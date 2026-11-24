@@ -600,6 +600,9 @@ pub struct PathStep {
     pub draw: Option<Vec<Value>>,
     /// The step's probability.
     pub probability: Rational,
+    /// Exact elapsed time in the subject's declared time unit, zero for an
+    /// untimed step.
+    pub elapsed: Rational,
     /// The complete product key reached after this step and any scheduler
     /// resolution it requires.
     pub target: Box<ProbKey>,
@@ -615,6 +618,8 @@ pub struct PathStep {
 pub struct UndefinedPath {
     /// The index of the initial state in the subject.
     pub initial: u32,
+    /// The complete product key at the selected initial state.
+    pub initial_key: Box<ProbKey>,
     /// The `over` binding for which the undefined read was evaluated.
     pub binding: Option<ModelInstance>,
     /// The model steps from the initial state, in order.

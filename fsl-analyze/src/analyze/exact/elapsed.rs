@@ -378,12 +378,24 @@ pub(super) fn run(
         claim,
         limits,
     };
-    let (built, _) = match build_retaining_monitor(product_request, cancel) {
+    let (built, monitor) = match build_retaining_monitor(product_request, cancel) {
         Ok(built) => built,
         Err(refusal) => return build_refusal(refusal, subject),
     };
-    let ProbBuild::Built(product) = built else {
-        return not_yet();
+    let product = match built {
+        ProbBuild::Built(product) => product,
+        ProbBuild::Undefined(path) => {
+            return undefined::run(
+                simulation,
+                claim,
+                path,
+                monitor,
+                &limits,
+                cancel,
+                subject,
+                tamper_witness,
+            );
+        }
     };
     let [(_, _, start)] = product.initial.as_slice() else {
         return not_yet();

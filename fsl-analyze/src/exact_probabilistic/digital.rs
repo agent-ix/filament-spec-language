@@ -604,6 +604,7 @@ struct Target {
     state: DState,
     truths: Vec<bool>,
     resolution: Option<Resolution>,
+    trace_step: Option<TraceStep>,
 }
 
 #[derive(Clone)]
@@ -611,6 +612,18 @@ struct TraceStep {
     action: Option<ScheduledIdentity>,
     draw: Option<Vec<Value>>,
     probability: Rational,
+    elapsed_ticks: u64,
+    chain: Vec<TraceHop>,
+}
+
+#[derive(Clone)]
+struct TraceHop {
+    action: ScheduledIdentity,
+    draw: Vec<Value>,
+    probability: Rational,
+    elapsed_ticks: u64,
+    reached: DState,
+    target: Option<ProbKey>,
 }
 
 struct Planned {
@@ -1461,6 +1474,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     state,
                     truths,
                     resolution: None,
+                    trace_step: None,
                 };
                 let id = self.intern(target, None, None, at)?;
                 starts.push((at, self.bindings[binding].0.clone(), ProbStateId(id)));
@@ -1546,48 +1560,38 @@ impl<'c> Builder<'_, '_, 'c> {
         hit: Hit,
     ) -> Halt {
         let mut steps: Vec<PathStep> = step
-            .map(|step| PathStep {
-                action: step.action.clone(),
-                draw: step.draw.clone(),
-                probability: step.probability.clone(),
-                target: Box::new(key.clone()),
-                resolved: None,
-            })
-            .into_iter()
-            .collect();
+            .map(|step| self.path_steps(step, &key))
+            .unwrap_or_default();
         let mut chosen = resolved;
         let mut cursor = parent;
         let mut initial = initial;
+        let mut initial_key = None;
         while let Some(at) = cursor {
             initial = self.nodes[at].initial;
             let Some((before, taken)) = &self.nodes[at].parent else {
+                initial_key = Some(self.nodes[at].key.clone());
                 break;
             };
             match taken {
                 Some(taken) => {
                     let resolution = chosen.take();
-                    steps.push(PathStep {
-                        action: taken.action.clone(),
-                        draw: taken.draw.clone(),
-                        probability: taken.probability.clone(),
-                        target: Box::new(
-                            resolution
-                                .clone()
-                                .unwrap_or_else(|| self.nodes[at].key.clone()),
-                        ),
-                        resolved: resolution.map(Box::new),
-                    });
+                    let target = resolution
+                        .clone()
+                        .unwrap_or_else(|| self.nodes[at].key.clone());
+                    steps.extend(self.path_steps(taken, &target));
                 }
                 None => chosen = Some(self.nodes[at].key.clone()),
             }
             cursor = Some(*before);
         }
         steps.reverse();
+        let initial_key = initial_key.unwrap_or_else(|| key.clone());
         let probability = steps
             .iter()
             .fold(one(), |total, step| total.mul(&step.probability));
         Halt::Undefined(Box::new(UndefinedPath {
             initial,
+            initial_key: Box::new(initial_key),
             binding: key.binding.clone(),
             position: u64::try_from(steps.len()).unwrap_or(u64::MAX),
             steps,
@@ -1597,6 +1601,39 @@ impl<'c> Builder<'_, '_, 'c> {
             read: hit.read,
             cause: hit.cause,
         }))
+    }
+
+    fn path_steps(&self, step: &TraceStep, final_target: &ProbKey) -> Vec<PathStep> {
+        if step.chain.is_empty() {
+            return vec![PathStep {
+                action: step.action.clone(),
+                draw: step.draw.clone(),
+                probability: step.probability.clone(),
+                elapsed: Rational::new(
+                    Integer::from(step.elapsed_ticks),
+                    Integer::from(self.scale),
+                )
+                .expect("the digital time scale is positive"),
+                target: Box::new(final_target.clone()),
+                resolved: None,
+            }];
+        }
+        step.chain
+            .iter()
+            .rev()
+            .map(|hop| PathStep {
+                action: Some(hop.action.clone()),
+                draw: Some(hop.draw.clone()),
+                probability: hop.probability.clone(),
+                elapsed: Rational::new(
+                    Integer::from(hop.elapsed_ticks),
+                    Integer::from(self.scale),
+                )
+                .expect("the digital time scale is positive"),
+                target: Box::new(hop.target.clone().unwrap_or_else(|| final_target.clone())),
+                resolved: None,
+            })
+            .collect()
     }
 
     /// The target reached from node `at` by `reached` after the letters of
@@ -1611,6 +1648,50 @@ impl<'c> Builder<'_, '_, 'c> {
         reuse: impl FnOnce(&ProbKey) -> bool,
     ) -> Step<Target> {
         let binding = self.binding_of(at)?;
+        if let Some(taken) = taken.filter(|taken| !taken.chain.is_empty()) {
+            let mut taken = taken.clone();
+            let mut source = self.nodes[at].key.monitor;
+            let mut letters = Vec::with_capacity(taken.chain.len());
+            for hop in &mut taken.chain {
+                let truths = match self.truths(&hop.reached.model, binding)? {
+                    Ok(truths) => truths,
+                    Err(hit) => {
+                        let key = self.key_of(&hop.reached, binding, source, None)?;
+                        hop.target = Some(key.clone());
+                        return Err(self.undefined(
+                            Some(at), Some(&taken), None, self.nodes[at].initial, key, hit,
+                        ));
+                    }
+                };
+                let mut state = hop.reached.clone();
+                source = self.control_after(source, &mut state, std::slice::from_ref(&truths))?;
+                hop.target = Some(self.key_of(&state, binding, source, None)?);
+                hop.reached = state;
+                letters.push(truths);
+            }
+            reached = taken
+                .chain
+                .last()
+                .map(|hop| hop.reached.clone())
+                .ok_or_else(|| fault("chain-has-a-state"))?;
+            let truths = letters
+                .last()
+                .cloned()
+                .ok_or_else(|| fault("chain-has-a-letter"))?;
+            let key = self.key_of(&reached, binding, source, None)?;
+            if !reuse(&key) {
+                self.admit_edge(planned.len())?;
+            }
+            self.admit_state(&key)?;
+            super::observe_target_construction();
+            return Ok(Target {
+                key,
+                state: reached,
+                truths,
+                resolution: None,
+                trace_step: Some(taken),
+            });
+        }
         let mut letters = Vec::with_capacity(landed.len());
         for model in landed {
             match self.truths(model, binding)? {
@@ -1650,6 +1731,7 @@ impl<'c> Builder<'_, '_, 'c> {
             state: reached,
             truths,
             resolution: None,
+            trace_step: taken.cloned(),
         })
     }
 
@@ -1670,7 +1752,8 @@ impl<'c> Builder<'_, '_, 'c> {
                 ));
             }
             let zero_delay = edge.zero_delay;
-            let to = self.intern(edge.target, Some(at), edge.step, self.nodes[at].initial)?;
+            let step = edge.target.trace_step.clone().or(edge.step);
+            let to = self.intern(edge.target, Some(at), step, self.nodes[at].initial)?;
             let mut rewards = edge.rewards;
             if matches!(self.form, Form::MeanTime { .. }) {
                 let name = Identifier::new(ELAPSED_REWARD)
@@ -1757,6 +1840,8 @@ impl<'c> Builder<'_, '_, 'c> {
             action: None,
             draw: None,
             probability: one(),
+            elapsed_ticks,
+            chain: Vec::new(),
         };
         let current = self.nodes[at].key.clone();
         let target = self.arrive(at, reached, &[], Some(&taken), planned, |key| {
@@ -1873,6 +1958,8 @@ impl<'c> Builder<'_, '_, 'c> {
                 action: None,
                 draw: None,
                 probability: one(),
+                elapsed_ticks: 0,
+                chain: Vec::new(),
             };
             let landed = [state.model.clone()];
             let target = self.arrive(at, reached, &landed, Some(&taken), &planned, |_| false)?;
@@ -2009,6 +2096,8 @@ impl<'c> Builder<'_, '_, 'c> {
                 action: None,
                 draw: None,
                 probability: probability.clone(),
+                elapsed_ticks: least,
+                chain: Vec::new(),
             };
             // Inspect the monitor before allocating a terminal target. A
             // nonterminal delay is only the start of the tied chain.
@@ -2079,6 +2168,8 @@ impl<'c> Builder<'_, '_, 'c> {
                 action: Some(action.identity.clone()),
                 draw: Some(draw.random.clone()),
                 probability: share.mul(&draw.probability),
+                elapsed_ticks: 0,
+                chain: Vec::new(),
             };
             let probability = share.mul(&draw.probability);
             let post = |model: &ModelSimState, clocks: &[u64]| DState {
@@ -2110,6 +2201,8 @@ impl<'c> Builder<'_, '_, 'c> {
                         action: taken.action,
                         draw: None,
                         probability: merged.probability.clone(),
+                        elapsed_ticks: 0,
+                        chain: Vec::new(),
                     });
                     continue;
                 }
@@ -2169,6 +2262,7 @@ impl<'c> Builder<'_, '_, 'c> {
                         .map(|(model, clocks)| post(model, clocks))
                         .collect(),
                 }),
+                trace_step: None,
             };
             super::observe_edge_construction();
             planned.push(Planned {
@@ -2585,16 +2679,18 @@ impl<'c> Builder<'_, '_, 'c> {
             Vec<DState>,
             Option<Vec<Value>>,
             Vec<(Identifier, Value)>,
+            Vec<TraceHop>,
         );
         let mut chains: Vec<Chain> = vec![(
             probability,
             vec![start.clone()],
             None,
             self.system.zero_rewards(),
+            Vec::new(),
         )];
         for identity in ordered {
             let mut next: Vec<Chain> = Vec::new();
-            for (chain_probability, states, first_draw, summed) in chains {
+            for (chain_probability, states, first_draw, summed, mut hops) in chains {
                 let current = states
                     .last()
                     .cloned()
@@ -2605,7 +2701,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     .iter()
                     .find(|candidate| candidate.identity == *identity)
                 else {
-                    next.push((chain_probability, states, first_draw, summed));
+                    next.push((chain_probability, states, first_draw, summed, hops));
                     continue;
                 };
                 for draw in &action.draws {
@@ -2625,18 +2721,33 @@ impl<'c> Builder<'_, '_, 'c> {
                         }))
                         .into());
                     };
-                    let mut reached = states.clone();
-                    reached.push(DState {
+                    let reached_state = DState {
                         model: model.clone(),
                         clocks: clocks.clone(),
                         deadline: current.deadline,
                         tail: Tail::Running,
+                    };
+                    let hop_probability = if hops.is_empty() {
+                        chain_probability.mul(&draw.probability)
+                    } else {
+                        draw.probability.clone()
+                    };
+                    hops.push(TraceHop {
+                        action: identity.clone(),
+                        draw: draw.random.clone(),
+                        probability: hop_probability,
+                        elapsed_ticks: if hops.is_empty() { elapsed_ticks } else { 0 },
+                        reached: reached_state.clone(),
+                        target: None,
                     });
+                    let mut reached = states.clone();
+                    reached.push(reached_state);
                     next.push((
                         chain_probability.mul(&draw.probability),
                         reached,
                         first_draw.clone().or_else(|| Some(draw.random.clone())),
                         add_rewards(&summed, &draw.rewards)?,
+                        hops.clone(),
                     ));
                 }
             }
@@ -2646,7 +2757,7 @@ impl<'c> Builder<'_, '_, 'c> {
             .first()
             .cloned()
             .ok_or_else(|| fault("race-takes-an-identity"))?;
-        for (chain_probability, states, draw, rewards) in chains {
+        for (chain_probability, states, draw, rewards, hops) in chains {
             let reached = states
                 .last()
                 .cloned()
@@ -2660,6 +2771,8 @@ impl<'c> Builder<'_, '_, 'c> {
                 action: Some(first.clone()),
                 draw: draw.clone(),
                 probability: chain_probability.clone(),
+                elapsed_ticks,
+                chain: hops,
             };
             let target = self.arrive(at, reached, &landed, Some(&taken), planned, |key| {
                 planned[scope..].iter().any(|edge| {
@@ -2677,8 +2790,10 @@ impl<'c> Builder<'_, '_, 'c> {
                 merged.draw = None;
                 merged.step = Some(TraceStep {
                     action: taken.action,
-                    draw: None,
-                    probability: merged.probability.clone(),
+                    draw: taken.draw,
+                    probability: taken.probability,
+                    elapsed_ticks,
+                    chain: taken.chain,
                 });
                 continue;
             }

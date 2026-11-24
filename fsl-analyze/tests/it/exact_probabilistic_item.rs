@@ -32,6 +32,7 @@ mod fraction_window;
 mod measure_profile;
 mod outcomes;
 mod subsystem_refutation;
+mod timed_undefined;
 
 /// `Link` delivers within two attempts: the least delivery probability over
 /// every scheduler is 24/25 (send_b twice), the greatest 99/100.

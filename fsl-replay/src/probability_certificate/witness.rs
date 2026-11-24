@@ -17,6 +17,7 @@ mod measure;
 mod step;
 mod subsystem;
 mod undefined;
+mod undefined_timed;
 pub use undefined::{replay_probabilistic_undefined, ProbabilityUndefinedWitness};
 
 /// A semantic operation, draw and resulting state in a finite witness.

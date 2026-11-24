@@ -24,9 +24,10 @@ pub(super) fn run(
     let ProbForm::LongRunFraction { bound, weight, .. } = &claim.form else {
         return not_yet();
     };
+    let delay_weight = matches!(weight, Some(fsl_semantics::check::Weighting::Delay));
     let weight = match weight {
         Some(fsl_semantics::check::Weighting::Reward(name)) => Some(name),
-        Some(fsl_semantics::check::Weighting::Delay) => return not_yet(),
+        Some(fsl_semantics::check::Weighting::Delay) => None,
         None => None,
     };
     if !matches!(
@@ -135,6 +136,11 @@ pub(super) fn run(
             }
         }
     };
+    // Undefined reads are replayed from their positive timed path before the
+    // defined delay-weighted profile is admitted below.
+    if delay_weight {
+        return not_yet();
+    }
     let kind = if every {
         ProductKind::Mdp
     } else {

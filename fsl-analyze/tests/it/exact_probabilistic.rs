@@ -174,6 +174,7 @@ fn a_timed_undefined_read_keeps_its_complete_pre_read_product_key() {
     assert_eq!(path.position, 1);
     assert_eq!(path.probability, ratio(1, 2));
     assert_eq!(step.probability, ratio(1, 2));
+    assert_eq!(step.elapsed, ratio(1, 1));
     assert_eq!(step.target, path.key);
     assert!(matches!(path.read, UndefinedRead::Atom(_)));
     assert!(path.key.monitor.is_some(), "the bounded control is retained");

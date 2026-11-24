@@ -960,6 +960,7 @@ impl Builder<'_, '_, '_, '_> {
                 action: step.action.clone(),
                 draw: step.draw.clone(),
                 probability: step.probability.clone(),
+                elapsed: Rational::from_integer(Integer::zero()),
                 target: Box::new(key.clone()),
                 resolved: None,
             })
@@ -968,9 +969,11 @@ impl Builder<'_, '_, '_, '_> {
         let mut chosen = resolved;
         let mut cursor = parent;
         let mut initial = initial;
+        let mut initial_key = None;
         while let Some(at) = cursor {
             initial = self.nodes[at].initial;
             let Some((before, taken)) = &self.nodes[at].parent else {
+                initial_key = Some(self.nodes[at].key.clone());
                 break;
             };
             match taken {
@@ -980,6 +983,7 @@ impl Builder<'_, '_, '_, '_> {
                         action: taken.action.clone(),
                         draw: taken.draw.clone(),
                         probability: taken.probability.clone(),
+                        elapsed: Rational::from_integer(Integer::zero()),
                         target: Box::new(
                             resolution
                                 .clone()
@@ -995,6 +999,7 @@ impl Builder<'_, '_, '_, '_> {
             cursor = Some(*before);
         }
         steps.reverse();
+        let initial_key = initial_key.unwrap_or_else(|| key.clone());
         let probability = steps
             .iter()
             .fold(Rational::from_integer(Integer::one()), |total, step| {
@@ -1002,6 +1007,7 @@ impl Builder<'_, '_, '_, '_> {
             });
         Halt::Undefined(Box::new(UndefinedPath {
             initial,
+            initial_key: Box::new(initial_key),
             binding: key.binding.clone(),
             position: u64::try_from(steps.len()).unwrap_or(u64::MAX),
             steps,

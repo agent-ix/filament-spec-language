@@ -41,6 +41,9 @@ pub fn replay_probabilistic_undefined(
         return Err(ProbabilityWitnessError::Refused);
     }
     let claim = bind_claim(package.graph().probabilistic_model().claims(), item, cancel)?;
+    if super::undefined_timed::is_timed_key(&witness.product_state) {
+        return super::undefined_timed::replay(system, claim, witness, limits, cancel);
+    }
     if claim.bounded_measure() {
         return super::measure::replay_undefined(system, claim, witness, limits, cancel);
     }

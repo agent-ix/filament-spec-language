@@ -14,6 +14,7 @@ mod instances;
 mod long_run;
 mod measure;
 mod subsystem;
+mod timed_mean_undefined;
 mod undefined;
 
 use filament_exact::{Cancel, ObjectReference, Rational};
@@ -594,9 +595,21 @@ fn run_timed(
         Ok(built) => built,
         Err(refusal) => return build_refusal(refusal, subject),
     };
-    let (built, _) = built;
-    let ProbBuild::Built(product) = built else {
-        return not_yet();
+    let (built, monitor) = built;
+    let product = match built {
+        ProbBuild::Built(product) => product,
+        ProbBuild::Undefined(path) => {
+            return undefined::run(
+                simulation,
+                claim,
+                path,
+                monitor,
+                &limits,
+                cancel,
+                subject,
+                tamper_witness,
+            );
+        }
     };
     let [(_, _, start)] = product.initial.as_slice() else {
         return not_yet();
@@ -980,6 +993,7 @@ fn run_timed_mean(
     request: ProductRequest<'_>,
     cancel: &Cancel,
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
+    tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     let claim = request.claim;
     let ProbForm::MeanTime { bound, .. } = &claim.form else {
@@ -1025,7 +1039,7 @@ fn run_timed_mean(
             return build_refusal(refusal, subject);
         }
     };
-    let built = match build_retaining_monitor(
+    let (built, monitor) = match build_retaining_monitor(
         ProductRequest {
             subject: request.subject,
             claim,
@@ -1033,13 +1047,25 @@ fn run_timed_mean(
         },
         cancel,
     ) {
-        Ok((built, _)) => built,
+        Ok(built) => built,
         Err(refusal) => {
             return build_refusal(refusal, subject);
         }
     };
-    let ProbBuild::Built(product) = built else {
-        return not_yet();
+    let product = match built {
+        ProbBuild::Built(product) => product,
+        ProbBuild::Undefined(path) => {
+            return timed_mean_undefined::run(
+                simulation,
+                claim,
+                path,
+                monitor,
+                &limits,
+                cancel,
+                subject,
+                tamper_witness,
+            );
+        }
     };
     let [(_, _, start)] = product.initial.as_slice() else {
         return not_yet();
@@ -1229,7 +1255,7 @@ fn run(
         return measure::run(request, cancel, tamper, tamper_witness);
     }
     if matches!(&request.claim.form, ProbForm::MeanTime { .. }) {
-        return run_timed_mean(request, cancel, tamper);
+        return run_timed_mean(request, cancel, tamper, tamper_witness);
     }
     if matches!(
         &request.claim.form,

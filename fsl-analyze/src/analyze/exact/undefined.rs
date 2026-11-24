@@ -4,7 +4,9 @@
 use super::*;
 use crate::exact_probabilistic::{PredicateRole, UndefinedPath, UndefinedRead};
 use fsl_eval::automaton::{Monitor, PropertyAutomaton, QualifiedBoundedMonitor};
-use fsl_eval::simulation::model::{ModelSimulationRequest, PredicateReading};
+use fsl_eval::simulation::model::{
+    ModelSimState, ModelSimulationRequest, PredicateReading, TimedSystem,
+};
 use fsl_replay::{ProbabilityUndefinedWitness, replay_probabilistic_undefined};
 
 #[allow(clippy::too_many_arguments)]
@@ -28,6 +30,7 @@ pub(super) fn run(
             | ProbForm::Quantile { .. }
             | ProbForm::LongRunFraction { .. }
             | ProbForm::ExpectedReward { .. }
+            | ProbForm::MeanTime { .. }
     ) {
         return not_yet();
     }
@@ -65,7 +68,8 @@ pub(super) fn run(
                 | ProbForm::Probability { bound, .. }
                 | ProbForm::LongRunFraction { bound, .. }
                 | ProbForm::ExpectedReward { bound, .. }
-                | ProbForm::MeanOfFraction { bound, .. } => bound,
+                | ProbForm::MeanOfFraction { bound, .. }
+                | ProbForm::MeanTime { bound, .. } => bound,
                 ProbForm::Quantile { q, threshold, .. } => {
                     quantile_bound = match threshold {
                         Bound::AtMost(_) => Bound::AtLeast(q.clone()),
@@ -73,7 +77,6 @@ pub(super) fn run(
                     };
                     &quantile_bound
                 }
-                _ => return not_yet(),
             };
             let scope = package.graph().scope();
             let Some(occurrence) = claim.occurrence() else {
@@ -195,7 +198,19 @@ fn materialize_inner(
                 .map_err(ProbabilityWitnessError::from)?,
             )
         }
+        (
+            ProbForm::Probability {
+                event:
+                    Event::Formula {
+                        timed_horizon: Some(_),
+                        ..
+                    },
+                ..
+            },
+            None,
+        ) => None,
         (ProbForm::Reach { .. }, None) => None,
+        (ProbForm::MeanTime { .. }, None) => None,
         (ProbForm::LongRunFraction { .. } | ProbForm::ExpectedReward { .. }, None) => None,
         (_, None) if measured => None,
         _ => return Err(ProbabilityWitnessError::Refused),
@@ -203,6 +218,10 @@ fn materialize_inner(
     let key = |state: &crate::exact_probabilistic::ProbKey| -> Result<ProbabilityProductKey, ProbabilityWitnessError> {
         match monitor.as_ref() {
             Some(monitor) => bounded_product_key(state, reference, monitor, limits.document, cancel).map_err(ProbabilityWitnessError::from),
+            None if state.certificate_state.is_some() => Ok(state
+                .certificate_state
+                .clone()
+                .ok_or(ProbabilityWitnessError::Refused)?),
             None if measured => {
                 let mut scope=measure_scope.borrow_mut();
                 let (meter,storage)=&mut *scope;
@@ -216,7 +235,9 @@ fn materialize_inner(
         return Err(ProbabilityWitnessError::Refused);
     };
     let mut measure_source = None;
-    let initial_key = if path.steps.is_empty() {
+    let initial_key = if let Some(initial_key) = path.initial_key.certificate_state.clone() {
+        initial_key
+    } else if path.steps.is_empty() {
         match monitor.as_ref() {
             Some(monitor) => {
                 let control = monitor
@@ -335,6 +356,34 @@ fn materialize_inner(
             .map_err(ProbabilityWitnessError::from)?
     };
     let mut state = initial.clone();
+    let timed_system = if path.key.certificate_state.is_some() {
+        Some(
+            TimedSystem::new(system, &claim.subject.alias)
+                .map_err(|_| ProbabilityWitnessError::Refused)?,
+        )
+    } else {
+        None
+    };
+    let mut timed_state = timed_system.as_ref().and_then(|timed| {
+        let initial_key = system.state_key(initial).ok()?.0;
+        timed.initial().into_iter().find(|candidate| {
+            system
+                .state_key(candidate.discrete())
+                .ok()
+                .is_some_and(|(candidate, _)| candidate == initial_key)
+        })
+    });
+    let timed_time = path
+        .key
+        .certificate_state
+        .as_ref()
+        .and_then(|_| TimedSystem::new(system, &claim.subject.alias).ok())
+        .map(|_| {
+            path.steps.iter().fold(
+                Rational::from_integer(filament_exact::Integer::zero()),
+                |sum, step| sum.add(&step.elapsed),
+            )
+        });
     let mut steps = Vec::new();
     let mut scheduler = std::collections::BTreeMap::new();
     let mut spelled = Vec::new();
@@ -355,7 +404,7 @@ fn materialize_inner(
         if matches!(claim.scheduler, ProbScheduler::Every) {
             scheduler.insert(source_key.clone(), choice.clone());
             spelled.push((
-                if measured {
+                if measured || timed_system.is_some() {
                     fsl_eval::simulation::StateKey::from_canonical_bytes(
                         source_key.as_bytes().to_vec(),
                     )
@@ -386,12 +435,7 @@ fn materialize_inner(
                     continue;
                 }
                 for (transition, post) in candidate_draw.successors {
-                    if system
-                        .state_key(&post)
-                        .map_err(|_| ProbabilityWitnessError::Refused)?
-                        .0
-                        == step.target.model
-                    {
+                    if target_matches_model(system, &step.target, &post)? {
                         if matched.is_some() {
                             if step.draw.is_some() {
                                 return Err(ProbabilityWitnessError::Refused);
@@ -406,6 +450,35 @@ fn materialize_inner(
         let Some((transition, post, draw)) = matched else {
             return Err(ProbabilityWitnessError::Refused);
         };
+        if let (Some(timed), Some(current)) = (timed_system.as_ref(), timed_state.as_ref()) {
+            let delayed = timed
+                .delay(current, &step.elapsed)
+                .map_err(|_| ProbabilityWitnessError::Refused)?
+                .ok_or(ProbabilityWitnessError::Refused)?;
+            let post_key = system
+                .state_key(&post)
+                .map_err(|_| ProbabilityWitnessError::Refused)?
+                .0;
+            let mut reached = None;
+            for (guarded, next) in timed
+                .steps(&delayed)
+                .map_err(|_| ProbabilityWitnessError::Refused)?
+            {
+                if guarded.transition() == &transition
+                    && system
+                        .state_key(guarded.post())
+                        .map_err(|_| ProbabilityWitnessError::Refused)?
+                        .0
+                        == post_key
+                {
+                    if reached.is_some() {
+                        return Err(ProbabilityWitnessError::Refused);
+                    }
+                    reached = Some(next);
+                }
+            }
+            timed_state = Some(reached.ok_or(ProbabilityWitnessError::Refused)?);
+        }
         let post_key = key(&step.target)?;
         if measured && step.resolved.is_some() && matches!(claim.scheduler, ProbScheduler::Every) {
             let (control, sums) = measure_source
@@ -473,7 +546,7 @@ fn materialize_inner(
             draw: Some(draw),
             post: post.clone(),
             post_key: post_key.clone(),
-            elapsed: Rational::from_integer(0_i64.into()),
+            elapsed: step.elapsed.clone(),
         });
         source_key = post_key;
         state = post;
@@ -518,7 +591,18 @@ fn materialize_inner(
                     state_key: path.state_key.clone(),
                     locus,
                     transition: None,
-                    time: None,
+                    time: timed_time.clone().and_then(|stamp| {
+                        let timed = timed_system.as_ref()?;
+                        let state = timed_state.as_ref()?;
+                        let clocks = timed
+                            .places()
+                            .iter()
+                            .zip(state.clocks().values())
+                            .filter(|(place, _)| timed.live(place, state.discrete()))
+                            .map(|(_, clock)| clock.clone())
+                            .collect();
+                        Some(Box::new(fsl_replay::TimedPoint { stamp, clocks }))
+                    }),
                 },
                 cause: path.cause.clone(),
             },
@@ -526,6 +610,30 @@ fn materialize_inner(
         },
         spelled,
     ))
+}
+
+fn target_matches_model(
+    system: &ModelSystem<'_>,
+    target: &crate::exact_probabilistic::ProbKey,
+    state: &ModelSimState,
+) -> Result<bool, ProbabilityWitnessError> {
+    let (raw, _) = system
+        .state_key(state)
+        .map_err(|_| ProbabilityWitnessError::Refused)?;
+    let Some(certificate) = target.certificate_state.as_ref() else {
+        return Ok(raw == target.model);
+    };
+    let value: serde_json::Value = serde_json::from_slice(certificate.as_bytes())
+        .map_err(|_| ProbabilityWitnessError::Refused)?;
+    let Some(discrete) = value
+        .get(4)
+        .and_then(|model| model.get(1))
+        .and_then(|timed| timed.get(1))
+    else {
+        return Ok(false);
+    };
+    let expected = serde_json::to_vec(discrete).map_err(|_| ProbabilityWitnessError::Refused)?;
+    Ok(raw == expected)
 }
 
 enum ProducerFailure {
