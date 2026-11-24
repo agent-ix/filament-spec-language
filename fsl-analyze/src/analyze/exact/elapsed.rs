@@ -360,7 +360,7 @@ pub(super) fn run(
         claim.subject.alias.as_str(),
     ) {
         Ok(timed) => timed,
-        Err(_) => return not_yet(),
+        Err(error) => return EngineReport::Refused(subject_refusal(&error)),
     };
     if crate::exact_probabilistic::timed_region_route(&timed, claim) != at_least {
         return not_yet();
@@ -408,7 +408,7 @@ pub(super) fn run(
     {
         let binding = match claim_binding(&system, claim) {
             Ok(binding) => binding,
-            Err(_) => return not_yet(),
+            Err(error) => return graph_failure(error, &limits, subject),
         };
         return refute(Refutation {
             system: &system,
@@ -431,11 +431,11 @@ pub(super) fn run(
         .collect::<Vec<_>>();
     let identity = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(identity) => identity,
-        Err(_) => return not_yet(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let binding = match claim_binding(&system, claim) {
         Ok(binding) => binding,
-        Err(_) => return not_yet(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let mut certificate = match certificate_of(
         &product,

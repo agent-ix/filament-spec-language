@@ -36,7 +36,7 @@ pub(super) fn run(
     let claims = package.graph().probabilistic_model().claims();
     let item = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(item) => item,
-        Err(_) => return not_yet(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let binding = match claim_binding(&system, claim) {
         Ok(binding) => binding,
@@ -607,7 +607,7 @@ fn refute_mean(
             };
             let action = match canonical_action(system, product, &action, &key_of) {
                 Ok(action) => action,
-                Err(_) => return not_yet(),
+                Err(error) => return document_failure(error, subject),
             };
             scheduler.push((key, action));
         }

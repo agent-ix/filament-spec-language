@@ -3215,6 +3215,17 @@ fn finish_replay(
     }
 }
 
+/// A stopped expansion keeps its budget; any other schedule failure is a
+/// product the engine built that the system cannot write.
+fn schedule_failure(error: fsl_replay::ProductActionError) -> ProbabilityDocumentError {
+    match error {
+        fsl_replay::ProductActionError::Stopped(stop) => {
+            ProbabilityDocumentError::Build(Box::new(ExactProbBuildIssue::Expansion(stop)))
+        }
+        _ => ProbabilityDocumentError::Malformed,
+    }
+}
+
 fn canonical_action(
     system: &ModelSystem<'_>,
     product: &ProbProduct,
@@ -3223,14 +3234,7 @@ fn canonical_action(
         &crate::exact_probabilistic::ProbKey,
     ) -> Result<ProbabilityProductKey, ProbabilityDocumentError>,
 ) -> Result<fsl_replay::ProductAction, ProbabilityDocumentError> {
-    // A stopped expansion keeps its budget; any other schedule failure is a
-    // product the engine built that the system cannot write.
-    let unscheduled = |error| match error {
-        fsl_replay::ProductActionError::Stopped(stop) => {
-            ProbabilityDocumentError::Build(Box::new(ExactProbBuildIssue::Expansion(stop)))
-        }
-        _ => ProbabilityDocumentError::Malformed,
-    };
+    let unscheduled = schedule_failure;
     use crate::exact_probabilistic::ProductAction as AnalyzerAction;
     Ok(match choice {
         AnalyzerAction::Identity(identity) => fsl_replay::ProductAction::Identity(
@@ -3327,6 +3331,76 @@ mod tests {
         assert_eq!(terminal.diagnostic(), Some(BROKEN));
         assert!(terminal.exact_certificate_document().is_none());
         assert!(evidence.is_none() && counterexample.is_none());
+    }
+
+    fn is_fault(report: &EngineReport) -> bool {
+        matches!(report, EngineReport::Refused(Refusal::Failed(code)) if *code == BROKEN)
+    }
+
+    fn is_not_yet(report: &EngineReport) -> bool {
+        matches!(report, EngineReport::Refused(Refusal::Unsupported(code)) if *code == NOT_YET)
+    }
+
+    /// QSL-2850 FR-281 "Engine refusals": a swallowed identity, binding or
+    /// schedule error settles as its own outcome (a stopped expansion or a
+    /// cancel is a limit, a graph the claim was never bound to is a fault),
+    /// never as `not-yet-implemented`.
+    #[trace("TC-763", "FR-281-AC-11", "FR-203-AC-3")]
+    #[test]
+    fn swallowed_exact_errors_settle_as_their_own_outcome() {
+        let meter = fsl_replay::AccountingLimits::default().0;
+        let subject = SubjectLimits {
+            expansion: fsl_eval::simulation::model::ExpansionLimits { max_candidates: 1 },
+            meter: &meter,
+        };
+        let limits = crate::exact_probabilistic::ExactProbLimits::default();
+        let stop = fsl_eval::simulation::ExpansionStop {
+            cause: filament_semantic_value::catalog::CatalogCode::new(
+                "resource_exhausted",
+                "insufficient-next-charge",
+            ),
+            limit: Some(fsl_eval::simulation::ExpansionLimit::MaxCandidates),
+        };
+        let stopped = document_failure(
+            schedule_failure(fsl_replay::ProductActionError::Stopped(stop)),
+            subject,
+        );
+        assert!(
+            matches!(&stopped, EngineReport::Exact(report) if matches!(**report, ExactReport::Settled(_))),
+            "a stopped expansion keeps its budget"
+        );
+        for unwritable in [
+            fsl_replay::ProductActionError::Schedule,
+            fsl_replay::ProductActionError::Canonical,
+        ] {
+            assert!(is_fault(&document_failure(
+                schedule_failure(unwritable),
+                subject
+            )));
+        }
+        assert!(is_fault(&graph_failure(
+            ExactProbabilityGraphError::ClaimNotBound,
+            &limits,
+            subject
+        )));
+        let cancelled = graph_failure(
+            ExactProbabilityGraphError::Cancelled(filament_exact::CancelCause::Requested),
+            &limits,
+            subject,
+        );
+        assert!(!is_not_yet(&cancelled) && !is_fault(&cancelled));
+        assert!(matches!(
+            graph_failure(ExactProbabilityGraphError::RequiresBound, &limits, subject),
+            EngineReport::Refused(Refusal::RequiresBound)
+        ));
+        assert!(is_fault(&document_failure(
+            ProbabilityDocumentError::UndefinedPredicate(
+                fsl_eval::temporal::UndefinedCause::Kernel(
+                    filament_exact::Undefined::DivisionByZero
+                )
+            ),
+            subject
+        )));
     }
 
     #[trace("FR-203-AC-11")]
