@@ -3068,6 +3068,7 @@ mod initial;
 mod relationships;
 mod tree;
 mod write;
+pub(crate) use relationships::ModelFacts;
 
 pub use document::{admit_record_sample, unit_id_named, unit_name_of, ObservationRole};
 use document::{read_document, DocumentKind};
@@ -3088,7 +3089,7 @@ pub(crate) fn observe_protocol_state(
     state: &crate::model::state::ModelState,
     identity: DocumentRef,
 ) -> Result<Observation, AdmissionFailure> {
-    let mut observation = observe_state(views, types, state, identity)?;
+    let mut observation = observe_state(views, types, state, identity, None)?;
     let facts = relationships::model_facts(views, types)?;
     let provenance = facts.population_provenance()?;
     let mut holders = BTreeMap::new();
@@ -3174,6 +3175,13 @@ pub(crate) fn observe_protocol_state(
         .with_population_provenance(provenance)
         .with_population_reference_closures(closures);
     Ok(observation)
+}
+
+pub(crate) fn observation_facts(
+    views: &[ModelView],
+    types: &TypeEnvironment,
+) -> Result<ModelFacts, AdmissionFailure> {
+    relationships::model_facts(views, types)
 }
 pub use write::{
     write_environment_document, EnvironmentLabels, EnvironmentModel, EnvironmentObject,

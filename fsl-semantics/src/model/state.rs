@@ -11,7 +11,7 @@
 //! directly over the model's [`StateModel::population_index`].
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use filament_contract_model::{
     NativeJoinBudget, NativeJoinChargeKind, NativeJoinDeniedCharge, NativeJoinLocus,
@@ -29,8 +29,8 @@ use crate::model::intake::{NormalizedModel, PackageInput};
 use crate::model::normalize::EffectiveView;
 use crate::model::observation::{
     admit_initial_state, model_views, observe_state, state_fields, state_reference,
-    AdmissionFailure, DocumentRef, ModelSelections, ModelView, Observation, ObservationLimits,
-    PathStep, SelectedAnchor,
+    AdmissionFailure, DocumentRef, ModelFacts, ModelSelections, ModelView, Observation,
+    ObservationLimits, PathStep, SelectedAnchor, observation_facts,
 };
 use filament_checked::key::DeclarationKey;
 
@@ -330,6 +330,7 @@ pub struct StateModel {
     pub(crate) views: Vec<ModelView>,
     pub(crate) types: StateTypes,
     pub(crate) limits: ModelNormalizationLimits,
+    observation_facts: OnceLock<Result<ModelFacts, AdmissionFailure>>,
 }
 
 #[derive(Debug)]
@@ -453,6 +454,7 @@ impl StateModel {
                 crate::check::dense_model_data_environment(&view.view, source.span, &types, units)?;
         }
         self.types = StateTypes::Owned(Box::new(types));
+        self.observation_facts.take();
         Ok(&self.types)
     }
 
@@ -677,6 +679,7 @@ impl StateModel {
             views,
             types,
             limits: limits.map_or_else(ModelNormalizationLimits::default, |(_, limits)| limits),
+            observation_facts: OnceLock::new(),
         })
     }
 
@@ -776,6 +779,7 @@ impl StateModel {
             views: model_views(model_selections, packages, limits)?,
             types: StateTypes::Owned(Box::new(types.clone())),
             limits,
+            observation_facts: OnceLock::new(),
         })
     }
 
@@ -791,6 +795,7 @@ impl StateModel {
             views: views.into_iter().map(ModelView::new).collect(),
             types: StateTypes::Owned(Box::new(types.clone())),
             limits,
+            observation_facts: OnceLock::new(),
         }
     }
 
@@ -978,7 +983,16 @@ impl StateModel {
         state: &ModelState,
         identity: DocumentRef,
     ) -> Result<Observation, AdmissionFailure> {
-        observe_state(&self.views, &self.types, state, identity)
+        let facts = self
+            .observation_facts
+            .get_or_init(|| observation_facts(&self.views, &self.types));
+        observe_state(
+            &self.views,
+            &self.types,
+            state,
+            identity,
+            Some(facts.as_ref().map_err(Clone::clone)?),
+        )
     }
 
     /// Observe the complete simulated state with the population authority

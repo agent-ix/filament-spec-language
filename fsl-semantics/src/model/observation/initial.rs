@@ -185,6 +185,7 @@ pub(crate) fn observe_state(
     types: &TypeEnvironment,
     state: &ModelState,
     identity: DocumentRef,
+    facts: Option<&super::ModelFacts>,
 ) -> Result<Observation, AdmissionFailure> {
     let mut objects = Vec::new();
     let mut completeness = BTreeMap::new();
@@ -263,12 +264,15 @@ pub(crate) fn observe_state(
     }
     let closure =
         ObjectClosure::new(types, closure_objects, &tolerated).map_err(map_environment_refusal)?;
-    let extents = admit_supplied_extents(
-        types,
-        model_facts(views, types)?,
-        state.extents.clone(),
-        &completeness,
-    )?;
+    let generated_facts;
+    let facts = match facts {
+        Some(facts) => facts,
+        None => {
+            generated_facts = model_facts(views, types)?;
+            &generated_facts
+        }
+    };
+    let extents = admit_supplied_extents(types, facts, state.extents.clone(), &completeness)?;
     Ok(Observation {
         identity,
         environment: ObjectEnvironment::new(closure)
