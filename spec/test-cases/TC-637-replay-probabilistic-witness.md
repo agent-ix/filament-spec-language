@@ -26,13 +26,14 @@ Fixtures: §15.4's and §15.2's one-path refutations; §15.3's per-window subsys
 6. Replay the FR-202-AC-6 quantile path sets over the two-point model and its half-activated variant.
 7. Replay FR-204-AC-10's `Detour` maximum witness and path set, then the copies with its `FreeDelays` rows swapped, with the row given `[3]` removed, with `B` delay 4, and with the entry replaced by `WorkloadResolve{B, 1}`.
 8. For this path-set entry, supply a timed witness other than FR-202-AC-8's
-   explicit `Detour` / FR-204-AC-10 FreeDelays witness, and fairness inputs
-   other than FR-202-AC-3's explicit FR-200-AC-2 `Coin2` fair witness. Confirm
-   the timed and fair witnesses specified by AC-8 and AC-3 remain admissible.
-   Also supply an unbounded cyclic case, a subsystem input, randomized-policy
-   evidence, and multiple-initial/instance inputs. Exercise pre-cancellation,
-   cancellation at final acceptance and one-short expansion/work/storage
-   limits.
+   explicit `Detour` / FR-204-AC-10 FreeDelays witness, a subsystem input
+   other than FR-202-AC-3's explicit §15.3 per-window subsystem witness, and
+   fairness inputs other than FR-202-AC-3's explicit FR-200-AC-2 `Coin2` fair
+   witness. Confirm the timed, subsystem and fair witnesses specified by AC-8
+   and AC-3 remain admissible. Also supply an unbounded cyclic case,
+   randomized-policy evidence, and multiple-initial/instance inputs. Exercise
+   pre-cancellation, cancellation at final acceptance and one-short
+   expansion/work/storage limits.
 
 Tag the tests `#[trace("TC-637", "FR-202-AC-n")]`.
 Tag the caller-configured input-limit assertion `#[trace("TC-637", "FR-202-AC-7")]`.
@@ -47,6 +48,6 @@ Tag the caller-configured input-limit assertion `#[trace("TC-637", "FR-202-AC-7"
 - Step 6: the two-point model: `refuted`, then `inconclusive`, `ReplayParity`; its half-activated variant: `refuted` with `N` counted, then `inconclusive`, `ReplayParity` without the not-activated path.
 - Step 7: `refuted` with `3/4`, the merged steps' `1/2` and `1/2` recomputed from rows `[1]` and `[3]`; each copy refuses `invalid_runtime_input`/`invalid-value`.
 - Step 8: the named unsupported cases return unsupported without a token;
-  the AC-8 timed witness and AC-3 fair `Coin2` witness remain admissible and
-  replay `refuted`. Cancellation and resource-limit cases return incomplete
-  without a token or refuted record.
+  the AC-8 timed witness and AC-3 §15.3 subsystem and fair `Coin2` witnesses
+  remain admissible and replay `refuted`. Cancellation and resource-limit
+  cases return incomplete without a token or refuted record.
