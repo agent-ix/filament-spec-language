@@ -25,6 +25,8 @@ use serde_json::{json, Value};
 use super::long_run_certificate::limits;
 use crate::timed_world::{self, World};
 
+mod bounded_monitor_profile;
+
 const PROFILES: &str = "profile ev = \"filament.temporal.timed/v1\";\n\
      profile inf = \"filament.temporal.infinite-trace/v1\";\n";
 
