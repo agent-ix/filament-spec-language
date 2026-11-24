@@ -38,3 +38,24 @@ Verified correct:
 - Uses of an omitted owner are dropped only from nodes that a kept owner or context also uses, which matches a walk that never visits an unwritten owner.
 - The 6d278ad4fc gate is sound for the multi-owner case. Single-owner nodes under literal-guard pruning were already a gap before these commits.
 - The walks use an explicit stack with no recursion.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-010 | medium | renumber now refuses (SourceMapInvariant) when a walked owner that visits a multiply-used node is not in `function_identity_at`. An FR-322 owner-join function (derived from an operation body or precondition clause) that shares a node with a declared function would make a valid package refuse. No test covers an owner-join owner. | fsl-package/src/emit/value_validity_requirements/ordinals.rs:160-170 |
+| FND-011 | low | No test covers a state-clause (Use::Other) use of a shared node that the checker numbers before the function uses, which the "uses no walk reaches follow the visits" rule exists for. | fsl-package/src/emit/value_validity_requirements/ordinals.rs:258-268 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | union_nodes an_omitted_owner_leaves_a_shared_application_with_the_written_owners_record asserts occurrence 0 for b, a single expression occurrence and b's region. Without the renumbering, b keeps checker ordinal 1 and the test fails. fixture_s_regions_and_rows_follow_the_owner_walk_numbering covers the regions and the term rows. The missing state-clause case is FND-011. |
+| FND-002 | fixed | An unwritten claim is now an OmittedNode with cause NoClauseNode (once), and the record names it. rows() refuses SourceMapInvariant unless the claim is in that omission set. The written-node set is built in one pass. The new test is an_unwritten_presence_claim_is_an_omitted_node_its_record_names. |
+| FND-003 | fixed | Uses are keyed by declaration index and paired in source-path order. There is no leftover fill: a visit with no use refuses for an application. Literal-guard pruning can still pair a visit with a pruned use, but that now refuses rather than mis-numbering. |
+| FND-004 | fixed | Mapping is Vec<(u64, Option<u64>)>. ordinal() returns None for a dropped use. rows() and append refuse unless the owner is omitted. relabel_term_data drops the rows of a dropped use. |
+| FND-005 | fixed | carry_rows calls ordinals::rewalk when owner_order changes, then relabels nodes, the source map, rows (relabel_rows) and term rows in finish/emit_timed_models. Only one monitor test reaches this path. |
+| FND-006 | fixed | frame_chain now carries the region of the guard's occurrence, and expected.node is computed with cited() from the new frame id. |
+| FND-007 | fixed | Use::Body(usize) and Use::Measure(usize) carry the ExpressionOwner declaration index. |
+| FND-008 | still-open | The linear scan, the per-visit String clone and the undrained table.visited are fixed, and renumber charges its visits to the meter. The frames::derive, rederive and rewalk walks are still not charged to the emit meter (coder caveat c). rederive and rewalk are new in this PR. |
+| FND-009 | fixed | rustfmt --check reports 0 diffs in all five files at 1fecd1c037. The single_match patterns are gone. Clippy was not run. |
