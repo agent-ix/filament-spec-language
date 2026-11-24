@@ -9,8 +9,7 @@
 //! FR-125-AC-11 and AC-12 read the bound parameter through the production
 //! letters of the checked clause (`ModelSystem::clause_letters`).
 //!
-//! Not covered: FR-125-AC-9 and AC-15, whose reads are of the reference
-//! itself; no state-graph claim (FR-165) is instantiated here.
+//! Not covered: FR-125-AC-9, whose reads are of the reference itself.
 
 use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
@@ -23,6 +22,7 @@ use fsl_analyze::model_check::{
     check_model, check_state_graph, ModelCheckRefusal, ModelCheckRequest, StateGraphItem,
     StateGraphRequest,
 };
+use fsl_eval::hyper::{CheckedHyperLetters, HyperLetters, ParameterBinding};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ModelSubject};
 use fsl_eval::simulation::model::{
     ClauseOutcome, ExpansionLimits, LettersRefusal, ModelSimState, ModelSimulationRequest,
@@ -36,7 +36,9 @@ use fsl_package::CheckedPackage;
 use fsl_replay::{check_closure, CertificateRequest, ClosureCertificate, ClosureRefusal};
 use fsl_replay::{CounterexampleKind, ModelCheckItem, ModelCheckLimits};
 use fsl_replay::{ModelCheckOutcome, UndecidedCause};
-use fsl_semantics::check::{CheckedTemporalClause, FormulaNode, FormulaNodeId};
+use fsl_semantics::check::{
+    CheckCause, CheckedTemporalClause, FormulaNode, FormulaNodeId, HyperCause,
+};
 use fsl_semantics::family::ClaimExtent;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{meaning, package_input};
@@ -470,8 +472,8 @@ fn instances_are_each_key_of_each_admitting_population_in_canonical_order() {
         &[P1, P2, Q],
         &[
             ("P1", &[("d", "Lamp"), ("c", "Switch")]),
-            ("P2", &[("b", "Lamp")]),
-            ("Q", &[]),
+            ("P2", &[("b", "Lamp"), ("a", "Switch")]),
+            ("Q", &[("z", "Other")]),
         ],
     );
     let bounded = || universes(&[("Q", &["z"]), ("P2", &["b", "a"]), ("P1", &["d", "c"])]);
@@ -499,7 +501,10 @@ fn instances_are_each_key_of_each_admitting_population_in_canonical_order() {
             .expect("bounded"),
         vec![instance("P1", "d"), instance("P1", "c")]
     );
-    let supertype = self::world(&[P2, Q], &[("P2", &[("b", "Lamp")]), ("Q", &[])]);
+    let supertype = self::world(
+        &[P2, Q],
+        &[("P2", &[("b", "Lamp"), ("a", "Switch")]), ("Q", &[])],
+    );
     assert_eq!(
         supertype
             .instances("Lamp", universes(&[("Q", &["z"]), ("P2", &["b", "a"])]))
@@ -517,6 +522,189 @@ fn instances_are_each_key_of_each_admitting_population_in_canonical_order() {
         world.run("Thing", bounded(), true).expect("checked"),
         ModelCheckOutcome::Holds { .. }
     ));
+}
+
+/// A key listed in an overlapping population's universe but
+/// absent from every initial record is excluded, including when the key is
+/// repeated in another population. Excluded keys retain first population and
+/// universe occurrence order; a non-overlapping population does not contribute.
+#[trace("TC-520", "FR-125-AC-10")]
+#[test]
+fn excluded_keys_are_initially_unadmitted_and_deduplicated_in_instance_order() {
+    let world = world(
+        &[P1, P2, Q],
+        &[
+            ("P1", &[("d", "Lamp")]),
+            ("P2", &[("a", "Lamp")]),
+            ("Q", &[("z", "Other")]),
+        ],
+    );
+    let universes = universes(&[
+        ("Q", &["z"]),
+        ("P2", &["u", "a", "v"]),
+        ("P1", &["d", "u", "w"]),
+    ]);
+    let package = world.formula("Thing", "always holds(true)");
+    let system = ModelSystem::new(world.subject(&package, universes).simulation)
+        .expect("the bounded subject admits");
+    let [clause] = package.graph().temporal_clauses() else {
+        panic!("one temporal clause");
+    };
+    assert_eq!(
+        system
+            .instances(&clause.clause().over().1)
+            .expect("instances"),
+        [instance("P1", "d"), instance("P2", "a")],
+    );
+    assert_eq!(
+        system
+            .excluded_keys(&clause.clause().over().1)
+            .expect("excluded keys"),
+        ["u", "w", "v"],
+    );
+}
+
+/// FR-125-AC-15: a state-graph claim uses the same ordered instances as a
+/// temporal claim over AC-10's populations, and both expose the same excluded
+/// universe keys.
+#[trace("TC-520", "FR-125-AC-15")]
+#[test]
+fn state_graph_claims_share_temporal_instance_and_excluded_key_order() {
+    let world = world(
+        &[P1, P2, Q],
+        &[
+            ("P1", &[("d", "Lamp")]),
+            ("P2", &[("a", "Lamp")]),
+            ("Q", &[]),
+        ],
+    );
+    let bounded = universes(&[
+        ("Q", &["z"]),
+        ("P2", &["u", "a", "v"]),
+        ("P1", &["d", "u", "w"]),
+    ]);
+    let package = world.formula("Thing", "always holds(true)");
+    let system = ModelSystem::new(world.subject(&package, bounded.clone()).simulation)
+        .expect("the bounded subject admits");
+    let [temporal] = package.graph().temporal_clauses() else {
+        panic!("one temporal clause");
+    };
+    let temporal_instances = system
+        .instances(&temporal.clause().over().1)
+        .expect("instances");
+    let excluded = system
+        .excluded_keys(&temporal.clause().over().1)
+        .expect("excluded keys");
+    let graph_instances = world.reach("Thing", bounded).expect("state graph claim");
+    assert_eq!(
+        temporal_instances,
+        [instance("P1", "d"), instance("P2", "a")]
+    );
+    assert_eq!(graph_instances, ["d", "a"]);
+    assert_eq!(excluded, ["u", "w", "v"]);
+}
+
+/// FR-125-AC-15: a `Thing` hyper parameter reads the key `s` as its held
+/// `Switch` reference. The narrower `Lamp` parameter reads the same key as an
+/// `absent-key` undefined value, with the production checked hyper letters.
+#[trace("TC-520", "FR-125-AC-15")]
+#[test]
+fn hyper_parameters_read_the_held_most_specific_type_or_absent_key() {
+    let world = world(&[P1], &[("P1", &[("l", "Lamp"), ("s", "Switch")])]);
+    let body = "hyper HThing using t0 over behaviours (v: M::Thing) \
+        forall trace a of M { always holds((v = M::Switch#\"s\") @ a) }\n\
+        hyper HLamp using t0 over behaviours (v: M::Lamp) \
+        forall trace a of M { always holds((v = v) @ a) }\n";
+    let graph = declarations_in(PACKAGE, &world.document, body)
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("hyper clauses check: {refusals:?}"));
+    let package = CheckedPackage::link(graph);
+    let universe = universes(&[("P1", &["l", "s"])]);
+    let system =
+        ModelSystem::new(world.subject(&package, universe).simulation).expect("the subject admits");
+    let state = &system.initial_states()[0];
+    let held_references = system
+        .invocation_receivers(state)
+        .expect("the initial state exposes its objects");
+    assert!(
+        held_references.iter().any(|(_, reference)| {
+            reference.object().as_str() == "s"
+                && format!("{:?}", reference.object_type()).contains("Switch")
+        }),
+        "the initial state must hold key s with its most-specific Switch type: {held_references:?}"
+    );
+    let clauses = package.graph().hyper_clauses();
+    assert_eq!(clauses.len(), 2);
+    let thing_index = clauses[0]
+        .body()
+        .nodes()
+        .iter()
+        .position(|node| matches!(node, FormulaNode::Holds { .. }))
+        .expect("Thing has one holds atom");
+    let thing_atom = clauses[0]
+        .body()
+        .node_id(thing_index)
+        .expect("Thing atom has an id");
+    let binding = [ParameterBinding {
+        parameter: "v".to_owned(),
+        instance: instance("P1", "s"),
+    }];
+    let thing_letters = CheckedHyperLetters::new(&package, &clauses[0], vec![&system])
+        .expect("Thing hyper letters");
+    assert_eq!(
+        thing_letters
+            .atom(thing_atom, &binding, &[state], &mut Meter::new(UNLIMITED),)
+            .expect("the held Switch reference is read"),
+        AtomReading::True,
+    );
+    let lamp_index = clauses[1]
+        .body()
+        .nodes()
+        .iter()
+        .position(|node| matches!(node, FormulaNode::Holds { .. }))
+        .expect("Lamp has one holds atom");
+    let lamp_atom = clauses[1]
+        .body()
+        .node_id(lamp_index)
+        .expect("Lamp atom has an id");
+    let lamp_letters =
+        CheckedHyperLetters::new(&package, &clauses[1], vec![&system]).expect("Lamp hyper letters");
+    let absent = lamp_letters
+        .atom(lamp_atom, &binding, &[state], &mut Meter::new(UNLIMITED))
+        .expect("an absent key is undefined, not a refusal");
+    assert!(
+        matches!(
+            absent,
+        AtomReading::Undefined(UndefinedCause::Family(ref record))
+            if record.reason == UndefinedReason::AbsentKey
+        ),
+        "{absent:?}"
+    );
+
+    let unrelated = "hyper HUnrelated using t0 over behaviours (v: M::Other) \
+        forall trace a of M { always holds(v = v) }\n";
+    let refusal = declarations_in(PACKAGE, &world.document, unrelated)
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .expect_err("an unrelated type has no overlapping population");
+    assert!(
+        refusal
+            .iter()
+            .any(|refusal| matches!(
+                refusal.cause.as_ref(),
+                CheckCause::Hyper(cause)
+                    if matches!(cause.as_ref(), HyperCause::UnresolvedPopulation { parameter, .. }
+                        if parameter == "v")
+            )),
+        "the unrelated parameter keeps its typed unresolved-population refusal: {refusal:?}"
+    );
 }
 
 /// FR-125-AC-8: a population that admits `T` and has no universe is
@@ -755,8 +943,8 @@ fn a_state_graph_claim_is_instanced_like_a_clause() {
         &[P1, P2, Q],
         &[
             ("P1", &[("d", "Lamp"), ("c", "Switch")]),
-            ("P2", &[("b", "Lamp")]),
-            ("Q", &[]),
+            ("P2", &[("b", "Lamp"), ("a", "Switch")]),
+            ("Q", &[("z", "Other")]),
         ],
     );
     let bounded = || universes(&[("Q", &["z"]), ("P2", &["b", "a"]), ("P1", &["d", "c"])]);

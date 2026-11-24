@@ -264,9 +264,8 @@ fn parameter_type(
     index: usize,
 ) -> Result<filament_exact::EffectiveId, LettersRefusal> {
     clause
-        .parameters()
-        .get(index)
-        .map(|parameter| parameter.population.object())
+        .parameter_object_type(index)
+        .cloned()
         .ok_or(LettersRefusal::OverTypeUndeclared)
 }
 
