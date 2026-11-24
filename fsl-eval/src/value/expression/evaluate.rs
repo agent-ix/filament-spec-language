@@ -1317,10 +1317,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             Decimal, PathEntry, PlaceIdentity, SlotIndex,
         };
         use fsl_semantics::model::clock_reference::{encode_identity, is_declared_identity};
-        let ValueType::Reference(clock_type) = node.value_type() else {
-            return Err(invariant("place-reference-result-type-expected"));
-        };
-        if !fsl_semantics::model::clock_reference::is_clock_type(clock_type) {
+        // FSL FR-230-AC-71 gives `Reference<Clock>` its dedicated kernel type.
+        // It is not an object reference to the native Clock declaration.
+        if !matches!(node.value_type(), ValueType::ClockReference) {
             return Err(invariant("place-reference-result-type-expected"));
         }
         let unavailable = || unavailable_clock_origin(origins);
