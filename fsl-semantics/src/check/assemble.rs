@@ -6903,7 +6903,7 @@ fn terminal_declarations(
                     }
                 };
                 TerminalClauseKind::When {
-                    predicate: predicate.clone(),
+                    predicate: Box::new(predicate.clone()),
                     context,
                     population,
                 }
