@@ -308,7 +308,13 @@ fn serial_binding_tests_share_the_probability_work_allowance() {
         provenance: provenance.clone(),
     };
     let statistical = settle_statistical(&outcome, limits);
-    let exact = settle_exact_prob_build_issue(&ExactProbBuildIssue::Expansion(stop.clone()), limits);
+    let StatisticalStop::Expansion(expansion) = &stop else {
+        panic!("expected an expansion stop, got {stop:?}");
+    };
+    let exact = settle_exact_prob_build_issue(
+        &ExactProbBuildIssue::Expansion(expansion.clone()),
+        limits,
+    );
     assert_eq!(statistical.value, exact.value().clone());
     assert_eq!(statistical.measured(), None);
     assert!(statistical.diagnostic.is_none());

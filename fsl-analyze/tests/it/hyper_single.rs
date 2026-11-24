@@ -553,7 +553,7 @@ fn hp5_witnesses_settle_through_the_product_certificate_and_replay() {
     let mut budget = limits;
     budget.limits.max_states = 1;
     let stopped = settle_instance(&world, instance, budget);
-    assert_eq!(stopped.record.label, ResultLabel::Incomplete);
+    assert_eq!(stopped.record.basis, SettlementBasis::Unsettled);
     assert!(matches!(
         stopped.record.value,
         TerminalValue::Incomplete(IncompleteCause::LimitReached {

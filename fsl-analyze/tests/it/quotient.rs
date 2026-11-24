@@ -800,7 +800,8 @@ fn concretisation_charges_exact_transition_and_work_budgets() {
     let ModelCheckOutcome::Violated { stats, .. } = &counter_outcome else {
         panic!("the reduced each loop refutes: {counter_outcome:?}");
     };
-    let counterexample = violation(&counter_outcome);
+    let counter_result = Ok(counter_outcome.clone());
+    let counterexample = violation(&counter_result);
     assert_eq!(counterexample.len(), 3);
     assert_eq!(moved(&counter_world.positions(counterexample)), ["b", "b", "b"]);
     let counter_edges = usize::try_from(stats.product_edges).expect("small");
@@ -888,11 +889,13 @@ fn concretisation_charges_exact_transition_and_work_budgets() {
     assert!(matches!(one_short, ModelCheckOutcome::Stopped {
         cause: IncompleteCause::ResourceExhausted,
         limit: Some(ReachedLimit { limit: ModelCheckLimit::MaxTransitions, value }),
+        ..
     } if value == u64::try_from(m - 1).expect("small")));
     let two_short = with_budgets(&world, m - 2, u64::MAX).expect("typed stop");
     assert!(matches!(two_short, ModelCheckOutcome::Stopped {
         cause: IncompleteCause::ResourceExhausted,
         limit: Some(ReachedLimit { limit: ModelCheckLimit::MaxTransitions, .. }),
+        ..
     }));
 }
 

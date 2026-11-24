@@ -144,14 +144,13 @@ fn a_source_constraint_is_typed_and_selectable_by_name() {
         .expect("S4 emits the checked unit");
     let emitted_bytes = emitted.package().bytes();
     let wire: serde_json::Value = serde_json::from_slice(emitted_bytes).expect("S4 JSON");
-    let low_key = serde_json::to_value(low.node()).expect("Low node key wire form");
     let low_nodes: Vec<_> = wire["semantic_graph"]["nodes"]
         .as_array()
         .expect("semantic nodes")
         .iter()
         .filter(|node| node["node_tag"] == "state"
             && node["semantic_form"] == "state_clause"
-            && node["node_id"] == low_key)
+            && node["body"]["operation"]["member"]["clause"] == "constraint")
         .collect();
     let [low_node] = low_nodes.as_slice() else {
         panic!("S4 emits exactly one state clause node for Low: {low_nodes:?}");

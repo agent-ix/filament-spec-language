@@ -1598,7 +1598,13 @@ fn wrong_form_list_variants_settle_rejected_and_empty_lists_settle_proved() {
     let mut replays = 0;
     let record = settle(&world, AB, "ReachesTwo", original, no_samples(), &mut replays);
     assert_eq!(record.label, ResultLabel::Proved);
-    assert_eq!(record.certification, Certification::Certified);
+    assert!(matches!(
+        record.value,
+        TerminalValue::Proved {
+            certification: Certification::Certified,
+            ..
+        }
+    ));
 
     let sequenced = job_world(true, false);
     let result = run(sequenced.request(&["j"], vec![sequenced.item("InOneWay")], no_samples()));
@@ -1617,7 +1623,13 @@ fn wrong_form_list_variants_settle_rejected_and_empty_lists_settle_proved() {
     let mut replays = 0;
     let record = settle(&sequenced, &["j"], "InOneWay", original, no_samples(), &mut replays);
     assert_eq!(record.label, ResultLabel::Proved);
-    assert_eq!(record.certification, Certification::Certified);
+    assert!(matches!(
+        record.value,
+        TerminalValue::Proved {
+            certification: Certification::Certified,
+            ..
+        }
+    ));
 }
 
 /// FR-169-AC-6: FR-168-AC-5's `Undefined` outcome settles `refuted`,

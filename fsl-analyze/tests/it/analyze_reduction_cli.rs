@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
     analyze, clause, counter_request_with, counter_snapshot, label, package_selection,
-    request_members, Workspace,
+    request_members, Workspace, HANDOFF,
 };
 use crate::counter::{document, symmetric_document};
 
@@ -218,8 +218,10 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
             "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}
     }});
     let compile_path = bad_ws.write("compile.json", compile_request.to_string().as_bytes());
-    let refusal = fsl_command::command::compile_outcome(&compile_path)
-        .expect_err("Bad cannot anchor a state constraint at an operation");
+    let refusal = match fsl_command::command::compile_outcome(&compile_path) {
+        Err(refusal) => refusal,
+        Ok(_) => panic!("Bad cannot anchor a state constraint at an operation"),
+    };
     let diagnostic: Value = serde_json::from_slice(
         &refusal
             .outcome_document(fsl_replay::Operation::Package)

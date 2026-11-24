@@ -861,7 +861,7 @@ fn required_weak_whole_fairness_does_not_imply_concrete_strong_each() {
         abstract_package: world.package(),
         abstract_initial: vec![world.abstract_initial()].into(),
     };
-    let replay_assumption = |candidate| {
+    let replay_assumption = |candidate: &fsl_replay::ProtocolAssumptionWitness| {
         replay_protocol_assumption_witness(world.refinement(), &systems, candidate)
     };
     let settled = settle_refinement_safety_with_assumption_replay(
@@ -925,12 +925,10 @@ fn required_weak_whole_fairness_does_not_imply_concrete_strong_each() {
     assert!(matches!(
         &limited_outcome.safety,
         SafetyOutcome::Stopped {
-            limit: Some(fsl_replay::ReachedLimit {
-                limit: fsl_replay::ModelCheckLimit::MaxTransitions,
-                value: 1,
-            }),
+            limit: Some(reached),
             ..
-        }
+        } if reached.limit == fsl_replay::ModelCheckLimit::MaxTransitions
+            && reached.value == 1
     ));
     let incomplete = settle_refinement_safety_with_assumption_replay(
         &limited_outcome.safety,
@@ -948,7 +946,7 @@ fn required_weak_whole_fairness_does_not_imply_concrete_strong_each() {
             ..
         })
     ));
-    assert_eq!(incomplete.label, fsl_replay::ResultLabel::Incomplete);
+    assert_eq!(incomplete.basis, SettlementBasis::Unsettled);
 }
 
 /// FR-148-AC-14 (TC-553): a satisfied refinement `ensure` remains a

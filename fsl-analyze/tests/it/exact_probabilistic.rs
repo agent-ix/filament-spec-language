@@ -158,7 +158,7 @@ fn exact_probability_manifest_and_statistical_refusal_settlement_are_exact() {
     use fsl_analyze::statistical::manifest as statistical_manifest;
     use fsl_foundation::bound::DomainKind;
     use fsl_route::{EvidenceKind, Mode, ProviderOrigin};
-    use fsl_replay::proof_result::{
+use fsl_replay::{
         StatisticalRequestRefusal, TerminalValue, UnavailabilityCause,
     };
     use fsl_replay::statistical::{settle_statistical_refusal, StatisticalRefusal};

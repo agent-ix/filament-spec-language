@@ -261,7 +261,7 @@ fn the_request_builder_names_the_evidence_kind_of_each_probabilistic_item() {
         assert_eq!(item.kind(), Capability::ProbabilisticSatisfaction);
         assert_eq!(
             item.extent(),
-            fsl_route::ExtentClassification::Unbounded {
+            fsl_route::request::ExtentClassification::Unbounded {
                 finite_bound_available: false
             }
         );
