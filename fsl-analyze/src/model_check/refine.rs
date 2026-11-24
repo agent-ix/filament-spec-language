@@ -50,16 +50,15 @@ use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, chec
 use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTarget};
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop, TransitionSystem};
 use fsl_replay::{
-    abstract_classes, candidate_edge_target_ordinal, candidate_lasso_has_fair_run, check_initial,
-    check_protocol_initial, check_protocol_state_relations, check_protocol_step, check_step,
-    open_protocol_systems, open_systems, AbstractClass, AbstractProtocolSystem, CandidateFairState,
-    CandidateFairStep, CandidateLivenessError, CertifiedEdge, CertifiedPosition, ConcreteStep,
-    CounterexampleKind, IncompleteCause, Lasso, LivenessHalf, ModelCheckLimit, ModelCheckLimits,
-    ModelCheckOutcome, ModelStep, ProtocolRelationError, ProtocolStateRelation,
-    ProtocolSystemsRefusal, ReachedLimit, RefinementFailure, RefinementOutcome, RefinementPosition,
-    RefinementSystems, RunStats, SafetyOutcome, SafetyUndecided, SimulationCertificate, StepResult,
-    StepVerdict, SubjectRefusal, Taken, TemporalCounterexample, UndecidedCause,
-    UndefinedEvaluation, Undetermined,
+    abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
+    check_protocol_state_relations, check_protocol_step, check_step, open_protocol_systems,
+    open_systems, AbstractClass, AbstractProtocolSystem, CandidateFairState, CandidateFairStep,
+    CandidateLivenessError, CertifiedEdge, CertifiedPosition, ConcreteStep, CounterexampleKind,
+    IncompleteCause, Lasso, LivenessHalf, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
+    ModelStep, ProtocolRelationError, ProtocolStateRelation, ProtocolSystemsRefusal, ReachedLimit,
+    RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems, RunStats,
+    SafetyOutcome, SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal,
+    Taken, TemporalCounterexample, UndecidedCause, UndefinedEvaluation, Undetermined,
 };
 
 use super::check::{BOUND_POSITIONS, ModelCheckRefusal, fault, not_simulated, widen};
@@ -3102,7 +3101,7 @@ impl Run<'_, '_> {
             );
         }
         let mut steps = Vec::with_capacity(context.path.len());
-        for (index, (product, edge_index)) in context.path.iter().enumerate() {
+        for (product, edge_index) in context.path {
             let edge = self
                 .nodes
                 .get(*product)
@@ -3111,29 +3110,9 @@ impl Run<'_, '_> {
             let Taken::CandidateSteps(rows) = &edge.taken else {
                 return Err(fault("candidate-lasso-edge-retains-candidate-steps").into());
             };
-            let target = &positions[(index + 1) % positions.len()];
             steps.push(
                 rows.iter()
-                    .enumerate()
-                    .map(|(row_index, row)| {
-                        let post_occurrence = rows
-                            .iter()
-                            .enumerate()
-                            .filter(|(prior_index, prior)| {
-                                prior.post_state == row.post_state
-                                    && (prior.pre_candidate, *prior_index)
-                                        <= (row.pre_candidate, row_index)
-                            })
-                            .count()
-                            - 1;
-                        let post_candidate = candidate_edge_target_ordinal(
-                            &positions[index],
-                            target,
-                            row.pre_candidate,
-                            &row.post_state,
-                            post_occurrence,
-                        )
-                        .map_err(|_| fault("candidate-lasso-row-target-is-ordinal"))?;
+                    .map(|row| {
                         Ok(CandidateFairStep {
                             pre_candidate: row.pre_candidate,
                             pre_state: row.pre_state.clone(),
@@ -3146,7 +3125,7 @@ impl Run<'_, '_> {
                                     })
                                 })
                                 .transpose()?,
-                            post_candidate,
+                            post_candidate: row.post_candidate,
                             post_state: row.post_state.clone(),
                             interior: Vec::new(),
                         })

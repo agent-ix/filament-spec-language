@@ -750,6 +750,66 @@ fn timed_hidden_a_stutter_and_a_guarded_step_decide_the_liveness_half() {
     ));
 }
 
+/// Distinct abstract transitions from one hidden candidate can reach the same
+/// abstract state. Their relation rows share one authoritative post ordinal;
+/// liveness must retain that ordinal instead of ranking transitions as
+/// separate target candidates.
+#[trace("TC-2538", "FR-899", "FSpec-FR-740-AC-4")]
+#[test]
+fn timed_hidden_liveness_keeps_shared_post_ordinal_for_same_source_transitions() {
+    let abstract_document = abstract_document(&[("send", &["inflight"]), ("send2", &["inflight"])]);
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    let world = refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             pre ASendable using v on A::Call::send {{ self.y >= 0 ms }}\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASendable2 using v on A::Call::send2 {{ self.y >= 0 ms }}\n\
+             post ASend2 using v on A::Call::send2 {{ self.inflight }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 1 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight")
+                .replace(" late = self.late;", "")
+                .replace(
+                    "-> A::Call::send(self)",
+                    "-> any;\nensure fair weak A::Call::send",
+                )
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_hidden_initials(&abstract_document, &[false, true]);
+
+    let certificate = certified(&world);
+    let part = certificate.refinement.as_ref().expect("refinement part");
+    assert!(
+        part.taken.iter().any(|taken| {
+            let Some(Taken::CandidateSteps(rows)) = taken else {
+                return false;
+            };
+            rows.iter().enumerate().any(|(index, row)| {
+                rows[index + 1..].iter().any(|other| {
+                    row.pre_candidate == other.pre_candidate
+                        && row.post_candidate == other.post_candidate
+                        && row.post_state == other.post_state
+                        && row.transition.is_some()
+                        && other.transition.is_some()
+                        && row.transition != other.transition
+                })
+            })
+        }),
+        "two transitions from one candidate share the same post candidate ordinal"
+    );
+
+    let outcome = both_halves(&world);
+    assert!(
+        matches!(&outcome.liveness, Some(TimedLivenessHalf::Checked(_))),
+        "candidate liveness checks the shared-ordinal relation rows: {:?}",
+        outcome.liveness
+    );
+}
+
 /// A looping world: the concrete `send` needs `x = 1`, resets `x` and is held
 /// by `x <= 1`; the abstract `send` has no guard and does not reset `y`, so
 /// `y` grows by one per loop. `invariants` are the abstract time invariants,
