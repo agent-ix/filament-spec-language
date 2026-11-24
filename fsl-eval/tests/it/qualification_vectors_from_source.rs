@@ -2785,6 +2785,7 @@ accounting_source_vectors!("FSpec-FR-142-AC-2", "FSpec-TC-187"; u14_source_accou
 /// have no ScalarLimitsV1 tuple in their pinned rows, so their source result
 /// is qualified without a synthetic budget tuple.
 #[trace(
+    "FR-093-AC-56",
     "FR-397-AC-27",
     "FR-397-AC-28",
     "FSpec-TC-185",
@@ -2880,6 +2881,7 @@ fn source_runner_applies_node_budget_after_function_call() {
     let actual = observed(&case);
     assert_eq!(actual.result, case.expected);
     assert_eq!(actual.node_charges, case.expected_charges.unwrap());
+    assert_eq!(actual.function_call_charges, 1);
 }
 
 #[trace("FSpec-TC-185")]
