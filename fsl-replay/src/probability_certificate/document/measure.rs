@@ -2071,6 +2071,17 @@ fn check_value_bits(value: &Rational, bits: u64) -> Result<(), ProbabilityDocume
 mod partial_lower_tests {
     use super::*;
 
+    fn limits() -> ProbabilityDocumentLimits {
+        ProbabilityDocumentLimits {
+            bytes: 1_000_000,
+            storage_bytes: 8_000_000,
+            states: 100,
+            edges: 100,
+            scalar_bits: 128,
+            accounting: crate::AccountingLimits::default().0,
+        }
+    }
+
     #[test]
     fn unnamed_shifted_successor_uses_negative_level() {
         let root = ProbabilityProductKey::from_canonical_bytes(vec![1]);
@@ -2156,12 +2167,12 @@ mod partial_lower_tests {
         };
         let floor = document.objective.level.as_ref().unwrap().neg();
         let mut meter = filament_exact::Meter::new(
-            ProbabilityDocumentLimits::default().accounting,
+            limits().accounting,
         );
         let result = checked_values(
             &document,
             &graph,
-            ProbabilityDocumentLimits::default(),
+            limits(),
             &Cancel::new(),
             &mut meter,
             Some(&floor),
@@ -2170,12 +2181,12 @@ mod partial_lower_tests {
         assert!(matches!(result, Ok(values) if values.get(&root) == Some(&document.values[0].value)));
         document.values[0].value = Rational::from_integer(Integer::zero());
         let mut meter = filament_exact::Meter::new(
-            ProbabilityDocumentLimits::default().accounting,
+            limits().accounting,
         );
         let result = checked_values(
             &document,
             &graph,
-            ProbabilityDocumentLimits::default(),
+            limits(),
             &Cancel::new(),
             &mut meter,
             Some(&floor),

@@ -1682,6 +1682,10 @@ fn a_timed_deadline_past_the_rational_budget_proves_with_value_bounds() {
         method,
         &fsl_replay::BoundsMethod::BackwardInduction { precision_bits: 64 }
     );
+    let fsl_replay::ExactBound::Finite(upper) = upper
+    else {
+        panic!("complete product interval has a finite upper endpoint");
+    };
     assert!(lower.value() <= &ratio(99, 100) && &ratio(99, 100) <= upper.value());
     assert!(lower.value() > &ratio(98, 100));
     assert_eq!(entries.len(), 1);

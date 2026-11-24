@@ -304,7 +304,7 @@ pub(crate) fn automaton_refusal(error: AutomatonError) -> ProductRefusal {
 
 #[cfg(test)]
 mod tests {
-    use super::{lower_completion, plan_refusal, PlanFault, Planned, ProductRefusal, Target};
+    use super::{lower_completion, plan_refusal, OmittedEdge, PlanFault, ProductRefusal};
     use crate::exact_probabilistic::{
         ProbEdge, ProbKey, ProbProduct, ProbStateId, ProductAction, ProductKind,
     };
@@ -370,20 +370,12 @@ mod tests {
             fairness_operations: Vec::new(),
             fairness: Vec::new(),
         };
-        let omitted = Planned {
+        let omitted = OmittedEdge {
             choice: ProductAction::TerminalStutter,
             action: None,
             draw: None,
-            target: Target {
-                key: key(2),
-                model: Vec::new(),
-                truths: Vec::new(),
-                resolution: None,
-                retained: false,
-            },
             probability: half,
             rewards: Vec::new(),
-            step: None,
         };
         let completed = lower_completion(&product, vec![(0, omitted)]);
         let source_mass = completed
@@ -473,6 +465,15 @@ struct Planned {
     step: Option<TraceStep>,
 }
 
+/// The solver edge for a successor omitted from partial exploration.
+struct OmittedEdge {
+    choice: ProductAction,
+    action: Option<ScheduledIdentity>,
+    draw: Option<Vec<Value>>,
+    probability: Rational,
+    rewards: Vec<(Identifier, Value)>,
+}
+
 /// The step retained during exploration. Its complete product target is
 /// filled from the discovered path when an undefined read is reported.
 #[derive(Clone)]
@@ -516,7 +517,7 @@ struct Builder<'r, 'c, 'p, 'k> {
     fairness_operations: Vec<FairnessOperationIdentity>,
     fairness: Vec<filament_semantic_value::fairness::FairnessConstraint>,
     partial: bool,
-    omitted: Vec<(usize, Planned)>,
+    omitted: Vec<(usize, OmittedEdge)>,
 }
 
 /// A predicate that has no value at a model state.
@@ -531,7 +532,7 @@ struct Hit {
 /// omitted edge keeps its original probability and action, so rows are never
 /// renormalized and each omitted successor contributes exactly its original
 /// mass at the least continuation value.
-fn lower_completion(product: &ProbProduct, omitted: Vec<(usize, Planned)>) -> ProbProduct {
+fn lower_completion(product: &ProbProduct, omitted: Vec<(usize, OmittedEdge)>) -> ProbProduct {
     let mut completed = product.clone();
     if omitted.is_empty() {
         return completed;
@@ -1111,7 +1112,16 @@ impl Builder<'_, '_, '_, '_> {
         for edge in planned {
             if !edge.target.retained {
                 self.partial = true;
-                self.omitted.push((at, edge));
+                self.omitted.push((
+                    at,
+                    OmittedEdge {
+                        choice: edge.choice,
+                        action: edge.action,
+                        draw: edge.draw,
+                        probability: edge.probability,
+                        rewards: edge.rewards,
+                    },
+                ));
                 continue;
             }
             if self.edges.len() >= self.max_transitions {

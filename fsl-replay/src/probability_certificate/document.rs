@@ -2922,7 +2922,7 @@ mod tests {
             ]),
             scheduler_actions: Default::default(),
         };
-        let values = BTreeMap::from([(root, rational(1)), (target, rational(1))]);
+        let values = BTreeMap::from([(root.clone(), rational(1)), (target.clone(), rational(1))]);
         let check = |limits: ProbabilityDocumentLimits| {
             let cancel = Cancel::new();
             let mut meter =
