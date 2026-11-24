@@ -430,13 +430,16 @@ pub struct CanonicalAssignment {
 /// assignments (a corpus counterexample), and settles
 /// `reproduced-without-witness`, never backend evidence (FR-072). `Hybrid`
 /// carries the FR-331 counterexample for a `state_clause` target.
+/// An empty `Input` for a nullary function is a claim-free plain call, whose
+/// completed value supplies the verdict used for settlement.
 #[derive(Clone, Eq, PartialEq)]
 pub enum ReplaySource {
     /// Replay derives its input from a backend transcript.
     Witness(Witness),
     /// Replay derives its input from stored canonical assignments (a corpus
-    /// counterexample); settles `reproduced-without-witness`, never backend
-    /// evidence.
+    /// counterexample); nonempty assignments settle against a proved
+    /// violation, never backend evidence. An empty list for a nullary
+    /// function denotes a claim-free plain call.
     Input(Vec<CanonicalAssignment>),
     /// An observed temporal counterexample, whose envelope carries its
     /// counterexample payload and checked-item identity (FR-331).
