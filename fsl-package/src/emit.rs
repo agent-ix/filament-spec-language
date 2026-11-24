@@ -6029,6 +6029,13 @@ fn append_schedulability_claims(
             rows.push(filament_contract_model::CheckedSchedulabilityClaimRow {
                 declaration: id.clone(),
                 occurrence: *ordinal,
+                release_backed: matches!(
+                    &claim.claim,
+                    fsl_semantics::check::ScheduleClaim::Schedulable(_)
+                ) && task_sets
+                    .releases()
+                    .iter()
+                    .any(|release| release.task_set() == claim.task_set),
             });
         }
         let node = CheckedSemanticNodeV2 {

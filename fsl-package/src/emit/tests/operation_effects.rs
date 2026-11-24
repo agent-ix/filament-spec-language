@@ -656,6 +656,7 @@ fn wire_without_member(package: &CheckedPackageV2) -> Value {
             |claim| filament_contract_model::CheckedSchedulabilityClaimRow {
                 declaration: claim.declaration().clone(),
                 occurrence: claim.occurrence().ordinal,
+                release_backed: claim.release_backed(),
             },
         )
         .collect();

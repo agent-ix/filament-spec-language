@@ -133,6 +133,7 @@ fn package_schedulability_items_keep_the_requests_order() {
 /// FR-246-AC-4: a named backend outside the claim's requirement candidates
 /// stays excluded on the package route, as it is on the source route.
 #[trace("TC-2961", "FR-246-AC-4")]
+#[trace("TC-3009", "FR-246-AC-5", "FR-075-AC-23")]
 #[test]
 fn a_package_schedulability_claim_rejects_a_backend_outside_its_requirements() {
     let items = json!([{"claim": "FullEdf", "backend": "en-6"}]);
@@ -141,6 +142,58 @@ fn a_package_schedulability_claim_rejects_a_backend_outside_its_requirements() {
 
     assert_eq!(package, source, "{package}");
     assert_eq!(package_exit, source_exit);
+    let item = &package["items"][0];
+    assert_eq!(label(item), "unsupported", "{item}");
+    assert_eq!(item["request"]["candidates"]["backends"], json!([]), "{item}");
+}
+
+/// FR-246-AC-5: only a schedulable claim in a released task set is
+/// release-backed in the package rows; a response claim remains unbacked.
+#[trace("TC-3009", "FR-246-AC-5")]
+#[test]
+fn package_schedulability_rows_preserve_release_backing_by_claim_kind() {
+    let declarations = "taskset Pair {\n\
+        task a periodic 4 ms deadline 3 ms wcet 1 ms priority 1 lo;\n\
+        }\n\
+        schedulable PairFp on Pair under fixed_priority;\n\
+        response PairAResponse on Pair.a <= 3 ms under fixed_priority;\n\
+        release Pair.a on M::Call::fire_a;\n";
+    let model = crate::zone_search::rpc_document_with(&[("fire_a", &["phase"])]);
+    let unit = crate::analyze_family_cli::rpc_unit(4, declarations);
+    let ws = Workspace::new("package-sched-release-backed-marker");
+    let path = request_over(
+        &ws,
+        &unit,
+        &model,
+        &[crate::analyze_family_cli::rpc_snapshot()],
+        json!({"items": [{"claim": "PairFp"}, {"claim": "PairAResponse"}]}),
+    );
+    let request: Value = serde_json::from_slice(&std::fs::read(&path).expect("request"))
+        .expect("request JSON");
+    let (_, bytes) = package_selection(&ws, &request["request"]);
+    let package: Value = serde_json::from_slice(&bytes).expect("checked package JSON");
+    let rows = package["schedulability_claims"]
+        .as_array()
+        .expect("schedulability claim rows");
+    let names = package["claim_names"].as_array().expect("claim names");
+    let mut markers = rows
+        .iter()
+        .map(|row| {
+            let name = names
+                .iter()
+                .find(|name| {
+                    name["declaration"] == row["declaration"]
+                        && name["occurrence"]["ordinal"] == row["occurrence"]
+                })
+                .expect("the package names the schedulability claim");
+            (
+                name["name"].as_str().expect("claim name"),
+                row["release_backed"].as_bool().expect("release-backed flag"),
+            )
+        })
+        .collect::<Vec<_>>();
+    markers.sort_unstable_by_key(|(name, _)| *name);
+    assert_eq!(markers, [("PairAResponse", false), ("PairFp", true)]);
 }
 
 /// FR-850-AC-3 (negative): package bytes missing the claim rows or nodes
