@@ -2786,6 +2786,131 @@ fn exact_unbounded_keys_keep_none_and_budget_stops_have_no_product() {
     );
 }
 
+/// FR-196-AC-17: the admitted event-position profile builds its formula
+/// monitor into EN-5's bounded product. A raw model self-cycle at the first
+/// loss therefore has a distinct remaining-horizon key, while the exact
+/// eventual and always values match their independent finite-horizon cases.
+#[trace("TC-631", "FR-196-AC-17")]
+#[test]
+fn bounded_event_position_formulas_use_formula_keys_and_exact_extrema() {
+    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+    use fsl_foundation::RequestIndex;
+    use fsl_replay::{ModelCheckLimits, ProofBasis, TerminalValue};
+
+    let eventual = World::new(&prob_world::Model {
+        package: "test/bounded-event-position",
+        object: "T",
+        population: "ts",
+        key: "x",
+        integers: vec![],
+        fields: vec![("delivered", prob_world::BOOLEAN.into())],
+        operations: vec![prob_world::Operation {
+            name: "step",
+            parameters: vec![("outcome", prob_world::BOOLEAN.into())],
+            modifies: vec!["delivered"],
+            deletes: false,
+        }],
+        body: "pre Active using v on M::T::step { not self.delivered }\n\
+               post Stepped using v on M::T::step { self.delivered = outcome }\n\
+               random T::step(outcome) ~ { true: 1, false: 1 };\n\
+               terminal Done using v on M when { self.delivered };\n\
+               workload Steady on M { weight T::step = 1; }\n\
+               probabilistic WithinTwo using ev on M over (t: M::T) under Steady on origin { probability >= rational(3, 4) [ eventually[0, 2] holds(t.delivered) ] }"
+            .to_owned(),
+        initial: serde_json::json!({"delivered": {"boolean": false}}),
+    });
+    let product = built(&eventual, "WithinTwo");
+    let initial_id = start(&product);
+    let initial = &product.states[initial_id.index()];
+    assert!(matches!(
+        initial.monitor,
+        Some(MonitorState::Formula(FormulaState::Running(_)))
+    ));
+    let loss = product
+        .outgoing(initial_id)
+        .iter()
+        .find(|edge| product.states[edge.to.index()].model == initial.model)
+        .expect("the undelivered half-probability branch returns to the same model state");
+    assert_eq!(loss.probability, ratio(1, 2));
+    let one_loss = &product.states[loss.to.index()];
+    assert_ne!(initial, one_loss, "remaining horizon is part of the full key");
+    assert_ne!(initial.monitor, one_loss.monitor);
+    assert!(matches!(
+        one_loss.monitor,
+        Some(MonitorState::Formula(FormulaState::Running(_)))
+    ));
+
+    let always = World::new(&prob_world::Model {
+        package: "test/bounded-always",
+        object: "T",
+        population: "ts",
+        key: "x",
+        integers: vec![("Phase", 0, 2)],
+        fields: vec![
+            ("phase", "ix://test/bounded-always/Phase".into()),
+            ("p", prob_world::BOOLEAN.into()),
+        ],
+        operations: vec![
+            prob_world::Operation {
+                name: "a",
+                parameters: vec![("outcome", prob_world::BOOLEAN.into())],
+                modifies: vec!["phase", "p"],
+                deletes: false,
+            },
+            prob_world::Operation {
+                name: "b",
+                parameters: vec![("outcome", prob_world::BOOLEAN.into())],
+                modifies: vec!["phase", "p"],
+                deletes: false,
+            },
+            prob_world::Operation {
+                name: "recover",
+                parameters: vec![],
+                modifies: vec!["phase", "p"],
+                deletes: false,
+            },
+        ],
+        body: "pre A using v on M::T::a { self.phase = 0 }\n\
+               post ADone using v on M::T::a { (outcome and self.phase = 1 and self.p = true) or (not outcome and self.phase = 2 and self.p = false) }\n\
+               pre B using v on M::T::b { self.phase = 0 }\n\
+               post BDone using v on M::T::b { (outcome and self.phase = 1 and self.p = true) or (not outcome and self.phase = 2 and self.p = false) }\n\
+               pre Recover using v on M::T::recover { self.phase = 2 }\n\
+               post Recovered using v on M::T::recover { self.phase = 1 and self.p = true }\n\
+               random T::a(outcome) ~ { true: 1, false: 3 };\n\
+               random T::b(outcome) ~ { true: 3, false: 1 };\n\
+               terminal Done using v on M when { self.phase = 1 };\n\
+               probabilistic Minimum using ev on M over (t: M::T) under every scheduler on origin { probability >= rational(1, 4) [ always[0, 1] holds(t.p) ] }\n\
+               probabilistic Maximum using ev on M over (t: M::T) under every scheduler on origin { probability <= rational(3, 4) [ always[0, 1] holds(t.p) ] }"
+            .to_owned(),
+        initial: serde_json::json!({
+            "phase": {"integer": "0"},
+            "p": {"boolean": true},
+        }),
+    });
+
+    let engines = Engines::fsl().expect("exact EN-5 is registered");
+    let exact_value = |world: &World, name: &str| {
+        let item = exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request(name, ModelCheckLimits::default()),
+        );
+        let mut records = analyze_items(&engines, vec![item], &Cancel::new());
+        assert_eq!(records.len(), 1);
+        let terminal = records.remove(0).terminal().expect("exact analysis settles");
+        let TerminalValue::Proved {
+            basis: ProofBasis::ExactValue { value, .. },
+            ..
+        } = terminal.value()
+        else {
+            panic!("{name} is proved with an exact formula value: {:?}", terminal.value());
+        };
+        value.value().clone()
+    };
+    assert_eq!(exact_value(&eventual, "WithinTwo"), ratio(3, 4));
+    assert_eq!(exact_value(&always, "Minimum"), ratio(1, 4));
+    assert_eq!(exact_value(&always, "Maximum"), ratio(3, 4));
+}
+
 /// FR-196-AC-16 (TC-3060): the conditioned all-scheduler analysis must reset
 /// the nonactivating `a` successor to `s0`, admit the `stay` end component's
 /// reset action, and retain the conditioned extrema. Removing `stay` leaves
