@@ -82,10 +82,14 @@ family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18
     checked-package handoff. Compare the complete outcome documents and process
     exits. Repeat the weak-whole form with
     `probability <= rational(98, 100) [eventually holds(m.delivered)]`.
-    Bind weak whole `>= 99/100` to `FR-940-AC-40`, strong whole to
-    `FR-200-AC-8` and `FR-940-AC-41`, weak each to `FR-200-AC-9` and
-    `FR-940-AC-42`, strong each to `FR-200-AC-10` and `FR-940-AC-43`,
-    and weak whole `<= 98/100` to `FR-940-AC-44`.
+    In `every_fairness_preserves_source_package_refutation_parity`, bind the
+    weak-whole form to `FR-200-AC-4` and `FR-940-AC-40`, the strong-whole form
+    to `FR-200-AC-8` and `FR-940-AC-41`, weak each to `FR-200-AC-9` and
+    `FR-940-AC-42`, and strong each to `FR-200-AC-10` and `FR-940-AC-43`.
+    Add traces for `TC-2958` and each listed owning AC to that test. In
+    `a_fair_every_scheduler_refutation_replays_with_source_package_parity`,
+    bind weak whole `<= 98/100` to `FR-200-AC-4` and `FR-940-AC-44`, and add
+    traces for `TC-2958` and both owning ACs.
 
 Tests: `fsl-analyze/tests/it/analyze_package_selection.rs` (steps 1 to 3 and 8 to 10),
 `fsl-analyze/tests/it/hyper_wire.rs` (step 4) and
