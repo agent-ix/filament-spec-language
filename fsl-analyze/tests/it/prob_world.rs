@@ -985,8 +985,8 @@ pub(crate) fn process(extra: &str) -> Model {
 }
 
 /// One fair `go` attempt succeeds with probability one half, then disables
-/// itself. The failed draw deadlocks outside the target, while the successful
-/// draw reaches `Done`; strong fairness is vacuous once `go` is disabled.
+/// itself. A failed draw can stutter through `wait` outside the target; strong
+/// fairness is vacuous once `go` is disabled.
 pub(crate) fn one_shot(extra: &str) -> Model {
     Model {
         package: "test/one-shot",
@@ -1003,10 +1003,17 @@ pub(crate) fn one_shot(extra: &str) -> Model {
             parameters: vec![("success", BOOLEAN.to_owned())],
             modifies: vec!["attempted", "done"],
             deletes: false,
+        }, Operation {
+            name: "wait",
+            parameters: vec![],
+            modifies: vec!["attempted", "done"],
+            deletes: false,
         }],
         body: format!(
             "pre Live_go using v on M::Once::go {{ not self.attempted }}\n\
              post Went using v on M::Once::go {{ self.attempted = true and self.done = success }}\n\
+             pre Live_wait using v on M::Once::wait {{ self.attempted and not self.done }}\n\
+             post Waited using v on M::Once::wait {{ self.attempted = pre(self.attempted) and self.done = pre(self.done) }}\n\
              random Once::go(success) ~ {{ true: 1, false: 1 }};\n\
              terminal Done using v on M when {{ self.done }};\n\
              {extra}"
