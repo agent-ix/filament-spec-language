@@ -2102,6 +2102,13 @@ fn counter_snapshot(package: &str, fields: Value) -> Value {
     })
 }
 
+/// An initialization snapshot with its own provisioned identity.
+fn counter_snapshot_with_identity(package: &str, identity: &str, fields: Value) -> Value {
+    let mut snapshot = counter_snapshot(package, fields);
+    snapshot["identity"]["identity"] = json!(identity);
+    snapshot
+}
+
 /// A `refinement_transfer` member over `refinement` between `abstract` and
 /// `concrete` for `clauses`, with the fixture's initial snapshots.
 fn transfer_member(
@@ -2209,7 +2216,11 @@ fn transfer_run_declaring(
         ),
         (
             "spec-1.json",
-            counter_snapshot(refinement_cas::SPEC, json!({"value": {"integer": "1"}})),
+            counter_snapshot_with_identity(
+                refinement_cas::SPEC,
+                "example/counter-spec/value-one",
+                json!({"value": {"integer": "1"}}),
+            ),
         ),
         (
             "third-0.json",
@@ -2509,7 +2520,6 @@ fn an_on_each_previous_and_interval_clause_transfers_certified() {
 /// met at position 2. Each transfer through `ThirdRefinesSpec` settles
 /// `inconclusive`, `premise-unproved` naming slot 1 with `result` `refuted`.
 #[test]
-#[ignore = "QSL-2875: PrevStutterEach settles conservatively inconclusive/premise-unproved; the other two clauses refute, with no false proof"]
 #[trace("TC-2920", "FR-1030-AC-9")]
 fn a_violated_on_each_clause_refutes_its_premise() {
     let (exit, value) = transfer_run_over(
@@ -2542,7 +2552,6 @@ fn a_violated_on_each_clause_refutes_its_premise() {
 /// step-for-step: the transfer settles `inconclusive`, `premise-unproved`
 /// naming slot 0 with `result` `refuted`, `step_for_step.holds` `true`.
 #[test]
-#[ignore = "QSL-2875: the duplicate spec-1 observation fixture is refused before the refinement premise settles"]
 #[trace("TC-2920", "FR-1030-AC-10")]
 fn a_broken_initial_mapping_refutes_the_refinement_premise_not_the_transfer() {
     let mut member = transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["PrevSafeEach"]);
@@ -3030,12 +3039,11 @@ fn a_lean_proof_enters_as_trusted_evidence() {
     }
 }
 
-/// FR-1022-AC-3, FSpec FR-815-AC-3: evidence for an unrepresented record is
-/// refused at its obligation member.
+/// FSpec FR-815-AC-3: evidence for an unrepresented record is refused at its
+/// obligation member.
 #[test]
-#[trace("TC-2872", "FR-1022-AC-3")]
 #[trace("FSpec-TC-1974", "FSpec-FR-815-AC-3")]
-#[ignore = "QSL-2875: FR-1022 AC3 package-key and record applicability verification is not implemented"]
+#[ignore = "QSL-2875: package-key and record applicability verification is not implemented"]
 fn evidence_for_an_unrepresented_record_is_refused() {
     let (exit, value) = run(
         BRAKING,
