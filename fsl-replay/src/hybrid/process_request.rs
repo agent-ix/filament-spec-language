@@ -188,6 +188,15 @@ pub enum HybridProcessRequestRefusal {
     /// The request carried a non-canonical or invalid v2 package.
     #[error("the request package was not admitted as checked-package/v2")]
     PackageRefused,
+    /// The host refused an allocation the reader had admitted; this is a
+    /// tool failure, not a package refusal.
+    #[error(
+        "host allocation failed during {:?}: requested {} bytes after {} bytes were admitted",
+        .0.stage,
+        .0.requested,
+        .0.consumed
+    )]
+    HostAllocationFailed(filament_contract_model::CheckedPackageHostAllocationFailed),
     /// The context supplied conflicting evidence for one package identity.
     #[error("the process package context contains conflicting evidence")]
     PackageEvidenceConflict,
@@ -575,10 +584,12 @@ fn admit_package(
 ) -> Result<Box<CheckedPackageV2>, HybridProcessRequestRefusal> {
     match read_checked_package(bytes, context.limits, &context.evidence) {
         CheckedPackageDispatchResult::AdmittedV2(package) => Ok(package),
+        CheckedPackageDispatchResult::HostAllocationFailed(failure) => {
+            Err(HybridProcessRequestRefusal::HostAllocationFailed(failure))
+        }
         CheckedPackageDispatchResult::Refused(_)
         | CheckedPackageDispatchResult::Incomplete(_)
-        | CheckedPackageDispatchResult::CatalogUnavailable(_)
-        | CheckedPackageDispatchResult::HostAllocationFailed(_) => {
+        | CheckedPackageDispatchResult::CatalogUnavailable(_) => {
             Err(HybridProcessRequestRefusal::PackageRefused)
         }
     }

@@ -32,6 +32,10 @@ pub struct PackageAdmissionRefusal {
     pub pointer: Option<String>,
     /// The domain or library identity a `missing-selection` refusal names.
     pub identity: Option<String>,
+    /// A host allocation failure the strict reader admitted before the host
+    /// refused. This is a tool failure and carries no package refusal data.
+    pub host_allocation_failure:
+        Option<filament_contract_model::CheckedPackageHostAllocationFailed>,
 }
 
 /// Read `bytes` as a `filament.checked-package/v2` artifact, with `documents`
@@ -80,6 +84,7 @@ pub fn admit_checked_package_with_dependencies(
             cause: None,
             pointer: incomplete.path.map(|path| path.as_str().to_owned()),
             identity: None,
+            host_allocation_failure: None,
         }),
         CheckedPackageDispatchResult::CatalogUnavailable(_) => Err(PackageAdmissionRefusal {
             limit: None,
@@ -87,20 +92,26 @@ pub fn admit_checked_package_with_dependencies(
             cause: None,
             pointer: None,
             identity: None,
+            host_allocation_failure: None,
         }),
-        CheckedPackageDispatchResult::HostAllocationFailed(_) => Err(host_allocation_failed()),
+        CheckedPackageDispatchResult::HostAllocationFailed(failure) => {
+            Err(host_allocation_failed(failure))
+        }
     }
 }
 
 /// The host refused an allocation the strict read had admitted: no judgement
 /// of the package.
-fn host_allocation_failed() -> PackageAdmissionRefusal {
+fn host_allocation_failed(
+    failure: filament_contract_model::CheckedPackageHostAllocationFailed,
+) -> PackageAdmissionRefusal {
     PackageAdmissionRefusal {
         limit: None,
-        code: Code::ResourceExhausted,
-        cause: Some("allocation-failed".to_owned()),
+        code: Code::RuntimeInvariant,
+        cause: None,
         pointer: None,
         identity: None,
+        host_allocation_failure: Some(failure),
     }
 }
 
@@ -142,6 +153,8 @@ pub fn admit_checked_package_with_evidence(
         cause: Some("insufficient-next-charge".to_owned()),
         pointer,
         identity: None,
+        host_allocation_failure: None,
+        host_allocation_failure: None,
     };
     match filament_contract_model::read_checked_package_with_budget(
         bytes,
@@ -175,6 +188,7 @@ pub fn admit_checked_package_with_evidence(
             cause: None,
             pointer: incomplete.path.map(|path| path.as_str().to_owned()),
             identity: None,
+            host_allocation_failure: None,
         }),
         Read::CatalogUnavailable(_) => Err(PackageAdmissionRefusal {
             limit: None,
@@ -182,8 +196,9 @@ pub fn admit_checked_package_with_evidence(
             cause: None,
             pointer: None,
             identity: None,
+            host_allocation_failure: None,
         }),
-        Read::HostAllocationFailed(_) => Err(host_allocation_failed()),
+        Read::HostAllocationFailed(failure) => Err(host_allocation_failed(failure)),
     }
 }
 
@@ -212,6 +227,8 @@ pub fn checked_package_evidence(
                 cause: Some("conflicting-definition".to_owned()),
                 pointer: None,
                 identity: Some(identity.clone()),
+                host_allocation_failure: None,
+                host_allocation_failure: None,
             });
         }
     }
@@ -224,6 +241,8 @@ pub fn checked_package_evidence(
                 cause: Some("conflicting-definition".to_owned()),
                 pointer: None,
                 identity: Some(identity.clone()),
+                host_allocation_failure: None,
+                host_allocation_failure: None,
             })?;
     }
     Ok(evidence)
@@ -263,6 +282,7 @@ fn of_reader_refusal(refusal: &CheckedPackageRefusal) -> PackageAdmissionRefusal
         cause,
         pointer,
         identity: None,
+        host_allocation_failure: None,
     }
 }
 
@@ -271,6 +291,12 @@ impl PackageAdmissionRefusal {
     /// when present.
     #[must_use]
     pub fn label(&self) -> String {
+        if let Some(failure) = self.host_allocation_failure {
+            return format!(
+                "host allocation failed at {:?}, requested {} bytes (consumed {})",
+                failure.stage, failure.requested, failure.consumed
+            );
+        }
         let mut label = self.code.as_str().to_owned();
         if let Some(cause) = &self.cause {
             label.push('/');
@@ -330,6 +356,7 @@ impl PackageAdmissionRefusal {
         };
         let reader = |refusal: &V2ReadRefusal| match refusal {
             V2ReadRefusal::Envelope { refusal, .. } => Some(of_reader_refusal(refusal)),
+            V2ReadRefusal::HostAllocationFailed(failure) => Some(host_allocation_failed(*failure)),
             V2ReadRefusal::Fault(_) => None,
             other => Some(Self {
                 limit: None,
@@ -337,6 +364,7 @@ impl PackageAdmissionRefusal {
                 cause: None,
                 pointer: None,
                 identity: None,
+                host_allocation_failure: None,
             }),
         };
         let exhausted = || Self {
@@ -345,6 +373,7 @@ impl PackageAdmissionRefusal {
             cause: None,
             pointer: None,
             identity: None,
+            host_allocation_failure: None,
         };
         let found = match refusal.as_ref() {
             StageFailure::Refused(refusal) => reader(refusal),
@@ -386,18 +415,28 @@ mod host_allocation_tests {
 
     /// A host allocation failure during the strict read says nothing about the
     /// package: it is the catalogued `resource_exhausted`/`allocation-failed`
-    /// refusal, with no limit, locus or identity.
+    /// host failure, with its stage and charged size and no package locus.
     #[test]
-    fn a_host_allocation_failure_is_resource_exhausted_allocation_failed() {
-        assert_eq!(
-            host_allocation_failed(),
-            PackageAdmissionRefusal {
-                limit: None,
-                code: Code::ResourceExhausted,
-                cause: Some("allocation-failed".to_owned()),
-                pointer: None,
-                identity: None,
-            }
-        );
+    fn a_host_allocation_failure_is_an_internal_failure_not_a_package_refusal() {
+        let failure = filament_contract_model::CheckedPackageHostAllocationFailed {
+            stage: filament_contract_model::PackageReadStage::Envelope,
+            locus: filament_contract_model::NativeJoinLocus {
+                source: filament_contract_model::NativeJoinLocusSource::PackageRead(
+                    filament_contract_model::PackageReadStage::Envelope,
+                    0,
+                ),
+                form: "package_bytes",
+            },
+            requested: 32,
+            consumed: 64,
+        };
+        let refusal = host_allocation_failed(failure);
+        assert_eq!(refusal.code, Code::RuntimeInvariant,);
+        assert_eq!(refusal.cause, None);
+        assert_eq!(refusal.pointer, None);
+        assert_eq!(refusal.identity, None);
+        assert_eq!(refusal.host_allocation_failure, Some(failure));
+        assert!(refusal.label().contains("Envelope"));
+        assert!(refusal.label().contains("32 bytes"));
     }
 }

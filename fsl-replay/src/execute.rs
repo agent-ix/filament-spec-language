@@ -858,6 +858,11 @@ impl ReplayRefusal {
             Self::Request(refusal) => refusal
                 .pointer()
                 .map(|pointer| Cow::Owned(pointer.to_owned())),
+            Self::Package(crate::ReplayPackageAdmissionRefusal::HostAllocationFailed(_))
+            | Self::PackageWithIdentity {
+                refusal: crate::ReplayPackageAdmissionRefusal::HostAllocationFailed(_),
+                ..
+            } => None,
             Self::Package(refusal) => Some(Cow::Owned(refusal.pointer())),
             Self::PackageWithIdentity { refusal, .. } => Some(Cow::Owned(refusal.pointer())),
             Self::RefinementInternals { pointer, .. } => Some(Cow::Owned(pointer.clone())),

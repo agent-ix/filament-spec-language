@@ -35,8 +35,8 @@ pub use analyze::{
 };
 pub use flow::{analyze_flow_report, FlowAnalyzeError};
 pub use limits::{
-    CommandLimits, LimitedOperation, MonitorPreparationLimits, OperationMismatch,
-    PreparationBound, PreparationRefusal, SettingUnavailable,
+    CommandLimits, LimitedOperation, MonitorPreparationLimits, OperationMismatch, PreparationBound,
+    PreparationRefusal, SettingUnavailable,
 };
 pub use monitor::{monitor, MonitorEvent, MonitorProviders, MonitorSummary};
 pub use output::NativeResult;
@@ -2628,14 +2628,17 @@ pub fn inspect_handoff_with_operand(
                 member,
                 pointer,
             });
-            OutcomeDocument::new(Operation::Inspect, None, Category::Refusal).with_diagnostics(
-                vec![OutcomeDiagnostic::new(
-                    None,
-                    error.code_name(),
-                    locus,
-                    error.to_string(),
-                )],
-            )
+            let category = if matches!(
+                error,
+                crate::checked_handoff::Error::ReaderHostAllocationFailed(_)
+            ) {
+                Category::InternalFailure
+            } else {
+                Category::Refusal
+            };
+            OutcomeDocument::new(Operation::Inspect, None, category).with_diagnostics(vec![
+                OutcomeDiagnostic::new(None, error.code_name(), locus, error.to_string()),
+            ])
         }
     }
 }
@@ -2657,9 +2660,7 @@ fn inspect_handoff_position(
         ),
         Error::ReaderIncomplete(_)
         | Error::ReaderCatalogUnavailable(_)
-        | Error::ReaderHostAllocationFailed(_) => {
-            (Some("checked-package.json".to_owned()), None)
-        }
+        | Error::ReaderHostAllocationFailed(_) => (Some("checked-package.json".to_owned()), None),
         Error::Read { path, .. } => {
             let path = Path::new(path);
             if path == directory {
@@ -3703,12 +3704,8 @@ fn complete_sources(
             let emitted = result.map_err(failure)?.into_value();
             if let Some(selection) = request_call_site(request.call_site.as_ref(), sources.len())? {
                 let program_identity = package_name(sources[0].source().identity());
-                fsl_replay::locate_in_checked(
-                    &checked,
-                    &program_identity,
-                    &selection,
-                )
-                .map_err(RunCause::CallSite)?;
+                fsl_replay::locate_in_checked(&checked, &program_identity, &selection)
+                    .map_err(RunCause::CallSite)?;
             }
             let package_bytes = emitted.package().bytes().to_vec();
             let handoff_temporal_selections = if request.handoff.is_some() {
