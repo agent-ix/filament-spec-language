@@ -109,6 +109,9 @@ limit, and `StageFailure::Cancelled` when the run is cancelled.
 | FR-355-AC-4 | A fence body written on its second line, after an indented first line, reports its refusal at the artifact line and column of the offending token, computed through the fence's source map, for an artifact with CRLF line endings and for the same artifact with LF line endings. | Test (TC-901) |
 | FR-355-AC-5 | An artifact whose only fence is labelled `text` gives no `FenceResult`; an artifact with a `quire` fence whose frontmatter names an object type no supplied manifest declares gives one `FenceResult` with `missing_declaration`/`missing-name` naming the artifact's id. | Test (TC-901) |
 | FR-355-AC-6 | The AC-2 inventory checked twice gives equal reports; checked with a cancelled `Cancel` it returns `StageFailure::Cancelled` and no report. | Test (TC-901) |
+| FR-355-AC-7 | An inventory refused by FR-056, an unavailable fence extraction, and a reached check limit each return the corresponding typed whole-inventory `StageFailure`, with no `FenceReport` or partial `FenceResult`s. | Test (TC-901) |
+| FR-355-AC-8 | For every extracted `quire` fence body, the operation calls `SourceMap::verify` before translating any offset from that body; if verification does not succeed, no offset from that body is translated. | Test (TC-901) |
+| FR-355-AC-9 | `check_fences` and its callees read no filesystem path, process environment, clock, or search location beyond the operation's explicit inputs. | Inspection |
 
 ## Dependencies
 
