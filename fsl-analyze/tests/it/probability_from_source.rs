@@ -4,15 +4,22 @@
 //! `Link` model (random losses on two sends, a `cost` reward and the
 //! workload `Even`), which S4 emits as a checked package (FR-740).
 
+use base64::Engine;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::prob_world::{self, World};
 use filament_exact::Cancel;
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+use fsl_analyze::exact_probabilistic::{
+    build_product, decide_reachability, ExactProbLimits, ExtRational, ProbBuild, UnboundedObjective,
+};
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_foundation::RequestIndex;
-use fsl_replay::{replay_probabilistic_witness, ExactProbLimits, ModelCheckLimits};
+use fsl_replay::{
+    replay_probabilistic_witness, ActivationPhase, ExactOrBounds, ModelCheckLimits, OnEachOutcome,
+    ProbabilityProductKey, ProofBasis, TerminalValue,
+};
 
 use crate::analyze_cli_support::{
     analyze, assert_no_nested_node_ids, label, request_over, Workspace,
@@ -758,65 +765,245 @@ fn probabilistic_on_each_names_first_failing_instance() {
     assert_eq!(item, &once()["items"][0], "a rerun names the same instance");
 }
 
-/// FR-741-AC-5 (TC-3062): an `on each` proof carries a `conditional`
-/// certificate, and its refutation names the failing instance in the
-/// counterexample's `instance` member.
+/// FR-196-AC-15 and FR-741-AC-5 (TC-3060/TC-3062): the checked two-object
+/// Link source emits the conditional masses for m, leaves n vacuous and
+/// waiting at every reachable key, and names m on a refutation.
 #[trace("TC-3062", "FR-741-AC-5")]
+#[trace("TC-3060", "FR-196-AC-15")]
 #[test]
 fn probabilistic_on_each_reports_conditional_certificate_and_instance() {
-    let start = || link_start(&[("m", false), ("n", true)]);
-    let proved = run_from(
-        "on-each-conditional",
-        &on_each("rational(9, 10)"),
-        start(),
-        json!([{"claim": "E"}]),
-    );
-    let item = &proved["items"][0];
-    assert_eq!(label(item), "proved", "{item}");
-    assert_eq!(item["certificate"]["kind"], "conditional", "{item}");
-    let conditional = &item["certificate"]["document"]["conditional"];
-    assert_eq!(conditional["mode"], "ratio", "{item}");
-    // `m` is the one compared instance, with a null `binding`; `n` never
-    // activates, is confirmed vacuous and has no entry (FR-741 "Binding").
-    let entries = item["record"]["basis"]["entries"]
-        .as_array()
-        .expect("entries");
-    assert_eq!(entries.len(), 1, "{item}");
-    assert_eq!(entries[0]["instance"]["key"], "m", "{item}");
-    assert_eq!(entries[0]["binding"], Value::Null, "{item}");
-    assert!(entries[0]["value"].to_string().contains("391"), "{item}");
-    // `m` activates at position 0, so at its initial key the numerator is the
-    // `on origin` value and the denominator 1.
-    let holds_value = |part: &str, value: Value| {
-        conditional[part]["values"]
-            .as_array()
-            .is_some_and(|rows| rows.iter().any(|row| row["value"] == value))
+    let world_with = |threshold: &str| {
+        let mut model = prob_world::link("");
+        model
+            .body
+            .push_str(&format!("\n{}\n{}", on_each(threshold), EVENTUALLY));
+        // LINK_UNIT's `self` contracts and operations are receiver-scoped;
+        // the symmetric fixture emits those same per-object frames.
+        World::symmetric_with_initials(
+            &model,
+            &["m", "n"],
+            &[json!({"objects": {
+                "m": {"delivered": {"boolean": false}, "attempts": {"integer": "0"}},
+                "n": {"delivered": {"boolean": true}, "attempts": {"integer": "0"}}
+            }})],
+        )
     };
-    assert!(
-        holds_value(
-            "numerator",
-            json!({"numerator": "391", "denominator": "400"})
-        ),
-        "{item}"
+    let world = world_with("rational(9, 10)");
+    let cancel = Cancel::new();
+    let subject = world.subject();
+    let system = ModelSystem::new(subject.simulation).expect("the checked Link model admits");
+    let claims = world.package.graph().probabilistic_model().claims();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim("E"))
+        .expect("the on-each identity is canonical");
+    let limits = fsl_replay::ProbabilityDocumentLimits::for_exact(
+        &ExactProbLimits::default(),
+        system.meter_limits(),
+    );
+    let OnEachOutcome::Holds { document } = fsl_replay::on_each_outcome(
+        &system,
+        claims,
+        &item,
+        limits,
+        ExactProbLimits::default().max_witness_paths,
+        &cancel,
+    )
+    .expect("the checked on-each claim settles") else {
+        panic!("the nonempty on-each proof holds");
+    };
+    let proof: Value = serde_json::from_slice(&document).expect("canonical conditional JSON");
+    assert_eq!(proof["kind"], "conditional", "{proof}");
+    let conditional = &proof["conditional"];
+    assert_eq!(conditional["mode"], "ratio", "{proof}");
+
+    let initial = fsl_eval::simulation::TransitionSystem::initial(&system)
+        .into_iter()
+        .next()
+        .expect("initial state");
+    let (model_key, _) = system.state_key(&initial).expect("initial model key");
+    let model_product = ProbabilityProductKey::for_model_state(None, &model_key)
+        .expect("the initial model key forms a product key");
+    let fsl_semantics::check::ClaimActivation::Each { value_type, .. } =
+        &world.claim("E").activation
+    else {
+        panic!("E is an on-each claim");
+    };
+    let instances = system.instances(value_type).expect("the Msg instances");
+    let reference = |key: &str| {
+        let instance = instances
+            .iter()
+            .find(|instance| instance.key == key)
+            .expect("the initial instance exists");
+        let filament_exact::ValueType::Reference(over) = value_type.as_ref() else {
+            panic!("the activation is over a reference type");
+        };
+        system
+            .bound_reference(over.clone(), instance)
+            .expect("the instance has its checked reference")
+    };
+    let product_key = |instance: &str, phase| {
+        model_product
+            .with_activation(
+                &reference(instance),
+                phase,
+                fsl_replay::ProbabilityDocumentIoLimits::default(),
+                &cancel,
+            )
+            .expect("the product key is canonical")
+    };
+    let active_m = product_key("m", ActivationPhase::Active);
+    let waiting_n = product_key("n", ActivationPhase::Waiting);
+    let encoded_m = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(active_m.as_bytes());
+    let encoded_n = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(waiting_n.as_bytes());
+    let numerator_rows = conditional["numerator"]["values"]
+        .as_array()
+        .expect("numerator value rows");
+    let denominator_rows = conditional["denominator"]["values"]
+        .as_array()
+        .expect("denominator value rows");
+    let exact_value = |rows: &[Value], key: &str| {
+        rows.iter()
+            .find(|row| row["state"] == key)
+            .map(|row| row["value"].clone())
+            .expect("the initial instance key has an exact value")
+    };
+    assert_eq!(
+        exact_value(numerator_rows, &encoded_m),
+        json!({"numerator": "391", "denominator": "400"}),
+        "m's active initial numerator equals on-origin"
+    );
+    assert_eq!(
+        exact_value(denominator_rows, &encoded_m),
+        json!({"numerator": "1", "denominator": "1"}),
+        "m's active initial denominator is one"
     );
     assert!(
-        holds_value("denominator", json!({"numerator": "1", "denominator": "1"})),
-        "{item}"
+        numerator_rows
+            .iter()
+            .chain(denominator_rows)
+            .any(|row| row["state"] == encoded_n),
+        "the producer emits n's initial waiting key"
+    );
+    for row in numerator_rows.iter().chain(denominator_rows) {
+        let Some(encoded) = row["state"].as_str() else {
+            panic!("an exact row has a state key: {row}");
+        };
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded)
+            .expect("a canonical product key is base64url");
+        let key: Value = serde_json::from_slice(&bytes).expect("a canonical product key is JSON");
+        if key[2][1] == "n" {
+            assert_eq!(key[3], "waiting", "every reachable n key remains waiting");
+        }
+    }
+    assert_ne!(active_m, waiting_n, "m and n initial keys differ");
+    assert!(matches!(
+        fsl_replay::check_probability_certificate_document(
+            &system, claims, &item, &document, limits, &cancel
+        ),
+        Ok(fsl_replay::ExactProbabilityCertificateCheck::Accepted(_))
+    ));
+
+    let analyze_claim = |world: &World, name: &str| {
+        let engines = Engines::fsl().expect("the exact engine registers");
+        analyze_items(
+            &engines,
+            vec![exact_probabilistic_item(
+                RequestIndex::new(0),
+                world.request(name, ModelCheckLimits::default()),
+            )],
+            &Cancel::new(),
+        )
+        .remove(0)
+    };
+    let on_each_record = analyze_claim(&world, "E");
+    let on_each_terminal = on_each_record.terminal().expect("E settles");
+    let TerminalValue::Proved {
+        basis:
+            ProofBasis::ExactValue {
+                entries: on_each_entries,
+                ..
+            },
+        ..
+    } = on_each_terminal.value()
+    else {
+        panic!("E has an exact value basis");
+    };
+    assert_eq!(on_each_entries.len(), 1, "n has no conditional value");
+    let entry = &on_each_entries[0];
+    assert_eq!(
+        entry
+            .instance
+            .as_ref()
+            .map(|instance| instance.key.as_str()),
+        Some("m")
+    );
+    assert!(entry.binding.is_none());
+    let ExactOrBounds::Exact { value } = &entry.value else {
+        panic!("m has an exact value");
+    };
+    let on_each_value = value.value().clone();
+    assert_eq!(
+        on_each_value,
+        filament_exact::Rational::new(
+            filament_exact::Integer::from(391_i64),
+            filament_exact::Integer::from(400_i64),
+        )
+        .expect("nonzero denominator"),
+        "m's on-each value is exactly 391/400"
     );
 
-    let refuted = run_from(
-        "on-each-conditional-refuted",
-        &on_each("rational(99, 100)"),
-        start(),
-        json!([{"claim": "E"}]),
+    let origin_world = World::new(&prob_world::link(EVENTUALLY));
+    let origin_product = match build_product(
+        origin_world.request("Eventually", ModelCheckLimits::default()),
+        &cancel,
+    ) {
+        Ok(ProbBuild::Built(product)) => product,
+        other => panic!("the on-origin claim builds an exact product: {other:?}"),
+    };
+    let origin_target = origin_product
+        .labels
+        .iter()
+        .map(|labels| labels[0])
+        .collect::<Vec<_>>();
+    let origin_values = decide_reachability(
+        &origin_product,
+        &origin_target,
+        UnboundedObjective::Max,
+        &ExactProbLimits::default(),
+    )
+    .expect("the on-origin exact reachability value computes");
+    let origin_initial = origin_product.initial[0].2.index();
+    assert_eq!(
+        origin_values.values[origin_initial],
+        ExtRational::Finite(on_each_value.clone()),
+        "m's on-each value equals the on-origin product value"
     );
-    let item = &refuted["items"][0];
-    assert_eq!(label(item), "refuted", "{item}");
-    let counterexample = &item["counterexample"];
-    assert_eq!(counterexample["binding"], Value::Null, "{item}");
+    assert_eq!(
+        origin_values.values[origin_initial],
+        ExtRational::Finite(
+            filament_exact::Rational::new(
+                filament_exact::Integer::from(391_i64),
+                filament_exact::Integer::from(400_i64),
+            )
+            .expect("nonzero denominator")
+        ),
+        "the independently computed on-origin value is 391/400"
+    );
+
+    let refuted_world = world_with("rational(99, 100)");
+    let refuted = analyze_claim(&refuted_world, "E");
+    assert!(matches!(
+        refuted.terminal().expect("the refutation settles").value(),
+        TerminalValue::Refuted
+    ));
+    let witness = refuted
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the refutation names its instance");
     assert!(
-        counterexample["instance"].to_string().contains("\"m\""),
-        "{item}"
+        witness.wire.as_ref().expect("the witness spells")["instance"]
+            .to_string()
+            .contains("\"m\"")
     );
 }
 
