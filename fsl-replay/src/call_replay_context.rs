@@ -335,12 +335,14 @@ mod tests {
         )
         .expect("requirements associate with the call");
         let context = PluginReplayContext::new(checked, emitted, models, limits);
+        let package_id = PackageId::of(context.package_bytes());
         RunWithReplayContext {
             package_name: library_name.clone(),
+            package_id,
             outcome,
             requirements: CallRequirements::new(call, members.clone()),
             context: CallReplayContext {
-                package_name: library_name,
+                package_id,
                 context,
                 members,
             },

@@ -98,7 +98,7 @@ fn a_consumer_runs_builds_and_settles_through_the_crate_root() {
     let member = &requirements.members()[0];
     let request: ReplayRequestWire = context
         .request(
-            result.package_id(),
+            package_id,
             member.request_index(),
             &bounds,
             &plugin,
