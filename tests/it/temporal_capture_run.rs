@@ -4,9 +4,9 @@
 //! the capture value it took at its own position, and a capture fault is
 //! reported at the capture, never as an internal fault (exit 30).
 
-use crate::command_harness::{Output, run_file};
+use crate::command_harness::{run_file, Output};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 const EVENTS: &str = "filament.temporal.event-position.false-extension/v1";

@@ -430,17 +430,20 @@ pub struct CanonicalAssignment {
 /// assignments (a corpus counterexample), and settles
 /// `reproduced-without-witness`, never backend evidence (FR-072). `Hybrid`
 /// carries the FR-331 counterexample for a `state_clause` target.
-/// An empty `Input` for a nullary function is a claim-free plain call, whose
-/// completed value supplies the verdict used for settlement.
+/// `ClaimFree` explicitly marks a plain call whose completed value supplies
+/// the verdict used for settlement; an empty `Input` remains a counterexample.
 #[derive(Clone, Eq, PartialEq)]
 pub enum ReplaySource {
     /// Replay derives its input from a backend transcript.
     Witness(Witness),
     /// Replay derives its input from stored canonical assignments (a corpus
     /// counterexample); nonempty assignments settle against a proved
-    /// violation, never backend evidence. An empty list for a nullary
-    /// function denotes a claim-free plain call.
+    /// violation, never backend evidence. Empty assignments do not change
+    /// that counterexample claim.
     Input(Vec<CanonicalAssignment>),
+    /// Replay a plain call without a counterexample claim. This marker is
+    /// distinct from `Input`, including an empty assignment list.
+    ClaimFree,
     /// An observed temporal counterexample, whose envelope carries its
     /// counterexample payload and checked-item identity (FR-331).
     ObservedTemporal(Box<ObservedTemporalEnvelope>),
@@ -465,6 +468,7 @@ impl ReplaySource {
         match self {
             Self::Witness(witness) => witness.transcript().len(),
             Self::Input(assignments) => measured_assignments(assignments),
+            Self::ClaimFree => 0,
             Self::ObservedTemporal(envelope) => envelope.measured_bytes(),
             Self::Hybrid(counterexample) => counterexample.measured_bytes(),
             Self::ModelGraph(envelope) => envelope.measured_bytes(),
@@ -547,6 +551,7 @@ impl fmt::Debug for ReplaySource {
         match self {
             Self::Witness(witness) => f.debug_tuple("Witness").field(witness).finish(),
             Self::Input(assignments) => fmt_input_source(assignments, f),
+            Self::ClaimFree => f.write_str("ClaimFree"),
             Self::ObservedTemporal(envelope) => f
                 .debug_struct("ObservedTemporal")
                 .field("envelope", envelope)

@@ -315,6 +315,9 @@ fn tc_1252_the_input_arm_packet_round_trips_and_replays() {
         let envelope_source = match wire.source.clone() {
             crate::ReplaySource::Witness(witness) => crate::EnvelopeSource::Witness(witness),
             crate::ReplaySource::Input(assignments) => crate::EnvelopeSource::Input(assignments),
+            crate::ReplaySource::ClaimFree => {
+                panic!("value-parity packets cannot carry a claim-free source")
+            }
             crate::ReplaySource::ObservedTemporal(_) => {
                 panic!("value-parity packets cannot carry observed temporal sources")
             }

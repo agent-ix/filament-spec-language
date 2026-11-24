@@ -103,8 +103,8 @@ const LIBRARY: &str = "test/plant";
 const PROGRAM: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
      import \"test/plant\" as P;\n\
-     function entry using v(): Boolean pure { true }\n";
-/// A program over the same library whose function settles without calling it.
+     function entry using v(): Boolean pure { P::flag() }\n";
+/// A plain value program over the same library, without a library call.
 const OWN_VALUE: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
      import \"test/plant\" as P;\n\
@@ -210,7 +210,7 @@ impl Fixture {
                     "role": occurrence.origin().role().as_str(),
                     "ordinal": occurrence.origin().ordinal().to_string()},
                 "over": null},
-            "source": {"kind": "input", "assignments": []},
+            "source": {"kind": "claim_free"},
             "obligation_identity": {
                 "node_id": graph.wire_value(obligation.node()).unwrap(),
                 "model": null,
@@ -246,7 +246,7 @@ impl Fixture {
                 refinement_internals: None,
             }],
             replay_target: RequestTargetWire::function(entry(), site.site.declaration.clone()),
-            source: ReplaySource::Input(Vec::new()),
+            source: ReplaySource::ClaimFree,
             obligation_identity: site.site.obligation_identity().clone(),
             backend: "fr-862-ac-2".to_owned(),
             state_environment: StateEnvironment::default(),
