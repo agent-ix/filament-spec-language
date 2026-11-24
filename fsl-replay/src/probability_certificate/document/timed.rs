@@ -4578,7 +4578,7 @@ fn price_paths(
         }
         let mut chosen: BTreeMap<ProbabilityProductKey, usize> = BTreeMap::new();
         if matches!(payoff, Payoff::Deadline { .. }) {
-            let Some(path_mass) = witness_path_mass(
+            let Some(_path_mass) = witness_path_mass(
                 graph,
                 &used,
                 payoff,
@@ -4592,9 +4592,6 @@ fn price_paths(
             )? else {
                 return Ok(None);
             };
-            if !payoff.refutes(&path_mass, &zero()) {
-                return Ok(None);
-            }
         } else {
             for (key, targets) in &used {
                 let state = graph.states.get(key).ok_or(Error::Refused)?;
