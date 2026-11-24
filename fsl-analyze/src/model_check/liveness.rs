@@ -970,6 +970,20 @@ struct DeadRoot<State, T> {
     depth: usize,
 }
 
+/// A cached subject expansion and the exact canonical keys of its successors,
+/// once those keys have been observed during a pass.
+struct CachedExpansion<T, State> {
+    expansion: Bounded<T, State>,
+    successor_keys: Option<Vec<StateKey>>,
+}
+
+/// An expansion returned to a caller, with successor keys available only when
+/// the expansion cache already retained them.
+struct ExpansionReuse<T, State> {
+    expansion: Bounded<T, State>,
+    successor_keys: Option<Vec<StateKey>>,
+}
+
 /// One binding's product as a `TransitionSystem`.
 struct LassoSystem<'r, S: LiveSubject> {
     system: &'r S,
@@ -982,9 +996,9 @@ struct LassoSystem<'r, S: LiveSubject> {
     /// Successful subject expansions, shared by product states that carry
     /// the same canonical model state. Each `LassoSystem` is one binding's
     /// exploration pass, so this cache never crosses a pass boundary.
-    expansions: RefCell<BTreeMap<StateKey, Bounded<Tr<S>, S::State>>>,
+    expansions: RefCell<BTreeMap<StateKey, CachedExpansion<Tr<S>, S::State>>>,
     /// The model-only finding pass re-derives expansions in its own cache.
-    model_only_expansions: RefCell<BTreeMap<StateKey, Bounded<Tr<S>, S::State>>>,
+    model_only_expansions: RefCell<BTreeMap<StateKey, CachedExpansion<Tr<S>, S::State>>>,
     /// Where the clause fixes its captures (FR-337).
     captured: CaptureSite,
     initial: Vec<LState<S::State>>,
@@ -1062,7 +1076,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
         &self,
         state: &S::State,
         key: &StateKey,
-    ) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
+    ) -> Result<ExpansionReuse<Tr<S>, S::State>, ExpansionStop> {
         self.expand_cached(state, key, &self.expansions)
     }
 
@@ -1072,7 +1086,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
         &self,
         state: &S::State,
         key: &StateKey,
-    ) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
+    ) -> Result<ExpansionReuse<Tr<S>, S::State>, ExpansionStop> {
         self.expand_cached(state, key, &self.model_only_expansions)
     }
 
@@ -1080,11 +1094,14 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
         &self,
         state: &S::State,
         key: &StateKey,
-        cache: &RefCell<BTreeMap<StateKey, Bounded<Tr<S>, S::State>>>,
-    ) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
+        cache: &RefCell<BTreeMap<StateKey, CachedExpansion<Tr<S>, S::State>>>,
+    ) -> Result<ExpansionReuse<Tr<S>, S::State>, ExpansionStop> {
         self.poll()?;
-        if let Some(expansion) = cache.borrow().get(key) {
-            return Ok(expansion.clone());
+        if let Some(cached) = cache.borrow().get(key) {
+            return Ok(ExpansionReuse {
+                expansion: cached.expansion.clone(),
+                successor_keys: cached.successor_keys.clone(),
+            });
         }
         let expansion = self
             .system
@@ -1092,8 +1109,33 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
             .inspect_err(|&stop| {
                 self.record(Halt::Expansion(stop));
             })?;
-        cache.borrow_mut().insert(key.clone(), expansion.clone());
-        Ok(expansion)
+        cache.borrow_mut().insert(
+            key.clone(),
+            CachedExpansion {
+                expansion: expansion.clone(),
+                successor_keys: None,
+            },
+        );
+        Ok(ExpansionReuse {
+            expansion,
+            successor_keys: None,
+        })
+    }
+
+    /// Retain keys already computed while reading an expansion's successors.
+    /// Keeping them alongside only this pass's cached expansion lets a later
+    /// cache hit reuse the exact FR-101 bytes without changing the reading key.
+    fn retain_successor_keys(
+        &self,
+        cache: &RefCell<BTreeMap<StateKey, CachedExpansion<Tr<S>, S::State>>>,
+        key: &StateKey,
+        successor_keys: Vec<StateKey>,
+    ) {
+        if let Some(cached) = cache.borrow_mut().get_mut(key) {
+            if cached.successor_keys.is_none() {
+                cached.successor_keys = Some(successor_keys);
+            }
+        }
     }
 
     fn state_key_of(&self, state: &S::State) -> Result<StateKey, ExpansionStop> {
@@ -1115,11 +1157,20 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
         state: &S::State,
         initial: bool,
     ) -> Result<(StateKey, Reading), ExpansionStop> {
-        let state_key = self.state_key_of(state)?;
-        let key = (
-            state_key.clone(),
-            initial && self.captured == CaptureSite::Origin,
-        );
+        self.reading_at_with_key(state, initial, None)
+    }
+
+    fn reading_at_with_key(
+        &self,
+        state: &S::State,
+        initial: bool,
+        known_key: Option<&StateKey>,
+    ) -> Result<(StateKey, Reading), ExpansionStop> {
+        let state_key = match known_key {
+            Some(state_key) => state_key.clone(),
+            None => self.state_key_of(state)?,
+        };
+        let key = (state_key, initial && self.captured == CaptureSite::Origin);
         if let Some(known) = self.readings.borrow().get(&key) {
             return Ok((key.0.clone(), known.clone()));
         }
@@ -1429,7 +1480,8 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                 Err(stop) => return Err(self.record(Halt::Expansion(stop))),
             }
         }
-        let (expansion, cut) = self.expand(&state.model, &state.model_key)?;
+        let reuse = self.expand(&state.model, &state.model_key)?;
+        let (expansion, cut) = reuse.expansion;
         let mut findings: Vec<Self::Finding> = expansion
             .findings
             .into_iter()
@@ -1485,21 +1537,47 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
             });
         }
         let has_model_successors = !expansion.successors.is_empty();
-        let mut steps: Vec<(Self::TransitionId, S::State)> = if !has_model_successors {
-            vec![(ProductTransition::TerminalStutter, state.model.clone())]
-        } else {
-            expansion
-                .successors
-                .into_iter()
-                .map(|(transition, model)| (ProductTransition::Model(transition), model))
-                .collect()
-        };
+        let model_successor_count = expansion.successors.len();
+        let mut steps: Vec<(Self::TransitionId, S::State, Option<StateKey>)> =
+            if !has_model_successors {
+                vec![(
+                    ProductTransition::TerminalStutter,
+                    state.model.clone(),
+                    Some(state.model_key.clone()),
+                )]
+            } else {
+                expansion
+                    .successors
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (transition, model))| {
+                        (
+                            ProductTransition::Model(transition),
+                            model,
+                            reuse
+                                .successor_keys
+                                .as_ref()
+                                .and_then(|keys| keys.get(index))
+                                .cloned(),
+                        )
+                    })
+                    .collect()
+            };
         if has_model_successors && self.stutter_closure {
-            steps.push((ProductTransition::StutterClosure, state.model.clone()));
+            steps.push((
+                ProductTransition::StutterClosure,
+                state.model.clone(),
+                Some(state.model_key.clone()),
+            ));
         }
         let mut successors = Vec::new();
-        for (transition, model) in steps {
-            let (model_key, reading) = self.reading_at(&model, false)?;
+        let mut observed_keys = Vec::with_capacity(model_successor_count);
+        for (transition, model, known_key) in steps {
+            let (model_key, reading) =
+                self.reading_at_with_key(&model, false, known_key.as_ref())?;
+            if matches!(transition, ProductTransition::Model(_)) {
+                observed_keys.push(model_key.clone());
+            }
             let properties = self.step(before, &reading)?;
             if let (true, Before::At(at)) = (properties.is_empty(), before) {
                 self.dead.borrow_mut().push(DeadRoot {
@@ -1526,6 +1604,7 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                 ));
             }
         }
+        self.retain_successor_keys(&self.expansions, &state.model_key, observed_keys);
         Ok(Expansion {
             successors,
             findings,
@@ -2440,23 +2519,28 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     }
                 }
             }
-            let (expansion, cut) = if constraint_undefined.is_some() || boundary_unexpanded {
-                (
-                    Expansion {
-                        successors: Vec::new(),
-                        findings: Vec::new(),
-                    },
-                    Cut::default(),
-                )
-            } else {
-                match run.product.expand_model_only(&model, &model_key) {
-                    Ok(expanded) => expanded,
-                    Err(_) => {
-                        stop(&mut phase)?;
-                        return Ok(phase);
+            let (expansion, cut, successor_keys) =
+                if constraint_undefined.is_some() || boundary_unexpanded {
+                    (
+                        Expansion {
+                            successors: Vec::new(),
+                            findings: Vec::new(),
+                        },
+                        Cut::default(),
+                        None,
+                    )
+                } else {
+                    match run.product.expand_model_only(&model, &model_key) {
+                        Ok(reuse) => {
+                            let (expanded, cut) = reuse.expansion;
+                            (expanded, cut, reuse.successor_keys)
+                        }
+                        Err(_) => {
+                            stop(&mut phase)?;
+                            return Ok(phase);
+                        }
                     }
-                }
-            };
+                };
             if cut.memory {
                 self.dead_limited
                     .borrow_mut()
@@ -2529,25 +2613,41 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 continue;
             }
             let root = nodes.get(index).map_or(0, |node| node.root);
-            for (transition, next) in expansion.successors {
+            let successor_count = expansion.successors.len();
+            let mut observed_keys = Vec::with_capacity(successor_count);
+            for (successor_index, (transition, next)) in
+                expansion.successors.into_iter().enumerate()
+            {
                 if *edges_left == 0 {
                     phase.stopped = out_of(ModelCheckLimit::MaxTransitions, limits.max_transitions);
                     return Ok(phase);
                 }
                 *edges_left -= 1;
-                if examined.reach(self.state_key(&next)?, depth.saturating_add(1)) {
+                let next_key = match successor_keys
+                    .as_ref()
+                    .and_then(|keys| keys.get(successor_index))
+                {
+                    Some(key) => key.clone(),
+                    None => self.state_key(&next)?,
+                };
+                observed_keys.push(next_key.clone());
+                if examined.reach(next_key.clone(), depth.saturating_add(1)) {
                     if *states_left == 0 {
                         phase.stopped = out_of(ModelCheckLimit::MaxStates, limits.max_states);
                         return Ok(phase);
                     }
                     *states_left -= 1;
-                    let undefined = match run.product.reading(&next) {
-                        Ok(reading) => matches!(reading, Reading::Undefined { .. }),
-                        Err(_) => {
-                            stop(&mut phase)?;
-                            return Ok(phase);
-                        }
-                    };
+                    let undefined =
+                        match run
+                            .product
+                            .reading_at_with_key(&next, false, Some(&next_key))
+                        {
+                            Ok((_, reading)) => matches!(reading, Reading::Undefined { .. }),
+                            Err(_) => {
+                                stop(&mut phase)?;
+                                return Ok(phase);
+                            }
+                        };
                     frontier.insert((depth.saturating_add(1), nodes.len()));
                     nodes.push(DeadNode {
                         model: next,
@@ -2559,6 +2659,13 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                         break;
                     }
                 }
+            }
+            if observed_keys.len() == successor_count {
+                run.product.retain_successor_keys(
+                    &run.product.model_only_expansions,
+                    &model_key,
+                    observed_keys,
+                );
             }
         }
         Ok(phase)
