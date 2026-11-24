@@ -26,8 +26,8 @@ use crate::ring_queue;
 mod evaluator_closure_cases;
 
 use ring_queue::{
-    all_rows, checked, checked_over, key, node, queue_spec, ranged, ring_is_queue, Checked, QUEUE,
-    RING,
+    all_rows, check_over, checked, checked_over, key, node, queue_spec, ranged, ring_is_queue,
+    Checked, QUEUE, RING,
 };
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -311,19 +311,16 @@ fn a_form_charges_one_work_unit_per_object_visited() {
 }
 
 /// The undefined reason and payload of `row` at `state`.
-fn undefined(world: &World, state: &ModelState, row: usize) -> (UndefinedReason, Vec<String>) {
+fn undefined(
+    world: &World,
+    state: &ModelState,
+    row: usize,
+) -> (UndefinedReason, BTreeMap<&'static str, String>) {
     let mut meter = Meter::new(UNLIMITED);
     match world.evaluate(state, row, &mut meter).outcome {
         FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause)) => {
             let record = cause.undefined_record();
-            (
-                record.reason,
-                record
-                    .fields
-                    .iter()
-                    .map(|(name, value)| format!("{name}={value}"))
-                    .collect(),
-            )
+            (record.reason, record.fields)
         }
         other => panic!("row {row} is undefined: {other:?}"),
     }
@@ -347,28 +344,18 @@ fn undefined(world: &World, state: &ModelState, row: usize) -> (UndefinedReason,
 fn only_is_undefined_for_no_object_and_for_several() {
     let world = World::new();
     for state in [world.state(1, 2, [0, 1]), world.state(0, 0, [1, 1])] {
-        assert_eq!(
-            undefined(&world, &state, LONE),
-            (
-                UndefinedReason::OnlyNotOne,
-                vec![
-                    "locus=[]".to_owned(),
-                    format!("population={}", key(RING, "slots").node),
-                    "row=TypeDeclaration { name: \"refinement row 718..766\" }".to_owned()
-                ]
-            )
-        );
-        assert_eq!(
-            undefined(&world, &state, GHOST),
-            (
-                UndefinedReason::OnlyNotOne,
-                vec![
-                    "locus=[]".to_owned(),
-                    format!("population={}", key(RING, "slots").node),
-                    "row=TypeDeclaration { name: \"refinement row 776..856\" }".to_owned()
-                ]
-            )
-        );
+        for (row, enclosing_row) in [(LONE, "Q::Queue.lone"), (GHOST, "Q::Queue.ghost")] {
+            let (reason, fields) = undefined(&world, &state, row);
+            assert_eq!(reason, UndefinedReason::OnlyNotOne);
+            assert_eq!(
+                fields.keys().copied().collect::<Vec<_>>(),
+                ["locus", "population", "row"]
+            );
+            assert_eq!(fields["population"], key(RING, "slots").node);
+            assert_eq!(fields["row"], enclosing_row);
+            assert_eq!(fields["locus"], format!("{enclosing_row}#root"));
+            assert!(!fields.contains_key("found"));
+        }
     }
 }
 
@@ -379,17 +366,16 @@ fn only_is_undefined_for_no_object_and_for_several() {
 fn only_over_a_population_with_no_matches_is_undefined() {
     let world = World::new();
     let state = world.state(0, 0, [1, 1]);
+    let (reason, fields) = undefined(&world, &state, GHOST);
+    assert_eq!(reason, UndefinedReason::OnlyNotOne);
     assert_eq!(
-        undefined(&world, &state, GHOST),
-        (
-            UndefinedReason::OnlyNotOne,
-            vec![
-                "locus=[]".to_owned(),
-                format!("population={}", key(RING, "slots").node),
-                "row=TypeDeclaration { name: \"refinement row 776..856\" }".to_owned()
-            ]
-        )
+        fields.keys().copied().collect::<Vec<_>>(),
+        ["locus", "population", "row"]
     );
+    assert_eq!(fields["population"], key(RING, "slots").node);
+    assert_eq!(fields["row"], "Q::Queue.ghost");
+    assert_eq!(fields["locus"], "Q::Queue.ghost#root");
+    assert!(!fields.contains_key("found"));
 }
 
 /// FR-139 (`sum`, metering): `sum(s in R::slots where s.ring = self:
@@ -449,12 +435,12 @@ fn shifted_sum_rows() -> String {
 }
 
 /// FR-139 (`sum`, TC-544): `sum(s in R::slots where s.ring = self: s.value +
-/// 1)`, whose summand lies in `[1, 2]`, has the bound `[0, 4]` at `slots =
-/// {s0, s1}`, not `[2, 4]`; a row of it mapped to an abstract field of type
-/// `Int[0, 4]` is admitted at that universe, and one mapped to `Int[2, 4]`
-/// refuses `ill_typed`/`type-mismatch`, at S3 and at the row, for the bound
-/// includes 0 whatever the universe size. At a state where no slot satisfies
-/// the condition it evaluates to 0.
+/// 1)`, whose summand lies in `[1, 2]`, records the symbolic bound `[0, 2n]`
+/// at S3 without refusing even when the row's required type is `Int[2, 4]`.
+/// At subject admission with `slots = {s0, s1}`, `Int[0, 4]` is admitted and
+/// `Int[2, 4]` refuses `ill_typed`/`type-mismatch`, naming `Q::Queue.total`,
+/// `R::slots` and size 2. At a state where no slot satisfies the condition
+/// it evaluates to 0.
 #[trace("TC-544", "FR-139-AC-6")]
 #[test]
 fn a_sum_with_a_positive_summand_includes_zero_in_its_bound() {
@@ -466,16 +452,34 @@ fn a_sum_with_a_positive_summand_includes_zero_in_its_bound() {
     let [used] = total.population_uses() else {
         panic!("the sum row records its bound");
     };
-    assert!(matches!(used.value(), PopulationValue::Sum { .. }));
+    let PopulationValue::Sum { .. } = used.value() else {
+        panic!("the sum row records its summand interval");
+    };
+    for (size, upper) in [(0_u64, 0_i64), (1, 2), (2, 4), (3, 6)] {
+        let expected = IntegerInterval::new(0_i64.into(), upper.into()).expect("an interval");
+        assert_eq!(used.admitted_type(size), Some(ValueType::Int(expected)));
+    }
     let bound = IntegerInterval::new(0_i64.into(), 4_i64.into()).expect("an interval");
-    assert_eq!(used.admitted_type(2), Some(ValueType::Int(bound)));
+    assert_eq!(used.admitted_type(2), Some(ValueType::Int(bound.clone())));
     let universe = BTreeMap::from([(key(RING, "slots"), 2)]);
     assert_eq!(wide.refinement().admit_universes(&universe), Ok(()));
 
-    let narrow = World::of(checked_over(
-        &queue_with_total(2, 4),
-        &ring_is_queue(&shifted_sum_rows()),
-    ));
+    let narrow = match check_over(&queue_with_total(2, 4), &ring_is_queue(&shifted_sum_rows())) {
+        Ok(checked) => World::of(checked),
+        Err(refusals) => panic!(
+            "S3 must not refuse Int[2, 4] while n is symbolic; got {} refusals",
+            refusals.len()
+        ),
+    };
+    let narrow_total = &narrow.refinement().objects()[0].fields[TOTAL].expression;
+    let [narrow_use] = narrow_total.population_uses() else {
+        panic!("S3 accepts Int[2, 4] and records the symbolic bound");
+    };
+    assert_eq!(
+        narrow_use.required(),
+        &ValueType::Int(IntegerInterval::new(2_i64.into(), 4_i64.into()).expect("the target"))
+    );
+    assert_eq!(narrow_use.admitted_type(2), Some(ValueType::Int(bound)));
     let refusals = narrow
         .refinement()
         .admit_universes(&universe)
