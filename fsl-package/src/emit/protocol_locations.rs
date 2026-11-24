@@ -675,18 +675,15 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
         operand_forms.sort_unstable();
         assert_eq!(operand_forms, vec!["binary".to_owned(), "query".to_owned()]);
         let positions = walk(capture.initializer.root());
-        let query = positions
+        let (shared, _) = applications
             .iter()
-            .map(|(node, _)| *node)
-            .find(|node| matches!(node.kind(), NodeKind::Query { .. }))
-            .expect("the capture's checked query");
-        let query_operands = query.children();
-        let [source, predicate] = query_operands.as_slice() else {
-            panic!("the query has its source and predicate operands");
-        };
-        let shared = source.location();
-        assert_eq!(shared, predicate.location());
-        assert_ne!(shared, root);
+            .find(|(_, candidates)| {
+                operands
+                    .iter()
+                    .all(|operand| candidates.iter().any(|(key, _)| key == operand))
+            })
+            .expect("the checked graph retains both operands at a shared location");
+        assert_ne!(shared, &root, "the sibling operands are not at the root location");
         let located_operands = operands
             .iter()
             .map(|operand| {
@@ -698,6 +695,7 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
                 let [location] = locations.as_slice() else {
                     panic!("each retained operand has one actual location: {operand}");
                 };
+                assert_eq!(location, shared, "the direct operands share one location");
                 let operation = application_form(operand);
                 let expected_kind = match operation.as_str() {
                     "query" => "query",
