@@ -43,6 +43,7 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
         "{}\
          post Drop using v on M::Call::drop {{ (b = 0 and count(o in M::calls where true) = 0) or (b = 1 and count(o in M::calls where true) = 1) }}\n\
          random Call::drop(b) ~ {{ 0: 1, 1: 1 }};\n\
+         reward R on M::Call::drop = 0;\n\
          delay M::Call::drop ~ discrete {{ 1 ms: 1 }};\n\
          workload Even on M {{ weight Call::drop = 1; weight Call::keep = 0; }}\n\
          probabilistic UndefinedHalf using timed on M over (c: M::Call) under Even on origin\n\
@@ -57,6 +58,9 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
          probabilistic UndefinedElapsed using timed on M over (c: M::Call) under Even on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
              {{ quantile 0.5 of (elapsed from holds(c.phase = 0) until holds(c.phase = 1) within 3 ms) <= 1 ms }}\n\
+         probabilistic UndefinedFraction using timed on M over (c: M::Call) under Even on origin\n\
+             with alpha 0.4, beta 0.4, indifference 0.005\n\
+             {{ mean of (fraction holds(c.phase = 0) over [0 ms, 0 ms] weighted by R) >= rational(1, 2) }}\n\
          probabilistic UndefinedEvery using timed on M over (c: M::Call) under every scheduler on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
              {{ probability >= 0.5 [ always[0 ms, 3 ms] holds(c.phase = 0) ] }}\n\
@@ -83,6 +87,7 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
         "UndefinedSmall",
         "UndefinedUntil",
         "UndefinedElapsed",
+        "UndefinedFraction",
         "UndefinedEvery",
         "UndefinedWeightedLongRun",
         "UndefinedMeanTime",
@@ -104,7 +109,7 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
         let item = exact_probabilistic_item(RequestIndex::new(0), request);
         records.extend(analyze_items(&engines, vec![item], &Cancel::new()));
     }
-    assert_eq!(records.len(), 7);
+    assert_eq!(records.len(), 8);
     for record in &records {
         assert_eq!(
             record.terminal().unwrap().value(),
@@ -118,6 +123,16 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
         assert_eq!(witness.mass(), &ratio(1, 2));
         assert_eq!(witness.undefined().unwrap().evaluation.site.position, 1);
     }
+    assert_eq!(
+        records[4]
+            .probabilistic_counterexample
+            .as_ref()
+            .unwrap()
+            .wire
+            .as_ref()
+            .unwrap()["evidence"]["undefined"]["cause"],
+        "division-by-zero"
+    );
     let witness = records[0]
         .probabilistic_counterexample
         .as_ref()
@@ -293,12 +308,24 @@ fn timed_undefined_replays_every_hop_of_a_tied_race() {
     assert_eq!(steps[0].elapsed, ratio(1, 1));
     assert_eq!(steps[1].elapsed, ratio(0, 1));
     assert_eq!(undefined.evaluation.site.position, 2);
-    assert_eq!(undefined.evaluation.site.time.as_ref().unwrap().stamp, ratio(1, 1));
+    assert_eq!(
+        undefined.evaluation.site.time.as_ref().unwrap().stamp,
+        ratio(1, 1)
+    );
     assert_eq!(witness.mass(), &ratio(1, 2));
     let intermediate: Value = serde_json::from_slice(steps[0].post_key.as_bytes()).unwrap();
     let final_key: Value = serde_json::from_slice(undefined.product_state.as_bytes()).unwrap();
-    assert_eq!(intermediate[5], serde_json::json!(["deadline", "always", "pending"]));
-    assert_eq!(final_key[5], serde_json::json!(["deadline", "always", "pending"]));
+    assert_eq!(
+        intermediate[5],
+        serde_json::json!(["deadline", "always", "pending"])
+    );
+    assert_eq!(
+        final_key[5],
+        serde_json::json!(["deadline", "always", "pending"])
+    );
     assert_eq!(final_key[4][1][4][0][1], "1");
-    assert_eq!(witness.wire.as_ref().unwrap()["evidence"]["undefined"]["cause"], "absent-key");
+    assert_eq!(
+        witness.wire.as_ref().unwrap()["evidence"]["undefined"]["cause"],
+        "absent-key"
+    );
 }
