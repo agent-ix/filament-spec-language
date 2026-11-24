@@ -2546,6 +2546,8 @@ impl<'a> ModelSystem<'a> {
         let mut instances = Vec::new();
         for (_, population) in admitting {
             for key in self.universes.get(population).into_iter().flatten() {
+                // Generated stages change field values only; they preserve
+                // every base object's type identity and population holder.
                 let admitted = self.initial_base.iter().any(|state| {
                     state
                         .state
