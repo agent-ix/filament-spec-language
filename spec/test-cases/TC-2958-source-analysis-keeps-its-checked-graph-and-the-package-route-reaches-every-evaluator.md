@@ -152,7 +152,7 @@ named `operation_contract_package_route_matches_source` case for step 7.
 - Step 13: `CounterIdentity` is equal on both routes: `proved`, `certified`,
   backend `en-1`, exit 0, with no source present on the package route. For
   `deadlock-freedom` and `time-lock-freedom`, both routes refuse the item with
-  `unknown-claim`, null certificate/counterexample/replay and exit 20. For
-  `race-freedom`, both routes use `unsupported-requested-capability`, null
-  certificate/counterexample/replay and exit 21. Each package outcome document
-  equals its source counterpart.
+  cause `unknown-claim`; the item omits `certificate`, `counterexample` and
+  `replay`, and exits 20. For `race-freedom`, both routes use cause
+  `unsupported-requested-capability`; the item omits those three members and
+  exits 21. Each package outcome document equals its source counterpart.

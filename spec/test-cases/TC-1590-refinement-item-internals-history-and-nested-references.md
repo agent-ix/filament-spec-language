@@ -35,7 +35,8 @@ Verify FR-630's request item and decisions. Scope: FR-630-AC-1 to FR-630-AC-11, 
    `tests/corpus/refinement/refinement-identity.native`, selected model is
    `fsl-conformance/cases/counter-step-package.json` and abstract document is
    `fsl-conformance/cases/counter-step-v0.json`; its initial state and universe
-   both select `test`/`v0`.
+   both select `test`/`v0`. Assert the first outcome item's `claim_name` is
+   `CounterIdentity`.
 
 ## Expected Results
 
@@ -46,6 +47,7 @@ Verify FR-630's request item and decisions. Scope: FR-630-AC-1 to FR-630-AC-11, 
 - Steps 5–8: each item settles `proved`, `certified`; its checked simulation
   certificate maps the record, tuple, union or nested sequence/option value
   exactly as the corresponding FR-630 acceptance criterion states.
-- Step 9: the source route settles `CounterIdentity` `proved`, `certified`
-  with backend `en-1`, exit 0.
+- Step 9: the source route's first outcome item has `claim_name`
+  `CounterIdentity` and settles `proved`, `certified` with backend `en-1`,
+  exit 0.
 - Assertions compare the outcome document's typed members and the exit code, never message text.
