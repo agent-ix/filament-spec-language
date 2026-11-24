@@ -13,7 +13,7 @@ relationships:
 
 Verify that an expression whose literal operands or collection-literal source
 supply no unique type is refused `ill_typed`/`ambiguous-literal`, and that the
-same shape checks when the context supplies the type. Scope: FR-104-AC-13,
+same shape checks when the context supplies the type. Scope: FR-104-AC-13, FR-104-AC-20,
 FR-104-AC-16 and FR-766-AC-9. The retired FR-006-AC-4 and FR-016-AC-4 are
 carried by these criteria; the refusal's cause is `ambiguous-literal`, located
 at the literal or the arithmetic node, not a bare `ill_typed`.
@@ -24,7 +24,7 @@ at the literal or the arithmetic node, not a bare `ill_typed`.
    all `decimal(c, s)` literals with no expected type.
 2. Check the invariant of FR-766-AC-9 whose `count` source is a bare
    `sequence[...]` literal, under `Linked` and `Kernel` modes.
-3. Check each with a typed operand or an annotated source.
+3. Check each with a typed operand or an annotated source, and `size(self.items) = 2` against `size(self.items) = self.count` (FR-104-AC-20).
 
 ## Expected Results
 

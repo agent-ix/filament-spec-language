@@ -12,7 +12,7 @@ relationships:
 
 Verify the state-core runner, its ticket-key registry and the unproduced-form
 list, and the `FSPEC_FULL_QUALIFICATION` behavior. Scope: FR-350-AC-21 to
-FR-350-AC-24.
+FR-350-AC-25.
 
 ## Test Procedure
 
