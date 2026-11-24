@@ -1142,7 +1142,7 @@ fn tso_flush_fairness_replays_against_an_unmet_inc_assumption() {
 /// FR-148-AC-12 (TC-553): an undecided precondition on an identified
 /// concrete fairness class carries a finite paired prefix and remains an
 /// inconclusive relation result rather than a proof or a failure.
-#[trace("TC-553", "FR-148-AC-12")]
+#[trace("TC-553", "FR-148-AC-12", "FR-144-AC-10")]
 #[test]
 fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
     let source = cas_twice(false, false)
@@ -1230,23 +1230,89 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
             .expect("a stale undecided locus settles by parity"),
         ProtocolAssumptionReplaySettlement::Inconclusive(_)
     ));
+    let certificate_request = SimulationCertificateRequest {
+        refinement: world.refinement(),
+        concrete: world.concrete_request(UNLIMITED),
+        abstract_package: world.package(),
+        abstract_initial: vec![world.abstract_initial()].into(),
+    };
+    let replay_assumption = |witness| {
+        replay_protocol_assumption_witness(world.refinement(), &systems, witness)
+    };
     let settled = settle_refinement_safety_with_assumption_replay(
         &outcome.safety,
         &ModelCheckLimits::default(),
-        &SimulationCertificateRequest {
-            refinement: world.refinement(),
-            concrete: world.concrete_request(UNLIMITED),
-            abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()].into(),
-        },
+        &certificate_request,
         &Cancel::new(),
         |_| unreachable!("an assumption witness is not a counterexample"),
-        |witness| replay_protocol_assumption_witness(world.refinement(), &systems, witness),
+        replay_assumption,
     );
-    assert!(
-        !matches!(settled.value, TerminalValue::Proved { .. }),
-        "an undecided assumption relation cannot settle proved"
+    assert_eq!(settled.label, fsl_replay::ResultLabel::Inconclusive);
+    assert_eq!(settled.basis, SettlementBasis::Unsettled);
+    assert!(matches!(
+        settled.value,
+        TerminalValue::Inconclusive(
+            fsl_replay::InconclusiveCause::ProtocolAssumptionNotEstablished(ref settled_witness)
+                if settled_witness.reason == fsl_replay::ProtocolAssumptionReason::RelationUndetermined
+        )
+    ));
+
+    let mut stale_safety = outcome.safety.clone();
+    let SafetyOutcome::Undecided {
+        cause: fsl_replay::SafetyUndecided::ProtocolAssumptionNotEstablished(stale_witness),
+        ..
+    } = &mut stale_safety
+    else {
+        unreachable!("the engine returned an undecided assumption witness")
+    };
+    stale_witness.path.protocol_initial = vec![0];
+    let parity = settle_refinement_safety_with_assumption_replay(
+        &stale_safety,
+        &ModelCheckLimits::default(),
+        &certificate_request,
+        &Cancel::new(),
+        |_| unreachable!("an assumption witness is not a counterexample"),
+        replay_assumption,
     );
+    assert!(matches!(
+        parity.value,
+        TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::ReplayParity(_))
+    ));
+
+    let mut limited = ModelCheckLimits::default();
+    limited.limits.max_transitions = 1;
+    let limited_outcome = check_refinement(
+        RefinementCheckRequest {
+            refinement: world.refinement(),
+            concrete: ModelSubject {
+                simulation: world.concrete_request(UNLIMITED),
+                proof_bounds: Vec::new(),
+            },
+            abstract_package: world.package(),
+            abstract_initial: vec![world.abstract_initial()].into(),
+            abstract_protocol_binding: Some(protocol_binding()),
+            max_depth: None,
+            limits: limited,
+        },
+        &Cancel::new(),
+    )
+    .expect("the limited subject is admitted");
+    let incomplete = settle_refinement_safety_with_assumption_replay(
+        &limited_outcome.safety,
+        &limited,
+        &certificate_request,
+        &Cancel::new(),
+        |_| unreachable!("a product limit has no counterexample"),
+        replay_assumption,
+    );
+    assert!(matches!(
+        incomplete.value,
+        TerminalValue::Incomplete(fsl_replay::IncompleteCause::LimitReached {
+            limit: fsl_replay::ModelCheckLimit::MaxTransitions,
+            value: 1,
+            ..
+        })
+    ));
 }
 
 /// FR-148-AC-12 (TC-553): a protocol operation whose checked contract is

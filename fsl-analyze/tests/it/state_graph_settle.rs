@@ -1439,6 +1439,76 @@ fn a_claim_with_no_instances_settles_no_instance_without_exploration() {
     assert_eq!(replays, 0, "NoInstance carries no evidence to replay");
 }
 
+/// FR-169-AC-14 (TC-1197): a malformed closure certificate settles
+/// inconclusive before any witness replay is requested.
+#[trace("TC-1197", "FR-169-AC-14")]
+#[test]
+fn a_malformed_state_graph_certificate_settles_inconclusive() {
+    let world = config_world(REACHES_TWO, &[(0, 0)]);
+    let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
+    let mut malformed = result.items[0][0].clone();
+    let StateGraphOutcome::Witnessed { certificate, .. } = &mut malformed.outcome else {
+        panic!("the run returns a witnessed certificate: {:?}", malformed.outcome);
+    };
+    let duplicate_state = certificate.closure[0].clone();
+    certificate.closure[1] = duplicate_state.clone();
+
+    let mut replays = 0;
+    let record = settle(
+        &world,
+        AB,
+        "ReachesTwo",
+        &malformed,
+        no_samples(),
+        &mut replays,
+    );
+    assert_eq!(replays, 0);
+    assert_eq!(record.label, ResultLabel::Inconclusive);
+    assert_eq!(record.basis, SettlementBasis::Unsettled);
+    assert!(matches!(
+        record.value,
+        TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+            rule: CertificateRule::Malformed,
+            at: CertificateLocus::ModelKey(ref state),
+        }) if state == &duplicate_state
+    ));
+}
+
+/// FR-169-AC-15 (TC-644): the wrong-form `counts` list settles as a
+/// malformed certificate rejection at closure state 0, never as a proof.
+#[trace("TC-644", "FR-169-AC-15")]
+#[test]
+fn a_certificate_with_the_other_forms_list_settles_inconclusive() {
+    let world = config_world(REACHES_TWO, &[(0, 0)]);
+    let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
+    let mut malformed = result.items[0][0].clone();
+    let StateGraphOutcome::Witnessed { certificate, .. } = &mut malformed.outcome else {
+        panic!("the run returns a witnessed certificate: {:?}", malformed.outcome);
+    };
+    let closure_state_zero = certificate.closure[0].clone();
+    certificate.counts.push((0, 1, 0));
+
+    let mut replays = 0;
+    let record = settle(
+        &world,
+        AB,
+        "ReachesTwo",
+        &malformed,
+        no_samples(),
+        &mut replays,
+    );
+    assert_eq!(replays, 0);
+    assert_eq!(record.label, ResultLabel::Inconclusive);
+    assert_eq!(record.basis, SettlementBasis::Unsettled);
+    assert!(matches!(
+        record.value,
+        TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+            rule: CertificateRule::Malformed,
+            at: CertificateLocus::ModelKey(ref state),
+        }) if state == &closure_state_zero
+    ));
+}
+
 /// FR-169-AC-6: FR-168-AC-5's `Undefined` outcome settles `refuted`,
 /// `decisive-counterexample`, violation, after its replay reproduces it,
 /// with cause `UndefinedEvaluation` naming the node `(2, 0)` and division
