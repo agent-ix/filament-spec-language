@@ -156,8 +156,8 @@ fn the_statistical_gate_returns_each_exact_only_cause() {
 #[trace("TC-630", "FR-195-AC-8")]
 #[test]
 fn statistical_gate_precedence_precedes_claim_reduction_and_sampling() {
+    use fsl_analyze::statistical::{StatisticalRequest, check_statistical};
     use fsl_foundation::selection::DefinitionRef;
-    use fsl_analyze::statistical::{check_statistical, StatisticalRequest};
     use fsl_replay::statistical::{StatisticalLimits, StatisticalMethod, StatisticalRefusal};
 
     let workload = World::new(&prob_world::link(
@@ -172,11 +172,7 @@ fn statistical_gate_precedence_precedes_claim_reduction_and_sampling() {
     let invalid_sampler = DefinitionRef::new("agent-ix", "not-a-sampler/v1").unwrap();
 
     for (world, name, expected) in [
-        (
-            &every,
-            "FairTerminates",
-            StatisticalRefusal::EveryScheduler,
-        ),
+        (&every, "FairTerminates", StatisticalRefusal::EveryScheduler),
         (&workload, "Cost", StatisticalRefusal::ExactOnlyForm),
         (&workload, "Bounded", StatisticalRefusal::MissingConfidence),
     ] {
