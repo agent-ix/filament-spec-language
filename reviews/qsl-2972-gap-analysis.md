@@ -43,3 +43,11 @@ A `quire coverage --scope . --json` run completed. It reports 24,247 diagnostics
 2. Add fsl-command injected-failure coverage through the consumer path, tagged to FR-096-AC-24.
 3. Prefix cross-repository tags as `FSpec-FR-330-AC-17`; retain local criterion tags where the test establishes them.
 4. Ensure the analyze diagnostic pair is cataloged/owned or use an already registered host/internal diagnostic pair.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Host allocation failure is now explicitly returned as `ReplayRefusal::HostAllocationFailed`; the injected model-check admission test asserts the type, runtime-invariant code and stage/size message. |
+| FND-002 | fixed | The command test injects the reader outcome through `checked_handoff::admit` and asserts the inspect result; it is tagged to FR-096-AC-24. |
+| FND-003 | fixed | Both tests now carry the external `FSpec-FR-330-AC-17` tag, rather than the bare local FR identifier. |

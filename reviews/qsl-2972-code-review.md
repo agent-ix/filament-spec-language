@@ -54,3 +54,28 @@ The only new fsl-command test at `fsl-command/src/command.rs:5667` calls `inspec
 ### FND-004 — unregistered diagnostic cause
 
 `fsl-analyze/src/analyze/document/composition_item.rs:933` emits `CatalogCode::new(Code::RuntimeInvariant.as_str(), "host-allocation-failed")`. The registered catalog entries in `fsl-foundation/src/lib.rs:51-55` and `fsl-analyze/src/lib.rs:47-50` include `runtime_invariant/established-invariant-broken`, but not `runtime_invariant/host-allocation-failed`. This introduces an unregistered code/cause pair. Preserve the host/internal failure semantics using a registered diagnostic pair, or add the pair only with its proper catalog/spec ownership and evidence.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Host allocation failure is now explicitly returned as `ReplayRefusal::HostAllocationFailed`; the injected model-check admission test asserts the type, runtime-invariant code and stage/size message. |
+| FND-002 | fixed | Both tests now carry the external `FSpec-FR-330-AC-17` tag and local `FR-096-AC-24` tag. |
+| FND-003 | fixed | The command test injects `CheckedPackageDispatchResult::HostAllocationFailed` through `checked_handoff::admit`, then checks the inspect outcome category, code and stage/size message. |
+| FND-004 | fixed | Analyze now uses the registered `runtime_invariant/established-invariant-broken` catalog pair while retaining host-allocation detail fields. |
+
+### FND-001 after_excerpt
+
+`return ReplayRefusal::HostAllocationFailed(failure);`
+
+### FND-002 after_excerpt
+
+`#[trace("FSpec-FR-330-AC-17", "FR-096-AC-24")]`
+
+### FND-003 after_excerpt
+
+`let error = checked_handoff::admit(CheckedPackageDispatchResult::HostAllocationFailed(failure))`
+
+### FND-004 after_excerpt
+
+`CatalogCode::new(Code::RuntimeInvariant.as_str(), "established-invariant-broken"),`
