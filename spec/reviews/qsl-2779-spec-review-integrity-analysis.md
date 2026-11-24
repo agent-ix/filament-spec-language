@@ -71,3 +71,10 @@ Clean:
 | FND-006 | fixed | FR-1040-AC-10 states that `eq` over a clock reference and an object reference refuses `ill_typed`/`operator-ineligible` at check time. |
 | FND-007 | fixed | Both rows now map to the one operation `enq`, with target types `FastQueue` and `SlowQueue`. |
 | FND-008 | fixed | The closing summary paragraph now follows the runtime-value bullet, and the wire form cites FSpec FR-181. |
+
+## Dispositions (round 2)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-009 | fixed | At dac33b16, FR-244 writes `Taken::Failing` for the failing edge into the locked entry and `None` only inside the locked region, and carries `candidate_blocks` (FR-244-AC-8, TC-699 step 7). FR-245 rejects a `taken` mismatch as `PostDiffers` and `candidate_blocks` defects as `Malformed` at `positions` (FR-245-AC-12, TC-700 step 9). This matches FSpec FR-418 and FR-418-AC-22 at 0747d2dc and the schema (`post-differs` is in the zone-edge rule enum). |
+| FND-010 | fixed | TC-546 now says the old test "is to be replaced by the implementation" and that the implementation SHALL add the two named tests and delete the old one, rather than stating the replacement as done. |
