@@ -106,8 +106,8 @@ use fsl_eval::simulation::protocol::{
 };
 use fsl_eval::simulation::{
     ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, FairLoop,
-    Location, NotSimulated, Permutation, RequiresBound, SubjectSystem, SubjectTransition,
-    SymmetryGroup, TransitionSystem, ZeroProgress, ZeroProgressError,
+    InitialStateRefusal, Location, NotSimulated, Permutation, RequiresBound, SubjectSystem,
+    SubjectTransition, SymmetryGroup, TransitionSystem, ZeroProgress, ZeroProgressError,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_package::TemporalClockSelection;
@@ -128,6 +128,7 @@ use super::ample::{Atoms, Por};
 use super::concretise::{Lift, LiftStop};
 use super::fair_walk::FairModel;
 use super::false_extension::false_extension_rejects;
+use super::initial::{admit_initial, Refused};
 use super::reduce::{self, InstanceGroup, TableForm};
 use fsl_route::reductions::Reductions;
 
@@ -1379,13 +1380,14 @@ fn check_protocol_liveness(
             )
         }),
     };
-    decided.unwrap_or_else(|refusal| {
-        construction_refusal(
+    match decided {
+        Ok(Err(ModelCheckRefusal::Protocol(refusal))) | Err(refusal) => construction_refusal(
             refusal,
             &subject.model.simulation.meter,
             subject.model.simulation.expansion.max_candidates,
-        )
-    })
+        ),
+        Ok(outcome) => outcome,
+    }
 }
 
 /// What a refusal of `ProtocolSystem::new` settles, before any state is
@@ -1537,7 +1539,12 @@ impl ProtocolRun<'_> {
                 stats: run.stats(),
             });
         }
-        run.decide(self.instances)
+        match run.decide(self.instances) {
+            Err(ModelCheckRefusal::Protocol(refusal)) => {
+                construction_refusal(refusal, &self.meter, self.max_candidates)
+            }
+            outcome => outcome,
+        }
     }
 }
 
@@ -1545,7 +1552,7 @@ impl ProtocolRun<'_> {
 /// with, naming the limit it reached and that limit's configured value (the
 /// counter's bound in `meter`, or `max_candidates`); `None` for a stop that
 /// broke an invariant.
-fn expansion_stopped(
+pub(super) fn expansion_stopped(
     stop: ExpansionStop,
     meter: &filament_exact::ScalarLimits,
     max_candidates: u64,
@@ -1620,7 +1627,12 @@ fn check_reduced(
     let system =
         read_system(request).map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS).map_err(not_simulated)?;
-    let group = match precheck(reductions, &request.item, &system)? {
+    let group = match precheck(
+        reductions,
+        &request.item,
+        &system,
+        request.limits.limits.max_states,
+    )? {
         Admitted::Group(group) => group,
         Admitted::Settled(outcome) => return Ok(outcome),
     };
@@ -2080,6 +2092,7 @@ pub(super) fn precheck(
     reductions: &Reductions,
     item: &ModelCheckItem<'_>,
     system: &ModelSystem<'_>,
+    max_states: usize,
 ) -> Result<Admitted, ModelCheckRefusal> {
     let form = TableForm::of(item).ok_or_else(|| fault("a-decided-item-has-a-table-row"))?;
     if let Some(reduction) = reduce::not_preserving(reductions, form) {
@@ -2099,10 +2112,35 @@ pub(super) fn precheck(
         })));
     }
     let group = reduce::admit(system, &reductions.symmetry).map_err(ModelCheckRefusal::Symmetry)?;
-    let closed = reduce::closure(system, &group).map_err(|refusal| match refusal {
-        reduce::ClosureRefusal::Encoding(refusal) => ModelCheckRefusal::Encoding(refusal),
-        reduce::ClosureRefusal::Unordered => fault("a-permuted-collection-is-ordered"),
-    })?;
+    let closed = match reduce::closure_under_limit(system, &group, max_states) {
+        Ok(closed) => closed,
+        Err(reduce::ClosureRefusal::OverBudget) => {
+            return Ok(Admitted::Settled(ModelCheckOutcome::Stopped {
+                cause: IncompleteCause::ResourceExhausted,
+                limit: Some(ReachedLimit {
+                    limit: ModelCheckLimit::MaxStates,
+                    value: widen(max_states),
+                }),
+                stats: RunStats::default(),
+            }));
+        }
+        Err(reduce::ClosureRefusal::Stopped(stop)) => {
+            let (cause, limit) = expansion_stopped(stop, &system.meter(), system.max_candidates())
+                .ok_or_else(|| fault("model-expansion-invariant"))?;
+            return Ok(Admitted::Settled(ModelCheckOutcome::Stopped {
+                cause,
+                limit,
+                stats: RunStats::default(),
+            }));
+        }
+        Err(reduce::ClosureRefusal::Encoding(refusal)) => return Err(refusal.into()),
+        Err(reduce::ClosureRefusal::Initial(_)) => {
+            return Err(fault("model-initial-admission-has-no-protocol-construction-fault"));
+        }
+        Err(reduce::ClosureRefusal::Unordered) => {
+            return Err(fault("a-permuted-collection-is-ordered"));
+        }
+    };
     if let Some(cause) = closed {
         return Ok(Admitted::Settled(settled(cause)));
     }
@@ -2776,24 +2814,37 @@ where
     fn explore(&mut self) -> Step<()> {
         self.poll()?;
         let start = self.monitor.initial().map_err(Self::automaton)?;
-        let mut initial = Vec::new();
-        for (index, state) in self.system.initial().into_iter().enumerate() {
-            let (state, permutation) = self.canonical(state)?;
-            let (key, state_key) = self.system.state_key(&state)?;
-            initial.push((key, index, state_key, state, permutation));
-        }
-        // Equal keys coalesce into the first initial state that has the key.
-        initial.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
-        initial.dedup_by(|later, earlier| later.0 == earlier.0);
-        if initial.len() > self.limits.limits.max_states {
-            return Err(Self::stopped(
-                ModelCheckLimit::MaxStates,
-                widen(self.limits.limits.max_states),
-            )
-            .into());
-        }
+        // Equal keys coalesce into the first initial state that has the key;
+        // the budget refuses before the remaining states are constructed.
+        let initial = admit_initial(
+            self.system
+                .initial_for_check_with_symmetry(self.limits.limits.max_states, &self.group),
+            self.limits.limits.max_states,
+            |_, state| {
+                let (state, permutation) = self.canonical(state)?;
+                let (key, state_key) = self.system.state_key(&state)?;
+                Ok::<_, Halt>((key, (state_key, state, permutation)))
+            },
+        )
+        .map_err(|refused| match refused {
+            Refused::OverBudget | Refused::Construction(InitialStateRefusal::OverBudget(_)) => {
+                Self::stopped(
+                    ModelCheckLimit::MaxStates,
+                    widen(self.limits.limits.max_states),
+                )
+                .into()
+            }
+            Refused::Construction(InitialStateRefusal::Construction(refusal)) => {
+                ModelCheckRefusal::Protocol(refusal).into()
+            }
+            Refused::Construction(InitialStateRefusal::Encoding(refusal)) => refusal.into(),
+            Refused::Construction(InitialStateRefusal::Expansion(stop)) => {
+                self.expansion_stop(stop).into()
+            }
+            Refused::Keying(halt) => halt,
+        })?;
         let before = vec![start; self.item.instance_count()];
-        for (key, index, state_key, state, permutation) in initial {
+        for (key, index, (state_key, state, permutation)) in initial {
             if self.first_bad.is_some() && !self.has_unresolved_local_access() {
                 break;
             }

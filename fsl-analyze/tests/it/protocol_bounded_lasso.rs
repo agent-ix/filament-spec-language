@@ -497,7 +497,10 @@ fn an_unfair_zero_counted_lasso_refuses_naming_the_scheduler_constraint() {
         "the concrete ProtocolKey comparison must reject this loop before fairness"
     );
     let protocol = crate::fill::concrete_sc_system(&adversarial.subject("Echo"));
-    let mut concrete = protocol.initial().remove(0);
+    let mut concrete = protocol
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let mut states = Vec::new();
     for kind in [StepKind::Send, StepKind::Duplicate, StepKind::Lose] {
         let (_, next) = protocol
@@ -561,7 +564,10 @@ pub(crate) fn echo_body(scheduling: &str) -> String {
 /// Build the witness from enabled concrete transitions, without model search.
 fn echo_lasso(case: &Case) -> TemporalCounterexample<ProtocolTransition> {
     let system = crate::fill::concrete_sc_system(&case.subject("Echo"));
-    let mut state = system.initial().remove(0);
+    let mut state = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let mut prefix = Vec::new();
     let mut entry = None;
     for kind in [StepKind::Send, StepKind::Duplicate, StepKind::Lose] {
@@ -629,7 +635,10 @@ fn echo_cycle_keys_preserve_read_delivery_labels_and_pair_unread_steps() {
             .find(|(transition, _)| transition.kind() == kind)
             .expect("enabled step")
     };
-    let (_, s1) = step(&system.initial()[0], StepKind::Send);
+    let (_, s1) = step(
+        &system.try_initial().expect("initial states settle")[0],
+        StepKind::Send,
+    );
     let (duplicate, both) = step(&s1, StepKind::Duplicate);
     assert_eq!(duplicate.delivery().unwrap().index(), 1);
     let losses: Vec<_> = system
@@ -745,7 +754,10 @@ fn echo_message_read_set_keeps_ordinals_and_canonicalizes_delivery_indices() {
             .find(|(transition, _)| transition.kind() == kind)
             .expect("enabled step")
     };
-    let (_, s1) = step(&system.initial()[0], StepKind::Send);
+    let (_, s1) = step(
+        &system.try_initial().expect("initial states settle")[0],
+        StepKind::Send,
+    );
     let (_, both) = step(&s1, StepKind::Duplicate);
     let losses: Vec<_> = system
         .successors(&both)
@@ -813,7 +825,10 @@ fn echo_message_read_set_keeps_ordinals_and_canonicalizes_delivery_indices() {
         + &claim("always holds(k.v = 0)").replace("using tb over", "using t0 over");
     let loop_case = Case::new(&loop_body);
     let loop_system = crate::fill::concrete_sc_system(&loop_case.subject("Loop"));
-    let initial = loop_system.initial().remove(0);
+    let initial = loop_system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let (send0, sent0) = loop_system
         .successors(&initial)
         .unwrap()
@@ -941,7 +956,10 @@ fn loop_received_message_ordinals_canonicalize_and_en1_closes() {
         + &claim("always holds(k.v = 0)").replace("using tb over", "using t0 over");
     let case = Case::new(&body);
     let system = crate::fill::concrete_sc_system(&case.subject("Loop"));
-    let mut state = system.initial().remove(0);
+    let mut state = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let mut loop_states = vec![state.clone()];
     let mut sent_states = Vec::new();
     let mut send_identities = Vec::new();
@@ -1141,7 +1159,7 @@ fn echo_cycle_edges_lift_to_never_reused_concrete_delivery_indices() {
     let mut payload = echo_lasso(&case);
     payload.prefix.truncate(1);
     let (_, mut concrete) = raw
-        .successors(&raw.initial()[0])
+        .successors(&raw.try_initial().expect("initial states settle")[0])
         .unwrap()
         .successors
         .into_iter()
@@ -1227,7 +1245,10 @@ fn echo_unordered_cycle_keys_renumber_nonconsecutive_copies() {
             .expect("the required concrete queue is reachable")
             .1
     };
-    let s0 = system.initial().remove(0);
+    let s0 = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let s1 = take(&s0, StepKind::Send, &[0]);
     let both = take(&s1, StepKind::Duplicate, &[0, 1]);
     let one = take(&both, StepKind::Lose, &[1]);
@@ -1267,7 +1288,7 @@ fn echo_pending_interval_send_keeps_its_delivery_labels_and_bound() {
     );
     let system = crate::fill::concrete_sc_system(&case.subject("Echo"));
     let (_, forked) = system
-        .successors(&system.initial()[0])
+        .successors(&system.try_initial().expect("initial states settle")[0])
         .unwrap()
         .successors
         .into_iter()
@@ -1461,7 +1482,10 @@ fn an_on_each_tp3_debt_after_the_origin_is_judged_by_the_fair_uncounted_loop() {
     };
     let subject = adversarial.subject("Echo");
     let system = crate::fill::concrete_sc_system(&subject).with_cycle_keys(BTreeSet::new());
-    let origin = system.initial().remove(0);
+    let origin = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let step = |from, kind| {
         system
             .successors(from)

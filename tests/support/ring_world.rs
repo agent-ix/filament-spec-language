@@ -451,8 +451,7 @@ fn items_row(variant: Variant) -> String {
 /// `RingIsQueue` with the `items` row `items`.
 pub fn ring_is_queue(items: &str) -> String {
     format!(
-        "invariant Anything using v on R::Ring at current {{ true }}\n\
-         refinement RingIsQueue using inf abstract Q concrete R {{\n\
+        "refinement RingIsQueue using inf abstract Q concrete R {{\n\
          population Q::queues from R::rings;\n\
          object Q::Queue from R::Ring {{ {items} }}\n\
          step R::Slot::put -> Q::Queue::enq(self.ring, x);\n\
@@ -476,8 +475,7 @@ pub fn twin_refinement(cell_first: bool) -> String {
         (queue, cell.to_owned())
     };
     format!(
-        "invariant Anything using v on R::Ring at current {{ true }}\n\
-         refinement RingIsQueue using inf abstract Q concrete R {{\n\
+        "refinement RingIsQueue using inf abstract Q concrete R {{\n\
          population Q::queues from R::rings;\n\
          population Q::cells from R::rings;\n\
          {first}\n\

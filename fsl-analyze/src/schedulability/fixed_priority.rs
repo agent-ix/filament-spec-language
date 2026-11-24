@@ -2,14 +2,13 @@
 //! Fixed-priority response-time analysis (ADR-026 RT-4) and `response`
 //! claims.
 
-use filament_exact::Cancel;
 use fsl_replay::{
     ClosedFormEvidence, ClosedFormOutcome, MissEvidence, ScheduleSubject, Task, TaskFixpoint,
 };
 
 use super::arith::int;
 use super::busy_period::{jobs, Jobs, Level, Term};
-use super::Analysed;
+use super::{Analysed, Pace};
 
 /// The level-`i` recurrence of `task` with every budget at its highest.
 fn level<'a>(subject: &'a ScheduleSubject, task: &'a Task) -> Level<'a> {
@@ -30,10 +29,13 @@ fn level<'a>(subject: &'a ScheduleSubject, task: &'a Task) -> Level<'a> {
 
 /// Analyse each claimed task, highest priority first: the first to pass its
 /// bound is the miss.
-pub(super) fn analyse(subject: &ScheduleSubject, cancel: &Cancel) -> Analysed<ClosedFormOutcome> {
+pub(super) fn analyse(
+    subject: &ScheduleSubject,
+    pace: &mut Pace<'_>,
+) -> Analysed<ClosedFormOutcome> {
     let mut fixpoints = Vec::new();
     for task in subject.analysed() {
-        match jobs(task, &level(subject, task), subject.bound(task), cancel)? {
+        match jobs(task, &level(subject, task), subject.bound(task), pace)? {
             Jobs::Met(jobs) => fixpoints.push(TaskFixpoint {
                 task: task.name.clone(),
                 jobs,

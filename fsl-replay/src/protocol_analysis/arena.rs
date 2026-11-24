@@ -21,6 +21,9 @@ use super::{ObservationClass, Observed, ProtocolPremises, StrategyAction};
 /// Why the arena could not be read.
 #[derive(Debug, thiserror::Error)]
 pub enum ArenaError {
+    /// The protocol refused while settling an initial state.
+    #[error(transparent)]
+    Protocol(fsl_eval::simulation::protocol::ProtocolRefusal),
     /// A protocol read refused.
     #[error(transparent)]
     View(#[from] ViewRefusal),

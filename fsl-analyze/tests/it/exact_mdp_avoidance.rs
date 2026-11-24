@@ -88,6 +88,7 @@ fn value(product: &ProbProduct, objective: UnboundedObjective) -> ExtRational {
         &[false, true, false],
         objective,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("normalized finite MDP")
     .values[0]
@@ -122,6 +123,7 @@ fn two_actions_with_cyclic_positive_failure_keep_fractional_extrema() {
         UnboundedObjective::Min,
         &ratio(1, 2),
         &limits,
+        &Cancel::new(),
     )
     .expect("equality falls back to exact policy iteration");
     let UnboundedOutcome::Exact(result) = outcome else {
@@ -145,7 +147,8 @@ fn fractional_minimum_observes_policy_and_arithmetic_budgets() {
             &[false, true, false],
             UnboundedObjective::Min,
             &ratio(1, 2),
-            &limits
+            &limits,
+            &Cancel::new()
         ),
         Ok(UnboundedOutcome::Stopped(
             fsl_replay::ExactProbLimit::MaxPolicyIterations
@@ -160,7 +163,8 @@ fn fractional_minimum_observes_policy_and_arithmetic_budgets() {
             &product,
             &[false, true, false],
             UnboundedObjective::Min,
-            &limits
+            &limits,
+            &Cancel::new()
         ),
         Err(UnboundedError::MaxRationalBits)
     );
@@ -226,6 +230,7 @@ fn acyclic_failure_sibling_does_not_require_other_successors_to_be_targets() {
         &[false, true, false, false],
         UnboundedObjective::Min,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("finite acyclic prefix");
     assert_eq!(result.values[0], ExtRational::Finite(ratio(2, 3)));
@@ -246,6 +251,7 @@ fn positive_nonreach_has_infinite_expected_until_even_with_zero_costs() {
             "cost",
             objective,
             &qualitative_limits,
+            &Cancel::new(),
         )
         .expect("nonreach is decided qualitatively");
         assert_eq!(result.values[0], ExtRational::PlusInfinity);
@@ -262,6 +268,7 @@ fn positive_nonreach_has_infinite_expected_until_even_with_zero_costs() {
         "cost",
         UnboundedObjective::Min,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("a proper zero-cost policy exists");
     assert_eq!(result.values[0], ExtRational::Finite(ratio(0, 1)));
@@ -271,6 +278,7 @@ fn positive_nonreach_has_infinite_expected_until_even_with_zero_costs() {
         "cost",
         UnboundedObjective::Max,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("the avoiding policy remains available");
     assert_eq!(result.values[0], ExtRational::PlusInfinity);
@@ -298,6 +306,7 @@ fn target_leak_without_failure_keeps_expected_reward_finite() {
             "cost",
             objective,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("the target is reached almost surely with geometric mean time two");
         assert_eq!(result.values[0], ExtRational::Finite(ratio(2, 1)));
@@ -345,8 +354,14 @@ fn pending_post_state_resolutions_remain_scheduler_choices_after_the_draw() {
         (UnboundedObjective::Min, ratio(0, 1)),
         (UnboundedObjective::Max, ratio(1, 1)),
     ] {
-        let result = decide_reachability(&product, &target, objective, &ExactProbLimits::default())
-            .expect("post-draw alternatives are independent scheduler actions");
+        let result = decide_reachability(
+            &product,
+            &target,
+            objective,
+            &ExactProbLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("post-draw alternatives are independent scheduler actions");
         assert_eq!(
             result.values[pending.index()],
             ExtRational::Finite(expected)

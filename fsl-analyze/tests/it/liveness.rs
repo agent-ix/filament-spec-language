@@ -1044,8 +1044,8 @@ impl<M: TransitionSystem> PropertyComponent<M> for Silent {
     type Key = usize;
     type Finding = ();
 
-    fn initial(&self, _model: &M::State) -> Vec<usize> {
-        vec![0]
+    fn initial(&self, _model: &M::State) -> impl Iterator<Item = usize> + use<M> {
+        std::iter::once(0)
     }
 
     fn key(&self, state: &usize) -> usize {

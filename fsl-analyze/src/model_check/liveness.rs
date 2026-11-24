@@ -92,32 +92,32 @@ use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    translate, Atom, AutomatonError, AutomatonKind, Letter, PropertyAutomaton, StateId, SubjectKind,
+    Atom, AutomatonError, AutomatonKind, Letter, PropertyAutomaton, StateId, SubjectKind, translate,
 };
 use fsl_eval::fairness::{
-    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
+    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex, analyze,
 };
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ProtocolSubject};
-use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
-use fsl_eval::simulation::protocol::{
-    protocol_constraints, FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem,
-    ProtocolTransition,
-};
 use fsl_eval::simulation::ConstraintValue;
 use fsl_eval::simulation::StateKey;
+use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, check_model_bounds};
+use fsl_eval::simulation::protocol::{
+    FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem, ProtocolTransition,
+    protocol_constraints,
+};
 use fsl_eval::simulation::{
-    Bounded, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, Footprint, Limit,
-    Limits, OfferedReductions, Outcome, Permutation, SubjectSystem, SubjectTransition,
-    SymmetryGroup, TransitionSystem,
+    Bounded, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, Footprint,
+    InitialStateRefusal, Limit, Limits, OfferedReductions, Outcome, Permutation, SubjectSystem,
+    SubjectTransition, SymmetryGroup, TransitionSystem,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_foundation::IdentityLimits;
 use fsl_replay::{
-    undefined_finding, AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter,
-    CounterexampleKind, IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound,
-    MemoryBoundMember, MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep,
-    ProofCertificate, Proviso, ReachedLimit, ReductionCause, RunStats, StepSite,
-    TemporalCounterexample, UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
+    AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter, CounterexampleKind,
+    IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound, MemoryBoundMember,
+    MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep, ProofCertificate,
+    Proviso, ReachedLimit, ReductionCause, RunStats, StepSite, TemporalCounterexample,
+    UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite, undefined_finding,
 };
 use fsl_semantics::check::{CaptureSite, CheckedTemporalClause, FormulaNodeId};
 use quire_canonical::{Encode, Sink, Writer};
@@ -125,11 +125,11 @@ use quire_canonical_api as canonical_api;
 
 use super::ample::{Atoms, Por};
 use super::check::{
-    atom_refusal, not_simulated, precheck, refuse_capture_read, Admitted, ModelCheckRefusal,
-    ModelCheckRequest, BOUND_POSITIONS,
+    Admitted, BOUND_POSITIONS, ModelCheckRefusal, ModelCheckRequest, atom_refusal, not_simulated,
+    precheck, refuse_capture_read,
 };
 use super::concretise::{Lift, LiftStop, PermuterOf};
-use super::fair_walk::{fairness_constraints, tree_path, FairModel};
+use super::fair_walk::{FairModel, fairness_constraints, tree_path};
 use super::graph::{
     retain_reduced_with_key, Ample, Choice, GraphExploration, ProductStateId, RetainedEdge,
     RetainConfig, RetainedGraph,
@@ -209,7 +209,12 @@ pub(super) fn check(
     let group = if request.reductions.is_empty() {
         SymmetryGroup::default()
     } else {
-        match precheck(&request.reductions, &request.item, &system)? {
+        match precheck(
+            &request.reductions,
+            &request.item,
+            &system,
+            request.limits.limits.max_states,
+        )? {
             Admitted::Group(group) => group,
             Admitted::Settled(outcome) => return Ok(outcome),
         }
@@ -604,9 +609,7 @@ fn retained<'l, S: LiveSubject>(
         || run.cancel.poll() && run.cancel.cause().is_some(),
         |state| product.encoded_key(state, identity),
     )
-    .map_err(|error| {
-        ModelCheckRefusal::Encoding(EncodingRefusal::of(&error, IdentityLimits::default()))
-    })
+    .map_err(|error| error.model_refusal(IdentityLimits::default()))
 }
 
 impl<'a> LiveSubject for ModelSystem<'a> {
@@ -1027,6 +1030,8 @@ enum Halt {
     Cancelled(CancelCause),
     /// The automaton reached `max_automaton_states`.
     Automaton(u64),
+    /// Another distinct initial product state would exceed the remaining budget.
+    InitialStates,
     /// An identity has no canonical encoding, or an invariant broke.
     Refusal(ModelCheckRefusal),
 }
@@ -1299,7 +1304,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
                 return Ok(vec![Property::Undefined {
                     locus: locus.clone(),
                     cause: cause.clone(),
-                }])
+                }]);
             }
             Reading::Defined(letter) => *letter,
         };
@@ -1320,9 +1325,27 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
 
     /// The initial product states: each initial model state paired with each
     /// property state its letter reads into.
-    fn start_states(&mut self) -> Result<(), ExpansionStop> {
-        let mut initial = Vec::new();
-        for model in self.system.initial() {
+    fn start_states(
+        &mut self,
+        group: &SymmetryGroup,
+        max_states: usize,
+    ) -> Result<(), ExpansionStop> {
+        let mut initial = BTreeMap::new();
+        let identity = IdentityLimits::default();
+        for model in self
+            .system
+            .initial_for_check_with_symmetry(max_states, group)
+        {
+            let model = model.map_err(|refusal| match refusal {
+                InitialStateRefusal::OverBudget(_) => self.record(Halt::InitialStates),
+                InitialStateRefusal::Encoding(refusal) => {
+                    self.record(Halt::Refusal(ModelCheckRefusal::Encoding(refusal)))
+                }
+                InitialStateRefusal::Expansion(stop) => self.record(Halt::Expansion(stop)),
+                InitialStateRefusal::Construction(refusal) => {
+                    self.record(Halt::Refusal(ModelCheckRefusal::Protocol(refusal)))
+                }
+            })?;
             let (model_key, reading) = self.reading_at(&model, true)?;
             let properties = self.step(Before::Start, &reading)?;
             if properties.is_empty() {
@@ -1333,15 +1356,37 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
                 });
             }
             for property in properties {
-                initial.push(LState {
+                let state = LState {
                     model: model.clone(),
                     model_key: model_key.clone(),
                     property,
                     depth: 0,
-                });
+                };
+                let canonical;
+                let keyed = if group.is_trivial() {
+                    &state
+                } else {
+                    (canonical, _) = self.canonical(&state, group).ok_or_else(|| {
+                        self.record(Halt::Refusal(fault("a-reduced-product-offers-symmetry")))
+                    })??;
+                    &canonical
+                };
+                let key = quire_canonical::to_vec(
+                    &self.key(keyed),
+                    quire_canonical::Limits::new(identity.input_bytes),
+                )
+                .map_err(|error| {
+                    self.record(Halt::Refusal(ModelCheckRefusal::Encoding(
+                        EncodingRefusal::of(&error, identity),
+                    )))
+                })?;
+                initial.entry(key).or_insert(state);
+                if initial.len() > max_states {
+                    return Err(self.record(Halt::InitialStates));
+                }
             }
         }
-        self.initial = initial;
+        self.initial = initial.into_values().collect();
         Ok(())
     }
 }
@@ -1460,8 +1505,10 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
     type Key = ProductKey<S::Key, PropertyKey>;
     type Finding = Finding<Tr<S>>;
 
-    fn initial(&self) -> Vec<Self::State> {
-        self.initial.clone()
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        self.initial.iter().cloned().map(Ok)
     }
 
     fn key(&self, state: &Self::State) -> Self::Key {
@@ -1485,7 +1532,7 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                 return Ok(Expansion {
                     successors: Vec::new(),
                     findings: Vec::new(),
-                })
+                });
             }
             Property::After(at) => Before::At(*at),
         };
@@ -1992,7 +2039,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                         IncompleteCause::Cancelled { source },
                         None,
                         totals.stats(),
-                    ))
+                    ));
                 }
                 Second::Stopped(cause, limit) => return Ok(stopped(cause, limit, totals.stats())),
                 Second::NoneFair => {}
@@ -2156,7 +2203,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     ModelCheckLimit::MaxAutomatonStates,
                     limit,
                     totals.stats(),
-                )))
+                )));
             }
             Err(other) => return Err(LivenessRefusal::from(other).into()),
         };
@@ -2182,12 +2229,12 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             found: Cell::new(None),
             halt: RefCell::new(None),
         };
-        if product.start_states().is_err() {
-            return self.halted(&product, totals).map(Err);
-        }
         // The budgets are the run's, shared by every binding.
         let spent = self.request.limits.limits;
         let (max_states, max_transitions) = totals.remaining(spent);
+        if product.start_states(&binding.group, max_states).is_err() {
+            return self.halted(&product, totals).map(Err);
+        }
         let remaining = Limits {
             max_states,
             max_transitions,
@@ -2236,7 +2283,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 None => return Err(fault("a-stopped-expansion-recorded-its-halt")),
             },
             Outcome::BoundReached { .. } => {
-                return Err(fault("the-horizon-is-the-product-s-not-the-exploration-s"))
+                return Err(fault("the-horizon-is-the-product-s-not-the-exploration-s"));
             }
         };
         Ok(Ok(Explored {
@@ -2286,6 +2333,10 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             ),
             Halt::Cancelled(source) => Ending::Stopped(IncompleteCause::Cancelled { source }, None),
             Halt::Automaton(limit) => reached(ModelCheckLimit::MaxAutomatonStates, limit),
+            Halt::InitialStates => reached(
+                ModelCheckLimit::MaxStates,
+                widen(self.request.limits.limits.max_states),
+            ),
             Halt::Refusal(refusal) => return Err(refusal),
             Halt::Expansion(stop) => match stop.limit {
                 Some(ExpansionLimit::EvaluationMeter(counter)) => reached(
@@ -2296,7 +2347,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     reached(ModelCheckLimit::MaxCandidates, self.request.max_candidates)
                 }
                 None if stop.is_internal_failure() => {
-                    return Err(fault("model-expansion-invariant"))
+                    return Err(fault("model-expansion-invariant"));
                 }
                 None => Ending::Stopped(IncompleteCause::ResourceExhausted, None),
             },
@@ -2884,7 +2935,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             Ok(analyses) => analyses,
             Err(FairnessError::Cancelled) => return self.cancelled(),
             Err(FairnessError::UnknownVertex { .. } | FairnessError::EmptyLoop) => {
-                return Err(fault("the-fairness-graph-is-built-from-retained-states"))
+                return Err(fault("the-fairness-graph-is-built-from-retained-states"));
             }
         };
         let Some(passing) = Analysis::first_fair_in(&analyses) else {
@@ -2902,7 +2953,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 Ok(analyses) => analyses,
                 Err(FairnessError::Cancelled) => return self.cancelled(),
                 Err(FairnessError::UnknownVertex { .. } | FairnessError::EmptyLoop) => {
-                    return Err(fault("the-fairness-graph-is-built-from-retained-states"))
+                    return Err(fault("the-fairness-graph-is-built-from-retained-states"));
                 }
             };
             let Some(full_passing) = Analysis::first_fair_in(&full_analyses) else {

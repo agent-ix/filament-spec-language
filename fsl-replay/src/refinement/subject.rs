@@ -17,7 +17,7 @@ use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem, Populatio
 use fsl_eval::simulation::protocol::{
     Capacities, CapacityRefusal, ResolvedMemory, UnboundCapacity,
 };
-use fsl_eval::simulation::ExpansionStop;
+use fsl_eval::simulation::{ExpansionStop, InitialStateRefusal, SubjectSystem};
 use fsl_semantics::check::AbstractSide;
 
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef, SelectedAnchor};
@@ -68,6 +68,13 @@ pub enum SubjectRefusal {
     /// Building the abstract initial states from the mapping stopped on a
     /// budget (FSL FR-630 "Request item"): the run is incomplete, naming it.
     Stopped(ExpansionStop),
+    /// Mapping another distinct concrete initial state would exceed the
+    /// explicit-state check's budget.
+    InitialStateLimit(usize),
+    /// A concrete initial state had no canonical encoding.
+    InitialEncoding,
+    /// The concrete initial iterator returned its typed construction fault.
+    InitialConstruction(fsl_eval::simulation::protocol::ProtocolRefusal),
 }
 
 /// Why [`open_protocol_systems`] built no systems: a subject refusal, or a
@@ -125,6 +132,30 @@ pub fn open_systems<'a>(
         abstract_package,
         abstract_initial.into(),
         false,
+        None,
+    )
+}
+
+/// Open a refinement for explicit-state checking and bound the mapped
+/// initial-state construction by the concrete state budget.
+///
+/// # Errors
+///
+/// As [`open_systems`], plus an initial state limit or encoding refusal.
+pub fn open_systems_with_initial_limit<'a>(
+    refinement: &dyn RefinementRead,
+    concrete: &ModelSimulationRequest<'a>,
+    abstract_package: &'a dyn RefinementWorld,
+    abstract_initial: AbstractInitial,
+    max_states: usize,
+) -> Result<RefinementSystems<'a>, SubjectRefusal> {
+    open_systems_inner(
+        refinement,
+        concrete,
+        abstract_package,
+        abstract_initial,
+        false,
+        Some(max_states),
     )
 }
 
@@ -147,7 +178,32 @@ pub fn open_protocol_systems<'a>(
     over: ModelInstance,
     capacities: &[CapacityBinding],
 ) -> Result<RefinementSystems<'a>, ProtocolSystemsRefusal> {
-    let abstract_initial = abstract_initial.into();
+    open_protocol_systems_with_initial_limit(
+        refinement,
+        concrete,
+        abstract_package,
+        abstract_initial.into(),
+        over,
+        capacities,
+        None,
+    )
+}
+
+/// Open a protocol refinement with the optional explicit-state budget for
+/// mapped initial-state construction.
+///
+/// # Errors
+///
+/// As [`open_protocol_systems`], plus an initial state limit or encoding refusal.
+pub fn open_protocol_systems_with_initial_limit<'a>(
+    refinement: &dyn RefinementRead,
+    concrete: &ModelSimulationRequest<'a>,
+    abstract_package: &'a dyn RefinementWorld,
+    abstract_initial: AbstractInitial,
+    over: ModelInstance,
+    capacities: &[CapacityBinding],
+    max_states: Option<usize>,
+) -> Result<RefinementSystems<'a>, ProtocolSystemsRefusal> {
     let mapped = matches!(abstract_initial, AbstractInitial::Mapped);
     let mut systems = open_systems_inner(
         refinement,
@@ -155,6 +211,7 @@ pub fn open_protocol_systems<'a>(
         abstract_package,
         abstract_initial,
         true,
+        max_states,
     )?;
     let AbstractSide::Protocol { clause, .. } = refinement.abstract_side() else {
         return Err(SubjectRefusal::ProtocolAbstractSide.into());
@@ -230,6 +287,7 @@ fn open_systems_inner<'a>(
     abstract_package: &'a dyn RefinementWorld,
     abstract_initial: AbstractInitial,
     allow_protocol: bool,
+    max_states: Option<usize>,
 ) -> Result<RefinementSystems<'a>, SubjectRefusal> {
     if refinement.concrete_protocol().is_some() {
         return Err(SubjectRefusal::ProtocolSubject);
@@ -275,7 +333,7 @@ fn open_systems_inner<'a>(
     let mut abstract_system =
         ModelSystem::over_model(abstract_request.clone(), abstract_model).map_err(admit)?;
     if mapped {
-        let images = mapped_initial(refinement, &concrete_system, &abstract_system)?;
+        let images = mapped_initial(refinement, &concrete_system, &abstract_system, max_states)?;
         abstract_system = abstract_system.with_initial_states(images);
     }
     Ok(RefinementSystems {
@@ -298,11 +356,43 @@ fn mapped_initial(
     refinement: &dyn RefinementRead,
     concrete: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
+    max_states: Option<usize>,
 ) -> Result<Vec<(ModelState, SelectedAnchor)>, SubjectRefusal> {
     let mut images = Vec::new();
+    let mut admitted_roots = std::collections::BTreeSet::new();
     // One budget for every concrete initial state: the total of assignments.
     let mut budget = u128::from(abstract_system.max_candidates());
-    for initial in concrete.initial_states() {
+    let initial_states: Box<
+        dyn Iterator<Item = Result<fsl_eval::simulation::model::ModelSimState, InitialStateRefusal>>
+            + '_,
+    > = match max_states {
+        Some(limit) => Box::new(concrete.initial_for_check(limit)),
+        None => Box::new(concrete.generated_initial().map(Ok)),
+    };
+    for initial in initial_states {
+        let initial = match initial {
+            Ok(initial) => initial,
+            Err(InitialStateRefusal::OverBudget(limit)) => {
+                return Err(SubjectRefusal::InitialStateLimit(limit));
+            }
+            Err(InitialStateRefusal::Encoding(_)) => {
+                return Err(SubjectRefusal::InitialEncoding);
+            }
+            Err(InitialStateRefusal::Expansion(stop)) => {
+                return Err(SubjectRefusal::Stopped(stop));
+            }
+            Err(InitialStateRefusal::Construction(fault)) => {
+                return Err(SubjectRefusal::InitialConstruction(fault));
+            }
+        };
+        if max_states.is_some() {
+            let (key, _) = concrete
+                .state_key(&initial)
+                .map_err(|_| SubjectRefusal::InitialEncoding)?;
+            if !admitted_roots.insert(key) {
+                continue;
+            }
+        }
         let history = initial_history(refinement, concrete, initial.state());
         let Ok(mapped) = map_state(
             refinement,

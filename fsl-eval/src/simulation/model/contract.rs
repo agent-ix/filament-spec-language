@@ -377,7 +377,7 @@ impl<'a> ModelSystem<'a> {
     /// else an unnamed initialization. The anchor is no part of a state's
     /// key.
     pub fn declared_anchor(&self) -> SelectedAnchor {
-        self.initial
+        self.initial_base
             .first()
             .and_then(ModelSimState::anchor)
             .cloned()
@@ -396,7 +396,7 @@ impl<'a> ModelSystem<'a> {
     /// member, or a member type's field has no finite domain.
     pub fn declared_states(&self) -> Result<DeclaredStates<'_, 'a>, DeclaredStatesRefusal> {
         if self
-            .initial
+            .initial_base
             .iter()
             .any(|initial| !initial.state.extents.is_empty())
         {

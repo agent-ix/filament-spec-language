@@ -1457,7 +1457,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         if self.free_delay {
             return self
                 .system
-                .initial
+                .initial_states()
                 .iter()
                 .cloned()
                 .map(|discrete| TimedState::new(discrete, ClockValuation::new(Vec::new())))
@@ -1467,7 +1467,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         // reset when the slot becomes live.
         let zero = ClockValuation(vec![zero(); self.places.len()]);
         let mut discrete: Vec<(u64, ModelSimState)> = Vec::new();
-        for state in &self.system.initial {
+        for state in self.system.initial_states() {
             discrete.extend(self.unbounded_counts(state));
         }
         // Ascending count (FR-230 "Initial element count"), each base

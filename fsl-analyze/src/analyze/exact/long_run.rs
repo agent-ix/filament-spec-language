@@ -187,6 +187,7 @@ pub(super) fn run(
         &predicate,
         weight.map(|name| name.as_str()),
         &limits,
+        cancel,
     ) {
         Ok(solution) => solution,
         Err(UnboundedError::MaxRationalBits) => {
@@ -206,6 +207,18 @@ pub(super) fn run(
                 },
                 subject,
             )
+        }
+        Err(UnboundedError::MaxWorkingBytes) => {
+            return settled(
+                &ExactProbBuildIssue::Limit {
+                    limit: ModelCheckLimit::CertificateMaxWorkingBytes,
+                    value: limits.document.storage_bytes,
+                },
+                subject,
+            )
+        }
+        Err(UnboundedError::Cancelled(cause)) => {
+            return settled(&ExactProbBuildIssue::Cancelled(cause), subject)
         }
         Err(UnboundedError::ZeroWeightComponent) => {
             return EngineReport::Refused(Refusal::Unsupported(ZERO_WEIGHT_COMPONENT))
@@ -415,7 +428,7 @@ fn every_scheduler(
         other => unbounded_failure(other, limits, subject),
     };
     let (values, policy, solution, fair_witness) = if claim.fairness.is_empty() {
-        match decide_long_run_mdp(product, predicate, None, objective, limits) {
+        match decide_long_run_mdp(product, predicate, None, objective, limits, cancel) {
             Ok(solution) => (
                 solution.values.clone(),
                 solution.policy.clone(),
@@ -425,7 +438,7 @@ fn every_scheduler(
             Err(error) => return stopped(error),
         }
     } else {
-        match decide_fair_long_run_mdp(product, predicate, None, bound, limits) {
+        match decide_fair_long_run_mdp(product, predicate, None, bound, limits, cancel) {
             Ok(solution) => {
                 let fair_witness = solution.witness.clone();
                 let component_solution = LongRunResult {
@@ -537,12 +550,12 @@ fn every_scheduler(
         }
     }
     let chain = induced_chain(product, &policy);
-    let solved =
-        match crate::exact_probabilistic::decide_long_run_workload(&chain, predicate, None, limits)
-        {
-            Ok(solved) => solved,
-            Err(error) => return stopped(error),
-        };
+    let solved = match crate::exact_probabilistic::decide_long_run_workload(
+        &chain, predicate, None, limits, cancel,
+    ) {
+        Ok(solved) => solved,
+        Err(error) => return stopped(error),
+    };
     let Some(ExtRational::Finite(induced)) = solved.values.get(initial.index()) else {
         return broken();
     };
@@ -730,7 +743,7 @@ fn fair_randomized_refutation(
         Ok(chain) => chain,
         Err(_) => return broken(),
     };
-    let solution = match decide_long_run_workload(&chain, predicate, None, limits) {
+    let solution = match decide_long_run_workload(&chain, predicate, None, limits, cancel) {
         Ok(solution) => solution,
         Err(error) => return unbounded_failure(error, limits, subject),
     };

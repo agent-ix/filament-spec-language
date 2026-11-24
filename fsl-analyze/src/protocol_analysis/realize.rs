@@ -122,6 +122,7 @@ impl From<ExpansionStop> for RealizabilityRefusal {
 impl From<ArenaError> for RealizabilityRefusal {
     fn from(error: ArenaError) -> Self {
         match error {
+            ArenaError::Protocol(refusal) => Self::Protocol(refusal),
             ArenaError::View(refusal) => Self::View(refusal),
             ArenaError::Stopped(stop) => Self::Stopped(stop),
             ArenaError::UnnamedNode(path) => Self::UnnamedNode(path),
@@ -261,7 +262,8 @@ impl Game<'_, '_> {
         let mut stack: Vec<Pending> = self
             .arena
             .system
-            .initial()
+            .try_initial()
+            .map_err(RealizabilityRefusal::Protocol)?
             .into_iter()
             .enumerate()
             .rev()
@@ -988,7 +990,8 @@ impl Game<'_, '_> {
         let mut stack: Vec<(ProtocolState<Sc>, usize, Seen)> = self
             .arena
             .system
-            .initial()
+            .try_initial()
+            .map_err(RealizabilityRefusal::Protocol)?
             .into_iter()
             .rev()
             .map(|state| (state, 0, Seen::new(roles)))

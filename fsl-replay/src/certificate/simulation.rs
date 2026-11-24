@@ -470,8 +470,12 @@ pub fn check_simulation_certificate(
             Checker::Simulation.fault("the-subjects-of-a-refinement-open")
         }
         SubjectRefusal::ProtocolAbstractSide => ClosureRefusal::ProtocolAbstractSide,
-        SubjectRefusal::Stopped(_) => {
+        SubjectRefusal::Stopped(_) | SubjectRefusal::InitialStateLimit(_) => {
             Checker::Simulation.fault("the-abstract-initial-states-build-within-the-check-budget")
+        }
+        SubjectRefusal::InitialEncoding => ClosureRefusal::Encoding,
+        SubjectRefusal::InitialConstruction(_) => {
+            Checker::Simulation.fault("the-concrete-initial-state-construction-is-typed")
         }
     })?;
     for system in [&concrete, &abstract_system] {

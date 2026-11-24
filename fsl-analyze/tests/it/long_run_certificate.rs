@@ -10,8 +10,8 @@ use fsl_foundation::RequestIndex;
 use fsl_replay::{
     check_probability_certificate_document, read_long_run_probability_certificate,
     read_weighted_long_run_probability_certificate, write_long_run_probability_certificate,
-    ExactProbabilityCertificateCheck, LongRunProbabilityDocument, ModelCheckLimits,
-    ProbabilityDocumentError, ProbabilityDocumentLimits,
+    ExactProbabilityCertificateCheck, IncompleteCause, LongRunProbabilityDocument, ModelCheckLimit,
+    ModelCheckLimits, ProbabilityDocumentError, ProbabilityDocumentLimits, TerminalValue,
 };
 use ix_trace_rs::trace;
 
@@ -30,6 +30,187 @@ pub(super) fn limits() -> ProbabilityDocumentLimits {
 }
 fn claim(name: &str, predicate: &str, bound: &str) -> String {
     format!("probabilistic {name} using inf on M over (s: M::Server) under Steady on origin {{ long_run_fraction holds({predicate}) {bound} }}\n")
+}
+
+/// The workload settles the bound exceeded by its stationary distribution.
+#[trace("TC-638", "FR-203-AC-28")]
+#[test]
+fn workload_long_run_dense_working_bytes_limit_settles_incomplete() {
+    assert_long_run_dense_limit("Workload");
+}
+
+/// The workload's two-state recurrent component has a stationary system
+/// whose elimination stop is settled by the long-run adapter.
+#[trace("TC-638", "FR-203-AC-28")]
+#[test]
+fn workload_long_run_dense_elimination_cancellation_settles_incomplete() {
+    let world = finite(true);
+    prob_world::assert_dense_elimination_cancelled(
+        world.request("Fraction", ModelCheckLimits::default()),
+    );
+}
+
+/// The scheduler route settles the bound exceeded during policy evaluation.
+#[trace("TC-638", "FR-203-AC-28")]
+#[test]
+fn scheduler_long_run_dense_working_bytes_limit_settles_incomplete() {
+    assert_long_run_dense_limit("Schedulers");
+}
+
+fn assert_long_run_dense_limit(name: &str) {
+    use fsl_analyze::exact_probabilistic::{
+        build_product_with_key_budget, decide_long_run_mdp, decide_long_run_workload, ProbBuild,
+        UnboundedError, UnboundedObjective,
+    };
+    use fsl_foundation::IdentityLimits;
+    use fsl_replay::ProbabilityKeyAdmission;
+
+    const PACKAGE: &str = "test/longrun-dense";
+    let bits = [
+        "b0", "b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9", "b10", "b11",
+    ];
+    let flips = [
+        "flip0", "flip1", "flip2", "flip3", "flip4", "flip5", "flip6", "flip7", "flip8", "flip9",
+        "flip10", "flip11",
+    ];
+    // A reflected Gray-code cycle visits all bit patterns, changing one bit
+    // per step. Each frame enumerates two candidates for the bit it writes.
+    let odd = bits[1..].iter().fold("self.b0".to_owned(), |parity, bit| {
+        format!("not ({parity} = self.{bit})")
+    });
+    let declarations: String = flips
+        .iter()
+        .zip(bits)
+        .enumerate()
+        .map(|(index, (name, bit))| {
+            let guard = if index == 0 {
+                format!("not ({odd})")
+            } else {
+                let lower = bits[index - 1];
+                let selected = if index + 1 == bits.len() {
+                    format!("(self.{lower} or self.{bit})")
+                } else {
+                    format!("self.{lower}")
+                };
+                std::iter::once(format!("({odd})"))
+                    .chain(
+                        bits[..index - 1]
+                            .iter()
+                            .map(|bit| format!("not self.{bit}")),
+                    )
+                    .chain([selected])
+                    .collect::<Vec<_>>()
+                    .join(" and ")
+            };
+            format!(
+            "pre Guard{index} using v on M::Server::{name} {{ {guard} }}\n\
+             post Step{index} using v on M::Server::{name} {{ self.{bit} = not pre(self.{bit}) }}\n"
+        )
+        })
+        .collect();
+    let weights: String = flips
+        .iter()
+        .map(|name| format!("weight Server::{name} = 1; "))
+        .collect();
+    let world = World::new(&Model {
+        package: PACKAGE,
+        object: "Server",
+        population: "servers",
+        key: "s",
+        integers: Vec::new(),
+        fields: bits
+            .into_iter()
+            .map(|bit| (bit, prob_world::BOOLEAN.to_owned()))
+            .collect(),
+        operations: flips
+            .into_iter()
+            .zip(bits)
+            .map(|(name, bit)| Operation {
+                name,
+                parameters: Vec::new(),
+                modifies: vec![bit],
+                deletes: false,
+            })
+            .collect(),
+        body: format!("{declarations}workload Steady on M {{ {weights}}}\n")
+            + &claim("Workload", "s.b11", ">= rational(1,2)")
+            + &every_claim("Schedulers", "s.b11", ">= rational(1,2)"),
+        initial: serde_json::Value::Object(
+            bits.into_iter()
+                .map(|bit| (bit.to_owned(), serde_json::json!({"boolean": false})))
+                .collect(),
+        ),
+    });
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let cancel = Cancel::new();
+    let product_request = world.request(name, ModelCheckLimits::default());
+    let mut limits = product_request.limits;
+    let mut working_bytes = 0;
+    let mut meter = filament_exact::Meter::new(product_request.subject.simulation.meter)
+        .with_cancel(cancel.clone());
+    let mut admission =
+        ProbabilityKeyAdmission::new(&mut meter, &mut working_bytes, u64::MAX, &cancel);
+    let ProbBuild::Built(product) = build_product_with_key_budget(
+        product_request,
+        IdentityLimits::default(),
+        &mut admission,
+        &cancel,
+    )
+    .expect("the product fits the working storage bound") else {
+        panic!("the long-run product must build");
+    };
+    assert_eq!(product.states.len(), 1 << bits.len());
+    let rows = product.states.len() as u64;
+    let cell_bytes =
+        (std::mem::size_of::<Rational>() + std::mem::size_of::<num_bigint::BigInt>()) as u64;
+    let dense_bytes = rows * (rows + 1) * cell_bytes;
+    let bound = working_bytes
+        .checked_add(1)
+        .expect("the measured key storage fits");
+    assert!(
+        bound < dense_bytes,
+        "{name}: key admission needs {working_bytes} bytes and the dense system needs {dense_bytes}",
+    );
+    eprintln!("{name}: key admission {working_bytes} bytes; request bound {bound} bytes; dense system {dense_bytes} bytes");
+    limits.document.storage_bytes = bound;
+    let predicate: Vec<_> = product.labels.iter().map(|labels| labels[0]).collect();
+    let solve = if name == "Workload" {
+        decide_long_run_workload(&product, &predicate, None, &limits, &cancel).map(|_| ())
+    } else {
+        decide_long_run_mdp(
+            &product,
+            &predicate,
+            None,
+            UnboundedObjective::Min,
+            &limits,
+            &cancel,
+        )
+        .map(|_| ())
+    };
+    assert!(
+        matches!(solve, Err(UnboundedError::MaxWorkingBytes)),
+        "{name} needs more than the {working_bytes} bytes used by key admission: {solve:?}",
+    );
+
+    let mut request = world.request(name, ModelCheckLimits::default());
+    request.limits = limits;
+    let records = analyze_items(
+        &engines,
+        vec![exact_probabilistic_item(RequestIndex::new(0), request)],
+        &Cancel::new(),
+    );
+    let terminal = records[0]
+        .terminal()
+        .unwrap_or_else(|| panic!("{name} must settle incomplete: {:?}", records[0].settlement));
+    assert_eq!(
+        terminal.value(),
+        &TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::CertificateMaxWorkingBytes,
+            value: bound,
+            required: None,
+        }),
+        "{name}",
+    );
 }
 pub(super) fn availability() -> World {
     let claims = [

@@ -27,7 +27,9 @@ use filament_exact::Cancel;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{SafetyState, SafetyTranslation};
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, TerminalClass};
-use fsl_eval::simulation::{SymmetryGroup, TransitionSystem};
+use fsl_eval::simulation::{
+    ExpansionStop, InitialStateRefusal, SubjectSystem, SymmetryGroup, TransitionSystem,
+};
 use fsl_replay::{
     ClosureCertificate, CounterexampleKind, ItemRefusal, ModelCheckLimit, ModelCheckLimits,
     ModelCheckOutcome, ModelStep, OpenCause, ProductStateRef, RunEnd, RunStats,
@@ -36,11 +38,83 @@ use fsl_replay::{
 
 use super::super::ample::Por;
 use super::{
-    cancelled, expansion_stop, stopped, Budgets, ExploredStateGraph, GraphEdge, GraphNode,
-    GraphStats, Halt, InstanceView, NodeIndex, PredicateLabel,
+    Budgets, ExploredStateGraph, GraphEdge, GraphNode, GraphStats, Halt, InstanceView, NodeIndex,
+    PredicateLabel, cancelled, expansion_stop, stopped,
 };
-use crate::model_check::check::{fault, widen};
 use crate::model_check::ModelCheckRefusal;
+use crate::model_check::check::{fault, widen};
+use crate::model_check::initial::{Refused, admit_initial};
+
+/// Why keying one initial state failed.
+enum Keying {
+    /// Canonicalising it stopped.
+    Stop(ExpansionStop),
+    /// Its key has no encoding.
+    Refused(ModelCheckRefusal),
+}
+
+/// The admitted roots and the declaration-order mapping both phases use.
+pub(super) struct Initial {
+    nodes: Vec<(Vec<u8>, usize, ModelSimState)>,
+    keys: Vec<Vec<u8>>,
+    pub(super) starts: Vec<ModelSimState>,
+}
+
+impl Initial {
+    /// Admit before sampling or checking symmetry closure. Keep the concrete
+    /// starts only when one of those steps needs them.
+    pub(super) fn admit(
+        system: &ModelSystem<'_>,
+        symmetry: &SymmetryGroup,
+        max_states: usize,
+        retain_starts: bool,
+        budgets: Budgets,
+    ) -> Result<Result<Self, Halt>, ModelCheckRefusal> {
+        let mut keys = Vec::new();
+        let mut starts = Vec::new();
+        let nodes = admit_initial(
+            system.initial_for_check_with_symmetry(max_states, symmetry),
+            max_states,
+            |_, start| {
+                let (state, _) = system
+                    .canonicalise(&start, symmetry)
+                    .map_err(Keying::Stop)?;
+                let (key, _) = system
+                    .state_key(&state)
+                    .map_err(|refused| Keying::Refused(refused.into()))?;
+                keys.push(key.clone());
+                if retain_starts {
+                    starts.push(start);
+                }
+                Ok((key, state))
+            },
+        );
+        match nodes {
+            Ok(nodes) => Ok(Ok(Self {
+                nodes,
+                keys,
+                starts,
+            })),
+            Err(Refused::OverBudget) => {
+                Ok(Err(stopped(ModelCheckLimit::MaxStates, widen(max_states))))
+            }
+            Err(Refused::Construction(InitialStateRefusal::OverBudget(_))) => {
+                Ok(Err(stopped(ModelCheckLimit::MaxStates, widen(max_states))))
+            }
+            Err(Refused::Construction(InitialStateRefusal::Encoding(refusal))) => {
+                Err(ModelCheckRefusal::Encoding(refusal))
+            }
+            Err(Refused::Construction(InitialStateRefusal::Expansion(stop))) => {
+                Ok(Err(expansion_stop(&stop, budgets)?))
+            }
+            Err(Refused::Construction(InitialStateRefusal::Construction(refusal))) => {
+                Err(ModelCheckRefusal::Protocol(refusal))
+            }
+            Err(Refused::Keying(Keying::Stop(stop))) => Ok(Err(expansion_stop(&stop, budgets)?)),
+            Err(Refused::Keying(Keying::Refused(refusal))) => Err(refusal),
+        }
+    }
+}
 
 /// The explored graph of a run that explored nothing.
 pub(super) fn empty(end: RunEnd) -> ExploredStateGraph {
@@ -131,7 +205,7 @@ impl Walk {
 
 impl Exploration<'_, '_, '_> {
     /// Explore the subject.
-    pub(super) fn run(&self) -> Result<Explored, ModelCheckRefusal> {
+    pub(super) fn run(&self, initial: Initial) -> Result<Explored, ModelCheckRefusal> {
         let mut walk = Walk {
             graph: empty(RunEnd::Completed),
             states: Vec::new(),
@@ -141,59 +215,33 @@ impl Exploration<'_, '_, '_> {
             reduced: !self.symmetry.is_trivial(),
             partial_order_reduced: false,
         };
-        let mut initial = Vec::new();
-        for (index, state) in self.system.initial().into_iter().enumerate() {
-            let (state, _) = match self.system.canonicalise(&state, self.symmetry) {
-                Ok(canonical) => canonical,
-                Err(stop) => {
-                    walk.graph.end = expansion_stop(&stop, self.budgets)?.end();
-                    return self.finish(walk);
-                }
-            };
-            let (key, _) = self.system.state_key(&state)?;
-            initial.push((key, index, state));
-        }
-        let count = initial.len();
-        initial.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+        let Initial {
+            nodes,
+            keys,
+            starts: _,
+        } = initial;
         let mut known = BTreeMap::new();
-        let mut of_initial = vec![None; count];
-        let distinct = {
-            let mut keys: Vec<&Vec<u8>> = initial.iter().map(|entry| &entry.0).collect();
-            keys.dedup();
-            keys.len()
-        };
-        if distinct > self.limits.limits.max_states {
-            walk.graph.end = stopped(
-                ModelCheckLimit::MaxStates,
-                widen(self.limits.limits.max_states),
-            )
-            .end();
-            return self.finish(walk);
+        for (key, index, state) in nodes {
+            let node = walk.insert(
+                state,
+                fsl_eval::simulation::StateKey::from_canonical_bytes(key.clone()),
+                0,
+                None,
+                index,
+            );
+            known.insert(key, node);
         }
-        for (key, index, state) in initial {
-            // Equal keys coalesce into the first initial state that has the key.
-            let node = match known.get(&key) {
-                Some(node) => *node,
-                None => {
-                    let node = walk.insert(
-                        state,
-                        fsl_eval::simulation::StateKey::from_canonical_bytes(key.clone()),
-                        0,
-                        None,
-                        index,
-                    );
-                    known.insert(key, node);
-                    node
-                }
-            };
-            if let Some(slot) = of_initial.get_mut(index) {
-                *slot = Some(NodeIndex(node));
-            }
-        }
-        walk.graph.initial = of_initial
-            .into_iter()
-            .collect::<Option<Vec<_>>>()
-            .ok_or_else(|| fault("every-initial-state-has-a-node"))?;
+        let of_initial = keys
+            .iter()
+            .map(|key| {
+                known
+                    .get(key)
+                    .copied()
+                    .map(NodeIndex)
+                    .ok_or_else(|| fault("every-initial-state-has-a-node"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        walk.graph.initial = of_initial;
         while let Some(at) = walk.queue.pop_front() {
             match self.visit(&mut walk, at, &mut known)? {
                 Ok(()) => {}
