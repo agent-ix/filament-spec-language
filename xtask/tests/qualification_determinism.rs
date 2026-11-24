@@ -239,8 +239,8 @@ fn cargo_child(
     if concurrent {
         command.env(CONCURRENT_CHILD, "1");
     }
-    let target = std::env::current_exe()
-        .expect("test executable path is available")
+    let executable = std::env::current_exe().expect("test executable path is available");
+    let target = executable
         .parent()
         .and_then(Path::parent)
         .and_then(Path::parent)

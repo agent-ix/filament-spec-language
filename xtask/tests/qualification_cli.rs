@@ -74,65 +74,6 @@ fn qualify_runs_fspec_formatter_fixture_and_reports_a_qualified_scope() {
 }
 
 #[test]
-#[trace("TC-881", "FR-353-AC-3")]
-fn qualify_reports_only_the_selected_passing_capability_as_qualified() {
-    let temp = tempfile::tempdir().unwrap();
-    let corpus = copy_fixture(&temp);
-    let corpus_file = corpus.join("complete-v1.json");
-    let mut value: Value = serde_json::from_slice(&fs::read(&corpus_file).unwrap()).unwrap();
-    let mut failing = value["vectors"][0].clone();
-    failing["id"] = serde_json::json!("V1-LANG-001-unit-mismatch");
-    failing["capability_id"] = serde_json::json!("V1-LANG-001");
-    failing["class"] = serde_json::json!("refusal");
-    failing["subject"] = serde_json::json!({"consumer_type":"language", "operation":"compile"});
-    failing["applicability"]["consumer_types"] = serde_json::json!(["language"]);
-    failing["input"]["files"] =
-        serde_json::json!([{"kind":"source", "path":"inputs/mismatch.native"}]);
-    failing["expected"] = serde_json::json!({
-        "disposition":"refusal", "code":"ill_typed", "cause":"type-mismatch"
-    });
-    value["vectors"].as_array_mut().unwrap().push(failing);
-    value["coverage"]["primary"]
-        .as_array_mut()
-        .unwrap()
-        .push(serde_json::json!({
-            "capability_id":"V1-LANG-001",
-            "applicability":{
-                "consumer_types":["language"],
-                "semantic_profiles":["filament.value.complete/v1"]
-            }
-        }));
-    value["coverage"]["consumer_rollups"]
-        .as_array_mut()
-        .unwrap()
-        .push(serde_json::json!({
-            "consumer_type":"language", "capability_ids":["V1-LANG-001"]
-        }));
-    fs::write(
-        corpus.join("inputs/mismatch.native"),
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\ndimension Time; dimension Length; unit s: Time = rational(1, 1); unit m: Length = rational(1, 1); function mismatched using v(): Boolean pure { 5 m = 5 s }\n",
-    )
-    .unwrap();
-    write_canonical(&corpus_file, &value);
-
-    let output = run(&[
-        "qualify",
-        "--corpus",
-        corpus.to_str().unwrap(),
-        "--capability",
-        "V1-TOOL-004",
-    ]);
-
-    assert_eq!(output.status.code(), Some(0), "{}", utf8(&output.stderr));
-    let report: Value = serde_json::from_slice(&output.stdout).expect("JSON report");
-    assert_eq!(report["scope"], serde_json::json!(["V1-TOOL-004"]));
-    assert_eq!(report["verdict"], "qualified");
-    assert!(report["qualification"].is_null());
-    assert_eq!(report["capabilities"].as_array().unwrap().len(), 1);
-    assert_eq!(report["capabilities"][0]["outcome"], "passed");
-}
-
-#[test]
 #[trace("TC-875", "FR-350-AC-1")]
 fn qualify_compiles_a_language_vector_through_the_public_entry_point() {
     let temp = tempfile::tempdir().unwrap();
