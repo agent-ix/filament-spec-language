@@ -711,6 +711,17 @@ impl<'a> Iterator for CheckedChildren<'a> {
 
     #[implements("NFR-141-AC-6")]
     fn next(&mut self) -> Option<Self::Item> {
+        #[cfg(feature = "child-traversal-profile")]
+        {
+            let child = super::child_traversal_profile::measure_child(false, || {
+                self.ids.next().map(|id| self.body.node(id))
+            });
+            if child.is_some() {
+                super::child_traversal_profile::note_child_yielded();
+            }
+            return child;
+        }
+        #[cfg(not(feature = "child-traversal-profile"))]
         self.ids.next().map(|id| self.body.node(id))
     }
 
@@ -722,6 +733,17 @@ impl<'a> Iterator for CheckedChildren<'a> {
 impl DoubleEndedIterator for CheckedChildren<'_> {
     #[implements("NFR-141-AC-6")]
     fn next_back(&mut self) -> Option<Self::Item> {
+        #[cfg(feature = "child-traversal-profile")]
+        {
+            let child = super::child_traversal_profile::measure_child(false, || {
+                self.ids.next_back().map(|id| self.body.node(id))
+            });
+            if child.is_some() {
+                super::child_traversal_profile::note_child_yielded();
+            }
+            return child;
+        }
+        #[cfg(not(feature = "child-traversal-profile"))]
         self.ids.next_back().map(|id| self.body.node(id))
     }
 }
@@ -732,7 +754,9 @@ impl std::iter::FusedIterator for CheckedChildren<'_> {}
 
 /// Allocation-free operand identifiers for a checked node kind.
 pub struct NodeChildIds<'a, C> {
-    prefix: std::array::IntoIter<Option<C>, 3>,
+    prefix: [Option<C>; 3],
+    prefix_front: usize,
+    prefix_back: usize,
     tail: NodeChildTail<'a, C>,
     remaining: usize,
 }
@@ -907,10 +931,14 @@ impl<'a, C: Copy> NodeChildIds<'a, C> {
 
     #[implements("NFR-141-AC-6")]
     fn with_children(prefix: [Option<C>; 3], tail: NodeChildTail<'a, C>) -> Self {
-        let prefix_len = prefix.iter().flatten().count();
+        let prefix_len = usize::from(prefix[0].is_some())
+            + usize::from(prefix[1].is_some())
+            + usize::from(prefix[2].is_some());
         let remaining = prefix_len + tail.len();
         Self {
-            prefix: prefix.into_iter(),
+            prefix,
+            prefix_front: 0,
+            prefix_back: 3,
             tail,
             remaining,
         }
@@ -922,11 +950,19 @@ impl<C: Copy> Iterator for NodeChildIds<'_, C> {
 
     #[implements("NFR-141-AC-6")]
     fn next(&mut self) -> Option<Self::Item> {
-        for child in self.prefix.by_ref().flatten() {
-            self.remaining -= 1;
-            return Some(child);
+        while self.prefix_front < self.prefix_back {
+            let child = self.prefix[self.prefix_front];
+            self.prefix_front += 1;
+            if child.is_some() {
+                self.remaining -= 1;
+                return child;
+            }
         }
-        self.tail.next().inspect(|_| self.remaining -= 1)
+        let child = self.tail.next();
+        if child.is_some() {
+            self.remaining -= 1;
+        }
+        child
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -937,10 +973,19 @@ impl<C: Copy> Iterator for NodeChildIds<'_, C> {
 impl<C: Copy> DoubleEndedIterator for NodeChildIds<'_, C> {
     #[implements("NFR-141-AC-6")]
     fn next_back(&mut self) -> Option<Self::Item> {
-        self.tail
-            .next_back()
-            .or_else(|| self.prefix.by_ref().rev().flatten().next())
-            .inspect(|_| self.remaining -= 1)
+        if let Some(child) = self.tail.next_back() {
+            self.remaining -= 1;
+            return Some(child);
+        }
+        while self.prefix_front < self.prefix_back {
+            self.prefix_back -= 1;
+            let child = self.prefix[self.prefix_back];
+            if child.is_some() {
+                self.remaining -= 1;
+                return child;
+            }
+        }
+        None
     }
 }
 
@@ -1115,11 +1160,18 @@ impl<'a> CheckedNode<'a> {
 
     /// Direct operands in evaluation order.
     #[implements("NFR-141-AC-6")]
+    #[inline]
     pub fn children(self) -> CheckedChildren<'a> {
-        CheckedChildren {
+        let children = || CheckedChildren {
             body: self.body,
             ids: NodeChildIds::new(self.kind()),
+        };
+        #[cfg(feature = "child-traversal-profile")]
+        {
+            super::child_traversal_profile::measure_child(true, children)
         }
+        #[cfg(not(feature = "child-traversal-profile"))]
+        children()
     }
 
     /// Visit direct operands in evaluation order without allocating a list.

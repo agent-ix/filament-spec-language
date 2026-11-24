@@ -3,11 +3,9 @@
 
 use fsl_bench::check::{call_head, completed_with_five, linked_chain};
 use fsl_bench::evaluator_cost::{
-    self, AllocationProbe, ReportRole, CALL_CHAIN_SIZES, EVALUATOR_CALL_CHAIN_AXIS,
-    EVALUATOR_KERNEL_AXIS,
+    self, ReportRole, CALL_CHAIN_SIZES, EVALUATOR_CALL_CHAIN_AXIS, EVALUATOR_KERNEL_AXIS,
 };
 use fsl_bench::kernel::{KernelCase, KernelKind, SIZES};
-use fsl_semantics::check::CheckedNode;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::string_edge;
 use std::error::Error;
@@ -61,14 +59,7 @@ fn profile(target: &Path, axis: &str) -> Result<(), Box<dyn Error>> {
             for kind in KernelKind::ALL {
                 for size in SIZES {
                     let case = KernelCase::new(kind, size);
-                    let body = case
-                        .package
-                        .graph()
-                        .function_state(0)
-                        .expect("kernel function exists")
-                        .body;
-                    let nodes = checked_nodes([body]);
-                    record_case(target, run_id, axis, kind.name(), size, &nodes, || {
+                    record_case(target, run_id, axis, kind.name(), size, || {
                         black_box(case.call(&objects));
                     })?;
                 }
@@ -77,15 +68,7 @@ fn profile(target: &Path, axis: &str) -> Result<(), Box<dyn Error>> {
         EVALUATOR_CALL_CHAIN_AXIS => {
             for size in CALL_CHAIN_SIZES {
                 let package = linked_chain(size);
-                let roots = (0..size).map(|index| {
-                    package
-                        .graph()
-                        .function_state(index)
-                        .expect("linked-chain function exists")
-                        .body
-                });
-                let nodes = checked_nodes(roots);
-                record_case(target, run_id, axis, "linked_chain", size, &nodes, || {
+                record_case(target, run_id, axis, "linked_chain", size, || {
                     let evaluation = call_head(&package, &objects);
                     assert!(completed_with_five(&evaluation));
                     black_box(evaluation);
@@ -97,47 +80,19 @@ fn profile(target: &Path, axis: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn checked_nodes<'a>(roots: impl IntoIterator<Item = CheckedNode<'a>>) -> Vec<CheckedNode<'a>> {
-    let mut pending: Vec<_> = roots.into_iter().collect();
-    let mut nodes = Vec::new();
-    while let Some(node) = pending.pop() {
-        nodes.push(node);
-        pending.extend(node.children());
-    }
-    nodes
-}
-
 fn record_case(
     target: &Path,
     run_id: u128,
     axis: &str,
     case: &str,
     size: usize,
-    nodes: &[CheckedNode<'_>],
     evaluate: impl FnOnce(),
 ) -> Result<(), Box<dyn Error>> {
-    let child_allocations = allocation_counter::measure(|| {
-        for node in nodes.iter().copied() {
-            for child in node.children() {
-                black_box(child);
-            }
-        }
-    });
-    let evaluation_allocations = allocation_counter::measure(evaluate);
-    evaluator_cost::record_probe(
-        target,
-        run_id,
-        axis,
-        case,
-        size,
-        AllocationProbe {
-            child_traversal_allocation_count: child_allocations.count_total,
-            evaluation_allocation_count: evaluation_allocations.count_total,
-        },
-    )?;
+    let traversal =
+        evaluator_cost::record_evaluation_probe(target, run_id, axis, case, size, evaluate)?;
     println!(
-        "{axis}/{case}/{size}: child traversal allocations {} of {} evaluation allocations",
-        child_allocations.count_total, evaluation_allocations.count_total
+        "{axis}/{case}/{size}: {} child iterators yielded {} children with {} allocations",
+        traversal.iterator_count, traversal.child_count, traversal.allocation_count
     );
     Ok(())
 }

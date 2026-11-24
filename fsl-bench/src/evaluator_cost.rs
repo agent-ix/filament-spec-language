@@ -42,6 +42,35 @@ pub struct AllocationProbe {
     pub evaluation_allocation_count: u64,
 }
 
+/// Evaluate one real case while recording dynamic child traversal allocations.
+#[cfg(feature = "allocation-probe")]
+pub fn record_evaluation_probe(
+    target: &Path,
+    run_id: u128,
+    axis: &str,
+    case: &str,
+    size: usize,
+    evaluate: impl FnOnce(),
+) -> Result<fsl_semantics::check::ChildTraversalProfile, Box<dyn Error>> {
+    use fsl_semantics::check::{begin_child_traversal_profile, end_child_traversal_profile};
+
+    begin_child_traversal_profile();
+    let evaluation = allocation_counter::measure(evaluate);
+    let traversal = end_child_traversal_profile();
+    record_probe(
+        target,
+        run_id,
+        axis,
+        case,
+        size,
+        AllocationProbe {
+            child_traversal_allocation_count: traversal.allocation_count,
+            evaluation_allocation_count: evaluation.count_total,
+        },
+    )?;
+    Ok(traversal)
+}
+
 /// Whether a report is describing the baseline A or verifying candidate B.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReportRole {

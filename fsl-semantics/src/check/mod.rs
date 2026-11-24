@@ -136,6 +136,8 @@ pub mod imports;
 #[cfg(not(any(test, feature = "test-support")))]
 pub(crate) mod imports;
 mod ir;
+#[cfg(feature = "child-traversal-profile")]
+mod child_traversal_profile;
 mod key_order;
 pub use key_order::node_keys_within;
 mod layer;
@@ -501,6 +503,10 @@ pub use ir::{
     EqualityOperandTypeFact, EqualityOperandTypeIdentity, EqualityProducerData,
     EqualityProducerIdentity, EqualityUnitIdentityFact, EqualityUnitOperandRole,
     EqualityUnitTypeFact, Node, NodeChildIds, NodeId, Slot,
+};
+#[cfg(feature = "child-traversal-profile")]
+pub use child_traversal_profile::{
+    begin_child_traversal_profile, end_child_traversal_profile, ChildTraversalProfile,
 };
 
 pub(crate) use assemble::dense_model_data_environment;

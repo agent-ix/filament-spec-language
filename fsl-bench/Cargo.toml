@@ -50,7 +50,7 @@ nix = { version = "0.31.3", default-features = false, features = ["resource"] }
 [features]
 counters = []
 property-generators = ["dep:proptest", "dep:fsl-proptest-policy"]
-allocation-probe = ["dep:allocation-counter"]
+allocation-probe = ["dep:allocation-counter", "fsl-semantics/child-traversal-profile"]
 
 [dev-dependencies]
 # Grammar derivations are consumed only by the property-generator acceptance

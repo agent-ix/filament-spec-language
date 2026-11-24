@@ -1467,6 +1467,7 @@ dependencies = [
 name = "fsl-semantics"
 version = "0.1.0"
 dependencies = [
+ "allocation-counter",
  "agent-ix-extraction-frontend",
  "agent-ix-semantic-ir",
  "filament-checked",

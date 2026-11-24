@@ -5,7 +5,9 @@ use fsl_bench::evaluator_cost::{
     self, AllocationProbe, ReportRole, CALL_CHAIN_SIZES, EVALUATOR_CALL_CHAIN_AXIS,
     EVALUATOR_KERNEL_AXIS, PROFILE_AXES, REPORT_FIELDS,
 };
+use fsl_bench::kernel::KernelCase;
 use fsl_bench::kernel::{KernelKind, SIZES};
+use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
 use std::collections::BTreeSet;
 use std::fs;
@@ -211,4 +213,67 @@ fn report_refuses_a_missing_per_size_probe() {
         evaluator_cost::emit_report(&target.0, EVALUATOR_CALL_CHAIN_AXIS, ReportRole::Candidate)
             .expect_err("missing per-size evidence prevents report emission");
     assert!(error.to_string().contains("missing allocation probe"));
+}
+
+#[test]
+#[trace("NFR-141-AC-7")]
+fn emitted_candidate_artifact_uses_dynamic_evaluator_traversal_allocations() {
+    let target = TempTarget::new();
+    let run_id = evaluator_cost::start_invocation(&target.0)
+        .expect("the benchmark invocation is initialized");
+    let case = KernelCase::new(KernelKind::ArithmeticRecursion, 5);
+    let objects = ObjectEnvironment::default();
+    let traversal = evaluator_cost::record_evaluation_probe(
+        &target.0,
+        run_id,
+        EVALUATOR_KERNEL_AXIS,
+        "sum",
+        5,
+        || {
+            let result = case.call(&objects);
+            assert!(case.matches_rust_reference(&result));
+            std::hint::black_box(result);
+        },
+    )
+    .expect("the production evaluator call records its dynamic traversal");
+    assert!(traversal.iterator_count > 0);
+    assert!(traversal.child_count > 0);
+
+    for (axis, _) in PROFILE_AXES {
+        for (case_name, size) in expected_cases(axis) {
+            if axis == EVALUATOR_KERNEL_AXIS && case_name == "sum" && size == 5 {
+                continue;
+            }
+            evaluator_cost::record_probe(
+                &target.0,
+                run_id,
+                axis,
+                case_name,
+                size,
+                AllocationProbe {
+                    child_traversal_allocation_count: 0,
+                    evaluation_allocation_count: 100,
+                },
+            )
+            .expect("the other complete-matrix probes are recorded");
+            target.write_estimate(axis, case_name, size, 100.0 + size as f64);
+        }
+    }
+    target.write_estimate(EVALUATOR_KERNEL_AXIS, "sum", 5, 100.0);
+
+    let artifact =
+        evaluator_cost::emit_report(&target.0, EVALUATOR_KERNEL_AXIS, ReportRole::Candidate)
+            .expect("the production candidate report is emitted");
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(artifact).expect("report exists"))
+            .expect("report is JSON");
+    let row = report["rows"]
+        .as_array()
+        .expect("report rows exist")
+        .iter()
+        .find(|row| row["case"] == "sum" && row["size"] == 5)
+        .expect("the profiled evaluator case is present");
+    assert_eq!(row["child_traversal_allocation_count"], 0);
+    assert_eq!(row["child_traversal_allocation_share"], 0.0);
+    assert_eq!(row["evaluation_allocation_count"], 100);
 }
