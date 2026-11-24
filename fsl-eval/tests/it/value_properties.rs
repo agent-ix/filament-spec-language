@@ -50,8 +50,8 @@
 //!   declared domain (an intermediate typed at the wide domain, for example by
 //!   a `let`, is refused correctly, FR-495-AC-14), so a `let` binds only a
 //!   root.
-//! - `min` and `max` are `reduce` over a `Sequence` only: `reduce` over a
-//!   `Set` or `Bag` is refused `operator-ineligible`.
+//! - FR-701 catalogues bounded ordered `min` and `max` reductions over a
+//!   `Set` or `Bag`.
 //! - Equality of two integers or text lengths is written over
 //!   `convert<Integer>(..)`: `=` of two `Int[..]` operands with different
 //!   inferred intervals is refused `unproved-range`.
@@ -60,7 +60,7 @@ use filament_eval::FamilyOutcome;
 use filament_exact::{
     admit_text, form_collection, CardinalityBound, CollectionKind, CollectionType, Decimal,
     FieldValue, Integer, IntegerInterval, Meter, OptionValue, Outcome, Rational, Refusal,
-    ScalarLimits, TextPayload, TextProfile, TextType, Undefined, Value, ValueType,
+    RationalDomain, ScalarLimits, TextPayload, TextProfile, TextType, Undefined, Value, ValueType,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
@@ -292,6 +292,11 @@ enum Arg {
         minimum: u64,
         items: Vec<i64>,
     },
+    CollRat {
+        kind: CollKind,
+        minimum: u64,
+        items: Vec<(i128, i128)>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -337,6 +342,36 @@ fn collection_value(kind: CollKind, minimum: u64, items: &[i64]) -> Value {
         .expect("the collection forms")
 }
 
+fn rational_domain() -> RationalDomain {
+    RationalDomain::new(int_interval(0, 4), int_interval(1, 2)).expect("bounded rational domain")
+}
+
+fn rational_collection_value(kind: CollKind, minimum: u64, items: &[(i128, i128)]) -> Value {
+    let kind = match kind {
+        CollKind::Sequence => CollectionKind::Sequence,
+        CollKind::Set => CollectionKind::Set,
+        CollKind::Bag => CollectionKind::Bag,
+    };
+    let ty = CollectionType::new(
+        kind,
+        ValueType::Rational(rational_domain()),
+        Some(CardinalityBound::new(minimum, 6).expect("bound")),
+    );
+    let members = items
+        .iter()
+        .map(|(numerator, denominator)| {
+            Value::Rational(
+                Rational::new(Integer::from(*numerator), Integer::from(*denominator))
+                    .expect("nonzero denominator"),
+            )
+        })
+        .collect();
+    form_collection(&ty, members, &mut Meter::new(UNLIMITED))
+        .expect("members are admitted")
+        .completed()
+        .expect("the collection forms")
+}
+
 impl Arg {
     fn value(&self) -> Value {
         match self {
@@ -370,6 +405,11 @@ impl Arg {
                 minimum,
                 items,
             } => collection_value(*kind, *minimum, items),
+            Arg::CollRat {
+                kind,
+                minimum,
+                items,
+            } => rational_collection_value(*kind, *minimum, items),
         }
     }
 }
@@ -2105,6 +2145,40 @@ fn p5_min_max_aggregates_equal_the_reference_fold_in_any_order() {
         },
     )
     .unwrap();
+}
+
+/// FR-701-AC-3: bounded Rational Bag reductions return the same extremum for
+/// every permutation of a fixed nonempty input.
+#[trace("TC-1907", "FR-701-AC-3")]
+#[test]
+fn bounded_rational_bag_min_max_reductions_are_permutation_invariant() {
+    let source_for = |operator: &str| {
+        unit(
+            None,
+            "type R = Rational[0, 4; 1, 2];\n",
+            "xs: Bag<R>[1, 3]",
+            "R",
+            &format!("reduce<R>(acc, x in xs: {operator}(acc, x))"),
+        )
+    };
+    let items = vec![(1, 2), (4, 1), (3, 2)];
+    let mut reversed = items.clone();
+    reversed.reverse();
+    let mut rotated = items.clone();
+    rotated.rotate_left(1);
+    for (operator, expected) in [("min", "q:1/2"), ("max", "q:4/1")] {
+        let source = source_for(operator);
+        let package = try_compile(&source, CheckMode::Linked)
+            .unwrap_or_else(|error| panic!("{error}\n{source}"));
+        for order in [&items, &reversed, &rotated] {
+            let args = [Arg::CollRat {
+                kind: CollKind::Bag,
+                minimum: 1,
+                items: order.clone(),
+            }];
+            assert_eq!(evaluate(&package, &args), Ok(expected.to_owned()), "{source}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------- negatives

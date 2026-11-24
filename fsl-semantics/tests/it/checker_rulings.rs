@@ -730,6 +730,8 @@ fn bounded_min_max_folds_and_reductions_check() {
         "function imax using v(i: Set<Int[0, 9]>[0, 3]): BI pure { fold<BI>(acc, x in i: max(acc, x), identity: 0) }",
         "function rmin using v(r: Bag<Rational[0, 4; 1, 2]>[0, 3]): R pure { fold<R>(acc, x in r: min(acc, x), identity: rational(4, 1)) }",
         "function rmax using v(r: Bag<Rational[0, 4; 1, 2]>[0, 3]): R pure { fold<R>(acc, x in r: max(acc, x), identity: rational(0, 1)) }",
+        "function rrmin using v(r: Bag<Rational[0, 4; 1, 2]>[1, 3]): R pure { reduce<R>(acc, x in r: min(acc, x)) }",
+        "function rrmax using v(r: Bag<Rational[0, 4; 1, 2]>[1, 3]): R pure { reduce<R>(acc, x in r: max(acc, x)) }",
         "function irmin using v(i: Set<Int[0, 9]>[1, 3]): BI pure { reduce<BI>(acc, x in i: min(acc, x)) }",
         "function irmax using v(i: Set<Int[0, 9]>[1, 3]): BI pure { reduce<BI>(acc, x in i: max(acc, x)) }",
     ] {
