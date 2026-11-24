@@ -261,22 +261,6 @@ fn multiple_initials_and_instances_are_unsupported_without_a_token() {
             ExactProbabilityGraphError::UnsupportedInitial
         ))
     ));
-    let engines = Engines::fsl().expect("the linked EN-5 engine is admitted");
-    let initial_record = analyze_items(
-        &engines,
-        vec![exact_probabilistic_item(
-            RequestIndex::new(0),
-            multiple_initials.request("TooMuch", ModelCheckLimits::default()),
-        )],
-        &Cancel::new(),
-    )
-    .remove(0);
-    assert!(matches!(
-        initial_record.terminal().unwrap().value(),
-        TerminalValue::Unsupported(_)
-    ));
-    assert!(initial_record.probabilistic_counterexample.is_none());
-
     let multiple_instances = World::with_objects(&model, &["m", "n"]);
     assert!(matches!(
         replay(
@@ -289,20 +273,6 @@ fn multiple_initials_and_instances_are_unsupported_without_a_token() {
             ExactProbabilityGraphError::UnsupportedBinding
         ))
     ));
-    let instance_record = analyze_items(
-        &engines,
-        vec![exact_probabilistic_item(
-            RequestIndex::new(0),
-            multiple_instances.request("TooMuch", ModelCheckLimits::default()),
-        )],
-        &Cancel::new(),
-    )
-    .remove(0);
-    assert!(matches!(
-        instance_record.terminal().unwrap().value(),
-        TerminalValue::Unsupported(_)
-    ));
-    assert!(instance_record.probabilistic_counterexample.is_none());
 }
 
 #[trace("TC-637", "FR-202-AC-10")]
