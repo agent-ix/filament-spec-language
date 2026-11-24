@@ -152,6 +152,7 @@ impl NormalizationLimitKind {
             Self::DispatchCandidates => Setting::ModelDispatchCandidates,
             Self::WorkUnits => Setting::ModelWorkUnits,
             Self::AncestorSteps => Setting::ModelAncestorSteps,
+            Self::FamilySteps => Setting::ModelFamilySteps,
         }
     }
 }
@@ -213,6 +214,8 @@ pub enum NormalizationLimitKind {
     WorkUnits,
     /// Per-walk `ancestor_steps`; this is not a retained meter counter.
     AncestorSteps,
+    /// Per-link `family_steps`; this is not a retained meter counter.
+    FamilySteps,
 }
 
 impl NormalizationLimitKind {
@@ -234,6 +237,7 @@ impl NormalizationLimitKind {
             Self::DispatchCandidates => "dispatch_candidates",
             Self::WorkUnits => "work_units",
             Self::AncestorSteps => "ancestor_steps",
+            Self::FamilySteps => "family_steps",
         }
     }
 
@@ -250,6 +254,7 @@ impl NormalizationLimitKind {
             Self::DispatchCandidates => Some(3),
             Self::WorkUnits => Some(4),
             Self::AncestorSteps => None,
+            Self::FamilySteps => None,
         }
     }
 
@@ -261,6 +266,7 @@ impl NormalizationLimitKind {
             Self::DispatchCandidates => limits.dispatch_candidates,
             Self::WorkUnits => limits.work_units,
             Self::AncestorSteps => limits.ancestor_steps,
+            Self::FamilySteps => limits.family_steps,
         }
     }
 }
@@ -310,6 +316,8 @@ pub enum NormalizationChargePoint {
     DispatchSubtype,
     /// `dispatch.candidate`.
     DispatchCandidate,
+    /// One distinct `redefines` edge followed by a dispatch-family walk.
+    ModelFamilyEdge,
     /// `dispatch.dominance`.
     DispatchDominance,
     /// `systems.kind`.
@@ -328,7 +336,7 @@ pub enum NormalizationChargePoint {
 
 impl NormalizationChargePoint {
     /// Every named point this rung charges, in first-use order.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::ReferenceCatalog,
         Self::ReferenceResult,
         Self::NormalizeRecord,
@@ -341,6 +349,7 @@ impl NormalizationChargePoint {
         Self::ModelAncestorEdge,
         Self::DispatchSubtype,
         Self::DispatchCandidate,
+        Self::ModelFamilyEdge,
         Self::DispatchDominance,
         Self::SystemsKind,
         Self::SystemsConnectionCondition,
@@ -365,6 +374,7 @@ impl NormalizationChargePoint {
             Self::ModelAncestorEdge => "model.ancestor-edge",
             Self::DispatchSubtype => "dispatch.subtype",
             Self::DispatchCandidate => "dispatch.candidate",
+            Self::ModelFamilyEdge => "model.family-edge",
             Self::DispatchDominance => "dispatch.dominance",
             Self::SystemsKind => "systems.kind",
             Self::SystemsConnectionCondition => "systems.connection-condition",

@@ -134,6 +134,21 @@ fn every_result_names_the_checked_subject_it_was_evaluated_for() {
             ] {
                 let used = result.usage.get(counter);
                 if used == 0 {
+                    let mut zero = asked.clone();
+                    zero.limits = TemporalEvidenceLimits::default().with_ceiling(counter, 0);
+                    let (zero, _) = run(&package, &clause, &zero);
+                    let zero = zero.expect("zero-use dimension remains complete at zero");
+                    assert!(zero.incomplete.is_none(), "{kind} {counter:?}=0");
+                    assert_eq!(zero.usage.get(counter), 0, "{kind} {counter:?}");
+
+                    let ceiling = TemporalEvidenceLimits::default().ceiling(counter);
+                    let mut raised = asked.clone();
+                    raised.limits = TemporalEvidenceLimits::default()
+                        .with_ceiling(counter, ceiling.saturating_add(1));
+                    let (raised, _) = run(&package, &clause, &raised);
+                    let raised = raised.expect("zero-use counter remains complete above default");
+                    assert!(raised.incomplete.is_none(), "{kind} {counter:?}");
+                    assert_eq!(raised.usage.get(counter), 0, "{kind} {counter:?}");
                     continue;
                 }
                 for ceiling in [0, used, used + 1] {

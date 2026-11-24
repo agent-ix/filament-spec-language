@@ -15,10 +15,11 @@ use std::path::Path;
 use filament_eval::{CallAdmissionFailure, CallFailure};
 use filament_exact::Meter;
 use fsl_eval::temporal::evidence::{
-    ActivationState, ClauseFormula, ClauseWork, CompletenessRecord, EvidenceCounter,
-    EvidenceIncomplete, EvidencePackage, EvidencePosition, EvidenceRef, EvidenceRequest,
-    EvidenceResult, ExecutionDisposition, ExecutionOrigin, PackageRows, Payload, Relation,
-    SemanticTriggerIdentity, TemporalEvidenceLimits, TraceBinding, TriggerEvidence,
+    ActivationState, CaptureFact, CapturedValue, ClauseFormula, ClauseWork, CompletenessRecord,
+    Evicted, EvidenceCounter, EvidenceIncomplete, EvidencePackage, EvidencePosition, EvidenceRef,
+    EvidenceRequest, EvidenceResult, ExecutionDisposition, ExecutionOrigin, FaultKind,
+    FaultSubject, InstanceState, PackageRows, Payload, Relation, SemanticTriggerIdentity,
+    TemporalEvidenceLimits, TraceBinding, TriggerEvidence,
 };
 use fsl_eval::temporal::{ClockCover, ProgressClosure, ProgressCompleteness, Valuation};
 use fsl_foundation::SourceIdentity;
@@ -651,7 +652,7 @@ pub(super) fn cause(failure: &CallFailure) -> String {
 /// of a valuation the selected clause needs is retained as an incomplete
 /// result naming its position and atom.
 #[test]
-#[trace("NFR-008-M-2", "NFR-008-M-4")]
+#[trace("NFR-008-M-2", "NFR-008-M-3", "NFR-008-M-4")]
 fn temporal_overflow_eviction_and_forced_stops_never_produce_truth() {
     for (index, kind) in KINDS.into_iter().enumerate() {
         let profile = match kind {
@@ -715,6 +716,65 @@ fn temporal_overflow_eviction_and_forced_stops_never_produce_truth() {
         };
         assert_eq!((*position, *atom), (0, 0), "{kind}");
         assert!(evicted.truth.is_none(), "{kind}");
+
+        let captured = boundary_clause(
+            kind,
+            profile,
+            &clock,
+            "capture n: Int[0, 1000] = c.versionNumber; eventually[0,2] holds(n >= 0)",
+            index + 100,
+        )
+        .expect("a captured temporal clause checks");
+        let captured_read = captured.read(&captured.emission);
+        let captured_package = EvidencePackage::from_read(
+            &captured_read,
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("read-back captured temporal package");
+        let captured_clause = clause_ids(&captured_package)
+            .into_iter()
+            .next()
+            .expect("a captured clause");
+        let mut captured_request = request(&captured_package, &captured_clause, None, 3);
+        captured_request.origins[0].captures = vec![CaptureFact::Value {
+            anchor: "obs0".to_owned(),
+            value: CapturedValue::new(b"0".as_slice()),
+        }];
+        let (funded_capture, _) = run(&captured_package, &captured_clause, &captured_request);
+        let funded_capture = funded_capture.expect("the supplied capture is admitted");
+        let captures_used = funded_capture.usage.get(EvidenceCounter::Captures);
+        assert!(captures_used > 0, "{kind}: the origin capture is charged");
+        let mut capture_denied = captured_request.clone();
+        capture_denied.limits = TemporalEvidenceLimits::default()
+            .with_ceiling(EvidenceCounter::Captures, captures_used - 1);
+        let (capture_denied, _) = run(&captured_package, &captured_clause, &capture_denied);
+        let capture_denied = capture_denied.expect("capture exhaustion is typed incompleteness");
+        let Some(EvidenceIncomplete::Limit(reached)) = &capture_denied.incomplete else {
+            panic!("{kind}: expected capture limit stop");
+        };
+        assert_eq!(reached.counter, EvidenceCounter::Captures, "{kind}");
+        assert!(capture_denied.truth.is_none(), "{kind}");
+
+        captured_request.evicted = vec![Evicted::Capture {
+            instance: id("o1"),
+            capture: "n".to_owned(),
+        }];
+        let (captured, _) = run(&captured_package, &captured_clause, &captured_request);
+        let captured = captured.expect("capture eviction is an incomplete assessment");
+        assert_eq!(captured.activation, ActivationState::Unavailable, "{kind}");
+        assert!(captured.truth.is_none(), "{kind}");
+        let [instance] = captured.instances.as_slice() else {
+            panic!("{kind}: exactly one origin instance");
+        };
+        let InstanceState::Unavailable(fault) = &instance.state else {
+            panic!("{kind}: expected a typed unavailable capture instance");
+        };
+        assert_eq!(
+            fault.subject,
+            FaultSubject::Capture("n".to_owned()),
+            "{kind}"
+        );
+        assert_eq!(fault.kind, FaultKind::Missing, "{kind}");
     }
 }
 
@@ -1120,6 +1180,26 @@ fn the_call_gives_equal_results_over_both_routes_and_any_replaced_input_differs(
             let (changed_limits, _) = run(&emitted, &clause, &changed_limits);
             let changed_limits = evaluated(changed_limits);
             assert_ne!(left.result_identity, changed_limits.result_identity);
+            for counter in [
+                EvidenceCounter::Positions,
+                EvidenceCounter::Valuations,
+                EvidenceCounter::Instances,
+                EvidenceCounter::Captures,
+                EvidenceCounter::Support,
+                EvidenceCounter::EvaluationSteps,
+            ] {
+                let baseline = TemporalEvidenceLimits::default().ceiling(counter);
+                let mut changed_limits = asked.clone();
+                changed_limits.limits = changed_limits
+                    .limits
+                    .with_ceiling(counter, baseline.saturating_add(1));
+                let (changed_limits, _) = run(&emitted, &clause, &changed_limits);
+                let changed_limits = evaluated(changed_limits);
+                assert_ne!(
+                    left.result_identity, changed_limits.result_identity,
+                    "changing {counter:?} above its default changes result identity"
+                );
+            }
             // One clock row: the same row under another clock name.
             let mut replaced = subject.occurrences[0].clock.expect("a row").clone();
             replaced.clock_name = "another-clock".into();

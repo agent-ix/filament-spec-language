@@ -379,19 +379,25 @@ fn dispatch_candidate_and_family_edge_ceilings_return_their_typed_stops() {
 
     let mut family =
         NormalizationMeter::new(ModelNormalizationLimits::default().with_family_steps(0));
-    let LinkCheckOutcome::Refused(refusal) = dispatch::link_dispatch(
+    let LinkCheckOutcome::Incomplete(family_stop) = dispatch::link_dispatch(
         &view,
         &key("Base/update"),
         GeneralizationClosure::Closed,
         &mut family,
     ) else {
-        panic!("zero family-step budget refuses before following the child edge")
+        panic!("zero family-step budget makes the family walk incomplete")
     };
-    assert!(matches!(
-        refusal.cause,
-        ModelRefusalCause::FamilySteps { original, limit: 0, reached: 1, .. }
-            if original == key("Base/update")
-    ));
+    assert_eq!(family_stop.limit_kind, NormalizationLimitKind::FamilySteps);
+    assert_eq!(
+        (
+            family_stop.limit,
+            family_stop.consumed,
+            family_stop.next_charge
+        ),
+        (0, 0, 1)
+    );
+    assert_eq!(family_stop.denial().setting().name(), "model.family_steps");
+    assert_eq!(family_stop.charge_point.as_str(), "model.family-edge");
 }
 
 #[trace("FR-082-AC-3", "TC-220")]

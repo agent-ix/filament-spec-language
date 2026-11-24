@@ -15,6 +15,18 @@ fn root() -> PathBuf {
         .to_path_buf()
 }
 
+fn rust_sources(path: &Path, found: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(path).unwrap_or_else(|error| panic!("{}: {error}", path.display())) {
+        let entry = entry.expect("directory entry");
+        let path = entry.path();
+        if path.is_dir() {
+            rust_sources(&path, found);
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            found.push(path);
+        }
+    }
+}
+
 fn dependencies(value: &Value, workspace_dependencies: &Value) -> Vec<(String, String)> {
     let Some(table) = value.as_table() else {
         return Vec::new();
@@ -105,26 +117,70 @@ fn direct_workspace_dependencies_are_present_in_the_lockfile() {
     }
 }
 
-/// Registry packages retain both their registry source and checksum in the
-/// lockfile; git packages retain a pinned source revision.
+/// The lock identifies the reviewed parser package, whose exact grant and
+/// both required notices must remain present. A package substitution with a
+/// different grant therefore fails this independent rights assertion.
 #[test]
 #[trace("NFR-004-M-2")]
-fn locked_third_party_packages_retain_their_provenance() {
+fn locked_parser_dependency_retains_its_grant_and_notices() {
+    let root = root();
+    let manifest: Value = toml::from_str(
+        &fs::read_to_string(root.join("xtask/Cargo.toml")).expect("read xtask manifest"),
+    )
+    .expect("parse xtask manifest");
     let lock: Value =
-        toml::from_str(&fs::read_to_string(root().join("Cargo.lock")).expect("read lockfile"))
+        toml::from_str(&fs::read_to_string(root.join("Cargo.lock")).expect("read lockfile"))
             .expect("parse lockfile");
-    for package in lock["package"].as_array().expect("lock packages") {
-        let Some(source) = package.get("source").and_then(Value::as_str) else {
-            continue;
-        };
-        if source.starts_with("registry+") {
-            assert!(package.get("checksum").and_then(Value::as_str).is_some());
-        } else if source.starts_with("git+") {
-            assert!(
-                source.contains("#"),
-                "git source is not revision-pinned: {source}"
-            );
-        }
+    let declaration = manifest["dependencies"]
+        .get("toml")
+        .expect("xtask declares toml");
+    let required = declaration
+        .as_table()
+        .and_then(|declaration| declaration.get("version"))
+        .and_then(Value::as_str)
+        .or_else(|| declaration.as_str())
+        .expect("toml version");
+    let package = lock["package"]
+        .as_array()
+        .expect("lock packages")
+        .iter()
+        .find(|package| {
+            package["name"].as_str() == Some("toml")
+                && package["version"].as_str() == Some(required)
+        })
+        .expect("the parser dependency is locked at the manifest version");
+    assert!(package["source"]
+        .as_str()
+        .is_some_and(|source| source.starts_with("registry+")));
+    assert!(package["checksum"]
+        .as_str()
+        .is_some_and(|checksum| !checksum.is_empty()));
+
+    let registry = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").expect("HOME or CARGO_HOME")).join(".cargo")
+        })
+        .join("registry/src");
+    let crate_manifest = fs::read_dir(&registry)
+        .unwrap_or_else(|error| panic!("{}: {error}", registry.display()))
+        .filter_map(Result::ok)
+        .map(|cache| cache.path().join(format!("toml-{required}/Cargo.toml")))
+        .find(|path| path.is_file())
+        .expect("locked parser source is available for grant inspection");
+    let source: Value =
+        toml::from_str(&fs::read_to_string(&crate_manifest).expect("read locked parser manifest"))
+            .expect("parse locked parser manifest");
+    assert_eq!(
+        source["package"]["license"].as_str(),
+        Some("MIT OR Apache-2.0")
+    );
+    let crate_dir = crate_manifest.parent().expect("crate directory");
+    for notice in ["LICENSE-MIT", "LICENSE-APACHE"] {
+        let notice = crate_dir.join(notice);
+        let contents = fs::read_to_string(&notice)
+            .unwrap_or_else(|error| panic!("{}: {error}", notice.display()));
+        assert!(!contents.trim().is_empty(), "{} is empty", notice.display());
     }
 }
 
@@ -145,28 +201,25 @@ fn native_compiler_has_no_required_optional_feature() {
     );
 }
 
-/// QSL-2097's added and modified Rust sources are the included-file inventory;
-/// each one must carry the selected grant in its source header.
+/// NFR-004's selected grant is AGPL-3.0-or-later. Inspect every Rust source
+/// included in the three allowed test roots, not a hand-maintained subset.
 #[test]
 #[trace("NFR-004-M-1")]
 fn every_included_rust_source_records_its_selected_grant() {
     let root = root();
-    for path in [
-        "tests/it/main.rs",
-        "tests/it/temporal_package_route.rs",
-        "tests/it/temporal_result_evidence.rs",
-        "tests/it/qsl2097_measurements.rs",
-        "xtask/tests/qsl2097_meter_memory.rs",
-        "xtask/tests/qsl2097_dependency_inventory.rs",
-    ] {
-        let content =
-            fs::read_to_string(root.join(path)).unwrap_or_else(|error| panic!("{path}: {error}"));
-        assert!(
-            content
-                .lines()
-                .take(2)
-                .any(|line| line.starts_with("// SPDX-License-Identifier:")),
-            "Rust source {path} does not record its selected grant"
+    let mut sources = Vec::new();
+    for path in ["tests/it", "xtask/tests", "fsl-foundation/tests"] {
+        rust_sources(&root.join(path), &mut sources);
+    }
+    assert!(!sources.is_empty(), "included source inventory is empty");
+    for source in sources {
+        let content = fs::read_to_string(&source)
+            .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
+        assert_eq!(
+            content.lines().next(),
+            Some("// SPDX-License-Identifier: AGPL-3.0-or-later"),
+            "Rust source {} does not record the exact spec-selected grant",
+            source.strip_prefix(&root).unwrap_or(&source).display()
         );
     }
 }
