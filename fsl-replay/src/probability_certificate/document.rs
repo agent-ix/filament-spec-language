@@ -573,6 +573,7 @@ enum ProfileDispatch {
     Measure,
     Exact,
     Timed,
+    FairTimed,
     LongRun,
     CyclicMdp,
     CyclicMdpReward,
@@ -622,6 +623,19 @@ fn profile_dispatch(
             }
             Some(quire_canonical::Node::String(CYCLIC_MDP_REWARD_PROFILE)) => {
                 ProfileDispatch::CyclicMdpReward
+            }
+            Some(quire_canonical::Node::String(BOUNDED_FAIR_PROFILE))
+                if matches!(
+                    parsed
+                        .root()
+                        .get("objective")
+                        .and_then(|node| node.get("timed"))
+                        .and_then(|node| node.get("form"))
+                        .map(|node| node.node()),
+                    Some(quire_canonical::Node::String("expected-elapsed"))
+                ) =>
+            {
+                ProfileDispatch::FairTimed
             }
             Some(quire_canonical::Node::String(BOUNDED_FAIR_PROFILE)) => {
                 ProfileDispatch::BoundedFair
@@ -1281,6 +1295,34 @@ pub fn write_probability_certificate(
     cancel: &Cancel,
 ) -> Result<Vec<u8>, ProbabilityDocumentError> {
     writer::write(document, limits, cancel)
+}
+
+/// Write an expected-elapsed certificate carrying the checked timed claim's
+/// fairness objective.
+pub fn write_timed_fair_probability_certificate(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    document: &ProbabilityCertificateDocument,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<Vec<u8>, ProbabilityDocumentError> {
+    let claim = bind_claim(claims, item, cancel)?;
+    if !std::ptr::eq(system.input().probabilistic.claims(), claims)
+        || !matches!(
+            document.timed.as_ref().map(|timed| timed.form),
+            Some(TimedProbabilityForm::ExpectedElapsed)
+        )
+    {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
+    let mut storage = 0;
+    let fairness = fairness::checked(system, claim, limits, cancel, &mut meter, &mut storage)?;
+    if fairness.is_empty() {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    writer::encode_fair_profile(document, limits, cancel, false, false, &fairness)
 }
 
 type SubjectGraph = (
@@ -2120,6 +2162,17 @@ fn check_document_bytes(
             );
         }
         ProfileDispatch::Timed => {
+            return timed::check(
+                system,
+                claims,
+                item,
+                bytes,
+                offer.relation(),
+                limits,
+                cancel,
+            );
+        }
+        ProfileDispatch::FairTimed => {
             return timed::check(
                 system,
                 claims,
