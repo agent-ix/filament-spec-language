@@ -4544,6 +4544,35 @@ impl<'a> Lowering<'a> {
         self.type_ref(&node.lowered_value_type(), node.location())
     }
 
+    /// The model package names an unparameterized floating field by its
+    /// scalar type. Preserve that identity for its projection and for IEEE
+    /// negation, whose checked result has the operand's type node.
+    fn lowering_type_ref(&mut self, node: CheckedNode<'_>) -> Result<NodeRef, CheckRefusal> {
+        let value_type = node.lowered_value_type();
+        if matches!(node.kind(), NodeKind::Attribute { .. }) {
+            if let ValueType::Float(float) = &*value_type {
+                // Equality provenance retains the checked exact-mode source
+                // type even though the model member's wire type is scalar.
+                let source_type = self.type_ref(&value_type, node.location())?;
+                if let Some(key) = source_type.admitted() {
+                    if !self.occurrences.has(key.clone()) {
+                        self.record(
+                            key.clone(),
+                            OccurrenceRole::Generated,
+                            node.location().clone(),
+                        );
+                    }
+                }
+                let scalar = match float.width() {
+                    filament_exact::IeeeWidth::Binary32 => "float32",
+                    filament_exact::IeeeWidth::Binary64 => "float64",
+                };
+                return self.scalar(scalar, node.location()).map(NodeRef::from);
+            }
+        }
+        self.type_ref(&value_type, node.location())
+    }
+
     /// Key an application node for checked `node` and return a reference to
     /// it.
     fn application(
@@ -4587,8 +4616,13 @@ impl<'a> Lowering<'a> {
         };
         let result_type = if let Some(key) = control_range {
             NodeRef::from(key)
+        } else if matches!(&*lowered_type, ValueType::Float(_)) {
+            match node.kind() {
+                NodeKind::Negate(operand) => self.lowering_type_ref(node.at(*operand))?,
+                _ => self.lowering_type_ref(node)?,
+            }
         } else if lowered_type.as_ref() == node.value_type() {
-            self.type_ref(&lowered_type, node.location())?
+            self.lowering_type_ref(node)?
         } else {
             // The application lowers at the Integer node, so its checked
             // interval has no edge from it. Only an integer division keeps
@@ -4614,7 +4648,7 @@ impl<'a> Lowering<'a> {
                     }
                 }
             }
-            self.type_ref(&lowered_type, node.location())?
+            self.lowering_type_ref(node)?
         };
         self.typed_application(node.location(), result_type, operator, operation, arguments)
     }
