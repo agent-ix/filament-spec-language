@@ -5,6 +5,10 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-940
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-230
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-945
+    type: references
 ---
 # TC-2958: Source analysis keeps its checked graph and the package route reaches every evaluator
 
@@ -13,7 +17,7 @@ relationships:
 Verify that analysis from source decides every item family over its compiled
 package, that a selected package reaches the source-checked evaluators through
 their package forms with equal records, and that the package route settles every item
-family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18, FR-940-AC-21, FR-940-AC-22 and FR-940-AC-28: a source run whose compiled package the strict reader refuses on read-back settles as the reader's typed refusal, and a refused replay package read settles only the replaying item `inconclusive` `replay_refused`.
+family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18, FR-940-AC-21, FR-940-AC-22, FR-940-AC-28 and FR-940-AC-29 to FR-940-AC-32: a source run whose compiled package the strict reader refuses on read-back settles as the reader's typed refusal, and a refused replay package read settles only the replaying item `inconclusive` `replay_refused`.
 
 ## Test Procedure
 
@@ -41,11 +45,38 @@ family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18
    record, selected `ContractClaim`, subject, case limit, item record and
    process exit. Then submit a malformed operation-contract record through
    the strict reader and verify no engine runs.
+8. Use FR-230-AC-63's selected model with `Phase { Armed(Clock), Idle }` and
+   its dense `ms` time declaration. Analyze the timed guard and reset over the
+   source route and over the admitted package route. Compare the `Armed`
+   clock-place identity, guard amount `1 ms`, presence predicate, reset place
+   and reset amount `0 ms`; verify the package result does not create
+   `Value::Clock`.
+   Bind the test `#[trace("TC-2958", "FR-940-AC-29")]`.
+9. Select a model declaring `tuple Slot(Integer, Integer)` and
+   `union Outcome { FromTuple(Slot), Empty }`. Analyze the invariant and
+   state-graph claims that read separate tuple positions through `FromTuple`
+   from source and from the handoff package. Compare item records, witnesses or
+   counterexamples, replay data and charge logs. Remove only `model_tuples` from
+   the handoff and verify package admission refuses before any item runs and
+   never reads source.
+   Bind the test `#[trace("TC-2958", "FR-940-AC-30")]`.
+10. Analyze the checked unit with `union Reading { Raw(Integer), Wide(Int[0, 9]) }`,
+    invariant `ReadingInvariant` and state-graph claim `ReadingReach` from the
+    source route, then from its handoff package. Compare both item records and
+    process exits and check both claims prove. Bind the test
+    `#[trace("TC-2958", "FR-940-AC-31")]`.
+11. In `fsl-analyze/tests/it/analyze_package_value.rs`, declare `union Shape { Empty, Circle(Boolean) }` and a pure `isCircle`
+    function with a `Shape` parameter whose case returns the `Circle` Boolean
+    payload or `false` for `Empty`. Invoke `isCircle` through the source and
+    package run-call routes with `Circle(true)` and with `Empty`. Compare the
+    argument values, Boolean results and semantic charge logs. Bind the test
+    `#[trace("TC-2958", "FR-940-AC-32")]`.
 
-Tests: `fsl-analyze/tests/it/analyze_package_selection.rs` (steps 1 to 3),
+Tests: `fsl-analyze/tests/it/analyze_package_selection.rs` (steps 1 to 3 and 8 to 10),
 `fsl-analyze/tests/it/hyper_wire.rs` (step 4) and
 `fsl-analyze/tests/it/package_refusal_route.rs` (steps 5 and 6), and the
 named `operation_contract_package_route_matches_source` case for step 7.
+`fsl-analyze/tests/it/analyze_package_value.rs` covers step 11.
 
 ## Expected Results
 
@@ -68,3 +99,15 @@ named `operation_contract_package_route_matches_source` case for step 7.
 - Step 7: both valid routes return equal operation-contract item records and
   the same process exit; malformed package data is refused by admission before
   engine execution, never as "requirement record has no package form".
+- Step 8: both routes identify the same `Armed` clock place and return the
+  same exact guard and reset amounts and presence condition; the package route
+  does not create `Value::Clock`.
+- Step 9: both routes return equal item records, witnesses or counterexamples,
+  replay data and charge logs. Missing `model_tuples` refuses the whole package
+  before item execution, with no source fallback.
+- Step 10: both routes settle the source-union invariant and state-graph items
+  `proved` with equal records and process exits; neither package item is
+  `unsupported` for the payload-bearing source union.
+- Step 11: both routes return `true` for `Circle(true)` and `false` for
+  `Empty`, with equal argument values, results and charge logs. The package
+  run-call does not refuse or settle `unsupported` for the union parameter.

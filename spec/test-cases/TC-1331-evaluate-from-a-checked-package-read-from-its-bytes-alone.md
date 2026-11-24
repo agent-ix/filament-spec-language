@@ -19,7 +19,7 @@ relationships:
 ## Description
 
 Verify the bytes-only entry and its selected-monitor preparation boundary.
-Scope: FR-531-AC-1 through FR-531-AC-35, and FR-531-AC-45 through FR-531-AC-48. **R** is the package of FR-517.
+Scope: FR-531-AC-1 through FR-531-AC-35, FR-531-AC-45 through FR-531-AC-48 and FR-531-AC-51. **R** is the package of FR-517.
 The isolated bytes-only consumer test crate depends on `filament-contract-model`,
 `fsl-package` and `fsl-eval` only. Producer transport and selected-monitor
 preparation tests additionally obtain authentic final emissions, admitted model
@@ -145,10 +145,10 @@ Bind each new test with a two-id attribute such as
 two-id attributes; a source-enum locus test names AC-30 rather than the equality
 materialization criterion.
 
-**Clock member entries (FR-531-AC-34).** Write and read back the `identities/5`
+**Clock member entries (FR-531-AC-34).** Write and read back the `identities/7`
 file of the AC-34 unit; compare each data and clock entry, the `source_tuples`
 row, the union's `clock_payload` and the operation's `clock_parameters`; then
-feed the `/4` document and each malformed entry of AC-34 and expect `Malformed`
+feed the `/6` document and each malformed entry of AC-34 and expect `Malformed`
 with no partial read. Bind it `#[trace("TC-1331", "FR-531-AC-34")]`.
 
 **Requirement records (FR-531-AC-35).** Compile the AC-35 unit, emit it and
@@ -166,10 +166,18 @@ native closure and project the union node; repeat with no rows and require
 `Exact(UnavailableIdentityWitness)`. Bind these two tests
 `#[trace("TC-1331", "FR-531-AC-45", "FR-531-AC-46")]` and
 `#[trace("TC-1331", "FR-531-AC-46")]`. Run the classifier over normalized
-records with the AC-47 tag and the reorder oracle with AC-48; neither adds an
-end-to-end admission claim, and the Clock payload adds no timed amount, reset or
-`Value::Clock` claim. The typed lowering faults of FR-531-AC-49 are checked by
-inspection of `model_union_payloads` and `KeyFault`, not by a runtime test.
+records with the AC-47 tag and the reorder oracle with AC-48. The typed lowering
+faults of FR-531-AC-49 are checked by inspection of `model_union_payloads` and
+`KeyFault`, not by a runtime test.
+
+**Model tuple identity channel (FR-531-AC-51).** Compile the AC-51 selected
+model, write `identities.json`, compare its `model_tuples` and `model_unions`
+rows to the final emission's retained identities, read the file with the strict
+reader, and compare the joined tuple positions and union case identities from
+the bare projection. Repeat with one channel absent and with one row whose
+selected-document identity, declaration key, position order or member type is
+changed; each malformed/incomplete witness refuses without a partial view.
+Bind the test `#[trace("TC-1331", "FR-531-AC-51")]`.
 
 ## Expected Results
 
