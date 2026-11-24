@@ -302,6 +302,10 @@ fn cyclic_chain_bounds_are_checked_by_their_claim_side_role() {
         doc["policy"] = json!([]);
     });
     rejected(&hinted, "malformed", at_member("policy"));
+    let null_policy = edit(&lower, |doc| {
+        doc["policy"] = Value::Null;
+    });
+    rejected(&null_policy, "malformed", at_member("policy"));
 }
 
 /// The `<= rational(3,5)` proof over `W` and the same proof rebound to the
@@ -315,7 +319,7 @@ fn w_proofs() -> (Value, Value, Keys) {
     );
     let keys = keys(&maximum);
     let mut minimum = maximum.clone();
-    replace_source_and_rebind(&mut minimum, &w(">=", "rational(1,4)"));
+    replace_source_and_rebind(&mut minimum, &w("<=", "rational(1,4)"));
     let minimum = edit(&minimum, |doc| {
         doc["objective"]["optimization"] = json!("minimum");
     });
@@ -359,7 +363,20 @@ fn cyclic_mdp_bounds_check_hinted_and_selected_policies() {
         rational(1, 4),
     );
     let wait = selected(&output, &s);
-    assert!(names(&wait, "send_a"), "{wait}");
+
+    // The same policy hint accepts as the claim side at its inclusive
+    // `<= 1/4` threshold.
+    let output = accepted(
+        &bound(
+            &minimum,
+            "upper",
+            &[(&s, rational(1, 4))],
+            Some(json!([hint(&s, &wait)])),
+            true,
+        ),
+        rational(1, 4),
+    );
+    assert_eq!(selected(&output, &s), wait);
 
     // AC-3, AC-17: hinted `go` is checked and accepted for the maximum
     // `lower`; hinted `wait` is rank-broken there, and with the value 1 no
@@ -411,7 +428,7 @@ fn cyclic_mdp_bounds_check_hinted_and_selected_policies() {
             "upper",
             &[(&s, rational(1, 4))],
             Some(json!([hint(&s, &wait)])),
-            false,
+            true,
         ),
         rational(1, 4),
     );
@@ -422,7 +439,7 @@ fn cyclic_mdp_bounds_check_hinted_and_selected_policies() {
             "upper",
             &[(&s, rational(1, 4))],
             Some(json!([hint(&s, &go)])),
-            false,
+            true,
         ),
         "inequality-fails",
         at_key(&s),
@@ -443,27 +460,14 @@ fn cyclic_mdp_bounds_check_hinted_and_selected_policies() {
         "inequality-fails",
         at_key(&s),
     );
-    // AC-14: with `1/2` both actions satisfy, so the first in canonical
-    // full-product-action order is retained.
+    // AC-14: with `1/2` both actions satisfy; the literal canonical first
+    // action is `send_a`.
     let output = accepted(
         &bound(&minimum, "upper", &[(&s, rational(1, 2))], None, false),
         rational(1, 2),
     );
     let first = selected(&output, &s);
-    let order = |action: &Value| {
-        fsl_replay::ProductAction::parse(&serde_json::to_vec(action).unwrap())
-            .unwrap()
-            .to_bytes()
-            .unwrap()
-    };
-    assert_eq!(
-        first,
-        if order(&wait) < order(&go) {
-            wait.clone()
-        } else {
-            go.clone()
-        }
-    );
+    assert!(names(&first, "ix://test/link/Msg/send_a"), "{first}");
 
     // A hint has no place on a universal side.
     rejected(

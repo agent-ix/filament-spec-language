@@ -38,7 +38,7 @@ pub(super) struct BoundDocument {
 }
 
 /// The `policy` member of canonical bound-document `bytes`, row shapes only.
-fn policy_hints(bytes: &[u8]) -> Result<Option<Vec<PolicyHint>>, ProbabilityDocumentError> {
+fn policy_hints(bytes: &[u8]) -> Result<Vec<PolicyHint>, ProbabilityDocumentError> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Row<'a> {
@@ -49,19 +49,19 @@ fn policy_hints(bytes: &[u8]) -> Result<Option<Vec<PolicyHint>>, ProbabilityDocu
     }
     #[derive(Deserialize)]
     struct Hints<'a> {
-        #[serde(borrow, default)]
-        policy: Option<Vec<Row<'a>>>,
+        #[serde(borrow)]
+        policy: Vec<Row<'a>>,
     }
     let hints: Hints<'_> = serde_json::from_slice(bytes)
         .map_err(|_| ProbabilityDocumentError::MalformedMember("policy"))?;
-    Ok(hints.policy.map(|rows| {
-        rows.into_iter()
-            .map(|row| PolicyHint {
-                state: row.state.to_owned(),
-                choice: row.choice.get().to_owned(),
-            })
-            .collect()
-    }))
+    Ok(hints
+        .policy
+        .into_iter()
+        .map(|row| PolicyHint {
+            state: row.state.to_owned(),
+            choice: row.choice.get().to_owned(),
+        })
+        .collect())
 }
 
 fn object(value: &Value) -> Result<&serde_json::Map<String, Value>, ProbabilityDocumentError> {
@@ -160,7 +160,7 @@ pub(super) fn unwrap(
             let base = objective["base"].clone();
             root.insert("objective".into(), base);
             if root.remove("policy").is_some() {
-                policy = policy_hints(bytes)?;
+                policy = Some(policy_hints(bytes)?);
             }
             match side {
                 SubsystemBoundKind::Upper => {

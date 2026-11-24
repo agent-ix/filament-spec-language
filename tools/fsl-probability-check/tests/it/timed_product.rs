@@ -124,6 +124,19 @@ fn elapsed_quantile_certificate_passes_the_separate_checker() {
     );
 }
 
+/// FR-1042: a timed deadline's wrong-kind bound is still rejected as the
+/// claim side at `kind`, while the timed profile keeps its existing shape.
+#[trace("TC-3212", "FR-1042-AC-16")]
+#[test]
+fn timed_deadline_wrong_kind_claim_side_is_malformed_at_kind() {
+    let request = timed_request();
+    let wrong_kind = mutate(&request, |doc| doc["kind"] = json!("upper"));
+    let (code, output) = run(&wrong_kind);
+    assert_eq!(code, 1, "{output}");
+    assert_eq!(output["rule"], "malformed", "{output}");
+    assert_eq!(output["at"], json!({"member": "kind"}), "{output}");
+}
+
 fn assert_separate_checker(route: &str, source: &str) {
     let request = certified(source);
     let (code, output) = run(&request);
