@@ -172,6 +172,8 @@ compiles, and only this item finds it.
 | FR-630-AC-9 | Over the `Holder` union fixture of FR-135-AC-15 and FR-140-AC-21, with `Ring a` holding `holder = Holder::Has(Reference<Ring>(b))` and the concrete/abstract transition rows preserving it, the `RingIsQueue` refinement item settles `proved`, `certified`; the checked simulation certificate maps it to `Holder::Has(Reference<Queue>(b))` with the same active tag. | Test (TC-1590) |
 | FR-630-AC-10 | Over the nested `Parcel` fixture of FR-135-AC-16 and FR-140-AC-22, with `Ring a` holding `parcel.owners = [Some(Reference<Ring>(b)), None]` and the concrete/abstract transition rows preserving it, the `RingIsQueue` refinement item settles `proved`, `certified`; the checked simulation certificate maps it to `[Some(Reference<Queue>(b)), None]` in the same order. | Test (TC-1590) |
 
+| FR-630-AC-11 | For the `native-analyze/1` source request `tests/corpus/refinement/refinement-identity.analyze.json`, with its `program` file `tests/corpus/refinement/refinement-identity.native`, selected model `fsl-conformance/cases/counter-step-package.json`, abstract document `fsl-conformance/cases/counter-step-v0.json` and initial state and universe `test`/`v0`, the source route analyzes `CounterIdentity` as `proved`, `certified`, using backend `en-1`, and exits 0. | Test (TC-1590) |
+
 ## Dependencies
 
 - FR-135 to FR-149 own refinement checking; FR-027 owns the

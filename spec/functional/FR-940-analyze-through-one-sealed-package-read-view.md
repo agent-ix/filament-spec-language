@@ -9,6 +9,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-531
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-630
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-850
     type: specifies
   - target: ix://agent-ix/filament-spec-language/FR-281
@@ -910,6 +912,10 @@ step.
 | FR-940-AC-42 | On the `Link` fixture, the `program` and `package` requests for the every-scheduler `TooLikely` claim `probability >= rational(99, 100) [eventually holds(m.delivered)]` under `fair weak each M::Msg::send_a` produce equal complete outcome documents and equal exit codes; both settle the item `refuted`, exit `10`. | Test |
 | FR-940-AC-43 | On the `Link` fixture, the `program` and `package` requests for the every-scheduler `TooLikely` claim `probability >= rational(99, 100) [eventually holds(m.delivered)]` under `fair strong each M::Msg::send_a` produce equal complete outcome documents and equal exit codes; both settle the item `refuted`, exit `10`. | Test |
 | FR-940-AC-44 | On the `Link` fixture, the `program` and `package` requests for `TooLikely` with `probability <= rational(98, 100) [eventually holds(m.delivered)]` under every scheduler with `fair weak M::Msg::send_a` produce equal complete outcome documents/stdout and process exits; both settle the item `refuted`, exit `10`, and the package-route replay has `reproduced` `true`. | Test |
+| FR-940-AC-45 | For FR-630-AC-11's `CounterIdentity` request, the package request removes `request.program`, selects the handoff directory written by `native-compile/1` with that program and model, and runs after `unit.native` and the handoff `sources/` have been deleted. The package route exits 0 and its complete outcome document equals the source route's; its item remains `proved`, `certified`, backend `en-1`, never `unsupported`. | Test (TC-2958) |
+| FR-940-AC-46 | With the `CounterIdentity` source request of FR-630-AC-11 and the same counter-step model/document, changing `request.items[0].temporal.item_kind` to `deadlock-freedom` leaves the source route's item with diagnostic cause `unknown-claim`, null `certificate`, `counterexample` and `replay`, and exit 20; after compiling and removing `unit.native` and handoff `sources/`, the package route's complete outcome document and exit equal the source route's. | Test (TC-2958) |
+| FR-940-AC-47 | With the `CounterIdentity` source request of FR-630-AC-11 and the same counter-step model/document, changing `request.items[0].temporal.item_kind` to `time-lock-freedom` leaves the source route's item with diagnostic cause `unknown-claim`, null `certificate`, `counterexample` and `replay`, and exit 20; after compiling and removing `unit.native` and handoff `sources/`, the package route's complete outcome document and exit equal the source route's. | Test (TC-2958) |
+| FR-940-AC-48 | With the `CounterIdentity` source request of FR-630-AC-11 and the same counter-step model/document, changing `request.items[0].temporal.item_kind` to `race-freedom` leaves the source route's item with diagnostic cause `unsupported-requested-capability`, null `certificate`, `counterexample` and `replay`, and exit 21; after compiling and removing `unit.native` and handoff `sources/`, the package route's complete outcome document and exit equal the source route's. | Test (TC-2958) |
 
 ## Dependencies
 
