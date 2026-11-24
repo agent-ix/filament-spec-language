@@ -2845,7 +2845,7 @@ fn on_each_reset_process_preserves_conditioned_scheduler_extrema() {
             operations,
             body: format!(
                 "pre A using v on M::T::a {{ self.phase = 0 }}\n\
-                 post ADone using v on M::T::a {{ self.phase = (if route = 0 then 1 else 2) and self.activated = (route = 0) and self.success = (route = 0) }}\n\
+                 post ADone using v on M::T::a {{ (route = 0 and self.phase = 1 and self.activated = true and self.success = true) or (route = 1 and self.phase = 2 and self.activated = false and self.success = false) }}\n\
                  pre B using v on M::T::b {{ self.phase = 0 }}\n\
                  post BDone using v on M::T::b {{ self.phase = 3 and self.activated = true and self.success = false }}\n\
                  pre Finish using v on M::T::finish {{ self.phase = 3 }}\n\
