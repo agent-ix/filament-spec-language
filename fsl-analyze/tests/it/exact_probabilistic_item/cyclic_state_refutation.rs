@@ -3,7 +3,7 @@
 //! are refuted through the event-avoidance subsystem certificate, on either
 //! bound side, and never by a path-set search.
 use super::*;
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use fsl_analyze::exact_probabilistic::{
     product_construction_counts, reset_product_construction_counts,
 };
@@ -11,7 +11,7 @@ use fsl_replay::{
     ProbabilisticCounterexample, ProbabilisticSchedulerChoice, ProbabilityWitnessError,
     ProbabilityWitnessReplay, ProductAction,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn limits() -> fsl_replay::ProbabilityDocumentLimits {
     fsl_replay::ProbabilityDocumentLimits {

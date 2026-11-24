@@ -306,8 +306,18 @@ fn refinement_internals_are_a_request_member() {
         "family-refinement-internals-unknown",
         json!([{"refinement": "Nope", "internal": []}]),
     );
-    assert_ne!(unknown.exit, 0, "{}", String::from_utf8_lossy(&unknown.stdout));
-    assert_eq!(unknown.document()["last_stage"], "S3", "{}", unknown.document());
+    assert_ne!(
+        unknown.exit,
+        0,
+        "{}",
+        String::from_utf8_lossy(&unknown.stdout)
+    );
+    assert_eq!(
+        unknown.document()["last_stage"],
+        "S3",
+        "{}",
+        unknown.document()
+    );
 }
 
 /// FR-630-AC-3, FR-138-AC-9: decimal and enum history rows check and the
@@ -327,8 +337,7 @@ fn decimal_and_enum_history_rows_check_and_prove() {
             "history M::Counter.last : Phase = Phase::idle { on M::Counter::inc : Phase::busy; }\n",
         ),
     ] {
-        let body =
-            "enum Phase { idle, busy }\n".to_owned() + &refinement(name, "self.value", &rows);
+        let body = "enum Phase { idle, busy }\n".to_owned() + &refinement(name, "self.value", rows);
         let ws = Workspace::new(&format!("family-history-{name}"));
         let run = analyze(&refinement_request(
             &ws,
@@ -356,7 +365,8 @@ fn decimal_and_enum_history_rows_check_and_prove() {
 fn option_history_initials_prove_or_refuse() {
     let run_with = |declared: &str, initial: &str| {
         let rows = format!("history M::Counter.last : {declared} = {initial} {{ }}\n");
-        let body = "enum Phase { idle, busy }\n".to_owned() + &refinement("Opt", "self.value", &rows);
+        let body =
+            "enum Phase { idle, busy }\n".to_owned() + &refinement("Opt", "self.value", &rows);
         let ws = Workspace::new("family-history-present-option");
         analyze(&refinement_request(
             &ws,
@@ -381,7 +391,10 @@ fn option_history_initials_prove_or_refuse() {
     for (declared, initial) in [
         ("Option<Int[0, 1]>", "5"),
         ("Option<Phase>", "Phase::missing"),
-        ("Option<Decimal[0, 100; 0, 2; nearest-even]>", "decimal(101, 0)"),
+        (
+            "Option<Decimal[0, 100; 0, 2; nearest-even]>",
+            "decimal(101, 0)",
+        ),
     ] {
         let run = run_with(declared, initial);
         assert_ne!(run.exit, 0, "{declared} = {initial}");

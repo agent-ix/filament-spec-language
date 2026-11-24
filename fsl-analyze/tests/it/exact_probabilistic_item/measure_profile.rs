@@ -116,7 +116,7 @@ fn workload_quantile_has_independently_checked_numerator_denominator_and_ranks()
             .iter()
             .find(|row| {
                 let key = key(row);
-                key[5][1] == remaining.to_string() && key[5][2] == "active" && key[6][2] == amount
+                key[5][1] == remaining && key[5][2] == "active" && key[6][2] == amount
             })
             .expect("an active amount row");
         assert_eq!(
@@ -217,9 +217,7 @@ fn every_scheduler_checks_shifted_extrema_and_the_strict_zero_edge() {
             .iter()
             .find(|row| {
                 let state = key(row);
-                state[5][1] == remaining.to_string()
-                    && state[5][2] == "active"
-                    && state[6][2] == amount
+                state[5][1] == remaining && state[5][2] == "active" && state[6][2] == amount
             })
             .unwrap();
         assert_eq!(
@@ -3061,7 +3059,7 @@ fn partial_lower_restores_detached_terminal_undecided_and_pending_rows() {
                 .find(|row| {
                     let state = key(row);
                     state[4] == initial[4]
-                        && state[5][1] == remaining.to_string()
+                        && state[5][1] == remaining
                         && state[6]
                             == json!([
                                 "count-fraction",

@@ -411,7 +411,7 @@ mod generated {
                 .map(|(label, selection)| {
                     let world = &world;
                     scope.spawn(move || {
-                        let outcome = run(subject, &world, skew, selection);
+                        let outcome = run(subject, world, skew, selection);
                         let found = verdict(&outcome).ok_or_else(|| {
                             format!(
                                 "{label} did not settle a verdict: {outcome:?}\n{}",
@@ -459,7 +459,7 @@ mod generated {
                 .map(|(label, selection)| {
                     let world = &world;
                     scope.spawn(move || {
-                        let candidate = match run(subject, &world, skew, selection) {
+                        let candidate = match run(subject, world, skew, selection) {
                             Ok(ModelCheckOutcome::Violated { counterexample, .. }) => {
                                 Some(counterexample.as_ref().clone())
                             }

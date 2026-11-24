@@ -39,7 +39,8 @@ fn a_long_run_claim_with_an_undefined_predicate_replays_its_path() {
 #[trace("FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7")]
 #[test]
 fn an_expected_reward_claim_with_an_undefined_predicate_replays_its_path() {
-    let claim = "probabilistic RewardUndefined using inf on M over (c: M::Coin) under Even on origin \
+    let claim =
+        "probabilistic RewardUndefined using inf on M over (c: M::Coin) under Even on origin \
                 { expected accumulate cost until holds(c.v = 1) <= 1 }";
     let model = prob_world::coin(&format!("reward cost on Coin::drop = 1;\n{claim}"));
     let world = World::new(&model);
@@ -65,7 +66,7 @@ fn an_expected_reward_claim_with_an_undefined_predicate_replays_its_path() {
 #[trace("FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7")]
 #[test]
 fn expected_reward_undefined_replay_rejects_a_path_after_until_decides() {
-    use fsl_replay::{ProbabilityWitnessReplay, replay_probabilistic_undefined};
+    use fsl_replay::{replay_probabilistic_undefined, ProbabilityWitnessReplay};
 
     let claims = "probabilistic Open using inf on M over (c: M::Coin) under Even on origin \
         { long_run_fraction holds(c.armed) >= 0.5 }\n\
@@ -78,9 +79,8 @@ fn expected_reward_undefined_replay_rejects_a_path_after_until_decides() {
     assert_eq!(witness.evaluation.site.position, 2);
     assert_eq!(witness.path.paths[0].steps.len(), 2);
     witness.path.item = fsl_replay::probabilistic_claim_identity(world.claim("Decided")).unwrap();
-    witness.evaluation.site.locus = fsl_replay::UndefinedLocus::ClaimPredicate(
-        fsl_replay::ClaimPredicate::Until,
-    );
+    witness.evaluation.site.locus =
+        fsl_replay::UndefinedLocus::ClaimPredicate(fsl_replay::ClaimPredicate::Until);
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let replay = replay_probabilistic_undefined(
         &world.package,
@@ -100,17 +100,16 @@ fn expected_reward_undefined_replay_rejects_a_path_after_until_decides() {
 fn long_run_and_expected_reward_undefined_replay_reject_adverse_evidence() {
     use fsl_eval::simulation::model::ModelSystem;
     use fsl_replay::{
-        ExactProbabilityGraphError, ProbabilityWitnessError, ProbabilityWitnessReplay,
-        ProbabilisticSchedulerChoice, ProductAction, Schedule, replay_probabilistic_undefined,
+        replay_probabilistic_undefined, ExactProbabilityGraphError, ProbabilisticSchedulerChoice,
+        ProbabilityWitnessError, ProbabilityWitnessReplay, ProductAction, Schedule,
     };
 
-    let claims = "probabilistic LongRun using inf on M over (c: M::Coin) under every scheduler on origin \
+    let claims =
+        "probabilistic LongRun using inf on M over (c: M::Coin) under every scheduler on origin \
         { long_run_fraction holds(c.v = 1) >= 0.5 }\n\
         probabilistic Reward using inf on M over (c: M::Coin) under every scheduler on origin \
         { expected accumulate cost until holds(c.v = 1) <= 1 }";
-    let mut model = prob_world::coin(&format!(
-        "reward cost on Coin::drop = 1;\n{claims}"
-    ));
+    let mut model = prob_world::coin(&format!("reward cost on Coin::drop = 1;\n{claims}"));
     model.operations.push(prob_world::Operation {
         name: "keep",
         parameters: vec![],
@@ -155,7 +154,11 @@ fn long_run_and_expected_reward_undefined_replay_reject_adverse_evidence() {
             .into_iter()
             .find(|action| action.identity.operation.contains("keep"))
             .expect("the self-loop operation is enabled");
-        let draw = keep.draws.into_iter().next().expect("one deterministic draw");
+        let draw = keep
+            .draws
+            .into_iter()
+            .next()
+            .expect("one deterministic draw");
         let (transition, post) = draw
             .successors
             .into_iter()

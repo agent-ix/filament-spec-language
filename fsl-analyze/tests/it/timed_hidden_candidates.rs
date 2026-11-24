@@ -330,8 +330,7 @@ fn timed_hidden_candidates_with_different_resets_are_refused_distinctly() {
     let mut request = safety_request(&world);
     request.limits = LIMITS;
     let refused = check_timed_refinement(request, &Cancel::new())
-        .err()
-        .expect("rows with different resets are refused");
+        .expect_err("rows with different resets are refused");
     assert!(
         matches!(
             refused,

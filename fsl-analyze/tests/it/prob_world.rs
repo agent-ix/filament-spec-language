@@ -397,19 +397,6 @@ impl World {
         Self::build(model, &[model.key], &[model.key], &initials, false, false)
     }
 
-    /// `model`, checked, with the integer operators of
-    /// `filament.value.complete/v1` available as the profile `vc`.
-    pub(crate) fn with_value_profile(model: &Model) -> Self {
-        Self::build(
-            model,
-            &[model.key],
-            &[model.key],
-            &[&model.initial],
-            false,
-            true,
-        )
-    }
-
     /// `model`, checked, with its population declared `symmetric` and its
     /// operations scoped to their receivers, over a universe of `keys`,
     /// every one of them live in the initial snapshot.

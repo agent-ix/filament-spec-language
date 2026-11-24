@@ -25,8 +25,10 @@ use fsl_replay::statistical::{
     StatisticalUnsupported, StatisticalVerdict, UndecidedCause, WitnessReplay, WitnessValue,
 };
 use fsl_replay::statistical::{settle_statistical, settle_statistical_refusal, SubjectLimits};
-use fsl_replay::{settle_exact_prob_build_issue, ExactProbBuildIssue, IncompleteCause, ModelCheckLimit};
 use fsl_replay::SymmetryRefusal;
+use fsl_replay::{
+    settle_exact_prob_build_issue, ExactProbBuildIssue, IncompleteCause, ModelCheckLimit,
+};
 use fsl_replay::{ClaimPredicate, TerminalValue, UndefinedLocus};
 use fsl_route::reductions::SymmetryDeclaration;
 use fsl_semantics::check::{Event, ProbForm, ProbScheduler};
@@ -86,15 +88,13 @@ impl BehaviourSampler for CandidateStopSampler {
         _seed: u64,
         _trace: u64,
     ) -> Result<Drawn, SampleHalt> {
-        Err(SampleHalt::Expansion(
-            fsl_eval::simulation::ExpansionStop {
-                cause: filament_semantic_value::catalog::CatalogCode::new(
-                    "resource_exhausted",
-                    "insufficient-next-charge",
-                ),
-                limit: Some(fsl_eval::simulation::ExpansionLimit::MaxCandidates),
-            },
-        ))
+        Err(SampleHalt::Expansion(fsl_eval::simulation::ExpansionStop {
+            cause: filament_semantic_value::catalog::CatalogCode::new(
+                "resource_exhausted",
+                "insufficient-next-charge",
+            ),
+            limit: Some(fsl_eval::simulation::ExpansionLimit::MaxCandidates),
+        }))
     }
 
     fn walk(&mut self, _test: &TestSubject, _seed: u64, _trace: u64) -> Self::Walk {
@@ -139,16 +139,11 @@ impl TraceSampler {
 impl BehaviourSampler for TraceSampler {
     type Walk = UnusedWalk;
 
-    fn sample(
-        &mut self,
-        test: &TestSubject,
-        seed: u64,
-        trace: u64,
-    ) -> Result<Drawn, SampleHalt> {
+    fn sample(&mut self, test: &TestSubject, seed: u64, trace: u64) -> Result<Drawn, SampleHalt> {
         let holds = match self.pattern {
             TracePattern::AlwaysHolds => true,
             TracePattern::PrefixAroundBoundary if trace >= 100 => true,
-            TracePattern::PrefixAroundBoundary => (trace % 2 == 0) == (seed == 7),
+            TracePattern::PrefixAroundBoundary => trace.is_multiple_of(2) == (seed == 7),
         };
         self.draws.push(RecordedSample {
             seed,
@@ -311,10 +306,7 @@ fn serial_binding_tests_share_the_probability_work_allowance() {
     let StatisticalStop::Expansion(expansion) = &stop else {
         panic!("expected an expansion stop, got {stop:?}");
     };
-    let exact = settle_exact_prob_build_issue(
-        &ExactProbBuildIssue::Expansion(expansion.clone()),
-        limits,
-    );
+    let exact = settle_exact_prob_build_issue(&ExactProbBuildIssue::Expansion(*expansion), limits);
     assert_eq!(statistical.value, exact.value().clone());
     assert_eq!(statistical.measured(), None);
     assert!(statistical.diagnostic.is_none());
@@ -330,7 +322,10 @@ fn serial_binding_tests_share_the_probability_work_allowance() {
     );
     let TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, .. }) = &statistical.value
     else {
-        panic!("the work-unit stop remains incomplete: {:?}", statistical.value);
+        panic!(
+            "the work-unit stop remains incomplete: {:?}",
+            statistical.value
+        );
     };
     assert_eq!(limit.setting(), "accounting.work_units");
 
@@ -380,9 +375,13 @@ fn serial_binding_tests_share_the_probability_work_allowance() {
             required: None,
         })
     );
-    let TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, .. }) = &local_record.value
+    let TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, .. }) =
+        &local_record.value
     else {
-        panic!("the candidate stop remains incomplete: {:?}", local_record.value);
+        panic!(
+            "the candidate stop remains incomplete: {:?}",
+            local_record.value
+        );
     };
     assert_eq!(limit.setting(), "expansion.max_candidates");
     assert_eq!(local_record.measured(), None);
@@ -450,11 +449,16 @@ fn sampled_seven_reproduces_a_stopped_prefix_and_seed_eight_changes_it() {
     let repeated = check_sampled(default, &mut repeated_sampler, &Cancel::new())
         .expect("the repeated sampled run completes");
     assert_eq!(first, repeated);
-    assert_eq!(format!("{first:?}").as_bytes(), format!("{repeated:?}").as_bytes());
+    assert_eq!(
+        format!("{first:?}").as_bytes(),
+        format!("{repeated:?}").as_bytes()
+    );
     assert_eq!(first_sampler.draws, repeated_sampler.draws);
 
-    let mut limited = StatisticalLimits::default();
-    limited.max_samples = 100;
+    let limited = StatisticalLimits {
+        max_samples: 100,
+        ..Default::default()
+    };
     let stopped_request = sampled_request(
         &claim,
         &tests,
@@ -467,10 +471,11 @@ fn sampled_seven_reproduces_a_stopped_prefix_and_seed_eight_changes_it() {
     let stopped = check_sampled(stopped_request, &mut stopped_sampler, &Cancel::new())
         .expect("the requested sample limit is an outcome");
     let StatisticalOutcome::Stopped {
-        stop: StatisticalStop::Limit {
-            limit: StatisticalLimit::MaxSamples,
-            value: 100,
-        },
+        stop:
+            StatisticalStop::Limit {
+                limit: StatisticalLimit::MaxSamples,
+                value: 100,
+            },
         partial,
         provenance,
     } = stopped
@@ -576,10 +581,12 @@ fn sampled_two_test_provenance_keeps_bindings_and_method() {
         )
     };
     let mut okamoto_sampler = TraceSampler::new(TracePattern::AlwaysHolds);
-    let StatisticalOutcome::Completed(okamoto) =
-        check_sampled(request(StatisticalMethod::Okamoto), &mut okamoto_sampler, &Cancel::new())
-            .expect("Okamoto completes")
-    else {
+    let StatisticalOutcome::Completed(okamoto) = check_sampled(
+        request(StatisticalMethod::Okamoto),
+        &mut okamoto_sampler,
+        &Cancel::new(),
+    )
+    .expect("Okamoto completes") else {
         panic!("Okamoto completion expected");
     };
     assert_eq!(okamoto.provenance.tests.len(), 2);
@@ -588,23 +595,30 @@ fn sampled_two_test_provenance_keeps_bindings_and_method() {
         (&okamoto.provenance.tests[1], 4, "b", 1),
     ] {
         assert_eq!(entry.initial, initial);
-        assert_eq!(entry.binding.as_ref().map(|binding| binding.key.as_str()), Some(key));
+        assert_eq!(
+            entry.binding.as_ref().map(|binding| binding.key.as_str()),
+            Some(key)
+        );
         assert_eq!((entry.traces.first, entry.traces.step), (trace, 2));
-        assert_eq!(entry.traces.count, okamoto.tests[entry.index as usize].draws);
+        assert_eq!(
+            entry.traces.count,
+            okamoto.tests[entry.index as usize].draws
+        );
     }
     assert_eq!(okamoto.basis.method, StatisticalMethod::Okamoto);
 
     let mut sprt_sampler = TraceSampler::new(TracePattern::AlwaysHolds);
-    let StatisticalOutcome::Completed(sprt) =
-        check_sampled(request(StatisticalMethod::Sprt), &mut sprt_sampler, &Cancel::new())
-            .expect("SPRT completes")
-    else {
+    let StatisticalOutcome::Completed(sprt) = check_sampled(
+        request(StatisticalMethod::Sprt),
+        &mut sprt_sampler,
+        &Cancel::new(),
+    )
+    .expect("SPRT completes") else {
         panic!("SPRT completion expected");
     };
     assert_eq!(sprt.basis.method, StatisticalMethod::Sprt);
     assert_eq!(
-        okamoto.provenance.tests,
-        sprt.provenance.tests,
+        okamoto.provenance.tests, sprt.provenance.tests,
         "the logical tests and trace assignment do not depend on method"
     );
     // Obligation identity is not returned by SampledRequest or
@@ -1634,17 +1648,20 @@ fn exact_only_claims_are_refused_before_any_sample() {
         )
         .expect_err("the gate refuses before a sample");
         assert_eq!(refusal, refusal_expected);
-        let record = settle_statistical_refusal(&refusal)
-            .expect("a gate refusal has a terminal settlement");
+        let record =
+            settle_statistical_refusal(&refusal).expect("a gate refusal has a terminal settlement");
         let TerminalValue::Unsupported(cause) = record.value else {
             panic!("an exact-only gate refusal settles unsupported: {record:?}");
         };
-        assert_eq!(cause.as_str(), match claim {
-            "Every" => "every-scheduler",
-            "Bare" => "missing-confidence",
-            "Expected" => "exact-only-form",
-            _ => unreachable!("listed claim"),
-        });
+        assert_eq!(
+            cause.as_str(),
+            match claim {
+                "Every" => "every-scheduler",
+                "Bare" => "missing-confidence",
+                "Expected" => "exact-only-form",
+                _ => unreachable!("listed claim"),
+            }
+        );
     }
 }
 

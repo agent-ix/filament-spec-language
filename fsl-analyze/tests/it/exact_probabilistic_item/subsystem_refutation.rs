@@ -481,7 +481,7 @@ fn an_every_scheduler_expected_total_carries_its_scheduler_and_a_proper_upper_ce
     );
     let doc = document(&found);
     assert_eq!(doc["kind"], "upper");
-    let mut values = vec![(down.clone(), q(1, 1), 1), (up.clone(), q(0, 1), 0)];
+    let mut values = [(down.clone(), q(1, 1), 1), (up.clone(), q(0, 1), 0)];
     values.sort_by(|a, b| a.0.cmp(&b.0));
     assert_eq!(
         doc["values"],
@@ -651,7 +651,7 @@ fn a_rarely_failing_workload_always_is_refuted_by_its_rejecting_union() {
     let doc = document(&found);
     assert_eq!(doc["kind"], "lower");
     assert_eq!(doc["objective"]["base"]["event"], "always");
-    let mut expected = vec![(up.clone(), q(1, 1), 1), (down.clone(), q(1, 1), 0)];
+    let mut expected = [(up.clone(), q(1, 1), 1), (down.clone(), q(1, 1), 0)];
     expected.sort_by(|a, b| a.0.cmp(&b.0));
     assert_eq!(
         doc["values"],
@@ -754,7 +754,7 @@ fn event_avoidance_derives_the_event_free_bottom_component_itself() {
         .into_iter()
         .find(|key| *key != a)
         .expect("the event state");
-    let mut expected = vec![(s.clone(), q(1, 2), 1), (a.clone(), q(1, 1), 0)];
+    let mut expected = [(s.clone(), q(1, 2), 1), (a.clone(), q(1, 1), 0)];
     expected.sort_by(|left, right| left.0.cmp(&right.0));
     assert_eq!(
         doc["values"],

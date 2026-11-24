@@ -138,22 +138,28 @@ fn package_protocol_graph<M: crate::fill::Explored + Clone>(
         ws,
         path,
         memory,
-        roles,
-        source_absent,
-        cycle_keys,
-        None,
+        PackageProtocolGraphOptions {
+            roles,
+            source_absent,
+            cycle_keys,
+            snapshot: None,
+        },
         inspect,
     )
+}
+
+struct PackageProtocolGraphOptions<'a> {
+    roles: &'a [&'a str],
+    source_absent: bool,
+    cycle_keys: bool,
+    snapshot: Option<Vec<u8>>,
 }
 
 fn package_protocol_graph_with_snapshot<M: crate::fill::Explored + Clone>(
     ws: &Workspace,
     path: &std::path::Path,
     memory: M,
-    roles: &[&str],
-    source_absent: bool,
-    cycle_keys: bool,
-    snapshot: Option<Vec<u8>>,
+    options: PackageProtocolGraphOptions<'_>,
     inspect: impl FnOnce(
         &fsl_eval::simulation::protocol::ProtocolSystem<'_, M>,
         &fsl_eval::simulation::protocol::ProtocolSystem<'_, M>,
@@ -164,6 +170,13 @@ fn package_protocol_graph_with_snapshot<M: crate::fill::Explored + Clone>(
     use fsl_eval::simulation::protocol::{ProtocolSystem, ResolvedMemory};
     use fsl_package::{AnalysisView, BarePackage, BareSupply, EmitLimits, V2ReadLimits};
     use fsl_semantics::model::accounting::ModelNormalizationLimits;
+
+    let PackageProtocolGraphOptions {
+        roles,
+        source_absent,
+        cycle_keys,
+        snapshot,
+    } = options;
 
     let _ = package_request(ws, path);
     let compiled =
@@ -2958,10 +2971,12 @@ fn channel_related_graph(ws: &Workspace, path: &std::path::Path, related: bool, 
         ws,
         path,
         Sc,
-        &["Planning", "Machining"],
-        false,
-        false,
-        Some(snapshot),
+        PackageProtocolGraphOptions {
+            roles: &["Planning", "Machining"],
+            source_absent: false,
+            cycle_keys: false,
+            snapshot: Some(snapshot),
+        },
         |_, _| {},
     );
     let queue_len = |at: usize| {
@@ -3726,8 +3741,7 @@ fn a_helper_call_attempt_has_equal_tso_results_and_footprints() {
             .attempt(step)
             .expect("package helper-call attempt is classified");
         assert_eq!(
-            package_attempt.instances,
-            source_attempt.instances,
+            package_attempt.instances, source_attempt.instances,
             "package helper-call footprint for {step}",
         );
     }

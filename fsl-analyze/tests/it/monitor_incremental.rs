@@ -605,7 +605,7 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
     let batch = run_package_temporal(&request);
     let from_session = outcome.records[0].report();
     assert_eq!(
-        qsl_2750_report_fields(&from_session),
+        qsl_2750_report_fields(from_session),
         qsl_2750_report_fields(&batch)
     );
     assert!(batch.ledger.is_some());
@@ -4894,7 +4894,7 @@ fn batch_answer(
             assert_eq!(report.ledger.as_ref(), held, "a refusal returns the ledger");
             let found = &refusal.contradiction;
             Err((
-                found.dimension.clone(),
+                found.dimension,
                 found.retained.clone(),
                 found.asserted.clone(),
             ))

@@ -574,11 +574,10 @@ fn the_incremental_assessment_member_reports_each_prefix() {
         "the last prefix is the batch assessment"
     );
 
-    for assessment in ["batch"] {
-        let item = run("replay-batch", assessment).item(0);
-        assert!(item.get("prefixes").is_none(), "{item}");
-        assert_eq!(item["obligations"], prefixes[5]["obligations"], "{item}");
-    }
+    let assessment = "batch";
+    let item = run("replay-batch", assessment).item(0);
+    assert!(item.get("prefixes").is_none(), "{item}");
+    assert_eq!(item["obligations"], prefixes[5]["obligations"], "{item}");
     let none = replay_with(
         "replay-no-assessment",
         &told_protocol(),
