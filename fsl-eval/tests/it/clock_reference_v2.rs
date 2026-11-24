@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use filament_eval::{Evaluation, FamilyOutcome};
+use filament_eval::{Evaluation, FamilyOutcome, FamilyResult};
 use filament_exact::{Integer, Meter, ObjectReference, Outcome, ScalarLimits, Value};
 use filament_semantic_value::admission::{AdmissionRecord, ObservationAdmission, PathStep};
 use filament_semantic_value::catalog::CatalogCode;
@@ -16,14 +16,15 @@ use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits, V2ReadLim
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{
-    AdmissionFailure, AnchorKind, ClauseFacts, ClauseSelection, ClauseSelectionInput, DocumentRef,
-    ObservationLimits, Provisions, SelectedAnchor, SelectedObject, admit_observations,
+    admit_observations, AdmissionFailure, AnchorKind, ClauseFacts, ClauseSelection,
+    ClauseSelectionInput, DocumentRef, ObservationLimits, Provisions, SelectedAnchor,
+    SelectedObject,
 };
 use fsl_semantics::model::state::StateModel;
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
-use crate::ring_queue::{self, CLOCKS, Checked, QUEUE, clock_refinement, key, node};
+use crate::ring_queue::{self, clock_refinement, key, node, Checked, CLOCKS, QUEUE};
 
 const LIMITS: ScalarLimits = ScalarLimits {
     integer_bits: 1 << 20,
@@ -85,7 +86,48 @@ fn fixture_with(remove_x: bool, q_slots: QSlots) -> Checked {
             ));
         document
     };
-    let queue = add_reference(ring_queue::queue_spec(), QUEUE, "Queue", "chosen");
+    let mut queue = add_reference(ring_queue::queue_spec(), QUEUE, "Queue", "chosen");
+    queue["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|ty| ty["identity"] == node(QUEUE, "Queue"))
+        .expect("Queue")
+        .get_mut("fields")
+        .and_then(Json::as_array_mut)
+        .expect("Queue fields")
+        .push(ring_queue::field(
+            QUEUE,
+            "Queue",
+            "clock_set",
+            &node(QUEUE, "ClockRef"),
+            (0, 3, false),
+        ));
+    let queue_fields = queue["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|ty| ty["identity"] == node(QUEUE, "Queue"))
+        .expect("Queue")
+        .get_mut("fields")
+        .and_then(Json::as_array_mut)
+        .expect("Queue fields");
+    queue_fields.extend([
+        ring_queue::single(
+            QUEUE,
+            "Queue",
+            "set_count",
+            "ix://filament/native/Integer",
+        ),
+        ring_queue::single(QUEUE, "Queue", "set_exists", "ix://filament/native/Boolean"),
+        ring_queue::single(QUEUE, "Queue", "set_all", "ix://filament/native/Boolean"),
+        ring_queue::single(
+            QUEUE,
+            "Queue",
+            "set_only",
+            &node(QUEUE, "ClockRef"),
+        ),
+    ]);
     let mut calls = add_reference(ring_queue::clock_calls(), CLOCKS, "Call", "r");
     let call = calls["types"]
         .as_array_mut()
@@ -107,6 +149,13 @@ fn fixture_with(remove_x: bool, q_slots: QSlots) -> Checked {
         &node(CLOCKS, "ClockRef"),
         (0, 3, true),
     ));
+    fields.push(ring_queue::field(
+        CLOCKS,
+        "Call",
+        "clock_set",
+        &node(CLOCKS, "ClockRef"),
+        (0, 3, false),
+    ));
     if !matches!(q_slots, QSlots::None) {
         let mut q = ring_queue::single(CLOCKS, "Call", "q", "ix://filament/native/Clock");
         q["multiplicity"] = json!({"lower": 0, "ordered": true, "unique": false});
@@ -125,7 +174,7 @@ fn fixture_with(remove_x: bool, q_slots: QSlots) -> Checked {
     // Bind the optional read once so present/value share that stable local
     // rather than trying to prove presence of a function's model Attribute.
     let body = format!(
-        "{}\n\
+        "type ClockRefCount = Integer;\n{}\n\
          protocol Places using p over (call: C::Call) on each (opened: Boolean) when (opened) {{\n\
            capture chosen: Reference<Clock> = ref(call.{selected});\n\
            capture used: Integer = count(c in C::calls where ref(c.{selected}) = call.r);\n\
@@ -144,7 +193,11 @@ fn fixture_with(remove_x: bool, q_slots: QSlots) -> Checked {
         clock_refinement(&format!(
             "used = count(c in C::calls where ref(c.{selected}) = self.r);\n\
              busy = only(c in C::calls where c.n = 2: ref(c.{selected})) = self.r;\n\
-             chosen = ref(self.{selected});"
+             chosen = ref(self.{selected});\n\
+             set_count = count<ClockRefCount>(item in self.clock_set: item = ref(self.{selected}));\n\
+             set_exists = exists(item in self.clock_set: item = ref(self.{selected}));\n\
+             set_all = forall(item in self.clock_set: item = ref(self.{selected}));\n\
+             set_only = only(item in self.clock_set: item);"
         ))
     );
     ring_queue::check_models_with_profiles(
@@ -163,6 +216,102 @@ fn fixture_with(remove_x: bool, q_slots: QSlots) -> Checked {
                 .collect::<Vec<_>>()
         )
     })
+}
+
+/// A small source model with no scalar Reference<Clock> fields. The only
+/// clock-reference input is an empty placeholder Set, which the AC test
+/// replaces with typed candidates from ModelSystem's domain.
+fn clock_set_fixture() -> Checked {
+    let mut queue: Json = serde_json::from_slice(&ring_queue::queue_spec()).expect("queue JSON");
+    let mut calls: Json = serde_json::from_slice(&ring_queue::clock_calls()).expect("calls JSON");
+    for (document, domain) in [(&mut queue, QUEUE), (&mut calls, CLOCKS)] {
+        let mut reference = ring_queue::declaration(
+            domain,
+            "ClockRef",
+            "unused",
+            json!({"target":"ix://filament/native/Clock"}),
+        );
+        reference["kind"] = json!("reference");
+        document["types"]
+            .as_array_mut()
+            .expect("types")
+            .push(reference);
+    }
+    queue["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|ty| ty["identity"] == node(QUEUE, "Queue"))
+        .expect("Queue")
+        .get_mut("fields")
+        .and_then(Json::as_array_mut)
+        .expect("Queue fields")
+        .extend([
+            ring_queue::field(QUEUE, "Queue", "clock_set", &node(QUEUE, "ClockRef"), (0, 3, false)),
+            ring_queue::single(QUEUE, "Queue", "set_count", "ix://filament/native/Integer"),
+            ring_queue::single(QUEUE, "Queue", "set_exists", "ix://filament/native/Boolean"),
+            ring_queue::single(QUEUE, "Queue", "set_all", "ix://filament/native/Boolean"),
+            ring_queue::single(QUEUE, "Queue", "set_only", &node(QUEUE, "ClockRef")),
+        ]);
+    calls["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|ty| ty["identity"] == node(CLOCKS, "Call"))
+        .expect("Call")
+        .get_mut("fields")
+        .and_then(Json::as_array_mut)
+        .expect("Call fields")
+        .push(ring_queue::field(
+            CLOCKS,
+            "Call",
+            "clock_set",
+            &node(CLOCKS, "ClockRef"),
+            (0, 3, false),
+        ));
+    let rows = "set_count = count<ClockRefCount>(item in self.clock_set: item = item);\n\
+                set_exists = exists(item in self.clock_set: item = item);\n\
+                set_all = forall(item in self.clock_set: item = item);\n\
+                set_only = only(item in (self.clock_set): item);";
+    let body = format!("type ClockRefCount = Integer;\n{}", clock_refinement(rows));
+    ring_queue::check_models_with_profiles(
+        &serde_json::to_vec(&queue).expect("queue"),
+        ("C", CLOCKS, &serde_json::to_vec(&calls).expect("calls")),
+        true,
+        "",
+        &body,
+    )
+    .unwrap_or_else(|refusals| {
+        panic!(
+            "Set-only fixture checks: {:?}",
+            refusals
+                .iter()
+                .map(|refusal| (&refusal.refusal, refusal.at.as_str()))
+                .collect::<Vec<_>>()
+        )
+    })
+}
+
+fn clock_set_snapshot() -> BTreeMap<DocumentRef, Vec<u8>> {
+    let objects = [("c1", "1"), ("c2", "2")]
+        .into_iter()
+        .map(|(owner, n)| {
+            json!({
+                "key": owner,
+                "type": node(CLOCKS, "Call"),
+                "fields": {"n": {"integer": n}, "d": {"integer": "0"}, "clock_set": {"set": []}}
+            })
+        })
+        .collect::<Vec<_>>();
+    let document = json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "test", "identity": "clock-v2"},
+        "observation": "current",
+        "model": {"identity": CLOCKS},
+        "anchor": {"kind": "initialization", "name": "start"},
+        "populations": [{"population": node(CLOCKS, "calls"), "complete": true, "objects": objects}]
+    });
+    BTreeMap::from([(identity(), serde_json::to_vec(&document).expect("snapshot"))])
 }
 
 /// An independent FR-230 grammar oracle. All five components contain only
@@ -208,7 +357,10 @@ fn snapshot(first: &str, second: &str, present: bool) -> BTreeMap<DocumentRef, V
         "key":owner,"type":node(CLOCKS,"Call"),"fields":{
             "n":{"integer":n},"d":{"integer":"0"},"r":raw_reference(reference),
             "maybe":if present {json!({"present":raw_reference(second)})} else {json!({"absent":{}})},
-            "refs":{"sequence":[raw_reference(second),raw_reference(first)]}
+            "refs":{"sequence":[raw_reference(second),raw_reference(first)]},
+            // Source admission needs a concrete placeholder; the AC-11 test
+            // replaces this field with values from the typed model domain.
+            "clock_set":{"set":[]}
         }
     })).collect();
     let document = json!({
@@ -1293,7 +1445,7 @@ fn declared_table_collision_refuses_both_origins_and_aliases_admit_on_both_route
 /// route stops earlier, at type projection.
 #[trace("FR-106", "TC-464")]
 #[test]
-#[ignore = "QSL-3001: the checker types Reference<Clock> as ValueType::ClockReference; evaluating ref(place) and admitting clock data as Value::ClockReference is slice B"]
+#[ignore = "QSL-3002: raw-v2 clock snapshot admission and Source/Bare routing are slice C"]
 fn raw_clock_data_admits_declared_and_refuses_undeclared_identities() {
     let checked = fixture(false);
     let package = CheckedPackage::link(checked.graph);
@@ -1415,16 +1567,14 @@ fn raw_clock_data_admits_declared_and_refuses_undeclared_identities() {
 
 /// An ordinary snapshot supplies real owner population authority; generated
 /// Clock references do not require accepting transported Clock DATA.
-#[trace("FR-230", "TC-3084")]
+#[trace("FR-230", "TC-3084", "FR-1040-AC-10")]
 #[test]
-#[ignore = "QSL-3001: the checker types Reference<Clock> as ValueType::ClockReference; evaluating ref(place) and admitting clock data as Value::ClockReference is slice B"]
 fn source_generates_clock_references_from_ordinary_admitted_owners() {
-    let body = format!("{}\nprotocol Places using p over (call: C::Call) on each (opened: Boolean) when (opened) {{
-        capture chosen: Reference<Clock> = ref(call.x);
-        role Observer on C::Call;
-        run sequence Main {{ check Ready using v {{ true }}; }}
-        finish End as (outcome: Boolean) {{ true }};
-    }}", clock_refinement("used = count(c in C::calls where true); busy = false;"));
+    let body = format!("{}
+        invariant Stored using m on C::Call at current {{ ref(self.x) = ref(self.x) }}
+        function same_clock(left: Reference<Clock>, right: Reference<Clock>): Boolean pure {{ left = right }}
+        ",
+        clock_refinement("used = count(c in C::calls where true); busy = false;"));
     let checked = ring_queue::check_models_with_profiles(
         &ring_queue::queue_spec(),
         ("C", CLOCKS, &ring_queue::clock_calls()),
@@ -1452,19 +1602,204 @@ fn source_generates_clock_references_from_ordinary_admitted_owners() {
     });
     let snapshots =
         BTreeMap::from([(identity(), serde_json::to_vec(&document).expect("snapshot"))]);
-    let mut generated = Vec::new();
-    for owner in ["c1", "c2"] {
-        let Value::Reference(reference) =
-            capture(&package, &checked.packages, &snapshots, 0, owner)
+    assert_producer_clause(
+        &package,
+        &package,
+        package.graph().scope().types(),
+        &checked.packages,
+        &snapshots,
+        true,
+    );
+
+    let model = source_model(&checked.packages, &package);
+    let (state, _) = model
+        .admit_initial(&snapshots, &identity(), ObservationLimits::default())
+        .expect("the complete ordinary-owner population admits");
+    let observation = model
+        .observation(&state, identity())
+        .expect("the admitted state observes");
+    let same_clock = QualifiedName::unqualified("same_clock").expect("function name");
+    let universe = crate::support::ids::universe_id(b"clock-reference-test");
+    let clock = |owner: &str, field: &str| {
+        Value::ClockReference(
+            filament_exact::ClockPlaceReference::new(
+                universe.clone(),
+                &expected_place(owner, field),
+            )
+            .expect("canonical place reference"),
+        )
+    };
+    let compare = |left: Value, right: Value| {
+        completed(
+            package
+                .call(
+                    &same_clock,
+                    vec![left, right],
+                    &observation.environment,
+                    &mut Meter::new(LIMITS),
+                )
+                .expect("typed ClockReference comparison completes"),
+        )
+    };
+    assert!(matches!(compare(clock("c1", "x"), clock("c1", "x")), Value::Boolean(true)));
+    assert!(matches!(compare(clock("c1", "x"), clock("c1", "y")), Value::Boolean(false)));
+    let foreign = Value::ClockReference(
+        filament_exact::ClockPlaceReference::new(
+            crate::support::ids::universe_id(b"foreign-clock-reference-test"),
+            &expected_place("c1", "x"),
+        )
+        .expect("same place text in another universe"),
+    );
+    assert!(matches!(compare(clock("c1", "x"), foreign), Value::Boolean(false)));
+}
+
+/// FR-1040-AC-11: all four set aggregators consume ClockReference elements in
+/// the same canonical place-id order, regardless of the constructor order.
+#[trace("TC-3084", "FR-1040-AC-11")]
+#[test]
+fn clock_reference_set_aggregators_use_the_canonical_member_order() {
+    use fsl_eval::simulation::model::{
+        ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PopulationUniverse,
+    };
+    use fsl_eval::value::evaluate_refinement_row;
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+    use fsl_semantics::model::observation::declared_type_universe_for;
+
+    let checked = clock_set_fixture();
+    let package = CheckedPackage::link(checked.graph);
+    let snapshots = clock_set_snapshot();
+    let initial = identity();
+    let population = key(CLOCKS, "calls");
+    let system = ModelSystem::new(ModelSimulationRequest {
+        emit: EmitLimits::fixture(),
+        input: ModelCheckInput::source(&package),
+        packages: &checked.packages,
+        normalization: ModelNormalizationLimits::default(),
+        snapshots: &snapshots,
+        initial: vec![initial.clone()],
+        universes: vec![PopulationUniverse {
+            population: population.clone(),
+            keys: vec!["c1".to_owned(), "c2".to_owned()],
+        }],
+        observation: ObservationLimits::default(),
+        expansion: ExpansionLimits {
+            max_candidates: 1_000,
+        },
+        meter: LIMITS,
+    })
+    .expect("the Source ModelSystem admits ordinary owners");
+    let initial_state = &system.initial_states()[0];
+    let visible = initial_state.state();
+    let call = &visible.populations[&population]["c1"];
+    let field = system
+        .fields_of(&call.type_identity)
+        .expect("Call fields")
+        .iter()
+        .find(|field| field.name == "clock_set")
+        .expect("the unordered ClockReference Set field")
+        .key
+        .clone();
+    let anchor = initial_state.anchor().expect("anchored state").clone();
+    let mut budget = 1_000_000;
+    let completed = system
+        .complete_open_fields(
+            visible,
+            &anchor,
+            &[(population.clone(), "c1".to_owned(), field.clone())],
+            &mut budget,
+        )
+        .expect("the typed model domain supplies ClockReference Sets");
+    let (call_type, call_universe) = declared_type_universe_for(
+        package.graph().model_selections(),
+        &checked.packages,
+        ModelNormalizationLimits::default(),
+        &key(CLOCKS, "Call"),
+    )
+    .expect("Call universe resolves")
+    .expect("Call is selected");
+    let receiver = ObjectReference::new(
+        call_universe,
+        call_type,
+        filament_exact::ObjectId::new("c1").expect("receiver id"),
+    );
+    let [refinement] = package.graph().refinements() else {
+        panic!("one refinement");
+    };
+    let [queue, _cell] = refinement.objects() else {
+        panic!("Queue and Cell rows");
+    };
+    let model = source_model(&checked.packages, &package);
+    let row_value = |state: &_, name: &str| {
+        let field = key(QUEUE, &format!("Queue/{name}"));
+        let expression = &queue
+            .fields
+            .iter()
+            .find(|row| row.field == field)
+            .unwrap_or_else(|| {
+                panic!(
+                    "aggregate row {name} not found among {:?}",
+                    queue.fields.iter().map(|row| &row.field).collect::<Vec<_>>()
+                )
+            })
+            .expression;
+        let environment = model
+            .observation(
+                state,
+                DocumentRef {
+                    authority: "test".to_owned(),
+                    identity: "clock-v2".to_owned(),
+                },
+            )
+            .expect("generated typed Set state observes")
+            .environment;
+        evaluate_refinement_row(
+            &package,
+            expression,
+            &environment,
+            vec![Value::Reference(receiver.clone())],
+            &mut Meter::new(LIMITS),
+        )
+        .expect("Set aggregate row evaluates")
+        .outcome
+    };
+    assert!(!completed.is_empty(), "the Set domain has values");
+    for state in &completed {
+        let Some(Value::Collection(set)) = state.populations[&population]["c1"].fields.get(&field)
         else {
-            panic!("the actual producer returns Clock DATA")
+            panic!("the generated field is a typed Set");
         };
-        assert_eq!(reference.object().as_str(), expected_place(owner, "x"));
-        generated.push(reference);
+        let refs = set.elements();
+        let count = row_value(state, "set_count");
+        assert!(matches!(
+            count,
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(ref value)))
+                if value == &Integer::from(refs.len() as i64)
+        ), "count over {} Set members: {count:?}", refs.len());
+        assert!(matches!(
+            row_value(state, "set_exists"),
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(value)))
+                if value == !refs.is_empty()
+        ));
+        assert!(matches!(
+            row_value(state, "set_all"),
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(value)))
+                if value
+        ));
+        let only = row_value(state, "set_only");
+        if refs.len() == 1 {
+            let FamilyOutcome::Evaluated(Outcome::Completed(value)) = only else {
+                panic!("only over one Set member completes: {only:?}");
+            };
+            assert_value(&value, refs.first().expect("one Set member"));
+        } else {
+            let FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause)) = only else {
+                panic!("only over {} Set members: {only:?}", refs.len());
+            };
+            let record = cause.undefined_record();
+            assert_eq!(record.reason.as_str(), "only-not-one");
+            assert_eq!(record.fields["population"], "collection");
+        }
     }
-    assert_eq!(generated[0].universe(), generated[1].universe());
-    assert_eq!(generated[0].object_type(), generated[1].object_type());
-    assert_ne!(generated[0].object(), generated[1].object());
 }
 
 /// FR-106-AC-81: a valid `Reference<Clock>` identity whose selector lies
@@ -1759,7 +2094,7 @@ fn refused_with(
 /// the fault; a valid selector, and any selector of an unbounded slot, admits.
 #[trace("TC-464", "FR-106-AC-80")]
 #[test]
-#[ignore = "QSL-3001: the checker types Reference<Clock> as ValueType::ClockReference; evaluating ref(place) and admitting clock data as Value::ClockReference is slice B"]
+#[ignore = "QSL-3002: raw-v2 clock snapshot admission and Source/Bare routing are slice C"]
 fn invalid_clock_selectors_refuse_invalid_value_on_source() {
     let invalid = CatalogCode::new("invalid_runtime_input", "invalid-value");
     let checked = fixture_with(false, QSlots::Max(2));
@@ -1806,7 +2141,7 @@ fn invalid_clock_selectors_refuse_invalid_value_on_source() {
 /// FR-106-AC-80 and AC-81, Source half: an unbounded slot admits any index.
 #[trace("TC-464", "FR-106-AC-81")]
 #[test]
-#[ignore = "QSL-3001: the checker types Reference<Clock> as ValueType::ClockReference; evaluating ref(place) and admitting clock data as Value::ClockReference is slice B"]
+#[ignore = "QSL-3002: raw-v2 clock snapshot admission and Source/Bare routing are slice C"]
 fn any_selector_of_an_unbounded_clock_slot_admits_on_source() {
     let checked = fixture_with(false, QSlots::Unbounded);
     let package = CheckedPackage::link(checked.graph);
@@ -1831,7 +2166,7 @@ fn any_selector_of_an_unbounded_clock_slot_admits_on_source() {
 /// authenticated declaration is invalid input at the field's nested locus.
 #[trace("TC-464", "FR-230-AC-45")]
 #[test]
-#[ignore = "QSL-3001: the checker types Reference<Clock> as ValueType::ClockReference; evaluating ref(place) and admitting clock data as Value::ClockReference is slice B"]
+#[ignore = "QSL-3002: raw-v2 clock snapshot admission and Source/Bare routing are slice C"]
 fn clock_scope_disagreement_is_invalid_input_at_the_nested_locus_on_source() {
     use fsl_semantics::model::clock_reference::identity::{DeclarationScope, PlaceIdentity};
     let checked = fixture(false);
@@ -1881,7 +2216,7 @@ fn clock_scope_disagreement_is_invalid_input_at_the_nested_locus_on_source() {
 /// applied (FR-106 check 7).
 #[trace("TC-464", "FR-106-AC-72", "FR-106-AC-73")]
 #[test]
-#[ignore = "QSL-3001: the checker types Reference<Clock> as ValueType::ClockReference; evaluating ref(place) and admitting clock data as Value::ClockReference is slice B"]
+#[ignore = "QSL-3002: raw-v2 clock snapshot admission and Source/Bare routing are slice C"]
 fn an_unlisted_clock_owner_is_dangling_when_complete_and_tolerated_when_incomplete() {
     let dangling = CatalogCode::new("dangling_reference", "absent-target-in-complete-population");
     let invalid = CatalogCode::new("invalid_runtime_input", "invalid-value");
@@ -1958,7 +2293,7 @@ fn an_unlisted_clock_owner_is_dangling_when_complete_and_tolerated_when_incomple
 /// identity refuses dangling at its nested locus, never resolving to `y`.
 #[trace("TC-464", "FR-106-AC-73")]
 #[test]
-#[ignore = "QSL-3001: the checker types Reference<Clock> as ValueType::ClockReference; evaluating ref(place) and admitting clock data as Value::ClockReference is slice B"]
+#[ignore = "QSL-3002: raw-v2 clock snapshot admission and Source/Bare routing are slice C"]
 fn a_removed_clock_place_is_dangling_at_the_nested_locus_on_source() {
     let dangling = CatalogCode::new("dangling_reference", "absent-target-in-complete-population");
     let changed = fixture(true);

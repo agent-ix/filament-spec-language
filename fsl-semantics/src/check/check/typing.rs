@@ -2377,7 +2377,10 @@ impl<'a> Typer<'a> {
                     BinderQuery::Forall | BinderQuery::Exists => {
                         self.named_domain(expression.at(*source), binder, &source_location)?
                     }
-                    BinderQuery::Map | BinderQuery::Filter | BinderQuery::FlatMap => None,
+                    BinderQuery::Map
+                    | BinderQuery::Filter
+                    | BinderQuery::FlatMap
+                    | BinderQuery::Only => None,
                 };
                 frames.push(Frame::Query(Box::new(QueryFrame {
                     query: *query,
@@ -4373,7 +4376,7 @@ impl<'a> Typer<'a> {
                     self.bind_element(&typed, frame.binder, &frame.location)?;
                 let body_location = frame.location.child(1);
                 let goal = match frame.query {
-                    BinderQuery::Map | BinderQuery::FlatMap => {
+                    BinderQuery::Map | BinderQuery::FlatMap | BinderQuery::Only => {
                         Goal::Infer(frame.body, None, body_location)
                     }
                     BinderQuery::Filter | BinderQuery::Forall | BinderQuery::Exists => {

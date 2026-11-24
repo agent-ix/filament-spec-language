@@ -165,6 +165,17 @@ impl Space {
         orders: &RecordOrders,
         visiting: &mut Vec<NodeKey>,
     ) -> Option<Self> {
+        Self::of_with_clock_references(value_type, objects, &[], types, orders, visiting)
+    }
+
+    fn of_with_clock_references(
+        value_type: &ValueType,
+        objects: &[ObjectReference],
+        clock_references: &[ClockPlaceReference],
+        types: &TypeEnvironment,
+        orders: &RecordOrders,
+        visiting: &mut Vec<NodeKey>,
+    ) -> Option<Self> {
         match value_type {
             ValueType::Enum(shape) => Some(Self::Enum(
                 shape
@@ -210,7 +221,14 @@ impl Space {
                                     .positions()
                                     .iter()
                                     .map(|position| {
-                                        Self::of(position, objects, types, orders, visiting)
+                                        Self::of_with_clock_references(
+                                            position,
+                                            objects,
+                                            clock_references,
+                                            types,
+                                            orders,
+                                            visiting,
+                                        )
                                     })
                                     .collect::<Option<Vec<_>>>()?;
                                 Some((verified, positions))
@@ -224,7 +242,14 @@ impl Space {
                 let fields = members
                     .into_iter()
                     .map(|(optional, member)| {
-                        Self::of(member, objects, types, orders, visiting)
+                        Self::of_with_clock_references(
+                            member,
+                            objects,
+                            clock_references,
+                            types,
+                            orders,
+                            visiting,
+                        )
                             .map(|space| (optional, space))
                     })
                     .collect::<Option<Vec<_>>>()?;
@@ -240,7 +265,14 @@ impl Space {
                     order,
                 })
             }
-            other => Domain::of(other, objects, types, orders).map(Self::Plain),
+            other => Domain::of_with_clock_references(
+                other,
+                objects,
+                clock_references,
+                types,
+                orders,
+            )
+            .map(Self::Plain),
         }
     }
 
@@ -408,14 +440,33 @@ pub(crate) fn unenumerable_paths(value_type: &ValueType, types: &TypeEnvironment
 
 /// Every value of the composite type `value_type`, in index order; `charge`
 /// is called once per value. `None` when the type has no finite space.
+#[cfg(test)]
 pub(super) fn composite_values<E>(
     value_type: &ValueType,
     objects: &[ObjectReference],
     types: &TypeEnvironment,
     orders: &RecordOrders,
+    charge: impl FnMut() -> Result<(), E>,
+) -> Result<Option<Vec<Value>>, E> {
+    composite_values_with_clock_references(value_type, objects, &[], types, orders, charge)
+}
+
+pub(super) fn composite_values_with_clock_references<E>(
+    value_type: &ValueType,
+    objects: &[ObjectReference],
+    clock_references: &[ClockPlaceReference],
+    types: &TypeEnvironment,
+    orders: &RecordOrders,
     mut charge: impl FnMut() -> Result<(), E>,
 ) -> Result<Option<Vec<Value>>, E> {
-    let Some(space) = Space::of(value_type, objects, types, orders, &mut Vec::new()) else {
+    let Some(space) = Space::of_with_clock_references(
+        value_type,
+        objects,
+        clock_references,
+        types,
+        orders,
+        &mut Vec::new(),
+    ) else {
         return Ok(None);
     };
     let mut values = Vec::new();
@@ -510,6 +561,16 @@ impl Domain {
         types: &TypeEnvironment,
         orders: &RecordOrders,
     ) -> Option<Self> {
+        Self::of_with_clock_references(value_type, objects, &[], types, orders)
+    }
+
+    pub(super) fn of_with_clock_references(
+        value_type: &ValueType,
+        objects: &[ObjectReference],
+        clock_references: &[ClockPlaceReference],
+        types: &TypeEnvironment,
+        orders: &RecordOrders,
+    ) -> Option<Self> {
         match value_type {
             ValueType::Boolean => Some(Self::Boolean),
             ValueType::Text(text_type) => Some(Self::Text(*text_type)),
@@ -522,7 +583,13 @@ impl Domain {
             }
             ValueType::Option(payload) => Some(Self::Option {
                 payload_type: (**payload).clone(),
-                inner: Box::new(Self::of(payload, objects, types, orders)?),
+                inner: Box::new(Self::of_with_clock_references(
+                    payload,
+                    objects,
+                    clock_references,
+                    types,
+                    orders,
+                )?),
             }),
             // FR-120 "Applications" (STD-508): an enum, a record or tuple
             // whose components all have a finite domain, the first declared
@@ -530,7 +597,14 @@ impl Domain {
             // positions all have one; a clock component is a place, not a
             // component of the checked value.
             ValueType::Enum(_) | ValueType::Composite(_) => {
-                Space::of(value_type, objects, types, orders, &mut Vec::new())
+                Space::of_with_clock_references(
+                    value_type,
+                    objects,
+                    clock_references,
+                    types,
+                    orders,
+                    &mut Vec::new(),
+                )
                     .map(|space| Self::Space(Box::new(space)))
             }
             // FR-106 "Clock-reference domains": the candidates are the declared
@@ -551,21 +625,7 @@ impl Domain {
                         .collect(),
                 ))
             }
-            ValueType::ClockReference => Some(Self::ClockReference(
-                objects
-                    .iter()
-                    .filter(|object| {
-                        fsl_semantics::model::clock_reference::is_clock_type(object.object_type())
-                    })
-                    .map(|object| {
-                        ClockPlaceReference::new(
-                            object.universe().clone(),
-                            object.object().as_str(),
-                        )
-                        .ok()
-                    })
-                    .collect::<Option<Vec<_>>>()?,
-            )),
+            ValueType::ClockReference => Some(Self::ClockReference(clock_references.to_vec())),
             ValueType::Reference(target) => Some(Self::Reference(
                 objects
                     .iter()
@@ -577,7 +637,13 @@ impl Domain {
             // over a finite element, an ordered set by its arrangements.
             ValueType::Collection(collection) => {
                 let bound = collection.bound()?;
-                let element = Box::new(Self::of(collection.element(), objects, types, orders)?);
+                let element = Box::new(Self::of_with_clock_references(
+                    collection.element(),
+                    objects,
+                    clock_references,
+                    types,
+                    orders,
+                )?);
                 let (collection, min, max) =
                     ((**collection).clone(), bound.minimum(), bound.maximum());
                 match collection.kind() {
@@ -616,11 +682,35 @@ impl Domain {
         orders: &RecordOrders,
         max_value_bits: Option<u8>,
     ) -> Option<Self> {
+        Self::of_bounded_with_clock_references(
+            value_type,
+            objects,
+            &[],
+            types,
+            orders,
+            max_value_bits,
+        )
+    }
+
+    pub(super) fn of_bounded_with_clock_references(
+        value_type: &ValueType,
+        objects: &[ObjectReference],
+        clock_references: &[ClockPlaceReference],
+        types: &TypeEnvironment,
+        orders: &RecordOrders,
+        max_value_bits: Option<u8>,
+    ) -> Option<Self> {
         match value_type {
             ValueType::Integer => Some(Self::SizeInteger {
                 bits: max_value_bits?,
             }),
-            _ => Self::of(value_type, objects, types, orders),
+            _ => Self::of_with_clock_references(
+                value_type,
+                objects,
+                clock_references,
+                types,
+                orders,
+            ),
         }
     }
 
@@ -632,6 +722,7 @@ impl Domain {
     /// keys ascending in `K`'s domain order, then by values in `V`'s. The
     /// value kernel has no map value, so the domain is counted and never
     /// materialized: [`Self::map_size`] is what a limit check reads.
+    #[cfg(test)]
     pub(super) fn map_size(
         value_type: &ValueType,
         objects: &[ObjectReference],
@@ -645,6 +736,38 @@ impl Domain {
         let size = |member: &ValueType| match member {
             ValueType::Map(_) => Self::map_size(member, objects, types, orders),
             other => Self::of(other, objects, types, orders).map(|domain| domain.len()),
+        };
+        let (keys, values) = (size(map.key())?, size(map.values())?);
+        Some(entries_size(keys, values, bound.minimum(), bound.maximum()))
+    }
+
+    pub(super) fn map_size_with_clock_references(
+        value_type: &ValueType,
+        objects: &[ObjectReference],
+        clock_references: &[ClockPlaceReference],
+        types: &TypeEnvironment,
+        orders: &RecordOrders,
+    ) -> Option<u128> {
+        let ValueType::Map(map) = value_type else {
+            return None;
+        };
+        let bound = map.bound()?;
+        let size = |member: &ValueType| match member {
+            ValueType::Map(_) => Self::map_size_with_clock_references(
+                member,
+                objects,
+                clock_references,
+                types,
+                orders,
+            ),
+            other => Self::of_with_clock_references(
+                other,
+                objects,
+                clock_references,
+                types,
+                orders,
+            )
+            .map(|domain| domain.len()),
         };
         let (keys, values) = (size(map.key())?, size(map.values())?);
         Some(entries_size(keys, values, bound.minimum(), bound.maximum()))
@@ -2547,7 +2670,7 @@ mod tests {
 #[cfg(test)]
 mod clock_reference_tests {
     use super::{clock_reference_paths, enumerable, Domain, RecordOrders};
-    use filament_exact::{ObjectReference, Value, ValueType};
+    use filament_exact::{Value, ValueType};
     use filament_semantic_value::declaration::TypeEnvironment;
     use ix_trace_rs::trace;
 
@@ -2569,15 +2692,11 @@ mod clock_reference_tests {
         else {
             panic!("a clock-reference fixture");
         };
-        let candidate = ObjectReference::new(
-            expected.universe().clone(),
-            fsl_semantics::check::clock_reference_target(),
-            filament_exact::ObjectId::new(expected.text()).expect("canonical place id"),
-        );
         let types = TypeEnvironment::new([], []).expect("an empty environment admits");
-        let domain = Domain::of(
+        let domain = Domain::of_with_clock_references(
             &ValueType::ClockReference,
-            &[candidate],
+            &[],
+            std::slice::from_ref(&expected),
             &types,
             &RecordOrders::new(),
         )

@@ -403,12 +403,7 @@ impl<'a> ModelSystem<'a> {
                         Some(support) => ParameterValues::Values(support.values()),
                         None => match self.domain_with_clocks(value_type, references) {
                             Some(domain) => ordered(domain, false)?,
-                            None => match Domain::map_size(
-                                value_type,
-                                references,
-                                self.types,
-                                &self.record_orders,
-                            ) {
+                            None => match self.map_size_with_clocks(value_type, references) {
                                 Some(size) if size > MAX_DOMAIN => ParameterValues::TooMany(size),
                                 _ => ParameterValues::Unbounded,
                             },
@@ -421,12 +416,7 @@ impl<'a> ModelSystem<'a> {
                 Some(result_type) => ResultValues::Declared(
                     match self.domain_with_clocks(result_type, references) {
                         Some(domain) => ordered(domain, true)?,
-                        None => match Domain::map_size(
-                            result_type,
-                            references,
-                            self.types,
-                            &self.record_orders,
-                        ) {
+                        None => match self.map_size_with_clocks(result_type, references) {
                             Some(size) if size > MAX_DOMAIN => ParameterValues::TooMany(size),
                             _ => ParameterValues::Unbounded,
                         },

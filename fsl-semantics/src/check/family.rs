@@ -203,6 +203,7 @@ fn binder_query_tag(query: BinderQuery) -> &'static str {
         BinderQuery::FlatMap => "flat-map",
         BinderQuery::Forall => "forall",
         BinderQuery::Exists => "exists",
+        BinderQuery::Only => "only",
     }
 }
 

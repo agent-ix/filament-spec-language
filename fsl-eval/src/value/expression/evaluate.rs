@@ -526,7 +526,11 @@ fn population_of<'a, N: NodeSource<'a>>(source: N) -> Result<String, Halt> {
                 source,
                 ..
             } => node = node.at(*source),
-            _ => return Err(invariant("only-source-is-a-population")),
+            // A checked Set<Reference<Clock>> `only` query has a collection
+            // expression as its source rather than an FR-139 population.
+            // Keep the catalogued cause well-formed without misrepresenting
+            // that source as a population identity.
+            _ => return Ok("collection".to_owned()),
         }
     }
 }
@@ -1312,17 +1316,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         origins: &ReferenceOrigins,
         place: &NodeKey,
         selectors: Vec<Value>,
-    ) -> Result<ObjectReference, Halt> {
+    ) -> Result<filament_exact::ClockPlaceReference, Halt> {
         use fsl_semantics::model::clock_reference::identity::{
             Decimal, PathEntry, PlaceIdentity, SlotIndex,
         };
         use fsl_semantics::model::clock_reference::{encode_identity, is_declared_identity};
-        let ValueType::Reference(clock_type) = node.value_type() else {
+        let ValueType::ClockReference = node.value_type() else {
             return Err(invariant("place-reference-result-type-expected"));
         };
-        if !fsl_semantics::model::clock_reference::is_clock_type(clock_type) {
-            return Err(invariant("place-reference-result-type-expected"));
-        }
         let unavailable = || unavailable_clock_origin(origins);
         let declarations = self.clock_declarations.as_ref().ok_or_else(unavailable)?;
         let run = declarations.run_place(place).ok_or_else(unavailable)?;
@@ -1386,12 +1387,17 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         ) {
             return Err(Stop::Undefined(Undefined::NoElement).into());
         }
-        encode_identity(
+        let encoded = encode_identity(
             owner,
             &identity,
             quire_canonical::Limits::new(fsl_foundation::IdentityLimits::default().input_bytes),
         )
-        .map_err(clock_identity_halt)
+        .map_err(clock_identity_halt)?;
+        filament_exact::ClockPlaceReference::new(
+            owner.universe().clone(),
+            encoded.object().as_str(),
+        )
+        .map_err(|_| invariant("clock-place-reference-identity-is-canonical"))
     }
 
     /// FR-1000: evaluate against the reference literals admitted with the
@@ -3752,6 +3758,11 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     {
                         (l == r) == (*operator == EqualityOperator::Equal)
                     }
+                    (Value::ClockReference(left), Value::ClockReference(right))
+                        if left.universe() != right.universe() =>
+                    {
+                        false == (*operator == EqualityOperator::Equal)
+                    }
                     _ => outcome_into_stop(checked.evaluate(
                         self.world.types(),
                         &left,
@@ -3988,7 +3999,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 let origins = origins
                     .first()
                     .ok_or_else(|| invariant("place-reference-owner-origin-slot"))?;
-                Value::Reference(self.clock_place_reference(
+                Value::ClockReference(self.clock_place_reference(
                     node,
                     &owner,
                     origins,
