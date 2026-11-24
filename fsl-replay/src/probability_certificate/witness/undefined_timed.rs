@@ -53,15 +53,37 @@ pub(super) fn replay(
         return Err(ExactProbabilityGraphError::UnsupportedInitial.into());
     };
     let monitor = initial_monitor(claim, witness)?;
-    let mut measure_started_at = measure_phase(&evidence.initial_key)
-        .filter(|phase| *phase != "inactive")
-        .map(|_| rational(0));
+    let elapsed_quantile = elapsed_quantile_predicates(claim);
+    let mut elapsed_phase = elapsed_quantile.map(|_| String::from("inactive"));
+    let mut measure_started_at = None;
+    if let Some((from, until, _)) = elapsed_quantile {
+        if let Some((from, until)) = elapsed_truths(
+            system,
+            current.discrete(),
+            from,
+            until,
+            binding.as_ref().map(|binding| &binding.reference),
+            cancel,
+        )? {
+            update_elapsed_phase(
+                elapsed_phase.as_mut().ok_or(ProbabilityWitnessError::Refused)?,
+                &mut measure_started_at,
+                &from,
+                &until,
+                &rational(0),
+            );
+        }
+    } else {
+        measure_started_at = measure_phase(&evidence.initial_key)
+            .filter(|phase| *phase != "inactive")
+            .map(|_| rational(0));
+    }
     if !same_model_state(system, model_initial, &evidence.initial)?
         || !same_model_state(system, current.discrete(), &evidence.initial)?
     {
         return Err(ProbabilityWitnessError::Refused);
     }
-    if claim.bounded_measure() {
+    if claim.bounded_measure() && elapsed_quantile.is_none() {
         match replay_measure_control(system, claim, witness, limits, cancel)? {
             ProbabilityWitnessReplay::Reproduced(_) => {}
             replay => return Ok(replay),
@@ -72,7 +94,7 @@ pub(super) fn replay(
         claim,
         &evidence.initial_key,
         current,
-        monitor.clone(),
+        elapsed_measure_monitor(elapsed_phase.as_deref()).or_else(|| monitor.clone()),
         rational(0),
         measure_started_at.as_ref(),
     )? {
@@ -121,6 +143,17 @@ pub(super) fn replay(
             .map_err(|_| ProbabilityWitnessError::Refused)?
             .ok_or(ProbabilityWitnessError::Refused)?;
         elapsed_total = elapsed_total.add(&supplied.elapsed);
+        if let (Some(phase), Some((_, _, window))) =
+            (elapsed_phase.as_mut(), elapsed_quantile)
+        {
+            if phase == "active"
+                && measure_started_at
+                    .as_ref()
+                    .is_some_and(|started| elapsed_total.sub(started) > *window)
+            {
+                *phase = String::from("censored");
+            }
+        }
         let mut untimed_step = supplied.clone();
         untimed_step.elapsed = rational(0);
         let (probability, post, ()) = step::replay(
@@ -162,23 +195,30 @@ pub(super) fn replay(
         if matches!(claim.scheduler, ProbScheduler::Every) && used.contains(&supplied.post_key) {
             return Ok(ProbabilityWitnessReplay::Parity);
         }
-        let previous_phase = if position == 0 {
-            measure_phase(&evidence.initial_key)
-        } else {
-            measure_phase(&path.steps[position - 1].post_key)
-        };
-        if previous_phase.as_deref() == Some("inactive")
-            && measure_phase(&supplied.post_key).is_some_and(|phase| phase != "inactive")
-            && measure_started_at.is_none()
-        {
-            measure_started_at = Some(elapsed_total.clone());
+        if let Some((from, until, _)) = elapsed_quantile {
+            if let Some((from, until)) = elapsed_truths(
+                system,
+                current.discrete(),
+                from,
+                until,
+                binding.as_ref().map(|binding| &binding.reference),
+                cancel,
+            )? {
+                update_elapsed_phase(
+                    elapsed_phase.as_mut().ok_or(ProbabilityWitnessError::Refused)?,
+                    &mut measure_started_at,
+                    &from,
+                    &until,
+                    &elapsed_total,
+                );
+            }
         }
         if !key_matches_timed_state(
             system,
             claim,
             &supplied.post_key,
             &current,
-            monitor.clone().map(|mut value| {
+            elapsed_measure_monitor(elapsed_phase.as_deref()).or_else(|| monitor.clone()).map(|mut value| {
                 if let Some(phase) = value.as_array_mut().and_then(|parts| parts.get_mut(2)) {
                     *phase = serde_json::Value::String(monitor_phase.clone());
                 }
@@ -220,7 +260,7 @@ pub(super) fn replay(
             claim,
             &witness.product_state,
             &current,
-            monitor.clone().map(|mut value| {
+            elapsed_measure_monitor(elapsed_phase.as_deref()).or_else(|| monitor.clone()).map(|mut value| {
                 if let Some(phase) = value.as_array_mut().and_then(|parts| parts.get_mut(2)) {
                     *phase = serde_json::Value::String(monitor_phase.clone());
                 }
@@ -230,7 +270,7 @@ pub(super) fn replay(
             measure_started_at.as_ref(),
         )?
         || !undefined_read_matches(system, claim, current.discrete(), witness, cancel)?
-        || !final_control_undecided(claim, witness, &elapsed_total)?
+        || !final_control_undecided(claim, witness, &elapsed_total, elapsed_phase.as_deref())?
         || witness
             .evaluation
             .site
@@ -259,11 +299,15 @@ fn final_control_undecided(
     claim: &CheckedProbabilisticClaim,
     witness: &ProbabilityUndefinedWitness,
     elapsed: &Rational,
+    measure_phase: Option<&str>,
 ) -> Result<bool, ProbabilityWitnessError> {
     if let Some((_, _, _, interval)) = timed_formula(claim, witness)? {
         return Ok(elapsed < interval.lower()
             || (elapsed == interval.lower() && !interval.lower_closed())
             || current_time(elapsed, interval));
+    }
+    if elapsed_quantile_predicates(claim).is_some() {
+        return Ok(matches!(measure_phase, Some("inactive" | "active")));
     }
     Ok(true)
 }
@@ -329,7 +373,7 @@ fn source_claim_undecided(
     elapsed: &Rational,
     cancel: &Cancel,
 ) -> Result<bool, ProbabilityWitnessError> {
-    if claim.bounded_measure() {
+    if claim.bounded_measure() && elapsed_quantile_predicates(claim).is_none() {
         // `measure::replay_undefined` independently replays the exact control
         // and accumulator for this pre-read state.
         return Ok(true);
@@ -572,6 +616,72 @@ fn measure_phase(key: &ProbabilityProductKey) -> Option<String> {
         .flatten()
 }
 
+fn elapsed_quantile_predicates(
+    claim: &CheckedProbabilisticClaim,
+) -> Option<(
+    &fsl_semantics::check::CheckedPredicate,
+    &fsl_semantics::check::CheckedPredicate,
+    &Rational,
+)> {
+    match &claim.form {
+        ProbForm::Quantile {
+            measure:
+                fsl_semantics::check::BoundedMeasure::Elapsed {
+                    from, until, within, ..
+                },
+            ..
+        } => Some((from.as_ref(), until.as_ref(), within)),
+        _ => None,
+    }
+}
+
+fn elapsed_measure_monitor(phase: Option<&str>) -> Option<serde_json::Value> {
+    phase.map(|phase| serde_json::json!(["measure", null, phase]))
+}
+
+fn elapsed_truths(
+    system: &ModelSystem<'_>,
+    state: &ModelSimState,
+    from: &fsl_semantics::check::CheckedPredicate,
+    until: &fsl_semantics::check::CheckedPredicate,
+    binding: Option<&filament_exact::ObjectReference>,
+    cancel: &Cancel,
+) -> Result<Option<(bool, bool)>, ProbabilityWitnessError> {
+    let readings = system
+        .state_predicates_with_cancel(state, &[(from, binding), (until, binding)], cancel)
+        .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
+    match readings.as_slice() {
+        [PredicateReading::True, PredicateReading::True] => Ok(Some((true, true))),
+        [PredicateReading::True, PredicateReading::False] => Ok(Some((true, false))),
+        [PredicateReading::False, PredicateReading::True] => Ok(Some((false, true))),
+        [PredicateReading::False, PredicateReading::False] => Ok(Some((false, false))),
+        [PredicateReading::Undefined { .. }, _] | [_, PredicateReading::Undefined { .. }] => {
+            Ok(None)
+        }
+        [PredicateReading::Refused(_), _] | [_, PredicateReading::Refused(_)] => {
+            Err(ProbabilityWitnessError::Refused)
+        }
+        _ => Err(ProbabilityWitnessError::Refused),
+    }
+}
+
+fn update_elapsed_phase(
+    phase: &mut String,
+    started_at: &mut Option<Rational>,
+    from: &bool,
+    until: &bool,
+    elapsed: &Rational,
+) {
+    match phase.as_str() {
+        "inactive" if *from => {
+            *started_at = Some(elapsed.clone());
+            *phase = if *until { "complete" } else { "active" }.to_owned();
+        }
+        "active" if *until => *phase = String::from("complete"),
+        _ => {}
+    }
+}
+
 fn measure_window(claim: &CheckedProbabilisticClaim) -> Option<&Rational> {
     match &claim.form {
         ProbForm::Quantile {
@@ -639,6 +749,7 @@ fn key_matches_timed_state(
         })
         .transpose()?
         .unwrap_or(serde_json::Value::Null);
+    let elapsed_measure = elapsed_quantile_predicates(claim).is_some();
     if root.get(0).and_then(serde_json::Value::as_str)
         != Some("filament.probability-product-key/v1")
         || root.get(1) != Some(&binding)
@@ -654,9 +765,9 @@ fn key_matches_timed_state(
             .and_then(|model| model.get(1))
             .and_then(|timed| timed.get(2))
             != Some(&unit)
-        || (!claim.bounded_measure()
+        || ((!claim.bounded_measure() || elapsed_measure)
             && root.get(5) != Some(&monitor.unwrap_or(serde_json::Value::Null)))
-        || (!claim.bounded_measure()
+        || ((!claim.bounded_measure() || elapsed_measure)
             && (root.get(6).is_none_or(|value| !value.is_null())
                 || root.get(7).is_none_or(|value| !value.is_null())))
         || root
@@ -921,7 +1032,7 @@ fn undefined_read_matches(
     witness: &ProbabilityUndefinedWitness,
     cancel: &Cancel,
 ) -> Result<bool, ProbabilityWitnessError> {
-    if claim.bounded_measure() {
+    if claim.bounded_measure() && elapsed_quantile_predicates(claim).is_none() {
         // The measure replay above verifies the exact undefined locus, cause,
         // and pre-read control without reading outside-window predicates.
         return Ok(true);
@@ -963,6 +1074,20 @@ fn undefined_read_matches(
             ProbForm::ExpectedReward { until, .. } | ProbForm::MeanTime { until, .. },
             crate::UndefinedLocus::ClaimPredicate(crate::ClaimPredicate::Until),
         ) => Some(until),
+        (
+            ProbForm::Quantile {
+                measure: fsl_semantics::check::BoundedMeasure::Elapsed { from, .. },
+                ..
+            },
+            crate::UndefinedLocus::ClaimPredicate(crate::ClaimPredicate::From),
+        ) => Some(from.as_ref()),
+        (
+            ProbForm::Quantile {
+                measure: fsl_semantics::check::BoundedMeasure::Elapsed { until, .. },
+                ..
+            },
+            crate::UndefinedLocus::ClaimPredicate(crate::ClaimPredicate::Until),
+        ) => Some(until.as_ref()),
         _ => None,
     }
     .ok_or(ProbabilityWitnessError::Refused)?;

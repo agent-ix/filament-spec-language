@@ -480,7 +480,11 @@ fn materialize_inner(
             timed_state = Some(reached.ok_or(ProbabilityWitnessError::Refused)?);
         }
         let post_key = key(&step.target)?;
-        if measured && step.resolved.is_some() && matches!(claim.scheduler, ProbScheduler::Every) {
+        if measured
+            && timed_system.is_none()
+            && step.resolved.is_some()
+            && matches!(claim.scheduler, ProbScheduler::Every)
+        {
             let (control, sums) = measure_source
                 .as_ref()
                 .ok_or(ProbabilityWitnessError::Refused)?;
@@ -528,7 +532,7 @@ fn materialize_inner(
                 fsl_replay::ProductAction::PostState(post_key.clone()),
             );
         }
-        if measured {
+        if measured && timed_system.is_none() {
             measure_source = Some((
                 step.target
                     .monitor

@@ -41,6 +41,33 @@ pub fn replay_probabilistic_undefined(
         return Err(ProbabilityWitnessError::Refused);
     }
     let claim = bind_claim(package.graph().probabilistic_model().claims(), item, cancel)?;
+    replay_probabilistic_undefined_with_claim(claim, system, item, witness, limits, cancel)
+}
+
+/// Replay an undefined path against an already-bound claim from the admitted
+/// model input. The caller must retain its own source/package identity checks.
+pub(super) fn replay_probabilistic_undefined_with_claim(
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    system: &ModelSystem<'_>,
+    item: &ObligationIdentity,
+    witness: &ProbabilityUndefinedWitness,
+    limits: &ExactProbLimits,
+    cancel: &Cancel,
+) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
+    poll_cancel(cancel)?;
+    let evidence = &witness.path;
+    if evidence.subsystem.is_some() || item != &evidence.item {
+        return Err(ProbabilityWitnessError::Refused);
+    }
+    let bound = system
+        .input()
+        .probabilistic
+        .claims()
+        .iter()
+        .find(|candidate| candidate.occurrence() == Some(item));
+    if !bound.is_some_and(|bound| std::ptr::eq(bound, claim)) {
+        return Err(ProbabilityWitnessError::Refused);
+    }
     if super::undefined_timed::is_timed_key(&witness.product_state) {
         return super::undefined_timed::replay(system, claim, witness, limits, cancel);
     }

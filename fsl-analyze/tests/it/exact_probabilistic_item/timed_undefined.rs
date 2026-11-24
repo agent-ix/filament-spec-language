@@ -55,12 +55,12 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
          probabilistic UndefinedUntil using timed on M over (c: M::Call) under Even on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
              {{ probability >= 0.5 [ holds(c.phase = 0) until[0 ms, 3 ms] holds(c.phase = 1) ] }}\n\
-         probabilistic UndefinedElapsed using timed on M over (c: M::Call) under Even on origin\n\
+         probabilistic UndefinedElapsed using timed on M over (c: M::Call) under every scheduler on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
              {{ quantile 0.5 of (elapsed from holds(c.phase = 0) until holds(c.phase = 1) within 3 ms) <= 1 ms }}\n\
          probabilistic UndefinedFraction using timed on M over (c: M::Call) under Even on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
-             {{ mean of (fraction holds(c.phase = 0) over [0 ms, 0 ms] weighted by R) >= rational(1, 2) }}\n\
+             {{ mean of (fraction holds(c.phase = 0) over [0, 0 ms] weighted by R) >= rational(1, 2) }}\n\
          probabilistic UndefinedEvery using timed on M over (c: M::Call) under every scheduler on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
              {{ probability >= 0.5 [ always[0 ms, 3 ms] holds(c.phase = 0) ] }}\n\
@@ -82,7 +82,7 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
     );
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let mut records = Vec::new();
-    for name in [
+    let names = [
         "UndefinedHalf",
         "UndefinedSmall",
         "UndefinedUntil",
@@ -91,7 +91,8 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
         "UndefinedEvery",
         "UndefinedWeightedLongRun",
         "UndefinedMeanTime",
-    ] {
+    ];
+    for name in names {
         let claim = world
             .package
             .graph()
@@ -106,13 +107,31 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
             claim,
             limits: fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
         };
+        if name == "UndefinedElapsed" {
+            let product = fsl_analyze::exact_probabilistic::build_product(
+                fsl_analyze::exact_probabilistic::ProductRequest {
+                    subject: fsl_eval::model_subject::ModelSubject {
+                        simulation: world.request(),
+                        proof_bounds: Vec::new(),
+                    },
+                    claim,
+                    limits: fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+                },
+                &Cancel::new(),
+            );
+            assert!(matches!(product, Ok(fsl_analyze::exact_probabilistic::ProbBuild::Undefined(_))),
+                "elapsed measure build did not stop at its undefined read: {product:#?}");
+        }
         let item = exact_probabilistic_item(RequestIndex::new(0), request);
         records.extend(analyze_items(&engines, vec![item], &Cancel::new()));
     }
     assert_eq!(records.len(), 8);
-    for record in &records {
+    for (name, record) in names.iter().zip(&records) {
         assert_eq!(
-            record.terminal().unwrap().value(),
+            record
+                .terminal()
+                .unwrap_or_else(|| panic!("{name} did not settle: {record:#?}"))
+                .value(),
             &TerminalValue::Refuted,
             "record: {record:#?}"
         );
