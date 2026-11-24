@@ -978,6 +978,10 @@ struct LassoSystem<'r, S: LiveSubject> {
     automaton: RefCell<PropertyAutomaton>,
     start: StateId,
     readings: RefCell<BTreeMap<(StateKey, bool), Reading>>,
+    /// Successful subject expansions, shared by product states that carry
+    /// the same canonical model state. Each `LassoSystem` is one binding's
+    /// exploration pass, so this cache never crosses a pass boundary.
+    expansions: RefCell<BTreeMap<StateKey, Bounded<Tr<S>, S::State>>>,
     /// Where the clause fixes its captures (FR-337).
     captured: CaptureSite,
     initial: Vec<LState<S::State>>,
@@ -1052,11 +1056,21 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
     /// The subject's expansion of `state`, and what the memory bound left of
     /// it unexpanded, recording why when it stops.
     fn expand(&self, state: &S::State) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
-        self.system
+        self.poll()?;
+        let key = self.state_key_of(state)?;
+        if let Some(expansion) = self.expansions.borrow().get(&key) {
+            return Ok(expansion.clone());
+        }
+        let expansion = self
+            .system
             .expand_live(state, self.enforce, self.stutter_closure)
             .inspect_err(|&stop| {
                 self.record(Halt::Expansion(stop));
-            })
+            })?;
+        self.expansions
+            .borrow_mut()
+            .insert(key, expansion.clone());
+        Ok(expansion)
     }
 
     fn state_key_of(&self, state: &S::State) -> Result<StateKey, ExpansionStop> {
@@ -2048,6 +2062,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             automaton: RefCell::new(automaton),
             start,
             readings: RefCell::new(BTreeMap::new()),
+            expansions: RefCell::new(BTreeMap::new()),
             captured: self.clause.capture_site(),
             initial: Vec::new(),
             dead: RefCell::new(Vec::new()),

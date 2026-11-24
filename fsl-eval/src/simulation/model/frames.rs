@@ -916,6 +916,9 @@ impl Allowed {
                         .into_iter()
                         .collect(),
                     (Some(_), _) => Vec::new(),
+                    (None, Value::Integer(_)) if matches!(domain, Domain::SizeInteger { .. }) => {
+                        domain.index_of(equal).into_iter().collect()
+                    }
                     (None, _) => (0..domain.len())
                         .filter(|index| {
                             domain
