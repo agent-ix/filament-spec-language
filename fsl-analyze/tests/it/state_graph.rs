@@ -1594,6 +1594,48 @@ fn the_walk_budget_bounds_and_counts_each_walk() {
     }
 }
 
+/// FR-168-AC-15 (TC-593): an impossible target is trapped at the initial
+/// state under either symmetry or partial-order reduction.
+#[trace("TC-593", "FR-168-AC-15")]
+#[test]
+fn an_impossible_target_is_trapped_under_each_reduction() {
+    let world = crate::graph_world::symmetric_config_world_over(
+        "",
+        "possible Impossible using v over (c: Config::ConfigVersion) { c.versionNumber = 1 and c.versionNumber = 2 }\n",
+        &["a", "b", "c"],
+        &[vec![0, 0, 0]],
+    );
+    let mut symmetry = world.request(
+        &["a", "b", "c"],
+        vec![world.item("Impossible")],
+        no_samples(),
+    );
+    symmetry
+        .reductions
+        .symmetry
+        .push(fsl_route::reductions::SymmetryDeclaration {
+            population: filament_checked::key::DeclarationKey {
+                package: "test/config".to_owned(),
+                node: "ix://test/config/config_history".to_owned(),
+            },
+            classes: vec![vec!["a".to_owned(), "b".to_owned(), "c".to_owned()]],
+        });
+    let mut por = world.request(
+        &["a", "b", "c"],
+        vec![world.item("Impossible")],
+        no_samples(),
+    );
+    por.reductions.partial_order = true;
+    for result in [run(symmetry), run(por)] {
+        assert_eq!(result.graph.end, RunEnd::Completed);
+        let StateGraphOutcome::Trapped { stem } = &result.items[0][0].outcome else {
+            panic!("an impossible target is trapped: {:?}", result.items[0][0].outcome);
+        };
+        assert_eq!(stem.initial, 0);
+        assert!(stem.steps.is_empty());
+    }
+}
+
 // ---------------------------------------------------------------- FR-168
 
 /// FR-168-AC-1: with phase 0 off, `ReachesTwo` for `c = a` returns
@@ -1875,6 +1917,34 @@ fn an_undefined_target_refutes_in_place_of_a_witness() {
     assert_eq!(undefined.state_key, stem.steps[1].post_state);
     assert_eq!(undefined.predicate, Some(PredicateRole::Target));
     assert!(undefined.locus.is_some());
+    assert_eq!(
+        undefined.cause,
+        fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
+    );
+}
+
+/// FR-168-AC-11 (TC-612): after reaching `versionNumber = 2`, evaluation of
+/// the `Guard` precondition is undefined. The result identifies the state
+/// and contract clause, rather than misreporting a target-predicate failure.
+#[trace("TC-612", "FR-168-AC-11")]
+#[test]
+fn an_undefined_operation_guard_is_reported_at_its_contract_site() {
+    let guard = "pre Guard using v on Config::ConfigVersion::attemptUpdate { \
+        quotient(2 - self.versionNumber) >= 1 }\n";
+    let world = config_kernel_world_over(
+        guard,
+        REACHES_TWO,
+        &["a", "b"],
+        &[vec![0, 0]],
+    );
+    let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
+    let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
+        panic!("an undefined guard: {:?}", result.items[0][0].outcome);
+    };
+    assert_eq!(versions(&world, stem), vec![(0, 0), (1, 0), (2, 0)]);
+    assert_eq!(undefined.state_key, stem.steps[1].post_state);
+    assert_eq!(undefined.predicate, None);
+    assert_eq!(undefined.locus, Some(fsl_replay::UndefinedLocus::Contract("Guard".to_owned())));
     assert_eq!(
         undefined.cause,
         fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
