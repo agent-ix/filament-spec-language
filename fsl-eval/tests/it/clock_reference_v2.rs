@@ -455,7 +455,7 @@ fn assert_supplied_clock_data(
 /// complete-population admission still precedes declared-place membership.
 #[trace("FR-390-AC-23", "TC-464")]
 #[test]
-#[ignore = "QSL-2776: Bare cannot read a Reference<Clock> data member (Contract IR object-field projection)"]
+#[ignore = "QSL-3002: with contract-ir 729a6641 (5dbd27f98 present) the Bare half now builds, but the declared-model snapshot admission refuses the Reference<Clock> field with invalid_runtime_input/wrong-value-kind at /populations/0/objects/0/fields/r; clock-place DATA admission as Value::ClockReference is unimplemented in fsl-semantics (observation/document.rs admit_leaf returns unsupported-feature clock-reference-admission-pending-qsl-3002; resolve_clock is still the pre-ClockReference object-reference path)"]
 fn supplied_clock_data_validates_owner_population_on_source_and_bare() {
     let checked = fixture(false);
     let package = CheckedPackage::link(checked.graph);
@@ -554,7 +554,7 @@ fn supplied_clock_data_validates_owner_population_on_source_and_bare() {
 
 #[trace("TC-464", "TC-3084", "FR-106-AC-72", "FR-106-AC-76")]
 #[test]
-#[ignore = "QSL-2776: Bare cannot read a Reference<Clock> data member (Contract IR object-field projection); the Source half passes"]
+#[ignore = "QSL-3002: with contract-ir 729a6641 (5dbd27f98 present) the Bare half now builds, but the declared-model snapshot admission refuses the Reference<Clock> field with invalid_runtime_input/wrong-value-kind at /populations/0/objects/0/fields/r; clock-place DATA admission as Value::ClockReference is unimplemented in fsl-semantics (observation/document.rs admit_leaf returns unsupported-feature clock-reference-admission-pending-qsl-3002; resolve_clock is still the pre-ClockReference object-reference path)"]
 fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
     let checked = fixture(false);
     let package = CheckedPackage::link(checked.graph);
@@ -728,7 +728,7 @@ fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
 
 #[trace("TC-464", "FR-106-AC-73", "FR-106-AC-76")]
 #[test]
-#[ignore = "QSL-2776: Bare cannot read a Reference<Clock> data member (Contract IR object-field projection)"]
+#[ignore = "QSL-3002: with contract-ir 729a6641 (5dbd27f98 present) the Bare half now builds, but the declared-model snapshot admission refuses the Reference<Clock> field with invalid_runtime_input/wrong-value-kind at /populations/0/objects/0/fields/r; clock-place DATA admission as Value::ClockReference is unimplemented in fsl-semantics (observation/document.rs admit_leaf returns unsupported-feature clock-reference-admission-pending-qsl-3002; resolve_clock is still the pre-ClockReference object-reference path)"]
 fn removing_x_never_rebinds_its_actual_reference_to_y_at_the_reused_ordinal() {
     let checked = fixture(false);
     let package = CheckedPackage::link(checked.graph);
@@ -912,7 +912,7 @@ fn removing_x_never_rebinds_its_actual_reference_to_y_at_the_reused_ordinal() {
 /// dangling outcome for an old field removed from the correct declaration.
 #[trace("TC-464", "FR-230-AC-45")]
 #[test]
-#[ignore = "QSL-2776: Bare cannot read a Reference<Clock> data member (Contract IR object-field projection)"]
+#[ignore = "QSL-3002: with contract-ir 729a6641 (5dbd27f98 present) the Bare half now builds, but the declared-model snapshot admission refuses the Reference<Clock> field with invalid_runtime_input/wrong-value-kind at /populations/0/objects/0/fields/r; clock-place DATA admission as Value::ClockReference is unimplemented in fsl-semantics (observation/document.rs admit_leaf returns unsupported-feature clock-reference-admission-pending-qsl-3002; resolve_clock is still the pre-ClockReference object-reference path)"]
 fn clock_reference_scope_disagreement_is_invalid_input_on_source_and_bare() {
     use filament_eval::{CallAdmissionFailure, CallAdmissionLocus, CallFailure};
     use fsl_semantics::model::clock_reference::identity::{DeclarationScope, PlaceIdentity};
@@ -1172,7 +1172,7 @@ fn clock_reference_scope_disagreement_is_invalid_input_on_source_and_bare() {
 /// each same original declaration retain one entry and admit real data.
 #[trace("FR-106-AC-77", "TC-464")]
 #[test]
-#[ignore = "QSL-2776: Bare cannot read a Reference<Clock> data member (Contract IR object-field projection)"]
+#[ignore = "QSL-3002: with contract-ir 729a6641 (5dbd27f98 present) the Bare half now builds, but the declared-model snapshot admission refuses the Reference<Clock> field with invalid_runtime_input/wrong-value-kind at /populations/0/objects/0/fields/r; clock-place DATA admission as Value::ClockReference is unimplemented in fsl-semantics (observation/document.rs admit_leaf returns unsupported-feature clock-reference-admission-pending-qsl-3002; resolve_clock is still the pre-ClockReference object-reference path)"]
 fn declared_table_collision_refuses_both_origins_and_aliases_admit_on_both_routes() {
     use fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable;
     use fsl_semantics::model::observation::ModelSelections;
