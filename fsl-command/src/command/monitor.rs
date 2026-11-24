@@ -9,8 +9,8 @@ use std::path::{Component, Path};
 
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::Category;
-use fsl_analyze::analyze::document::{Negotiate, RegistryEntry, SettledRun};
 use fsl_analyze::analyze::Engine;
+use fsl_analyze::analyze::document::{Negotiate, RegistryEntry, SettledRun};
 use fsl_analyze::monitor::{MonitorClause, MonitorRefusal, SettleTrigger, Settlement};
 use fsl_analyze::monitor_session::{
     ClauseStatus, MonitorObservation, MonitorOpen, MonitorPosition, MonitorSession, MonitorStamp,
@@ -20,17 +20,17 @@ use fsl_analyze::provider::ProviderOptions;
 use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::source::Source;
 use fsl_replay::spine::{
+    OverObject, ProgressLowerBoundary, TimestampedMissingValuation, TimestampedOrderKey,
     read_cover, read_ledger, read_lower_boundary, read_progress_assertion, read_sample_text,
-    read_trace_binding, write_clause_run_result, write_ledger, OverObject, ProgressLowerBoundary,
-    TimestampedMissingValuation, TimestampedOrderKey,
+    read_trace_binding, write_clause_run_result, write_ledger,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::limits::{CommandLimits, MonitorPreparationLimits};
 use super::settle::Settle;
 use super::{
-    check_sources, intake_with_bytes, request, request_integer_division, require_native_header,
-    wire, FileCounts, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
+    FileCounts, NativeResult, Result, RunCause, RunError, RunLimits, RunResult, check_sources,
+    intake_with_bytes, request, request_integer_division, require_native_header, wire,
 };
 
 /// The format of one event.
@@ -600,7 +600,7 @@ fn read_inputs(
             return Err(invalid(
                 "trace.kind",
                 "a timed trace is read but not yet run: the timed clock kind is not built",
-            ))
+            ));
         }
     };
     let lower_boundary = request.trace.lower_boundary.map_or(
@@ -661,17 +661,27 @@ enum Records<'r> {
     Stream(Box<dyn Iterator<Item = Result<Vec<u8>>> + 'r>),
 }
 
+struct DriveRequest<'a> {
+    directory: &'a Path,
+    bytes: &'a [u8],
+    dependent_bytes: usize,
+    caller: &'a CommandLimits,
+}
+
 /// Drive one stream. `lines` yields the records; `sink` gets each event.
 fn drive(
-    directory: &Path,
-    bytes: &[u8],
-    dependent_bytes: usize,
-    caller: &CommandLimits,
+    request_input: DriveRequest<'_>,
     source: Records<'_>,
     sink: &mut dyn FnMut(&MonitorEvent),
     settle: &Settle<'_>,
     cancel: &Cancel,
 ) -> Result<MonitorSummary> {
+    let DriveRequest {
+        directory,
+        bytes,
+        dependent_bytes,
+        caller,
+    } = request_input;
     let mut request: wire::MonitorRequest = request(bytes)?;
     let integer_division = request_integer_division(request.integer_division.take())?;
     let records_file = request.records.clone();
@@ -680,13 +690,13 @@ fn drive(
             return Err(invalid(
                 "records",
                 "a native-monitor/1 request run through run needs a records file",
-            ))
+            ));
         }
         (false, Some(_)) => {
             return Err(invalid(
                 "records",
                 "a records file is read by run; monitor reads the stream it is given",
-            ))
+            ));
         }
         _ => {}
     }
@@ -1092,10 +1102,12 @@ pub fn monitor(
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
         super::request_shape::admit(super::request_shape::Family::Monitor, bytes)?;
         drive(
-            directory,
-            bytes,
-            limits.dependent_bytes,
-            caller,
+            DriveRequest {
+                directory,
+                bytes,
+                dependent_bytes: limits.dependent_bytes,
+                caller,
+            },
             Records::Stream(Box::new(records.map(|line| {
                 line.map_err(|error| RunCause::Io {
                     path: path.to_path_buf(),
@@ -1124,10 +1136,12 @@ pub(super) fn run_bytes(
     });
     let mut events = Vec::new();
     let summary = drive(
-        directory,
-        bytes,
-        dependent_bytes,
-        &caller,
+        DriveRequest {
+            directory,
+            bytes,
+            dependent_bytes,
+            caller: &caller,
+        },
         Records::Batch,
         &mut |event| events.push(event.as_value().clone()),
         settle,
@@ -1171,17 +1185,19 @@ fn chained<T>(outer: &Cancel, work: impl FnOnce(&Cancel) -> T) -> T {
     std::thread::scope(|scope| {
         let (done, finished) = std::sync::mpsc::channel::<()>();
         let (watched, forwarded) = (outer.clone(), inner.clone());
-        scope.spawn(move || loop {
-            if let Some(cause) = watched.cause() {
-                forwarded.cancel(cause);
-                break;
-            }
-            // The thread ends on `work`'s end, or when the channel closes.
-            if !matches!(
-                finished.recv_timeout(POLL),
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-            ) {
-                break;
+        scope.spawn(move || {
+            loop {
+                if let Some(cause) = watched.cause() {
+                    forwarded.cancel(cause);
+                    break;
+                }
+                // The thread ends on `work`'s end, or when the channel closes.
+                if !matches!(
+                    finished.recv_timeout(POLL),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                ) {
+                    break;
+                }
             }
         });
         let value = work(&inner);

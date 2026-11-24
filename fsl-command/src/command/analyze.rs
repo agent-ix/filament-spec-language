@@ -10,8 +10,8 @@ use std::path::Path;
 
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::document::{
-    resolve_items, settle_package_run, settle_run, AnalyzeDocumentError, AnalyzeRun, ItemSelection,
-    Negotiate, PackageRun, PackageRunError, SettledRun, SubjectSelection,
+    AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, PackageRun, PackageRunError,
+    SettledRun, SubjectSelection, resolve_items, settle_package_run, settle_run,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
@@ -21,8 +21,9 @@ use fsl_semantics::model::observation::DocumentProvision;
 use super::limits::CommandLimits;
 use super::settle::Settle;
 use super::{
+    FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
     check_sources, intake_with_bytes, request, request_integer_division, require_native_header,
-    wire, FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
+    wire,
 };
 
 fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
@@ -230,7 +231,7 @@ fn validate_composition_premises(
                 return Err((
                     format!("{pointer}/role"),
                     "role must be a string".to_owned(),
-                ))
+                ));
             }
         }
         if !entry.get("key").is_some_and(serde_json::Value::is_object) {
@@ -445,9 +446,9 @@ fn run_package(
         budget,
     };
     let mut settled = with_deadline(cancel, deadline_ms, || {
-        settle_package_run(run, negotiate, cancel)
+        settle_package_run(run, negotiate, cancel).map_err(Box::new)
     })
-    .map_err(|failure| match failure {
+    .map_err(|failure| match *failure {
         PackageRunError::Input(refusal) => package_input_refusal(refusal, package.package().name()),
         PackageRunError::ClauseBuild { node, refusal } => package_clause_refusal(node, refusal),
         PackageRunError::Pending(pending) => RunCause::AnalyzeNotYetImplemented {
@@ -571,7 +572,7 @@ fn package_clause_refusal(
                 member: "package",
                 detail: format!(": {message}"),
                 locus: None,
-            }
+            };
         }
         PackageClauseRefusal::Horizon(limit)
         | PackageClauseRefusal::Domains(fsl_semantics::family::ClassifyFailure::Limit(limit)) => (
@@ -602,9 +603,9 @@ mod package_intake_tests {
     use super::*;
     use filament_semantic_value::catalog::{CatalogCode, InternalFault};
     use fsl_eval::simulation::model::PendingPackageForm;
+    use fsl_foundation::Span;
     use fsl_foundation::diagnostic::LimitExceeded;
     use fsl_foundation::setting::Setting;
-    use fsl_foundation::Span;
     use fsl_semantics::check::{
         AssemblyCause, AssemblyError, AssemblyRefusal, PackageClauseRefusal,
     };

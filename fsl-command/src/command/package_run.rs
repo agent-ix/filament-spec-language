@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use super::{output, wire, FileCounts, Result, RunCause, RunResult};
+use super::{FileCounts, Result, RunCause, RunResult, output, wire};
 
 /// The FR-517 files a `{directory}` selection reads.
 const PACKAGE_FILE: &str = "checked-package.json";
@@ -320,8 +320,8 @@ fn prepare_clause(
     progress_capacity: u64,
 ) -> Result<PreparedPackageRun> {
     use fsl_replay::spine::{
-        read_clause_selection, ClauseRunSelection, ClauseSelectionPartsKind, SuppliedObservation,
-        TraceInput,
+        ClauseRunSelection, ClauseSelectionPartsKind, SuppliedObservation, TraceInput,
+        read_clause_selection,
     };
 
     if request.call.is_some() || request.tl_lowering.is_some() {
@@ -1202,17 +1202,17 @@ fn execute_inner(
                 "prepared requirement settlement needs the run registry",
             )
         })?;
-        Some(settle_value_call(
-            &bare,
-            &package_bytes,
-            &dependencies,
-            &identities,
-            &packages,
-            &call.function,
+        Some(settle_value_call(ValueCall {
+            bare: &bare,
+            bytes: &package_bytes,
+            dependencies: &dependencies,
+            identities: &identities,
+            packages: &packages,
+            function: &call.function,
             requirements,
             settle,
             budget,
-        )?)
+        })?)
     } else {
         None
     };
@@ -1226,16 +1226,30 @@ fn execute_inner(
     Ok(result)
 }
 
-fn settle_value_call(
-    bare: &fsl_package::BarePackage<'_>,
-    bytes: &[u8],
-    dependencies: &[fsl_package::DependencyArtifact],
-    identities: &fsl_package::ReadIdentityRows,
-    packages: &fsl_semantics::model::intake::PackageInput,
-    function: &str,
-    requirements: &super::requirements::Requirements,
-    settle: &super::settle::Settle<'_>,
+struct ValueCall<'a> {
+    bare: &'a fsl_package::BarePackage<'a>,
+    bytes: &'a [u8],
+    dependencies: &'a [fsl_package::DependencyArtifact],
+    identities: &'a fsl_package::ReadIdentityRows,
+    packages: &'a fsl_semantics::model::intake::PackageInput,
+    function: &'a str,
+    requirements: &'a super::requirements::Requirements,
+    settle: &'a super::settle::Settle<'a>,
     budget: filament_contract_model::NativeJoinBudget,
+}
+
+fn settle_value_call(
+    ValueCall {
+        bare,
+        bytes,
+        dependencies,
+        identities,
+        packages,
+        function,
+        requirements,
+        settle,
+        budget,
+    }: ValueCall<'_>,
 ) -> Result<fsl_analyze::analyze::document::SettledRun> {
     use fsl_analyze::analyze::document::{CallItem, ItemSelection, PackageRun, SubjectSelection};
     use fsl_package::AnalysisView;

@@ -4652,7 +4652,9 @@ mod witness_pricing_tests {
         }
     }
 
-    fn graph(states: Vec<(&str, Option<bool>, Vec<Vec<ProbabilityEdge>>)>) -> CheckerGraph {
+    type GraphState<'a> = (&'a str, Option<bool>, Vec<Vec<ProbabilityEdge>>);
+
+    fn graph(states: Vec<GraphState<'_>>) -> CheckerGraph {
         CheckerGraph {
             initial: key("I"),
             states: states

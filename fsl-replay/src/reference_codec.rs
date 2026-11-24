@@ -22,7 +22,7 @@ mod values;
     dead_code,
     reason = "the shared model input is used with a scoped reference test unit"
 )]
-mod reference_fixture;
+pub(crate) mod reference_fixture;
 
 /// Semantic reasons a reference boundary refuses an input.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1863,7 +1863,9 @@ impl quire_canonical::Sink for Output<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::{ReferenceCodecError, ReferenceFailure, Scope};
-    use filament_exact::{Cancel, Integer, IntegerDecimalBudget, Meter, Reservation, ReservationDenied};
+    use filament_exact::{
+        Cancel, Integer, IntegerDecimalBudget, Meter, Reservation, ReservationDenied,
+    };
     use fsl_eval::simulation::model::{ModelKeyBudget, ModelKeyError, ModelRestoreBudget};
 
     struct Budget {

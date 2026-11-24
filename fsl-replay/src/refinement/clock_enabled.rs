@@ -528,10 +528,10 @@ mod tests {
             resets: vec![(0, whole(0))],
         };
         let delays = [Some(whole(1))];
-        let starts = settled_starts(&[reset.clone()], &delays, 1, 3).expect("settles");
+        let starts = settled_starts(std::slice::from_ref(&reset), &delays, 1, 3).expect("settles");
         assert_eq!(starts, [[Some(whole(0))]]);
         // The carry chain needs a pass to fill the second clock.
-        assert!(settled_starts(&[chain.clone()], &delays, 2, 1).is_none());
+        assert!(settled_starts(std::slice::from_ref(&chain), &delays, 2, 1).is_none());
         assert!(settled_starts(&[chain], &delays, 2, 4).is_some());
     }
 }

@@ -10,15 +10,15 @@ use fsl_eval::simulation::model::operation_identity_text;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::ObjectKey;
 use fsl_replay::{
-    check_step, map_state, ConcreteStep, EvalFailure, HistoryValues, MappingFailure, MappingRowRef,
-    RefinementPosition, StepArgument, StepVerdict, Taken, Undetermined,
+    ConcreteStep, EvalFailure, HistoryValues, MappingFailure, MappingRowRef, RefinementPosition,
+    StepArgument, StepVerdict, Taken, Undetermined, check_step, map_state,
 };
 use fsl_semantics::model::state::ModelState;
 use ix_trace_rs::trace;
 
 use crate::ring_world::{
-    custom_state, key, ring_is_queue, ring_state, twin_refinement, MapWorld, RingSpec, RingWorld,
-    Variant, ITEMS, QUEUE, RING, UNLIMITED,
+    MapWorld, QUEUE, RING, RingSpec, RingWorld, UNLIMITED, Variant, custom_state, key,
+    ring_is_queue, ring_state, twin_refinement,
 };
 
 const ITEMS_ROW: &str = "items = seq(i in 0 .. self.size - 1: only(s in R::slots where s.ring = self and s.index + 0 = (self.head + i) mod 2: s.value));";
