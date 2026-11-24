@@ -983,6 +983,8 @@ struct LassoSystem<'r, S: LiveSubject> {
     /// the same canonical model state. Each `LassoSystem` is one binding's
     /// exploration pass, so this cache never crosses a pass boundary.
     expansions: RefCell<BTreeMap<StateKey, Bounded<Tr<S>, S::State>>>,
+    /// The model-only finding pass re-derives expansions in its own cache.
+    model_only_expansions: RefCell<BTreeMap<StateKey, Bounded<Tr<S>, S::State>>>,
     /// Where the clause fixes its captures (FR-337).
     captured: CaptureSite,
     initial: Vec<LState<S::State>>,
@@ -1061,8 +1063,27 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
         state: &S::State,
         key: &StateKey,
     ) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
+        self.expand_cached(state, key, &self.expansions)
+    }
+
+    /// Expand in the model-only finding pass, with a cache separate from the
+    /// retained product pass.
+    fn expand_model_only(
+        &self,
+        state: &S::State,
+        key: &StateKey,
+    ) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
+        self.expand_cached(state, key, &self.model_only_expansions)
+    }
+
+    fn expand_cached(
+        &self,
+        state: &S::State,
+        key: &StateKey,
+        cache: &RefCell<BTreeMap<StateKey, Bounded<Tr<S>, S::State>>>,
+    ) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
         self.poll()?;
-        if let Some(expansion) = self.expansions.borrow().get(key) {
+        if let Some(expansion) = cache.borrow().get(key) {
             return Ok(expansion.clone());
         }
         let expansion = self
@@ -1071,9 +1092,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
             .inspect_err(|&stop| {
                 self.record(Halt::Expansion(stop));
             })?;
-        self.expansions
-            .borrow_mut()
-            .insert(key.clone(), expansion.clone());
+        cache.borrow_mut().insert(key.clone(), expansion.clone());
         Ok(expansion)
     }
 
@@ -2069,6 +2088,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             start,
             readings: RefCell::new(BTreeMap::new()),
             expansions: RefCell::new(BTreeMap::new()),
+            model_only_expansions: RefCell::new(BTreeMap::new()),
             captured: self.clause.capture_site(),
             initial: Vec::new(),
             dead: RefCell::new(Vec::new()),
@@ -2387,7 +2407,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 stop(&mut phase)?;
                 return Ok(phase);
             }
-            let reading = match run.product.reading(&model) {
+            let (model_key, reading) = match run.product.reading_at(&model, false) {
                 Ok(reading) => reading,
                 Err(_) => {
                     stop(&mut phase)?;
@@ -2429,7 +2449,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     Cut::default(),
                 )
             } else {
-                match run.product.expand(&model) {
+                match run.product.expand_model_only(&model, &model_key) {
                     Ok(expanded) => expanded,
                     Err(_) => {
                         stop(&mut phase)?;
