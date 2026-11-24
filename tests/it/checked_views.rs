@@ -59,7 +59,7 @@ fn requiring(package: &CheckedPackageV2, clause: &CheckedNodeId) -> Vec<CheckedN
                     if filament_contract_model::CheckedBindingNameKind::Other("requirements")
                         == name.kind() =>
                 {
-                    matches!(&**value, CheckedTerm::Aggregate { members }
+                    matches!(&**value, CheckedTerm::Aggregate { members, .. }
                         if members.iter().any(|member| matches!(member,
                             CheckedTerm::Reference { target } if target == clause)))
                 }
@@ -201,7 +201,7 @@ fn parameter_named(package: &CheckedPackageV2, name: &str) -> CheckedNodeId {
         .zip(package.node_kinds())
         .filter(|(_, kind)| **kind == CheckedNodeKind::Value(ValueForm::Parameter))
         .filter(|(node, _)| match package.term(&node.node_id) {
-            Some(CheckedTerm::Aggregate { members }) => members.iter().any(|member| {
+            Some(CheckedTerm::Aggregate { members, .. }) => members.iter().any(|member| {
                 matches!(member, CheckedTerm::Binding { name: bound, value, .. }
                     if CheckedBindingNameKind::Other("name") == bound.kind()
                         && value.literal_read().is_some_and(|literal|
