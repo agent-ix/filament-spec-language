@@ -1845,6 +1845,36 @@ fn fair_coin_has_no_nonterminal_fair_end_component() {
     assert!(operations[flip_index].operation.contains("flip"));
 }
 
+/// FR-1042-AC-22: strong fairness does not change the one-shot `go` draw;
+/// the only fair scheduler reaches `done` with probability exactly one half.
+#[trace("FR-1042-AC-22")]
+#[test]
+fn fair_one_shot_go_has_exactly_one_half_reachability() {
+    const CLAIM: &str =
+        "probabilistic FairHalf using inf on M over (o: M::Once) \\
+         under every scheduler fair strong Once::go on origin \\
+         { probability >= 0.4 [ eventually holds(o.done) ] }";
+    let world = World::new(&prob_world::one_shot(CLAIM));
+    let product = built(&world, "FairHalf");
+    let target = product
+        .labels
+        .iter()
+        .map(|labels| labels[0])
+        .collect::<Vec<_>>();
+    let result = decide_fair_reachability(
+        &product,
+        None,
+        &target,
+        UnboundedObjective::Min,
+        &ExactProbLimits::default(),
+    )
+    .expect("the fair one-shot MDP has exact reachability");
+    assert_eq!(
+        result.values[start(&product).index()],
+        fsl_analyze::exact_probabilistic::ExtRational::Finite(ratio(1, 2))
+    );
+}
+
 /// A terminal stutter-only component is fair when it remains in the
 /// non-target graph, despite having no scheduled identities.
 #[trace("TC-635", "FR-200-AC-5")]

@@ -226,7 +226,11 @@ impl Encode for Events<'_> {
         writer.begin_object()?;
         writer.name("profile")?;
         writer.string(if !self.fairness.is_empty() {
-            BOUNDED_FAIR_PROFILE
+            if self.cyclic_mdp {
+                CYCLIC_MDP_FAIR_PROFILE
+            } else {
+                BOUNDED_FAIR_PROFILE
+            }
         } else if self.document.timed.is_some() {
             TIMED_PROFILE
         } else if self.cyclic_mdp && self.document.reward.is_some() {

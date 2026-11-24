@@ -47,10 +47,11 @@ use super::items::{BROKEN, NOT_YET, admission};
 use super::timed_item::subject_refusal;
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::exact_probabilistic::{
-    ExtRational, FhError, FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest,
-    UnboundedError, UnboundedObjective, build_retaining_monitor, decide_always,
-    decide_bounded_event, decide_expected_reward, decide_reachability, decide_until,
-    manifest as en5, settle_product_refusal,
+    ExtRational, FairReachabilityOutcome, FhError, FhResult, ProbBuild, ProbProduct,
+    ProductRefusal, ProductRequest, UnboundedError, UnboundedObjective, build_retaining_monitor,
+    decide_always, decide_bounded_event, decide_expected_reward,
+    decide_fair_reachability_threshold, decide_reachability, decide_until, manifest as en5,
+    settle_product_refusal,
 };
 
 /// The FR-413 claim type for a checked exact form, using the shared type
@@ -495,6 +496,42 @@ fn bounded_monitor_failure(
 fn precision_budget(lower: Rational, upper: Rational, subject: SubjectLimits<'_>) -> EngineReport {
     settled(
         &ExactProbBuildIssue::PrecisionBudget { lower, upper },
+        subject,
+    )
+}
+
+fn fair_limit_failure(
+    limit: fsl_replay::ExactProbLimit,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    let limit = match limit {
+        fsl_replay::ExactProbLimit::MaxIterations => ModelCheckLimit::ExactProbMaxIterations,
+        fsl_replay::ExactProbLimit::MaxPrecisionBits => ModelCheckLimit::ExactProbMaxPrecisionBits,
+        fsl_replay::ExactProbLimit::MaxRationalBits => ModelCheckLimit::ExactProbMaxRationalBits,
+        fsl_replay::ExactProbLimit::MaxPolicyIterations => {
+            ModelCheckLimit::ExactProbMaxPolicyIterations
+        }
+        _ => return broken(),
+    };
+    settled(
+        &ExactProbBuildIssue::Limit {
+            limit,
+            value: limits
+                .value_of(match limit {
+                    ModelCheckLimit::ExactProbMaxIterations => {
+                        fsl_replay::ExactProbLimit::MaxIterations
+                    }
+                    ModelCheckLimit::ExactProbMaxPrecisionBits => {
+                        fsl_replay::ExactProbLimit::MaxPrecisionBits
+                    }
+                    ModelCheckLimit::ExactProbMaxRationalBits => {
+                        fsl_replay::ExactProbLimit::MaxRationalBits
+                    }
+                    _ => fsl_replay::ExactProbLimit::MaxPolicyIterations,
+                })
+                .unwrap_or_default(),
+        },
         subject,
     )
 }
@@ -1447,99 +1484,52 @@ fn run(
     let mut interval: Option<Interval> = None;
     let mut fair_policy: Option<Vec<Option<crate::exact_probabilistic::SchedulerChoice>>> = None;
     let (values, policy) = if fair_eventual {
-        let fair_values = match crate::exact_probabilistic::decide_fair_reachability(
-            &product, None, &target, objective, &limits,
+        let threshold = match bound {
+            Bound::AtLeast(threshold) | Bound::AtMost(threshold) => threshold,
+        };
+        let fair = match decide_fair_reachability_threshold(
+            &product, None, &target, objective, threshold, &limits,
         ) {
-            Ok(fair) => {
-                fair_policy = Some(fair.policy);
-                Some(fair.values)
-            }
-            Err(crate::exact_probabilistic::FairProductError::Product(
-                UnboundedError::MaxRationalBits,
-            )) => None,
+            Ok(fair) => fair,
             Err(crate::exact_probabilistic::FairProductError::Product(error)) => {
                 return unbounded_failure(error, &limits, subject);
             }
             Err(_) => return broken(),
         };
-        match fair_values {
-            Some(values)
-                if !exact_values_exceed_rational_budget(&values, limits.max_rational_bits) =>
-            {
-                (values, Vec::new())
+        match fair {
+            FairReachabilityOutcome::Exact(fair) => {
+                fair_policy = Some(fair.policy);
+                (fair.values, Vec::new())
             }
-            _ => {
-                let Bound::AtLeast(threshold) = bound else {
-                    return rational_bits_limit(&limits, subject);
-                };
-                if objective != UnboundedObjective::Min {
-                    return rational_bits_limit(&limits, subject);
-                }
-                match crate::exact_probabilistic::decide_fair_reachability_threshold(
-                    &product, &target, threshold, &limits,
-                ) {
-                    Ok(crate::exact_probabilistic::UnboundedOutcome::Bounds {
-                        lower,
-                        upper,
+            FairReachabilityOutcome::Bounds {
+                lower,
+                upper,
+                precision_bits,
+                sweeps,
+                policy,
+                ..
+            } => {
+                let values = lower
+                    .iter()
+                    .map(|end| ExtRational::Finite(end.rational()))
+                    .collect();
+                interval = Some(Interval {
+                    lower,
+                    upper,
+                    precision_bits,
+                    method: fsl_replay::BoundsMethod::IntervalIteration {
                         precision_bits,
                         sweeps,
-                        ..
-                    }) => {
-                        let values = lower
-                            .iter()
-                            .map(|end| ExtRational::Finite(end.rational()))
-                            .collect();
-                        interval = Some(Interval {
-                            lower,
-                            upper,
-                            precision_bits,
-                            method: fsl_replay::BoundsMethod::IntervalIteration {
-                                precision_bits,
-                                sweeps,
-                            },
-                        });
-                        (values, Vec::new())
-                    }
-                    Ok(crate::exact_probabilistic::UnboundedOutcome::Exact(result)) => {
-                        if exact_values_exceed_rational_budget(
-                            &result.values,
-                            limits.max_rational_bits,
-                        ) {
-                            return rational_bits_limit(&limits, subject);
-                        }
-                        (result.values, Vec::new())
-                    }
-                    Ok(crate::exact_probabilistic::UnboundedOutcome::PrecisionBudget {
-                        lower,
-                        upper,
-                    }) => return precision_budget(lower.rational(), upper.rational(), subject),
-                    Ok(crate::exact_probabilistic::UnboundedOutcome::Stopped(
-                        fsl_replay::ExactProbLimit::MaxPolicyIterations,
-                    )) => {
-                        return settled(
-                            &ExactProbBuildIssue::Limit {
-                                limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
-                                value: limits.max_policy_iterations,
-                            },
-                            subject,
-                        )
-                    }
-                    Ok(crate::exact_probabilistic::UnboundedOutcome::Stopped(
-                        fsl_replay::ExactProbLimit::MaxPrecisionBits,
-                    )) => {
-                        return settled(
-                            &ExactProbBuildIssue::Limit {
-                                limit: ModelCheckLimit::ExactProbMaxPrecisionBits,
-                                value: u64::from(limits.max_precision_bits),
-                            },
-                            subject,
-                        )
-                    }
-                    Ok(crate::exact_probabilistic::UnboundedOutcome::Stopped(_)) => {
-                        return rational_bits_limit(&limits, subject)
-                    }
-                    Err(error) => return unbounded_failure(error, &limits, subject),
-                }
+                    },
+                });
+                fair_policy = Some(policy);
+                (values, Vec::new())
+            }
+            FairReachabilityOutcome::PrecisionBudget { lower, upper } => {
+                return precision_budget(lower.rational(), upper.rational(), subject);
+            }
+            FairReachabilityOutcome::Stopped(limit) => {
+                return fair_limit_failure(limit, &limits, subject);
             }
         }
     } else if bounded_formula.is_some() {
@@ -1926,10 +1916,6 @@ fn run(
             evidence,
         }));
     }
-    if fair_eventual && interval.is_none() && holds {
-        // A fair-minimum certificate profile is QSL-2778 (FR-1041).
-        return not_yet();
-    }
     if !holds {
         if interval.is_some() {
             return rational_bits_limit(&limits, subject);
@@ -2033,6 +2019,28 @@ fn run(
         );
     }
     if let Some(interval) = interval {
+        if fair_eventual {
+            let item = match fsl_replay::probabilistic_claim_identity(claim) {
+                Ok(item) => item,
+                Err(error) => return graph_failure(error, &limits, subject),
+            };
+            return settle_fair_interval(
+                &system,
+                probabilistic.claims(),
+                &item,
+                &product,
+                reference,
+                bound,
+                extremum,
+                binding.as_ref(),
+                &limits,
+                interval,
+                ProbabilityDocumentLimits::for_interval(&limits, meter),
+                cancel,
+                tamper,
+                subject,
+            );
+        }
         let qualified_monitor = match (bounded_formula, monitor) {
             (Some(formula), Some(monitor)) => {
                 let context =
@@ -2497,6 +2505,82 @@ fn settle_interval(
         },
         subject,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn settle_fair_interval(
+    system: &ModelSystem<'_>,
+    claims: &[fsl_semantics::check::CheckedProbabilisticClaim],
+    item: &fsl_package::ObligationIdentity,
+    product: &ProbProduct,
+    reference: Option<&ObjectReference>,
+    bound: &Bound,
+    extremum: Option<Extremum>,
+    binding: Option<&fsl_replay::ClaimBinding>,
+    request_limits: &crate::exact_probabilistic::ExactProbLimits,
+    interval: Interval,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    use fsl_replay::SubsystemBoundKind;
+    let io = fsl_replay::ProbabilityDocumentIoLimits {
+        bytes: limits.bytes,
+        storage_bytes: limits.storage_bytes,
+    };
+    let mut sides = Vec::with_capacity(2);
+    for (side, ends) in [
+        (SubsystemBoundKind::Lower, &interval.lower),
+        (SubsystemBoundKind::Upper, &interval.upper),
+    ] {
+        let values = ends
+            .iter()
+            .map(|end| ExtRational::Finite(end.rational()))
+            .collect::<Vec<_>>();
+        let checked = (|| {
+            let mut certificate = certificate_of(product, reference, &values, io, cancel)?;
+            if let Some(tamper) = tamper {
+                tamper(&mut certificate);
+            }
+            let document =
+                probability_proof_document(system, claims, item, &certificate, limits, cancel)?;
+            certificate.values = document.document().values.clone();
+            let bytes =
+                fsl_replay::write_value_bounds_proof_document(&document, side, limits, cancel)?;
+            let check = fsl_replay::check_probability_certificate_document_as(
+                system,
+                claims,
+                item,
+                &bytes,
+                interval_role(side, bound),
+                limits,
+                cancel,
+            )?;
+            Ok::<_, ProbabilityDocumentError>((certificate, check))
+        })();
+        sides.push((side, checked));
+    }
+    let mut documents = sides.into_iter().map(|(_, checked)| checked);
+    let (Some(lower), Some(upper)) = (documents.next(), documents.next()) else {
+        return broken();
+    };
+    match finish_interval(
+        IntervalSettlement {
+            bound,
+            limits: request_limits,
+            lower,
+            upper,
+            binding,
+            extremum,
+            precision_bits: interval.precision_bits,
+            method: interval.method,
+        },
+        subject,
+    ) {
+        Ok(report) => report,
+        Err(rejected) => *rejected,
+    }
 }
 
 /// FR-1042: a value-bounds document of `side` is the claim side of `bound`
@@ -4177,8 +4261,7 @@ fn timed_step_for(
                         if identity.is_some_and(|identity| {
                             step.operation() != identity.operation
                                 || step.receiver() != &identity.receiver
-                        })
-                        {
+                        }) {
                             continue;
                         }
                         Some((step.transition().clone(), post.discrete().clone()))

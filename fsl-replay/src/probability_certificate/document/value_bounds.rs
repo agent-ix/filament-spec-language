@@ -26,6 +26,7 @@ fn is_wrappable_base(profile: &str) -> bool {
             | CYCLIC_REWARD_PROFILE
             | CYCLIC_MDP_REWARD_PROFILE
             | measure::PROFILE
+            | CYCLIC_MDP_FAIR_PROFILE
     )
 }
 

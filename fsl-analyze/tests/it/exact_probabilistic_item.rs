@@ -1524,6 +1524,46 @@ fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
     assert_eq!(kind(terminal.exact_counterpart_document()), "upper");
 }
 
+/// FR-1042-AC-22: the fair cyclic interval honors the one-bit rational cap,
+/// and both independent proof-role documents enclose the exact value 1/2.
+#[trace("FR-1042-AC-22")]
+#[test]
+fn fair_cyclic_low_rational_budget_proves_with_value_bounds() {
+    let claim = "probabilistic FairHalf using inf on M over (o: M::Once) \
+         under every scheduler fair strong Once::go on origin \
+         { probability >= 0.4 [ eventually holds(o.done) ] }";
+    let world = World::new(&prob_world::one_shot(claim));
+    let mut request = world.request("FairHalf", ModelCheckLimits::default());
+    request.limits.max_rational_bits = 1;
+    request.limits.precision_bits = 16;
+    request.limits.max_precision_bits = 16;
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let item = exact_probabilistic_item(RequestIndex::new(0), request);
+    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let TerminalValue::Proved {
+        basis:
+            ProofBasis::ValueBounds {
+                lower,
+                upper,
+                method,
+                ..
+            },
+        certification: Certification::Certified,
+    } = record.terminal().expect("a terminal record").value()
+    else {
+        panic!("the fair interval must be independently certified: {record:#?}");
+    };
+    assert!(lower.value() >= &ratio(2, 5));
+    assert!(upper.value() <= &ratio(1, 2));
+    assert!(matches!(
+        method,
+        fsl_replay::BoundsMethod::IntervalIteration {
+            precision_bits: 16,
+            sweeps: 1..
+        }
+    ));
+}
+
 /// FR-1042-AC-6: the checker accepts the claim-side `lower` document and the
 /// `upper` counterpart, and refuses either one relabelled as the other side,
 /// since the `lower` document's ranking and the `upper` document's absence of
