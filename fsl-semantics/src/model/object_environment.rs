@@ -394,7 +394,8 @@ impl PopulationProvenance {
 /// `Value::Population(population_id)` argument that names it.
 #[derive(Clone, Debug, Default)]
 pub struct ObjectEnvironment {
-    objects: ObjectClosure,
+    /// Immutable admitted object data, shared by cloned observations.
+    objects: Arc<ObjectClosure>,
     populations: BTreeMap<PopulationId, Arc<PopulationBinding>>,
     /// The post-state integers FR-106 check 6.5's witnessing admitted
     /// outside their declared range; empty for every other environment.
@@ -453,7 +454,7 @@ impl ObjectEnvironment {
     /// The environment over `objects`, with no population recorded yet.
     pub fn new(objects: ObjectClosure) -> Self {
         Self {
-            objects,
+            objects: Arc::new(objects),
             populations: BTreeMap::new(),
             out_of_range: Vec::new(),
             unresolved_references: false,
