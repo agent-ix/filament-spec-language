@@ -221,9 +221,11 @@ fn an_operation_created_key_stays_excluded_from_temporal_instances() {
     let letters = system
         .clause_letters(node)
         .expect("the production temporal letters admit");
+    let temporal_clock_selections =
+        crate::fill::tcb_01_event_position_selection(&world.package);
     let outcome = check_model(
         ModelCheckRequest {
-            temporal_clock_selections: &[],
+            temporal_clock_selections: &temporal_clock_selections,
             subject: world.subject(&keys, UNLIMITED),
             item: ModelCheckItem::Clause {
                 clause,
@@ -232,6 +234,8 @@ fn an_operation_created_key_stays_excluded_from_temporal_instances() {
             max_depth: None,
             limits: ModelCheckLimits::default(),
             reductions: Default::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
         },
         &Cancel::new(),
     )
