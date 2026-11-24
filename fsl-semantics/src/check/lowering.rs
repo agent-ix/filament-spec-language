@@ -7484,7 +7484,14 @@ impl<'a> Lowering<'a> {
             Value::String(value) if scalar == Some("text") => LiteralValue::Text(value.clone()),
             Value::String(value) => LiteralValue::String(value.clone()),
         };
-        let semantic_type = match scalar {
+        let float_scalar = match value {
+            Value::Float(value) => Some(match value.width() {
+                filament_exact::IeeeWidth::Binary32 => "float32",
+                filament_exact::IeeeWidth::Binary64 => "float64",
+            }),
+            _ => None,
+        };
+        let semantic_type = match scalar.or(float_scalar) {
             Some(form) => NodeRef::from(self.scalar(form, location)?),
             None => self.type_ref(declared, location)?,
         };
