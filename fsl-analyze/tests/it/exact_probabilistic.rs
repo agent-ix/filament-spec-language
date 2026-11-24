@@ -144,11 +144,10 @@ fn a_timed_undefined_read_keeps_its_complete_pre_read_product_key() {
              {{ probability >= 0.5 [ always[0 ms, 3 ms] holds(c.phase = 0) ] }}\n",
         crate::timed_world::DENSE,
     );
-    let world = crate::timed_world::world_holding(
+    let world = crate::timed_world::world(
         &document.to_string().into_bytes(),
         "profile timed = \"filament.temporal.timed/v1\";\n",
         &body,
-        &serde_json::json!({"x": {"integer": "0"}}),
     );
     let claim = world
         .package
