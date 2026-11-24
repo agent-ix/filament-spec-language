@@ -4470,14 +4470,14 @@ fn price_paths(
         Ok(value)
     }
     #[allow(clippy::too_many_arguments)]
-    fn witness_path_mass<'a>(
-        graph: &'a CheckerGraph,
+    fn witness_path_mass(
+        graph: &CheckerGraph,
         used: &BTreeMap<ProbabilityProductKey, BTreeSet<ProbabilityProductKey>>,
         payoff: &Payoff<'_>,
-        key: &'a ProbabilityProductKey,
+        key: &ProbabilityProductKey,
         chosen: &mut BTreeMap<ProbabilityProductKey, usize>,
-        memo: &mut BTreeMap<&'a ProbabilityProductKey, Rational>,
-        on_path: &mut BTreeSet<&'a ProbabilityProductKey>,
+        memo: &mut BTreeMap<ProbabilityProductKey, Rational>,
+        on_path: &mut BTreeSet<ProbabilityProductKey>,
         cancel: &Cancel,
         check_bits: &dyn Fn(&Rational) -> Result<(), Error>,
         covers: &dyn Fn(&[ProbabilityEdge], &ProbabilityProductKey) -> bool,
@@ -4489,15 +4489,15 @@ fn price_paths(
         let state = graph.states.get(key).ok_or(Error::Refused)?;
         if let Some(verdict) = state.terminal {
             let value = payoff.weight(key, verdict);
-            memo.insert(key, value.clone());
+            memo.insert(key.clone(), value.clone());
             return Ok(Some(value));
         }
-        if !on_path.insert(key) {
+        if !on_path.insert(key.clone()) {
             return Ok(None);
         }
         let Some(targets) = used.get(key) else {
             on_path.remove(key);
-            memo.insert(key, zero());
+            memo.insert(key.clone(), zero());
             return Ok(Some(zero()));
         };
         let mut child_values = BTreeMap::new();
@@ -4540,7 +4540,7 @@ fn price_paths(
             return Ok(None);
         };
         chosen.insert(key.clone(), index);
-        memo.insert(key, value.clone());
+        memo.insert(key.clone(), value.clone());
         Ok(Some(value))
     }
     // The choices and the mass a set of paths selects. `None` when a path is
