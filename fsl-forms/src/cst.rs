@@ -5,7 +5,9 @@
 //! wrappers expose only the source, token and diagnostic facts model intake
 //! needs; no layer-1 CST type appears in this module's public API.
 
-use fsl_foundation::{Code, Phase, Source, SourceIdentity, Span};
+use fsl_foundation::source::provenance::SourceRegion;
+use fsl_foundation::source::SourceReadCause;
+use fsl_foundation::{Code, Phase, Source, SourceIdentity, SourceLabel, Span};
 use std::fmt;
 
 /// The stable complete-source diagnostic code.
@@ -13,7 +15,7 @@ pub type CompleteCode = Code;
 
 /// A complete-source diagnostic cause, retained by its stable catalog tag.
 #[derive(Clone, Copy, Debug)]
-pub struct CompleteCause(&'static str, Option<fsl_cst::CompleteCause>);
+pub struct CompleteCause(fsl_cst::CompleteCause);
 
 impl PartialEq for CompleteCause {
     fn eq(&self, other: &Self) -> bool {
@@ -26,59 +28,69 @@ impl Eq for CompleteCause {}
 #[allow(non_upper_case_globals)]
 impl CompleteCause {
     /// An unexpected token.
-    pub const UnexpectedToken: Self = Self("unexpected-token", None);
+    pub const UnexpectedToken: Self = Self(fsl_cst::CompleteCause::UnexpectedToken);
     /// A required token was absent at end of input.
-    pub const UnexpectedEnd: Self = Self("unexpected-end", None);
+    pub const UnexpectedEnd: Self = Self(fsl_cst::CompleteCause::UnexpectedEnd);
     /// The source contains bytes that are not a token.
-    pub const InvalidToken: Self = Self("invalid-token", None);
+    pub const InvalidToken: Self = Self(fsl_cst::CompleteCause::InvalidToken);
     /// The parser reached its diagnostic-list bound.
-    pub const DiagnosticListCut: Self = Self("diagnostic-list-cut", None);
+    pub const DiagnosticListCut: Self = Self(fsl_cst::CompleteCause::DiagnosticListCut);
     /// A string contains an invalid escape.
-    pub const InvalidEscape: Self = Self("invalid-escape", None);
+    pub const InvalidEscape: Self = Self(fsl_cst::CompleteCause::InvalidEscape);
     /// A declaration form is not admitted.
-    pub const DeclarationForm: Self = Self("declaration-form", None);
+    pub const DeclarationForm: Self = Self(fsl_cst::CompleteCause::DeclarationForm);
     /// A selection is unsupported.
-    pub const UnsupportedSelection: Self = Self("unsupported-selection", None);
+    pub const UnsupportedSelection: Self = Self(fsl_cst::CompleteCause::UnsupportedSelection);
     /// A resource budget denied the next charge.
-    pub const InsufficientNextCharge: Self = Self("insufficient-next-charge", None);
+    pub const InsufficientNextCharge: Self = Self(fsl_cst::CompleteCause::InsufficientNextCharge);
     /// A selected definition is missing.
-    pub const MissingSelection: Self = Self("missing-selection", None);
+    pub const MissingSelection: Self = Self(fsl_cst::CompleteCause::MissingSelection);
     /// A name is ambiguous.
-    pub const AmbiguousName: Self = Self("ambiguous-name", None);
+    pub const AmbiguousName: Self = Self(fsl_cst::CompleteCause::AmbiguousName);
     /// An identity has conflicting authorities.
-    pub const ConflictingAuthority: Self = Self("conflicting-authority", None);
+    pub const ConflictingAuthority: Self = Self(fsl_cst::CompleteCause::ConflictingAuthority);
     /// A package member is duplicated.
-    pub const DuplicateMember: Self = Self("duplicate-member", None);
+    pub const DuplicateMember: Self = Self(fsl_cst::CompleteCause::DuplicateMember);
     /// A package value is invalid.
-    pub const InvalidValue: Self = Self("invalid-value", None);
+    pub const InvalidValue: Self = Self(fsl_cst::CompleteCause::InvalidValue);
     /// A definition graph contains a cycle.
-    pub const DefinitionCycle: Self = Self("definition-cycle", None);
+    pub const DefinitionCycle: Self = Self(fsl_cst::CompleteCause::DefinitionCycle);
     /// A selected feature set is inconsistent.
-    pub const FeatureSetMismatch: Self = Self("feature-set-mismatch", None);
+    pub const FeatureSetMismatch: Self = Self(fsl_cst::CompleteCause::FeatureSetMismatch);
     /// A required feature is unknown.
-    pub const UnknownFeature: Self = Self("unknown-feature", None);
+    pub const UnknownFeature: Self = Self(fsl_cst::CompleteCause::UnknownFeature);
     /// A required feature is unsupported.
-    pub const UnsupportedFeature: Self = Self("unsupported-feature", None);
+    pub const UnsupportedFeature: Self = Self(fsl_cst::CompleteCause::UnsupportedFeature);
     /// A model selection is wrong.
-    pub const WrongModelSelection: Self = Self("wrong-model-selection", None);
+    pub const WrongModelSelection: Self = Self(fsl_cst::CompleteCause::WrongModelSelection);
     /// A model declaration is malformed.
-    pub const MalformedDeclaration: Self = Self("malformed-declaration", None);
+    pub const MalformedDeclaration: Self = Self(fsl_cst::CompleteCause::MalformedDeclaration);
     /// A model reference has the wrong exported kind.
-    pub const WrongExport: Self = Self("wrong-export", None);
+    pub const WrongExport: Self = Self(fsl_cst::CompleteCause::WrongExport);
     /// A model declaration is missing.
-    pub const MissingDeclaration: Self = Self("missing-name", None);
+    pub const MissingDeclaration: Self = Self(fsl_cst::CompleteCause::MissingDeclaration);
     /// A model identity has conflicting bindings.
-    pub const ConflictingBinding: Self = Self("conflicting-binding", None);
+    pub const ConflictingBinding: Self = Self(fsl_cst::CompleteCause::ConflictingBinding);
     /// An established runtime invariant failed.
-    pub const EstablishedInvariantBroken: Self = Self("established-invariant-broken", None);
+    pub const EstablishedInvariantBroken: Self =
+        Self(fsl_cst::CompleteCause::EstablishedInvariantBroken);
 
     /// The stable complete-source cause tag.
-    pub const fn as_str(self) -> &'static str {
-        self.0
+    pub fn as_str(self) -> &'static str {
+        self.0.as_str()
+    }
+
+    /// The source label named by an `invalid_source_identity` blank-label
+    /// cause, if this diagnostic carries one.
+    pub fn identity_label(self) -> Option<SourceLabel> {
+        match self.0.identity_cause() {
+            Some(SourceReadCause::BlankLabel { label }) => Some(label),
+            _ => None,
+        }
     }
 
     fn from_layer_one(cause: fsl_cst::CompleteCause) -> Self {
-        Self(cause.as_str(), Some(cause))
+        Self(cause)
     }
 }
 
@@ -92,7 +104,10 @@ pub struct CompleteDiagnostic {
     /// Human-readable detail.
     pub message: String,
     cause: CompleteCause,
+    source: SourceIdentity,
+    path: String,
     span: Option<Span>,
+    region: Option<SourceRegion>,
 }
 
 impl CompleteDiagnostic {
@@ -106,14 +121,35 @@ impl CompleteDiagnostic {
         self.span
     }
 
+    /// The exact source region, when this diagnostic names one.
+    pub fn source_region(&self) -> Option<&SourceRegion> {
+        self.region.as_ref()
+    }
+
+    /// The exact source identity supplied for this diagnostic.
+    pub fn source_identity(&self) -> &SourceIdentity {
+        &self.source
+    }
+
+    /// The display path supplied for this diagnostic.
+    pub fn source_path(&self) -> &str {
+        &self.path
+    }
+
     fn from_layer_one(diagnostic: fsl_cst::CompleteDiagnostic) -> Self {
         let span = diagnostic.byte_span();
+        let region = diagnostic.region;
+        let source = diagnostic.source;
+        let path = diagnostic.path;
         Self {
             phase: diagnostic.phase,
             code: diagnostic.code,
             message: diagnostic.message,
             cause: CompleteCause::from_layer_one(diagnostic.cause),
+            source,
+            path,
             span,
+            region,
         }
     }
 }
@@ -291,35 +327,6 @@ pub mod diagnostic {
     }
 
     fn layer_one_cause(cause: CompleteCause) -> fsl_cst::CompleteCause {
-        use fsl_cst::CompleteCause as LayerOne;
-        if let Some(cause) = cause.1 {
-            return cause;
-        }
-        match cause.as_str() {
-            "unexpected-token" => LayerOne::UnexpectedToken,
-            "unexpected-end" => LayerOne::UnexpectedEnd,
-            "invalid-token" => LayerOne::InvalidToken,
-            "diagnostic-list-cut" => LayerOne::DiagnosticListCut,
-            "invalid-escape" => LayerOne::InvalidEscape,
-            "declaration-form" => LayerOne::DeclarationForm,
-            "unsupported-selection" => LayerOne::UnsupportedSelection,
-            "insufficient-next-charge" => LayerOne::InsufficientNextCharge,
-            "missing-selection" => LayerOne::MissingSelection,
-            "ambiguous-name" => LayerOne::AmbiguousName,
-            "conflicting-authority" => LayerOne::ConflictingAuthority,
-            "duplicate-member" => LayerOne::DuplicateMember,
-            "invalid-value" => LayerOne::InvalidValue,
-            "definition-cycle" => LayerOne::DefinitionCycle,
-            "feature-set-mismatch" => LayerOne::FeatureSetMismatch,
-            "unknown-feature" => LayerOne::UnknownFeature,
-            "unsupported-feature" => LayerOne::UnsupportedFeature,
-            "wrong-model-selection" => LayerOne::WrongModelSelection,
-            "malformed-declaration" => LayerOne::MalformedDeclaration,
-            "wrong-export" => LayerOne::WrongExport,
-            "missing-name" => LayerOne::MissingDeclaration,
-            "conflicting-binding" => LayerOne::ConflictingBinding,
-            "established-invariant-broken" => LayerOne::EstablishedInvariantBroken,
-            _ => LayerOne::EstablishedInvariantBroken,
-        }
+        cause.0
     }
 }

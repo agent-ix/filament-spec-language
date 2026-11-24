@@ -17,7 +17,7 @@
 //! Every walk uses an explicit stack, so the depth of an operand chain never
 //! consumes the call stack.
 
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeList};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeList, standalone};
 use std::collections::{BTreeMap, HashMap, TryReserveError};
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -372,7 +372,9 @@ pub enum StructuralKeyMaterializationError {
     #[error(transparent)]
     Wire(#[from] WireIdError),
     /// The caller's original cumulative native allowance denied a charge.
-    #[error("native structural-key charge denied: {denied:?} (bound {configured_bound}, locus {locus:?})")]
+    #[error(
+        "native structural-key charge denied: {denied:?} (bound {configured_bound}, locus {locus:?})"
+    )]
     Budget {
         /// The original first unpaid resource and attempted cumulative amount.
         denied: NativeJoinDeniedCharge,
@@ -579,17 +581,17 @@ impl StructuralKeys {
             path.push(match segment {
                 CheckedNodePathSegment::Name(name) => PathSegment::Text(provision.text(name)?),
                 CheckedNodePathSegment::Index(index) => {
-                    return Err(WireIdError::NoGraph { index: *index }.into())
+                    return Err(WireIdError::NoGraph { index: *index }.into());
                 }
                 CheckedNodePathSegment::Operand(slot) => {
-                    return Err(WireIdError::OperandSlot { slot: *slot }.into())
+                    return Err(WireIdError::OperandSlot { slot: *slot }.into());
                 }
                 CheckedNodePathSegment::Dependency { package, node } => {
                     return Err(WireIdError::DependencyPosition {
                         package: provision.text(package)?,
                         node: *node,
                     }
-                    .into())
+                    .into());
                 }
                 CheckedNodePathSegment::Node(operand) => {
                     PathSegment::Node(self.by_operand[&Arc::as_ptr(operand)].1.clone())
@@ -666,13 +668,13 @@ fn key_with(
                 top.path.push(PathSegment::Node(key));
             }
             Some(CheckedNodePathSegment::Operand(slot)) => {
-                return Err(WireIdError::OperandSlot { slot: *slot })
+                return Err(WireIdError::OperandSlot { slot: *slot });
             }
             Some(CheckedNodePathSegment::Dependency { package, node }) => {
                 return Err(WireIdError::DependencyPosition {
                     package: package.to_string(),
                     node: *node,
-                })
+                });
             }
             Some(CheckedNodePathSegment::Node(nested)) => stack.push(frame(nested)),
             None => {
@@ -1691,6 +1693,27 @@ impl WireGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// FR-322-AC-280: only a complete nested node identity is structural; a
+    /// path segment with incidental identity-like fields remains ordinary
+    /// data.
+    #[ix_trace_rs::trace("FSpec-TC-233", "FSpec-FR-322-AC-280")]
+    #[test]
+    fn nested_structural_identity_requires_all_node_id_fields() {
+        let nested = serde_json::json!({
+            "package": "p",
+            "path": [{"package": "q", "path": ["expression", "literal"], "ordinal": 0}],
+            "ordinal": 0,
+        });
+        assert!(is_nested_structural(&nested));
+
+        let partial = serde_json::json!({
+            "package": "p",
+            "path": [{"package": "q", "path": ["expression", "literal"]}],
+            "ordinal": 0,
+        });
+        assert!(!is_nested_structural(&partial));
+    }
 
     #[ix_trace_rs::trace("FSpec-TC-233", "FSpec-FR-322-AC-280")]
     #[test]

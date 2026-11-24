@@ -27,7 +27,7 @@ use fsl_semantics::check::{
     CheckedOrdering, CheckedProtocol, CheckedTerminalMember, LeafTerm, NodeTag,
 };
 
-use super::{checked_occurrence, EmitRefusal};
+use super::{EmitRefusal, checked_occurrence};
 
 /// The largest integer a JSON number carries exactly.
 pub(super) const MAX_SAFE: u64 = 9_007_199_254_740_991;
@@ -446,6 +446,10 @@ fn term_application<'c>(
     under: Option<(&NodeKey, &[&NodeKey])>,
 ) -> Result<Option<&'c NodeKey>, EmitRefusal> {
     let mut keys: Vec<&NodeKey> = Vec::new();
+    // NodeKey's checked-term grammar puts each application under the exact
+    // `expression/<form>` prefix. Inspecting those typed path segments keeps
+    // query and collection terms from being mistaken for another application
+    // at the same location; no display-string or substring search is used.
     let form = match node.kind() {
         NodeKind::Query { .. } => Some("query"),
         NodeKind::Collection { .. } => Some("collection"),
@@ -572,13 +576,13 @@ fn is_deref_application(key: &NodeKey) -> bool {
 mod tests {
     use super::*;
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-    use fsl_semantics::check::{test_support::ZeroRewardEvaluator, PackageDeclarations};
+    use fsl_semantics::check::{PackageDeclarations, test_support::ZeroRewardEvaluator};
     use ix_trace_rs::trace;
 
     /// A count's retained collection has query and equality operands at
     /// distinct checked locations; rows preserve each operand's own visit
     /// location and application (FR-383-AC-35).
-    #[trace("FR-383", "TC-1063")]
+    #[trace("FR-383", "FR-383-AC-35", "TC-1063")]
     #[test]
     fn query_and_equality_keep_actual_parent_operands_and_checked_locations() {
         fn application_form(key: &NodeKey) -> String {

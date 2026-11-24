@@ -3,6 +3,7 @@
 
 use filament_exact::{Meter, Value};
 use fsl_eval::simulation::model::ModelEvaluator;
+use fsl_forms::cst;
 use fsl_package::{BarePackage, BareSupply, ReadEqualityRows, ReadIdentityRows};
 use fsl_semantics::check::{ProbForm, ReachTarget};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -45,11 +46,11 @@ fn enum_fixture() -> (String, Vec<u8>) {
     let enum_source = b"language \"ix:native\" edition \"1-draft\";\n\
                         domain \"test/link\";\n\
                         enum Loss { Lost, Delivered }\n";
-    let parsed = fsl_cst::parse(
+    let parsed = cst::parse(
         fsl_foundation::SourceIdentity::new("test", "link/spec"),
         "spec.fspec",
         enum_source,
-        fsl_cst::Limits::default(),
+        cst::Limits::default(),
     )
     .expect("the enum model source parses");
     let compiled = fsl_semantics::model::intake::compile_model_unit(
