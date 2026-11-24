@@ -85,6 +85,7 @@ impl Case {
     pub(crate) fn model_item(&self) -> fsl_analyze::analyze::ModelItem<'_> {
         fsl_analyze::analyze::ModelItem {
             request: ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: subject(
                     &self.checked,
@@ -96,6 +97,8 @@ impl Case {
                 item: ModelCheckItem::DeadlockFreedom,
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             stutter_closure: false,
@@ -144,11 +147,14 @@ fn case_in_mode(body: &str, values: &[i64], mode: CheckMode) -> Case {
         .collect();
     let outcome = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: subject(&checked, &documents, initial.clone(), &["c"], UNLIMITED),
             item: ModelCheckItem::DeadlockFreedom,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),
