@@ -292,11 +292,7 @@ fn replay_fixture() -> Fixture {
 fn replay_fixture_source(source: &str) -> Fixture {
     let selected = fsl_replay::call_site(
         fsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native"),
-        fsl_replay::CallSiteUnit::new(
-            "qualification".into(),
-            "inputs/unit.native",
-            source.as_bytes(),
-        ),
+        fsl_replay::CallSiteUnit::new("qualification", "inputs/unit.native", source.as_bytes()),
         [],
         &fsl_replay::DependencyInput::default(),
         &fsl_replay::RequestClocks::default(),
@@ -1062,7 +1058,7 @@ fn genuine_witness_replay_retains_record_absence_regions_and_disagreement() {
     let linked = fsl_replay::call_site(
         fsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native"),
         fsl_replay::CallSiteUnit::new(
-            "qualification".into(),
+            "qualification",
             "inputs/unit.native",
             undefined_source.as_bytes(),
         ),

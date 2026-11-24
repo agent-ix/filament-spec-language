@@ -109,7 +109,7 @@ fn request(with_dependency: bool) -> ReplayRequestWire {
     let selection = QualifiedName::new(vec![Identifier::new("entry").unwrap()]).unwrap();
     let located = fsl_replay::call_site(
         source.clone(),
-        fsl_replay::CallSiteUnit::new(ROOT.into(), "root.native", program.as_bytes()),
+        fsl_replay::CallSiteUnit::new(ROOT, "root.native", program.as_bytes()),
         documents.iter().map(Vec::as_slice),
         &dependencies,
         &fsl_replay::RequestClocks::default(),

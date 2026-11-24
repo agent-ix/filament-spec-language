@@ -1155,7 +1155,7 @@ mod tests {
     ) -> Result<CallSite<FunctionSite>, Box<CallSiteRefusal>> {
         call_site(
             SourceIdentity::new("a", "u"),
-            CallSiteUnit::new("fixture", "unit.native", bytes),
+            crate::CallSiteUnit::new("fixture", "unit.native", bytes),
             [],
             &DependencyInput::default(),
             &crate::RequestClocks::default(),
@@ -1274,7 +1274,7 @@ mod tests {
         for selection in [name("nope"), name("F"), qualified] {
             let refusal = call_site(
                 SourceIdentity::new("a", "u"),
-                CallSiteUnit::new("fixture", "unit.native", UNIT.as_bytes()),
+                crate::CallSiteUnit::new("fixture", "unit.native", UNIT.as_bytes()),
                 [],
                 &DependencyInput::default(),
                 &crate::RequestClocks::default(),
