@@ -95,3 +95,4 @@ side.
 
 - [FR-002](FR-002-parse-native-units.md) owns the parser and its production inventory.
 - FSpec FR-339 incorporates the shared grammar; FSpec FR-503 makes its production inventory readable.
+- FSpec [FR-375](ix://agent-ix/filament-specification/FR-375) defines the normative FR-local EBNF productions for refinement declarations and rows.
