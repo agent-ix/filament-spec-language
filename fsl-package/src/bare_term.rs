@@ -181,18 +181,18 @@ struct FormParts<'a, 'p> {
     profile: &'p filament_contract_model::CheckedSelection,
 }
 
-type FormAtomSpan<'a, W: FormWork> = dyn for<'p, 'entry> FnMut(
+type FormAtomSpan<'a, W, E> = dyn for<'p, 'entry> FnMut(
         usize,
         &'entry crate::checked_views::FormulaNodeUse<'p>,
         &mut W,
-    ) -> Result<fsl_foundation::Span, W::Error>
+    ) -> Result<fsl_foundation::Span, E>
     + 'a;
 
 struct FormResolution<'n, 'a, W: FormWork> {
     lookup: &'a dyn Fn(&CheckedNodeId) -> Option<&'n CheckedSemanticNodeV2>,
     intervals: bool,
     malformed: &'a dyn Fn() -> BareClauseRefusal,
-    atom_span: &'a mut FormAtomSpan<'a, W>,
+    atom_span: &'a mut FormAtomSpan<'a, W, W::Error>,
     work: &'a mut W,
 }
 
