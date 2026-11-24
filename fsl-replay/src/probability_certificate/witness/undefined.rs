@@ -291,7 +291,8 @@ pub fn replay_probabilistic_undefined(
                         target: ReachTarget::Until(..),
                         ..
                     } => truths[1] || !truths[0],
-                    ProbForm::LongRunFraction { .. } | ProbForm::ExpectedReward { .. } => false,
+                    ProbForm::LongRunFraction { .. } => false,
+                    ProbForm::ExpectedReward { .. } => truths[0],
                     _ => return Err(ExactProbabilityGraphError::UnsupportedClaimForm.into()),
                 };
                 (pre_key, decided)

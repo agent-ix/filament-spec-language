@@ -59,6 +59,35 @@ fn an_expected_reward_claim_with_an_undefined_predicate_replays_its_path() {
     assert_replayed_undefined(record, &world, "RewardUndefined");
 }
 
+/// FSpec FR-411-AC-12, FR-413-AC-7,11: replay stops at the first true
+/// expected-reward `until` predicate, even if a forged suffix reaches an
+/// undefined state later.
+#[trace("FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7", "FSpec-FR-413-AC-11")]
+#[test]
+fn expected_reward_undefined_replay_rejects_a_path_after_until_decides() {
+    use fsl_replay::{ProbabilityWitnessReplay, replay_probabilistic_undefined};
+
+    let claims = "probabilistic Open using inf on M over (c: M::Coin) under Even on origin \
+        { expected accumulate cost until holds(c.v = 1) <= 1 }\n\
+        probabilistic Decided using inf on M over (c: M::Coin) under Even on origin \
+        { expected accumulate cost until holds(c.v = 0) <= 1 }";
+    let world = World::new(&prob_world::coin(&format!(
+        "reward cost on Coin::drop = 1;\n{claims}"
+    )));
+    let mut witness = undefined_evidence(&world, "Open");
+    witness.path.item = fsl_replay::probabilistic_claim_identity(world.claim("Decided")).unwrap();
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let replay = replay_probabilistic_undefined(
+        &world.package,
+        &system,
+        &witness.path.item,
+        &witness,
+        &world.request("Decided", ModelCheckLimits::default()).limits,
+        &Cancel::new(),
+    );
+    assert!(matches!(replay, Ok(ProbabilityWitnessReplay::Parity)));
+}
+
 fn assert_replayed_undefined(
     record: fsl_analyze::analyze::AnalyzeRecord,
     world: &World,
