@@ -1731,6 +1731,99 @@ fn a_delay_weighted_long_run_fraction_weighs_each_cycle_by_its_delays() {
     assert_eq!(estimates[0], ratio(1, 4));
     assert_eq!(estimates[1], ratio(1, 4));
     assert_eq!(estimates[2], ratio(1, 2));
+    // Each run recomputes from its seed with its delays: a repeat of the same
+    // request gives the same verdict, cycle count and step count.
+    let again = || {
+        completed(run_timed_method(
+            &world,
+            "Low",
+            method,
+            7,
+            fsl_replay::statistical::TimedSampling::default(),
+            1,
+        ))
+    };
+    assert_eq!(again(), again());
+}
+
+/// FSpec FR-420-AC-10: the return to the initial discrete state after the
+/// first of two tied steps, with the second still pending, is not a
+/// regeneration point. `p` resets the clock without changing the discrete
+/// state and ties with `q`; when `p` goes first its post state equals the
+/// initial key with `q` pending, and a cut there would give one-step
+/// cycles. Every cycle is `q, r` or `p, q, r`: at least two steps.
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-10")]
+#[test]
+fn a_return_with_a_tied_step_pending_cuts_no_cycle() {
+    let claims = format!(
+        "pre P using v on M::Call::p {{ not self.retried }}\n\
+         post Pd using v on M::Call::p {{ self.x = 0 ms }}\n\
+         delay M::Call::p ~ discrete {{ 1 ms: 1 }};\n\
+         pre Q using v on M::Call::q {{ not self.retried }}\n\
+         post Qd using v on M::Call::q {{ self.retried = true }}\n\
+         delay M::Call::q ~ discrete {{ 1 ms: 1 }};\n\
+         pre R using v on M::Call::r {{ self.retried }}\n\
+         post Rd using v on M::Call::r {{ self.retried = false and self.x = 0 ms }}\n\
+         delay M::Call::r ~ discrete {{ 1 ms: 1 }};\n\
+         workload Even on M {{ weight Call::p = 1; weight Call::q = 1; weight Call::r = 1; }}\n\
+         probabilistic Tie using ev on M over (c: M::Call) under Even on origin \
+         {UP_DOWN_CONFIDENCE} {{ long_run_fraction holds(c.retried) weighted by delay >= rational(1, 10) }}\n"
+    );
+    let world = timed_world_with(
+        &[("p", &["x"]), ("q", &["retried"]), ("r", &["retried", "x"])],
+        &claims,
+    );
+    let verdict = completed(run_timed_method(
+        &world,
+        "Tie",
+        StatisticalMethod::Regenerative { min_cycles: 200 },
+        3,
+        fsl_replay::statistical::TimedSampling::default(),
+        1,
+    ));
+    assert_eq!(verdict.decision, Decision::Accepted);
+    assert!(
+        verdict.basis.draws >= 2 * verdict.basis.samples,
+        "{} steps over {} cycles: a cycle was cut with a tied step pending",
+        verdict.basis.draws,
+        verdict.basis.samples
+    );
+}
+
+/// FSpec FR-420-AC-11: a time-locked state reached by a delay-weighted
+/// long-run behaviour settles `unsupported`, `time-locked-sample{state}`.
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-11", "FSpec-FR-420-AC-7")]
+#[test]
+fn a_time_locked_long_run_behaviour_is_unsupported() {
+    let claims = format!(
+        "pre Go using v on M::Call::go {{ self.phase = 0 }}\n\
+         post Went using v on M::Call::go {{ self.phase = 1 }}\n\
+         delay M::Call::go ~ discrete {{ 1 ms: 1 }};\n\
+         time invariant Deadline when {{ self.phase = 1 }} {{ self.x <= 2 ms }}\n\
+         workload Even on M {{ weight Call::go = 1; }}\n\
+         probabilistic Locked using ev on M over (c: M::Call) under Even on origin \
+         {UP_DOWN_CONFIDENCE} {{ long_run_fraction holds(c.phase = 1) weighted by delay >= rational(1, 10) }}\n"
+    );
+    let world = timed_world_with(&[("go", &["phase"])], &claims);
+    let outcome = run_timed_method(
+        &world,
+        "Locked",
+        StatisticalMethod::Regenerative { min_cycles: 5 },
+        3,
+        fsl_replay::statistical::TimedSampling::default(),
+        1,
+    )
+    .expect("the run ends with an outcome");
+    assert!(
+        matches!(
+            outcome,
+            StatisticalOutcome::Unsupported {
+                cause: StatisticalUnsupported::TimeLockedSample { .. },
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
 }
 
 /// FSpec FR-420-AC-10: a return to the initial discrete state with a clock
@@ -1738,7 +1831,7 @@ fn a_delay_weighted_long_run_fraction_weighs_each_cycle_by_its_delays() {
 /// clock, so every cycle contains the full `A`, `B`, `Z` run: at least three
 /// positions. A model whose steps never reset the clock never returns to the
 /// initial key and stops at `max_cycle_steps`.
-#[trace("FSpec-TC-374", "FSpec-FR-420-AC-10")]
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-10", "FSpec-FR-408-AC-20")]
 #[test]
 fn only_a_return_with_every_clock_at_its_initial_value_cuts_a_cycle() {
     let loop_model = |reset: &str| {

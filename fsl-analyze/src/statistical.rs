@@ -514,10 +514,13 @@ impl Run {
         self.weight = self.weight.add(weight);
     }
 
-    /// Close the open cycle. A cycle of total weight 0 adds nothing to the
-    /// weighted denominator.
-    fn close(&mut self) {
-        self.cycles.close(&self.held, &self.weight);
+    /// Close the open cycle. Under a timed claim a cycle of total delay 0 is
+    /// kept only in the unweighted tally: it adds nothing to the weighted
+    /// denominator, the weighted cycle count or the half-width.
+    fn close(&mut self, timed: bool) {
+        if !(timed && self.weight == int(0)) {
+            self.cycles.close(&self.held, &self.weight);
+        }
         self.unweighted.close(
             &Rational::from_integer(Integer::from(self.held_positions)),
             &Rational::from_integer(Integer::from(self.positions)),
@@ -529,10 +532,12 @@ impl Run {
         self.cycle_steps = 0;
     }
 
-    /// The cycles the estimate reads: the unweighted ones for a timed claim
-    /// whose every closed cycle has total delay 0.
+    /// The cycles the estimate reads: the weighted ones, or the unweighted
+    /// ones for a timed claim that has closed no cycle of positive delay, so
+    /// a run decides before its first positive-delay cycle only when every
+    /// cycle so far has delay 0.
     fn counted(&self, timed: bool) -> &Cycles {
-        if timed && self.cycles.estimate().is_none() {
+        if timed && self.cycles.count() == 0 {
             &self.unweighted
         } else {
             &self.cycles
@@ -840,8 +845,8 @@ impl Plan<'_> {
         let mut walk = sampler.walk(subject, self.request.seed, trace);
         let mut run = Run::new();
         loop {
-            tally.counted = run.cycles.count();
-            if run.cycles.count() == limits.max_samples {
+            tally.counted = run.counted(claim.timed).count();
+            if run.counted(claim.timed).count() == limits.max_samples {
                 return Ok(self.limit_stop(StatisticalLimit::MaxSamples));
             }
             if tally.draws == limits.max_draws {
@@ -872,7 +877,7 @@ impl Plan<'_> {
                 Ok(WalkStep::UndecidedSuccessor) => {
                     return Ok(undecided_successor(run.estimate(claim.timed)));
                 }
-                Ok(WalkStep::Terminal { holds }) => {
+                Ok(WalkStep::Terminal { .. }) => {
                     return self.terminal_behaviours(
                         index,
                         subject,
@@ -880,7 +885,6 @@ impl Plan<'_> {
                         regeneration,
                         tally,
                         witnesses,
-                        holds,
                     );
                 }
                 Ok(WalkStep::Position {
@@ -893,9 +897,9 @@ impl Plan<'_> {
             if !returned {
                 continue;
             }
-            run.close();
-            tally.counted = run.cycles.count();
-            if run.cycles.count() < regeneration.min_cycles {
+            run.close(claim.timed);
+            tally.counted = run.counted(claim.timed).count();
+            if run.counted(claim.timed).count() < regeneration.min_cycles {
                 continue;
             }
             let Some(interval) = run
@@ -916,8 +920,8 @@ impl Plan<'_> {
     }
 
     /// FSpec FR-420 "Delay-weighted cycles": the first behaviour of the test
-    /// terminated, so the test draws independent behaviours, behaviour `j` at
-    /// trace index `j · m + test`. Each gives a value in `[0, 1]`: the
+    /// terminated, so the test draws `N` fresh independent behaviours,
+    /// behaviour `j` (from 1) at trace index `j · m + test`. Each gives a value in `[0, 1]`: the
     /// terminal limit when it terminates, its own `Σ Y / Σ L` when it closes
     /// `min_cycles` cycles first. The estimate is their mean and the interval
     /// the fixed-sample one, `v̄ ± ι`, over Okamoto's `N`.
@@ -930,7 +934,6 @@ impl Plan<'_> {
         regeneration: &Regeneration,
         tally: &mut Tally,
         witnesses: &mut Witnesses,
-        first_holds: bool,
     ) -> Result<TestEnd, StatisticalRefusal> {
         let claim = self.request.claim;
         let iota = claim.confidence().indifference();
@@ -948,13 +951,15 @@ impl Plan<'_> {
         }
         let required = count.to_u64().ok_or(fault(EMPTY_FIXED_SAMPLE))?;
         let stride = u64::from(self.tests);
-        let mut sum = int(i64::from(first_holds));
-        let mut behaviours: u64 = 1;
-        tally.behaviours = 1;
-        tally.counted = 1;
+        // The probe behaviour at trace index `test` is not counted: the test
+        // entered this mode because it terminated, so it is not an
+        // independent draw. `N` fresh behaviours follow it.
+        let mut sum = int(0);
+        let mut behaviours: u64 = 0;
         while behaviours < required {
             let trace = behaviours
-                .checked_mul(stride)
+                .checked_add(1)
+                .and_then(|next| next.checked_mul(stride))
                 .and_then(|base| base.checked_add(u64::from(index)))
                 .ok_or(StatisticalRefusal::TraceIndexRange {
                     max_draws: limits.max_draws,
@@ -992,8 +997,8 @@ impl Plan<'_> {
                         if !returned {
                             continue;
                         }
-                        run.close();
-                        if run.cycles.count() >= regeneration.min_cycles {
+                        run.close(true);
+                        if run.counted(true).count() >= regeneration.min_cycles {
                             break run.estimate(true).ok_or(fault(EMPTY_FIXED_SAMPLE))?;
                         }
                     }
@@ -1001,7 +1006,8 @@ impl Plan<'_> {
             };
             sum = sum.add(&value);
             behaviours += 1;
-            tally.behaviours = behaviours;
+            // The probe's trace is part of the test's range, uncounted.
+            tally.behaviours = behaviours + 1;
             tally.counted = behaviours;
         }
         let estimate =

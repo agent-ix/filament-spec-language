@@ -1431,5 +1431,23 @@ mod tests {
         let text = String::from_utf8(x_bytes).expect("UTF-8");
         assert!(text.contains("\"place_id\""), "{text}");
         assert!(!text.contains("\"package\""), "{text}");
+
+        // A set holding both orders its elements by the place text's bytes,
+        // whichever order they were supplied in.
+        assert!(x_ref.text().as_bytes() < y_ref.text().as_bytes());
+        let set_of = |elements: Vec<Value>| {
+            let set_type = filament_exact::CollectionType::new(
+                CollectionKind::Set,
+                ValueType::ClockReference,
+                None,
+            );
+            encode(&filament_exact::from_admitted(set_type, elements))
+        };
+        let expected = Enc::tagged(
+            "set",
+            vec![("elements", Enc::Array(vec![x_enc.clone(), y_enc.clone()]))],
+        );
+        assert_eq!(set_of(vec![y.clone(), x.clone()]), expected);
+        assert_eq!(set_of(vec![x, y]), expected);
     }
 }
