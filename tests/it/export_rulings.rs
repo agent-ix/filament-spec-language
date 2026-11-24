@@ -58,6 +58,10 @@ fn tla(obligations: Value) -> Value {
     json!({"profile": "filament.output.tla2/v1", "obligations": obligations})
 }
 
+fn lean(obligations: Value) -> Value {
+    json!({"profile": "filament.output.lean4/v1", "obligations": obligations})
+}
+
 fn names(value: &Value, text: &str) {
     assert!(value.to_string().contains(text), "names {text}: {value}");
 }
@@ -412,7 +416,6 @@ fn float_model() -> Value {
 #[test]
 #[trace("TC-3006", "FR-056-AC-62")]
 #[trace("FSpec-TC-1971", "FSpec-FR-812-AC-8")]
-#[ignore = "QSL-2878: a float model field compiles to a package that is refused invalid_package/operator-ineligible at result_type, so it cannot export yet"]
 fn a_float_model_field_exports_its_exact_bits() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -455,10 +458,66 @@ fn a_float_model_field_exports_its_exact_bits() {
         target.contains("\"finite\""),
         "a finite float tag: {target}"
     );
+    assert!(target.contains("4503599627370496..9007199254740991"));
+    assert!(target.contains("1..4503599627370495, exponent : {-1074}"));
+    assert!(target.contains("F_float64_nan_bits(bits)"));
+    assert!(target.contains("Len(bits) = 16"));
+    assert!(target.contains("SubSeq(bits, 1, 1) \\in {\"7\", \"f\"}"));
+    assert!(target.contains("SubSeq(bits, 2, 3) = \"ff\""));
+    assert!(target.contains("\\E i \\in 4..16 : SubSeq(bits, i, i) # \"0\""));
+    assert!(!target.contains("[tag : {\"nan\"}, bits : STRING]"));
     assert!(
         !target.contains("[num |->"),
         "no rational stands for the float field: {target}"
     );
+
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0",
+            "source": source("float-model.semantic-ir.json")}],
+        "program": {"source": source("unit.native")},
+        "export": lean(json!(["NotPayload"]))}});
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let result = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+        .expect("Lean Float64 model export is admitted");
+    let value: Value = serde_json::from_str(&result.value.to_string()).expect("JSON document");
+    assert_eq!(result.exit_code, 0, "{value}");
+    assert_eq!(
+        value["export"]["records"][0]["disposition"], "preserved",
+        "{value}"
+    );
+    let target = text(&value);
+    assert!(
+        target.contains("inductive F where"),
+        "Float64 type: {target}"
+    );
+    assert!(
+        target.contains("def F_float64_values"),
+        "Float64 domain: {target}"
+    );
+    assert!(
+        target.contains("def F_float64_nan_bits"),
+        "canonical NaN bit-pattern predicate: {target}"
+    );
+    assert!(target.contains("sign ∈ \"7f\".toList"));
+    assert!(
+        target.contains("F_float64_hex_lower f12"),
+        "all payload characters are lowercase hex: {target}"
+    );
+    assert!(target.contains("F_float64_hex_lower e3"));
+    assert!(target.contains("e3 ≠ '0'"));
+    assert!(
+        target.contains("def F_float64_eq"),
+        "Float64 equality: {target}"
+    );
+    assert!(
+        target.contains("def F_float64_neg"),
+        "Float64 negation: {target}"
+    );
+    assert!(
+        target.contains("F.nan \"7ff8000000000001\""),
+        "exact AC-8 NaN bit-pattern string: {target}"
+    );
+    assert!(target.contains("F_float64_neg_nan bits"));
 }
 
 #[test]

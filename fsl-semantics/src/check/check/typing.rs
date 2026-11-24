@@ -1500,9 +1500,17 @@ impl<'a> Typer<'a> {
                         cause: Box::new(CheckCause::IntegerOutsideI128(outside)),
                     });
                 }
+                let value_type = match hint.as_deref() {
+                    Some(ValueType::Int(interval))
+                        if interval.lower() <= value && value <= interval.upper() =>
+                    {
+                        ValueType::Int(interval.clone())
+                    }
+                    _ => ValueType::Integer,
+                };
                 node(
                     NodeKind::Literal(CheckedLiteral(Value::Integer(value.clone()))),
-                    ValueType::Integer,
+                    value_type,
                     &location,
                 )
             }

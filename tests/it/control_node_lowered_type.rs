@@ -67,12 +67,54 @@ fn count(package: &Value, identity: &str) -> usize {
     found.len()
 }
 
+/// Return an application's result type with its local operand slots resolved
+/// to graph node indices, so equality compares referenced nodes rather than
+/// per-application slot numbers.
+fn result_type_by_node(package: &Value, application: &Value) -> Value {
+    let nodes = package["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("checked graph nodes");
+    let node_index = nodes
+        .iter()
+        .position(|node| {
+            let mut found = Vec::new();
+            applications(
+                node,
+                application["operation"]["identity"]
+                    .as_str()
+                    .expect("application identity"),
+                &mut found,
+            );
+            found
+                .iter()
+                .any(|candidate| std::ptr::eq(*candidate, application))
+        })
+        .expect("application belongs to a checked graph node");
+    let operands = package["semantic_graph"]["operand_rows"][node_index]
+        .as_array()
+        .expect("node operand row");
+    let mut result_type = application["result_type"].clone();
+    let path = result_type["path"]
+        .as_array_mut()
+        .expect("result type path");
+    for segment in path {
+        let Some(slot) = segment.get("operand").and_then(Value::as_u64) else {
+            continue;
+        };
+        let target = operands
+            .get(slot as usize)
+            .and_then(Value::as_u64)
+            .expect("node operand slot target");
+        *segment = json!({"node": target});
+    }
+    result_type
+}
+
 /// FR-495-AC-23: the `if` over a `mod` leaf in an unbounded position is
 /// typed `Integer` as its leaf is; in a bounded position each leaf is
 /// narrowed; a `let` binder bound to the `if` is narrowed at its read.
 #[test]
 #[trace("TC-2298", "FR-495-AC-23")]
-#[ignore = "QSL-2878: a control node's lowered type is not the hull of its leaves' lowered types yet"]
 fn a_control_node_takes_the_hull_of_its_leaves_lowered_types() {
     let directory = tempfile::tempdir().unwrap();
     let ifi = package(
@@ -82,7 +124,11 @@ fn a_control_node_takes_the_hull_of_its_leaves_lowered_types() {
     );
     let modulo = the_one(&ifi, "filament.op.integer.mod");
     let branch = the_one(&ifi, "filament.op.control.if");
-    assert_eq!(branch["result_type"], modulo["result_type"], "{ifi}");
+    assert_eq!(
+        result_type_by_node(&ifi, branch),
+        result_type_by_node(&ifi, modulo),
+        "{ifi}"
+    );
     assert_eq!(count(&ifi, NARROW), 0, "{ifi}");
 
     let ifb = package(
@@ -92,10 +138,14 @@ fn a_control_node_takes_the_hull_of_its_leaves_lowered_types() {
     );
     let narrow = the_one(&ifb, NARROW);
     let branch = the_one(&ifb, "filament.op.control.if");
-    assert_eq!(branch["result_type"], narrow["result_type"], "{ifb}");
+    assert_eq!(
+        result_type_by_node(&ifb, branch),
+        result_type_by_node(&ifb, narrow),
+        "{ifb}"
+    );
     assert_ne!(
-        branch["result_type"],
-        the_one(&ifb, "filament.op.integer.mod")["result_type"],
+        result_type_by_node(&ifb, branch),
+        result_type_by_node(&ifb, the_one(&ifb, "filament.op.integer.mod")),
         "{ifb}"
     );
 
@@ -107,8 +157,8 @@ fn a_control_node_takes_the_hull_of_its_leaves_lowered_types() {
     assert_eq!(count(&letif, NARROW), 1, "{letif}");
     let branch = the_one(&letif, "filament.op.control.if");
     assert_eq!(
-        branch["result_type"],
-        the_one(&letif, "filament.op.integer.mod")["result_type"],
+        result_type_by_node(&letif, branch),
+        result_type_by_node(&letif, the_one(&letif, "filament.op.integer.mod")),
         "{letif}"
     );
 
