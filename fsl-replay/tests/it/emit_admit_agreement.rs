@@ -268,7 +268,7 @@ fn corrupted_package_is_refused() {
     // (FR-110: `{authority, identity}` rows; no FR makes the strict reader check an
     // identity against a registry), so a changed identity character is INTENTIONALLY
     // admitted. FR gap: no requirement says whether the reader must refuse an unknown
-    // definition identity (QSL-2947).
+    // definition identity (QSL-3106).
     let lock_at = text
         .find("\"definition_selections\"")
         .expect("the lock carries definition selections");
