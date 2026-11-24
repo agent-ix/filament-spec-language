@@ -690,9 +690,13 @@ fn refute_mean(
                 ));
             }
             let scope = package.graph().scope();
+            let Some(claim_type) = super::probabilistic_bound_type(&claim.form) else {
+                return broken();
+            };
             let wire = fsl_replay::probabilistic_wire(
                 token.evidence(),
                 bound,
+                claim_type,
                 scope.types(),
                 scope.variant_types(),
                 &|state| system.state_key(state).ok().map(|(_, key)| key),

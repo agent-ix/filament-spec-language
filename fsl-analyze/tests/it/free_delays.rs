@@ -324,6 +324,7 @@ fn later_guard_race() -> World {
 /// and the minimum `1/4` take the least attaining delay of each row.
 #[trace("TC-642", "FR-204-AC-8")]
 #[trace("TC-642", "FR-204-AC-9")]
+#[trace("FSpec-TC-374", "FSpec-FR-413-AC-8")]
 #[test]
 fn two_rows_take_the_least_attaining_delay_of_each() {
     let world = race(

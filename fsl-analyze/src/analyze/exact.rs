@@ -20,7 +20,7 @@ use filament_exact::{Cancel, ObjectReference, Rational};
 use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_foundation::{BackendId, RequestIndex};
-use fsl_replay::statistical::SubjectLimits;
+use fsl_replay::statistical::{ClaimForm, SubjectLimits};
 use fsl_replay::{CertificateLocus, CertificateRule};
 use fsl_replay::{
     ExactBinding, ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
@@ -51,6 +51,21 @@ use crate::exact_probabilistic::{
     decide_bounded_event, decide_expected_reward, decide_reachability, decide_until,
     manifest as en5, settle_product_refusal,
 };
+
+/// The FR-413 claim type for a checked exact form, using the shared type
+/// spellings owned by `ClaimForm` wherever the exact and statistical forms
+/// overlap.
+pub(super) fn probabilistic_bound_type(form: &ProbForm) -> Option<&'static str> {
+    let form = match form {
+        ProbForm::Reach { .. } | ProbForm::Probability { .. } => ClaimForm::Probability,
+        ProbForm::MeanOfFraction { .. } => ClaimForm::MeanOfFraction,
+        ProbForm::LongRunFraction { .. } => ClaimForm::LongRunFraction,
+        ProbForm::Quantile { .. } => ClaimForm::Quantile,
+        ProbForm::ExpectedReward { .. } => return Some("expected-total"),
+        _ => return None,
+    };
+    Some(form.bound_type())
+}
 
 /// The certificate EN-5 produced and the core's checker accepted for a
 /// `proved` item (FR-281-AC-1: the record carries the certificate).
@@ -3228,6 +3243,9 @@ fn finish_replay(
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
             let input = system.input();
             let quantile_bound;
+            let Some(claim_type) = probabilistic_bound_type(&claim.form) else {
+                return not_yet();
+            };
             let bound = match &claim.form {
                 ProbForm::Reach { bound, .. }
                 | ProbForm::Probability { bound, .. }
@@ -3250,6 +3268,7 @@ fn finish_replay(
                 Some(enum_members) => fsl_replay::probabilistic_wire_with_enum_members(
                     witness,
                     bound,
+                    claim_type,
                     input.types,
                     input.variant_types,
                     enum_members,
@@ -3259,6 +3278,7 @@ fn finish_replay(
                 None => fsl_replay::probabilistic_wire(
                     witness,
                     bound,
+                    claim_type,
                     input.types,
                     input.variant_types,
                     &state_key,

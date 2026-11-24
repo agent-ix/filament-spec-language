@@ -469,6 +469,7 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
     let expected = fsl_replay::probabilistic_wire(
         witness,
         bound,
+        "probability",
         scope.types(),
         scope.variant_types(),
         &state_key,
@@ -478,6 +479,7 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
     let actual = fsl_replay::probabilistic_wire_with_enum_members(
         witness,
         bound,
+        "probability",
         world.types(),
         &[],
         world.enum_members(),
