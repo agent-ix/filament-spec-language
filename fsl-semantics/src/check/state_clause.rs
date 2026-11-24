@@ -194,11 +194,12 @@ pub struct AttemptDeclaration {
     pub frame_population: Option<PopulationDomain>,
 }
 
-/// One state clause the FR-091 assembler admitted (FR-104 "Inputs"): every
+/// One invariant, constraint, precondition or postcondition the FR-091
+/// assembler admitted (FR-104 "Inputs"): every
 /// name of its header resolved, its body as S2 built it.
 #[derive(Clone, Debug)]
 pub struct StateClauseDeclaration {
-    /// Invariant, precondition or postcondition.
+    /// Invariant, constraint, precondition or postcondition.
     pub kind: StateClauseKind,
     /// The declared clause name.
     pub name: String,
@@ -644,6 +645,7 @@ pub struct ClauseClaim {
 /// lowering keys it.
 #[derive(Debug)]
 pub struct TypedStateClause {
+    pub(crate) kind: StateClauseKind,
     pub(crate) facts: CheckedFacts,
     pub(crate) parameters: Vec<(String, ValueType)>,
     pub(crate) body: CheckedBody,
@@ -866,7 +868,11 @@ impl FamilyContract for ProtocolClauseFamily {
     }
 
     fn requirements(checked: &TypedStateClause) -> Vec<ClauseClaim> {
-        checked.claims.clone()
+        if checked.kind == StateClauseKind::Constraint {
+            Vec::new()
+        } else {
+            checked.claims.clone()
+        }
     }
 }
 
@@ -1124,6 +1130,7 @@ fn check_clause_typed(
         .into_iter()
         .collect();
     Ok(TypedStateClause {
+        kind: form.kind,
         facts,
         parameters,
         body,
@@ -1139,7 +1146,8 @@ fn check_clause_typed(
     })
 }
 
-/// One state clause S3 checked (FR-104 "Outputs"): its kind, context,
+/// One invariant, constraint, precondition or postcondition S3 checked
+/// (FR-104 "Outputs"): its kind, context,
 /// operation, checked Boolean body with each model read's observation, its
 /// node identity and its `claim` occurrence.
 pub struct CheckedStateClause {
