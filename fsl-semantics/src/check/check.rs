@@ -91,7 +91,7 @@ use filament_semantic_value::absence::AbsenceMode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
     admits_equality_conversion, CompositeShape, EqualityOperand, EqualityOperator,
-    FieldDeclaration, TypeEnvironment,
+    FieldDeclaration, StorageRequest, StorageUnit, TypeEnvironment,
 };
 use filament_semantic_value::enumeration::{EnumDeclaration, EnumMemberIndex, EnumValue};
 use filament_semantic_value::location::{
@@ -2793,42 +2793,68 @@ pub(crate) fn cancelled_refusal(location: &Location) -> CheckRefusal {
 ///
 /// The walk keeps its own stack, so a type nested to any depth the parser
 /// admits does not consume the thread's stack (FR-356-AC-7).
-fn clock_reference_as_leaf(value_type: &ValueType) -> Option<ValueType> {
+#[cfg(test)]
+fn clock_reference_as_leaf(
+    value_type: &ValueType,
+    location: &Location,
+) -> Result<ValueType, CheckRefusal> {
+    fn reserve<T>(values: &mut Vec<T>, location: &Location) -> Result<(), CheckRefusal> {
+        let request = StorageRequest::new(1, StorageUnit::AdditionalElements);
+        values
+            .try_reserve(1)
+            .map_err(|_| refuse(location, CheckCause::TypeCheckAllocation(request)))
+    }
+
     enum Step<'a> {
         Visit(&'a ValueType),
         Option,
         Collection(&'a CollectionType),
         Map(&'a filament_exact::MapType),
     }
-    let mut steps = vec![Step::Visit(value_type)];
+    let mut steps = Vec::new();
+    reserve(&mut steps, location)?;
+    steps.push(Step::Visit(value_type));
     let mut built: Vec<ValueType> = Vec::new();
     while let Some(step) = steps.pop() {
         match step {
             Step::Visit(visited) => match visited {
                 ValueType::Reference(target) if target == &super::clock_reference_target() => {
+                    reserve(&mut built, location)?;
                     built.push(ValueType::Boolean);
                 }
                 ValueType::Option(payload) => {
+                    reserve(&mut steps, location)?;
                     steps.push(Step::Option);
+                    reserve(&mut steps, location)?;
                     steps.push(Step::Visit(payload));
                 }
                 ValueType::Collection(collection) => {
+                    reserve(&mut steps, location)?;
                     steps.push(Step::Collection(collection));
+                    reserve(&mut steps, location)?;
                     steps.push(Step::Visit(collection.element()));
                 }
                 ValueType::Map(map) => {
+                    reserve(&mut steps, location)?;
                     steps.push(Step::Map(map));
+                    reserve(&mut steps, location)?;
                     steps.push(Step::Visit(map.values()));
+                    reserve(&mut steps, location)?;
                     steps.push(Step::Visit(map.key()));
                 }
-                other => built.push(other.clone()),
+                other => {
+                    reserve(&mut built, location)?;
+                    built.push(other.clone());
+                }
             },
             Step::Option => {
-                let payload = built.pop()?;
+                let payload = built.pop().ok_or_else(|| mismatch(location))?;
+                reserve(&mut built, location)?;
                 built.push(ValueType::Option(Arc::new(payload)));
             }
             Step::Collection(collection) => {
-                let element = built.pop()?;
+                let element = built.pop().ok_or_else(|| mismatch(location))?;
+                reserve(&mut built, location)?;
                 built.push(ValueType::collection(CollectionType::new(
                     collection.kind(),
                     element,
@@ -2836,15 +2862,16 @@ fn clock_reference_as_leaf(value_type: &ValueType) -> Option<ValueType> {
                 )));
             }
             Step::Map(map) => {
-                let values = built.pop()?;
-                let key = built.pop()?;
-                built.push(ValueType::Map(Arc::new(
-                    filament_exact::MapType::new(key, values, map.bound()).ok()?,
-                )));
+                let values = built.pop().ok_or_else(|| mismatch(location))?;
+                let key = built.pop().ok_or_else(|| mismatch(location))?;
+                let map_type = filament_exact::MapType::new(key, values, map.bound())
+                    .map_err(|_| mismatch(location))?;
+                reserve(&mut built, location)?;
+                built.push(ValueType::Map(Arc::new(map_type)));
             }
         }
     }
-    built.pop()
+    built.pop().ok_or_else(|| mismatch(location))
 }
 
 fn mismatch(location: &Location) -> CheckRefusal {
@@ -3818,12 +3845,30 @@ impl<'a> Typer<'a> {
     ) -> Result<(), CheckRefusal> {
         // `Reference<Clock>` names no declared object type, so the whole type
         // is checked with each clock reference read as a leaf of its own.
-        let whole = clock_reference_as_leaf(value_type).ok_or_else(|| mismatch(location))?;
-        self.scope
-            .types
-            .try_check_type(&whole)
-            .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?;
-        let mut pending = vec![value_type];
+        // Ask the owner to check the original borrowed type first. This keeps
+        // its fallible traversal reservation ahead of the local conversion
+        // worklist and preserves the owner's native allocation request.
+        let original_check = self.scope.types.try_check_type(value_type);
+        if matches!(
+            &original_check,
+            Err(
+                filament_semantic_value::declaration::TypeCheckError::Allocation(_)
+                    | filament_semantic_value::declaration::TypeCheckError::Capacity(_)
+            )
+        ) {
+            return original_check
+                .map_err(|failure| CheckRefusal::from_type_check(location, failure));
+        }
+        // Validate leaves directly instead of rebuilding an equivalent
+        // ValueType with Arc allocations. Arc::new and the collection/map
+        // constructors abort on allocation failure, so they cannot preserve
+        // the owner's typed allocation refusal (FR-534-AC-2).
+        let mut pending = Vec::new();
+        let request = StorageRequest::new(1, StorageUnit::AdditionalElements);
+        pending
+            .try_reserve(1)
+            .map_err(|_| refuse(location, CheckCause::TypeCheckAllocation(request)))?;
+        pending.push(value_type);
         while let Some(value_type) = pending.pop() {
             match value_type {
                 ValueType::Enum(shape) => {
@@ -3846,17 +3891,47 @@ impl<'a> Typer<'a> {
                     // type for a clock place. The native Clock declaration
                     // is not an object type in the admitted TypeEnvironment.
                 }
-                ValueType::Option(payload) => pending.push(payload),
-                ValueType::Collection(collection) => pending.push(collection.element()),
+                ValueType::Option(payload) => {
+                    pending
+                        .try_reserve(1)
+                        .map_err(|_| refuse(location, CheckCause::TypeCheckAllocation(request)))?;
+                    pending.push(payload);
+                }
+                ValueType::Collection(collection) => {
+                    // Collection eligibility is checked before the owner
+                    // descends into its element. Recheck this boundary when
+                    // an earlier owner refusal (such as Reference<Clock>)
+                    // might otherwise hide a separate collection refusal.
+                    if original_check.is_err() {
+                        self.scope
+                            .types
+                            .try_check_type(value_type)
+                            .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?;
+                    }
+                    pending
+                        .try_reserve(1)
+                        .map_err(|_| refuse(location, CheckCause::TypeCheckAllocation(request)))?;
+                    pending.push(collection.element());
+                }
                 ValueType::Map(map) => {
+                    pending
+                        .try_reserve(2)
+                        .map_err(|_| refuse(location, CheckCause::TypeCheckAllocation(request)))?;
                     pending.push(map.key());
                     pending.push(map.values());
                 }
-                ValueType::Reference(_) | ValueType::Composite(_) => self
-                    .scope
-                    .types
-                    .try_check_type(value_type)
-                    .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?,
+                // A successful owner walk above has already checked every
+                // reference and composite. Repeat leaf checks only when the
+                // owner stopped at an ordinary refusal (for example, the
+                // synthetic Clock reference), so other invalid leaves
+                // remain detectable without another successful full walk.
+                ValueType::Reference(_) | ValueType::Composite(_) if original_check.is_err() => {
+                    self.scope
+                        .types
+                        .try_check_type(value_type)
+                        .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?
+                }
+                ValueType::Reference(_) | ValueType::Composite(_) => {}
                 ValueType::Boolean
                 | ValueType::Integer
                 | ValueType::Int(_)
@@ -3868,15 +3943,16 @@ impl<'a> Typer<'a> {
                 | ValueType::CarriedQuantity(_)
                 | ValueType::Text(_)
                 | ValueType::String
-                | ValueType::Population(_)
                 | ValueType::Uuid
                 | ValueType::Timestamp
                 | ValueType::Bytes
-                | ValueType::JsonObject => self
+                | ValueType::JsonObject => {}
+                ValueType::Population(_) if original_check.is_err() => self
                     .scope
                     .types
                     .try_check_type(value_type)
                     .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?,
+                ValueType::Population(_) => {}
             }
         }
         Ok(())
@@ -4165,8 +4241,8 @@ impl<'a> Typer<'a> {
                 ));
             }
             if self.scope.names_enum(type_name) {
-                // FR-317-AC-6: an unknown member of a source enum or ordered enum
-                // refuses like an undeclared model variant case.
+                // FR-317-AC-6 gives source enum members the same diagnostic
+                // as undeclared model variant cases.
                 return Err(refuse(
                     location,
                     CheckCause::UndeclaredVariantCase {
@@ -6828,9 +6904,13 @@ mod holds_float_tests {
                 let plain = nest(ValueType::Integer);
                 assert!(Typer::holds_references(&held));
                 assert!(!Typer::holds_references(&plain));
-                let leafed = clock_reference_as_leaf(&held).expect("a leaf rewrite");
+                let location = Location::at(Origin::Expression, &[]);
+                let leafed = clock_reference_as_leaf(&held, &location).expect("a leaf rewrite");
                 assert!(!Typer::holds_references(&leafed));
-                assert_eq!(clock_reference_as_leaf(&plain), Some(plain.clone()));
+                assert_eq!(
+                    clock_reference_as_leaf(&plain, &location),
+                    Ok(plain.clone())
+                );
             })
             .expect("the thread spawns")
             .join()
