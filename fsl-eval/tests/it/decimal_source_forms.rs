@@ -6,10 +6,8 @@
 //! `decimal(c, s)` literal that is not a member at type checking, before any
 //! charge. D13 and D18 are evaluator-boundary vectors with no source form.
 //!
-//! The vectors' `ScalarLimitsV1` figures are for the arithmetic itself. A
-//! source call also charges `FunctionCall`, one work unit, so a call through
-//! a function needs `work_units` one above the vector's figure to complete
-//! and one above its short figure to stop at the same charge point.
+//! Scalar vector limits are calibrated to the remaining budget at the tested
+//! node. The source function's `FunctionCall` charge is accounted separately.
 
 use filament_eval::FamilyOutcome;
 use filament_exact::{
@@ -142,6 +140,25 @@ fn call(package: &CheckedPackage, arguments: Vec<Value>, limits: ScalarLimits) -
     }
 }
 
+/// Runs a source function with `limits` as the budget remaining at its first
+/// expression node. The call itself consumes one work unit before that node;
+/// incomplete records are normalized back to the node's budget and usage.
+fn call_at_node(package: &CheckedPackage, arguments: Vec<Value>, limits: ScalarLimits) -> Run {
+    let mut call_limits = limits;
+    call_limits.work_units = call_limits
+        .work_units
+        .checked_add(1)
+        .expect("the calibrated call budget fits");
+    let mut run = call(package, arguments, call_limits);
+    if let Outcome::Incomplete(incomplete) = &mut run.outcome {
+        if incomplete.limit_kind == LimitKind::WorkUnits {
+            incomplete.limit -= 1;
+            incomplete.consumed -= 1;
+        }
+    }
+    run
+}
+
 /// `(exact_numerator, exact_denominator, rounded_coefficient, rounded_scale,
 /// mode)` of a decimal loss record.
 type LossFields = (Integer, Integer, Integer, u32, &'static str);
@@ -247,7 +264,7 @@ fn conversion(mode: &str) -> CheckedPackage {
 #[test]
 fn d24_a_rational_converts_to_a_decimal_as_the_division_at_the_target_scale() {
     let package = conversion("nearest-even");
-    let run = call(&package, vec![rational(2, 3)], limits(9, 3, 2, 6));
+    let run = call_at_node(&package, vec![rational(2, 3)], limits(9, 3, 2, 5));
     assert_eq!(run.decimal(), (int(67), 2));
     assert_eq!(run.one_loss(), (int(2), int(3), int(67), 2, "nearest-even"));
     assert_eq!(
@@ -267,7 +284,7 @@ fn d24_a_rational_converts_to_a_decimal_as_the_division_at_the_target_scale() {
         ]
     );
 
-    let short = call(&package, vec![rational(2, 3)], limits(9, 3, 1, 6));
+    let short = call_at_node(&package, vec![rational(2, 3)], limits(9, 3, 1, 5));
     assert_eq!(
         short.stop(),
         (
@@ -283,10 +300,22 @@ fn d24_a_rational_converts_to_a_decimal_as_the_division_at_the_target_scale() {
         vec![ChargePoint::FunctionCall, ChargePoint::DecimalOperands]
     );
 
-    let exact = call(
+    let short_work = call_at_node(&package, vec![rational(2, 3)], limits(9, 3, 2, 4));
+    assert_eq!(
+        short_work.stop(),
+        (
+            LimitKind::WorkUnits,
+            4,
+            4,
+            one(1),
+            ChargePoint::DecimalResultRetain
+        )
+    );
+
+    let exact = call_at_node(
         &conversion("exact"),
         vec![rational(2, 3)],
-        limits(9, 3, 2, 6),
+        limits(9, 3, 2, 5),
     );
     assert_eq!(
         exact.refusal(),
