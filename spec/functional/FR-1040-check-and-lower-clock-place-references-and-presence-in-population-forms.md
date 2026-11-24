@@ -190,11 +190,25 @@ population holds, so there is no absent owner to test.
   leaves the unit refused with that refusal, and the call adds no second
   refusal.
 
+- **Runtime value of `Reference<Clock>`.** At run time `ref(...)` evaluates to
+  `Value::ClockReference`, a value kind of its own that holds the place id of
+  the instance (FSpec FR-829 "The runtime value"), and the evaluator SHALL NOT
+  model it as an `ObjectReference` with a place attached. Two clock references
+  are equal exactly when their place id texts are byte equal, whichever
+  universe produced them: a reference from another universe is the foreign
+  value, equal only to a reference naming the same owner identity, template
+  and slots, never an error. Set elements and map keys of clock references
+  are ordered by the UTF-8 byte order of the place id text, entries supplied
+  in any order give one value, and a repeated place id is a
+  `duplicate-member` refusal. The state key and the wire form carry a clock
+  reference as the typed value of kind `clock_reference` with its place id
+  text (`{"type":"clock_reference","place_id":"<text>"}` (FSpec FR-181)), so two places of one object are two
+  state keys and a round trip returns an equal value.
+
 With these rules no `unknown_required_feature`/`unsupported-feature` or
 `unsupported_construct`/`not-yet-implemented` refusal remains on a
 place reference, a presence read, a population sum operand or a call. Each
 form either lowers or refuses with one of the typed causes above.
-
 ## Acceptance Criteria
 
 Verification cells use this repository's `Test (TC-id)` convention: `Test`
@@ -211,6 +225,9 @@ is the method and the parenthesized identifier names its owning procedure.
 | FR-1040-AC-7 | A pure function `same(a: Reference<Clock>, b: Reference<Clock>): Boolean { a = b }` has a function node whose parameters are typed by the `scalar_type`/`clock_reference` node, and a refinement row or clause calling it lowers its call to that node; with the function's body made ill-typed, the unit refuses once at the function body and not at the call. | Test (TC-3084) |
 | FR-1040-AC-8 | Over a domain package `acme/rpc` whose object type `Call` has clock fields `x` and `y` and a field `r` typed `ix://acme/rpc/ClockRef`, a type definition of `kind` `reference` with `target` `ix://filament/native/Clock`, intake gives `r` the type `Reference<Clock>` as a data member, and the postcondition `self.r = ref(self.x)` of an operation `point` whose frame names only `r` checks with no `clock-write` refusal and lowers the write to a `filament.op.clock_reference.ref` application typed by the `scalar_type`/`clock_reference` node, which also types the field; after `point` the state's `r` holds the place id of `self.x`, and two states that differ only in clock values have one state key. The same field typed `ix://filament/native/Clock` is a clock field and the same postcondition refuses `invalid_timed_model`/`clock-write`. An FSL model unit declaring `object Call { x: Clock; r: Reference<Clock>; }` under `domain "acme/rpc"` compiles to a document holding the type definition `ix://acme/rpc/Reference_Call_r` of `kind` `reference` with `target` `ix://filament/native/Clock` and the field `r` typed by it. | Test (TC-3084) |
 | FR-1040-AC-9 | Source and bare checked routes produce equal full canonical `place/v2` references for the same authenticated declarations through record aliases, nested tuples and union cases, preserving all typed path tags and selector indices; two populations with the same owner local key remain distinct. Each route refuses distinct declaration origins with one normalized identity in the same model scope as `conflicting_declaration`/`duplicate-declaration`, naming both origins and publishing no partial table; importing the same authenticated declaration through two aliases succeeds as one view. An ambiguous short-name ownership lookup refuses `ambiguous_declaration`/`ambiguous-name` at that lookup on each route, naming both competing origins and producing no place table. Admitted independently selected documents and union expansions have distinct identities when their authenticated scopes or full path prefixes differ. `Base { c: Clock }`, `Child extends Base {}` under `time Base dense unit ms` retains the original `Base.c` template for a Child receiver. Source `Child` redeclaring inherited field `c` refuses `ambiguous_declaration`/`ambiguous-name` at `Child.c` (FR-569). A selected package with both `Base` and `Child` as candidate timed-model nodes, including one with legal model field redefinition `Child/d -> Base/c`, refuses `ambiguous_declaration`/`ambiguous-name` at `M` in `time M dense unit ms` (FR-230-AC-38). Two source units each declaring `record W` refuse `ambiguous_declaration`/`ambiguous-name`, naming both declarations with their units (FR-480-AC-2). These three refusals precede canonical-table construction. | Test (TC-3084) |
+| FR-1040-AC-10 | The evaluator holds `ref(self.x)`, `ref(self.y)` and `ref(other.x)` as `Value::ClockReference` values: `ref(self.x)` in two states or two universes with the same owner identity is equal, `ref(self.x)` and `ref(self.y)` are distinct, and `ref(self.x)` and `ref(other.x)` are distinct; a reference from a foreign universe compares false and never refuses; no value is an `ObjectReference` and a clock reference and an object reference are never compared: `eq` over one of each refuses `ill_typed`/`operator-ineligible` at check time (FSpec FR-829-AC-8). | Test (TC-3084) |
+| FR-1040-AC-11 | A `Set<Reference<Clock>>` and a `Map` keyed by `Reference<Clock>` supplied in two entry orders are one value with one state key, ordered by the byte order of the place id texts; a repeated place id refuses `invalid_runtime_input`/`duplicate-member`; adding an element for another place changes the state key; the same ordering is used when the set is iterated by `count`, `exists`, `all` and `only`. | Test (TC-3084) |
+| FR-1040-AC-12 | A clock reference round-trips through the state key and the wire form `{"type":"clock_reference","place_id":"<place id text>"}` (FSpec FR-181-AC-35) to an equal value and is never written as an object reference; two places of one object give two state keys; a reference naming an owner or template absent from the supplied world refuses `dangling_reference` at that reference on the source and bare routes alike. | Test (TC-3084) |
 
 ## Dependencies
 

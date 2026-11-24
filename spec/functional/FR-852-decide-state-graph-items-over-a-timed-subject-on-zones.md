@@ -123,6 +123,7 @@ invariants `x <= 3 ms` while in flight and `x <= 4 ms` while `phase` is 1.
 | FR-852-AC-4 | AC-1's `Replied` item with `backend` `en-1` and no `options.method` settles `unsupported` with `unsupported_projection`/`unsupported-requested-capability`, exit 21; with `temporal.limits.max_states` 1 it settles `incomplete` `LimitReached{max_states}`, exit 22. | Test (TC-2412) |
 | FR-852-AC-5 | `Engines::fsl()`'s `en-6` registration lists `possible`, `always-possible` and `unique-path` in `state_graph_forms`. | Test (TC-2412) |
 | FR-852-AC-6 | AC-1's `Replied` and `Late` items with `options.method` `digital-clocks` settle the same verdicts on backend `en-1`, the proof with basis `exhaustive` and witness delays that are integers and replay; `Engines::fsl()`'s `en-1` registration lists the three state-graph forms. | Test (TC-2412) |
+| FR-852-AC-7 | Over the Zeno-only variant of AC-1's subject (time invariant `x <= 0 ms` at every state, every infinite path zero-delay), `possible Replied` on `en-6` settles `proved` with a witness and a zone `certificate` that carries no `admitted` member and is accepted (FR-244-AC-7, FR-245-AC-11), and `possible Late` (the item whose predicate is `c.phase = 3`, the `TimedOut` state) settles `refuted`; neither is refused by backend candidate selection as `invalid_capability`/`inconsistent-candidates` or for a missing divergence witness, and a certificate given an `admitted` member settles `inconclusive`, `certificate-rejected`, `malformed`. | Test (TC-3030) |
 
 ## Dependencies
 

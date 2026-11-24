@@ -12,7 +12,7 @@ relationships:
 
 Verify `check_zone_certificate` on valid certificates, each tampering, budgets, and the Kani harnesses of its DBM code.
 
-Scope: FR-245-AC-1 to FR-245-AC-4, FR-245-AC-5, FR-245-AC-6, FR-245-AC-8, FR-245-AC-9.
+Scope: FR-245-AC-1 to FR-245-AC-4, FR-245-AC-5, FR-245-AC-6, FR-245-AC-8, FR-245-AC-9 and FR-245-AC-12.
 
 ## Test Procedure
 
@@ -26,6 +26,7 @@ Fixtures: the certificates of TC-699; the tamperings of FR-245-AC-2; the Kani ha
 6. Read every core crate's normal, dev and build dependencies from `cargo metadata`.
 7. Check the refinement-form certificates of FR-244-AC-5, the `locked`-mark and `positions` tamperings, a forged initial position, a replaced target position, a changed `taken`, and the evaluation meter set to 0 (FR-245-AC-8).
 8. Check the `Init3` certificate (one failing-but-locked initial state, two passing divergent ones), the certificate with the `locked` mark removed from the initial node of index 1, with a `locked` mark added to the initial node of index 0, and a non-covering `initials[2]`, the `Init3L` variant with the locked state at index 0 (`admitted` from `initials[1]`, and from `initials[0]`), and a forged `Holds` certificate for the variant without the time invariant (FR-245-AC-9).
+9. Tamper the `taken` of the edge into the locked entry node (`None`), of an edge inside the locked region and of a passing edge (`Taken::Failing`), and remove, shorten and unsort `candidate_blocks` over a timed abstract model and add it over an untimed one (FR-245-AC-12).
 
 Tag the tests `#[trace("TC-700", "FR-245-AC-n")]`.
 
@@ -39,3 +40,4 @@ Tag the tests `#[trace("TC-700", "FR-245-AC-n")]`.
 - Step 6: no core crate names `fsl-analyze`.
 - Step 7: `Accepted` for each refinement-form certificate; `Rejected` `StepFails` at the `ZoneEdge`; `Rejected` `InitialMismatch`; `Rejected` `PostDiffers`; `Stopped` naming `evaluation-meter` for the zero meter; and `Rejected` `Malformed` at `CertificateMember("positions")`.
 - Step 8: `Accepted` for the `Init3` certificate; `Rejected` `InitialMismatch` at the initial `ZoneNode` for each of the two marks; `Rejected` `InitialMissing` for the non-covering node; `Accepted` for `Init3L` with `admitted` from `initials[1]` and `WitnessFails` from `initials[0]`; `Rejected` `BadState` at the forged `locked` initial node.
+- Step 9: `Accepted` unmodified; `Rejected` `PostDiffers` at the `ZoneEdge` of each wrong `taken`; `Rejected` `Malformed` at `CertificateMember("positions")` for each `candidate_blocks` defect.

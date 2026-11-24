@@ -30,3 +30,5 @@ Test: `fsl-package/src/emit/tests/timed_clauses.rs` `an_element_presence_quantif
 - Step 2: the invariant has no `binders` and its predicate is the same application; the urgency predicate is that application; I2 admits both.
 - Step 3: one part whose predicate is the `exists` application; the shared-binder guard's parts carry the binder in `binders`.
 - Step 4: `invalid_package`/`timed-node-reference` at the binder target.
+
+FR-930-AC-5 and FR-930-AC-6: the mixed guard, invariant and urgency of AC-5 emit with `binders` for the slot parameter only; the added-binder and shared-parameter variants refuse; the empty collection reads as AC-6 states.

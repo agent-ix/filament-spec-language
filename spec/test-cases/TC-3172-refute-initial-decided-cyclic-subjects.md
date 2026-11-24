@@ -30,3 +30,5 @@ each cycle without a token. EN-5 starts no path-set search and emits a
 `lower` certificate: accepting union `{b}` with `x(b) = 1`, rank 0, and
 rejecting union `{f}` with `x(f) = 1`, rank 0. Replay checks `1 > 1/2` and
 both items settle `refuted`, not `unsupported`.
+
+Add the repeatable-operation case of FR-202-AC-46: a reachable cycle with initial not-P (`always`) and an `eventually` with an empty cylinder (value 0 against `>= 1/2`). Each is refuted by the `lower` certificate on the absorbed initial state and settles `refuted` (exit code 10), with no path-set search and no refusal for the cycle, never `unsupported`/`not-yet-implemented`; a ranked `lower` certificate over the cyclic chain is accepted, and a fair-minimum ranking part over a cyclic graph is rejected `inconclusive`, `certificate-rejected`, rule `malformed` at `{"member": "ranking"}` with the initial verdict unchanged.
