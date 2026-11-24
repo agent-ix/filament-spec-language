@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
 use num_traits::Zero;
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 
 mod elapsed;
 
@@ -411,7 +411,7 @@ fn check_mean_time_values(
             ProbabilityObjective::Workload
             | ProbabilityObjective::WorkloadMinimum
             | ProbabilityObjective::WorkloadMaximum => {
-                return Err(ProbabilityDocumentError::Unsupported)
+                return Err(ProbabilityDocumentError::Unsupported);
             }
         }
         .unwrap_or_else(zero);
@@ -471,7 +471,7 @@ fn check_mean_time_values(
             ProbabilityObjective::Workload
             | ProbabilityObjective::WorkloadMinimum
             | ProbabilityObjective::WorkloadMaximum => {
-                return Err(ProbabilityDocumentError::Unsupported)
+                return Err(ProbabilityDocumentError::Unsupported);
             }
         };
         for (choice_index, choice) in state.choices.iter().enumerate() {
@@ -1047,10 +1047,10 @@ fn mean_target(
     match readings.as_slice() {
         [fsl_eval::simulation::model::PredicateReading::True] => Ok(true),
         [fsl_eval::simulation::model::PredicateReading::False] => Ok(false),
-        [fsl_eval::simulation::model::PredicateReading::Undefined { .. }
-        | fsl_eval::simulation::model::PredicateReading::Refused(_)] => {
-            Err(ProbabilityDocumentError::Unsupported)
-        }
+        [
+            fsl_eval::simulation::model::PredicateReading::Undefined { .. }
+            | fsl_eval::simulation::model::PredicateReading::Refused(_),
+        ] => Err(ProbabilityDocumentError::Unsupported),
         _ => Err(ProbabilityDocumentError::Unsupported),
     }
 }
@@ -4358,11 +4358,7 @@ impl Payoff<'_> {
             Self::Deadline { failing, .. } => verdict == !*failing,
             Self::Elapsed { violating, .. } => violating.contains(key),
         };
-        if counted {
-            one()
-        } else {
-            zero()
-        }
+        if counted { one() } else { zero() }
     }
 
     fn activation(&self, key: &ProbabilityProductKey) -> Rational {
@@ -4488,14 +4484,17 @@ fn price_paths(
                 if state.terminal.is_some() {
                     return Err(Error::Refused);
                 }
-                used.entry(at.clone())
-                    .or_default()
-                    .insert(step.clone());
+                used.entry(at.clone()).or_default().insert(step.clone());
                 sequence.push(step.clone());
                 at = step.clone();
             }
             let end = graph.states.get(&at).ok_or(Error::Refused)?;
             if sequence.is_empty() || !payoff.ends(&at, end.terminal) {
+                eprintln!(
+                    "timed witness debug: path endpoint {at:?} terminal {:?} len {}",
+                    end.terminal,
+                    sequence.len()
+                );
                 return Ok(None);
             }
             if !seen.insert(sequence) {
@@ -4517,7 +4516,10 @@ fn price_paths(
                     best = Some((position, covered));
                 }
             }
-            let (index, _) = best.ok_or(Error::Refused)?;
+            let (index, covered) = best.ok_or(Error::Refused)?;
+            eprintln!(
+                "timed witness debug: state {key:?}, targets {targets:?}, selected {index} covers {covered}"
+            );
             chosen.insert(key.clone(), index);
         }
         let priced = |weight: &dyn Fn(&ProbabilityProductKey, bool) -> Rational| {
@@ -4545,7 +4547,9 @@ fn price_paths(
         let Some((chosen, mass, activation)) = solve(&kept)? else {
             return Ok(None);
         };
+        eprintln!("timed witness debug: mass {mass:?}, activation {activation:?}");
         if !payoff.refutes(&mass, &activation) {
+            eprintln!("timed witness debug: bound not refuted");
             return Ok(None);
         }
         let before = kept.len();
@@ -4563,6 +4567,7 @@ fn price_paths(
             })
         });
         if kept.is_empty() {
+            eprintln!("timed witness debug: no paths reproduced");
             return Ok(None);
         }
         if kept.len() == before {
