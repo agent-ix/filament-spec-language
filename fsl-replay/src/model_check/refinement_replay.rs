@@ -1537,6 +1537,7 @@ fn replay_lasso(
             Vec<u8>,
             Option<ModelTransition>,
             Vec<u8>,
+            Option<usize>,
             Vec<(Vec<ModelTransition>, Option<ModelTransition>)>,
         );
         let mut identities = BTreeSet::<ModelTransition>::new();
@@ -1590,6 +1591,7 @@ fn replay_lasso(
                                     row.pre_state.clone(),
                                     row.transition.clone(),
                                     row.post_state.clone(),
+                                    Some(row.post_candidate),
                                     Vec::new(),
                                 )
                             })
@@ -1649,7 +1651,14 @@ fn replay_lasso(
                                 .iter()
                                 .filter(|(ordinal, key)| later.contains(&(*ordinal, key.clone())))
                                 .map(|(ordinal, key)| {
-                                    (*ordinal, key.clone(), None, key.clone(), Vec::new())
+                                    (
+                                        *ordinal,
+                                        key.clone(),
+                                        None,
+                                        key.clone(),
+                                        Some(*ordinal),
+                                        Vec::new(),
+                                    )
                                 })
                                 .collect(),
                         );
@@ -1657,10 +1666,12 @@ fn replay_lasso(
                         timed_rows.push(
                             candidate_rows[index]
                                 .iter()
-                                .filter(|(pre_ordinal, pre, _, post, _)| {
+                                .filter(|(pre_ordinal, pre, _, post, target, _)| {
                                     candidates.contains(&(*pre_ordinal, pre.clone()))
-                                        && next_alive.iter().any(|(ordinal, key)| {
-                                            ordinal == pre_ordinal && key == post
+                                        && target.is_some_and(|ordinal| {
+                                            next_alive.iter().any(|(alive, key)| {
+                                                *alive == ordinal && key == post
+                                            })
                                         })
                                 })
                                 .cloned()
@@ -1678,7 +1689,7 @@ fn replay_lasso(
             }
         }
         for rows in &candidate_rows {
-            for (_, _, transition, _, hops) in rows {
+            for (_, _, transition, _, _, hops) in rows {
                 identities.extend(transition.iter().cloned());
                 for (enabled, taken) in hops {
                     identities.extend(enabled.iter().cloned());
@@ -1722,60 +1733,70 @@ fn replay_lasso(
                 let next_position = (position + 1) % candidate_positions.len();
                 rows.iter()
                     .enumerate()
-                    .map(|(row_index, (pre_candidate, pre_state, transition, post_state, hops))| {
-                        let post_occurrence = rows
-                            .iter()
-                            .enumerate()
-                            .filter(|(prior_index, prior)| {
-                                prior.3 == *post_state
-                                    && (prior.0, *prior_index) <= (*pre_candidate, row_index)
-                            })
-                            .count()
-                            - 1;
-                        let post_candidate = candidate_edge_target_ordinal(
-                            &candidate_positions[position],
-                            &candidate_positions[next_position],
-                            *pre_candidate,
-                            post_state,
-                            post_occurrence,
-                        )
-                        .map_err(|_| fault("candidate-replay-row-target-is-ordinal"))?;
-                        let number = |transition: &ModelTransition| {
-                            numbered
-                                .get(transition)
-                                .copied()
-                                .ok_or_else(|| fault("candidate-taken-transition-numbered"))
-                        };
-                        let interior = hops
-                            .iter()
-                            .map(|(enabled, taken)| {
-                                Ok(CandidateFairHop {
-                                    enabled: enabled.iter().map(number).collect::<Result<
-                                        Vec<_>,
-                                        ReplayRefusal,
-                                    >>(
-                                    )?,
-                                    transition: taken.as_ref().map(number).transpose()?,
+                    .map(
+                        |(
+                            row_index,
+                            (pre_candidate, pre_state, transition, post_state, target, hops),
+                        )| {
+                            let post_candidate = match target {
+                                Some(ordinal) => *ordinal,
+                                None => {
+                                    let post_occurrence = rows
+                                        .iter()
+                                        .enumerate()
+                                        .filter(|(prior_index, prior)| {
+                                            prior.3 == *post_state
+                                                && (prior.0, *prior_index)
+                                                    <= (*pre_candidate, row_index)
+                                        })
+                                        .count()
+                                        .saturating_sub(1);
+                                    candidate_edge_target_ordinal(
+                                        &candidate_positions[position],
+                                        &candidate_positions[next_position],
+                                        *pre_candidate,
+                                        post_state,
+                                        post_occurrence,
+                                    )
+                                    .map_err(|_| fault("candidate-replay-row-target-is-ordinal"))?
+                                }
+                            };
+                            let number = |transition: &ModelTransition| {
+                                numbered
+                                    .get(transition)
+                                    .copied()
+                                    .ok_or_else(|| fault("candidate-taken-transition-numbered"))
+                            };
+                            let interior = hops
+                                .iter()
+                                .map(|(enabled, taken)| {
+                                    Ok(CandidateFairHop {
+                                        enabled: enabled.iter().map(number).collect::<Result<
+                                            Vec<_>,
+                                            ReplayRefusal,
+                                        >>(
+                                        )?,
+                                        transition: taken.as_ref().map(number).transpose()?,
+                                    })
                                 })
+                                .collect::<Result<Vec<_>, ReplayRefusal>>()?;
+                            Ok(CandidateFairStep {
+                                pre_candidate: *pre_candidate,
+                                pre_state: pre_state.clone(),
+                                transition: transition
+                                    .as_ref()
+                                    .map(|transition| {
+                                        numbered.get(transition).copied().ok_or_else(|| {
+                                            fault("candidate-taken-transition-numbered")
+                                        })
+                                    })
+                                    .transpose()?,
+                                post_candidate,
+                                post_state: post_state.clone(),
+                                interior,
                             })
-                            .collect::<Result<Vec<_>, ReplayRefusal>>()?;
-                        Ok(CandidateFairStep {
-                            pre_candidate: *pre_candidate,
-                            pre_state: pre_state.clone(),
-                            transition: transition
-                                .as_ref()
-                                .map(|transition| {
-                                    numbered
-                                        .get(transition)
-                                        .copied()
-                                        .ok_or_else(|| fault("candidate-taken-transition-numbered"))
-                                })
-                                .transpose()?,
-                            post_candidate,
-                            post_state: post_state.clone(),
-                            interior,
-                        })
-                    })
+                        },
+                    )
                     .collect::<Result<Vec<_>, ReplayRefusal>>()
             })
             .collect::<Result<Vec<_>, ReplayRefusal>>()?;
@@ -2168,7 +2189,7 @@ fn same_product_state(
 ) -> Result<bool, ReplayRefusal> {
     let encodes = |_| fault("a-product-state-encodes");
     let candidates = |position: &RefinementPosition| {
-        position
+        let mut keys = position
             .abstract_states
             .iter()
             .map(|state| {
@@ -2177,7 +2198,10 @@ fn same_product_state(
                     .state_key_of(state)
                     .map(|(key, _)| key)
             })
-            .collect::<Result<Vec<_>, _>>()
+            .collect::<Result<Vec<_>, _>>()?;
+        keys.sort();
+        keys.dedup();
+        Ok(keys)
     };
     let protocol_candidates = |position: &RefinementPosition| {
         let Some(protocol) = &systems.abstract_protocol else {
@@ -2228,6 +2252,7 @@ type CandidateRow = (
     Vec<u8>,
     Option<ModelTransition>,
     Vec<u8>,
+    Option<usize>,
     Vec<HopRow>,
 );
 
@@ -2319,7 +2344,7 @@ fn protocol_hidden_graph(
             match taken {
                 Taken::Stutter => {
                     if reaches(&pre) {
-                        rows.push((pre_candidate, pre.clone(), None, pre, Vec::new()));
+                        rows.push((pre_candidate, pre.clone(), None, pre, None, Vec::new()));
                     }
                 }
                 Taken::Protocol(transitions) => {
@@ -2337,6 +2362,7 @@ fn protocol_hidden_graph(
                                 pre.clone(),
                                 transition.application().cloned(),
                                 post,
+                                None,
                                 Vec::new(),
                             ));
                         }
@@ -2373,7 +2399,7 @@ fn protocol_hidden_graph(
                             };
                             hops.push((enabled, step.application().cloned()));
                         }
-                        rows.push((pre_candidate, pre.clone(), first, post, hops));
+                        rows.push((pre_candidate, pre.clone(), first, post, None, hops));
                     }
                 }
                 Taken::Abstract(_) | Taken::CandidateSteps(_) | Taken::Failing => {

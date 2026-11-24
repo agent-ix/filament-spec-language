@@ -22,8 +22,8 @@ use filament_exact::{ObjectReference, Value};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
-    AbstractApplication, Judgement, ModelFinding, ModelSimState, ModelSystem, Rejection,
-    ResolvedStep, RowReading, operation_identity_text,
+    operation_identity_text, AbstractApplication, Judgement, ModelFinding, ModelSimState,
+    ModelSystem, Rejection, ResolvedStep, RowReading,
 };
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop};
 use fsl_semantics::check::StepClass;
@@ -37,10 +37,10 @@ use crate::refinement::failure::{
     CandidateStep, ProtocolTrace, RefinementFailure, StepRejection, StepResult, StepVerdict, Taken,
     Undetermined,
 };
-use crate::refinement::history::{HistoryValues, advance, has_update, initial_history};
+use crate::refinement::history::{advance, has_update, initial_history, HistoryValues};
 use crate::refinement::map::{
-    EvalFailure, Lifting, MappedState, MappingFailure, MappingRowRef, MappingUndetermined,
-    StepArgument, lift_value, map_state, object_of,
+    lift_value, map_state, object_of, EvalFailure, Lifting, MappedState, MappingFailure,
+    MappingRowRef, MappingUndetermined, StepArgument,
 };
 use crate::refinement::protocol_system::{AbstractProtocolSystem, ProtocolCandidate};
 
@@ -56,9 +56,55 @@ pub struct RefinementPosition {
     pub history: HistoryValues,
     /// The abstract states, sorted by state key.
     pub abstract_states: Vec<ModelState>,
+    /// Physical abstract clock block for each candidate ordinal. Several
+    /// ordinals may share a block only when their clock valuations are equal
+    /// throughout the current zone.
+    pub candidate_clock_blocks: Vec<usize>,
     /// The protocol control states of an abstract protocol subject (FR-148).
     /// Empty for a model subject.
     pub abstract_protocol_states: Vec<super::protocol_system::ProtocolCandidate>,
+}
+
+impl RefinementPosition {
+    /// The number of physically distinct abstract clock blocks.
+    pub fn candidate_clock_block_count(&self) -> usize {
+        self.candidate_clock_blocks
+            .iter()
+            .copied()
+            .max()
+            .map_or(0, |last| last + 1)
+    }
+
+    /// The physical block for one candidate ordinal.
+    pub fn candidate_clock_block(&self, ordinal: usize) -> Option<usize> {
+        self.candidate_clock_blocks.get(ordinal).copied()
+    }
+
+    /// Canonical physical-block layout after retaining candidate ordinals.
+    pub fn candidate_clock_blocks_for(&self, ordinals: &[usize]) -> Vec<usize> {
+        let mut remap = std::collections::BTreeMap::new();
+        ordinals
+            .iter()
+            .map(|&ordinal| {
+                let block = self.candidate_clock_blocks[ordinal];
+                let next = remap.len();
+                *remap.entry(block).or_insert(next)
+            })
+            .collect()
+    }
+
+    /// Existing physical blocks referenced by retained candidate ordinals,
+    /// unique in candidate order.
+    pub fn candidate_clock_source_blocks_for(&self, ordinals: &[usize]) -> Vec<usize> {
+        let mut selected = Vec::new();
+        for &ordinal in ordinals {
+            let block = self.candidate_clock_blocks[ordinal];
+            if !selected.contains(&block) {
+                selected.push(block);
+            }
+        }
+        selected
+    }
 }
 
 /// One concrete step to decide: where it ends and what it did.
@@ -129,6 +175,88 @@ fn sorted(
     Ok(keyed.into_iter().map(|(_, state)| state).collect())
 }
 
+/// Hidden timed candidates retain one post row per path, even when several
+/// paths reach the same discrete state key. Their clock blocks remain
+/// independent until the timed checker proves an exact alias.
+fn sorted_with_duplicate_candidates(
+    system: &ModelSystem<'_>,
+    states: impl IntoIterator<Item = ModelState>,
+    rows: &[CandidateStep],
+) -> Result<Vec<ModelState>, StepVerdict> {
+    let mut sources_by_key = std::collections::BTreeMap::<Vec<u8>, Vec<usize>>::new();
+    for row in rows {
+        let sources = sources_by_key.entry(row.post_state.clone()).or_default();
+        if !sources.contains(&row.pre_candidate) {
+            sources.push(row.pre_candidate);
+        }
+    }
+    let mut keyed = Vec::new();
+    for state in states {
+        let (key, _) = system
+            .state_key_of(&state)
+            .map_err(|_| fault("abstract-state-encodes"))?;
+        keyed.push((key, state));
+    }
+    keyed.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut kept_by_key = std::collections::BTreeMap::<Vec<u8>, usize>::new();
+    Ok(keyed
+        .into_iter()
+        .filter_map(|(key, state)| {
+            let kept = kept_by_key.entry(key.clone()).or_default();
+            let limit = sources_by_key.get(&key).map_or(0, Vec::len);
+            if *kept < limit {
+                *kept += 1;
+                Some(state)
+            } else {
+                None
+            }
+        })
+        .collect())
+}
+
+fn assign_post_candidates(
+    system: &ModelSystem<'_>,
+    candidates: &[ModelState],
+    rows: &mut [CandidateStep],
+) -> Result<(), StepVerdict> {
+    let mut keys = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        keys.push(
+            system
+                .state_key_of(candidate)
+                .map_err(|_| fault("candidate-state-encodes"))?
+                .0,
+        );
+    }
+    let mut ordinals = std::collections::BTreeMap::<(Vec<u8>, usize), usize>::new();
+    let mut sources_by_key = std::collections::BTreeMap::<Vec<u8>, Vec<usize>>::new();
+    for row in rows.iter() {
+        let sources = sources_by_key.entry(row.post_state.clone()).or_default();
+        if !sources.contains(&row.pre_candidate) {
+            sources.push(row.pre_candidate);
+        }
+    }
+    for (key, sources) in &mut sources_by_key {
+        sources.sort_unstable();
+        for (occurrence, source) in sources.iter().enumerate() {
+            let ordinal = keys
+                .iter()
+                .enumerate()
+                .filter(|(_, candidate_key)| *candidate_key == key)
+                .nth(occurrence)
+                .map(|(index, _)| index)
+                .ok_or_else(|| fault("candidate-post-ordinal"))?;
+            ordinals.insert((key.clone(), *source), ordinal);
+        }
+    }
+    for row in rows {
+        row.post_candidate = *ordinals
+            .get(&(row.post_state.clone(), row.pre_candidate))
+            .ok_or_else(|| fault("candidate-post-ordinal"))?;
+    }
+    Ok(())
+}
+
 /// FR-141 "Initial states" (RS-2): `concrete_initial`, the initial state at
 /// `index` of the concrete subject, maps to the abstract subject's own
 /// initial states, compared by state key on the visible part (the whole
@@ -179,6 +307,7 @@ pub fn check_initial(
         RefinementPosition {
             concrete: concrete_initial.clone(),
             history,
+            candidate_clock_blocks: (0..candidates.len()).collect(),
             abstract_states: candidates,
             abstract_protocol_states: Vec::new(),
         },
@@ -1332,6 +1461,7 @@ fn decide_step(
             RefinementPosition {
                 concrete: step.post.state().clone(),
                 history: history.clone(),
+                candidate_clock_blocks: (0..states.len()).collect(),
                 abstract_states: states,
                 abstract_protocol_states: Vec::new(),
             },
@@ -1424,6 +1554,7 @@ fn decide_step(
                                     pre_state: pre_key,
                                     transition: Some(transition.clone()),
                                     post_state: post_key,
+                                    post_candidate: usize::MAX,
                                 });
                             }
                             next.push(successor.state().clone());
@@ -1456,10 +1587,19 @@ fn decide_step(
                     position: step.position,
                 });
             }
-            let next = match sorted(abstract_system, next) {
+            let next = match if hidden {
+                sorted_with_duplicate_candidates(abstract_system, next, &candidate_steps)
+            } else {
+                sorted(abstract_system, next)
+            } {
                 Ok(next) => next,
                 Err(verdict) => return verdict,
             };
+            if let Err(verdict) =
+                assign_post_candidates(abstract_system, &next, &mut candidate_steps)
+            {
+                return verdict;
+            }
             if stuttered {
                 return if hidden {
                     pass_with_states(Taken::CandidateSteps(candidate_steps), next)
@@ -1536,6 +1676,7 @@ fn candidate_stutters(
                 pre_state: key.clone(),
                 transition: None,
                 post_state: key,
+                post_candidate: pre_candidate,
             })
         })
         .collect()
@@ -2259,6 +2400,7 @@ fn judge_operation(
                                 pre_state: pre_key,
                                 transition: Some(found.transition.clone()),
                                 post_state: post_key,
+                                post_candidate: usize::MAX,
                             });
                         }
                         accepted.push(found.transition);
@@ -2278,13 +2420,18 @@ fn judge_operation(
         return StepVerdict::Undetermined(Undetermined::UndecidedSuccessor);
     }
     if !accepted.is_empty() {
-        let (taken, next) = match (
-            canonical(abstract_system, accepted),
-            sorted(abstract_system, next),
-        ) {
+        let next_result = if mapped.hidden.is_empty() {
+            sorted(abstract_system, next)
+        } else {
+            sorted_with_duplicate_candidates(abstract_system, next, &candidate_steps)
+        };
+        let (taken, next) = match (canonical(abstract_system, accepted), next_result) {
             (Ok(taken), Ok(next)) => (taken, next),
             (Err(verdict), _) | (_, Err(verdict)) => return verdict,
         };
+        if let Err(verdict) = assign_post_candidates(abstract_system, &next, &mut candidate_steps) {
+            return verdict;
+        }
         return if mapped.hidden.is_empty() {
             passes(Taken::Abstract(taken), next)
         } else {
@@ -2379,14 +2526,12 @@ mod tests {
     #[test]
     fn an_undetermined_row_is_kept_and_any_other_verdict_ends_the_check() {
         let mut soft = Soft::default();
-        assert!(
-            soft.record(StepVerdict::Undetermined(Undetermined::UndecidedSuccessor))
-                .is_ok()
-        );
-        assert!(
-            soft.record(fails(RefinementFailure::NoAbstractMatch { position: 1 }))
-                .is_err()
-        );
+        assert!(soft
+            .record(StepVerdict::Undetermined(Undetermined::UndecidedSuccessor))
+            .is_ok());
+        assert!(soft
+            .record(fails(RefinementFailure::NoAbstractMatch { position: 1 }))
+            .is_err());
         assert!(matches!(
             soft.first(),
             Some(StepVerdict::Undetermined(Undetermined::UndecidedSuccessor))
@@ -2414,10 +2559,9 @@ mod tests {
             ),
         });
         let mut soft = Soft::default();
-        assert!(
-            soft.record(StepVerdict::Undetermined(Undetermined::UndecidedSuccessor))
-                .is_ok()
-        );
+        assert!(soft
+            .record(StepVerdict::Undetermined(Undetermined::UndecidedSuccessor))
+            .is_ok());
         assert!(soft.record(undefined).is_ok());
         assert!(matches!(soft.first(), Some(StepVerdict::Undefined(_))));
     }

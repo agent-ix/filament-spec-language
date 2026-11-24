@@ -350,7 +350,7 @@ impl<W: Exact> Zone<W> {
         for (i, &old_i) in clocks.iter().enumerate() {
             for (j, &old_j) in clocks.iter().enumerate() {
                 zone.cells[i * dim + j] = if old_i == old_j {
-                    Some(W::of(0))
+                    zero_le()
                 } else {
                     self.cell(old_i, old_j).clone()
                 };

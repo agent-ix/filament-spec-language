@@ -212,6 +212,10 @@ pub struct CandidateStep {
     pub transition: Option<ModelTransition>,
     /// Canonical state-key bytes of the candidate after the concrete step.
     pub post_state: Vec<u8>,
+    /// Candidate ordinal in the canonical post-state set before timed block
+    /// expansion. The timed checker may remap this after proving clock blocks
+    /// exactly equivalent.
+    pub post_candidate: usize,
 }
 
 /// One admitted path through an abstract protocol candidate graph.

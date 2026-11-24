@@ -86,8 +86,8 @@ mod wire;
 pub use wire::{ZoneCertificateReferenceError, ZoneCertificateWireError};
 mod product;
 pub use task_check::{
-    QuotientEdge, QuotientIdentity, QuotientInitial, QuotientStop, QuotientVertex,
-    TaskProductQuotient, explore_task_product, recomputed_member,
+    explore_task_product, recomputed_member, QuotientEdge, QuotientIdentity, QuotientInitial,
+    QuotientStop, QuotientVertex, TaskProductQuotient,
 };
 mod task_check;
 
@@ -99,9 +99,9 @@ use std::fmt;
 use filament_exact::{Cancel, Integer, Meter, Rational, ValueType};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    AutomatonError, ClockedEdge, Read, Stamp, WindowClaim, WindowRefusal, position_automaton,
+    position_automaton, AutomatonError, ClockedEdge, Read, Stamp, WindowClaim, WindowRefusal,
 };
-use fsl_eval::fairness::{EdgeLabel, FairnessError, Graph, Identity, components};
+use fsl_eval::fairness::{components, EdgeLabel, FairnessError, Graph, Identity};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
     GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem, PlaceConstraint,
@@ -119,15 +119,15 @@ use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef};
 use fsl_semantics::model::state::ModelState;
 
 use super::closure::CertificateRejection;
-use super::simulation::{CertifiedPosition, EvaluationOutcome, position_matches};
+use super::simulation::{position_matches, CertifiedPosition, EvaluationOutcome};
 use super::zone::{LuBounds, Zone, ZoneError};
 use super::{CertificateLocus, CertificateMember, CertificateRule};
 use crate::model_check::identity::node_occurrence;
 use crate::model_check::limits::ModelCheckLimit;
 use crate::proof_result::IncompleteCause;
 use crate::refinement::{
-    ConcreteStep, RefinementPosition, StepVerdict, SubjectRefusal, Taken, check_initial,
-    check_step, open_systems,
+    check_initial, check_step, open_systems, CandidateStep, ConcreteStep, RefinementPosition,
+    StepVerdict, SubjectRefusal, Taken,
 };
 
 /// FR-244's certificate of a zone search's proof of the item `obligation`
@@ -1393,6 +1393,7 @@ struct Successor {
 struct Expected {
     position: RefinementPosition,
     alive: Vec<Vec<u8>>,
+    taken: Option<Taken>,
 }
 
 fn project_blocks(
@@ -1411,6 +1412,77 @@ fn project_blocks(
         coordinates.push(zone.dim() - 1);
     }
     zone.reindex(&coordinates)
+}
+
+/// Independently alias candidates only when their state keys and every
+/// physical clock are exactly equal throughout the post-step zone.
+fn alias_equal_candidate_clocks(
+    zone: &Zone,
+    concrete_clocks: usize,
+    abstract_clocks: usize,
+    keys: &[Vec<u8>],
+) -> Result<(Vec<usize>, Vec<usize>), ZoneError> {
+    let mut layout = Vec::with_capacity(keys.len());
+    let mut representatives = Vec::new();
+    for (ordinal, key) in keys.iter().enumerate() {
+        let mut alias = None;
+        for &representative in &representatives {
+            if keys[representative] != *key {
+                continue;
+            }
+            let equal = (0..abstract_clocks).all(|clock| {
+                let left = concrete_clocks + representative * abstract_clocks + clock + 1;
+                let right = concrete_clocks + ordinal * abstract_clocks + clock + 1;
+                zone.bound(left, right).ok() == Some(Some((Integer::zero(), false)))
+                    && zone.bound(right, left).ok() == Some(Some((Integer::zero(), false)))
+            });
+            if equal {
+                alias = Some(representative);
+                break;
+            }
+        }
+        if let Some(representative) = alias {
+            layout.push(representative);
+        } else {
+            layout.push(ordinal);
+            representatives.push(ordinal);
+        }
+    }
+    let mut remap = BTreeMap::new();
+    for &representative in &representatives {
+        let next = remap.len();
+        remap.insert(representative, next);
+    }
+    for block in &mut layout {
+        *block = remap[block];
+    }
+    Ok((layout, representatives))
+}
+
+fn aliased_clock_blocks_are_equal(
+    zone: &Zone,
+    concrete_clocks: usize,
+    abstract_clocks: usize,
+    layout: &[usize],
+) -> bool {
+    for left in 0..layout.len() {
+        for right in left + 1..layout.len() {
+            if layout[left] != layout[right] {
+                continue;
+            }
+            for clock in 0..abstract_clocks {
+                let left_clock = concrete_clocks + left * abstract_clocks + clock + 1;
+                let right_clock = concrete_clocks + right * abstract_clocks + clock + 1;
+                if zone.bound(left_clock, right_clock).ok() != Some(Some((Integer::zero(), false)))
+                    || zone.bound(right_clock, left_clock).ok()
+                        != Some(Some((Integer::zero(), false)))
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 /// One piece of a zone split by the truth pattern of candidate invariants:
@@ -1802,9 +1874,33 @@ impl<O> Checker<'_, '_, O> {
                 }
                 for position in &refined.part.positions {
                     match (self.auxiliary_timed, &position.candidate_blocks) {
-                        (Some(_), Some(blocks))
-                            if blocks.len() == position.abstract_states.len()
-                                && position
+                        (Some(_), Some(blocks)) => {
+                            let Some(layout) = &position.candidate_clock_blocks else {
+                                return malformed(CertificateMember::Positions);
+                            };
+                            let mut seen = BTreeSet::new();
+                            let canonical = layout.iter().all(|&block| {
+                                if seen.contains(&block) {
+                                    true
+                                } else {
+                                    let next = seen.len();
+                                    seen.insert(block);
+                                    block == next
+                                }
+                            });
+                            let expected: Vec<_> = layout
+                                .iter()
+                                .map(|&block| {
+                                    fsl_eval::simulation::StateKey::from_canonical_bytes(
+                                        format!("[\"candidate-block\",{block}]").into_bytes(),
+                                    )
+                                })
+                                .collect();
+                            if blocks.len() != position.abstract_states.len()
+                                || layout.len() != position.abstract_states.len()
+                                || !canonical
+                                || blocks != &expected
+                                || position
                                     .abstract_states
                                     .iter()
                                     .zip(blocks)
@@ -1815,15 +1911,23 @@ impl<O> Checker<'_, '_, O> {
                                             .skip(1)
                                             .zip(blocks.iter().skip(1)),
                                     )
-                                    .all(
+                                    .any(
                                         |((left_state, left_block), (right_state, right_block))| {
-                                            (left_state, left_block) <= (right_state, right_block)
+                                            (left_state, left_block) > (right_state, right_block)
                                         },
-                                    ) => {}
+                                    )
+                            {
+                                return malformed(CertificateMember::Positions);
+                            }
+                        }
                         (Some(_), _) | (None, Some(_)) => {
                             return malformed(CertificateMember::Positions);
                         }
-                        (None, None) => {}
+                        (None, None) => {
+                            if position.candidate_clock_blocks.is_some() {
+                                return malformed(CertificateMember::Positions);
+                            }
+                        }
                     }
                 }
                 if refined.part.taken.len() != certificate.edges.len() {
@@ -1871,7 +1975,25 @@ impl<O> Checker<'_, '_, O> {
                     .get(node.automaton_state)
                     .is_some_and(|position| {
                         node.zone.dim()
-                            == self.dim_for_candidate_blocks(position.abstract_states.len())
+                            == self.dim_for_candidate_blocks(position.candidate_clock_block_count())
+                            && position
+                                .candidate_clock_blocks
+                                .as_ref()
+                                .is_none_or(|layout| {
+                                    aliased_clock_blocks_are_equal(
+                                        &node.zone,
+                                        self.timed.places().len(),
+                                        self.auxiliary_timed
+                                            .map_or(0, |timed| timed.places().len()),
+                                        layout,
+                                    ) && layout.iter().enumerate().all(|(left, block)| {
+                                        layout.iter().enumerate().all(|(right, other)| {
+                                            block != other
+                                                || position.abstract_states[left]
+                                                    == position.abstract_states[right]
+                                        })
+                                    })
+                                })
                     }),
                 (Some(reserved), Some(_)) if node.automaton_state == reserved => {
                     let base = self.auxiliary_timed.map_or(self.dim(), |timed| {
@@ -2216,7 +2338,7 @@ impl<O> Checker<'_, '_, O> {
                 state.state(),
             );
             let block_count = match &verdict {
-                StepVerdict::Passes { post, .. } => post.abstract_states.len(),
+                StepVerdict::Passes { post, .. } => post.candidate_clock_block_count(),
                 _ => 0,
             };
             let mut zone = Zone::zero(self.dim_for_candidate_blocks(block_count));
@@ -2239,6 +2361,7 @@ impl<O> Checker<'_, '_, O> {
                         .iter()
                         .map(|&candidate| pruned.abstract_states[candidate].clone())
                         .collect();
+                    pruned.candidate_clock_blocks = pruned.candidate_clock_blocks_for(&alive);
                     if alive.len() != post.abstract_states.len() {
                         zone = project_blocks(
                             &zone,
@@ -2313,7 +2436,10 @@ impl<O> Checker<'_, '_, O> {
         // Every alive candidate's invariant holds (FR-899 "Timed subjects");
         // a candidate whose own invariant stops holding leaves the alive set
         // by a death edge, so the cut is exact only together with those.
-        for (block, candidate) in position.abstract_states.iter().enumerate() {
+        for (ordinal, candidate) in position.abstract_states.iter().enumerate() {
+            let block = position
+                .candidate_clock_block(ordinal)
+                .unwrap_or(usize::MAX);
             let invariants = self.candidate_invariants_at(candidate, block)?;
             self.constrain(zone, &invariants)?;
         }
@@ -2527,9 +2653,15 @@ impl<O> Checker<'_, '_, O> {
         let StepVerdict::Passes { post, taken } = verdict else {
             return unchanged(zone);
         };
+        let yielded_taken = (*taken).clone();
         // The rows: a guarded step or a stutter, and the key of the post
         // candidate each leads to (`None` when the verdict names none).
-        let mut rows: Vec<(usize, Option<GuardedStep>, Option<Vec<u8>>)> = Vec::new();
+        let mut rows: Vec<(
+            usize,
+            Option<GuardedStep>,
+            Option<Vec<u8>>,
+            Option<CandidateStep>,
+        )> = Vec::new();
         match *taken {
             Taken::Abstract(transitions) => {
                 for (block, candidate) in pre.abstract_states.iter().enumerate() {
@@ -2542,7 +2674,7 @@ impl<O> Checker<'_, '_, O> {
                         .into_iter()
                         .find(|step| transitions.contains(step.transition()))
                     {
-                        rows.push((block, Some(step), None));
+                        rows.push((block, Some(step), None, None));
                     }
                 }
                 if rows.is_empty() {
@@ -2578,39 +2710,69 @@ impl<O> Checker<'_, '_, O> {
                     if row.transition.is_some() && step.is_none() {
                         return reject(CertificateRule::PostDiffers, at_node(node));
                     }
-                    rows.push((block, step, Some(row.post_state.clone())));
+                    rows.push((block, step, Some(row.post_state.clone()), Some(row.clone())));
                 }
             }
-            Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => {}
+            Taken::Stutter => {
+                for (block, candidate) in pre.abstract_states.iter().enumerate() {
+                    let key = abstract_system
+                        .state_key_of(candidate)
+                        .map(|(bytes, _)| bytes)
+                        .or_else(undecided)?;
+                    rows.push((block, None, Some(key), None));
+                }
+            }
+            Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => {}
         }
-        // Split the zone by the truth pattern of the rows' guards.
-        let mut patterns: Vec<(Zone, Vec<bool>)> = vec![(zone, Vec::new())];
-        for (block, step, _) in &rows {
+        // Rows over one physical clock block with the same guard share its
+        // truth value. Keep every row ordinal while splitting once.
+        let mut groups: Vec<(Vec<usize>, Option<Vec<Vec<PlaceConstraint>>>)> = Vec::new();
+        for (ordinal, (block, step, _, _)) in rows.iter().enumerate() {
+            let covers = match step {
+                None => None,
+                Some(step) => {
+                    let physical = pre
+                        .candidate_clock_block(*block)
+                        .ok_or_else(|| fault(CheckerFault::ZoneShape))?;
+                    let offset = self.timed.places().len() + physical * timed.places().len();
+                    Some(
+                        step.parts()
+                            .iter()
+                            .map(|part| {
+                                part.iter()
+                                    .map(|constraint| {
+                                        PlaceConstraint::new(
+                                            offset + constraint.place(),
+                                            constraint.op(),
+                                            constraint.bound().clone(),
+                                        )
+                                    })
+                                    .collect()
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                }
+            };
+            if let Some((members, _)) = groups.iter_mut().find(|(_, existing)| existing == &covers)
+            {
+                members.push(ordinal);
+            } else {
+                groups.push((vec![ordinal], covers));
+            }
+        }
+        let mut patterns: Vec<(Zone, Vec<bool>)> = vec![(zone, vec![false; rows.len()])];
+        for (members, covers) in groups {
             let mut next = Vec::new();
-            match step {
+            match covers {
                 None => {
                     for (piece, mut mask) in patterns {
-                        mask.push(true);
+                        for &member in &members {
+                            mask[member] = true;
+                        }
                         next.push((piece, mask));
                     }
                 }
-                Some(step) => {
-                    let offset = self.timed.places().len() + block * timed.places().len();
-                    let covers: Vec<Vec<PlaceConstraint>> = step
-                        .parts()
-                        .iter()
-                        .map(|part| {
-                            part.iter()
-                                .map(|constraint| {
-                                    PlaceConstraint::new(
-                                        offset + constraint.place(),
-                                        constraint.op(),
-                                        constraint.bound().clone(),
-                                    )
-                                })
-                                .collect()
-                        })
-                        .collect();
+                Some(covers) => {
                     for (piece, mask) in patterns {
                         let mut outside = vec![piece];
                         for cover in &covers {
@@ -2619,20 +2781,16 @@ impl<O> Checker<'_, '_, O> {
                                 let (hit, others) = self.split(&residual, cover)?;
                                 if !hit.is_empty() {
                                     let mut held = mask.clone();
-                                    held.push(true);
+                                    for &member in &members {
+                                        held[member] = true;
+                                    }
                                     next.push((hit, held));
                                 }
                                 rest.extend(others);
                             }
                             outside = rest;
                         }
-                        for residual in outside {
-                            if !residual.is_empty() {
-                                let mut held = mask.clone();
-                                held.push(false);
-                                next.push((residual, held));
-                            }
-                        }
+                        next.extend(outside.into_iter().map(|residual| (residual, mask.clone())));
                     }
                 }
             }
@@ -2641,7 +2799,12 @@ impl<O> Checker<'_, '_, O> {
         }
         let mut pieces = Vec::new();
         for (piece, mask) in patterns {
-            let holding: Vec<&(usize, Option<GuardedStep>, Option<Vec<u8>>)> = rows
+            let holding: Vec<&(
+                usize,
+                Option<GuardedStep>,
+                Option<Vec<u8>>,
+                Option<CandidateStep>,
+            )> = rows
                 .iter()
                 .zip(&mask)
                 .filter_map(|(row, held)| (*held).then_some(row))
@@ -2660,14 +2823,21 @@ impl<O> Checker<'_, '_, O> {
             let mut ordered_holding = holding;
             ordered_holding
                 .sort_by(|left, right| left.2.cmp(&right.2).then_with(|| left.0.cmp(&right.0)));
+            let physical_blocks = ordered_holding
+                .iter()
+                .map(|row| {
+                    pre.candidate_clock_block(row.0)
+                        .ok_or_else(|| fault(CheckerFault::ZoneShape))
+                })
+                .collect::<Step<Vec<_>, O>>()?;
             let mut piece = project_blocks(
                 &piece,
                 self.timed.places().len(),
                 timed.places().len(),
-                &ordered_holding.iter().map(|row| row.0).collect::<Vec<_>>(),
+                &physical_blocks,
                 self.window.is_some(),
             )?;
-            for (output, (_, step, _)) in ordered_holding.iter().enumerate() {
+            for (output, (_, step, _, _)) in ordered_holding.iter().enumerate() {
                 let Some(step) = step else { continue };
                 let offset = self.timed.places().len() + output * timed.places().len();
                 let period = timed.tick_of(step.operation());
@@ -2693,18 +2863,24 @@ impl<O> Checker<'_, '_, O> {
             // The post candidates of the holding rows, retaining two rows
             // that reach the same abstract state as separate clock blocks.
             let mut candidates = Vec::with_capacity(ordered_holding.len());
-            for (index, (_, _, wanted)) in ordered_holding.iter().enumerate() {
-                let candidate = if let Some(wanted) = wanted {
-                    post.abstract_states.iter().find(|candidate| {
-                        abstract_system
-                            .state_key_of(candidate)
-                            .is_ok_and(|(key, _)| key == *wanted)
+            for (index, (_, _, wanted, row)) in ordered_holding.iter().enumerate() {
+                let candidate = row
+                    .as_ref()
+                    .and_then(|row| post.abstract_states.get(row.post_candidate))
+                    .or_else(|| {
+                        wanted.as_ref().and_then(|wanted| {
+                            post.abstract_states.iter().find(|candidate| {
+                                abstract_system
+                                    .state_key_of(candidate)
+                                    .is_ok_and(|(key, _)| key == *wanted)
+                            })
+                        })
                     })
-                } else {
-                    post.abstract_states
-                        .get(index.min(post.abstract_states.len().saturating_sub(1)))
-                }
-                .ok_or_else(|| fault(CheckerFault::ZoneShape))?;
+                    .or_else(|| {
+                        post.abstract_states
+                            .get(index.min(post.abstract_states.len().saturating_sub(1)))
+                    })
+                    .ok_or_else(|| fault(CheckerFault::ZoneShape))?;
                 candidates.push(candidate.clone());
             }
             for part in self.entry_pieces(piece, &candidates)? {
@@ -2718,7 +2894,7 @@ impl<O> Checker<'_, '_, O> {
                     });
                     continue;
                 }
-                let zone = project_blocks(
+                let mut zone = project_blocks(
                     &part.zone,
                     self.timed.places().len(),
                     timed.places().len(),
@@ -2731,13 +2907,82 @@ impl<O> Checker<'_, '_, O> {
                     .map(|&at| candidates[at].clone())
                     .collect();
                 let alive_keys = self.candidate_keys(&survivors)?;
+                let (layout, representatives) = alias_equal_candidate_clocks(
+                    &zone,
+                    self.timed.places().len(),
+                    timed.places().len(),
+                    &alive_keys,
+                )?;
+                if representatives.len() != layout.len() {
+                    zone = project_blocks(
+                        &zone,
+                        self.timed.places().len(),
+                        timed.places().len(),
+                        &representatives,
+                        self.window.is_some(),
+                    )?;
+                }
+                let mut row_targets = vec![None; ordered_holding.len()];
+                let mut unique_states: Vec<ModelState> = Vec::new();
+                let mut unique_keys: Vec<Vec<u8>> = Vec::new();
+                let mut unique_physical: Vec<usize> = Vec::new();
+                for (survivor, &row_index) in part.alive.iter().enumerate() {
+                    let key = &alive_keys[survivor];
+                    let physical = layout[survivor];
+                    let target = unique_keys
+                        .iter()
+                        .zip(&unique_physical)
+                        .position(|(known_key, known_block)| {
+                            known_key == key && *known_block == physical
+                        })
+                        .unwrap_or_else(|| {
+                            unique_states.push(survivors[survivor].clone());
+                            unique_keys.push(key.clone());
+                            unique_physical.push(physical);
+                            unique_keys.len() - 1
+                        });
+                    row_targets[row_index] = Some(target);
+                }
+                if unique_physical.len() != representatives.len() {
+                    zone = project_blocks(
+                        &zone,
+                        self.timed.places().len(),
+                        timed.places().len(),
+                        &unique_physical,
+                        self.window.is_some(),
+                    )?;
+                }
                 let mut position = (*post).clone();
-                position.abstract_states = survivors;
+                position.abstract_states = unique_states;
+                position.candidate_clock_blocks = (0..position.abstract_states.len()).collect();
+                let expected_taken = match &yielded_taken {
+                    Taken::CandidateSteps(steps) => {
+                        let mut expected = Vec::new();
+                        for step in steps {
+                            let row_index = ordered_holding.iter().position(|row| {
+                                row.3.as_ref().is_some_and(|candidate_step| {
+                                    candidate_step.pre_candidate == step.pre_candidate
+                                        && candidate_step.post_state == step.post_state
+                                        && candidate_step.transition == step.transition
+                                        && candidate_step.post_candidate == step.post_candidate
+                                })
+                            });
+                            if let Some(target) = row_index.and_then(|at| row_targets[at]) {
+                                let mut step = step.clone();
+                                step.post_candidate = target;
+                                expected.push(step);
+                            }
+                        }
+                        Some(Taken::CandidateSteps(expected))
+                    }
+                    other => Some(other.clone()),
+                };
                 pieces.push(Piece {
                     zone,
                     position: Some(Expected {
                         position,
-                        alive: alive_keys,
+                        alive: unique_keys,
+                        taken: expected_taken,
                     }),
                     locks: false,
                 });
@@ -2770,7 +3015,10 @@ impl<O> Checker<'_, '_, O> {
             return Ok(());
         }
         let mut invariants = Vec::with_capacity(count);
-        for (block, candidate) in position.abstract_states.iter().enumerate() {
+        for (ordinal, candidate) in position.abstract_states.iter().enumerate() {
+            let block = position
+                .candidate_clock_block(ordinal)
+                .unwrap_or(usize::MAX);
             invariants.push(self.candidate_invariants_at(candidate, block)?);
         }
         let concrete = self.invariants(state)?;
@@ -2799,7 +3047,7 @@ impl<O> Checker<'_, '_, O> {
                     &piece.zone,
                     self.timed.places().len(),
                     self.auxiliary_timed.map_or(0, |timed| timed.places().len()),
-                    &piece.alive,
+                    &position.candidate_clock_source_blocks_for(&piece.alive),
                     self.window.is_some(),
                 )?
             };
@@ -2826,10 +3074,13 @@ impl<O> Checker<'_, '_, O> {
                     .iter()
                     .map(|&at| position.abstract_states[at].clone())
                     .collect();
+                survivors.candidate_clock_blocks =
+                    position.candidate_clock_blocks_for(&piece.alive);
                 let alive = self.candidate_keys(&survivors.abstract_states)?;
                 successor.expect = Some(Expected {
                     position: survivors,
                     alive,
+                    taken: None,
                 });
             }
             found.push(successor);
@@ -2849,7 +3100,7 @@ impl<O> Checker<'_, '_, O> {
         node: usize,
         index: usize,
         step: &GuardedStep,
-        expect: Option<&RefinementPosition>,
+        expect: Option<&Expected>,
     ) -> Step<(), O> {
         let Some(Refined {
             refinement,
@@ -2893,12 +3144,30 @@ impl<O> Checker<'_, '_, O> {
                     post,
                     taken: yielded,
                 } => {
+                    let expected_taken = expect
+                        .and_then(|expected| expected.taken.as_ref())
+                        .unwrap_or(&yielded);
+                    let expected_position =
+                        expect.map(|expected| &expected.position).unwrap_or(&*post);
+                    let position_holds =
+                        self.position_is(target.automaton_state, expected_position)?;
+                    let taken_holds = match (taken, expected_taken, yielded.as_ref()) {
+                        (
+                            Some(Taken::CandidateSteps(listed)),
+                            Taken::CandidateSteps(required),
+                            Taken::CandidateSteps(admitted),
+                        ) => {
+                            required.iter().all(|step| listed.contains(step))
+                                && listed.iter().all(|step| admitted.contains(step))
+                        }
+                        (listed, expected, _) => listed == Some(expected),
+                    };
                     let holds = !target.locked
                         && target.automaton_state < reserved
-                        && taken == Some(&yielded)
-                        && self.position_is(target.automaton_state, expect.unwrap_or(&*post))?;
+                        && taken_holds
+                        && position_holds;
                     if holds {
-                        self.know(target.automaton_state, expect.cloned().unwrap_or(*post));
+                        self.know(target.automaton_state, expected_position.clone());
                     }
                     (!holds).then_some(CertificateRule::PostDiffers)
                 }
@@ -2981,10 +3250,29 @@ impl<O> Checker<'_, '_, O> {
         };
         match self.auxiliary_timed {
             Some(_) => {
-                let expected: Vec<_> = (0..listed.abstract_states.len())
-                    .map(|index| {
+                let Some(layout) = listed.candidate_clock_blocks.as_ref() else {
+                    return Ok(false);
+                };
+                let mut seen = BTreeMap::new();
+                for &block in layout {
+                    if !seen.contains_key(&block) {
+                        if block != seen.len() {
+                            return Ok(false);
+                        }
+                        seen.insert(block, block);
+                    }
+                }
+                if layout.len() != listed.abstract_states.len()
+                    || seen.len() != position.candidate_clock_block_count()
+                    || layout != &position.candidate_clock_blocks
+                {
+                    return Ok(false);
+                }
+                let expected: Vec<_> = layout
+                    .iter()
+                    .map(|&block| {
                         fsl_eval::simulation::StateKey::from_canonical_bytes(
-                            format!("[\"candidate-block\",{index}]").into_bytes(),
+                            format!("[\"candidate-block\",{block}]").into_bytes(),
                         )
                     })
                     .collect();
@@ -3009,7 +3297,11 @@ impl<O> Checker<'_, '_, O> {
                     return Ok(false);
                 }
             }
-            None if listed.candidate_blocks.is_some() => return Ok(false),
+            None if listed.candidate_blocks.is_some()
+                || listed.candidate_clock_blocks.is_some() =>
+            {
+                return Ok(false);
+            }
             None => {}
         }
         position_matches(self.timed.system(), abstract_system, listed, position).or_else(undecided)
@@ -3189,14 +3481,17 @@ impl<O> Checker<'_, '_, O> {
                         };
                         if same && leads && self.binds(target.automaton_state, successor.q) {
                             self.covers[index] = Some(position);
-                            let expected =
-                                successor.expect.as_ref().map(|expected| &expected.position);
+                            let expected = successor.expect.as_ref();
                             if successor.locks {
                                 // Judged by `leads`.
                             } else if let Some(step) = &successor.step {
                                 self.refine_edge(node, index, step, expected)?;
                             } else if matches!(successor.silent, Some(SilentMove::Dies { .. })) {
-                                self.refine_death(node, index, expected)?;
+                                self.refine_death(
+                                    node,
+                                    index,
+                                    expected.map(|expected| &expected.position),
+                                )?;
                             }
                             if self.states[edge.to].is_none() {
                                 let post = successor
@@ -3262,7 +3557,8 @@ impl<O> Checker<'_, '_, O> {
         let period = self.timed.tick_period().cloned();
         let mut positions = 0_usize;
         if !tail || decided {
-            for step in self.timed.guarded_steps(state).or_else(undecided)? {
+            let checker_steps = self.timed.guarded_steps(state).or_else(undecided)?;
+            for step in checker_steps {
                 let target = self.invariants(step.post())?;
                 let state_key = self.state_key(step.post())?;
                 let tick =
@@ -3278,7 +3574,8 @@ impl<O> Checker<'_, '_, O> {
                     if next.is_empty() {
                         continue;
                     }
-                    for piece in self.auxiliary_pieces(node, q, &step, next)? {
+                    let auxiliary_pieces = self.auxiliary_pieces(node, q, &step, next)?;
+                    for piece in auxiliary_pieces {
                         let mut next = piece.zone;
                         if next.is_empty() {
                             continue;
@@ -4000,7 +4297,11 @@ impl<O> Checker<'_, '_, O> {
                 self.advancing_cycle(at, cycle)? && self.repeats(cycle, &zone)?
             }
         };
-        if holds { Ok(()) } else { fails(at) }
+        if holds {
+            Ok(())
+        } else {
+            fails(at)
+        }
     }
 
     /// The exact zone of an initial state the initial node `node` holds.

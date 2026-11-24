@@ -2319,9 +2319,16 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                 .map(|bound| bound.as_ref().map(|value| value * &finer))
                 .collect()
         };
-        let (lower, upper) = (rescale(&self.lower), rescale(&self.upper));
-        let mut point = Dbm::universe(self.dim());
-        for (place, value) in concrete.last_clocks.iter().enumerate() {
+        let places = self.timed.places().len();
+        let diverge_horizon = usize::from(self.window.is_some() && self.auxiliary_timed.is_none());
+        let mut lower = rescale(&self.lower[..places]);
+        let mut upper = rescale(&self.upper[..places]);
+        if diverge_horizon == 1 {
+            lower.push(self.lower[places].as_ref().map(|bound| bound * &finer));
+            upper.push(self.upper[places].as_ref().map(|bound| bound * &finer));
+        }
+        let mut point = Dbm::universe(places + 1 + diverge_horizon);
+        for (place, value) in concrete.last_clocks.iter().take(places).enumerate() {
             let value = scaled(value, &factor);
             point.constrain(place + 1, 0, Bound::le(value.clone()))?;
             point.constrain(0, place + 1, Bound::le(-value))?;

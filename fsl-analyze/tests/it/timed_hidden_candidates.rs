@@ -15,8 +15,8 @@ use fsl_analyze::zone_check::{
 use fsl_replay::{
     check_zone_certificate, CertEdge, CertificateCheckLimits, CertificateRule, Certification,
     CertifiedItem, DivergentTarget, InconclusiveCause, ProofBasis, RefinementFailure,
-    RefinementTraceSettlement, SilentMove, TemporalCounterexample, TerminalValue, ZoneCertificate,
-    ZoneCertificateRequest, ZoneCertificateVerdict,
+    RefinementTraceSettlement, SilentMove, Taken, TemporalCounterexample, TerminalValue,
+    ZoneCertificate, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 use fsl_route::deadlock::ItemObligation;
 use ix_trace_rs::trace;
@@ -272,7 +272,7 @@ fn timed_hidden_a_dead_candidate_cannot_cover_a_guard_failure() {
 /// `send`; the step row's guard `y >= 5` splits the zone: for `x` in
 /// `[1, 5)` only the stutters survive, from `x >= 5` both. The refinement
 /// holds, and FR-245's checker recomputes the split.
-#[trace("TC-2538", "FR-899")]
+#[trace("TC-2538", "FR-899", "FSpec-FR-740-AC-4", "FR-245-AC-12")]
 #[test]
 fn timed_hidden_a_stutter_and_a_guarded_step_split_the_zone() {
     let abstract_document = abstract_document(&[("send", &["inflight"])]);
@@ -298,6 +298,52 @@ fn timed_hidden_a_stutter_and_a_guarded_step_split_the_zone() {
         checked(&world, &certificate),
         ZoneCertificateVerdict::Accepted
     );
+
+    // The certificate carries the union of rows across guard-split zones.
+    // Every required row must be present, and each listed row must be
+    // independently admitted for the candidate and transition.
+    let part = certificate.refinement.as_ref().expect("refinement part");
+    let (edge, rows) = part
+        .taken
+        .iter()
+        .enumerate()
+        .find_map(|(edge, taken)| match taken {
+            Some(Taken::CandidateSteps(rows)) if rows.len() >= 4 => Some((edge, rows)),
+            _ => None,
+        })
+        .expect("a partitioned edge carries both stutter and guarded rows");
+    let mut missing_row_rejected = false;
+    for remove in 0..rows.len() {
+        let mut altered = certificate.clone();
+        let Some(Taken::CandidateSteps(altered_rows)) =
+            altered.refinement.as_mut().expect("refinement part").taken[edge].as_mut()
+        else {
+            panic!("the partitioned edge retains candidate rows");
+        };
+        altered_rows.remove(remove);
+        if matches!(
+            checked(&world, &altered),
+            ZoneCertificateVerdict::Rejected(_)
+        ) {
+            missing_row_rejected = true;
+            break;
+        }
+    }
+    assert!(missing_row_rejected, "a missing required row is rejected");
+
+    let mut forged = certificate.clone();
+    let Some(Taken::CandidateSteps(forged_rows)) =
+        forged.refinement.as_mut().expect("refinement part").taken[edge].as_mut()
+    else {
+        panic!("the partitioned edge retains candidate rows");
+    };
+    let mut extra = rows[0].clone();
+    extra.pre_candidate = usize::MAX;
+    forged_rows.push(extra);
+    assert!(matches!(
+        checked(&world, &forged),
+        ZoneCertificateVerdict::Rejected(_)
+    ));
 }
 
 /// Each hidden candidate takes its own mapped row and updates its own clock
@@ -584,10 +630,9 @@ fn timed_hidden_a_single_candidate_running_out_of_invariant_is_refuted() {
     ));
 }
 
-/// The world of the previous test where the concrete side is time-locked
-/// beyond the abstract invariant (`x <= 3` once sent): no time-divergent
-/// behaviour reaches the dead region, so it is a `locked` entry node, which
-/// the checker requires.
+/// A concrete send reaches the candidate's dead region, after which the
+/// concrete invariant (`x <= 3`) prevents time divergence. The locked entry
+/// is therefore reachable and required by the checker.
 fn locked_dead_region() -> Refining {
     custom(
         &[([false; 3], Some(false))],

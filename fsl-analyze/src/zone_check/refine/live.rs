@@ -29,16 +29,16 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{
-    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex, analyze,
+    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
 };
-use fsl_eval::simulation::ExpansionLimit;
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, PlaceConstraint};
+use fsl_eval::simulation::ExpansionLimit;
 use fsl_replay::{
-    abstract_classes, candidate_edge_target_ordinal, candidate_lasso_has_fair_run,
-    candidate_lasso_has_fair_run_with_recurring_edge, candidate_stutter_target_ordinal,
-    check_step, AbstractClass,
-    CandidateFairState, CandidateFairStep, ConcreteStep, CounterexampleKind, Lasso,
-    ModelCheckLimit, ReachedLimit, RefinementFailure, Taken, TemporalCounterexample, Undetermined,
+    abstract_classes, candidate_lasso_has_fair_run,
+    candidate_lasso_has_fair_run_with_recurring_edge, check_step, AbstractClass,
+    CandidateFairState, CandidateFairStep, CandidateStep, ConcreteStep, CounterexampleKind, Lasso,
+    ModelCheckLimit, ReachedLimit, RefinementFailure, RefinementPosition, Taken,
+    TemporalCounterexample, Undetermined,
 };
 use num_bigint::BigInt;
 
@@ -49,18 +49,18 @@ use super::{
     Judgement, Product, TimedRefinementStop, TimedRefinementUndecided, TimedSafetyOutcome,
 };
 use crate::model_check::fair_summary::FairScope;
-use crate::model_check::fair_walk::{FairModel, fairness_constraints};
-use crate::zone_check::concretise::{Stage, Target, concretise};
-use crate::zone_check::liveness::{CellAtom, Cells, Sign, next_cell};
+use crate::model_check::fair_walk::{fairness_constraints, FairModel};
+use crate::zone_check::concretise::{concretise, Stage, Target};
+use crate::zone_check::liveness::{next_cell, CellAtom, Cells, Sign};
 use crate::zone_check::search::{
-    Halt, Run, ZoneCheckRefusal, ZoneStats, ZoneUndecided, constrain_at, scaled, widen, zone_bytes,
+    constrain_at, scaled, widen, zone_bytes, Halt, Run, ZoneCheckRefusal, ZoneStats, ZoneUndecided,
 };
 use crate::zone_check::{Bound, Dbm};
 
 /// An outcome that ends the liveness half before it decides: undecided,
 /// stopped or a fault (its counts are replaced by the liveness product's).
 type Decided = TimedSafetyOutcome<()>;
-type FairLasso = Result<Vec<(Vec<u8>, Vec<ModelTransition>)>, Decided>;
+type FairLasso = Result<Vec<(usize, Vec<u8>, Vec<ModelTransition>)>, Decided>;
 
 /// What the liveness half decides.
 pub(super) enum Lived {
@@ -117,6 +117,8 @@ struct Arc {
     taken: Option<Taken>,
     /// Auxiliary abstract clock operation for a mapped discrete step.
     auxiliary_transform: Option<ClockTransform>,
+    /// Candidate-preserving stutters across delay, divergence or stutter arcs.
+    candidate_stutters: Vec<CandidateStep>,
     /// For a death edge, the constraints that cut its piece: the alive
     /// candidates' invariants and a failing branch of each dying one's.
     cut: Vec<PlaceConstraint>,
@@ -142,6 +144,12 @@ struct Live {
     views: BTreeMap<usize, AbstractView>,
 }
 
+/// The dense divergence clock follows the concrete clocks, the currently
+/// allocated abstract candidate blocks, and the optional horizon clock.
+fn divergence_clock(run: &Run<'_, '_, '_>, position: &RefinementPosition) -> usize {
+    run.dim_with_auxiliary_blocks(position.candidate_clock_block_count())
+}
+
 /// What a position's abstract candidates enable over the abstract clocks
 /// (FR-899 "Timed subjects"): the guard constants of the `F_A` classes
 /// split the cells, and each candidate step's enabling parts decide which
@@ -151,9 +159,9 @@ struct AbstractView {
     /// The cell atoms of the `F_A` operations' enabling parts, on the zone's
     /// clocks.
     atoms: Vec<CellAtom>,
-    /// Each step of each candidate (its state key), with its enabling parts
-    /// (FR-232) on the zone's clocks.
-    steps: Vec<(Vec<u8>, ModelTransition, Vec<Vec<PlaceConstraint>>)>,
+    /// Each step of each candidate, with its enabling parts (FR-232) on the
+    /// candidate's own clock block.
+    steps: Vec<(usize, Vec<u8>, ModelTransition, Vec<Vec<PlaceConstraint>>)>,
 }
 
 /// A position's step judged: its position after and the abstract steps it
@@ -253,7 +261,7 @@ impl Product<'_, '_> {
             if run.auxiliary_timed.is_some() {
                 let view = self.abstract_view(run, live, q)?;
                 let mut here = Vec::new();
-                for (_, transition) in Self::enabled_at_zone(run, &view, &live.nodes[at].zone)? {
+                for (_, _, transition) in Self::enabled_at_zone(run, &view, &live.nodes[at].zone)? {
                     if !here.contains(&transition) {
                         here.push(transition);
                     }
@@ -533,6 +541,7 @@ impl Product<'_, '_> {
                         landing.taken,
                         landing.transform,
                     );
+                    let candidate_stutters = landing.candidate_stutters;
                     if landed.is_empty() {
                         continue;
                     }
@@ -563,6 +572,7 @@ impl Product<'_, '_> {
                             },
                             taken: Some(taken.clone()),
                             auxiliary_transform: auxiliary_transform.clone(),
+                            candidate_stutters: candidate_stutters.clone(),
                             cut: Vec::new(),
                         };
                         created.extend(add_node(run, live, next, Some(arc))?);
@@ -583,8 +593,7 @@ impl Product<'_, '_> {
                 .positions
                 .get(node.q)
                 .ok_or(ZoneCheckRefusal::Fault("auxiliary-position"))?
-                .abstract_states
-                .len();
+                .candidate_clock_block_count();
             run.up_zone_with_blocks(&mut later, blocks)?;
             constrain_at(&mut later, &invariants, &scale)?;
             let extra = self.abstract_view(run, live, node.q)?.atoms;
@@ -592,8 +601,10 @@ impl Product<'_, '_> {
                 if !next_cell(&node.cell, &cell) {
                     continue;
                 }
-                for (target_q, alive, cut) in self.delay_pieces(run, node.q, piece)? {
+                for (target_q, alive, cut, survivors) in self.delay_pieces(run, node.q, piece)? {
                     let target_extra = self.abstract_view(run, live, target_q)?.atoms;
+                    let candidate_stutters =
+                        self.candidate_stutters(node.q, target_q, &survivors)?;
                     for (target_cell, part) in
                         run.split(&mut live.cells, &node.state, &target_extra, &alive)?
                     {
@@ -626,6 +637,7 @@ impl Product<'_, '_> {
                             },
                             taken: None,
                             auxiliary_transform: None,
+                            candidate_stutters: candidate_stutters.clone(),
                             cut: if target_q == node.q {
                                 Vec::new()
                             } else {
@@ -639,7 +651,11 @@ impl Product<'_, '_> {
         }
         if dense {
             // The divergence clock's reset once a unit has passed.
-            let z = live.dim - 1;
+            let position = self
+                .positions
+                .get(node.q)
+                .ok_or(ZoneCheckRefusal::Fault("divergence-position"))?;
+            let z = divergence_clock(run, position);
             let mut reset = node.zone.clone();
             reset.constrain(0, z, Bound::le(-scale.clone()))?;
             if !reset.is_empty() {
@@ -661,6 +677,11 @@ impl Product<'_, '_> {
                         via: Via::Diverge,
                         taken: None,
                         auxiliary_transform: None,
+                        candidate_stutters: self.candidate_stutters(
+                            node.q,
+                            node.q,
+                            &(0..self.positions[node.q].abstract_states.len()).collect::<Vec<_>>(),
+                        )?,
                         cut: Vec::new(),
                     };
                     created.extend(add_node(run, live, next, Some(arc))?);
@@ -693,7 +714,12 @@ impl Product<'_, '_> {
             .0;
         let mut created = Vec::new();
         for landing in landings {
-            let (landed, q, taken) = (landing.zone, landing.target, landing.taken);
+            let (landed, q, taken, candidate_stutters) = (
+                landing.zone,
+                landing.target,
+                landing.taken,
+                landing.candidate_stutters,
+            );
             let next = Node {
                 q,
                 positioned: true,
@@ -709,6 +735,7 @@ impl Product<'_, '_> {
                 via: Via::Stutter,
                 taken: Some(taken),
                 auxiliary_transform: None,
+                candidate_stutters,
                 cut: Vec::new(),
             };
             if run.auxiliary_timed.is_none() {
@@ -743,18 +770,27 @@ impl Product<'_, '_> {
         run: &Run<'_, '_, '_>,
         q: usize,
         zone: Dbm,
-    ) -> Result<Vec<(usize, Dbm, Vec<PlaceConstraint>)>, Halt> {
+    ) -> Result<Vec<(usize, Dbm, Vec<PlaceConstraint>, Vec<usize>)>, Halt> {
         let Some(timed) = run.auxiliary_timed else {
-            return Ok(vec![(q, zone, Vec::new())]);
+            let count = self
+                .positions
+                .get(q)
+                .ok_or(ZoneCheckRefusal::Fault("auxiliary-position"))?
+                .abstract_states
+                .len();
+            return Ok(vec![(q, zone, Vec::new(), (0..count).collect())]);
         };
-        let candidates = &self
+        let position = self
             .positions
             .get(q)
-            .ok_or(ZoneCheckRefusal::Fault("auxiliary-position"))?
-            .abstract_states;
+            .ok_or(ZoneCheckRefusal::Fault("auxiliary-position"))?;
+        let candidates = &position.abstract_states;
         let count = candidates.len();
         let mut invariants = Vec::with_capacity(count);
-        for (block, candidate) in candidates.iter().enumerate() {
+        for (ordinal, candidate) in candidates.iter().enumerate() {
+            let block = position
+                .candidate_clock_block(ordinal)
+                .ok_or(ZoneCheckRefusal::Fault("candidate-clock-layout"))?;
             invariants.push(Self::candidate_invariants_at(run, timed, block, candidate)?);
         }
         let mut leads = Vec::new();
@@ -763,7 +799,7 @@ impl Product<'_, '_> {
                 continue;
             }
             if piece.alive.len() == count {
-                leads.push((q, piece.zone, Vec::new()));
+                leads.push((q, piece.zone, Vec::new(), piece.alive));
                 continue;
             }
             let mut survivors = self.positions[q].clone();
@@ -772,11 +808,14 @@ impl Product<'_, '_> {
                 .iter()
                 .map(|&at| self.positions[q].abstract_states[at].clone())
                 .collect();
+            let (layout, selected_blocks) =
+                super::subset_clock_layout(&self.positions[q].candidate_clock_blocks, &piece.alive);
+            survivors.candidate_clock_blocks = layout;
             let zone = super::project_blocks(
                 &piece.zone,
                 run.timed.places().len(),
                 timed.places().len(),
-                &piece.alive,
+                &selected_blocks,
                 super::clock_tail(
                     &piece.zone,
                     run.timed.places().len(),
@@ -784,7 +823,7 @@ impl Product<'_, '_> {
                     count,
                 ),
             )?;
-            leads.push((self.intern(survivors, run)?, zone, piece.cut));
+            leads.push((self.intern(survivors, run)?, zone, piece.cut, piece.alive));
         }
         Ok(leads)
     }
@@ -924,8 +963,11 @@ impl Product<'_, '_> {
             .get(q)
             .ok_or(ZoneCheckRefusal::Fault("abstract-view-position"))?;
         let mut atoms = BTreeSet::new();
-        for (block, candidate) in position.abstract_states.iter().enumerate() {
+        for (ordinal, candidate) in position.abstract_states.iter().enumerate() {
             run.poll()?;
+            let block = position
+                .candidate_clock_block(ordinal)
+                .ok_or(ZoneCheckRefusal::Fault("candidate-clock-layout"))?;
             let key = self
                 .abstract_system
                 .state_key_of(candidate)
@@ -950,13 +992,16 @@ impl Product<'_, '_> {
                     }
                 }
                 view.steps
-                    .push((key.clone(), step.transition().clone(), parts));
+                    .push((ordinal, key.clone(), step.transition().clone(), parts));
             }
         }
         // The constants of the alive candidates' invariants are cell atoms
         // too, so the alive set is uniform on each cell, a death happens at a
         // cell boundary and no cell runs past an alive invariant.
-        for (block, candidate) in position.abstract_states.iter().enumerate() {
+        for (ordinal, candidate) in position.abstract_states.iter().enumerate() {
+            let block = position
+                .candidate_clock_block(ordinal)
+                .ok_or(ZoneCheckRefusal::Fault("candidate-clock-layout"))?;
             for constraint in Self::candidate_invariants_at(run, timed, block, candidate)? {
                 atoms.insert((
                     constraint.place() + 1,
@@ -975,15 +1020,15 @@ impl Product<'_, '_> {
         run: &Run<'_, '_, '_>,
         view: &AbstractView,
         zone: &Dbm,
-    ) -> Result<Vec<(Vec<u8>, ModelTransition)>, Halt> {
-        let mut here: Vec<(Vec<u8>, ModelTransition)> = Vec::new();
-        for (key, transition, parts) in &view.steps {
+    ) -> Result<Vec<(usize, Vec<u8>, ModelTransition)>, Halt> {
+        let mut here: Vec<(usize, Vec<u8>, ModelTransition)> = Vec::new();
+        for (ordinal, key, transition, parts) in &view.steps {
             run.poll()?;
             for part in parts {
                 let mut at = zone.clone();
                 constrain_at(&mut at, part, &run.scale)?;
                 if !at.is_empty() {
-                    let held = (key.clone(), transition.clone());
+                    let held = (*ordinal, key.clone(), transition.clone());
                     if !here.contains(&held) {
                         here.push(held);
                     }
@@ -1018,7 +1063,7 @@ impl Product<'_, '_> {
         } else {
             None
         };
-        for candidate in &self.positions[source.q].abstract_states {
+        for (ordinal, candidate) in self.positions[source.q].abstract_states.iter().enumerate() {
             run.poll()?;
             let (key, _) = self
                 .abstract_system
@@ -1061,8 +1106,11 @@ impl Product<'_, '_> {
             let enabled: Vec<_> = match &timed_enabled {
                 Some(held) => {
                     let mut here: Vec<ModelTransition> = Vec::new();
-                    for (candidate_key, transition) in held {
-                        if *candidate_key == key && !here.contains(transition) {
+                    for (candidate_ordinal, candidate_key, transition) in held {
+                        if *candidate_ordinal == ordinal
+                            && *candidate_key == key
+                            && !here.contains(transition)
+                        {
                             here.push(transition.clone());
                         }
                     }
@@ -1074,7 +1122,7 @@ impl Product<'_, '_> {
                     .map(|(transition, _)| transition)
                     .collect(),
             };
-            candidates.push((key, enabled));
+            candidates.push((ordinal, key, enabled));
         }
         Ok(Ok(candidates))
     }
@@ -1098,7 +1146,7 @@ impl Product<'_, '_> {
                 Ok(candidates) => candidates,
                 Err(ends) => return Ok(Err(ends)),
             };
-            for (_, enabled) in &candidates {
+            for (_, _, enabled) in &candidates {
                 transitions.extend(enabled.iter().cloned());
             }
             positions.push(candidates);
@@ -1131,10 +1179,9 @@ impl Product<'_, '_> {
             .map(|candidates| {
                 candidates
                     .iter()
-                    .enumerate()
-                    .map(|(ordinal, (key, enabled))| {
+                    .map(|(ordinal, key, enabled)| {
                         Ok(CandidateFairState {
-                            ordinal,
+                            ordinal: *ordinal,
                             key: key.clone(),
                             enabled: enabled
                                 .iter()
@@ -1153,37 +1200,12 @@ impl Product<'_, '_> {
             .collect::<Result<Vec<_>, _>>()?;
         let fair_steps = cycle
             .iter()
-            .enumerate()
-            .map(|(index, &arc_index)| {
+            .map(|&arc_index| {
                 let arc = &live.arcs[arc_index];
-                let source = &positions[index];
-                let next_index = (index + 1) % positions.len();
-                let next = &positions[next_index];
                 let rows = match arc.taken.as_ref() {
                     Some(Taken::CandidateSteps(rows)) => rows
                         .iter()
-                        .enumerate()
-                        .map(|(row_index, row)| {
-                            let post_occurrence = rows
-                                .iter()
-                                .enumerate()
-                                .filter(|(prior_index, prior)| {
-                                    prior.post_state == row.post_state
-                                        && (prior.pre_candidate, *prior_index)
-                                            <= (row.pre_candidate, row_index)
-                                })
-                                .count()
-                                - 1;
-                            let post_candidate = candidate_edge_target_ordinal(
-                                &fair_positions[index],
-                                &fair_positions[next_index],
-                                row.pre_candidate,
-                                &row.post_state,
-                                post_occurrence,
-                            )
-                            .map_err(|_| {
-                                ZoneCheckRefusal::Fault("candidate-loop-row-target-is-ordinal")
-                            })?;
+                        .map(|row| {
                             Ok(CandidateFairStep {
                                 pre_candidate: row.pre_candidate,
                                 pre_state: row.pre_state.clone(),
@@ -1198,47 +1220,24 @@ impl Product<'_, '_> {
                                         )
                                     })
                                     .transpose()?,
-                                post_candidate,
+                                post_candidate: row.post_candidate,
                                 post_state: row.post_state.clone(),
                                 interior: Vec::new(),
                             })
                         })
                         .collect::<Result<Vec<_>, ZoneCheckRefusal>>()?,
-                    Some(Taken::Stutter | Taken::Failing) | None => {
-                        let stuttering: Vec<_> = source
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, (key, _))| next.iter().any(|(held, _)| held == key))
-                            .collect();
-                        let surviving_candidates: Vec<_> = stuttering
-                            .iter()
-                            .map(|(pre_candidate, _)| *pre_candidate)
-                            .collect();
-                        stuttering
-                            .into_iter()
-                            .map(|(pre_candidate, (key, _))| {
-                                let post_candidate = candidate_stutter_target_ordinal(
-                                    &fair_positions[index],
-                                    &fair_positions[next_index],
-                                    pre_candidate,
-                                    &surviving_candidates,
-                                )
-                                .map_err(|_| {
-                                    ZoneCheckRefusal::Fault(
-                                        "candidate-loop-stutter-target-is-ordinal",
-                                    )
-                                })?;
-                                Ok(CandidateFairStep {
-                                    pre_candidate,
-                                    pre_state: key.clone(),
-                                    transition: None,
-                                    post_candidate,
-                                    post_state: key.clone(),
-                                    interior: Vec::new(),
-                                })
-                            })
-                            .collect::<Result<Vec<_>, ZoneCheckRefusal>>()?
-                    }
+                    Some(Taken::Stutter | Taken::Failing) | None => arc
+                        .candidate_stutters
+                        .iter()
+                        .map(|row| CandidateFairStep {
+                            pre_candidate: row.pre_candidate,
+                            pre_state: row.pre_state.clone(),
+                            transition: None,
+                            post_candidate: row.post_candidate,
+                            post_state: row.post_state.clone(),
+                            interior: Vec::new(),
+                        })
+                        .collect(),
                     _ => return Err(ZoneCheckRefusal::Fault("candidate-loop-taken-shape")),
                 };
                 Ok(rows)
@@ -1281,7 +1280,7 @@ impl Product<'_, '_> {
             .iter()
             .map(|(transition, identity)| (*identity, transition))
             .collect();
-        let recurring = run
+        let recurring: Option<Vec<Vec<bool>>> = run
             .auxiliary_timed
             .filter(|timed| timed.tick_period().is_some())
             .map(|timed| {
@@ -1544,7 +1543,6 @@ impl Product<'_, '_> {
             final_delay: None,
             closure_stutters: Vec::new(),
         };
-        let places = run.dim() - 1;
         let mut stem = path_to(live, entry);
         if live.nodes[entry].tail {
             // The idle tail: the stem to the quiescent state, then its
@@ -1556,6 +1554,10 @@ impl Product<'_, '_> {
             // With no step before the tail, the quiescent state is initial.
             let quiescent = live.arcs[stem[tail]].from;
             let (initial, stages) = stages_along(run, live, &stem[..tail], quiescent)?;
+            let places = run
+                .dim()
+                .saturating_sub(1)
+                .max(stages.iter().map(stage_place_count).max().unwrap_or(0));
             let Ok(concrete) = concretise(run.timed, places, &stages, &Target::Any, &run.scale)
             else {
                 return Ok(None);
@@ -1615,6 +1617,14 @@ impl Product<'_, '_> {
                 cycle_stages.push(stage(run, live, arc)?);
             }
         }
+        let places = run.dim().saturating_sub(1).max(
+            stem_stages
+                .iter()
+                .chain(&cycle_stages)
+                .map(stage_place_count)
+                .max()
+                .unwrap_or(0),
+        );
         // The loop's unreset clocks stand past every constant of either
         // model (FR-236).
         let ceiling = run.auxiliary_timed.map_or_else(
@@ -1748,6 +1758,55 @@ fn stages_along(
 }
 
 /// The abstract cell atoms of position `q`, as the build cached them.
+/// Number of clock places needed to concretise a stage, including every
+/// candidate-specific auxiliary block named by its zones and updates.
+pub(super) fn stage_place_count(stage: &super::super::concretise::Stage) -> usize {
+    let mut places = stage
+        .before
+        .iter()
+        .chain(stage.after.iter())
+        .chain(stage.piece.iter())
+        .map(|zone| zone.dim().saturating_sub(1))
+        .max()
+        .unwrap_or(0);
+    for constraint in stage
+        .invariants
+        .iter()
+        .chain(&stage.target)
+        .chain(&stage.position)
+    {
+        places = places.max(constraint.place().saturating_add(1));
+    }
+    if let Some((step, part)) = &stage.step {
+        if let Some(part) = step.parts().get(*part) {
+            for constraint in part {
+                places = places.max(constraint.place().saturating_add(1));
+            }
+        }
+        for (target, source) in step.carries() {
+            places = places.max(target.saturating_add(1));
+            places = places.max(source.saturating_add(1));
+        }
+        for (place, _) in step.resets() {
+            places = places.max(place.saturating_add(1));
+        }
+    }
+    for (target, source) in &stage.auxiliary_carries {
+        places = places.max(target.saturating_add(1));
+        places = places.max(source.saturating_add(1));
+    }
+    for (place, _) in &stage.auxiliary_resets {
+        places = places.max(place.saturating_add(1));
+    }
+    for (place, _) in &stage.auxiliary_advances {
+        places = places.max(place.saturating_add(1));
+    }
+    for clock in &stage.position_resets {
+        places = places.max(clock.saturating_add(1));
+    }
+    places
+}
+
 fn extra_atoms(live: &Live, q: usize) -> Vec<CellAtom> {
     live.views
         .get(&q)
@@ -1837,7 +1896,13 @@ fn dying_piece(
     if cut.is_empty() {
         return Ok(cell);
     }
-    let mut zone = cell.map_or_else(|| Dbm::universe(run.dim()), |zone| zone.widened(run.dim()));
+    let dim = cut
+        .iter()
+        .map(|constraint| constraint.place().saturating_add(2))
+        .max()
+        .unwrap_or(run.dim())
+        .max(cell.as_ref().map_or(0, Dbm::dim));
+    let mut zone = cell.map_or_else(|| Dbm::universe(dim), |zone| zone.widened(dim));
     constrain_at(&mut zone, cut, &run.scale)?;
     Ok(Some(zone))
 }

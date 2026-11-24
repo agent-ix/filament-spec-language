@@ -11,15 +11,14 @@ use super::{Integer, Zone, ZoneError};
 
 #[test]
 fn reindex_preserves_relations_and_can_split_a_clock_block() {
-    let mut zone = Zone::zero(3);
-    zone.up();
+    let mut zone = Zone::universe(3);
     zone.constrain(1, 0, &Integer::from(4_i64), false)
         .expect("x is a clock");
     zone.constrain(2, 1, &Integer::from(-2_i64), false)
         .expect("y is a clock");
-
     let split = zone.reindex(&[0, 1, 2, 1]).expect("all clocks exist");
     assert_eq!(split.dim(), 4);
+    assert!(!split.is_empty(), "reindexing must preserve a non-empty zone");
     assert_eq!(
         split.bound(3, 1).expect("in range"),
         Some((Integer::from(0_i64), false))

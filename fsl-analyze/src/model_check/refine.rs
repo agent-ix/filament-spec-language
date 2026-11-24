@@ -174,7 +174,13 @@ struct CandidateFairnessContext<'a> {
 fn candidate_enables(candidates: &[CandidateEnabled]) -> Vec<CandidateEnables<'_>> {
     candidates
         .iter()
-        .map(|candidate| (candidate.key.as_slice(), candidate.transitions.as_slice()))
+        .map(|candidate| {
+            (
+                candidate.ordinal,
+                candidate.key.as_slice(),
+                candidate.transitions.as_slice(),
+            )
+        })
         .collect()
 }
 
@@ -2385,6 +2391,7 @@ impl Run<'_, '_> {
                 history,
                 abstract_states,
                 candidate_blocks: None,
+                candidate_clock_blocks: None,
             });
         }
         Ok(SimulationCertificate {
@@ -2907,8 +2914,10 @@ impl Run<'_, '_> {
                 relation = candidate_steps_relation(
                     rows.iter().map(|row| {
                         (
+                            row.pre_candidate,
                             row.pre_state.as_slice(),
                             row.transition.as_ref(),
+                            row.post_candidate,
                             row.post_state.as_slice(),
                         )
                     }),
@@ -2956,7 +2965,10 @@ impl Run<'_, '_> {
                         )?;
                         insert_relation_label(
                             &mut relation,
-                            (candidate.key.clone(), target.key.clone()),
+                            (
+                                (candidate.ordinal, candidate.key.clone()),
+                                (target.ordinal, target.key.clone()),
+                            ),
                             label,
                         );
                     }
@@ -2991,7 +3003,10 @@ impl Run<'_, '_> {
                         )?;
                         insert_relation_label(
                             &mut relation,
-                            (candidate.key.clone(), target.key.clone()),
+                            (
+                                (candidate.ordinal, candidate.key.clone()),
+                                (target.ordinal, target.key.clone()),
+                            ),
                             label,
                         );
                     }
@@ -3060,7 +3075,6 @@ impl Run<'_, '_> {
         scope: FairScope,
     ) -> Result<bool, End> {
         let mut positions = Vec::with_capacity(context.path.len());
-        let mut steps = Vec::with_capacity(context.path.len());
         for (product, _) in context.path {
             let candidates = context
                 .enabled
@@ -3084,9 +3098,9 @@ impl Run<'_, '_> {
                                 .collect::<Result<Vec<_>, _>>()?,
                         })
                     })
-                    .collect::<Result<Vec<_>, End>>()
-            })
-            .collect::<Result<Vec<_>, End>>()?;
+                    .collect::<Result<Vec<_>, End>>()?,
+            );
+        }
         let mut steps = Vec::with_capacity(context.path.len());
         for (index, (product, edge_index)) in context.path.iter().enumerate() {
             let edge = self
@@ -3444,7 +3458,10 @@ fn candidate_identity_relation<'a>(
     for candidate in candidates {
         insert_relation_label(
             &mut relation,
-            (candidate.key.clone(), candidate.key.clone()),
+            (
+                (candidate.ordinal, candidate.key.clone()),
+                (candidate.ordinal, candidate.key.clone()),
+            ),
             neutral_label(classes),
         );
     }
@@ -3510,7 +3527,7 @@ mod tests {
         ));
 
         let mut relation = CandidateRelation::new();
-        let pair = (vec![0], vec![0]);
+        let pair = ((0, vec![0]), (0, vec![0]));
         insert_relation_label(&mut relation, pair.clone(), enabled_everywhere);
         insert_relation_label(&mut relation, pair.clone(), not_enabled_everywhere.clone());
 

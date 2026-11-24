@@ -25,17 +25,16 @@ pub use clock_enabled::{loop_segments, Segment};
 pub use clock_rows::{row_clock_step, InvariantReading, RowClockStep};
 pub use failure::{
     AssumptionIdentity, AssumptionOrigin, AssumptionSelectedMember, AssumptionSide,
-    AssumptionTarget, ObservationField, ObservationLabel, PairedAssumptionPath,
+    AssumptionTarget, CandidateStep, ObservationField, ObservationLabel, PairedAssumptionPath,
     PairedAssumptionStep, ProtocolAssumptionReason, ProtocolAssumptionWitness, ProtocolTrace,
     RefinementFailure, StepRejection, StepResult, StepVerdict, Taken, TerminalSuccessDirection,
     Undetermined,
 };
 pub use history::{initial_history, step_history, HistoryValues};
 pub use liveness::{
-    abstract_classes, candidate_edge_target_ordinal, candidate_stutter_target_ordinal,
-    candidate_lasso_has_fair_run,
-    candidate_lasso_has_fair_run_with_recurring_edge, AbstractClass, CandidateFairHop,
-    CandidateFairState, CandidateFairStep, CandidateLivenessError,
+    abstract_classes, candidate_edge_target_ordinal, candidate_lasso_has_fair_run,
+    candidate_lasso_has_fair_run_with_recurring_edge, candidate_stutter_target_ordinal,
+    AbstractClass, CandidateFairHop, CandidateFairState, CandidateFairStep, CandidateLivenessError,
 };
 pub use map::{
     map_state, EvalFailure, HiddenSlot, MappedState, MappingFailure, MappingRowRef,

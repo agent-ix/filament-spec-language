@@ -378,10 +378,9 @@ pub fn abstract_classes(
 #[cfg(test)]
 mod candidate_tests {
     use super::{
-        candidate_edge_target_ordinal, candidate_stutter_target_ordinal,
-        candidate_lasso_has_fair_run,
-        candidate_lasso_has_fair_run_with_recurring_edge, CandidateFairHop, CandidateFairState,
-        CandidateFairStep,
+        candidate_edge_target_ordinal, candidate_lasso_has_fair_run,
+        candidate_lasso_has_fair_run_with_recurring_edge, candidate_stutter_target_ordinal,
+        CandidateFairHop, CandidateFairState, CandidateFairStep,
     };
     use filament_exact::Cancel;
     use fsl_eval::fairness::{Constraint, Identity};
@@ -470,6 +469,31 @@ mod candidate_tests {
             &cancel,
         )
         .expect("the candidate graph is closed"));
+    }
+
+    /// Equal state keys do not make two timed candidate blocks one run. The
+    /// first block has the recurring tick but never takes the enabled strong
+    /// fairness class; the second takes the class but has no recurring tick.
+    #[trace("FSpec-FR-740-AC-5")]
+    #[test]
+    fn duplicate_candidate_keys_cannot_union_tick_and_fairness_witnesses() {
+        let tick = Identity::new(7);
+        let positions = vec![vec![state(0, b"same", &[tick]), state(1, b"same", &[tick])]];
+        let steps = vec![vec![
+            step(0, b"same", None, 0, b"same"),
+            step(1, b"same", Some(tick), 1, b"same"),
+        ]];
+        let constraints = [Constraint::strong([tick])];
+        let recurring = [vec![true, false]];
+
+        assert!(!candidate_lasso_has_fair_run_with_recurring_edge(
+            &positions,
+            &steps,
+            &recurring,
+            &constraints,
+            &Cancel::new(),
+        )
+        .expect("candidate blocks are checked independently"));
     }
 
     #[test]
