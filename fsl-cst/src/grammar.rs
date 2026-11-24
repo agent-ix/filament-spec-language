@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Declarative transcription of the frozen complete-V1 EBNF.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
 
 use super::{ExtensionForms, ExtensionProduction, Production as P};
 
@@ -208,8 +209,21 @@ fn bound_parameter() -> Rule {
     s(vec![x("("), r(P::Parameter), x(")")])
 }
 
-pub(super) fn complete_v1() -> Grammar {
-    complete_v1_with(&ExtensionForms::default())
+pub(super) fn complete_v1() -> &'static Grammar {
+    static GRAMMAR: OnceLock<Grammar> = OnceLock::new();
+    GRAMMAR.get_or_init(|| complete_v1_with(&ExtensionForms::default()))
+}
+
+pub(super) fn default_reserved_words() -> &'static BTreeSet<&'static str> {
+    static RESERVED_WORDS: OnceLock<BTreeSet<&'static str>> = OnceLock::new();
+    RESERVED_WORDS.get_or_init(|| complete_reserved_words(complete_v1()))
+}
+
+pub(super) fn default_compound_spellings() -> &'static [&'static str] {
+    static COMPOUND_SPELLINGS: OnceLock<Box<[&'static str]>> = OnceLock::new();
+    COMPOUND_SPELLINGS
+        .get_or_init(|| complete_compound_spellings(complete_v1()).into_boxed_slice())
+        .as_ref()
 }
 
 /// The complete-V1 grammar where each production of `forms` is also a
@@ -3755,13 +3769,26 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::{complete_compound_spellings, complete_reserved_words, complete_v1};
-    use crate::{parse, Limits};
+    use crate::{parse, ExtensionForms, ExtensionProduction, Limits};
     use fsl_foundation::SourceIdentity;
+
+    #[trace("NFR-141-AC-10")]
+    #[test]
+    fn default_grammar_table_is_shared_and_custom_forms_are_built() {
+        let first = complete_v1();
+        let second = complete_v1();
+        assert!(std::ptr::eq(first, second));
+        assert!(!first.contains_key(&super::P::ExtensionDeclaration));
+
+        let forms = ExtensionForms::new([ExtensionProduction::new("deploy", ["by"])]);
+        let custom = super::complete_v1_with(&forms);
+        assert!(custom.contains_key(&super::P::ExtensionDeclaration));
+    }
 
     #[trace("FSpec-TC-180", "FSpec-FR-339-AC-1", "FSpec-FR-302-AC-1")]
     #[test]
     fn every_declarative_compound_is_one_budgeted_cst_leaf() {
-        let compounds = complete_compound_spellings(&complete_v1());
+        let compounds = complete_compound_spellings(complete_v1());
         assert!(!compounds.is_empty());
         for compound in compounds {
             let parsed = parse(
@@ -3807,7 +3834,7 @@ mod tests {
             "profile Complete = \"filament.value.complete/v1\";\n",
             "record "
         );
-        for word in complete_reserved_words(&complete_v1()) {
+        for word in complete_reserved_words(complete_v1()) {
             let text = format!("{prefix}{word} {{ datum: Integer; }}");
             let parsed = parse(
                 SourceIdentity {
