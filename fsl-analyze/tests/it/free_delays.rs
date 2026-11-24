@@ -1019,21 +1019,34 @@ fn timed_detour_refutation_replays_its_free_delay_scheduler() {
         .expect("the independently replayed refutation carries its witness");
     assert_eq!(witness.mass(), &ratio(3, 4));
     let expected = [row(&[("A", 1)], &[("B", 2)]), row(&[("A", 3)], &[("B", 1)])];
-    assert!(witness.scheduler.iter().any(|(_, choice)| match choice {
-        ProbabilisticSchedulerChoice::Deterministic(ReplayProductAction::FreeDelays(rows)) => {
-            rows.len() == 2
-                && rows[0].given.len() == 1
-                && rows[0].given[0].1 == 1
-                && rows[0].free.len() == 1
-                && rows[0].free[0].1 == 2
-                && rows[1].given.len() == 1
-                && rows[1].given[0].1 == 3
-                && rows[1].free.len() == 1
-                && rows[1].free[0].1 == 1
-        }
-        _ => false,
-    }));
-    let mut path_lengths: Vec<_> = witness.paths.iter().map(|path| path.steps.len()).collect();
+    assert!(
+        witness
+            .evidence()
+            .scheduler
+            .iter()
+            .any(|(_, choice)| match choice {
+                ProbabilisticSchedulerChoice::Deterministic(ReplayProductAction::FreeDelays(
+                    rows,
+                )) => {
+                    rows.len() == 2
+                        && rows[0].given.len() == 1
+                        && rows[0].given[0].1 == 1
+                        && rows[0].free.len() == 1
+                        && rows[0].free[0].1 == 2
+                        && rows[1].given.len() == 1
+                        && rows[1].given[0].1 == 3
+                        && rows[1].free.len() == 1
+                        && rows[1].free[0].1 == 1
+                }
+                _ => false,
+            })
+    );
+    let mut path_lengths: Vec<_> = witness
+        .evidence()
+        .paths
+        .iter()
+        .map(|path| path.steps.len())
+        .collect();
     path_lengths.sort_unstable();
     assert_eq!(path_lengths, [1, 2]);
 }
