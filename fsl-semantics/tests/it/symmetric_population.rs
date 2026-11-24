@@ -497,6 +497,8 @@ fn a_quantified_invariant_can_compare_reference_fields_of_an_annotated_populatio
 /// Partial FR-150-AC-7 coverage (TC-566): function equality, bounded sequence
 /// conversion and order-independent population operators check; a chooser
 /// fold keeps FR-145's `operator-ineligible` refusal rather than FR-150's cause.
+/// AC-7 remains untagged because function-body reference-to-text conversion
+/// has no current runtime contract.
 #[trace("TC-566")]
 #[test]
 fn function_bodies_keep_their_rules_and_population_operators_check() {
