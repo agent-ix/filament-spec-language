@@ -331,7 +331,7 @@ fn a_replay_request_file_replays_as_the_in_process_request_does() {
 /// settles as the in-process replay does, and with the package's `lib-ms`
 /// dependency clock selection removed refuses `missing-clock-selection`.
 #[test]
-#[trace("TC-2443", "FR-862-AC-2")]
+#[trace("TC-2443", "FR-862-AC-2", "TC-2213", "FR-640-AC-11")]
 fn a_replay_request_file_replays_a_library_clock_from_the_package() {
     let fixture = Fixture::compile(
         PROGRAM,
