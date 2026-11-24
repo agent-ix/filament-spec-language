@@ -400,6 +400,20 @@ fn rational_bits_limit(
     )
 }
 
+fn exact_values_exceed_rational_budget(values: &[ExtRational], max_bits: u64) -> bool {
+    values.iter().any(|value| match value {
+        ExtRational::Finite(value) => {
+            value
+                .numerator()
+                .magnitude_bits()
+                .saturating_add(value.denominator().magnitude_bits())
+                .saturating_add(1)
+                > max_bits
+        }
+        ExtRational::PlusInfinity => false,
+    })
+}
+
 /// How a failed claim-binding, claim-identity or checker-graph step settles: a
 /// cancel or a reached state or edge budget names itself; the forms the bounded
 /// graph does not build (a cycle, a multi-state draw, several initial states or
@@ -1433,95 +1447,100 @@ fn run(
     let mut interval: Option<Interval> = None;
     let mut fair_policy: Option<Vec<Option<crate::exact_probabilistic::SchedulerChoice>>> = None;
     let (values, policy) = if fair_eventual {
-        let fair = match crate::exact_probabilistic::decide_fair_reachability(
+        let fair_values = match crate::exact_probabilistic::decide_fair_reachability(
             &product, None, &target, objective, &limits,
         ) {
-            Ok(fair) => fair,
+            Ok(fair) => {
+                fair_policy = Some(fair.policy);
+                Some(fair.values)
+            }
+            Err(crate::exact_probabilistic::FairProductError::Product(
+                UnboundedError::MaxRationalBits,
+            )) => None,
             Err(crate::exact_probabilistic::FairProductError::Product(error)) => {
                 return unbounded_failure(error, &limits, subject);
             }
             Err(_) => return broken(),
         };
-        fair_policy = Some(fair.policy);
-        let scalar_too_wide = fair.values.iter().any(|value| match value {
-            ExtRational::Finite(value) => {
-                value
-                    .numerator()
-                    .magnitude_bits()
-                    .saturating_add(value.denominator().magnitude_bits())
-                    .saturating_add(1)
-                    > limits.max_rational_bits
+        match fair_values {
+            Some(values)
+                if !exact_values_exceed_rational_budget(&values, limits.max_rational_bits) =>
+            {
+                (values, Vec::new())
             }
-            ExtRational::PlusInfinity => false,
-        });
-        if scalar_too_wide {
-            let Bound::AtLeast(threshold) = bound else {
-                return rational_bits_limit(&limits, subject);
-            };
-            if objective != UnboundedObjective::Min {
-                return rational_bits_limit(&limits, subject);
-            }
-            match crate::exact_probabilistic::decide_fair_reachability_threshold(
-                &product, &target, threshold, &limits,
-            ) {
-                Ok(crate::exact_probabilistic::UnboundedOutcome::Bounds {
-                    lower,
-                    upper,
-                    precision_bits,
-                    sweeps,
-                    ..
-                }) => {
-                    let values = lower
-                        .iter()
-                        .map(|end| ExtRational::Finite(end.rational()))
-                        .collect();
-                    interval = Some(Interval {
+            _ => {
+                let Bound::AtLeast(threshold) = bound else {
+                    return rational_bits_limit(&limits, subject);
+                };
+                if objective != UnboundedObjective::Min {
+                    return rational_bits_limit(&limits, subject);
+                }
+                match crate::exact_probabilistic::decide_fair_reachability_threshold(
+                    &product, &target, threshold, &limits,
+                ) {
+                    Ok(crate::exact_probabilistic::UnboundedOutcome::Bounds {
                         lower,
                         upper,
                         precision_bits,
-                        method: fsl_replay::BoundsMethod::IntervalIteration {
+                        sweeps,
+                        ..
+                    }) => {
+                        let values = lower
+                            .iter()
+                            .map(|end| ExtRational::Finite(end.rational()))
+                            .collect();
+                        interval = Some(Interval {
+                            lower,
+                            upper,
                             precision_bits,
-                            sweeps,
-                        },
-                    });
-                    (values, Vec::new())
+                            method: fsl_replay::BoundsMethod::IntervalIteration {
+                                precision_bits,
+                                sweeps,
+                            },
+                        });
+                        (values, Vec::new())
+                    }
+                    Ok(crate::exact_probabilistic::UnboundedOutcome::Exact(result)) => {
+                        if exact_values_exceed_rational_budget(
+                            &result.values,
+                            limits.max_rational_bits,
+                        ) {
+                            return rational_bits_limit(&limits, subject);
+                        }
+                        (result.values, Vec::new())
+                    }
+                    Ok(crate::exact_probabilistic::UnboundedOutcome::PrecisionBudget {
+                        lower,
+                        upper,
+                    }) => return precision_budget(lower.rational(), upper.rational(), subject),
+                    Ok(crate::exact_probabilistic::UnboundedOutcome::Stopped(
+                        fsl_replay::ExactProbLimit::MaxPolicyIterations,
+                    )) => {
+                        return settled(
+                            &ExactProbBuildIssue::Limit {
+                                limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
+                                value: limits.max_policy_iterations,
+                            },
+                            subject,
+                        )
+                    }
+                    Ok(crate::exact_probabilistic::UnboundedOutcome::Stopped(
+                        fsl_replay::ExactProbLimit::MaxPrecisionBits,
+                    )) => {
+                        return settled(
+                            &ExactProbBuildIssue::Limit {
+                                limit: ModelCheckLimit::ExactProbMaxPrecisionBits,
+                                value: u64::from(limits.max_precision_bits),
+                            },
+                            subject,
+                        )
+                    }
+                    Ok(crate::exact_probabilistic::UnboundedOutcome::Stopped(_)) => {
+                        return rational_bits_limit(&limits, subject)
+                    }
+                    Err(error) => return unbounded_failure(error, &limits, subject),
                 }
-                Ok(crate::exact_probabilistic::UnboundedOutcome::Exact(result)) => {
-                    (result.values, Vec::new())
-                }
-                Ok(crate::exact_probabilistic::UnboundedOutcome::PrecisionBudget {
-                    lower,
-                    upper,
-                }) => return precision_budget(lower.rational(), upper.rational(), subject),
-                Ok(crate::exact_probabilistic::UnboundedOutcome::Stopped(
-                    fsl_replay::ExactProbLimit::MaxPolicyIterations,
-                )) => {
-                    return settled(
-                        &ExactProbBuildIssue::Limit {
-                            limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
-                            value: limits.max_policy_iterations,
-                        },
-                        subject,
-                    )
-                }
-                Ok(crate::exact_probabilistic::UnboundedOutcome::Stopped(
-                    fsl_replay::ExactProbLimit::MaxPrecisionBits,
-                )) => {
-                    return settled(
-                        &ExactProbBuildIssue::Limit {
-                            limit: ModelCheckLimit::ExactProbMaxPrecisionBits,
-                            value: u64::from(limits.max_precision_bits),
-                        },
-                        subject,
-                    )
-                }
-                Ok(crate::exact_probabilistic::UnboundedOutcome::Stopped(_)) => {
-                    return rational_bits_limit(&limits, subject)
-                }
-                Err(error) => return unbounded_failure(error, &limits, subject),
             }
-        } else {
-            (fair.values, Vec::new())
         }
     } else if bounded_formula.is_some() {
         let outcome = if bounded_fair {
