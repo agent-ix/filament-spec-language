@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 
 // The repository's public test constructors provide the carrier structure;
 // the declarations, field data and adverse changes below are original.
-use crate::support::probabilistic_model::base as carrier;
+pub(super) use crate::support::probabilistic_model::base as carrier;
 #[path = "../../../fsl-semantics/tests/support/variant_fields.rs"]
 pub(super) mod fields;
 
