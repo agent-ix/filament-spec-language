@@ -408,6 +408,19 @@ enum E {
     Conj(Vec<E>),
 }
 
+impl E {
+    fn uses_float64(&self) -> bool {
+        match self {
+            Self::Float64Bits(_) | Self::FloatNeg(_) => true,
+            Self::Field { key, .. } | Self::Neg(key) | Self::Not(key) => key.uses_float64(),
+            Self::Bin(Op::EqFloat, _, _) => true,
+            Self::Bin(_, left, right) => left.uses_float64() || right.uses_float64(),
+            Self::Conj(items) => items.iter().any(Self::uses_float64),
+            Self::Int(_) | Self::Bool(_) | Self::Enum { .. } | Self::Param(_) => false,
+        }
+    }
+}
+
 /// A value and the definedness conditions of its operations, in evaluation
 /// order (FSpec FR-812 "Arithmetic and undefinedness").
 struct Low {
@@ -830,7 +843,7 @@ fn float64_value(bits: &str, target: Target) -> String {
     if exponent == 0x7ff && fraction != 0 {
         return match target {
             Target::Tla => format!("[tag |-> \"nan\", bits |-> \"{bits}\"]"),
-            Target::Lean => format!("F.nan \"{bits}\""),
+            Target::Lean => format!("F.nan {lean_sign} {fraction}"),
         };
     }
     if exponent == 0x7ff {
@@ -848,7 +861,7 @@ fn float64_value(bits: &str, target: Target) -> String {
         Target::Tla => format!(
             "[tag |-> \"finite\", sign |-> \"{sign}\", significand |-> {significand}, exponent |-> {power}]"
         ),
-        Target::Lean => format!("F.finite {lean_sign} {significand} {power}"),
+        Target::Lean => format!("F.finite {lean_sign} {significand} ({power})"),
     }
 }
 
@@ -1138,7 +1151,10 @@ fn range_conditions(path: &str, kind: &Kind, target: Target) -> Vec<String> {
             }
             out
         }
-        Kind::Float64 => vec![format!("{path} \\in F_float64_values")],
+        Kind::Float64 => match target {
+            Target::Tla => vec![format!("{path} \\in F_float64_values")],
+            Target::Lean => vec![format!("F_float64_values {path}")],
+        },
     }
 }
 
@@ -1248,19 +1264,6 @@ pub(super) fn lower(
     let names: BTreeSet<&str> = objects.iter().map(|object| object.name.as_str()).collect();
     if names.len() != objects.len() {
         return refuse("model/object_type", "two exported types share one name");
-    }
-    if target == Target::Lean
-        && objects.iter().any(|object| {
-            object
-                .fields
-                .iter()
-                .any(|field| matches!(field.kind, Kind::Float64))
-        })
-    {
-        return refuse(
-            "model/type",
-            "Float64 fields are only mapped for the TLA+ target",
-        );
     }
     let mut lowerer = Lowerer {
         graph,
@@ -1589,12 +1592,29 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
                     .iter()
                     .any(|param| matches!(param.kind, Kind::Float64))
             })
-    });
+    }) || input
+        .operations
+        .iter()
+        .flatten()
+        .flat_map(|operation| operation.pre.iter().chain(&operation.post))
+        .any(E::uses_float64)
+        || input
+            .clauses
+            .iter()
+            .any(|(_, _, _, clause)| clause.uses_float64())
+        || input.temporals.iter().any(|clause| {
+            clause
+                .defs
+                .iter()
+                .chain(&clause.cur)
+                .chain(&clause.next)
+                .any(E::uses_float64)
+        });
     if has_float64 {
         out.push(define(
             input.first,
             Some("F_float64_values".to_owned()),
-            "F_float64_values ==\n  [tag : {\"finite\"}, sign : {\"positive\", \"negative\"}, significand : 0..9007199254740991, exponent : -1074..971]\n  \\cup [tag : {\"inf\"}, sign : {\"positive\", \"negative\"}]\n  \\cup [tag : {\"nan\"}, bits : STRING]".to_owned(),
+            "F_float64_values ==\n  [tag : {\"finite\"}, sign : {\"positive\", \"negative\"}, significand : {0}, exponent : {-1074}]\n  \\cup [tag : {\"finite\"}, sign : {\"positive\", \"negative\"}, significand : 1..4503599627370495, exponent : {-1074}]\n  \\cup [tag : {\"finite\"}, sign : {\"positive\", \"negative\"}, significand : 4503599627370496..9007199254740991, exponent : -1074..971]\n  \\cup [tag : {\"inf\"}, sign : {\"positive\", \"negative\"}]\n  \\cup [tag : {\"nan\"}, bits : STRING]".to_owned(),
             None,
         ));
         out.push(define(
@@ -1834,6 +1854,61 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
 fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
     let target = Target::Lean;
     let objects = input.objects;
+    let has_float64 = objects.iter().any(|object| {
+        object
+            .fields
+            .iter()
+            .any(|field| matches!(field.kind, Kind::Float64))
+            || object.operations.iter().any(|operation| {
+                operation
+                    .params
+                    .iter()
+                    .any(|param| matches!(param.kind, Kind::Float64))
+            })
+    }) || input
+        .operations
+        .iter()
+        .flatten()
+        .flat_map(|operation| operation.pre.iter().chain(&operation.post))
+        .any(E::uses_float64)
+        || input
+            .clauses
+            .iter()
+            .any(|(_, _, _, clause)| clause.uses_float64())
+        || input.temporals.iter().any(|clause| {
+            clause
+                .defs
+                .iter()
+                .chain(&clause.cur)
+                .chain(&clause.next)
+                .any(E::uses_float64)
+        });
+    if has_float64 {
+        out.push(define(
+            input.first,
+            Some("F".to_owned()),
+            "inductive F where\n  | finite (negative : Bool) (significand : Nat) (exponent : Int)\n  | inf (negative : Bool)\n  | nan (negative : Bool) (payload : Nat)\n  deriving BEq, DecidableEq".to_owned(),
+            None,
+        ));
+        out.push(define(
+            input.first,
+            Some("F_float64_values".to_owned()),
+            "def F_float64_values (x : F) : Prop :=\n  match x with\n  | .finite _ significand exponent =>\n      (significand = 0 /\\ exponent = -1074) \\/\n      (1 <= significand /\\ significand < 4503599627370496 /\\ exponent = -1074) \\/\n      (4503599627370496 <= significand /\\ significand <= 9007199254740991 /\\ -1074 <= exponent /\\ exponent <= 971)\n  | .inf _ => True\n  | .nan _ payload => 1 <= payload /\\ payload < 4503599627370496".to_owned(),
+            None,
+        ));
+        out.push(define(
+            input.first,
+            Some("F_float64_eq".to_owned()),
+            "def F_float64_eq (a b : F) : Prop :=\n  match a, b with\n  | .nan _ _, _ | _, .nan _ _ => False\n  | .finite signA sigA expA, .finite signB sigB expB =>\n      if sigA = 0 /\\ sigB = 0 then True else signA = signB /\\ sigA = sigB /\\ expA = expB\n  | .inf signA, .inf signB => signA = signB\n  | _, _ => False".to_owned(),
+            None,
+        ));
+        out.push(define(
+            input.first,
+            Some("F_float64_neg".to_owned()),
+            "def F_float64_neg (x : F) : F :=\n  match x with\n  | .finite negative significand exponent => .finite (!negative) significand exponent\n  | .inf negative => .inf (!negative)\n  | .nan negative payload => .nan (!negative) payload".to_owned(),
+            None,
+        ));
+    }
     let mut enums = BTreeMap::new();
     for kind in objects
         .iter()
@@ -1903,7 +1978,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                 let value = match &field.kind {
                     Kind::Int { .. } => "0".to_owned(),
                     Kind::Bool => "false".to_owned(),
-                    Kind::Float64 => "F.finite false 0 0".to_owned(),
+                    Kind::Float64 => "F.finite false 0 (-1074)".to_owned(),
                     Kind::Enum { name, cases, .. } => cases.first().map_or_else(
                         || "".to_owned(),
                         |case| format!("{}.{}", enum_type_name(name), enum_member_name(name, case)),

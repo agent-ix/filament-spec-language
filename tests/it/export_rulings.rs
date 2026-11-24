@@ -58,6 +58,10 @@ fn tla(obligations: Value) -> Value {
     json!({"profile": "filament.output.tla2/v1", "obligations": obligations})
 }
 
+fn lean(obligations: Value) -> Value {
+    json!({"profile": "filament.output.lean4/v1", "obligations": obligations})
+}
+
 fn names(value: &Value, text: &str) {
     assert!(value.to_string().contains(text), "names {text}: {value}");
 }
@@ -454,9 +458,47 @@ fn a_float_model_field_exports_its_exact_bits() {
         target.contains("\"finite\""),
         "a finite float tag: {target}"
     );
+    assert!(target.contains("4503599627370496..9007199254740991"));
+    assert!(target.contains("1..4503599627370495, exponent : {-1074}"));
     assert!(
         !target.contains("[num |->"),
         "no rational stands for the float field: {target}"
+    );
+
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0",
+            "source": source("float-model.semantic-ir.json")}],
+        "program": {"source": source("unit.native")},
+        "export": lean(json!(["NotPayload"]))}});
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let result = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+        .expect("Lean Float64 model export is admitted");
+    let value: Value = serde_json::from_str(&result.value.to_string()).expect("JSON document");
+    assert_eq!(result.exit_code, 0, "{value}");
+    assert_eq!(
+        value["export"]["records"][0]["disposition"], "preserved",
+        "{value}"
+    );
+    let target = text(&value);
+    assert!(
+        target.contains("inductive F where"),
+        "Float64 type: {target}"
+    );
+    assert!(
+        target.contains("def F_float64_values"),
+        "Float64 domain: {target}"
+    );
+    assert!(
+        target.contains("def F_float64_eq"),
+        "Float64 equality: {target}"
+    );
+    assert!(
+        target.contains("def F_float64_neg"),
+        "Float64 negation: {target}"
+    );
+    assert!(
+        target.contains("F.nan false 2251799813685249"),
+        "exact NaN sign and payload: {target}"
     );
 }
 
