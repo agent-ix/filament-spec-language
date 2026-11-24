@@ -1195,10 +1195,9 @@ fn check_with_context(
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     if let (Some(side), Some(captured)) = (offer.side, captured) {
-        // FR-1042 value bounds currently cover cyclic reward only on a
-        // structurally valid expected-reward subject; state-event bounds use
-        // their separate profile rules.
-        if event.is_some() {
+        // Non-fair state-event bounds use a separate profile. Fair cyclic
+        // reachability bounds are checked by the dedicated fair-MEC verifier.
+        if event.is_some() && !fair_cyclic {
             return Err(ProbabilityDocumentError::Unsupported);
         }
         if fair_cyclic {
