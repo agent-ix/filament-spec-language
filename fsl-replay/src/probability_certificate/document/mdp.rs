@@ -1025,7 +1025,7 @@ fn construct(
         return Err(ProbabilityDocumentError::MalformedMember("values"));
     }
     let ranks = if fair_cyclic {
-        Vec::new()
+        BTreeMap::new()
     } else {
         derive_ranks(&graph, &values, &action_sums, objective, cx)?
     };

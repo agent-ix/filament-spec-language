@@ -391,7 +391,7 @@ fn policy_is_fair(
             taken.push(None);
             continue;
         };
-        let ProductAction::Identity(schedule) = action else {
+        let crate::ProductAction::Identity(schedule) = action else {
             return Err(ProbabilityDocumentError::MalformedMember("policy"));
         };
         let actions = system
@@ -512,7 +512,7 @@ fn policy_bottom_values_zero(
             reverse[index].push(index);
             continue;
         };
-        let ProductAction::Identity(schedule) = action else {
+        let crate::ProductAction::Identity(schedule) = action else {
             return Err(ProbabilityDocumentError::MalformedMember("policy"));
         };
         let choice = mdp::schedules_at(system, captured, key, cx)?

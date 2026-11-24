@@ -80,17 +80,26 @@ pub enum FairReachabilityOutcome {
     Exact(FairUnboundedResult),
     /// Outward-rounded value enclosure and a fair scheduler candidate.
     Bounds {
+        /// Lower endpoint for each product state.
         lower: Vec<super::Dyadic>,
+        /// Upper endpoint for each product state.
         upper: Vec<super::Dyadic>,
+        /// Dyadic precision used for the enclosure.
         precision_bits: u32,
+        /// Bellman interval sweeps performed.
         sweeps: u64,
+        /// Fair scheduler candidate, one per available state choice.
         policy: Vec<Option<SchedulerChoice>>,
+        /// Fair end components used to transform minimum reachability.
         components: Vec<FairEndComponent>,
+        /// The checked fairness set carried by the product.
         fairness: Vec<FairnessConstraint>,
     },
     /// The configured maximum precision could not decide the initial bound.
     PrecisionBudget {
+        /// The lower endpoint at the initial state.
         lower: super::Dyadic,
+        /// The upper endpoint at the initial state.
         upper: super::Dyadic,
     },
     /// The exact fallback stopped at a configured limit.

@@ -2573,7 +2573,6 @@ fn settle_fair_interval(
             upper,
             binding,
             extremum,
-            precision_bits: interval.precision_bits,
             method: interval.method,
         },
         subject,
