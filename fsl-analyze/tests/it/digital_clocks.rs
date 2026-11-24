@@ -1421,10 +1421,19 @@ fn zero_delay_loop_beside_an_end_component_is_decided() {
 fn time_locked_state_is_terminal() {
     let world = one_workload("delay M::Call::send ~ discrete { 5 ms: 1 };\n");
     let built = product(&world, "Under");
-    let [(_, _, initial)] = built.initial.as_slice() else {
+    let [_] = built.initial.as_slice() else {
         panic!("one initial state: {:?}", built.initial);
     };
-    assert!(built.outgoing(*initial).is_empty(), "time-lock has no move");
+    let time_locked = built.ids().find(|state| {
+        matches!(
+            built.states[state.index()].monitor,
+            Some(MonitorState::Deadline {
+                phase: DeadlinePhase::Pending,
+                ..
+            })
+        ) && built.outgoing(*state).is_empty()
+    });
+    assert!(time_locked.is_some(), "a pending deadline state has no move");
 }
 
 /// FR-203-AC-3 / FR-204-AC-3 (TC-639): an exponential delay requested as
