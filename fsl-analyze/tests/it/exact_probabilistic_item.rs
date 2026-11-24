@@ -1544,21 +1544,26 @@ fn a_value_bounds_document_is_accepted_only_for_the_side_it_certifies() {
     // Replay under the request's own limits, with no scalar bound widened by hand.
     let limits =
         fsl_replay::ProbabilityDocumentLimits::for_interval(&request_limits, prob_world::UNLIMITED);
-    let check = |bytes: &[u8]| {
-        fsl_replay::check_probability_certificate_document(
+    let check = |bytes: &[u8], role| {
+        fsl_replay::check_probability_certificate_document_as(
             &system,
             world.package.graph().probabilistic_model().claims(),
             &identity,
             bytes,
+            role,
             limits,
             &Cancel::new(),
         )
     };
-    for (bytes, bound) in [
-        (&lower, fsl_replay::SubsystemBoundKind::Lower),
-        (&upper, fsl_replay::SubsystemBoundKind::Upper),
+    let (claim, counterpart) = (
+        fsl_replay::CertificateRole::Claim,
+        fsl_replay::CertificateRole::Counterpart,
+    );
+    for (bytes, bound, role) in [
+        (&lower, fsl_replay::SubsystemBoundKind::Lower, claim),
+        (&upper, fsl_replay::SubsystemBoundKind::Upper, counterpart),
     ] {
-        let Ok(ExactProbabilityCertificateCheck::Accepted(accepted)) = check(bytes) else {
+        let Ok(ExactProbabilityCertificateCheck::Accepted(accepted)) = check(bytes, role) else {
             panic!("the {bound:?} document is accepted");
         };
         assert_eq!(accepted.bound(), Some(bound));
@@ -1566,10 +1571,10 @@ fn a_value_bounds_document_is_accepted_only_for_the_side_it_certifies() {
     let text = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).unwrap();
     let relabelled_lower = text(&lower).replace("\"kind\":\"lower\"", "\"kind\":\"upper\"");
     let relabelled_upper = text(&upper).replace("\"kind\":\"upper\"", "\"kind\":\"lower\"");
-    for bytes in [relabelled_lower, relabelled_upper] {
+    for (bytes, role) in [(relabelled_lower, counterpart), (relabelled_upper, claim)] {
         assert!(
             !matches!(
-                check(bytes.as_bytes()),
+                check(bytes.as_bytes(), role),
                 Ok(ExactProbabilityCertificateCheck::Accepted(_))
             ),
             "a side's document does not certify the other side"

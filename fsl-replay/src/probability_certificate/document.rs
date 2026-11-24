@@ -1798,6 +1798,10 @@ fn construct_document(
 /// Identity is compared before enumeration; targets and operator come solely
 /// from the checked claim. The opaque acceptance token is minted only after
 /// coverage, required rank progress, Bellman equality and threshold checks.
+///
+/// The document is checked as the claim side
+/// ([`check_probability_certificate_document_as`] with
+/// [`CertificateRole::Claim`]).
 pub fn check_probability_certificate_document(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -1806,11 +1810,37 @@ pub fn check_probability_certificate_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    check_probability_certificate_document_as(
+        system,
+        claims,
+        item,
+        bytes,
+        CertificateRole::Claim,
+        limits,
+        cancel,
+    )
+}
+
+/// [`check_probability_certificate_document`] for a document offered in
+/// `role` (FR-1042): a claim-side document meets its conditions and the
+/// claim's threshold, and one of the wrong kind is rejected `Malformed` at
+/// `kind`; a counterpart is a `lower` or `upper` document that meets its
+/// conditions and no threshold.
+pub fn check_probability_certificate_document_as(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    bytes: &[u8],
+    role: CertificateRole,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     check_document_with_control(
         system,
         claims,
         item,
         bytes,
+        role,
         limits,
         cancel,
         &super::reward::RewardControl::new(cancel),
@@ -1836,6 +1866,7 @@ pub fn check_cyclic_reward_probability_certificate_observing(
         claims,
         item,
         bytes,
+        CertificateRole::Claim,
         limits,
         cancel,
         &control,
@@ -1861,6 +1892,7 @@ pub fn check_bounded_fair_probability_certificate_observing(
         claims,
         item,
         bytes,
+        CertificateRole::Claim,
         limits,
         cancel,
         &super::reward::RewardControl::new(cancel),
@@ -1874,34 +1906,69 @@ fn check_document_with_control(
     claims: &[CheckedProbabilisticClaim],
     item: &ObligationIdentity,
     bytes: &[u8],
+    role: CertificateRole,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
     control: &super::reward::RewardControl<'_>,
     fair_control: &fairness::Control<'_>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
-    let (bound, inner) = match value_bounds::unwrap(bytes, limits, cancel) {
-        Ok(Some((side, inner))) => (Some(side), Some(inner)),
-        Ok(None) => (None, None),
+    let bound = match value_bounds::unwrap(bytes, limits, cancel) {
+        Ok(bound) => bound,
         Err(error) => return document_admission_error(error),
     };
+    let offer = Offer {
+        side: bound.as_ref().map(|bound| bound.side),
+        role,
+        policy: bound.as_ref().and_then(|bound| bound.policy.as_deref()),
+    };
+    // Only a `lower` or `upper` document can be a value-bounds counterpart.
+    if offer.side.is_none() && role == CertificateRole::Counterpart {
+        return Ok(misplaced_kind());
+    }
     let mut check = check_document_bytes(
         system,
         claims,
         item,
-        inner.as_deref().unwrap_or(bytes),
-        bound,
+        bound.as_ref().map_or(bytes, |bound| bound.exact.as_slice()),
+        offer,
         limits,
         cancel,
         control,
         fair_control,
     )?;
     if let ExactProbabilityCertificateCheck::Accepted(accepted) = &mut check {
-        if bound.is_some() {
+        if offer.side.is_some() {
             accepted.document = Some(bytes.into());
-            accepted.bound = bound;
+            accepted.bound = offer.side;
         }
     }
     Ok(check)
+}
+
+/// How a document is offered for checking (FR-1042): the bound side it
+/// certifies (none for an exact document), the role it is checked in and its
+/// unresolved policy hints.
+#[derive(Clone, Copy)]
+struct Offer<'a> {
+    side: Option<SubsystemBoundKind>,
+    role: CertificateRole,
+    policy: Option<&'a [value_bounds::PolicyHint]>,
+}
+
+impl Offer<'_> {
+    /// An exact document checked as the claim side.
+    #[cfg(feature = "test-support")]
+    fn exact() -> Self {
+        Self {
+            side: None,
+            role: CertificateRole::Claim,
+            policy: None,
+        }
+    }
+
+    fn relation(self) -> ValueRelation {
+        ValueRelation::of(self.side, self.role)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1910,13 +1977,19 @@ fn check_document_bytes(
     claims: &[CheckedProbabilisticClaim],
     item: &ObligationIdentity,
     bytes: &[u8],
-    bound_side: Option<SubsystemBoundKind>,
+    offer: Offer<'_>,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
     control: &super::reward::RewardControl<'_>,
     fair_control: &fairness::Control<'_>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
-    match profile_dispatch(bytes, limits, cancel)? {
+    let bound_side = offer.side;
+    let dispatch = profile_dispatch(bytes, limits, cancel)?;
+    // Only a cyclic MDP base resolves hints against its existential choices.
+    if offer.policy.is_some() && dispatch != ProfileDispatch::CyclicMdp {
+        return document_admission_error(ProbabilityDocumentError::MalformedMember("policy"));
+    }
+    match dispatch {
         ProfileDispatch::Measure => {
             if bound_side.is_some() {
                 return Err(ProbabilityDocumentError::Unsupported);
@@ -1924,7 +1997,15 @@ fn check_document_bytes(
             return measure::check(system, claims, item, bytes, limits, cancel);
         }
         ProfileDispatch::Timed => {
-            return timed::check(system, claims, item, bytes, bound_side, limits, cancel)
+            return timed::check(
+                system,
+                claims,
+                item,
+                bytes,
+                offer.relation(),
+                limits,
+                cancel,
+            )
         }
         ProfileDispatch::OnEach => {
             return instances::check(system, claims, item, bytes, limits, cancel)
@@ -1935,7 +2016,7 @@ fn check_document_bytes(
         }
         ProfileDispatch::CyclicMdp | ProfileDispatch::CyclicMdpReward => {
             return mdp::check_with_reward_control(
-                system, claims, item, bytes, limits, cancel, control,
+                system, claims, item, bytes, offer, limits, cancel, control,
             );
         }
         ProfileDispatch::Exact | ProfileDispatch::BoundedFair => {}
@@ -2007,15 +2088,20 @@ fn check_document_bytes(
     {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
-    // FR-1042: only a bounded base's acyclic product bounds a value by the
-    // one-step inequalities alone.
-    if bound_side.is_some()
-        && (bounded_ranks.is_none()
-            || reward.is_some()
-            || document.cyclic_dtmc
-            || !fairness_records.is_empty())
-    {
+    // FR-1042: a bounded base's acyclic product bounds a value by the
+    // one-step inequalities alone; an unbounded eventual chain adds the
+    // `lower` document's progress ranking.
+    let bound_base = if document.cyclic_dtmc {
+        event.is_none()
+    } else {
+        bounded_ranks.is_some()
+    };
+    if bound_side.is_some() && (!bound_base || reward.is_some() || !fairness_records.is_empty()) {
         return Err(ProbabilityDocumentError::Unsupported);
+    }
+    let relation = offer.relation();
+    if relation.misplaced(&bound) {
+        return Ok(misplaced_kind());
     }
     fair_control.phase(fairness::BoundedFairProbabilityPhase::Equality)?;
     let ranks: BTreeMap<_, _> = document.ranking.into_iter().collect();
@@ -2061,7 +2147,15 @@ fn check_document_bytes(
             }
         }
     }
-    for (key, state) in graph.states.iter().filter(|_| bound_side.is_none()) {
+    // An exact document and an unbounded `lower` document show progress at
+    // every positive state; a bounded `lower` document's ranks are the
+    // remaining horizon instead, and an `upper` document has no ranking.
+    let progress_checked = match bound_side {
+        None => true,
+        Some(SubsystemBoundKind::Lower) => document.cyclic_dtmc,
+        Some(SubsystemBoundKind::Upper) => false,
+    };
+    for (key, state) in graph.states.iter().filter(|_| progress_checked) {
         poll(cancel)?;
         if document.cyclic_dtmc && reward.is_some() {
             control.phase(super::reward::RewardProbabilityPhase::Progress)?;
@@ -2117,11 +2211,7 @@ fn check_document_bytes(
         &values,
         objective,
         &bound,
-        match bound_side {
-            None => ValueRelation::Exact,
-            Some(SubsystemBoundKind::Lower) => ValueRelation::Lower,
-            Some(SubsystemBoundKind::Upper) => ValueRelation::Upper,
-        },
+        relation,
         reward.as_ref(),
         limits,
         cancel,
@@ -2326,7 +2416,7 @@ fn check_document_equalities(
         graph,
         values,
         bound,
-        relation.tests_threshold(bound),
+        relation.tests_threshold(),
         limits,
         cancel,
     )
@@ -2363,6 +2453,7 @@ fn check_threshold(
         ExactProbabilityAcceptance {
             initial_values: None,
             bound: None,
+            policy: Vec::new(),
             certificate: ExactProbabilityCertificate {
                 values: values
                     .iter()
@@ -2410,7 +2501,7 @@ pub(super) fn certificate_identity(
     let unwrapped = value_bounds::unwrap(bytes, limits, cancel)?;
     let bytes = unwrapped
         .as_ref()
-        .map_or(bytes, |(_, exact)| exact.as_slice());
+        .map_or(bytes, |bound| bound.exact.as_slice());
     if profile_dispatch(bytes, limits, cancel)? == ProfileDispatch::Measure {
         return measure::identity(bytes, limits, cancel);
     }

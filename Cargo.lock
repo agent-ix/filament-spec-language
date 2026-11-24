@@ -1109,6 +1109,7 @@ dependencies = [
  "fsl-route",
  "fsl-semantics",
  "ix-trace-rs",
+ "quire-canonical",
  "serde",
  "serde_json",
 ]

@@ -79,6 +79,9 @@ struct Request {
     initial: Vec<Document>,
     universes: Vec<Universe>,
     certificate: String,
+    /// Whether `certificate` is the document the claim rests on, rather than
+    /// the counterpart of a value-bounds proof (FR-1042).
+    claim_side: bool,
     limits: Limits,
 }
 
@@ -142,6 +145,11 @@ fn check(request: Request, cancel: &Cancel) -> Result<Value, String> {
             accounting: caller.accounting.0,
         },
     };
+    let role = if request.claim_side {
+        fsl_replay::CertificateRole::Claim
+    } else {
+        fsl_replay::CertificateRole::Counterpart
+    };
     let result = match (request.source, request.package, named.as_ref()) {
         (Some(source), None, Some(reference)) => {
             let package_name = request
@@ -162,6 +170,7 @@ fn check(request: Request, cancel: &Cancel) -> Result<Value, String> {
                     initial,
                     universes,
                     certificate: request.certificate.as_bytes(),
+                    role,
                 },
                 limits,
                 cancel,
@@ -176,6 +185,7 @@ fn check(request: Request, cancel: &Cancel) -> Result<Value, String> {
                 initial,
                 universes,
                 certificate: request.certificate.as_bytes(),
+                role,
             },
             limits,
             cancel,
@@ -188,9 +198,13 @@ fn check(request: Request, cancel: &Cancel) -> Result<Value, String> {
     };
     Ok(match result {
         ExactProbabilityCertificateCheck::Accepted(accepted) => {
-            json!({"status":"accepted", "value": {
+            let mut output = json!({"status":"accepted", "value": {
                 "numerator": accepted.value().numerator().to_string(), "denominator": accepted.value().denominator().to_string(),
-            }})
+            }});
+            if !accepted.policy().is_empty() {
+                output["policy"] = Value::Array(policy_rows(accepted.policy())?);
+            }
+            output
         }
         ExactProbabilityCertificateCheck::AcceptedVacuous(accepted) => {
             json!({"status":"accepted","basis":"exhaustive","vacuous":true,"side":match accepted.side() { fsl_replay::ProbabilityBoundSide::AtLeast=>"at-least",fsl_replay::ProbabilityBoundSide::AtMost=>"at-most" }})
@@ -230,6 +244,25 @@ fn check(request: Request, cancel: &Cancel) -> Result<Value, String> {
             json!({"status":"rejected", "rule":rule, "at":at})
         }
     })
+}
+
+/// The checker-selected policy as `{state, action}` rows: the state's
+/// complete product key and the FR-196 action body selected there.
+fn policy_rows(
+    policy: &[(fsl_replay::ProbabilityProductKey, fsl_replay::ProductAction)],
+) -> Result<Vec<Value>, String> {
+    policy
+        .iter()
+        .map(|(key, action)| {
+            let state = serde_json::to_value(
+                fsl_replay::CertificateLocus::ProbabilityProductState(key.clone()),
+            )
+            .map_err(|error| error.to_string())?;
+            let body = action.to_bytes().map_err(|error| error.to_string())?;
+            let action: Value = serde_json::from_slice(&body).map_err(|error| error.to_string())?;
+            Ok(json!({"state": state["product_key"], "action": action}))
+        })
+        .collect()
 }
 
 #[derive(Serialize)]

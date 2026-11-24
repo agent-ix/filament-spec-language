@@ -14,10 +14,54 @@ use serde_json::{json, Value};
 
 use super::*;
 
-/// The base profile a wrapper may carry: bounded reachability, which FR-197's
-/// backward induction rounds into an interval.
+/// The base profiles a wrapper may carry: bounded reachability, which FR-197's
+/// backward induction rounds into an interval, and unbounded eventual
+/// reachability over a cyclic chain or MDP.
 fn is_wrappable_base(profile: &str) -> bool {
-    profile == PROFILE
+    matches!(profile, PROFILE | CYCLIC_PROFILE | CYCLIC_MDP_PROFILE)
+}
+
+/// One unchecked `policy` row of a bound document: a complete product key and
+/// the FR-181 transition identity hinted there, as offered.
+#[derive(Clone, Debug)]
+pub(super) struct PolicyHint {
+    pub(super) state: String,
+    pub(super) choice: String,
+}
+
+/// A proof-role bound document read as its base's exact document, the side it
+/// certifies and its `policy` hints, when it carries that member.
+pub(super) struct BoundDocument {
+    pub(super) side: SubsystemBoundKind,
+    pub(super) exact: Vec<u8>,
+    pub(super) policy: Option<Vec<PolicyHint>>,
+}
+
+/// The `policy` member of canonical bound-document `bytes`, row shapes only.
+fn policy_hints(bytes: &[u8]) -> Result<Vec<PolicyHint>, ProbabilityDocumentError> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Row<'a> {
+        #[serde(borrow)]
+        state: &'a str,
+        #[serde(borrow)]
+        choice: &'a serde_json::value::RawValue,
+    }
+    #[derive(Deserialize)]
+    struct Hints<'a> {
+        #[serde(borrow)]
+        policy: Vec<Row<'a>>,
+    }
+    let hints: Hints<'_> = serde_json::from_slice(bytes)
+        .map_err(|_| ProbabilityDocumentError::MalformedMember("policy"))?;
+    Ok(hints
+        .policy
+        .into_iter()
+        .map(|row| PolicyHint {
+            state: row.state.to_owned(),
+            choice: row.choice.get().to_owned(),
+        })
+        .collect())
 }
 
 fn object(value: &Value) -> Result<&serde_json::Map<String, Value>, ProbabilityDocumentError> {
@@ -32,17 +76,19 @@ fn side_of(kind: &str) -> Option<SubsystemBoundKind> {
     }
 }
 
-/// Read value-bounds `bytes` as the exact document of their base and the side
-/// they certify; `None` when `bytes` is not a proof-role bound document.
+/// Read value-bounds `bytes` as the exact document of their base, the side
+/// they certify and their policy hints; `None` when `bytes` is not a
+/// proof-role bound document.
 ///
 /// An `upper` document carries no `ranking` (the exact reader's required
 /// member is written empty); a `lower` document's missing `ranking` is left
-/// for the exact reader to name.
+/// for the exact reader to name. The `policy` member is removed from the exact
+/// document and returned unchecked for the base's checker to resolve.
 pub(super) fn unwrap(
     bytes: &[u8],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
-) -> Result<Option<(SubsystemBoundKind, Vec<u8>)>, ProbabilityDocumentError> {
+) -> Result<Option<BoundDocument>, ProbabilityDocumentError> {
     poll(cancel)?;
     let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
     if size > limits.bytes {
@@ -85,6 +131,7 @@ pub(super) fn unwrap(
     }
     let mut document: Value =
         serde_json::from_slice(bytes).map_err(|_| ProbabilityDocumentError::Malformed)?;
+    let mut policy = None;
     let profile = document
         .pointer("/objective/profile")
         .and_then(Value::as_str)
@@ -112,6 +159,9 @@ pub(super) fn unwrap(
             }
             let base = objective["base"].clone();
             root.insert("objective".into(), base);
+            if root.remove("policy").is_some() {
+                policy = Some(policy_hints(bytes)?);
+            }
             match side {
                 SubsystemBoundKind::Upper => {
                     if root.contains_key("ranking") {
@@ -136,7 +186,11 @@ pub(super) fn unwrap(
     }
     root.insert("kind".into(), json!("exact"));
     let exact = canonical(&document, limits.bytes)?;
-    Ok(Some((side, exact)))
+    Ok(Some(BoundDocument {
+        side,
+        exact,
+        policy,
+    }))
 }
 
 /// The proof-role spelling of the base's exact `document` bytes for `side`.

@@ -623,6 +623,7 @@ fn conflicting_identity_precedes_source_provision_and_compilation() {
                 }],
                 universes: vec![],
                 certificate,
+                role: fsl_replay::CertificateRole::Claim,
             },
             ProbabilitySourceLimits {
                 spine: fsl_replay::spine::SpineLimits::default(),

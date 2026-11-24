@@ -671,6 +671,7 @@ fn p95_quantity_ratio_is_accepted_from_its_emitted_package_and_two_ms_refutes() 
                 initial: simulation.initial.clone(),
                 universes: simulation.universes.clone(),
                 certificate: &bytes,
+                role: fsl_replay::CertificateRole::Claim,
             },
             limits,
             &Cancel::new(),

@@ -29,8 +29,18 @@ The request contains `source` (`authority`, `identity`, exact UTF-8 `content`),
 `byte_provision` triples (`authority`, `identity`, byte array), domain/snapshot
 `documents` as byte arrays, `initial` document references, `universes` keyed by
 original `{package,node}` population declarations, the exact `certificate`
-JSON text as a string, and `limits`. Certificate text is preserved exactly.
-Every request object rejects unknown members.
+JSON text as a string, `claim_side`, and `limits`. Certificate text is
+preserved exactly. Every request object rejects unknown members.
+
+`claim_side` states the certificate's role (FR-1042). `true` checks the
+document the claim rests on: an exact document, or the `lower` document of an
+`AtLeast` claim or the `upper` document of an `AtMost` claim, whose initial
+value must meet the threshold; a bound document of the other kind is rejected
+`malformed` at `kind`. `false` checks a value-bounds counterpart: a `lower` or
+`upper` document that meets its own conditions and no threshold. An accepted
+bound document over a cyclic MDP reports the action it selected at each
+existential state as `policy` rows `{state, action}`: the complete product key
+and the FR-196 action body.
 
 `limits` requires `bytes`, `storage_bytes`, `states`, `edges`, `scalar_bits`, `expansion`, and
 `stages` (a map of the existing FR-255 stage/accounting setting names to caller

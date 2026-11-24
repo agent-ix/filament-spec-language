@@ -1836,6 +1836,7 @@ fn check_graph(
         ExactProbabilityAcceptance {
             initial_values: None,
             bound: None,
+            policy: Vec::new(),
             certificate: ExactProbabilityCertificate {
                 values: document.values.clone(),
             },
@@ -2273,6 +2274,7 @@ fn check_mdp(
             },
             document: None,
             value: initial.clone(),
+            policy: Vec::new(),
             side: match bound {
                 Bound::AtLeast(_) => ProbabilityBoundSide::AtLeast,
                 Bound::AtMost(_) => ProbabilityBoundSide::AtMost,
