@@ -15,11 +15,11 @@
 //!
 //! Throughput is source bytes, so criterion also reports bytes per second.
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use fsl_bench::parse::{nested_source, outcome_id, parse, volume_source, ParseOutcome};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use fsl_bench::parse::{ParseOutcome, nested_source, outcome_id, parse, volume_source};
 use fsl_bench::widen;
-use std::hint::black_box;
 use ix_trace_rs::trace;
+use std::hint::black_box;
 
 /// Depths either side of today's refusal boundary (4 parses, 5 refuses).
 const DEPTHS: [usize; 7] = [0, 1, 2, 3, 4, 5, 8];
@@ -41,6 +41,7 @@ fn depth(c: &mut Criterion) {
     group.finish();
 }
 
+#[trace("NFR-141-AC-8", "NFR-141-AC-9")]
 fn volume(c: &mut Criterion) {
     let mut group = c.benchmark_group("parser/volume");
     group.sample_size(20);

@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 
 use logos::Logos;
+use smallvec::SmallVec;
 
 use super::cst::{
     self, CstElement, LosslessCst, Production, RawNode, Recovery, RecoveryKind, TokenClass,
@@ -49,22 +50,68 @@ const EXPECTED_ALTERNATIVE_BOUND: usize = 12;
 #[derive(Clone, Debug)]
 struct Failure {
     position: usize,
-    expected: BTreeSet<String>,
+    expected: SmallVec<[ExpectedId; 4]>,
+}
+
+/// Compact identity for an expected terminal. Human-readable descriptions
+/// are built only when a failure is turned into a diagnostic.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ExpectedId {
+    Label(&'static str),
+    Exact(&'static str),
+    TextValue(&'static str),
+    Peek(&'static [&'static str]),
+    CallableAllowed(&'static str),
+    TypeExcept(&'static str),
+    Dynamic(Box<str>),
+}
+
+impl ExpectedId {
+    fn is_exact(&self, value: &str) -> bool {
+        matches!(self, Self::Exact(expected) if *expected == value)
+    }
+
+    fn description(&self) -> String {
+        match self {
+            Self::Label(label) => (*label).to_owned(),
+            Self::Exact(value) => format!("`{value}`"),
+            Self::TextValue(value) => format!("`\"{value}\"`"),
+            Self::Peek(spellings) => format!("one of `{}`", spellings.join("`, `")),
+            Self::CallableAllowed(value) => format!("identifier or `{value}`"),
+            Self::TypeExcept(value) => format!("type name other than `{value}`"),
+            Self::Dynamic(value) => value.to_string(),
+        }
+    }
 }
 
 impl Failure {
-    fn expected(position: usize, expected: String) -> Self {
+    fn expected(position: usize, expected: ExpectedId) -> Self {
         Self {
             position,
-            expected: BTreeSet::from([expected]),
+            expected: smallvec::smallvec![expected],
         }
+    }
+
+    fn descriptions(&self) -> BTreeSet<String> {
+        self.expected.iter().map(ExpectedId::description).collect()
+    }
+
+    fn ordered_descriptions(&self) -> String {
+        self.descriptions()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(" or ")
     }
 
     fn merge(mut self, other: Self) -> Self {
         match other.position.cmp(&self.position) {
             std::cmp::Ordering::Greater => other,
             std::cmp::Ordering::Equal => {
-                self.expected.extend(other.expected);
+                for expected in other.expected {
+                    if !self.expected.contains(&expected) {
+                        self.expected.push(expected);
+                    }
+                }
                 self
             }
             std::cmp::Ordering::Less => self,
@@ -635,12 +682,7 @@ fn parse_with_declaration_recovery(
                             |code| (code, CompleteCause::UnsupportedSelection),
                         )
                     };
-                    let expected = failure
-                        .expected
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(" or ");
+                    let expected = failure.ordered_descriptions();
                     let message = tokens
                         .get(failure.position)
                         .filter(|_| declaration_form)
@@ -651,7 +693,7 @@ fn parse_with_declaration_recovery(
                                     format_expected(
                                         &tokens,
                                         failure.position,
-                                        &failure.expected,
+                                        &failure.descriptions(),
                                         reserved_words,
                                     )
                                 },
@@ -725,7 +767,13 @@ fn parse_with_declaration_recovery(
                 let has_lexical_error = lexical_spans
                     .iter()
                     .any(|span| span.start < region.end && region.start < span.end);
-                if next.is_none() && !has_lexical_error && failure.expected.contains(";") {
+                if next.is_none()
+                    && !has_lexical_error
+                    && failure
+                        .expected
+                        .iter()
+                        .any(|item| matches!(item, ExpectedId::Exact(";") | ExpectedId::Label(";")))
+                {
                     let insertion_span = failure_span(source, &tokens, failure.position);
                     let mut inserted = tokens.clone();
                     inserted.insert(
@@ -742,12 +790,7 @@ fn parse_with_declaration_recovery(
                     let mut retry = Engine::new(grammar, reserved_words, &inserted, limits, cancel);
                     if let Outcome::Match(_) = retry.production(Production::CompleteUnit, 0) {
                         let span = failure_span(source, &tokens, failure.position);
-                        let expected = failure
-                            .expected
-                            .iter()
-                            .cloned()
-                            .collect::<Vec<_>>()
-                            .join(" or ");
+                        let expected = failure.ordered_descriptions();
                         let message = derived_form(&tokens, &failure).map_or_else(
                             // Explain query type arguments at the parser's
                             // failure point before falling back to grammar details.
@@ -756,14 +799,13 @@ fn parse_with_declaration_recovery(
                                 format_expected(
                                     &tokens,
                                     failure.position,
-                                    &failure.expected,
+                                    &failure.descriptions(),
                                     reserved_words,
                                 )
                             },
                             str::to_owned,
                         );
-                        if scanned.len().saturating_add(diagnostics.len()) < limits.diagnostics
-                        {
+                        if scanned.len().saturating_add(diagnostics.len()) < limits.diagnostics {
                             diagnostics.push(*super::diagnostic::error(
                                 source,
                                 CompleteCode::InvalidSyntax,
@@ -798,30 +840,19 @@ fn parse_with_declaration_recovery(
                 }
                 if !has_lexical_error {
                     let span = failure_span(source, &tokens, failure.position);
-                    let expected = failure
-                        .expected
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(" or ");
                     let message = derived_form(&tokens, &failure)
-                    .or_else(|| {
-                        declared_type_name_hint(
-                            &tokens,
-                            &Failure::expected(failure.position, expected.clone()),
-                        )
-                    })
-                    .map_or_else(
-                        || {
-                            format_expected(
-                                &tokens,
-                                failure.position,
-                                &failure.expected,
-                                reserved_words,
-                            )
-                        },
-                        str::to_owned,
-                    );
+                        .or_else(|| declared_type_name_hint(&tokens, &failure))
+                        .map_or_else(
+                            || {
+                                format_expected(
+                                    &tokens,
+                                    failure.position,
+                                    &failure.descriptions(),
+                                    reserved_words,
+                                )
+                            },
+                            str::to_owned,
+                        );
                     if scanned.len().saturating_add(diagnostics.len()) < limits.diagnostics {
                         diagnostics.push(*super::diagnostic::error(
                             source,
@@ -2113,7 +2144,7 @@ fn derived_form(tokens: &[Significant], failure: &Failure) -> Option<&'static st
     ];
     let word = tokens.get(failure.position)?;
     let follower = tokens.get(failure.position + 1)?;
-    let admits = |operator: &str| failure.expected.contains(&format!("`{operator}`"));
+    let admits = |operator: &str| failure.expected.iter().any(|item| item.is_exact(operator));
     let starts_formula = || FORMULA_STARTS.contains(&follower.spelling.as_ref());
     match word.spelling.as_ref() {
         "previous" if admits("once") && starts_formula() => {
@@ -2615,7 +2646,10 @@ impl<'a> Engine<'a> {
         }
         let grammar = self.grammar;
         let Some(rule) = grammar.get(&production) else {
-            return Step::Return(self.fail(Failure::expected(position, format!("{production:?}"))));
+            return Step::Return(self.fail(Failure::expected(
+                position,
+                ExpectedId::Dynamic(format!("{production:?}").into()),
+            )));
         };
         self.frames.push(Frame::Production {
             production,
@@ -2646,9 +2680,10 @@ impl<'a> Engine<'a> {
             }
             Rule::Choice(rules) => {
                 let Some(head) = rules.first() else {
-                    return Step::Return(
-                        self.fail(Failure::expected(position, "alternative".into())),
-                    );
+                    return Step::Return(self.fail(Failure::expected(
+                        position,
+                        ExpectedId::Label("alternative"),
+                    )));
                 };
                 self.frames.push(Frame::Choice {
                     rules,
@@ -2832,7 +2867,10 @@ impl<'a> Engine<'a> {
                 } else {
                     Step::Return(match failure {
                         Some(failure) => Outcome::No(failure),
-                        None => self.fail(Failure::expected(end, "repeated production".into())),
+                        None => self.fail(Failure::expected(
+                            end,
+                            ExpectedId::Label("repeated production"),
+                        )),
                     })
                 }
             }
@@ -2846,12 +2884,15 @@ impl<'a> Engine<'a> {
                 return if position == self.tokens.len() {
                     Outcome::Match(position)
                 } else {
-                    self.fail(Failure::expected(position, "end of source".into()))
+                    self.fail(Failure::expected(
+                        position,
+                        ExpectedId::Label("end of source"),
+                    ))
                 };
             }
             _ => {
                 let Some(token) = self.tokens.get(position) else {
-                    return self.fail(Failure::expected(position, terminal.description()));
+                    return self.fail(Failure::expected(position, terminal.expected_id()));
                 };
                 match terminal {
                     Terminal::Exact(value)
@@ -2880,7 +2921,7 @@ impl<'a> Engine<'a> {
                         return if spellings.contains(&token.spelling.as_ref()) {
                             Outcome::Match(position)
                         } else {
-                            self.fail(Failure::expected(position, terminal.description()))
+                            self.fail(Failure::expected(position, terminal.expected_id()))
                         };
                     }
                     Terminal::Bound => {
@@ -2923,7 +2964,10 @@ impl<'a> Engine<'a> {
                                         .is_none_or(|before| before.spelling.as_ref() != "::")
                             });
                         if intrinsic && token.spelling.as_ref() == ")" {
-                            return self.fail(Failure::expected(position, "an expression".into()));
+                            return self.fail(Failure::expected(
+                                position,
+                                ExpectedId::Label("an expression"),
+                            ));
                         }
                         token.spelling.as_ref() == ")"
                     }
@@ -2936,35 +2980,38 @@ impl<'a> Engine<'a> {
             }
         };
         if !accepted {
-            return self.fail(Failure::expected(position, terminal.description()));
+            return self.fail(Failure::expected(position, terminal.expected_id()));
         }
         Outcome::Match(position + 1)
     }
 }
 
 impl Terminal {
-    fn description(&self) -> String {
+    fn expected_id(&self) -> ExpectedId {
         match self {
             Self::Exact(value) | Self::Literal(value) | Self::ContextualWord(value) => {
-                format!("`{value}`")
+                ExpectedId::Exact(value)
             }
-            Self::Identifier => "identifier".into(),
-            Self::CallableName(None) => "identifier".into(),
-            Self::CallableName(Some(allowed)) => format!("identifier or `{allowed}`"),
-            Self::MemberName => "qualified ASCII member name".into(),
-            Self::Text => "quoted string".into(),
-            Self::TextValue(value) => format!("`\"{value}\"`"),
-            Self::UnsignedInteger => "unsigned integer".into(),
-            Self::DecimalLiteral => "decimal literal".into(),
-            Self::Peek(spellings) => format!("one of `{}`", spellings.join("`, `")),
-            Self::Bound => "unsigned 64-bit integer".into(),
-            Self::ClockType { word, .. } => format!("`{word}`"),
-            Self::TypeIdentifier { except } => format!("type name other than `{except}`"),
-            Self::EmptyCallEnd { .. } => "`)`".into(),
-            Self::ExtensionKeyword(word) => format!("`{word}`"),
-            Self::ExtensionClause(name) => format!("clause-name, the clause `{name}`"),
-            Self::ExtensionSeparator(next) => format!("`,` before clause `{next}`"),
-            Self::End => "end of source".into(),
+            Self::Identifier | Self::CallableName(None) => ExpectedId::Label("identifier"),
+            Self::CallableName(Some(allowed)) => ExpectedId::CallableAllowed(allowed),
+            Self::MemberName => ExpectedId::Label("qualified ASCII member name"),
+            Self::Text => ExpectedId::Label("quoted string"),
+            Self::TextValue(value) => ExpectedId::TextValue(value),
+            Self::UnsignedInteger => ExpectedId::Label("unsigned integer"),
+            Self::DecimalLiteral => ExpectedId::Label("decimal literal"),
+            Self::Peek(spellings) => ExpectedId::Peek(spellings),
+            Self::Bound => ExpectedId::Label("unsigned 64-bit integer"),
+            Self::ClockType { word, .. } => ExpectedId::Exact(word),
+            Self::TypeIdentifier { except } => ExpectedId::TypeExcept(except),
+            Self::EmptyCallEnd { .. } => ExpectedId::Label("`)`"),
+            Self::ExtensionKeyword(word) => ExpectedId::Dynamic(format!("`{word}`").into()),
+            Self::ExtensionClause(name) => {
+                ExpectedId::Dynamic(format!("clause-name, the clause `{name}`").into())
+            }
+            Self::ExtensionSeparator(next) => {
+                ExpectedId::Dynamic(format!("`,` before clause `{next}`").into())
+            }
+            Self::End => ExpectedId::Label("end of source"),
         }
     }
 }

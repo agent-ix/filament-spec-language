@@ -572,7 +572,7 @@ fn corpus() -> Vec<(&'static str, String)> {
     ]
 }
 
-#[trace("FSpec-TC-180", "FSpec-FR-339-AC-2", "FR-003-AC-14")]
+#[trace("FSpec-TC-180", "FSpec-FR-339-AC-2", "FR-003-AC-14", "NFR-141-AC-8")]
 #[test]
 fn every_named_production_has_positive_vectors_and_exact_boundaries() {
     assert_eq!(Production::all(), ACCEPTED_PRODUCTIONS);
@@ -1185,7 +1185,11 @@ fn default_and_caller_forms_preserve_parser_outputs() {
             production_tree(&with_empty_forms),
             "{id}"
         );
-        assert_eq!(default.diagnostics(), with_empty_forms.diagnostics(), "{id}");
+        assert_eq!(
+            default.diagnostics(),
+            with_empty_forms.diagnostics(),
+            "{id}"
+        );
     }
 
     let forms = ExtensionForms::new([ExtensionProduction::new("deploy", ["by"])]);

@@ -24,7 +24,7 @@ fn messages(text: &str) -> Vec<String> {
         .collect()
 }
 
-#[trace("TC-2198")]
+#[trace("TC-2198", "NFR-141-AC-8")]
 #[test]
 fn long_expected_sets_use_a_short_category_phrase() {
     let output = messages(&format!(

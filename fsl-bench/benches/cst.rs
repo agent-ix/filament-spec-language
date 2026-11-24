@@ -13,8 +13,9 @@
 //! each) and 1,000 one-line functions. `fsl-bench-probe cst` prints their
 //! node counts.
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use fsl_bench::parse::{nested_source, parse, volume_source};
+use ix_trace_rs::trace;
 use std::hint::black_box;
 
 fn inputs() -> Vec<(String, String)> {
@@ -25,6 +26,7 @@ fn inputs() -> Vec<(String, String)> {
     inputs
 }
 
+#[trace("NFR-141-AC-8", "NFR-141-AC-9")]
 fn cst_parse(c: &mut Criterion) {
     let mut group = c.benchmark_group("cst");
     for (label, text) in inputs() {

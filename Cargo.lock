@@ -1006,6 +1006,7 @@ dependencies = [
  "logos",
  "proptest",
  "serde_json",
+ "smallvec",
 ]
 
 [[package]]
