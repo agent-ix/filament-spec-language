@@ -17,7 +17,7 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 const PACKAGE: &str = "example/config-version";
-const MODEL: &str = include_str!("../../examples/config-version/model.semantic-ir.json");
+const MODEL: &str = include_str!("../../../examples/config-version/model.semantic-ir.json");
 
 fn unit() -> String {
     format!(
