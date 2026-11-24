@@ -159,10 +159,11 @@ fn a_constraint_never_proves_past_its_boundary() {
     assert_ne!(label(&item), "proved", "{item}");
 }
 
-/// Partial TC-581 coverage: a named Low selection executes with true truth
-/// and its request echo retains the selected constraint name. A selection
-/// naming invariant Wide refuses before any state is expanded, and a
-/// constraint anchored at an operation refuses during source compilation.
+/// Partial TC-581 coverage: a named Low selection cuts exploration at the
+/// constraint boundary, records `constraint-reached`, and retains the
+/// selected constraint name in its request echo. A selection naming
+/// invariant Wide refuses before any state is expanded, and a constraint
+/// anchored at an operation refuses during source compilation.
 /// FR-158-AC-6 remains open for node-key request and refusal behavior.
 #[trace("TC-581")]
 #[test]
@@ -187,7 +188,10 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
             .as_bytes(),
     );
     let valid = analyze(&package_path).item(0);
-    assert_eq!(valid["axes"]["truth"], "true", "{valid}");
+    assert_eq!(label(&valid), "inconclusive", "{valid}");
+    assert!(valid["record"].to_string().contains("constraint-reached"), "{valid}");
+    assert_eq!(valid["exploration"]["states"], "57", "{valid}");
+    assert_eq!(valid["exploration"]["transitions"], "384", "{valid}");
     assert_eq!(valid["request"]["reductions"]["constraint"], "Low", "{valid}");
 
     let run_invalid = |name: &str, constraint: Value| {
