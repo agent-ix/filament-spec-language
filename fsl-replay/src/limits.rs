@@ -840,7 +840,7 @@ mod tests {
 
     /// FR-255-AC-14: the settings operation returns the SMT run values and
     /// keeps every encoding and solver bound at its published default.
-    #[trace("FR-255-AC-14")]
+    #[trace("FR-255-AC-14", "TC-1250")]
     #[test]
     fn smt_run_settings_are_typed_and_independent_from_encoding_settings() {
         let limits = CallerLimits::from_operands([
@@ -884,7 +884,7 @@ mod tests {
 
     /// FR-255-AC-21: worker settings are returned independently, default to
     /// one, and remain outside the engine limit table.
-    #[trace("FR-255-AC-21")]
+    #[trace("FR-255-AC-21", "TC-720")]
     #[test]
     fn worker_settings_are_positive_request_settings_not_engine_limits() {
         let limits = CallerLimits::from_operands([
@@ -928,7 +928,9 @@ mod tests {
         ] {
             let one = CallerLimits::from_operands([operand]).expect("worker setting is accepted");
             assert_eq!(one.workers, expected, "{operand}");
-            assert_eq!(one.explore.max_states, 10_000_000, "{operand}");
+            let mut expected_limits = CallerLimits::default();
+            expected_limits.workers = expected;
+            assert_eq!(one, expected_limits, "other limits changed for {operand}");
         }
         assert_eq!(Setting::from_name("explore.workers"), None);
         assert_eq!(Setting::from_name("model_check.workers"), None);
