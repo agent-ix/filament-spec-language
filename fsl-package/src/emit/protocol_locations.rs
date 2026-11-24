@@ -675,6 +675,20 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
         operand_forms.sort_unstable();
         assert_eq!(operand_forms, vec!["binary".to_owned(), "query".to_owned()]);
         let positions = walk(capture.initializer.root());
+        let query = positions
+            .iter()
+            .map(|(node, _)| *node)
+            .find(|node| matches!(node.kind(), NodeKind::Query { .. }))
+            .expect("the capture's checked query");
+        let query_operands = query.children();
+        let [source, predicate] = query_operands.as_slice() else {
+            panic!("the query has its source and predicate operands");
+        };
+        assert!(matches!(source.kind(), NodeKind::NamedPopulation { .. }));
+        assert!(matches!(predicate.kind(), NodeKind::Equality(..)));
+        let shared = source.location();
+        assert_eq!(shared, predicate.location());
+        assert_ne!(shared, root);
         let located_operands = operands
             .iter()
             .map(|operand| {

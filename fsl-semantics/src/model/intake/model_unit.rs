@@ -2,8 +2,7 @@
 //! FR-710: compile an FSL model unit to its FR-154 domain-package document.
 
 use agent_ix_extraction_frontend::identity::PackageIdentity;
-use fsl_cst as cst;
-use fsl_cst::{CompleteCause, CompleteCode, CompleteDiagnostic, ParsedSource};
+use fsl_forms::cst::{self, CompleteCause, CompleteCode, CompleteDiagnostic, ParsedSource};
 use fsl_foundation::diagnostic::{Code, Diagnostic};
 use fsl_foundation::{Phase, Source, SourceIdentity, Span};
 use serde_json::{json, Value};
@@ -75,7 +74,7 @@ pub(super) fn compile_model_unit_bytes(
         SourceIdentity::new("filament", identity),
         "model-unit.fsl",
         bytes,
-        cst::Limits::default().source_bytes,
+        cst::Limits::default().source_bytes(),
     )
     .map_err(|error| refusal(format!("{error}")))?;
     let parsed = cst::parse_source(source, cst::Limits::default())

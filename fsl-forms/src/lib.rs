@@ -31,6 +31,9 @@
 mod abstraction_declaration;
 mod clause_text;
 mod composition_declaration;
+/// FR-710's model-unit parsing seam, which wraps layer-1 source and token
+/// evidence without re-exporting any `fsl-cst` types.
+pub mod cst;
 mod dispatch;
 mod extension_declaration;
 mod guarantee_declaration;

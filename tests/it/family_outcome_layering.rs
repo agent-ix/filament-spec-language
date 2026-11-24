@@ -266,9 +266,10 @@ fn workspace_dependencies() -> Vec<PackageDependencies> {
 /// (a build dependency on a higher layer or on this crate fails as a normal
 /// one does). `fsl-semantics`
 /// (layer 3) names exactly `fsl-forms` and `fsl-foundation` among
-/// the workspace crates in `[dependencies]`, never `fsl-cst`; its `[dev-dependencies]` may name
-/// `fsl-cst` so the FR-091
-/// assembler's tests can run S1 (FR-091-AC-20), and only
+/// the workspace crates in `[dependencies]`, never `fsl-cst`; production
+/// model intake reaches S1 through `fsl-forms::cst`'s non-re-exporting
+/// wrapper, and its `[dev-dependencies]` may name `fsl-cst` for tests that
+/// exercise S1 directly (FR-091-AC-20), and only
 /// `model::intake` names its FCD dependencies. `filament-exact` and
 /// `filament-semantic-value` are external git dependencies of their own
 /// repositories, so no workspace check reaches them; `fsl-foundation` may name `filament-exact`,
