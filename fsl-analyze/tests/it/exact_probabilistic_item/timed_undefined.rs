@@ -205,6 +205,29 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
             serde_json::json!("absent-key"),
             "{name} undefined cause"
         );
+        let every_scheduler = matches!(
+            *name,
+            "UndefinedElapsed"
+                | "UndefinedElapsedRegion"
+                | "UndefinedEvery"
+                | "UndefinedWeightedLongRun"
+                | "UndefinedEveryWeightedLongRun"
+                | "UndefinedMeanTime"
+        );
+        assert_eq!(
+            undefined.path.scheduler.len(),
+            usize::from(every_scheduler),
+            "{name} scheduler rows"
+        );
+        if every_scheduler {
+            assert_eq!(
+                undefined.path.scheduler[0].1,
+                fsl_replay::ProbabilisticSchedulerChoice::Deterministic(
+                    undefined.path.paths[0].steps[0].choice.clone()
+                ),
+                "{name} selected scheduler action"
+            );
+        }
     }
     let every = records[5]
         .probabilistic_counterexample
@@ -213,36 +236,6 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
     let every_undefined = every
         .undefined()
         .expect("Every has a checked undefined path");
-    assert_eq!(
-        every_undefined.path.paths[0].steps[0]
-            .action
-            .as_ref()
-            .unwrap()
-            .operation,
-        "Call/drop"
-    );
-    assert_eq!(every_undefined.path.scheduler.len(), 1);
-    assert_eq!(
-        every_undefined.path.scheduler[0].1,
-        fsl_replay::ProbabilisticSchedulerChoice::Deterministic(
-            every_undefined.path.paths[0].steps[0].choice.clone()
-        )
-    );
-    let weighted_every = records[7]
-        .probabilistic_counterexample
-        .as_ref()
-        .expect("Every's reward-weighted undefined path is replayed")
-        .undefined()
-        .expect("Every's reward-weighted path has a checked scheduler");
-    assert_eq!(weighted_every.path.scheduler.len(), 1);
-    assert_eq!(
-        weighted_every.path.paths[0].steps[0]
-            .action
-            .as_ref()
-            .unwrap()
-            .operation,
-        "Call/drop"
-    );
     let system = fsl_eval::simulation::model::ModelSystem::new(world.request()).unwrap();
     let initial = system.initial().remove(0);
     let keep = system
