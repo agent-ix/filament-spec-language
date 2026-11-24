@@ -1399,6 +1399,22 @@ fn timed_deadline_dense_elimination_cancellation_settles_incomplete() {
     crate::prob_world::assert_dense_elimination_cancelled(request(&world, "Deadline"));
 }
 
+/// Expected elapsed time uses the unbounded solver fallback too, and must
+/// preserve its dense-elimination cancellation instead of turning it into an
+/// engine failure.
+#[trace("TC-638", "FR-203-AC-28")]
+#[test]
+fn timed_mean_dense_elimination_cancellation_settles_incomplete() {
+    let world = retx(
+        STRICT,
+        true,
+        "",
+        "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin \
+         { expected elapsed until holds(c.late) <= 3 ms }\n",
+    );
+    crate::prob_world::assert_dense_elimination_cancelled(request(&world, "MeanTime"));
+}
+
 /// FR-924-AC-5: a time-locked initial state is terminal.
 #[trace("TC-2493", "FR-924-AC-5")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-6")]
@@ -1785,8 +1801,7 @@ fn a_timed_deadline_past_the_rational_budget_proves_with_value_bounds() {
         method,
         &fsl_replay::BoundsMethod::BackwardInduction { precision_bits: 64 }
     );
-    let fsl_replay::ExactBound::Finite(upper) = upper
-    else {
+    let fsl_replay::ExactBound::Finite(upper) = upper else {
         panic!("complete product interval has a finite upper endpoint");
     };
     assert!(lower.value() <= &ratio(99, 100) && &ratio(99, 100) <= upper.value());

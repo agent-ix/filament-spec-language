@@ -208,6 +208,18 @@ pub(super) fn run(
                 subject,
             )
         }
+        Err(UnboundedError::MaxWorkingBytes) => {
+            return settled(
+                &ExactProbBuildIssue::Limit {
+                    limit: ModelCheckLimit::CertificateMaxWorkingBytes,
+                    value: limits.document.storage_bytes,
+                },
+                subject,
+            )
+        }
+        Err(UnboundedError::Cancelled(cause)) => {
+            return settled(&ExactProbBuildIssue::Cancelled(cause), subject)
+        }
         Err(UnboundedError::ZeroWeightComponent) => {
             return EngineReport::Refused(Refusal::Unsupported(ZERO_WEIGHT_COMPONENT))
         }
@@ -538,14 +550,12 @@ fn every_scheduler(
         }
     }
     let chain = induced_chain(product, &policy);
-    let solved =
-        match crate::exact_probabilistic::decide_long_run_workload(
-            &chain, predicate, None, limits, cancel,
-        )
-        {
-            Ok(solved) => solved,
-            Err(error) => return stopped(error),
-        };
+    let solved = match crate::exact_probabilistic::decide_long_run_workload(
+        &chain, predicate, None, limits, cancel,
+    ) {
+        Ok(solved) => solved,
+        Err(error) => return stopped(error),
+    };
     let Some(ExtRational::Finite(induced)) = solved.values.get(initial.index()) else {
         return broken();
     };

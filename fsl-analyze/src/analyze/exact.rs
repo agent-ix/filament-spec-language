@@ -21,7 +21,6 @@ use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::statistical::{ClaimForm, SubjectLimits};
-use fsl_replay::{CertificateLocus, CertificateRule};
 use fsl_replay::{
     check_probability_certificate_document, claim_binding, probability_proof_document,
     write_probability_certificate, write_probability_proof_document, ExactBinding,
@@ -37,6 +36,7 @@ use fsl_replay::{
     ProbabilisticCounterexample, ProbabilityWitnessError, ProbabilityWitnessPath,
     ProbabilityWitnessReplay, ProbabilityWitnessStep, ReproducedProbabilityWitness,
 };
+use fsl_replay::{CertificateLocus, CertificateRule};
 use fsl_replay::{InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule};
 use fsl_route::Mode;
 use fsl_semantics::check::{
@@ -386,6 +386,10 @@ fn unbounded_failure(
             },
             subject,
         ),
+        UnboundedError::MaxWorkingBytes => working_bytes_limit(limits, subject),
+        UnboundedError::Cancelled(cause) => {
+            settled(&ExactProbBuildIssue::Cancelled(cause), subject)
+        }
         _ => broken(),
     }
 }
@@ -425,6 +429,41 @@ fn is_unbounded_eventually_formula(formula: &fsl_semantics::check::CheckedTempor
 
 fn broken() -> EngineReport {
     EngineReport::Refused(Refusal::Failed(BROKEN))
+}
+
+/// A dense exact linear system that would not fit the working-storage ceiling:
+/// the run stopped at `certificate_check.max_working_bytes` before building it.
+fn working_bytes_limit(
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    settled(
+        &ExactProbBuildIssue::Limit {
+            limit: ModelCheckLimit::CertificateMaxWorkingBytes,
+            value: limits.document.storage_bytes,
+        },
+        subject,
+    )
+}
+
+/// Settle failures from the shared finite-horizon solver.
+fn bounded_solve_failure(
+    error: FhError,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    match error {
+        FhError::PolicyIterationLimit => settled(
+            &ExactProbBuildIssue::Limit {
+                limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
+                value: limits.max_policy_iterations,
+            },
+            subject,
+        ),
+        FhError::MaxWorkingBytes => working_bytes_limit(limits, subject),
+        FhError::Cancelled(cause) => settled(&ExactProbBuildIssue::Cancelled(cause), subject),
+        _ => broken(),
+    }
 }
 
 /// A finite-horizon solve that held its probabilities only as outward-rounded
@@ -623,19 +662,10 @@ fn run_timed(
             });
             (values, policy)
         }
-        Err(FhError::PolicyIterationLimit) => {
-            return settled(
-                &ExactProbBuildIssue::Limit {
-                    limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
-                    value: limits.max_policy_iterations,
-                },
-                subject,
-            );
-        }
         Ok(FhResult::PrecisionBudget { lower, upper, .. }) => {
             return precision_budget(lower.rational(), upper.rational(), subject);
         }
-        Err(_) => return broken(),
+        Err(error) => return bounded_solve_failure(error, &limits, subject),
     };
     let Some(value) = values.get(start.index()) else {
         return broken();
@@ -1086,6 +1116,10 @@ fn run_timed_mean(
                 },
                 subject,
             );
+        }
+        Err(UnboundedError::MaxWorkingBytes) => return working_bytes_limit(&limits, subject),
+        Err(UnboundedError::Cancelled(cause)) => {
+            return settled(&ExactProbBuildIssue::Cancelled(cause), subject)
         }
         Err(_) => {
             return broken();
@@ -1597,16 +1631,7 @@ fn run(
             Ok(FhResult::PrecisionBudget { lower, upper, .. }) => {
                 return precision_budget(lower.rational(), upper.rational(), subject);
             }
-            Err(FhError::PolicyIterationLimit) => {
-                return settled(
-                    &ExactProbBuildIssue::Limit {
-                        limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
-                        value: limits.max_policy_iterations,
-                    },
-                    subject,
-                );
-            }
-            Err(_) => return broken(),
+            Err(error) => return bounded_solve_failure(error, &limits, subject),
         }
     } else {
         let result = match &claim.form {
@@ -1625,16 +1650,14 @@ fn run(
                 target: ReachTarget::Always(_),
                 ..
             } => decide_always(solve_product, &target, objective, &limits, cancel),
-            ProbForm::ExpectedReward { reward, .. } => {
-                decide_expected_reward(
-                    solve_product,
-                    &target,
-                    reward.as_str(),
-                    objective,
-                    &limits,
-                    cancel,
-                )
-            }
+            ProbForm::ExpectedReward { reward, .. } => decide_expected_reward(
+                solve_product,
+                &target,
+                reward.as_str(),
+                objective,
+                &limits,
+                cancel,
+            ),
             _ => decide_reachability(solve_product, &target, objective, &limits, cancel),
         };
         let result = result.and_then(|solved| {
@@ -2215,8 +2238,8 @@ fn run(
             tamper,
             subject,
         ) {
-        Ok(report) => report,
-        Err(report) => *report,
+            Ok(report) => report,
+            Err(report) => *report,
         };
     }
     let certificate = match (bounded_formula, monitor) {
@@ -3267,13 +3290,9 @@ fn replay_refutation(
         // retry with the one that reaches a failure most, never continuing
         // past a state a direct event has already decided.
         let retried = match stopped.as_deref() {
-            None => decide_reachability(
-                product,
-                &accepting,
-                UnboundedObjective::Max,
-                limits,
-                cancel,
-            ),
+            None => {
+                decide_reachability(product, &accepting, UnboundedObjective::Max, limits, cancel)
+            }
             Some(stopped) => {
                 let open = stopped.iter().map(|stopped| !stopped).collect::<Vec<_>>();
                 decide_until(
