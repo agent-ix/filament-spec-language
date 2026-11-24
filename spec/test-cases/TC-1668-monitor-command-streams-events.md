@@ -27,5 +27,5 @@ progress record and final `{"end": true}` record.
 - One event per change at the record that caused it; the summary equals the closed batch run; exit 10.
 - The bad record yields one `refusal` event naming it; the other events and the summary are unchanged.
 - AC-5: each latest event's category equals the run over the samples so far; its disposition equals the run up to its record. `Never` settles at record 2 with `settled` `true` and a three-sample counterexample; `Reaches` is `pending` with `settled` `false` at records 0 and 1 and settles `success` at record 2, its witness, with `settled` `true`. The summary equals the latest events, `settled` included, and its `settlement` is each clause's settling event's, `{"step": "3", "trigger": "decided"}` with its basis; exit 10.
-- AC-20, AC-22 and AC-24: the summary clause category is `success`, exit 0, and at least one sink event has category `success`.
-- AC-21, AC-23 and AC-25: the summary clause category is `violation`, exit 10, and at least one sink event has category `violation`.
+- AC-20, AC-22 and AC-24: `summary.clauses[0].category` is `success`, exit 0, and at least one sink event has category `success`.
+- AC-21, AC-23 and AC-25: `summary.clauses[0].category` is `violation`, exit 10, and at least one sink event has category `violation`.
