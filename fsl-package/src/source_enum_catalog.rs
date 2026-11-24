@@ -544,7 +544,10 @@ mod tests {
             let document = serde_json::to_vec(&model_fixture::document()).unwrap();
             let packages =
                 fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
-            let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel M = {:?};\n{body}", model_fixture::PACKAGE);
+            let text = format!(
+                "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel M = {:?};\n{body}",
+                model_fixture::PACKAGE
+            );
             let parsed = fsl_cst::parse(
                 fsl_foundation::SourceIdentity::new("test", "enum-catalog"),
                 "catalog.native",
@@ -701,7 +704,7 @@ mod tests {
             .unwrap();
         let bytes = original.to_bytes(&fixture.admitted).unwrap();
         let file: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(file["format"], "filament.checked-handoff.identities/6");
+        assert_eq!(file["format"], "filament.checked-handoff.identities/7");
         let rows = file["source_enums"]
             .as_array()
             .expect("real source enum carrier");

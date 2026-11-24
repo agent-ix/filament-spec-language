@@ -7,7 +7,7 @@
 use filament_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 
-use filament_exact::{Integer, IntegerInterval, Presence};
+use filament_exact::{Integer, IntegerInterval, NodeKey, Presence, UnionMember};
 use fsl_forms::{
     BinaryOperator, BuiltinType, DeclaredClauseKind, Expression, FunctionDeclaration, TypeForm,
     TypeFormHead,
@@ -21,19 +21,22 @@ use super::*;
 use crate::check::checked_dispatch::{DispatchRoot, OperationClauses, checked_dispatch_operation};
 use crate::check::family::fixtures::{empty_scope, fixture_source};
 use crate::check::family::{OccurrenceMap, OccurrenceRole};
-use crate::check::{CheckedGraph, PackageDeclarations};
-use crate::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
+use crate::check::{CheckCause, CheckedGraph, PackageDeclarations, Scope};
+use crate::model::accounting::{Meter, ModelNormalizationLimits, NormalizationMeter};
 use crate::model::dispatch::GeneralizationClosure;
 use crate::model::domain_package::{
-    FieldMemberRecord, Multiplicity, NativeValueType, ObjectTypeRecord, OperationEffect,
-    OperationMemberRecord, OperationParameterRecord, OperationResult, PersistenceInterfaceRecord,
-    RecordValueTypeRecord, RelationshipDirection, RelationshipEnd, RelationshipRecord,
+    DomainPackage, DomainPackageRecord, DomainPackageRef, EnumRecord, FieldMemberRecord,
+    Multiplicity, NativeValueType, ObjectTypeRecord, OperationEffect, OperationMemberRecord,
+    OperationParameterRecord, OperationResult, PersistenceInterfaceRecord, RecordValueTypeRecord,
+    RelationshipDirection, RelationshipEnd, RelationshipRecord, SequenceTypeRecord,
     StateMachineRecord, StateMachineStateRecord, StateMachineTransitionRecord, ValueTypeRef,
+    VariantRecord,
 };
 use crate::model::normalize::{NormalizeOutcome, normalize};
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
-    FieldDeclaration, ObjectTypeDeclaration, TypeEnvironment,
+    CompositeDeclaration, CompositeShape, FieldDeclaration, ObjectTypeDeclaration, TypeEnvironment,
+    UnionMemberDeclaration,
 };
 use filament_semantic_value::location::ExpressionLocation as Location;
 
@@ -473,11 +476,22 @@ fn lower_with_occurrences<T>(
     build: impl FnOnce(&mut Lowering<'_>) -> T,
 ) -> (T, SemanticGraph, OccurrenceMap<Location>) {
     let scope = empty_scope();
+    lower_in_scope(&scope, models, units, build)
+}
+
+/// Shared lowering setup over an explicit scope, for defensive model-shape
+/// tests whose admitted union type must reach the payload lowering branch.
+fn lower_in_scope<T>(
+    scope: &Scope,
+    models: &[AdmittedModel],
+    units: filament_semantic_value::quantity::UnitTable,
+    build: impl FnOnce(&mut Lowering<'_>) -> T,
+) -> (T, SemanticGraph, OccurrenceMap<Location>) {
     let mut occurrences = OccurrenceMap::default();
     let owner = crate::check::SourceOwner::from(&fixture_source());
     let mut meter = filament_exact::Meter::new(crate::check::family::SCALAR_LIMITS_UNLIMITED);
     let mut lowering = Lowering::new_with_source_owners(
-        &scope,
+        scope,
         &owner,
         &std::collections::BTreeMap::new(),
         models,
@@ -495,6 +509,110 @@ fn lower_with_occurrences<T>(
         .expect("lowering finishes")
         .graph;
     (built, graph, occurrences)
+}
+
+/// Exercise one malformed admitted union payload through the same lowering
+/// branch that writes the selected model-union row.
+fn model_union_refusal(
+    payload_type: Option<ValueTypeRef>,
+    retain_variant_record: bool,
+) -> (KeyFault, bool) {
+    let union_key = key("Phase");
+    let case_key = key("variant/Phase-On");
+    let mut records = vec![DomainPackageRecord::Enum(EnumRecord {
+        key: union_key.clone(),
+        name: "Phase".to_owned(),
+        members: vec!["On".to_owned()],
+    })];
+    if payload_type
+        .as_ref()
+        .is_some_and(|payload| matches!(payload, ValueTypeRef::Package(target) if target == &key("ClockSequence")))
+    {
+        records.push(DomainPackageRecord::SequenceType(SequenceTypeRecord {
+            key: key("ClockSequence"),
+            items: ValueTypeRef::Clock,
+        }));
+    }
+    records.push(DomainPackageRecord::Variant(VariantRecord {
+        key: case_key.clone(),
+        owner: union_key.clone(),
+        case: "On".to_owned(),
+        payload_type,
+        position: 0,
+    }));
+    let package = DomainPackage::new(
+        DomainPackageRef {
+            identity: PACKAGE.to_owned(),
+        },
+        records,
+    );
+    let NormalizeOutcome::Completed(view) =
+        normalize(&package, ModelNormalizationLimits::default())
+    else {
+        panic!("the malformed lowering fixture still normalizes")
+    };
+    let mut model = AdmittedModel::new(&package, &view).expect("the admitted model is indexed");
+    if !retain_variant_record {
+        assert!(model.records.remove(&case_key).is_some());
+    }
+    let handle = model_declaration_key(
+        PACKAGE,
+        NodeTag::Model,
+        "variant_type",
+        union_key.node.as_str(),
+    )
+    .expect("the model union handle is well formed");
+    let member = UnionMember::from_admitted(handle.clone(), "On").expect("a case identity");
+    let types = TypeEnvironment::new(
+        [CompositeDeclaration::new(
+            handle.clone(),
+            "Phase",
+            CompositeShape::Union(vec![UnionMemberDeclaration::from_verified(
+                member,
+                Vec::new(),
+            )]),
+        )],
+        [],
+    )
+    .expect("the union type is admitted");
+    let scope = crate::check::family::fixtures::scope_with(types, Vec::new());
+    let models = [model];
+    let location = generated_location();
+    let ((refusal, no_union_row), graph, _) =
+        lower_in_scope(&scope, &models, Default::default(), |lowering| {
+            let refusal = lowering
+                .model_union_payloads(&union_key, &handle, &handle, "M", &location)
+                .expect_err("the malformed selected model union refuses");
+            let no_union_row = lowering.graph.selected_model_unions().next().is_none();
+            (refusal, no_union_row)
+        });
+    let CheckCause::InternalFault(fault) = refusal.cause else {
+        panic!(
+            "a typed internal union-lowering fault, got {:?}",
+            refusal.cause
+        );
+    };
+    assert!(graph.selected_model_unions().next().is_none());
+    (*fault, no_union_row)
+}
+
+/// FR-531-AC-49: both malformed union paths return their named typed fault and
+/// leave no selected model-union row, so no case is silently dropped.
+#[trace("TC-1331", "FR-531-AC-49")]
+#[test]
+fn malformed_selected_model_unions_refuse_without_emitting_a_union_row() {
+    let missing = model_union_refusal(None, false);
+    assert_eq!(missing.0, KeyFault::MissingUnionVariant(key("Phase")));
+    assert_eq!(missing.0.invariant(), "union-case-variant-retained");
+    assert!(missing.1, "a missing authored variant leaves no union row");
+
+    let unsupported = model_union_refusal(Some(ValueTypeRef::Package(key("ClockSequence"))), true);
+    assert_eq!(
+        unsupported.0,
+        KeyFault::UnsupportedUnionPayload(key("variant/Phase-On"))
+    );
+    assert_eq!(unsupported.0.invariant(), "union-payload-has-ir-form");
+    assert!(unsupported.1, "an unsupported payload leaves no union row");
 }
 
 // ---------------------------------------------------------------------

@@ -6,7 +6,7 @@ use filament_contract_model::{
     SelectedExactFieldRow, SelectedExactIdentities, SelectedExactIdentity, SelectedSourceObjectRow,
     SelectedSourceOperationRow, SelectedSourceRecordRow, SelectedSourceUnionRow,
 };
-use filament_exact::{EffectiveId, MemberId, MemberOwner};
+use filament_exact::{EffectiveId, MemberId, MemberOwner, PathSegmentView};
 
 use crate::native_row as charge;
 use crate::{IdentityFileRefusal, NativeRowError, ReadIdentityRows};
@@ -273,6 +273,28 @@ impl Emission {
                 row,
             )?;
         }
+        let locus = package_locus("identity_model_tuple_output");
+        charge::items(budget, locus, self.selected_tuple_declaration_rows.len())?;
+        for (index, row) in self.selected_tuple_declaration_rows.iter().enumerate() {
+            let locus = adapter_locus(index, "identity_model_tuple_output");
+            charge::work(budget, locus, 1)?;
+            charge::node(budget, locus, &row.structural_node)?;
+            charge::text(budget, locus, &row.selected_document)?;
+            charge::text(budget, locus, &row.original_identity)?;
+            let mut pending = vec![row.node_key.view()];
+            while let Some(view) = pending.pop() {
+                charge::work(budget, locus, 1)?;
+                charge::text(budget, locus, view.package())?;
+                for segment in view.path() {
+                    charge::work(budget, locus, 1)?;
+                    match segment {
+                        PathSegmentView::Text(text) => charge::text(budget, locus, text)?,
+                        PathSegmentView::Node(node) => pending.push(node),
+                    }
+                }
+            }
+        }
+        let model_tuples = self.selected_tuple_declaration_rows.clone();
         Ok(ReadIdentityRows::of_rows_with_source_rows(
             package,
             declarations,
@@ -291,6 +313,7 @@ impl Emission {
             self.selected_model_enum_member_rows.clone(),
             model_enum_shapes,
         )
+        .with_model_tuples(model_tuples)
         .with_model_unions(self.selected_model_union_rows.clone()))
     }
 }

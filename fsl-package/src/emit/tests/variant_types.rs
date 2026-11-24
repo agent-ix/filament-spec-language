@@ -812,6 +812,7 @@ fn model_enum_carrier_refuses_missing_repeated_foreign_and_conflicting_evidence(
         "model_enum_declarations",
         "model_enum_members",
         "model_enum_shapes",
+        "model_tuples",
         "model_unions",
     ] {
         let mut missing = value.clone();

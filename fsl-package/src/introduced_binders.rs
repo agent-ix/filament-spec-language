@@ -291,7 +291,9 @@ impl<'w> Walk<'_, 'w> {
                         reading.push((Reading::Term(value), shadow));
                         continue;
                     };
-                    let [CheckedTerm::Aggregate { members: binders, .. }, body] = members.as_slice()
+                    let [CheckedTerm::Aggregate {
+                        members: binders, ..
+                    }, body] = members.as_slice()
                     else {
                         reading.push((Reading::Term(value), shadow));
                         continue;

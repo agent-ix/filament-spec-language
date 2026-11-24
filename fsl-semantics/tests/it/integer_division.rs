@@ -211,6 +211,7 @@ fn signed_64() -> IntegerDomain {
 }
 
 #[trace(
+    "FR-495-AC-2",
     "FSpec-TC-192",
     "FSpec-FR-147-AC-1",
     "FSpec-FR-147-AC-4",
@@ -484,7 +485,12 @@ fn div_11_zero_divisors_are_undefined_after_the_operands_charge() {
     );
 }
 
-#[trace("FSpec-TC-192", "FSpec-FR-147-AC-5", "FSpec-FR-147-AC-6")]
+#[trace(
+    "FR-495-AC-2",
+    "FSpec-TC-192",
+    "FSpec-FR-147-AC-5",
+    "FSpec-FR-147-AC-6"
+)]
 #[test]
 fn div_12_mod_domain_refusal_precedes_the_retain_charge() {
     let unit_interval = IntegerDomain::Bounded(IntegerInterval::new(big(0), big(1)).unwrap());
@@ -493,10 +499,12 @@ fn div_12_mod_domain_refusal_precedes_the_retain_charge() {
         ..DIV_10
     };
     let mut meter = Meter::new(limits);
-    assert!(matches!(
+    assert_eq!(
         mod_10(&unit_interval, &mut meter),
-        Outcome::Refused(Refusal::ModuloOutOfDomain { .. })
-    ));
+        Outcome::Refused(Refusal::ModuloOutOfDomain {
+            domain: Box::new(IntegerInterval::new(big(0), big(1)).unwrap()),
+        })
+    );
     assert_eq!(
         admitted_points(&meter).as_slice(),
         [
@@ -706,7 +714,12 @@ fn generated_members_match_the_law_oracle_domains_and_every_denial() {
 /// evaluates to 2 although the remainder 0 is outside `1..=10`, and
 /// `x rem -1` over `-10..=5` at `x = -10` evaluates to 0 although the
 /// quotient 10 is outside that domain.
-#[trace("FSpec-TC-192", "FSpec-FR-147-AC-9", "FSpec-FR-147-AC-10")]
+#[trace(
+    "FR-495-AC-2",
+    "FSpec-TC-192",
+    "FSpec-FR-147-AC-9",
+    "FSpec-FR-147-AC-10"
+)]
 #[test]
 fn only_the_exposed_member_must_lie_in_the_consumer_domain() {
     let one_to_ten = IntegerDomain::Bounded(IntegerInterval::new(big(1), big(10)).unwrap());

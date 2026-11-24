@@ -17,8 +17,8 @@ use filament_exact::{Charge, ChargePoint, Meter, NodeKey, Outcome, Value};
 use filament_semantic_value::call::InputRefusal;
 use filament_semantic_value::catalog::InternalFault;
 use fsl_package::{
-    BareClauseTerm, BarePackage, BareSelectionFailure, BareSlot, BareWorld, ClauseBinder,
-    ProtocolSlotDescriptor,
+    BareClauseTerm, BarePackage, BareSelectionFailure, BareSlot, BareWorld, CheckedNodeId,
+    ClauseBinder, ProtocolSlotDescriptor, SourceOperationClause,
 };
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
@@ -74,6 +74,74 @@ pub fn evaluate_bare_refinement_row(
         expression.frame_slots(),
         bindings,
     )
+}
+
+/// Evaluate an admitted source operation contract clause by its checked
+/// operation anchor on the bytes-only route.
+///
+/// The anchor is joined to the package's source-operation identity rows before
+/// the clause function is projected. This cannot call a synthesized
+/// precondition by a public display name.
+///
+/// # Errors
+///
+/// Returns the same typed selection, argument-admission, or evaluator failure
+/// used by the other bare-package evaluation entries.
+pub fn evaluate_bare_source_operation_clause(
+    package: &BarePackage<'_>,
+    anchor: &CheckedNodeId,
+    clause: SourceOperationClause,
+    arguments: Vec<Value>,
+    objects: &ObjectEnvironment,
+    meter: &mut Meter,
+    native_budget: &mut fsl_package::NativeJoinBudget,
+) -> Result<Evaluation, BareSourceOperationEvaluationFailure> {
+    let projection = package
+        .project_source_operation_clause(anchor, clause, native_budget)
+        .map_err(|failure| match failure {
+            fsl_package::BareSourceOperationFailure::Selection(failure) => {
+                BareSourceOperationEvaluationFailure::Call(refusal(package, failure))
+            }
+            fsl_package::BareSourceOperationFailure::NativeJoin(failure) => {
+                BareSourceOperationEvaluationFailure::NativeJoin(failure)
+            }
+        })?;
+    let selected = projection
+        .selected_function()
+        .ok_or_else(|| {
+            CallFailure::Fault(InternalFault::new(
+                "FR-531",
+                "bare-source-operation-clause-is-selected",
+            ))
+        })
+        .map_err(BareSourceOperationEvaluationFailure::Call)?;
+    let parameters = selected
+        .parameters
+        .iter()
+        .map(|parameter| (parameter.name.clone(), parameter.value_type.clone()))
+        .collect::<Vec<_>>();
+    let world = package
+        .world_with_source_objects()
+        .map_err(|failure| BareSourceOperationEvaluationFailure::Call(refusal(package, failure)))?;
+    let cancel = meter.cancel().cloned().unwrap_or_default();
+    let mut run = SuppliedRun::new(SuppliedLimits::default(), cancel).map_err(|stop| {
+        BareSourceOperationEvaluationFailure::Call(CallFailure::from(SuppliedFailure::Stop(stop)))
+    })?;
+    super::admit_arguments(&parameters, &arguments, objects, world.types(), &mut run)
+        .map_err(BareSourceOperationEvaluationFailure::Call)?;
+    Machine::from_bare_package(&world, objects, meter)
+        .run(ReaderNode::root(&projection), selected.slots, arguments)
+        .map_err(|fault| BareSourceOperationEvaluationFailure::Call(CallFailure::Fault(fault)))
+}
+
+/// Refusal from the bytes-only source-operation entry. Native join exhaustion
+/// remains separate from evaluator call failures and retains its typed limit.
+#[derive(Debug)]
+pub enum BareSourceOperationEvaluationFailure {
+    /// Caller-owned native identity/projection work was exhausted.
+    NativeJoin(fsl_package::NativeJoinFailure),
+    /// The operation selection, argument admission or evaluator call failed.
+    Call(CallFailure),
 }
 
 /// A selection or projection refusal as the call reports it (FR-533

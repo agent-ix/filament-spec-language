@@ -610,9 +610,14 @@ fn composition_view_projection_preserves_the_cumulative_native_budget() {
 #[trace("FR-530-AC-1", "FR-940-AC-1", "FSpec-FR-491-AC-6")]
 #[test]
 fn composition_view_refuses_an_ambiguous_owning_clause_occurrence() {
-    let producer = dependency("test/producer", "temporal First using t over (p: M::Producer) clock \"model-steps\" on origin { always holds(p.sent_count >= 0) }\n temporal Second using t over (p: M::Producer) clock \"model-steps\" on origin { always holds(p.sent_count >= 0) }\n");
+    let producer = dependency(
+        "test/producer",
+        "temporal First using t over (p: M::Producer) clock \"model-steps\" on origin { always holds(p.sent_count >= 0) }\n temporal Second using t over (p: M::Producer) clock \"model-steps\" on origin { always holds(p.sent_count >= 0) }\n",
+    );
     let consumer = dependency("test/consumer", CONSUMER);
-    let source = unit(&format!("compose Sys rule interface {{ {COMPONENTS} guarantee Producer::Second; guarantee Consumer::Done; }}"));
+    let source = unit(&format!(
+        "compose Sys rule interface {{ {COMPONENTS} guarantee Producer::Second; guarantee Consumer::Done; }}"
+    ));
     let package = compile_with(&source, &[&producer, &consumer]).expect("the actual source checks");
     let emission = emit_checked(&package).expect("the actual source emits");
     let document = serde_json::to_vec(&fixture::document()).expect("model document");
@@ -678,7 +683,10 @@ fn composition_view_refuses_an_ambiguous_owning_clause_occurrence() {
 fn fair_clause_readback_preserves_constraints_and_key_fairness() {
     use crate::{BareFairnessRefusal, BareSupply, NativeRowErrorCode};
     use filament_contract_model::NativeJoinBudget;
-    let dependency = dependency("test/producer", "temporal Fair using t over (p: M::Producer) clock \"model-steps\" on origin { fair strong whole M::Producer::send; fair weak each M::Producer::send; fair strong each M::Producer::send; fair weak whole M::Producer::send; fair strong whole M::Producer::send; always eventually holds(p.sent) }\ntemporal Calm using t over (p: M::Producer) clock \"model-steps\" on origin { always holds(p.sent) }\n");
+    let dependency = dependency(
+        "test/producer",
+        "temporal Fair using t over (p: M::Producer) clock \"model-steps\" on origin { fair strong whole M::Producer::send; fair weak each M::Producer::send; fair strong each M::Producer::send; fair weak whole M::Producer::send; fair strong whole M::Producer::send; always eventually holds(p.sent) }\ntemporal Calm using t over (p: M::Producer) clock \"model-steps\" on origin { always holds(p.sent) }\n",
+    );
     let emission = emit_checked(&dependency.package).expect("the actual source emits");
     let document = serde_json::to_vec(&fixture::document()).expect("model document");
     let models =

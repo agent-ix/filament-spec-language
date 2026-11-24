@@ -46,6 +46,63 @@ fn assert_absent(root: &Path, forbidden: &[&str]) {
     }
 }
 
+fn cells(row: &str) -> Vec<&str> {
+    row.trim_matches('|').split('|').map(str::trim).collect()
+}
+
+/// The two local deletion tables state exactly the row-2 gate and its
+/// successors; the consumer gate names QSL-1549.
+#[trace("FR-521-AC-4", "TC-1316")]
+#[test]
+fn fr521_local_deletion_rows_match_the_named_row_two_gate() {
+    let fr499 = include_str!("../../spec/functional/FR-499-delete-each-retired-family-only-behind-its-named-successor.md");
+    let handoff = fr499
+        .lines()
+        .find(|line| line.starts_with("| Handoff writer "))
+        .expect("FR-499 handoff writer row");
+    assert!(handoff.contains("KEEP until FR-521 row 2 is green"));
+    assert_eq!(handoff.matches("KEEP until").count(), 1);
+    let formats = fr499
+        .lines()
+        .find(|line| line.starts_with("| Format identity constants "))
+        .expect("FR-499 format identity row");
+    assert!(formats.contains("KEEP until FR-521 row 15 is green"));
+    assert_eq!(formats.matches("KEEP until").count(), 1);
+    let readers = fr499
+        .lines()
+        .find(|line| line.contains("strict reader and refusal of mutated bytes"))
+        .expect("FR-499 strict reader row");
+    assert!(readers.contains("KEEP until FR-521 row 7 is green"));
+    assert_eq!(readers.matches("KEEP until").count(), 1);
+
+    let fr500 = include_str!("../../spec/functional/FR-500-map-each-fr-042-criterion-to-its-checked-package-successor.md");
+    for (id, test_case) in [("AC-10", "TC-1312, TC-1313"), ("AC-15", "TC-1312, TC-1313")] {
+        let row = fr500
+            .lines()
+            .find(|line| line.starts_with(&format!("| {id} ")))
+            .unwrap_or_else(|| panic!("FR-500 {id} row"));
+        let row = cells(row);
+        assert_eq!(row.len(), 3);
+        assert!(
+            row[1].starts_with("Successor: FR-517, FR-518"),
+            "{id}: {}",
+            row[1]
+        );
+        assert!(
+            row[2].starts_with(&format!("Test ({test_case})")),
+            "{id}: {}",
+            row[2]
+        );
+    }
+    let fr521 = include_str!("../../spec/functional/FR-521-gate-the-deletions-behind-filament-protocol-on-the-checked-package-and-name-each-behavior-it-relies-on.md");
+    let gate = fr521
+        .split("### The gate")
+        .nth(1)
+        .and_then(|rest| rest.split("### Rows").next())
+        .expect("FR-521 gate section");
+    assert!(gate.contains("QSL-1549"));
+}
+
 /// The spine producer/type crates do not route through the retained composed
 /// parser, and the checked-package crates do not reach into root-owned
 /// front-end or protocol-artifact modules. The root keeps those modules until
