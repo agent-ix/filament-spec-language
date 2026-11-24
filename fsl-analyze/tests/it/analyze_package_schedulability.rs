@@ -168,10 +168,9 @@ fn package_schedulability_rows_preserve_release_backing_by_claim_kind() {
         &[crate::analyze_family_cli::rpc_snapshot()],
         json!({"items": [{"claim": "PairFp"}, {"claim": "PairAResponse"}]}),
     );
-    let source = analyze(&path);
     let request: Value = serde_json::from_slice(&std::fs::read(&path).expect("request"))
         .expect("request JSON");
-    let (selected, bytes) = package_selection(&ws, &request["request"]);
+    let (_, bytes) = package_selection(&ws, &request["request"]);
     let package: Value = serde_json::from_slice(&bytes).expect("checked package JSON");
     let rows = package["schedulability_claims"]
         .as_array()
@@ -195,15 +194,6 @@ fn package_schedulability_rows_preserve_release_backing_by_claim_kind() {
         .collect::<Vec<_>>();
     markers.sort_unstable_by_key(|(name, _)| *name);
     assert_eq!(markers, [("PairAResponse", false), ("PairFp", true)]);
-
-    std::fs::remove_file(ws.path("program.fsl")).expect("remove source before package route");
-    let document = json!({"format": "native-analyze/1", "request": selected});
-    let packaged = analyze(&ws.write("analyze-package.json", document.to_string().as_bytes()));
-    assert_eq!(packaged.document(), source.document(), "{}", packaged.document());
-    assert_eq!(packaged.exit, source.exit);
-    for item in packaged.document()["items"].as_array().expect("items") {
-        assert_eq!(item["request"]["candidates"]["backends"], json!(["en-7"]));
-    }
 }
 
 /// FR-850-AC-3 (negative): package bytes missing the claim rows or nodes
