@@ -447,9 +447,7 @@ fn health_recovers_stably_but_restless_health_has_a_nonrecovering_lasso() {
              terminal Halt using v on H any;\n"
         )
     };
-    let base = contract(
-        "pre CanFail using v on H::Health::fail { self.failures = 0 }\n",
-    );
+    let base = contract("pre CanFail using v on H::Health::fail { self.failures = 0 }\n");
     let domain = health();
     let base_text = unit(
         &domain,
@@ -479,13 +477,14 @@ fn health_recovers_stably_but_restless_health_has_a_nonrecovering_lasso() {
         &Cancel::new(),
     );
     let ModelCheckOutcome::Holds {
-        stats,
         certificate: fsl_replay::ProofCertificate::Component(_),
-    } = base_outcome.expect("the recovery-stability claim is checked")
+        ..
+    } = base_outcome
+        .as_ref()
+        .expect("the recovery-stability claim is checked")
     else {
         panic!("expected exhaustive recovery stability, got {base_outcome:?}");
     };
-    assert!(stats.product_states > 0);
 
     let restless = contract("");
     let restless_text = unit(

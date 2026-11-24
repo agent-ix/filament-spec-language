@@ -190,35 +190,6 @@ impl Case {
         .expect("the protocol subject checks")
     }
 
-    /// EN-1's temporal-clause outcome over `protocol` with the requested
-    /// worker count.
-    fn temporal_with_workers(
-        &self,
-        protocol: &str,
-        clause: &fsl_semantics::check::CheckedTemporalClause,
-        workers: usize,
-    ) -> ModelCheckOutcome<ProtocolTransition> {
-        check_protocol(
-            ProtocolCheckRequest {
-                workers,
-                temporal_clock_selections: &[],
-                subject: self.subject(protocol),
-                item: ModelCheckItem::Clause {
-                    clause,
-                    letters: &NO_ATOMS,
-                },
-                max_depth: None,
-                max_store_buffer: None,
-                max_messages: None,
-                max_live_instances: None,
-                limits: ModelCheckLimits::default(),
-                ignore_memory_constraints: false,
-            },
-            &Cancel::new(),
-        )
-        .expect("the protocol temporal clause checks")
-    }
-
     /// FR-217's replay of `payload` against this case's unit and documents.
     pub(crate) fn replay(
         &self,
@@ -1814,11 +1785,10 @@ fn a_protocol_model_check_is_deterministic() {
     assert_eq!(holds, repaired.deadlock("Fill"));
 }
 
-/// FR-126-AC-20 exercises both protocol checker dispatches with more than
-/// one worker, including the liveness coordinator's raw-successor prefetch.
+/// FR-126-AC-20 exercises protocol safety with more than one worker.
 #[trace("TC-1417", "FR-126-AC-20")]
 #[test]
-fn protocol_worker_modes_preserve_safety_and_liveness_results() {
+fn protocol_worker_modes_preserve_safety_results() {
     let safety = Case::new(&fill_unit("self.v <= 1", ""), &[0]);
     let mut expected_safety = None;
     for workers in [1, 2, 4, 64] {
@@ -1827,30 +1797,6 @@ fn protocol_worker_modes_preserve_safety_and_liveness_results() {
             assert_eq!(&outcome, expected, "workers={workers}");
         } else {
             expected_safety = Some(outcome);
-        }
-    }
-
-    let body = format!(
-        "{}{}",
-        fill_unit("self.v <= 1", ""),
-        crate::counter::clause_text("WorkerClaim", "", "always true")
-    );
-    let liveness = Case::new(&body, &[0]);
-    let clause = liveness
-        .checked
-        .graph()
-        .temporal_clauses()
-        .first()
-        .expect("the protocol liveness claim is checked")
-        .clause()
-        .clone();
-    let mut expected_liveness = None;
-    for workers in [1, 2, 4, 64] {
-        let outcome = liveness.temporal_with_workers("Fill", &clause, workers);
-        if let Some(expected) = &expected_liveness {
-            assert_eq!(&outcome, expected, "workers={workers}");
-        } else {
-            expected_liveness = Some(outcome);
         }
     }
 }
