@@ -440,8 +440,8 @@ fn malformed_and_mistyped_bit_constructors_refuse_at_the_constructor() {
             panic!("one typed refusal for {constructor}: {refusals:?}");
         };
         assert_eq!(
-            refusal.cause,
-            CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
+            &*refusal.cause,
+            &CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
         );
         assert!(refusal.location.path().is_empty(), "{refusal:?}");
     }

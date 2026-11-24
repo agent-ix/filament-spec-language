@@ -13,7 +13,7 @@ use fsl_semantics::check::{
 };
 
 use crate::automaton::{
-    AutomatonError, Letter, Monitor, PropertyAutomaton, StateId, translate, translate_body,
+    translate, translate_body, AutomatonError, Letter, Monitor, PropertyAutomaton, StateId,
 };
 use crate::smt::{Measure, Refusal, SmtEncodingRefusal};
 
@@ -111,6 +111,15 @@ impl MonitorTable {
         let bits = atoms.len();
         let live = automaton.live().is_some();
         let letter_bits = bits + usize::from(when.is_some());
+        if letter_bits >= u64::BITS as usize {
+            return Err(Refusal::TooLarge {
+                measure: Measure::MonitorAtoms,
+                value: atom_count as u64,
+                limit: u64::BITS as u64 - 1,
+                setting: Measure::MonitorAtoms.setting(),
+            }
+            .into());
+        }
         let regular_letters = 1u64 << letter_bits;
         let end_letter = live.then_some(regular_letters);
         let letters = regular_letters + u64::from(live);

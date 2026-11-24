@@ -552,6 +552,42 @@ fn monitor_encoding_limits_accept_exact_and_reject_zero_or_one_short() {
     );
 }
 
+#[test]
+fn monitor_alphabet_width_overflow_is_a_typed_size_refusal() {
+    let atoms = (0..63)
+        .map(|value| format!("holds(c.value = {value})"))
+        .collect::<Vec<_>>();
+    let body = format!("always ({})", atoms.join(" and "));
+    let formulas = [body.as_str()];
+    let world = world_with_activation(
+        ("Counter", "c"),
+        &document(
+            "Counter",
+            vec![field("Counter", "value", &ident("Level"), "required")],
+            vec![operation("Counter", "inc", &["value"])],
+        ),
+        COUNTER_CONTRACT,
+        INFINITE,
+        "on each (q: M::Counter) when (c.value >= 0)",
+        &formulas,
+        &[("c", json!({"value": {"integer": "0"}}))],
+    );
+    let limits = SmtEncodingLimits {
+        max_monitor_atoms: 64,
+        ..SmtEncodingLimits::default()
+    };
+
+    assert!(matches!(
+        world.query_with_limits(0, SmtQueryKind::Unrolling { depth: 1 }, &limits),
+        Err(SmtEncodingRefusal::Refused(Refusal::TooLarge {
+            measure: Measure::MonitorAtoms,
+            value: 64,
+            limit: 63,
+            setting: "smt_encoding.max_monitor_atoms",
+        }))
+    ));
+}
+
 /// `Counter`: `value: Int[0, 3]`, operation `inc` modifying it, guarded by
 /// `value < 3`.
 const COUNTER_CONTRACT: &str = "pre CanInc using v on M::Counter::inc { self.value < 3 }\n\
