@@ -59,3 +59,18 @@ Verified correct:
 | FND-007 | fixed | Use::Body(usize) and Use::Measure(usize) carry the ExpressionOwner declaration index. |
 | FND-008 | still-open | The linear scan, the per-visit String clone and the undrained table.visited are fixed, and renumber charges its visits to the meter. The frames::derive, rederive and rewalk walks are still not charged to the emit meter (coder caveat c). rederive and rewalk are new in this PR. |
 | FND-009 | fixed | rustfmt --check reports 0 diffs in all five files at 1fecd1c037. The single_match patterns are gone. Clippy was not run. |
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-012 | medium | The FR-772-AC-2 binder case now expects `type-mismatch` at the presence read's `/body/arguments/2`, which is the slot-term rule ("a slot term not of its step's selector domain ... at that argument"). The reader's binder rule (contract-ir 729a6641 operations.rs `check_quantifier_slot_binder`) refuses at the quantifier's `/body/arguments/1`. The binder clause is not exercised; the expectation was moved to whichever rule the reader hits first. | fsl-package/src/emit/tests/timed_clauses.rs:2017-2036 |
+| FND-013 | medium | FR-772-AC-2 names one case explicitly: the slot domain as operand 0 of `filament.op.collection.count`, refused at the `count` application's `/body/arguments/0`. That case was dropped as a "legacy shape" and replaced with forall operand 1. FR-772's body covers forall operand 1, but AC-2's count case is now untested. Either build a well-formed `count` application (identity path included) or amend AC-2 in FSpec. | fsl-package/src/emit/tests/timed_clauses.rs:2037-2048 |
+
+## Dispositions (round 2)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-008 | fixed | `charge_walk` charges every owner walk in frames::derive and rederive, and rewalk charges its visits. carry_rows takes a meter in monitor finish and emit_timed_models. |
+| FND-010 | fixed | An owner missing from function_index now visits as Use::Other instead of refusing. a_reward_body_sharing_an_application_with_a_function_still_emits would hit the old `ok_or(SourceMapInvariant)` and fail. A residual remains: reward and state-clause uses share the Other pool, paired by source path. |
+| FND-011 | accepted-no-change | The new clause-use test pins the invariant but passes without the renumbering. The coder shows that the checker numbers the function use first even when the clause is declared first, so the inverted order cannot be built with this checker. Acceptable as a low. |

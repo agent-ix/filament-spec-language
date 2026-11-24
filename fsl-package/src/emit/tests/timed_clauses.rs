@@ -2014,32 +2014,20 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
         "operator-ineligible",
         &format!("/semantic_graph/nodes/{domain}/body/arguments/0"),
     );
-    // A binder typed Boolean instead of the slot domain's Integer.
+    // A binder whose name no in-scope parameter carries, so the binder is not
+    // typed by the slot domain: the quantifier's binder rule fires, at its
+    // own operand 1 (FSpec FR-772-AC-2 "with the binder typed Boolean" is the
+    // same join: a binder type the slot domain does not give).
     refused(
         &|wire| {
-            // The binder is the slot term of the presence read the
-            // quantifier's body names.
-            let at = |wire: &Value, reference: &Value| {
-                nodes(wire)
-                    .iter()
-                    .position(|node| node["node_id"] == reference["target"])
-                    .expect("a node the quantifier reaches")
-            };
-            let quantified = &wire["semantic_graph"]["nodes"][quantifier]["body"]["arguments"];
-            let body = at(wire, &quantified[1]["value"]);
-            let slot = &nodes(wire)[body]["body"]["arguments"][2];
-            let parameter = at(wire, slot);
-            assert_eq!(nodes(wire)[parameter]["semantic_form"], "parameter");
-            wire["semantic_graph"]["nodes"][parameter]["semantic_type"] = boolean.clone();
+            wire["semantic_graph"]["nodes"][quantifier]["body"]["arguments"][1]["name"] =
+                json!("unbound");
         },
         "type-mismatch",
-        // FSpec FR-772-AC-2: at the binder, the slot term of the presence read.
-        &format!("/semantic_graph/nodes/{read}/body/arguments/2"),
+        &format!("/semantic_graph/nodes/{quantifier}/body/arguments/1"),
     );
-    // The slot domain as an operand other than a quantifier's operand 0:
-    // quantifier_domain_only. (FSpec FR-772-AC-2 names `count`; a `count`
-    // application is a `quantify` node whose identity path names its operation,
-    // so the one defect of this case is the second operand.)
+    // The slot domain as a quantifier's operand 1: quantifier_domain_only
+    // admits it only as operand 0.
     refused(
         &|wire| {
             let values = vec![arguments(wire, quantifier)[0].clone(); 2];
@@ -2047,6 +2035,92 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
         },
         "operator-ineligible",
         &format!("/semantic_graph/nodes/{quantifier}/body/arguments/1"),
+    );
+    // The slot domain as operand 0 of `count` (FSpec FR-772-AC-2): the
+    // quantifier node is rebuilt as the `count` application the checker
+    // lowers (`collection` operator, a `type_argument` member, an Integer
+    // result, and the `count` identity path), so the reader reaches the
+    // domain check.
+    refused(
+        &|wire| {
+            // The clock guard reads the node as its Boolean predicate, so the
+            // rebuilt node keeps the quantifier's Boolean type and the `count`
+            // member names it; the domain check precedes the result-type check.
+            let integer = boolean.clone();
+            let old = wire["semantic_graph"]["nodes"][quantifier]["node_id"].clone();
+            let mut renamed = old.clone();
+            for segment in renamed["path"].as_array_mut().expect("a path") {
+                match segment.as_str() {
+                    Some("quantify") => *segment = json!("collection"),
+                    Some("filament.op.collection.forall") => {
+                        *segment = json!("filament.op.collection.count");
+                    }
+                    _ => {}
+                }
+            }
+            let node = &mut wire["semantic_graph"]["nodes"][quantifier];
+            node["body"]["operator"] = json!("collection");
+            node["body"]["operation"]["identity"] = json!("filament.op.collection.count");
+            node["body"]["operation"]["member"] =
+                json!({"declaration": integer.clone(), "kind": "type_argument"});
+            node["body"]["result_type"] = integer.clone();
+            node["semantic_form"] = json!("collection");
+            node["semantic_type"] = integer;
+            let text = wire
+                .to_string()
+                .replace(&old.to_string(), &renamed.to_string());
+            *wire = serde_json::from_str(&text).expect("JSON");
+            let node = &wire["semantic_graph"]["nodes"][quantifier];
+            // The dependencies are now exactly what the node names: its operands,
+            // the binding's value, and the Integer type.
+            let mut named = vec![node["body"]["operation"]["member"]["declaration"].clone()];
+            for argument in node["body"]["arguments"].as_array().expect("arguments") {
+                named.push(if argument["term"] == "binding" {
+                    argument["value"]["target"].clone()
+                } else {
+                    argument["target"].clone()
+                });
+            }
+            let mut named: Vec<(usize, Value)> = named
+                .into_iter()
+                .filter_map(|id| {
+                    nodes(wire)
+                        .iter()
+                        .position(|candidate| candidate["node_id"] == id)
+                        .map(|at| (at, id))
+                })
+                .collect();
+            // The `dependencies` are the structural-id-ascending join: names rank
+            // before indices, operand slots and nested keys.
+            let rank = |segment: &Value| match segment {
+                Value::String(_) => 0,
+                Value::Number(_) => 1,
+                _ => 2,
+            };
+            let order = |left: &Value, right: &Value| {
+                let (left, right) = (
+                    left["path"].as_array().unwrap(),
+                    right["path"].as_array().unwrap(),
+                );
+                left.iter()
+                    .zip(right)
+                    .map(|(a, b)| {
+                        rank(a).cmp(&rank(b)).then_with(|| match (a, b) {
+                            (Value::String(a), Value::String(b)) => a.cmp(b),
+                            (Value::Number(a), Value::Number(b)) => a.as_u64().cmp(&b.as_u64()),
+                            (a, b) => a.to_string().cmp(&b.to_string()),
+                        })
+                    })
+                    .find(|ordering| ordering.is_ne())
+                    .unwrap_or(left.len().cmp(&right.len()))
+            };
+            named.sort_by(|(_, a), (_, b)| order(a, b));
+            named.dedup_by_key(|(at, _)| *at);
+            wire["semantic_graph"]["nodes"][quantifier]["dependencies"] =
+                Value::Array(named.into_iter().map(|(_, id)| id).collect());
+        },
+        "operator-ineligible",
+        &format!("/semantic_graph/nodes/{quantifier}/body/arguments/0"),
     );
     // A path that embeds the clock_place node_id object.
     refused(
