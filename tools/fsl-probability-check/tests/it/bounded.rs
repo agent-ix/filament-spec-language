@@ -84,7 +84,10 @@ pub(super) fn try_compile_source_with(
     source: &str,
     domain: &[u8],
 ) -> Result<
-    (spine::CheckedUnit, fsl_semantics::model::intake::PackageInput),
+    (
+        spine::CheckedUnit,
+        fsl_semantics::model::intake::PackageInput,
+    ),
     spine::FrontEndFailure,
 > {
     try_compile_with_mode(source, domain, None)
@@ -95,7 +98,10 @@ fn try_compile_with_mode(
     domain: &[u8],
     check_mode: Option<filament_semantic_value::checking::CheckMode>,
 ) -> Result<
-    (spine::CheckedUnit, fsl_semantics::model::intake::PackageInput),
+    (
+        spine::CheckedUnit,
+        fsl_semantics::model::intake::PackageInput,
+    ),
     spine::FrontEndFailure,
 > {
     let identity = SourceIdentity::new("test", "bounded-certificate-source");
@@ -164,7 +170,7 @@ fn request_with_mode(
 
 /// One checker request for the settled record's certificate document and, for a
 /// value-bounds proof, a second for its counterpart document.
-fn requests_with_mode(
+pub(super) fn requests_with_mode(
     source: &str,
     snapshot: &[u8],
     exact: ExactProbLimits,

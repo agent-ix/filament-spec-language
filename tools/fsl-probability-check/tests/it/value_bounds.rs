@@ -520,3 +520,56 @@ fn cyclic_mdp_bounds_check_hinted_and_selected_policies() {
         at_member("policy"),
     );
 }
+
+/// FR-1042-AC-22: fair strong `go` makes the minimum eventual value `1/2`.
+/// When exact rational representation is too small, the analyzer settles an
+/// interval proof whose two fair-eventual documents pass the separate checker.
+#[trace("TC-3212", "FR-1042-AC-22")]
+#[test]
+fn fair_mdp_value_bounds_are_accepted_by_the_separate_checker() {
+    let source = w(">=", "rational(2,5)").replace(
+        "under every scheduler",
+        "under every scheduler fair strong Msg::send_b",
+    );
+    let limits = ExactProbLimits {
+        max_rational_bits: 1,
+        precision_bits: 4,
+        max_precision_bits: 16,
+        ..ExactProbLimits::default()
+    };
+    let (requests, settlement) =
+        super::bounded::requests_with_mode(&source, SNAPSHOT, limits, domain().as_bytes(), false);
+    let [claim, counterpart] = requests.as_slice() else {
+        panic!("fair interval proof carries both documents: {settlement:?}");
+    };
+    assert_eq!(document(claim)["kind"], "lower");
+    assert_eq!(claim["claim_side"], true);
+    assert_eq!(document(counterpart)["kind"], "upper");
+    assert_eq!(counterpart["claim_side"], false);
+    assert_eq!(
+        document(claim)["objective"]["base"]["profile"],
+        "filament.probability-objective/cyclic-mdp-fair-eventual/v1"
+    );
+    for request in [claim, counterpart] {
+        let (code, output) = run(request);
+        assert_eq!(code, 0, "{output}");
+        let altered = mutate(request, |doc| {
+            doc["values"][0]["value"] = rational(1, 7);
+        });
+        let (code, output) = run(&altered);
+        assert_ne!(code, 0, "a changed interval row is rejected: {output}");
+    }
+    let fsl_analyze::analyze::Settlement::Terminal(record) = settlement else {
+        panic!("fair interval proof settles terminal: {settlement:?}");
+    };
+    assert!(matches!(
+        record.value(),
+        fsl_replay::TerminalValue::Proved {
+            basis: fsl_replay::ProofBasis::ValueBounds {
+                method: fsl_replay::BoundsMethod::IntervalIteration { .. },
+                ..
+            },
+            certification: fsl_replay::Certification::Certified,
+        }
+    ));
+}

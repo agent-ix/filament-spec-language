@@ -1364,10 +1364,22 @@ fn run(
     };
     let (product, lower_product, monitor) = match built {
         (ProbBuild::Built(product), monitor) => (product, None, monitor),
-        (ProbBuild::Partial { product, lower_product }, monitor) => {
+        (
+            ProbBuild::Partial {
+                product,
+                lower_product,
+            },
+            monitor,
+        ) => {
             if fair_eventual
                 || bounded_formula.is_some()
-                || matches!(claim.form, ProbForm::Reach { target: ReachTarget::Always(_), .. })
+                || matches!(
+                    claim.form,
+                    ProbForm::Reach {
+                        target: ReachTarget::Always(_),
+                        ..
+                    }
+                )
             {
                 return not_yet();
             }
@@ -1523,7 +1535,20 @@ fn run(
                 let threshold = match bound {
                     Bound::AtLeast(threshold) | Bound::AtMost(threshold) => threshold,
                 };
-                let interval_result = match &claim.form {
+                let interval_result = if fair_eventual {
+                    match (objective, bound) {
+                        (UnboundedObjective::Min, Bound::AtLeast(threshold)) => {
+                            crate::exact_probabilistic::decide_fair_reachability_threshold(
+                                &product, &target, threshold, &limits,
+                            )
+                        }
+                        // The fair interval helper establishes the fair minimum
+                        // through its complement event; it does not certify a
+                        // fair maximum or an AtMost minimum claim.
+                        _ => Err(UnboundedError::MaxRationalBits),
+                    }
+                } else {
+                    match &claim.form {
                     ProbForm::Reach {
                         target: ReachTarget::Until(..),
                         ..
@@ -1609,6 +1634,7 @@ fn run(
                     _ => crate::exact_probabilistic::decide_reachability_threshold(
                         solve_product, &target, objective, threshold, &limits,
                     ),
+                    }
                 };
                 match interval_result {
                     Ok(crate::exact_probabilistic::UnboundedOutcome::Exact(solved)) => solved,
@@ -1677,7 +1703,10 @@ fn run(
         .into_iter()
         .take(product.states.len())
         .collect::<Vec<_>>();
-    let policy = policy.into_iter().take(product.states.len()).collect::<Vec<_>>();
+    let policy = policy
+        .into_iter()
+        .take(product.states.len())
+        .collect::<Vec<_>>();
     // A positive-infinite expectation fails a finite `<=` bound (FR-203-AC-15);
     // it is refuted only through a replayed finite lower certificate.
     let holds = match (values.get(start.index()), bound) {
@@ -1784,9 +1813,9 @@ fn run(
         let upper = if expected_reward {
             fsl_replay::ExactBound::Infinity
         } else {
-            fsl_replay::ExactBound::Finite(fsl_replay::ExactRational::new(
-                Rational::from_integer(1_i64.into()),
-            ))
+            fsl_replay::ExactBound::Finite(fsl_replay::ExactRational::new(Rational::from_integer(
+                1_i64.into(),
+            )))
         };
         let evidence = Box::new(ExactProbabilityEvidence {
             certificate,
@@ -1813,7 +1842,7 @@ fn run(
             evidence,
         }));
     }
-    if fair_eventual && holds {
+    if fair_eventual && interval.is_none() && holds {
         // A fair-minimum certificate profile is QSL-2778 (FR-1041).
         return not_yet();
     }
