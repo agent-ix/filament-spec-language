@@ -462,6 +462,7 @@ fn a_float_model_field_exports_its_exact_bits() {
     assert!(target.contains("1..4503599627370495, exponent : {-1074}"));
     assert!(target.contains("F_float64_nan_bits(bits)"));
     assert!(target.contains("Len(bits) = 16"));
+    assert!(target.contains("SubSeq(bits, 1, 1) \\in {\"7\", \"f\"}"));
     assert!(target.contains("SubSeq(bits, 2, 3) = \"ff\""));
     assert!(!target.contains("[tag : {\"nan\"}, bits : STRING]"));
     assert!(
@@ -496,6 +497,7 @@ fn a_float_model_field_exports_its_exact_bits() {
         target.contains("def F_float64_nan_bits"),
         "canonical NaN bit-pattern predicate: {target}"
     );
+    assert!(target.contains("sign ∈ \"7f\".toList"));
     assert!(
         target.contains("F_float64_hex_lower f12"),
         "all payload characters are lowercase hex: {target}"
