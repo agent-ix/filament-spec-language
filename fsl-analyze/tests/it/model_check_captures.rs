@@ -64,6 +64,8 @@ fn run(world: &World, limits: ModelCheckLimits) -> Result<ModelCheckOutcome, Mod
             },
             max_depth: None,
             limits,
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),
@@ -276,6 +278,8 @@ fn a_capture_initializer_joins_the_activation_footprint() {
             },
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: fsl_route::reductions::Reductions {
                 partial_order: true,
                 ..Default::default()

@@ -125,6 +125,8 @@ fn run(
             },
             max_depth,
             limits,
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         cancel,

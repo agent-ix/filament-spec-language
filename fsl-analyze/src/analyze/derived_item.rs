@@ -16,22 +16,22 @@ use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ModelSubject};
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimState, ModelSimulationRequest};
 use fsl_eval::temporal::AtomReading;
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
     CertificateRequest, ModelCheckItem, QualifiedName, ReplayRefusal, ReplayTargetMembers,
     RequestTargetWire, TemporalCounterexample,
 };
 use fsl_route::request::ItemKind;
-use fsl_semantics::check::footprint::{FootprintRefusal, SymbolicLocation};
 use fsl_semantics::check::FormulaNodeId;
+use fsl_semantics::check::footprint::{FootprintRefusal, SymbolicLocation};
 
-use super::clause_item::{replay_over, request_and_envelope, ReplayInputs, ReplayShape, WireParts};
-use super::items::{joined_replay, run_model_item, CounterexampleReplayFn, ModelItem};
+use super::clause_item::{ReplayInputs, ReplayShape, WireParts, replay_over, request_and_envelope};
+use super::items::{CounterexampleReplayFn, ModelItem, joined_replay, run_model_item};
 use super::{AnalyzeItem, AnalyzeLimits, SourceProvision, SubjectBinding, TemporalItem};
 use crate::claim_family::claim_family;
-use crate::model_check::manifest as en1;
 use crate::model_check::ModelCheckRequest;
+use crate::model_check::manifest as en1;
 
 /// The witness transcript of a derived deadlock-freedom counterexample: it
 /// carries no values, the payload being the finite prefix (FR-128).
@@ -150,6 +150,8 @@ pub fn deadlock_model_item<'a>(
         max_depth: None,
         limits: form.limits,
         reductions: form.reductions.clone(),
+        smt_encoding: form.smt_encoding.unwrap_or_default(),
+        smt_run: Default::default(),
     };
     let certificate = CertificateRequest {
         temporal_clock_selections: &[],
@@ -264,6 +266,8 @@ impl<'a> PackageDeadlockSubject<'a> {
             max_depth: None,
             limits: self.form.limits,
             reductions: self.form.reductions.clone(),
+            smt_encoding: self.form.smt_encoding.unwrap_or_default(),
+            smt_run: Default::default(),
         };
         let certificate = CertificateRequest {
             temporal_clock_selections: &[],

@@ -13,7 +13,7 @@ use fsl_semantics::check::{
 };
 
 use crate::automaton::{
-    translate, translate_body, AutomatonError, Letter, Monitor, PropertyAutomaton, StateId,
+    AutomatonError, Letter, Monitor, PropertyAutomaton, StateId, translate, translate_body,
 };
 use crate::smt::{Measure, Refusal, SmtEncodingRefusal};
 
@@ -22,16 +22,19 @@ use crate::smt::{Measure, Refusal, SmtEncodingRefusal};
 pub struct Move {
     /// The state read from.
     pub from: usize,
-    /// The truth of each atom, atom `i` being bit `i`.
+    /// The regular letter index, or the distinct end-letter index.
     pub letter: u64,
     /// The state reached.
     pub to: usize,
 }
 
-/// A monitor tabulated over every letter of its atoms.
+/// A monitor tabulated over every letter of its formula atoms and, when the
+/// translation supplies one, its distinct finite-trace end letter.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MonitorTable {
     atoms: Vec<FormulaNodeId>,
+    when: Option<usize>,
+    end_letter: Option<u64>,
     initial: usize,
     rejecting: Option<usize>,
     states: usize,
@@ -94,16 +97,23 @@ impl MonitorTable {
         max_states: u64,
     ) -> Result<Self, SmtEncodingRefusal> {
         let atoms = automaton.atoms().to_vec();
-        if u64::try_from(atoms.len()).unwrap_or(u64::MAX) > max_atoms {
+        let when = automaton.when().map(|atom| atom.index());
+        let atom_count = atoms.len() + usize::from(when.is_some());
+        if u64::try_from(atom_count).unwrap_or(u64::MAX) > max_atoms {
             return Err(Refusal::TooLarge {
                 measure: Measure::MonitorAtoms,
-                value: atoms.len() as u64,
+                value: atom_count as u64,
                 limit: max_atoms,
                 setting: Measure::MonitorAtoms.setting(),
             }
             .into());
         }
         let bits = atoms.len();
+        let live = automaton.live().is_some();
+        let letter_bits = bits + usize::from(when.is_some());
+        let regular_letters = 1u64 << letter_bits;
+        let end_letter = live.then_some(regular_letters);
+        let letters = regular_letters + u64::from(live);
         let mut monitor = Monitor::bad_prefix(automaton, max_states).map_err(Self::translation)?;
         let initial = monitor.initial().map_err(Self::translation)?;
         let mut reached: Vec<StateId> = vec![initial];
@@ -111,9 +121,29 @@ impl MonitorTable {
         let mut next = 0;
         while let Some(&from) = reached.get(next) {
             next += 1;
-            for letter in 0..(1u64 << bits) {
+            for letter in 0..letters {
+                let automaton_letter = if letter == regular_letters && live {
+                    0
+                } else {
+                    let mut bits = 0;
+                    for atom in 0..atoms.len() {
+                        let class_bit = atom + usize::from(when.is_some());
+                        if letter & (1u64 << class_bit) != 0 {
+                            bits |= 1u64 << atom;
+                        }
+                    }
+                    if let Some(index) = when {
+                        if letter & 1 != 0 {
+                            bits |= 1u64 << index;
+                        }
+                    }
+                    if live {
+                        bits |= 1u64 << (letter_bits);
+                    }
+                    bits
+                };
                 let to = monitor
-                    .step(from, Letter::from_bits(letter))
+                    .step(from, Letter::from_bits(automaton_letter))
                     .map_err(Self::translation)?;
                 let target = match reached.iter().position(|seen| *seen == to) {
                     Some(position) => position,
@@ -137,6 +167,8 @@ impl MonitorTable {
         }
         Ok(Self {
             atoms,
+            when,
+            end_letter,
             initial: 0,
             rejecting,
             states: reached.len(),
@@ -147,6 +179,17 @@ impl MonitorTable {
     /// The `holds` atoms of the letter, atom `i` being bit `i`.
     pub fn atoms(&self) -> &[FormulaNodeId] {
         &self.atoms
+    }
+
+    /// Whether the letter has a leading activation-condition member.
+    pub const fn has_when(&self) -> bool {
+        self.when.is_some()
+    }
+
+    /// The letter index representing a finite trace's end, if the
+    /// translation has a synthetic live atom.
+    pub const fn end_letter(&self) -> Option<u64> {
+        self.end_letter
     }
 
     /// The initial monitor state, read before position 0.

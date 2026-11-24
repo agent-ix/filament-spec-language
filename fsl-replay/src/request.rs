@@ -580,6 +580,11 @@ impl ReplayRequest {
 }
 
 impl ReplayRequestWire {
+    /// The content identity of the checked package carried by this request.
+    pub fn package_id(&self) -> crate::PackageId {
+        crate::PackageId::of(self.package.bytes())
+    }
+
     /// The accounting limits the replay runs under and any identity binds
     /// (FR-255 Behavior 10): `accounting_limits` with each counter a
     /// `stage_limits` entry names replaced by the entry's bound. Computed

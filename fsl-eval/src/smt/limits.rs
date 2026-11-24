@@ -5,7 +5,7 @@ use fsl_foundation::{Setting, SettingLimits};
 use std::vec::Vec;
 
 /// Size limits for one temporal SMT query encoding (FR-315).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct SmtEncodingLimits {
     /// The most declared state and monitor constants.
     pub max_constants: u64,

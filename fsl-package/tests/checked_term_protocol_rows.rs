@@ -95,6 +95,23 @@ fn package_without_checked_terms_omits_checked_term_data() {
 
 fn choice_domain() -> Vec<u8> {
     let mut document = tc1070::document();
+    let mut other = document["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|ty| ty["displayName"] == "Node")
+        .expect("Node")
+        .clone();
+    other["identity"] = json!("ix://test/orders/Other");
+    other["displayName"] = json!("Other");
+    let mut other_total = other["fields"][0].clone();
+    other_total["identity"] = json!("ix://test/orders/Other/total");
+    other_total["origin"]["generated"]["inputIdentities"] = json!(["ix://test/orders/Other/total"]);
+    other["identityFields"] = json!(["ix://test/orders/Other/total"]);
+    other["fields"] = json!([other_total]);
+    other["operations"] = json!([]);
+    other["relationships"] = json!([]);
+    document["types"].as_array_mut().unwrap().push(other);
     let mut choice = variant_fields::variant_type("Choice", &["Left", "Right"]);
     choice["variants"][0]["payloadType"] = json!("ix://filament/native/Integer");
     choice["variants"][1]["payloadType"] = json!("ix://filament/native/Boolean");
@@ -113,6 +130,231 @@ fn choice_domain() -> Vec<u8> {
             "meaning":fsl_semantics::model::intake::meaning::VARIANT_TYPE}
     }));
     document.to_string().into_bytes()
+}
+
+fn owner_model_source(over: &str) -> String {
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile P = \"filament.protocol.finite-global/v1\";\n\
+         model M = \"test/orders\";\n\
+         protocol Flow using P over (input: {over}) on origin {{\n\
+           role Service on M::Node;\n\
+           role Alternate on M::Other;\n\
+           run sequence Main {{ }}\n\
+           finish End as (outcome: Boolean) {{ true }};\n\
+         }}\n"
+    )
+}
+
+fn owner_model_clause(wire: &Value) -> &Value {
+    wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic nodes")
+        .iter()
+        .find(|node| node["semantic_form"] == "protocol_clause")
+        .expect("the emitted protocol clause")
+}
+
+fn owner_model_node<'a>(wire: &'a Value, name: &str) -> &'a Value {
+    let identity = format!("ix://test/orders/{name}");
+    wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic nodes")
+        .iter()
+        .find(|node| node["owner"]["node"] == identity)
+        .unwrap_or_else(|| {
+            panic!(
+                "the emitted model node for {identity}: {}",
+                wire["semantic_graph"]
+            )
+        })
+}
+
+fn refusal_path(refusal: &filament_contract_model::CheckedPackageRefusal) -> Option<&str> {
+    refusal
+        .loci
+        .first()?
+        .path
+        .as_ref()
+        .map(|path| path.as_str())
+}
+
+fn protocol_owner_wire(over: &str, domain: &[u8]) -> Value {
+    let package = checked(&owner_model_source(over), Some(domain));
+    let emission = emit_checked(&package, EmitLimits::new(64 * 1024 * 1024))
+        .expect("the owner-model package emits");
+    serde_json::from_slice(emission.package().bytes()).expect("the emitted JSON parses")
+}
+
+fn protocol_owner_refusal(
+    wire: &Value,
+    domain: &[u8],
+) -> filament_contract_model::CheckedPackageRefusal {
+    let mut evidence = filament_contract_model::CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"]
+        .as_array()
+        .expect("required features")
+    {
+        evidence.support_feature(feature.as_str().expect("feature identity"));
+    }
+    evidence
+        .insert_domain_package_document("test/orders", domain.to_vec())
+        .expect("fixture model evidence is unique");
+    let bytes = serde_json::to_vec(wire).expect("the mutated package serializes");
+    match filament_contract_model::read_checked_package(
+        &bytes,
+        filament_contract_model::CheckedPackageReadLimits::bounded(),
+        &evidence,
+    ) {
+        filament_contract_model::CheckedPackageDispatchResult::Refused(refusal) => refusal,
+        other => panic!("the mutated package is refused: {other:?}"),
+    }
+}
+
+#[test]
+fn protocol_owner_edges_follow_object_types_reached_through_subjects() {
+    let domain = choice_domain();
+    for over in ["Boolean", "Integer"] {
+        let emitted = protocol_owner_wire(over, &domain);
+        assert!(
+            owner_model_clause(&emitted).get("owner_model").is_none(),
+            "non-object subject {over} has no owner edge"
+        );
+    }
+    for over in ["Option<M::Node>", "Sequence<M::Node>", "M::Node"] {
+        let emitted = protocol_owner_wire(over, &domain);
+        assert_eq!(
+            owner_model_clause(&emitted)["owner_model"],
+            owner_model_node(&emitted, "Node")["node_id"],
+            "the owner edge follows {over} to Node"
+        );
+    }
+
+    let mut emitted = protocol_owner_wire("M::Node", &domain);
+    let clause_position = emitted["semantic_graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|node| node["semantic_form"] == "protocol_clause")
+        .expect("protocol clause position");
+    let clause_path = format!("/semantic_graph/nodes/{clause_position}");
+    let role_position = emitted["semantic_graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|node| node["semantic_form"] == "role")
+        .expect("role position");
+    let owner = emitted["semantic_graph"]["nodes"][clause_position]["owner_model"].clone();
+    let other_model = owner_model_node(&emitted, "Other")["node_id"].clone();
+    let boolean = emitted["semantic_graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["semantic_form"] == "boolean")
+        .expect("Boolean type node")["node_id"]
+        .clone();
+
+    let mut missing = emitted.clone();
+    missing["semantic_graph"]["nodes"][clause_position]
+        .as_object_mut()
+        .unwrap()
+        .remove("owner_model");
+    let refusal = protocol_owner_refusal(&missing, &domain);
+    assert_eq!(format!("{:?}", refusal.code), "MalformedWire");
+    assert_eq!(refusal_path(&refusal), Some(clause_path.as_str()));
+
+    let mut misplaced = emitted.clone();
+    misplaced["semantic_graph"]["nodes"][role_position]["owner_model"] = owner.clone();
+    let refusal = protocol_owner_refusal(&misplaced, &domain);
+    assert_eq!(format!("{:?}", refusal.code), "MalformedWire");
+    assert_eq!(
+        refusal_path(&refusal),
+        Some(format!("/semantic_graph/nodes/{role_position}/owner_model").as_str())
+    );
+
+    let mut external = emitted.clone();
+    external["semantic_graph"]["nodes"][clause_position]["owner_model"] =
+        json!({"package":"other", "node":owner});
+    let refusal = protocol_owner_refusal(&external, &domain);
+    assert_eq!(format!("{:?}", refusal.code), "MalformedWire");
+    assert_eq!(
+        refusal_path(&refusal),
+        Some(format!("{clause_path}/owner_model").as_str())
+    );
+
+    let mut unlisted = emitted.clone();
+    unlisted["semantic_graph"]["nodes"][clause_position]["dependencies"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|dependency| dependency != &owner);
+    let refusal = protocol_owner_refusal(&unlisted, &domain);
+    assert_eq!(
+        format!("{:?}", refusal.code),
+        "InvalidSemanticGraph",
+        "{refusal:?}; owner={owner}; deps={}",
+        emitted["semantic_graph"]["nodes"][clause_position]["dependencies"]
+    );
+    assert_eq!(
+        refusal_path(&refusal),
+        Some(format!("{clause_path}/dependencies").as_str())
+    );
+
+    let mut wrong_kind = emitted.clone();
+    wrong_kind["semantic_graph"]["nodes"][clause_position]["owner_model"] = boolean;
+    let wrong_owner = wrong_kind["semantic_graph"]["nodes"][clause_position]["owner_model"].clone();
+    let graph = fsl_semantics::check::wire_id::WireGraph::of_package_value(&wrong_kind)
+        .expect("the mutated wire keeps its node identities");
+    let mut dependencies = wrong_kind["semantic_graph"]["nodes"][clause_position]["dependencies"]
+        .as_array_mut()
+        .expect("clause dependencies")
+        .iter()
+        .map(|dependency| {
+            if dependency == &owner {
+                wrong_owner.clone()
+            } else {
+                dependency.clone()
+            }
+        })
+        .collect::<Vec<_>>();
+    dependencies.sort_by_key(|dependency| graph.key_of_value(dependency).unwrap());
+    wrong_kind["semantic_graph"]["nodes"][clause_position]["dependencies"] =
+        Value::Array(dependencies);
+    let refusal = protocol_owner_refusal(&wrong_kind, &domain);
+    assert_eq!(format!("{:?}", refusal.code), "InvalidModelBinding");
+    assert_eq!(format!("{:?}", refusal.cause), "Some(MalformedDeclaration)");
+    assert_eq!(
+        refusal_path(&refusal),
+        Some(format!("{clause_path}/owner_model").as_str())
+    );
+
+    emitted["semantic_graph"]["nodes"][clause_position]["owner_model"] = other_model.clone();
+    let graph = fsl_semantics::check::wire_id::WireGraph::of_package_value(&emitted)
+        .expect("the retargeted wire keeps its node identities");
+    let mut dependencies = emitted["semantic_graph"]["nodes"][clause_position]["dependencies"]
+        .as_array()
+        .expect("clause dependencies")
+        .clone();
+    dependencies.retain(|dependency| dependency != &owner);
+    dependencies.push(other_model);
+    dependencies.sort_by_key(|dependency| graph.key_of_value(dependency).unwrap());
+    dependencies.dedup();
+    emitted["semantic_graph"]["nodes"][clause_position]["dependencies"] =
+        Value::Array(dependencies);
+    let refusal = protocol_owner_refusal(&emitted, &domain);
+    assert_eq!(
+        format!("{:?}", refusal.code),
+        "InvalidPackage",
+        "{refusal:?}"
+    );
+    assert_eq!(format!("{:?}", refusal.cause), "Some(StaleNodeKey)");
+    assert_eq!(
+        refusal_path(&refusal),
+        Some(format!("{clause_path}/owner_model").as_str())
+    );
+    assert!(
+        refusal.locus.is_some(),
+        "the stale owner refusal has a node locus"
+    );
 }
 
 #[path = "../../fsl-semantics/tests/support/variant_fields.rs"]

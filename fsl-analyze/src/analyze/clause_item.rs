@@ -259,6 +259,12 @@ impl<'a> ClauseSubject<'a> {
                                 .as_ref()
                                 .map(|temporal| temporal.reductions.clone())
                                 .unwrap_or_default(),
+                            smt_encoding: subject
+                                .temporal
+                                .as_ref()
+                                .and_then(|temporal| temporal.smt_encoding)
+                                .unwrap_or_default(),
+                            smt_run: Default::default(),
                         },
                         stutter_closure,
                         certificate: CertificateRequest {
@@ -934,6 +940,12 @@ impl<'a> PackageClauseSubject<'a> {
                                 .as_ref()
                                 .map(|temporal| temporal.reductions.clone())
                                 .unwrap_or_default(),
+                            smt_encoding: subject
+                                .temporal
+                                .as_ref()
+                                .and_then(|temporal| temporal.smt_encoding)
+                                .unwrap_or_default(),
+                            smt_run: Default::default(),
                         },
                         stutter_closure,
                         certificate: CertificateRequest {

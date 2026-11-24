@@ -149,8 +149,9 @@ pub fn model_item<'a>(
 pub(super) fn run_model_item(
     index: RequestIndex,
     family: Option<DeclarationFamily>,
-    item: ModelItem<'_>,
+    mut item: ModelItem<'_>,
 ) -> AnalyzeItem<'_> {
+    item.certificate = item.request.certificate_request();
     let kind = match item.request.item {
         ModelCheckItem::Invariant { .. } => Capability::OperationContract,
         ModelCheckItem::Clause { .. }
