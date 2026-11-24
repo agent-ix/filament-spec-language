@@ -4363,15 +4363,13 @@ fn timed_scheduler_choices(
             return Err(Error::Refused);
         }
         let Some(aliases) = graph.scheduler_actions.get(key) else {
-            if matches!(
-                scheduler_choice,
+            match scheduler_choice {
                 ProbabilisticSchedulerChoice::Deterministic(
                     crate::ProductAction::FreeDelays(_)
-                )
-            ) {
-                return Err(Error::Refused);
+                    | crate::ProductAction::WorkloadResolve { .. },
+                ) => return Err(Error::Refused),
+                _ => continue,
             }
-            continue;
         };
         let ProbabilisticSchedulerChoice::Deterministic(action) = scheduler_choice else {
             return Err(Error::Refused);
@@ -4704,15 +4702,17 @@ fn price_paths(
                     chosen.insert(key.clone(), *index);
                     continue;
                 }
-                let index = state
-                    .choices
-                    .iter()
-                    .enumerate()
-                    .max_by_key(|(_, choice)| {
-                        targets.iter().filter(|target| covers(choice, target)).count()
-                    })
-                    .map(|(index, _)| index)
-                    .ok_or(Error::Refused)?;
+                let mut best: Option<(usize, usize)> = None;
+                for (index, choice) in state.choices.iter().enumerate() {
+                    let covered = targets
+                        .iter()
+                        .filter(|target| covers(choice, target))
+                        .count();
+                    if best.is_none_or(|(_, most)| covered > most) {
+                        best = Some((index, covered));
+                    }
+                }
+                let (index, _) = best.ok_or(Error::Refused)?;
                 chosen.insert(key.clone(), index);
             }
         }
