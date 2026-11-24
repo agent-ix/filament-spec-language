@@ -4554,17 +4554,23 @@ impl<'a> Lowering<'a> {
         arguments: Vec<MemberTerm>,
     ) -> Result<LeafTerm, CheckRefusal> {
         let lowered_type = node.lowered_value_type();
-        let result_type = if lowered_type.as_ref() == node.value_type() {
-            let type_location = if matches!(node.kind(), NodeKind::If { .. }) {
-                node.children()
-                    .into_iter()
-                    .skip(1)
-                    .find(|child| child.lowered_value_type().as_ref() == lowered_type.as_ref())
-                    .map_or(node.location(), |child| child.location())
-            } else {
-                node.location()
-            };
-            self.type_ref(&lowered_type, type_location)?
+        let control_range = if matches!(node.kind(), NodeKind::If { .. }) {
+            node.children()
+                .into_iter()
+                .skip(1)
+                .find_map(|child| match child.kind() {
+                    NodeKind::Coerce(_, interval) if child.value_type() == node.value_type() => {
+                        self.graph.integer_interval_node(interval)
+                    }
+                    _ => None,
+                })
+        } else {
+            None
+        };
+        let result_type = if let Some(key) = control_range {
+            NodeRef::from(key)
+        } else if lowered_type.as_ref() == node.value_type() {
+            self.type_ref(&lowered_type, node.location())?
         } else {
             // The application lowers at the Integer node, so its checked
             // interval has no edge from it. Only an integer division keeps
