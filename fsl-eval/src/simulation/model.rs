@@ -1830,7 +1830,7 @@ impl<'a> ModelSystem<'a> {
         state: &ModelSimState,
     ) -> Result<(Vec<u8>, crate::simulation::StateKey), crate::simulation::EncodingRefusal> {
         let key = self.canonical_state_key_ref(state)?;
-        Ok((key.as_bytes().to_vec(), key.as_ref().clone()))
+        Ok((key.as_bytes().to_vec(), key.clone()))
     }
 
     /// Canonical raw model identity bytes under cumulative caller admission.
