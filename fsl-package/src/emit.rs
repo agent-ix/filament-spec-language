@@ -739,6 +739,11 @@ pub enum OmissionCause {
     /// A nominal node whose owner is not the checked unit's source, so the
     /// lock the emitter writes selects no owner it joins.
     UnlockedOwner,
+    /// A claim the emitter decides to write no node for: a timed presence
+    /// requirement is a presence read with no clause node of its own. The
+    /// records that name the claim are omitted with it (FR-062 "Packaging is
+    /// all-or-nothing").
+    NoClauseNode,
     /// The node names a node the checked graph does not hold.
     NamesAbsentNode(CheckedNodeId),
     /// The node names a node the wire omits.
@@ -8184,6 +8189,7 @@ fn emit_package_nodes(
         &value_validity.operation_records,
         &relation_rows,
         &omitted_causes,
+        &omitted,
         &value_validity.renumbering,
     )?;
     meter.charge(&requirement_rows)?;

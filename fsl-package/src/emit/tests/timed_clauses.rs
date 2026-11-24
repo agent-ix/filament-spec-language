@@ -1224,6 +1224,43 @@ fn a_postcondition_presence_requirement_is_a_presence_read_with_no_clause_node()
     assert_declared_order(&wire);
 }
 
+/// FSpec FR-062 "Packaging is all-or-nothing", FR-825 "Emission": a
+/// presence requirement has no clause node, so the operation-contract record
+/// naming its claim goes with it, and every omission names a node that is
+/// itself omitted: the unwritten claim is an omitted node (once) and the record
+/// names it.
+#[trace("FR-062-AC-9", "FR-825")]
+#[test]
+fn an_unwritten_presence_claim_is_an_omitted_node_its_record_names() {
+    let (unit, checked) = checked(
+        &dropping_document(),
+        "post P using v on Config::ConfigVersion::attemptUpdate { present(self.v) }\n",
+    );
+    let graph = checked.unwrap_or_else(|refusals| panic!("{unit}: the unit checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    let omitted: Vec<&crate::emit::OmittedNode> = emission.omitted.iter().collect();
+    let claims: Vec<_> = omitted
+        .iter()
+        .filter(|omission| matches!(omission.cause, crate::emit::OmissionCause::NoClauseNode))
+        .collect();
+    assert!(!claims.is_empty(), "the presence claim is an omitted node: {omitted:?}");
+    for omission in &omitted {
+        if let crate::emit::OmissionCause::NamesOmittedNode(named) = &omission.cause {
+            assert!(
+                omitted.iter().any(|other| &other.node == named),
+                "{omission:?} names a node that is not omitted"
+            );
+        }
+    }
+    for claim in &claims {
+        assert_eq!(
+            omitted.iter().filter(|other| other.node == claim.node).count(),
+            1,
+            "an unwritten claim is omitted once"
+        );
+    }
+}
+
 /// [`presence_document`] whose `attemptUpdate` frame names `v`.
 fn dropping_document() -> Vec<u8> {
     let mut document: Value = serde_json::from_slice(&presence_document()).expect("JSON");

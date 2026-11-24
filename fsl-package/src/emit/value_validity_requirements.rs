@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-940 / FSpec FR-825: carry the checker's scalar requirement facts in V2.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use filament_contract_model::{
     CapabilityKind, CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, CheckedSemanticNodeV2,
@@ -310,6 +310,7 @@ fn append_operation_contract(
     source_map: &mut Vec<CheckedSourceMapEntry>,
     region: &impl Fn(&OccurrenceKey) -> Option<fsl_foundation::source::provenance::SourceRegion>,
     omitted: &Omitted,
+    written: &BTreeSet<CheckedNodeId>,
     omissions: &mut Vec<OmittedNode>,
     records: &mut OperationRecords,
     ordinal: &mut u64,
@@ -348,7 +349,23 @@ fn append_operation_contract(
     // emitter writes no node for (a timed presence clause, FR-062 "Packaging
     // is all-or-nothing") leaves no node for the record to name, so the record
     // goes with it, as with an omitted claim.
-    if omitted.contains_key(claim_key) || !nodes.iter().any(|node| node.node_id == claim_id) {
+    if omitted.contains_key(claim_key) {
+        omissions.push(OmittedNode {
+            node: id,
+            cause: OmissionCause::NamesOmittedNode(claim_id),
+        });
+        return Ok(());
+    }
+    if !written.contains(&claim_id) {
+        // The emitter decides to write no node for this claim, so the claim is
+        // itself an omitted node (once, however many records name it) and the
+        // record goes with it: an omission names a node that is omitted.
+        if !omissions.iter().any(|omission| omission.node == claim_id) {
+            omissions.push(OmittedNode {
+                node: claim_id.clone(),
+                cause: OmissionCause::NoClauseNode,
+            });
+        }
         omissions.push(OmittedNode {
             node: id,
             cause: OmissionCause::NamesOmittedNode(claim_id),
@@ -561,6 +578,21 @@ pub(super) fn append(
         ids,
         fsl_semantics::check::builtin_string_type_key(graph.package_name()).map_err(encoding)?,
     );
+    // The claim nodes the operation-contract records name that are written,
+    // found in one pass over the nodes.
+    let mut wanted = BTreeSet::<CheckedNodeId>::new();
+    for (claim, source) in graph.requirements().iter() {
+        if source.requirements().kind() == Capability::OperationContract
+            && !relation_owned(graph, claim)
+        {
+            wanted.insert(node_id(ids, claim.node()));
+        }
+    }
+    let written: BTreeSet<CheckedNodeId> = nodes
+        .iter()
+        .filter(|node| wanted.contains(&node.node_id))
+        .map(|node| node.node_id.clone())
+        .collect();
     for (claim, source) in graph.requirements().iter() {
         if source.requirements().kind() == Capability::OperationContract
             && relation_owned(graph, claim)
@@ -577,6 +609,7 @@ pub(super) fn append(
                 source_map,
                 regions,
                 omitted,
+                &written,
                 &mut omissions,
                 &mut operation_records,
                 &mut operation_ordinal,
@@ -788,6 +821,7 @@ pub(super) fn rows(
     operation_records: &OperationRecords,
     existing: &[RequirementItemRow],
     omitted: &Omitted,
+    unwritten: &[OmittedNode],
     renumbering: &ordinals::Renumbering,
 ) -> Result<Vec<RequirementItemRow>, EmitRefusal> {
     // Sidecar references remain document-held. Only the record body goes
@@ -828,11 +862,16 @@ pub(super) fn rows(
                 return Err(EmitRefusal::SourceMapInvariant);
             }
         }
-        // An operation-contract record dropped because its claim node is not
-        // written has no row either.
+        // An operation-contract record dropped because the emitter writes no node
+        // for its claim has no row either; any other missing record is a writer
+        // fault, never a silent drop.
         if source.requirements().kind() == Capability::OperationContract
             && !operation_records.contains_key(claim)
         {
+            let claim_id = node_id(ids, claim.node());
+            if !unwritten.iter().any(|omission| omission.node == claim_id) {
+                return Err(EmitRefusal::SourceMapInvariant);
+            }
             continue;
         }
         let kind = match source.requirements().kind() {

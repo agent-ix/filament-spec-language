@@ -854,7 +854,8 @@ pub(super) fn carry_rows(
         match cause {
             super::OmissionCause::UnsupportedForm { .. }
             | super::OmissionCause::DeclarationOccurrenceMismatch
-            | super::OmissionCause::UnlockedOwner => {}
+            | super::OmissionCause::UnlockedOwner
+            | super::OmissionCause::NoClauseNode => {}
             super::OmissionCause::NamesAbsentNode(id)
             | super::OmissionCause::NamesOmittedNode(id) => rekey.id(id),
         }
