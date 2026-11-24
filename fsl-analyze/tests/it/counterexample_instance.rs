@@ -19,7 +19,6 @@ use crate::counter::{
 /// refuted in instance order, with its two-step counterexample, not `b`'s
 /// shorter one.
 #[trace("TC-520", "FR-125-AC-16")]
-#[trace("FSpec-TC-290", "FSpec-FR-361-AC-10")]
 #[test]
 fn the_first_refuted_instance_is_reported_over_a_shorter_later_one() {
     let ModelCheckOutcome::Violated { counterexample, .. } =

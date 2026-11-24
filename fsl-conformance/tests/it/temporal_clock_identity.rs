@@ -15,6 +15,7 @@ use fsl_replay::spine::{
 };
 use fsl_replay::StateGraphIdentity;
 use fsl_semantics::model::intake::package_input;
+use ix_trace_rs::trace;
 
 const MODEL_SOURCE: &[u8] = br#"language "ix:native" edition "1-draft";
 domain "acme/rpc";
@@ -121,6 +122,7 @@ fn timestamped_clock() -> ClockConfiguration {
 /// TC-1326 / FR-337-AC-30: an explicitly selected timestamp role and unit
 /// survive package readback and identify the same state-graph claim; an
 /// unused role and a fixed-sample configuration are refused at their loci.
+#[trace("TC-1326", "FR-337-AC-30")]
 #[test]
 fn timestamped_role_readback_identity_and_selection_refusals_are_exact() {
     let clocks = RequestClocks::new(BTreeMap::from([(
