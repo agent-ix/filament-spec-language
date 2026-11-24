@@ -169,11 +169,11 @@ fn fast_avail2_witness(world: &World) -> ProbabilisticCounterexample {
     let mut policy = vec![
         fsl_replay::LongRunPolicyRow {
             state: up.clone(),
-            choice: tick.clone(),
+            choice: fsl_replay::LongRunPolicyChoice::Deterministic(tick.clone()),
         },
         fsl_replay::LongRunPolicyRow {
             state: down.clone(),
-            choice: fast.clone(),
+            choice: fsl_replay::LongRunPolicyChoice::Deterministic(fast.clone()),
         },
     ];
     policy.sort_by(|a, b| a.state.cmp(&b.state));

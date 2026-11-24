@@ -2268,8 +2268,16 @@ fn fair_eventual_value_bounds_are_independently_checked() {
     else {
         panic!("the fair value is enclosed by checked bounds: {record:#?}");
     };
-    assert!(lower.value() <= &ratio(1, 2) && &ratio(1, 2) <= upper.value());
-    assert!(lower.value() >= &ratio(2, 5));
+    let lower_value = match lower {
+        fsl_replay::ExactBound::Finite(value) => value.value(),
+        fsl_replay::ExactBound::Infinity => panic!("finite lower bound"),
+    };
+    let upper_value = match upper {
+        fsl_replay::ExactBound::Finite(value) => value.value(),
+        fsl_replay::ExactBound::Infinity => panic!("finite upper bound"),
+    };
+    assert!(lower_value <= &ratio(1, 2) && &ratio(1, 2) <= upper_value);
+    assert!(lower_value >= &ratio(2, 5));
 
     let system = ModelSystem::new(world.subject().simulation).expect("checked fair model");
     let identity =
@@ -2362,7 +2370,10 @@ fn fair_eventual_upper_policy_hint_is_optional_but_independently_checked() {
     else {
         panic!("the fair exact value is enclosed: {record:#?}");
     };
-    assert!(upper.value() >= &ratio(1, 2));
+    assert!(match upper {
+        fsl_replay::ExactBound::Finite(value) => value.value() >= &ratio(1, 2),
+        fsl_replay::ExactBound::Infinity => false,
+    });
     let upper_bytes = record
         .terminal()
         .unwrap()
