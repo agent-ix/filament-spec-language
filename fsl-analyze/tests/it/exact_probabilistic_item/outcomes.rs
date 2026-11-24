@@ -59,23 +59,28 @@ fn an_expected_reward_claim_with_an_undefined_predicate_replays_its_path() {
     assert_replayed_undefined(record, &world, "RewardUndefined");
 }
 
-/// FSpec FR-411-AC-12, FR-413-AC-7,11: replay stops at the first true
-/// expected-reward `until` predicate, even if a forged suffix reaches an
-/// undefined state later.
-#[trace("FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7", "FSpec-FR-413-AC-11")]
+/// FSpec FR-411-AC-12 and FR-413-AC-7: replay rejects a path that reaches an
+/// expected-reward `until` target at position 1, then continues to an
+/// undefined read at position 2.
+#[trace("FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7")]
 #[test]
 fn expected_reward_undefined_replay_rejects_a_path_after_until_decides() {
     use fsl_replay::{ProbabilityWitnessReplay, replay_probabilistic_undefined};
 
     let claims = "probabilistic Open using inf on M over (c: M::Coin) under Even on origin \
-        { expected accumulate cost until holds(c.v = 1) <= 1 }\n\
+        { long_run_fraction holds(c.armed) >= 0.5 }\n\
         probabilistic Decided using inf on M over (c: M::Coin) under Even on origin \
-        { expected accumulate cost until holds(c.v = 0) <= 1 }";
-    let world = World::new(&prob_world::coin(&format!(
-        "reward cost on Coin::drop = 1;\n{claims}"
+        { expected accumulate cost until holds(c.armed) <= 1 }";
+    let world = World::new(&prob_world::armed_coin(&format!(
+        "reward cost on Coin::arm = 1;\nreward cost on Coin::drop = 1;\n{claims}"
     )));
     let mut witness = undefined_evidence(&world, "Open");
+    assert_eq!(witness.evaluation.site.position, 2);
+    assert_eq!(witness.path.paths[0].steps.len(), 2);
     witness.path.item = fsl_replay::probabilistic_claim_identity(world.claim("Decided")).unwrap();
+    witness.evaluation.site.locus = fsl_replay::UndefinedLocus::ClaimPredicate(
+        fsl_replay::ClaimPredicate::Until,
+    );
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let replay = replay_probabilistic_undefined(
         &world.package,
@@ -86,6 +91,112 @@ fn expected_reward_undefined_replay_rejects_a_path_after_until_decides() {
         &Cancel::new(),
     );
     assert!(matches!(replay, Ok(ProbabilityWitnessReplay::Parity)));
+}
+
+/// Long-run and expected-reward replay reject forged positions, repeated
+/// product keys, exhausted path limits and cancellation.
+#[trace("FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7")]
+#[test]
+fn long_run_and_expected_reward_undefined_replay_reject_adverse_evidence() {
+    use fsl_eval::simulation::model::ModelSystem;
+    use fsl_replay::{
+        ExactProbabilityGraphError, ProbabilityWitnessError, ProbabilityWitnessReplay,
+        ProbabilisticSchedulerChoice, ProductAction, Schedule, replay_probabilistic_undefined,
+    };
+
+    let claims = "probabilistic LongRun using inf on M over (c: M::Coin) under every scheduler on origin \
+        { long_run_fraction holds(c.v = 1) >= 0.5 }\n\
+        probabilistic Reward using inf on M over (c: M::Coin) under every scheduler on origin \
+        { expected accumulate cost until holds(c.v = 1) <= 1 }";
+    let mut model = prob_world::coin(&format!(
+        "reward cost on Coin::drop = 1;\n{claims}"
+    ));
+    model.operations.push(prob_world::Operation {
+        name: "keep",
+        parameters: vec![],
+        modifies: vec![],
+        deletes: false,
+    });
+    let world = World::new(&model);
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+
+    for claim in ["LongRun", "Reward"] {
+        let witness = undefined_evidence(&world, claim);
+        let limits = world.request(claim, ModelCheckLimits::default()).limits;
+        let replay = |witness: &fsl_replay::ProbabilityUndefinedWitness,
+                      limits: &fsl_analyze::exact_probabilistic::ExactProbLimits,
+                      cancel: &Cancel| {
+            replay_probabilistic_undefined(
+                &world.package,
+                &system,
+                &witness.path.item,
+                witness,
+                limits,
+                cancel,
+            )
+        };
+
+        let mut wrong_position = witness.clone();
+        wrong_position.evaluation.site.position += 1;
+        assert!(matches!(
+            replay(&wrong_position, &limits, &Cancel::new()),
+            Ok(ProbabilityWitnessReplay::Parity)
+        ));
+
+        let initial = system.initial().remove(0);
+        let keep = system
+            .actions_with_cancel(&initial, &Cancel::new())
+            .unwrap()
+            .unwrap()
+            .into_iter()
+            .find(|action| action.identity.operation.contains("keep"))
+            .expect("the self-loop operation is enabled");
+        let draw = keep.draws.into_iter().next().expect("one deterministic draw");
+        let (transition, post) = draw
+            .successors
+            .into_iter()
+            .next()
+            .expect("the self-loop has one successor");
+        let mut repeated = witness.clone();
+        let first = fsl_replay::ProbabilityWitnessStep {
+            choice: ProductAction::Identity(Schedule::of(&system, &keep.identity).unwrap()),
+            action: Some(keep.identity),
+            transition: Some(transition),
+            draw: Some(draw.random),
+            post,
+            post_key: repeated.path.initial_key.clone(),
+            elapsed: ratio(0, 1),
+        };
+        repeated.path.paths[0].steps.insert(0, first);
+        repeated.evaluation.site.position += 1;
+        assert_eq!(repeated.evaluation.site.position, 2);
+        assert_eq!(repeated.path.paths[0].steps.len(), 2);
+        repeated.path.scheduler[0].1 = ProbabilisticSchedulerChoice::Deterministic(
+            repeated.path.paths[0].steps[0].choice.clone(),
+        );
+        assert!(matches!(
+            replay(&repeated, &limits, &Cancel::new()),
+            Ok(ProbabilityWitnessReplay::Parity)
+        ));
+
+        let mut no_paths = limits;
+        no_paths.max_witness_paths = 0;
+        assert!(matches!(
+            replay(&witness, &no_paths, &Cancel::new()),
+            Err(ProbabilityWitnessError::Limit {
+                limit: fsl_replay::ModelCheckLimit::ExactProbMaxWitnessPaths,
+                value: 0
+            })
+        ));
+        let cancel = Cancel::new();
+        cancel.cancel(CancelCause::Requested);
+        assert!(matches!(
+            replay(&witness, &limits, &cancel),
+            Err(ProbabilityWitnessError::Graph(
+                ExactProbabilityGraphError::Cancelled(CancelCause::Requested)
+            ))
+        ));
+    }
 }
 
 fn assert_replayed_undefined(

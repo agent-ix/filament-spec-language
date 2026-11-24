@@ -2470,7 +2470,12 @@ fn a_zero_reward_fraction_replays_the_undefined_fraction_value() {
     ));
 }
 
-#[trace("FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7")]
+#[trace(
+    "FR-1043-AC-11",
+    "FR-202-AC-26",
+    "FSpec-FR-411-AC-12",
+    "FSpec-FR-413-AC-7"
+)]
 #[test]
 fn zero_weight_fraction_replays_its_tentative_value_before_an_outside_window_predicate() {
     for scheduler in ["Even", "every scheduler"] {
