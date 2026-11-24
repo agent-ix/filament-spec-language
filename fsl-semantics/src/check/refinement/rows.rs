@@ -116,10 +116,11 @@ impl std::fmt::Debug for KeyedStepRow {
 /// A step row's right side, keyed. An argument `None` is `_`.
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) enum KeyedStepTarget {
-    /// An abstract operation: its `operation_anchor`, the receiver and the
-    /// arguments.
+    /// An abstract operation: its `operation_anchor`, declared target type,
+    /// receiver and arguments.
     Operation {
         operation: NodeKey,
+        target_type: NodeKey,
         receiver: LeafTerm,
         arguments: Vec<Option<LeafTerm>>,
     },
@@ -141,11 +142,13 @@ impl DebugWith for KeyedStepTarget {
         match self {
             Self::Operation {
                 operation,
+                target_type,
                 receiver,
                 arguments,
             } => f
                 .debug_struct("Operation")
                 .field("operation", &NodeKeyDebug(operation, table))
+                .field("target_type", &NodeKeyDebug(target_type, table))
                 .field("receiver", &receiver)
                 .field("arguments", &arguments)
                 .finish(),
@@ -287,10 +290,12 @@ impl KeyedRefinementRows {
             match &row.target {
                 KeyedStepTarget::Operation {
                     operation,
+                    target_type,
                     receiver,
                     arguments,
                 } => {
                     keys.push(operation);
+                    keys.push(target_type);
                     term(&mut keys, receiver);
                     for argument in arguments.iter().flatten() {
                         term(&mut keys, argument);

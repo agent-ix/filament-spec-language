@@ -1002,7 +1002,7 @@ fn the_most_specific_admitted_row_maps_the_object_whatever_the_row_order() {
 /// inherited from `Queue`, are each decided with the receiver lifted against
 /// the row's own target type, so each applies `enq` to its subtype's object
 /// and neither is a `Fault`.
-#[trace("TC-546", "FR-141-AC-16")]
+#[trace("TC-546", "FR-141-AC-16", "FSpec-FR-375-AC-39", "TC-2114")]
 #[test]
 fn an_inherited_operation_row_lifts_its_receiver_against_its_target_subtype() {
     let queue = format!("object Q::Queue from R::Ring {{ {ITEMS_ROW} }}");
@@ -1011,6 +1011,48 @@ fn an_inherited_operation_row_lifts_its_receiver_against_its_target_subtype() {
         [&queue, &fast],
         ["Q::FastQueue", "Q::SlowQueue"],
     ));
+    let emitted = fsl_package::emit_checked(world.package(), fsl_package::EmitLimits::fixture())
+        .expect("the inherited subtype refinement emits");
+    let written: serde_json::Value =
+        serde_json::from_slice(emitted.package().bytes()).expect("emitted package JSON");
+    let nodes = written["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("emitted semantic graph nodes");
+    let refinement = nodes
+        .iter()
+        .find(|node| node["semantic_form"] == "refinement")
+        .expect("the emitted refinement");
+    let step_target_type = |operation: &str| {
+        let step = refinement["body"]["steps"]
+            .as_array()
+            .expect("step rows")
+            .iter()
+            .find(|step| {
+                step["source_class"]
+                    .as_str()
+                    .is_some_and(|source| source.ends_with(operation))
+            })
+            .unwrap_or_else(|| panic!("the emitted row for {operation}"));
+        assert_eq!(step["target"]["kind"], "operation");
+        let target_type = &step["target"]["target_type"];
+        let node = nodes
+            .iter()
+            .find(|node| node["node_id"] == *target_type)
+            .expect("target_type names an emitted node");
+        assert_eq!(node["semantic_form"], "object_type");
+        node["owner"]["node"]
+            .as_str()
+            .expect("target object type identity")
+            .to_owned()
+    };
+    assert_eq!(
+        step_target_type("Slot::put"),
+        "ix://example/ring-queue-spec/FastQueue"
+    );
+    assert_eq!(
+        step_target_type("Slot::put2"),
+        "ix://example/ring-queue-spec/SlowQueue"
+    );
     let concrete = world.concrete_system(UNLIMITED);
     let abstracted = world.abstract_system(UNLIMITED);
     let (pre, post) = (
