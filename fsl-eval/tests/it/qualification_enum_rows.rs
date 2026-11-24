@@ -2,8 +2,11 @@
 //! TC-186 enum identity vectors executed through the real source checker.
 
 use filament_eval::FamilyOutcome;
-use filament_exact::{Meter, Outcome, ScalarLimits, Value};
+use filament_exact::{
+    ComparisonOperator, IllTyped, IllTypedCause, Meter, Outcome, ScalarLimits, Value,
+};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+use filament_semantic_value::enumeration::{compare_enum, EnumValue};
 use filament_specification::{QualificationVector, TestCase, QUALIFICATION_VECTORS};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
@@ -24,7 +27,7 @@ const UNLIMITED: ScalarLimits = ScalarLimits {
     result_units: u64::MAX,
 };
 
-fn source_package(body: &str) -> Result<CheckedPackage, Vec<fsl_semantics::check::CheckRefusal>> {
+fn source_declarations(body: &str) -> PackageDeclarations {
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{body}\n"
@@ -51,12 +54,27 @@ fn source_package(body: &str) -> Result<CheckedPackage, Vec<fsl_semantics::check
     )
     .expect("source declarations assemble");
     declarations
+}
+
+fn source_package(body: &str) -> Result<CheckedPackage, Vec<fsl_semantics::check::CheckRefusal>> {
+    source_declarations(body)
         .check(
             CheckMode::Linked,
             CheckingLimits::default(),
             &fsl_eval::value::S6aRewardEvaluator,
         )
         .map(CheckedPackage::link)
+}
+
+fn enum_members(body: &str) -> Vec<EnumValue> {
+    source_declarations(body).enums[0].members.clone()
+}
+
+fn enum_member<'a>(members: &'a [EnumValue], case: &str) -> &'a EnumValue {
+    members
+        .iter()
+        .find(|member| member.case() == case)
+        .expect("requested case is an admitted member")
 }
 
 fn refusal_code(body: &str) -> String {
@@ -107,12 +125,59 @@ fn t07_t09_cross_declaration_members_are_ill_typed() {
 
     let t09 = published_vector("T09");
     assert!(t09.expected.contains("ill_typed"));
-    for changed_declaration in ["enum B { READY, RUN }", "enum B { DONE, READY }"] {
-        let body = format!(
-            "enum A {{ READY, DONE }}\n{changed_declaration}\n\
-             \nfunction compare using v(a: A, b: B): Boolean pure {{ a = b }}"
+    let original = enum_members("ordered enum B { READY, DONE }");
+    let original_again = enum_members("ordered enum B { READY, DONE }");
+    assert_eq!(
+        compare_enum(
+            ComparisonOperator::Equal,
+            enum_member(&original, "READY"),
+            enum_member(&original_again, "READY"),
+            &mut Meter::new(UNLIMITED),
+        ),
+        Ok(Outcome::Completed(true)),
+        "unchanged declaration identity and shape compare equal"
+    );
+
+    for (difference, changed_declaration, expected_members) in [
+        (
+            "case set",
+            "ordered enum B { READY, RUN, DONE }",
+            ["READY", "RUN", "DONE"].as_slice(),
+        ),
+        (
+            "case order",
+            "ordered enum B { DONE, READY }",
+            ["DONE", "READY"].as_slice(),
+        ),
+    ] {
+        let changed = enum_members(changed_declaration);
+        assert_eq!(
+            changed[0]
+                .declaration_members()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            expected_members,
+            "{difference}: the changed enum has the literal expected members"
         );
-        assert_eq!(refusal_code(&body), "ill_typed");
+        let original_declaration = original[0].declaration().clone();
+        let changed_declaration = changed[0].declaration().clone();
+        assert_eq!(
+            original_declaration, changed_declaration,
+            "{difference}: the source owner and enum name are unchanged"
+        );
+        assert_eq!(
+            compare_enum(
+                ComparisonOperator::Equal,
+                enum_member(&original, "READY"),
+                enum_member(&changed, "READY"),
+                &mut Meter::new(UNLIMITED),
+            ),
+            Err(IllTyped {
+                cause: IllTypedCause::DistinctEnumDeclarations
+            }),
+            "{difference}: changed enum content is a distinct identity"
+        );
     }
 }
 
