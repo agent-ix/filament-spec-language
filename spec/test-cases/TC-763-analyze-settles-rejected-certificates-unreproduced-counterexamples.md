@@ -12,7 +12,7 @@ relationships:
 
 Verify the adverse and uncertified settlements of `analyze`, using test engines registered in layer A under `cfg(test)` and EN-1 under reduction.
 
-Scope: FR-281-AC-4 to FR-281-AC-7, FR-281-AC-11, FR-281-AC-12, FR-281-AC-20 and FR-281-AC-22.
+Scope: FR-281-AC-4 to FR-281-AC-7, FR-281-AC-11, FR-281-AC-12, FR-281-AC-20, FR-281-AC-22 and FR-281-AC-25.
 
 ## Test Procedure
 
@@ -26,8 +26,10 @@ Scope: FR-281-AC-4 to FR-281-AC-7, FR-281-AC-11, FR-281-AC-12, FR-281-AC-20 and 
 8. Build the `compile_fail` doctest that omits `AnalyzeLimits.deadline` and its control. Run a three-item request with `deadline` `Milliseconds(1)` and an uncancelled handle. Run it again with the handle cancelled `CancelCause::Deadline` from a second thread once the first item has settled and the other two remain open. Separately run a request where caller cancellation happens first and one where an engine or accounting limit happens first. Do not use wall-clock sleeps.
 9. Run TC-762 step 2's request with its provision omitting the source the package names, then with the provision holding, under that label, the Counter unit with `P`'s bound changed from `< 2` to `< 5`.
 10. Over step 7's model, run an EN-1 item with an `integer-range` `ProofBound` for the `Integer` field in `temporal.proof_bounds`, then the same item with empty `proof_bounds`.
+11. Run an EN-1 claim whose evaluation is defined at the initial state but
+    undefined at a successor step; retain the step location and cause.
 
-Tag the tests `#[trace("TC-763", "<AC id>")]`.
+Tag the tests `#[trace("TC-763", "<AC id>")]`; tag step 11 with `FR-281-AC-25`.
 
 ## Expected Results
 
@@ -41,3 +43,4 @@ Tag the tests `#[trace("TC-763", "<AC id>")]`.
 - Step 8: the doctest fails to compile and the control compiles; the uncancelled run settles all three items by their own results; both deadline-ended open items are `incomplete` with `cancelled{source: deadline}` and the earlier settled record is unchanged; caller cancellation first yields `cancelled{source: requested}`; the engine or accounting limit reached first retains its own typed limit result; binding admission refusal remains a whole-request `StageFailure::Refused` before items run.
 - Step 9: the first request fails with `StageFailure::Refused(AnalyzeRefusal::Provision)` naming the label, no record, no engine run; the second settles the item `inconclusive` with `replay_parity` and returns no `ItemCounterexample`.
 - Step 10: the item with `temporal.proof_bounds` settles a verdict; the unbounded one settles `unsupported` with `unsupported_projection`/`unbounded-extent` and explores no state.
+- Step 11: the item settles `refuted` with `UndefinedEvaluation` naming the successor step and its cause; it carries no `undefined` label.

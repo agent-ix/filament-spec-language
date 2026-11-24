@@ -616,7 +616,7 @@ registry reaches EN-7 (FR-620, FR-633).
 | FR-281-AC-23 | `Engines::fsl()` registers `en-7` advertising `schedulability`, and a schedulability item settled `Supported(en-7)` runs on EN-7. | Test (TC-1580) |
 | FR-281-AC-24 | When an external provider reports a refuted verdict with each FR-290 unusable-counterexample reason in turn, the item settles `inconclusive` with cause `replay-parity`, carries one item diagnostic with code `invalid_result`, cause `invalid-value` and that typed reason, and carries neither `counterexample` nor `replay`; a refuted verdict with mapped assignments still follows the existing replay rule. | Test (TC-774) |
 
-| FR-281-AC-25 | If an engine returns `undefined` while evaluating a claim at a state or step, the item settles `refuted` with `UndefinedEvaluation{where, cause}` identifying that state or step. It is not settled with an `undefined` label. | Test |
+| FR-281-AC-25 | If an engine returns `undefined` while evaluating a claim at a state or step, the item settles `refuted` with `UndefinedEvaluation{where, cause}` identifying that state or step. It is not settled with an `undefined` label. | Test (TC-763) |
 ## Dependencies
 
 - ADR-029 OP-2, CB-3: the operation and layer A.

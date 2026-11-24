@@ -17,7 +17,7 @@ FR-245's `CertificateCheckLimits` and FR-276's `Cancel` handle, return
 `Stopped` naming the limit, value and setting or the cancellation source,
 and that FR-127 settles a stopped check V-7, never `proved`.
 
-Scope: FR-314-AC-5.
+Scope: FR-282-AC-21 and FR-314-AC-5.
 
 ## Test Procedure
 
@@ -32,9 +32,11 @@ Scope: FR-314-AC-5.
    query, leaving out its proof's bytes.
 3. Check TC-893's `CasRefinesCounter` certificate through
    `check_refinement_smt_proof` with `max_certificate_bytes` 1.
-4. Repeat each check under the same limits.
+4. During source provision admission/source parsing, and separately during certificate document parsing, cancel with `Requested`; also call with the handle uncancelled.
+5. Inspect the checker inputs and verify no solver search state is passed; provide identical certificate and query inputs with solver state present or omitted.
+6. Repeat each check under the same limits.
 
-Tag the tests `#[trace("TC-1165", "FR-314-AC-5")]`.
+Tag the tests `#[trace("TC-1165", "FR-314-AC-5")]`, `#[trace("TC-1165", "FR-282-AC-21")]`.
 
 ## Expected Results
 
@@ -45,4 +47,6 @@ Tag the tests `#[trace("TC-1165", "FR-314-AC-5")]`.
   settling `incomplete`, `cancelled{requested}`.
 - Step 2: `QueryMismatch`, not `Stopped`.
 - Step 3: `Stopped` naming `max_certificate_bytes`.
-- Step 4: equal results.
+- Step 4: source or document parsing stops with cancellation retaining `Requested`; no accepted certificate or truth value. Uncancelled inputs continue normally.
+- Step 5: the checker has no solver-state input and its verdict depends on the certificate and query inputs only.
+- Step 6: equal results.

@@ -29,7 +29,8 @@ Scope: FR-314-AC-1 to FR-314-AC-4, FR-314-AC-9, FR-314-AC-10 to FR-314-AC-21.
 3. Settle the bounded result with no certificate; check and settle the
    bounded certificate with one step's rule replaced by `hole`, then by
    `lia_generic`.
-4. Check the bounded certificate with its proof replaced by each proof of
+4. Inspect the checker signature and inputs to confirm it receives the certificate and rebuilt-query inputs but no solver search state.
+5. Check the bounded certificate with its proof replaced by each proof of
    FR-314-AC-3, the renamed one included, and the inductive certificate
    with an empty base proof and with a malformed step proof. Settle each.
 5. Check FR-314-AC-4's `RefinementSmtCertificate` for `CasRefinesCounter` (a

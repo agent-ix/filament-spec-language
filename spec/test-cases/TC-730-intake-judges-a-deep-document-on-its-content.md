@@ -5,6 +5,8 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-260
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-259
+    type: verifies
 ---
 # TC-730: Intake judges a deep package document on its content
 
@@ -13,7 +15,7 @@ relationships:
 Verify that semantic-IR intake reads once through the shared reader and
 refuses or admits on content, never on depth.
 
-Scope: FR-260-AC-1, FR-260-AC-2, FR-260-AC-5.
+Scope: FR-259-AC-8; FR-260-AC-1, FR-260-AC-2, FR-260-AC-5.
 
 ## Test Procedure
 
