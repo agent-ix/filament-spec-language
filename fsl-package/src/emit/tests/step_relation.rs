@@ -79,7 +79,6 @@ fn checked_bound_graph_with_state_clauses() -> fsl_semantics::check::CheckedGrap
     "TC-1143",
     "FR-180-AC-2",
     "FR-180-AC-3",
-    "FR-180-AC-4",
     "FR-940-AC-23"
 )]
 #[test]
@@ -269,7 +268,7 @@ fn a_step_relation_emits_and_reads_back_its_execution_body() {
 /// FSL FR-507-AC-7, FSpec FR-477/FR-485: a bound relation has one claim
 /// occurrence shared by its model and code capability records, plus one
 /// declaration occurrence; Contract IR admits the emitted package.
-#[trace("FR-507-AC-7", "FR-180-AC-4", "FSpec-FR-477", "FSpec-FR-485")]
+#[trace("FR-507-AC-7", "FSpec-FR-477", "FSpec-FR-485")]
 #[test]
 fn one_step_relation_claim_occurrence_is_admitted_by_ir() {
     use fsl_semantics::check::Capability;
@@ -383,7 +382,7 @@ fn one_step_relation_claim_occurrence_is_admitted_by_ir() {
 /// FR-180-AC-4 (TC-1143): bound execution entries retain their operation
 /// anchor, anchor-specific pre/postcondition nodes and the same abstraction
 /// relation node, independently for each execution.
-#[trace("TC-1143", "FR-180-AC-4")]
+#[trace("TC-1143")]
 #[test]
 fn a_bound_step_relation_emits_its_execution_clause_and_abstraction_joins() {
     let graph = checked_bound_graph_with_state_clauses();

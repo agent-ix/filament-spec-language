@@ -783,7 +783,9 @@ fn the_counter_refinement_checks_to_one_population_and_one_object_row() {
 /// FR-135-AC-12 (TC-540): the checked binding keeps the selected package's
 /// canonical identity when the source aliases are unrelated to those
 /// identities. `DomainPackageRef` exposes identity only; source package
-/// version is not retained on the checked refinement binding.
+/// version is not retained on the checked refinement binding. This remains a
+/// partial case; the version and zero/one/many object-type and state-machine
+/// cardinality clauses are not covered by this assertion.
 #[trace("TC-540")]
 #[test]
 fn refinement_bindings_use_canonical_package_identity_not_source_aliases() {
@@ -1283,6 +1285,7 @@ fn an_abstract_field_with_no_row_is_hidden() {
 
 /// FR-135-AC-4 (TC-540 step 4): changing the checked field mapping changes
 /// the refinement's V2 node identity, even though its source name is stable.
+/// The package_id half is not observable through the current checked binding.
 #[trace("TC-540")]
 #[test]
 fn changing_a_field_mapping_changes_the_refinement_node_identity() {

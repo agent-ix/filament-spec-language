@@ -854,8 +854,10 @@ fn a_copy_group_carries_the_exchange_of_the_body_s_atoms() {
 
 /// FR-180-AC-1 (S3): `Det` over a vault whose `step` is bound to an
 /// implementation has a code claim beside its model claim; with no binding it
-/// has the model claim alone.
-#[trace("TC-605", "FR-180-AC-1")]
+/// has the model claim alone. The current S3 claim types expose capability
+/// kind and presence but no independent code-claim identity, so the identity
+/// clause remains uncovered.
+#[trace("TC-605")]
 #[test]
 fn a_bound_step_relation_has_a_code_claim_beside_its_model_claim() {
     use fsl_semantics::check::{
