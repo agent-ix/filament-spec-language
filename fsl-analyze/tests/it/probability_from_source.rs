@@ -765,12 +765,74 @@ fn probabilistic_on_each_names_first_failing_instance() {
     assert_eq!(item, &once()["items"][0], "a rerun names the same instance");
 }
 
+/// FR-741-AC-5 (TC-3062): an `on each` proof carries a `conditional`
+/// certificate, and its refutation names the failing instance in the
+/// counterexample's `instance` member.
+#[trace("TC-3062", "FR-741-AC-5")]
+#[test]
+fn probabilistic_on_each_reports_conditional_certificate_and_instance() {
+    let start = || link_start(&[("m", false), ("n", true)]);
+    let proved = run_from(
+        "on-each-conditional",
+        &on_each("rational(9, 10)"),
+        start(),
+        json!([{"claim": "E"}]),
+    );
+    let item = &proved["items"][0];
+    assert_eq!(label(item), "proved", "{item}");
+    assert_eq!(item["certificate"]["kind"], "conditional", "{item}");
+    let conditional = &item["certificate"]["document"]["conditional"];
+    assert_eq!(conditional["mode"], "ratio", "{item}");
+    // `m` is the one compared instance, with a null `binding`; `n` never
+    // activates, is confirmed vacuous and has no entry (FR-741 "Binding").
+    let entries = item["record"]["basis"]["entries"]
+        .as_array()
+        .expect("entries");
+    assert_eq!(entries.len(), 1, "{item}");
+    assert_eq!(entries[0]["instance"]["key"], "m", "{item}");
+    assert_eq!(entries[0]["binding"], Value::Null, "{item}");
+    assert!(entries[0]["value"].to_string().contains("391"), "{item}");
+    // `m` activates at position 0, so at its initial key the numerator is the
+    // `on origin` value and the denominator 1.
+    let holds_value = |part: &str, value: Value| {
+        conditional[part]["values"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row["value"] == value))
+    };
+    assert!(
+        holds_value(
+            "numerator",
+            json!({"numerator": "391", "denominator": "400"})
+        ),
+        "{item}"
+    );
+    assert!(
+        holds_value("denominator", json!({"numerator": "1", "denominator": "1"})),
+        "{item}"
+    );
+
+    let refuted = run_from(
+        "on-each-conditional-refuted",
+        &on_each("rational(99, 100)"),
+        start(),
+        json!([{"claim": "E"}]),
+    );
+    let item = &refuted["items"][0];
+    assert_eq!(label(item), "refuted", "{item}");
+    let counterexample = &item["counterexample"];
+    assert_eq!(counterexample["binding"], Value::Null, "{item}");
+    assert!(
+        counterexample["instance"].to_string().contains("\"m\""),
+        "{item}"
+    );
+}
+
 /// FR-196-AC-15 (TC-3060): the checked two-object Link source emits the
 /// conditional masses for m, leaves n vacuous and waiting at every reachable
 /// key, and preserves the distinct activation keys.
 #[trace("TC-3060", "FR-196-AC-15")]
 #[test]
-fn probabilistic_on_each_reports_conditional_certificate_and_instance() {
+fn probabilistic_on_each_product_preserves_multi_initial_keys() {
     let world_with = |threshold: &str| {
         let mut model = prob_world::link("");
         model
