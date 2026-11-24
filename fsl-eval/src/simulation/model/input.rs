@@ -846,8 +846,9 @@ impl<'p> PackageModelInput<'p> {
     /// [`Self::temporal_clause`] for a run that reads the clause over a trace
     /// or a model's behaviours rather than checking it: every profile
     /// and the clause's step intervals are read, since the evaluator reads
-    /// each from the clause itself. A clause with captures is still refused,
-    /// as the package-route letters do not read them yet.
+    /// each from the clause itself. Capture initializers are projected from
+    /// the package and evaluated with the values their activation already
+    /// fixed.
     ///
     /// # Errors
     ///
@@ -858,23 +859,10 @@ impl<'p> PackageModelInput<'p> {
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         position_limit: u64,
     ) -> Result<CheckedTemporalClause, PendingClauseForm> {
-        let clause = claim.node();
         let mut form = self
             .package
             .temporal_clause_run_form(claim)
             .map_err(PendingClauseForm::Read)?;
-        if !form.captures.is_empty() {
-            let node = self
-                .package
-                .temporal_clause_node(clause)
-                .map_err(PendingClauseForm::Read)?;
-            return Err(PendingClauseForm::Read(
-                fsl_package::BareClauseRefusal::Pending {
-                    fact: "capture",
-                    node: node.clone(),
-                },
-            ));
-        }
         if let ValueType::Reference(object) = &form.over.1 {
             form.populations = self.model.overlapping_populations(object.clone());
         }
@@ -1165,6 +1153,24 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         objects: &ObjectEnvironment,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
+
+    /// Evaluate one capture initializer from an admitted package clause,
+    /// with `over` and its earlier capture values bound.
+    fn evaluate_package_capture(
+        &self,
+        clause: &NodeKey,
+        index: usize,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        let _ = (clause, index, over, captures, objects, meter);
+        Err(CallFailure::Fault(InternalFault::new(
+            "FR-940",
+            "package-capture-on-source-route",
+        )))
+    }
 
     /// Evaluate a model behaviour's holds condition with FR-107 model-read accounting.
     /// With `absent_population`, `over` is the real instance key of a population
@@ -2450,6 +2456,20 @@ impl ModelEvaluator for BarePackage<'_> {
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
         CheckedPackageEvaluation::evaluate_holds(self, atom, over, captures, objects, meter)
+    }
+
+    fn evaluate_package_capture(
+        &self,
+        clause: &NodeKey,
+        index: usize,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        CheckedPackageEvaluation::evaluate_package_capture(
+            self, clause, index, over, captures, objects, meter,
+        )
     }
 
     #[allow(clippy::too_many_arguments)] // each value is an explicit evaluation input

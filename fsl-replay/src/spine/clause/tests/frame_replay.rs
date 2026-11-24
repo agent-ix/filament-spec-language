@@ -392,6 +392,9 @@ pub(super) fn packet<P: FamilyPayload>(
         source: Some(match source {
             ReplaySource::Witness(witness) => crate::EnvelopeSource::Witness(witness),
             ReplaySource::Input(assignments) => crate::EnvelopeSource::Input(assignments),
+            ReplaySource::ClaimFree => {
+                panic!("counterexample envelopes cannot carry claim-free sources")
+            }
             ReplaySource::ObservedTemporal(_) => {
                 panic!("a counterexample envelope cannot recursively carry an observed source")
             }

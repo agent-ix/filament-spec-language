@@ -958,11 +958,11 @@ pub enum DependencySelectionsCause {
     },
 }
 
-/// ADR-013 C-13: replay `wire` and settle its verdict. The counterexample a
-/// request replays refuted its property, so the proved verdict is
-/// `violation`; the replayed verdict is the selected predicate's: `false`
-/// is `violation`, `true` is `success`, and an S6a outcome that completed
-/// no value is its own category, which never agrees.
+/// ADR-013 C-13: settle the selected predicate's replayed verdict. A
+/// counterexample replay has a proved `violation` verdict; a claim-free
+/// nullary plain call uses its completed value as the claim and replayed
+/// verdict. `false` is `violation`, `true` is `success`, and an S6a outcome
+/// that completed no value is its own category, which never agrees.
 ///
 /// FR-063 seam: adding a `FamilyOutcome` variant with no arm here fails
 /// `--cfg seam_probe` with `E0004`; FR-063-AC-7's `#[deny(...)]` closes the
@@ -1371,7 +1371,7 @@ pub fn replay_with_cancel_and_temporal_selections(
     let function = match request.source() {
         ReplaySource::ObservedTemporal(_) => None,
         ReplaySource::ModelGraph(_) | ReplaySource::ProtocolAnalysis(_) => None,
-        ReplaySource::Witness(_) | ReplaySource::Input(_) => {
+        ReplaySource::Witness(_) | ReplaySource::Input(_) | ReplaySource::ClaimFree => {
             Some(declared_function_target(&request, ReplayEntry::Replay)?)
         }
         ReplaySource::Hybrid(_) => None,
@@ -1404,6 +1404,11 @@ pub fn replay_with_cancel_and_temporal_selections(
         .ok_or(ReplayRefusal::WrongModelGraphEntry)?;
     let claim = function_claim(declaring, function, replay_target)?;
     let call = select(declaring, function, claim.kind())?;
+    // Claim-free settlement requires its explicit source marker. Even an
+    // empty Input remains a stored counterexample and keeps violation claim.
+    let claim_free_plain_call = matches!(request.source(), ReplaySource::ClaimFree)
+        && call.parameters.is_empty()
+        && matches!(&claim, FunctionClaim::Predicate);
     let joined = arguments(
         &call,
         request.source(),
@@ -1530,7 +1535,14 @@ pub fn replay_with_cancel_and_temporal_selections(
         .and_then(|location| package.graph().region(location))
         .into_iter()
         .collect();
-    let settled = settle(&request, replayed, value, regions, consumed(&meter));
+    let settled = settle(
+        &request,
+        replayed,
+        value,
+        regions,
+        consumed(&meter),
+        claim_free_plain_call,
+    );
     Ok(match limit {
         Some(incomplete) => settled.with_limit(incomplete),
         None => settled,
@@ -1792,6 +1804,7 @@ fn settle_supplied(
             None,
             Vec::new(),
             charges(std::iter::empty()),
+            false,
         )
         .with_pre_call(stop)),
         SuppliedFailure::Stop(stop) => Err(ReplayRefusal::Supplied(stop)),
@@ -1807,8 +1820,13 @@ fn settle(
     value: Option<EvaluatedValue>,
     regions: Vec<fsl_foundation::source::provenance::SourceRegion>,
     charges: ScalarLimits,
+    claim_free_plain_call: bool,
 ) -> ReplayResult {
-    let proved = Verdict::from_category(Category::Violation);
+    let proved = Verdict::from_category(if claim_free_plain_call {
+        replayed
+    } else {
+        Category::Violation
+    });
     // ADR-031 SW-7: a function call's result has no decisive occurrence, so
     // it carries no record.
     match request.source() {
@@ -1821,15 +1839,17 @@ fn settle(
             regions,
             charges,
         )),
-        ReplaySource::Input(_) => ReplayResult::Input(InputArmResult::settle(
-            proved,
-            Verdict::from_category(replayed),
-            replayed,
-            value,
-            &WitnessCheck::Agrees(None),
-            regions,
-            charges,
-        )),
+        ReplaySource::Input(_) | ReplaySource::ClaimFree => {
+            ReplayResult::Input(InputArmResult::settle(
+                proved,
+                Verdict::from_category(replayed),
+                replayed,
+                value,
+                &WitnessCheck::Agrees(None),
+                regions,
+                charges,
+            ))
+        }
         ReplaySource::ObservedTemporal(_) => {
             unreachable!("observed temporal requests dispatch before function replay settlement")
         }
@@ -3116,6 +3136,12 @@ fn arguments(
                         .ok_or_else(|| ReplayRefusal::UnboundParameter(parameter.clone()))
                 })
                 .collect::<Result<Vec<_>, _>>()?
+        }
+        ReplaySource::ClaimFree => {
+            if let Some(parameter) = call.parameters.first() {
+                return Err(ReplayRefusal::UnboundParameter(parameter.clone()));
+            }
+            Vec::new()
         }
         ReplaySource::Witness(witness) => {
             let bindings = call

@@ -1079,6 +1079,29 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
             .map_err(CallFailure::Fault)
     }
 
+    fn evaluate_package_capture(
+        &self,
+        clause: &NodeKey,
+        index: usize,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        let world = self.world().map_err(|failure| refusal(self, failure))?;
+        let term = self
+            .project_capture(clause, index)
+            .map_err(|failure| refusal(self, failure))?;
+        let arguments = clause_arguments(&term, &over, captures)?;
+        Machine::from_bare_package(&world, objects, meter)
+            .run(
+                ReaderNode::root(term.projection()),
+                term.projection().frame_slots(),
+                arguments,
+            )
+            .map_err(CallFailure::Fault)
+    }
+
     #[allow(clippy::too_many_arguments)] // each value is an explicit evaluation input
     fn evaluate_model_holds(
         &self,

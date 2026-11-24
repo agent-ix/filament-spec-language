@@ -331,6 +331,69 @@ fn small(x: i64) -> ReplayRequestWire {
     )
 }
 
+/// FR-640-AC-11 / FR-862-AC-2: a nullary entry replay with no input
+/// assignments is a claim-free plain call. Its result supplies the verdict,
+/// so `true` settles `reproduced-without-witness` as `success`.
+#[trace("TC-2213", "FR-640-AC-11", "TC-2443", "FR-862-AC-2")]
+#[test]
+fn a_claim_free_nullary_entry_reproduces_its_value() {
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n{PROFILE}\
+         function entry using v(): Boolean pure {{ true }}\n"
+    );
+    let compiled = spine(&source, &BTreeMap::new());
+    let wire = request(
+        source.as_bytes(),
+        &compiled,
+        name(&["entry"]),
+        ReplaySource::ClaimFree,
+    );
+    let ReplayResult::Input(result) =
+        replay(wire, ReplayLimits::default()).expect("the plain entry call replays")
+    else {
+        panic!("a claim-free plain call settles on the Input arm");
+    };
+    assert_eq!(
+        result.settlement(),
+        InputSettlement::ReproducedWithoutWitness
+    );
+    assert_eq!(result.category(), Category::Success);
+    assert_eq!(result.value(), Some(EvaluatedValue::Boolean(true)));
+    assert_eq!(result.disagreement(), None);
+}
+
+/// An empty stored Input is still a counterexample source, not a plain call.
+#[trace("TC-2213", "FR-640-AC-11", "TC-2443", "FR-862-AC-2")]
+#[test]
+fn an_empty_input_counterexample_keeps_its_violation_claim() {
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n{PROFILE}\
+         function entry using v(): Boolean pure {{ true }}\n"
+    );
+    let compiled = spine(&source, &BTreeMap::new());
+    let wire = request(
+        source.as_bytes(),
+        &compiled,
+        name(&["entry"]),
+        ReplaySource::Input(Vec::new()),
+    );
+    let ReplayResult::Input(result) =
+        replay(wire, ReplayLimits::default()).expect("the empty counterexample replays")
+    else {
+        panic!("an Input source settles on the Input arm");
+    };
+    assert_eq!(result.settlement(), InputSettlement::Inconclusive);
+    assert_eq!(result.category(), Category::Success);
+    assert_eq!(result.value(), Some(EvaluatedValue::Boolean(true)));
+    assert_eq!(
+        result.disagreement(),
+        Some(&crate::DisagreementCause::Verdicts {
+            proved: Verdict::from_category(Category::Violation),
+            replayed: Verdict::from_category(Category::Success),
+        })
+    );
+}
+
 /// A request replaying `p(x)` against the proved unit: `p`'s own body calls
 /// `f`, a distinct declared function.
 fn p(x: i64) -> ReplayRequestWire {

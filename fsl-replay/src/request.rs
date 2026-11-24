@@ -2098,6 +2098,7 @@ mod tests {
                     crate::witness::WitnessValue::Integer(distinctive_value)
                 );
             }
+            ReplaySource::ClaimFree => panic!("expected the Input arm"),
             ReplaySource::Witness(_) => panic!("expected the Input arm"),
             ReplaySource::ObservedTemporal(_) => panic!("expected the Input arm"),
             ReplaySource::ModelGraph(_) => panic!("expected the Input arm"),

@@ -94,6 +94,7 @@ pub(crate) fn walk_failure(failure: WalkFailure) -> BareSelectionFailure {
 enum ClauseTerm {
     Holds(usize),
     Guard,
+    Capture(usize),
 }
 
 /// A fairness projection preserves both the original clause refusal and a
@@ -541,6 +542,17 @@ impl<'p> BarePackage<'p> {
         self.project_clause_term(clause, ClauseTerm::Guard, false)
     }
 
+    /// The initializer of capture `index` in the temporal clause `clause`,
+    /// projected over its `over`, trigger and earlier capture binders.
+    pub fn project_capture(
+        &self,
+        clause: &NodeKey,
+        index: usize,
+    ) -> Result<BareClauseTerm, BareSelectionFailure> {
+        self.project_clause_term(clause, ClauseTerm::Capture(index), false)?
+            .ok_or_else(|| SlotSelectionFailure::MalformedNode(clause.clone()).into())
+    }
+
     #[ix_trace_rs::string_edge]
     fn project_clause_term(
         &self,
@@ -579,6 +591,10 @@ impl<'p> BarePackage<'p> {
         let clause_index =
             declaration_index(package, clause_id, "temporal_clause").ok_or_else(malformed)?;
         let guard_term = matches!(term, ClauseTerm::Guard);
+        let capture_index = match term {
+            ClauseTerm::Capture(index) => Some(index),
+            _ => None,
+        };
         let (root, site) = match term {
             ClauseTerm::Holds(position) => {
                 let graph_uses = subject.formula_graph();
@@ -613,6 +629,13 @@ impl<'p> BarePackage<'p> {
                 Some(guard) => (guard, format!("temporal {clause_index} guard")),
                 None => return Ok(None),
             },
+            ClauseTerm::Capture(index) => {
+                let initializer = subject.captures().get(index).ok_or_else(malformed)?;
+                (
+                    initializer,
+                    format!("temporal {clause_index} capture {index}"),
+                )
+            }
         };
         // The term's free binders: the `value`/`parameter` nodes its
         // dependency closure reaches, less those it introduces itself
@@ -679,6 +702,8 @@ impl<'p> BarePackage<'p> {
         // slots given are those the term reads.
         let clause_binders = if guard_term {
             1 + usize::from(trigger.is_some())
+        } else if let Some(index) = capture_index {
+            1 + usize::from(trigger.is_some()) + index
         } else {
             1 + usize::from(trigger.is_some()) + subject.capture_names().len()
         };

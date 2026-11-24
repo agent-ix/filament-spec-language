@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-330-AC-18 (TC-2295): a record-sample counterexample names each
-//! position by its index in the request trace. FR-641-AC-8 (TC-2299): a
-//! clause run over a `model` trace writes the limits it ran under.
+//! position by its index in the request trace. FR-641-AC-8 (TC-2299),
+//! FR-330-AC-16: a model-subject trace writes its effective limits.
 
 use crate::command_harness::run_file;
+use crate::support::config_version_spine::{spine, Case};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -21,6 +22,59 @@ fn unit() -> String {
          temporal E using e over (r: Reading) clock \"events\" on origin {{ always[0,2] holds(r.level < 2) }}\n\
          temporal Never using i over (r: Reading) clock \"steps\" on origin {{ always holds(r.level < 2) }}\n"
     )
+}
+
+fn model_unit() -> String {
+    "language \"ix:native\" edition \"1-draft\";\n\
+     profile g = \"filament.model.complete/v1\";\n\
+     profile i = \"filament.temporal.infinite-trace/v1\";\n\
+     model Config = \"example/config-version\";\n\
+     post Stable using g on Config::ConfigVersion::attemptUpdate { false }\n\
+     temporal Never using i over (c: Config::ConfigVersion) clock \"model-steps\" on origin \
+     { always holds(c.versionNumber <= 1) }\n"
+        .to_owned()
+}
+
+fn source(file: &str) -> Value {
+    json!({"file": file, "authority": "agent-ix", "identity": format!("test:record-sample:{file}"),
+        "document": "RecordSample", "formal_revision": 1})
+}
+
+fn write_model_request(directory: &Path, bound: Option<u64>) -> PathBuf {
+    spine::write(directory, Case::Healthy).expect("the ConfigVersion model fixture writes");
+    let snapshot_path = directory.join("spine-snapshot.json");
+    let mut snapshot: Value =
+        serde_json::from_slice(&std::fs::read(&snapshot_path).unwrap()).unwrap();
+    snapshot["anchor"] = json!({"kind": "initialization", "name": "start"});
+    let population = &mut snapshot["populations"][0];
+    let population_ref = population["population"].clone();
+    let mut object = population["objects"][0].clone();
+    object["key"] = json!("c1");
+    object["fields"]["versionNumber"] = json!({"integer": "0"});
+    object["fields"]["parent"] = json!({"absent": {}});
+    population["complete"] = json!(true);
+    population["objects"] = json!([object]);
+    std::fs::write(
+        directory.join("s0.json"),
+        serde_json::to_vec(&snapshot).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(directory.join("unit.native"), model_unit()).unwrap();
+
+    let mut trace = json!({"initial": "s0", "universes": ["s0"], "prefix": [], "loop": [
+        {"transition": {"type": "terminal-stutter"}, "post_state": {"key": "W10"}}]});
+    if let Some(bound) = bound {
+        trace["max_candidates"] = json!(bound);
+    }
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}],
+        "program": {"source": source("unit.native")},
+        "clause": {"selection": {"temporal": {"name": "Never", "trace": {"model": trace},
+            "over": {"reference": {"population": population_ref, "key": "c1"}}}},
+            "observations": {"s0": "s0.json"}}}});
+    let path = directory.join("model-run.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    path
 }
 
 fn clocks() -> Value {
@@ -106,46 +160,34 @@ fn a_record_sample_counterexample_names_positions_by_index() {
 /// FR-641-AC-8: a `model` trace's effective candidate bound, default
 /// included, is the result's `limits` member; a sample trace writes none.
 #[test]
-#[trace("TC-2299", "FR-641-AC-8", "FSpec-TC-1701", "FSpec-FR-352-AC-19")]
-#[ignore = "QSL-2879: the request names no over and no model, so the run refuses `a model trace needs an over` before any result; it needs an FR-330-AC-16 model-subject fixture through command::run (the writer is covered in fsl-analyze model_trace_run::a_model_trace_result_writes_its_limits)"]
+#[trace(
+    "TC-2299",
+    "FR-641-AC-8",
+    "FR-330-AC-16",
+    "FSpec-TC-1701",
+    "FSpec-FR-352-AC-19"
+)]
 fn a_model_trace_run_writes_its_limits() {
     let directory = tempfile::tempdir().unwrap();
-    let model = |bound: Option<u64>| {
-        let mut trace = json!({"initial": "s0", "universes": [], "prefix": [], "loop": []});
-        if let Some(bound) = bound {
-            trace["max_candidates"] = json!(bound);
-        }
-        run_request(json!({"name": "Never", "trace": {"model": trace}}))
-    };
-    let default = result(&run_file(&write(
-        directory.path(),
-        "default.json",
-        &model(None),
-    )));
+    let default = result(&run_file(&write_model_request(directory.path(), None)));
     assert_eq!(
         default["limits"],
         json!({"expansion.max_candidates": "1000000"}),
         "{default}"
     );
-    let five = result(&run_file(&write(
-        directory.path(),
-        "five.json",
-        &model(Some(5)),
-    )));
+    let bounded_output = run_file(&write_model_request(directory.path(), Some(5)));
+    assert_eq!(bounded_output.status.code(), Some(22), "{bounded_output:?}");
+    let bounded = result(&bounded_output);
     assert_eq!(
-        five["limits"],
+        bounded["limits"],
         json!({"expansion.max_candidates": "5"}),
-        "{five}"
+        "{bounded}"
     );
-    // Otherwise equal: the bound is the only difference between the two.
-    let without_limits = |document: &Value| {
-        let mut document = document.clone();
-        if let Some(members) = document.as_object_mut() {
-            members.remove("limits");
-        }
-        document
-    };
-    assert_eq!(without_limits(&default), without_limits(&five));
+    assert_eq!(
+        bounded["disposition"]["category"],
+        "incomplete",
+        "{bounded}"
+    );
     let finite = result(&run_file(&write(
         directory.path(),
         "finite.json",
