@@ -384,7 +384,7 @@ fn emit_and_read(package: &CheckedPackage) -> Result<EmittedRead, Error> {
 
 /// Borrow one named member from a typed aggregate, retaining first-match order.
 fn binding_value<'a>(term: &'a CheckedTerm, binding_name: &str) -> Option<&'a CheckedTerm> {
-    let CheckedTerm::Aggregate { members } = term else {
+    let CheckedTerm::Aggregate { members, .. } = term else {
         return None;
     };
     members.iter().find_map(|member| match member {
