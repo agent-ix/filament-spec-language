@@ -68,7 +68,7 @@ fn assemble_refusal(documents: &[(&str, &str)]) -> (Vec<String>, AssemblyRefusal
     for (identity, declarations) in documents {
         let text = unit_document(declarations);
         let parsed = fsl_cst::parse(
-            fsl_foundation::SourceIdentity::new("qualification", identity),
+            fsl_foundation::SourceIdentity::new("qualification", *identity),
             "unit-diagnostic.native",
             text.as_bytes(),
             fsl_cst::Limits::default(),
