@@ -52,6 +52,18 @@ enum Expected {
         code: String,
         cause: Option<String>,
     },
+    RefusedWithDetails {
+        code: String,
+        cause: Option<String>,
+        required_payload: Vec<String>,
+        source_span: Option<String>,
+    },
+    ObservedRefusalDetails {
+        code: String,
+        cause: Option<String>,
+        payload: String,
+        source_span: String,
+    },
     Admitted,
     Undefined,
     /// A refusal whose authored cell names no code.
@@ -1221,6 +1233,25 @@ fn unit_program(source: &str, expected: Expected) -> SourceCase {
     }
 }
 
+fn refusal_with_details(
+    expected: &Expected,
+    required_payload: &[&str],
+    source_span: Option<&str>,
+) -> Expected {
+    let Expected::Refused { code, cause } = expected else {
+        panic!("unit diagnostic vector expects a typed refusal: {expected:?}");
+    };
+    Expected::RefusedWithDetails {
+        code: code.clone(),
+        cause: cause.clone(),
+        required_payload: required_payload
+            .iter()
+            .map(|part| (*part).to_owned())
+            .collect(),
+        source_span: source_span.map(str::to_owned),
+    }
+}
+
 /// The `code`/`cause` pairs of an authored cell, in order: a backticked
 /// package-level code followed by its backticked cause.
 fn refusal_pairs(text: &str) -> Vec<Expected> {
@@ -1333,6 +1364,28 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
         Expected::Admitted
     } else {
         first().expect("authored refusal")
+    };
+    let expected = match vector.id {
+        "U11a" => refusal_with_details(
+            &expected,
+            &[
+                "fault: TwoRoots",
+                "name: \"L\"",
+                "name: \"m\"",
+                "name: \"m_alt\"",
+            ],
+            None,
+        ),
+        "U11b" => refusal_with_details(
+            &expected,
+            &[
+                "fault: TargetCycle",
+                "from: \"m\", to: \"cm\"",
+                "from: \"cm\", to: \"m\"",
+            ],
+            None,
+        ),
+        _ => expected,
     };
     Some(vec![unit_program(&source, expected)])
 }
@@ -1555,7 +1608,17 @@ fn later_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             tokens[..2]
                 .iter()
                 .map(|declaration| {
-                    unit_program(&format!("dimension L; {declaration}"), pair.clone())
+                    let expected = refusal_with_details(
+                        &pair,
+                        &[
+                            "fault: NonIdentityRoot",
+                            "name: \"m\"",
+                            "Scale(Rational { numerator: Integer(2), denominator: Integer(1) })",
+                            "Offset(Rational { numerator: Integer(0), denominator: Integer(1) })",
+                        ],
+                        Some("m"),
+                    );
+                    unit_program(&format!("dimension L; {declaration}"), expected)
                 })
                 .collect()
         }
@@ -1973,7 +2036,7 @@ fn primary_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
     }
 }
 
-fn observed(declarations: &str, evaluate: bool) -> Expected {
+fn observed(declarations: &str, evaluate: bool, capture_details: bool) -> Expected {
     let kernel = declarations.starts_with(KERNEL);
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\nprofile v = \"{}\";\n{}",
@@ -2014,6 +2077,17 @@ fn observed(declarations: &str, evaluate: bool) -> Expected {
         Ok(declarations) => declarations,
         Err(errors) => {
             let error = errors.errors.first().expect("assembly refusal");
+            if capture_details {
+                return Expected::ObservedRefusalDetails {
+                    code: error.cause.code().as_str().to_owned(),
+                    cause: Some(error.cause.catalog_code().cause().to_owned()),
+                    payload: format!("{:?}", error.cause),
+                    source_span: source
+                        .get(error.span.start..error.span.end)
+                        .expect("assembly span is in source")
+                        .to_owned(),
+                };
+            }
             return Expected::Refused {
                 code: error.cause.code().as_str().to_owned(),
                 cause: Some(error.cause.catalog_code().cause().to_owned()),
@@ -2164,7 +2238,11 @@ fn run_vector(vector: &'static QualificationVector) -> Vec<Run> {
         .map(|(index, case)| Run {
             vector,
             index,
-            actual: observed(&case.declarations, case.expected != Expected::Admitted),
+            actual: observed(
+                &case.declarations,
+                case.expected != Expected::Admitted,
+                matches!(&case.expected, Expected::RefusedWithDetails { .. }),
+            ),
             expected: case.expected,
             source: case.declarations,
         })
@@ -2208,6 +2286,27 @@ fn agrees(expected: &Expected, actual: &Expected) -> bool {
         (Expected::Refused { code, cause: None }, Expected::Refused { code: actual, .. }) => {
             code == actual
         }
+        (
+            Expected::RefusedWithDetails {
+                code,
+                cause,
+                required_payload,
+                source_span,
+            },
+            Expected::ObservedRefusalDetails {
+                code: actual_code,
+                cause: actual_cause,
+                payload,
+                source_span: actual_span,
+            },
+        ) => {
+            code == actual_code
+                && cause == actual_cause
+                && required_payload.iter().all(|part| payload.contains(part))
+                && source_span
+                    .as_ref()
+                    .is_none_or(|expected| expected == actual_span)
+        }
         _ => expected == actual,
     }
 }
@@ -2250,9 +2349,10 @@ struct Probe {
 /// A published vector the source language cannot express today. `probes`
 /// pin what its closest FSL source meets now; an empty list means the vector's
 /// input is not source text at all (a `ScalarLimitsV1` tuple, imported
-/// packages, raw wire bytes) and only `recorded_vectors_are_published_and_not_also_executed`
-/// notices when it becomes expressible. `key` is the Linear ticket that owns
-/// the gap.
+/// packages, raw wire bytes). No capability canary is available for these
+/// entries; the registry only prevents double-counting and records the owning
+/// ticket. Once a source form is added, its adapter must move the vector out of
+/// this registry. `key` is the Linear ticket that owns the gap.
 struct Unexpressible {
     id: &'static str,
     probes: &'static [Probe],
@@ -2534,6 +2634,7 @@ fn refusing_vectors_match_codes() {
     for run in runs() {
         let (code, cause) = match &run.expected {
             Expected::Refused { code, cause } => (code.as_str(), cause.clone()),
+            Expected::RefusedWithDetails { code, cause, .. } => (code.as_str(), cause.clone()),
             Expected::Undefined => ("undefined", None),
             _ => continue,
         };
@@ -2542,6 +2643,16 @@ fn refusing_vectors_match_codes() {
             Expected::Refused {
                 code: actual,
                 cause: actual_cause,
+            } => {
+                actual == code
+                    && cause
+                        .as_ref()
+                        .is_none_or(|cause| Some(cause) == actual_cause.as_ref())
+            }
+            Expected::ObservedRefusalDetails {
+                code: actual,
+                cause: actual_cause,
+                ..
             } => {
                 actual == code
                     && cause
@@ -2572,7 +2683,7 @@ fn refusing_vectors_match_codes() {
 }
 
 fn probe_matches(probe: &Probe) -> Result<(), String> {
-    let actual = observed(probe.source, true);
+    let actual = observed(probe.source, true, false);
     let expected = match probe.met {
         Met::Refused(code, cause) => Expected::Refused {
             code: code.to_owned(),
