@@ -1836,6 +1836,7 @@ fn check_graph(
         ExactProbabilityAcceptance {
             initial_values: None,
             bound: None,
+            policy: Vec::new(),
             certificate: ExactProbabilityCertificate {
                 values: document.values.clone(),
             },

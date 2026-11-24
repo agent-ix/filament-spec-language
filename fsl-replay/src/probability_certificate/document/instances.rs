@@ -1895,6 +1895,7 @@ pub(super) fn check(
                 instances,
             }),
             bound: None,
+            policy: Vec::new(),
             value: least,
             side,
             certificate: ExactProbabilityCertificate {

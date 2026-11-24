@@ -446,6 +446,7 @@ fn subject(
     claims: &[CheckedProbabilisticClaim],
     item: &ObligationIdentity,
     cx: &mut Context<'_, '_>,
+    capture: Option<&super::super::cyclic::CapturedStates>,
 ) -> Result<
     (
         CheckerGraph,
@@ -602,7 +603,7 @@ fn subject(
     }
     drop(original);
     cx.tick(CyclicMdpProbabilityPhase::StoppedGraph)?;
-    let graph = super::super::cyclic::enumerate_graph(
+    let graph = super::super::cyclic::enumerate_graph_capturing(
         system,
         Some(predicate),
         reference,
@@ -614,6 +615,7 @@ fn subject(
         &mut cx.storage,
         true,
         true,
+        capture,
     )?;
     Ok((
         graph,
@@ -969,7 +971,7 @@ fn construct(
         bind_claim(claims, item, cx.cancel)?.form,
         ProbForm::ExpectedReward { .. }
     );
-    let (graph, objective, _, reward, event) = subject(system, claims, item, cx)?;
+    let (graph, objective, _, reward, event) = subject(system, claims, item, cx, None)?;
     let converted;
     let certificate = if event.is_some() {
         let ProbForm::Reach { bound, .. } = &bind_claim(claims, item, cx.cancel)?.form else {

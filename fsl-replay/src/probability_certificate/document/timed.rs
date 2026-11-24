@@ -19,7 +19,7 @@ pub(super) fn check(
     claims: &[CheckedProbabilisticClaim],
     item: &ObligationIdentity,
     bytes: &[u8],
-    bound_side: Option<SubsystemBoundKind>,
+    relation: super::super::ValueRelation,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
@@ -49,7 +49,7 @@ pub(super) fn check(
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     let deadline = objective.form == TimedProbabilityForm::Deadline;
-    if bound_side.is_some() && !deadline {
+    if relation != super::super::ValueRelation::Exact && !deadline {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     if objective.form == TimedProbabilityForm::ExpectedElapsed {
@@ -184,11 +184,7 @@ pub(super) fn check(
         scheduler_objective(optimization),
         &bound,
         super::super::GraphCycles::CollapseNonprogressive,
-        match bound_side {
-            None => super::super::ValueRelation::Exact,
-            Some(SubsystemBoundKind::Lower) => super::super::ValueRelation::Lower,
-            Some(SubsystemBoundKind::Upper) => super::super::ValueRelation::Upper,
-        },
+        relation,
         cancel,
     )
     .map_err(ProbabilityDocumentError::Graph)?;
@@ -580,6 +576,7 @@ fn check_mean_time_values(
         ExactProbabilityAcceptance {
             initial_values: None,
             bound: None,
+            policy: Vec::new(),
             value: initial.clone(),
             side: match bound {
                 Bound::AtLeast(_) => ProbabilityBoundSide::AtLeast,

@@ -2119,6 +2119,7 @@ fn acceptance(
     ExactProbabilityCertificateCheck::Accepted(ExactProbabilityAcceptance {
         initial_values: None,
         bound: None,
+        policy: Vec::new(),
         value,
         side,
         certificate: ExactProbabilityCertificate {

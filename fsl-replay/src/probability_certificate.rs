@@ -753,6 +753,9 @@ pub struct ExactProbabilityAcceptance {
     document: Option<Box<[u8]>>,
     // The FR-1042 side this acceptance certified; absent for an exact value.
     bound: Option<SubsystemBoundKind>,
+    // The action the checker selected at each existential state of a bound
+    // document, in key order; empty where no existential choice was checked.
+    policy: Vec<(ProbabilityProductKey, crate::ProductAction)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -773,6 +776,13 @@ impl ExactProbabilityAcceptance {
     /// for an exact value.
     pub fn bound(&self) -> Option<SubsystemBoundKind> {
         self.bound
+    }
+    /// FR-1042: the action the checker selected at each existential state of a
+    /// bound document, hinted or the first satisfying one in canonical
+    /// full-product-action order, in key order. Empty for a document that
+    /// checks no existential choice.
+    pub fn policy(&self) -> &[(ProbabilityProductKey, crate::ProductAction)] {
+        &self.policy
     }
     /// The exact certificate this checker accepted, retained with its token.
     pub fn certificate(&self) -> &ExactProbabilityCertificate {
@@ -1825,33 +1835,77 @@ fn check_exact_reachability(
     )
 }
 
+/// FR-1042: whether the caller checks a document as the one the claim rests
+/// on or as the other end of a value-bounds interval.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CertificateRole {
+    /// The claim side: an exact document, a `lower` document of an `AtLeast`
+    /// claim or an `upper` document of an `AtMost` claim. Its initial value
+    /// must meet the claim's threshold; a bound document of the other kind is
+    /// rejected `Malformed` at `kind`.
+    Claim,
+    /// The counterpart of a value-bounds proof: a bound document that meets
+    /// its own conditions and no threshold. Any other document is rejected
+    /// `Malformed` at `kind`.
+    Counterpart,
+}
+
 /// How a certified value relates to the Bellman value the checker recomputes
-/// (FR-1042): equal, at most (`lower`) or at least (`upper`).
+/// (FR-1042): equal, at most (`lower`) or at least (`upper`), with the role
+/// a bound document was offered in.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ValueRelation {
     Exact,
-    Lower,
-    Upper,
+    Lower(CertificateRole),
+    Upper(CertificateRole),
 }
 
 impl ValueRelation {
+    /// The relation a document of bound `side` (none for an exact document)
+    /// states when checked in `role`.
+    fn of(side: Option<SubsystemBoundKind>, role: CertificateRole) -> Self {
+        match side {
+            None => Self::Exact,
+            Some(SubsystemBoundKind::Lower) => Self::Lower(role),
+            Some(SubsystemBoundKind::Upper) => Self::Upper(role),
+        }
+    }
+
     /// Whether `certified` stands in this relation to the recomputed `actual`.
     fn holds(self, certified: &Rational, actual: &Rational) -> bool {
         match self {
             Self::Exact => certified == actual,
-            Self::Lower => certified <= actual,
-            Self::Upper => certified >= actual,
+            Self::Lower(_) => certified <= actual,
+            Self::Upper(_) => certified >= actual,
         }
     }
 
-    /// Whether the claim bound is tested at the initial value: always for an
-    /// exact value, and for a bound only on the claim's own side.
-    fn tests_threshold(self, bound: &Bound) -> bool {
+    /// Whether the claim bound is tested at the initial value: for an exact
+    /// value and for a claim-side bound, never for a counterpart.
+    fn tests_threshold(self) -> bool {
         matches!(
-            (self, bound),
-            (Self::Exact, _) | (Self::Lower, Bound::AtLeast(_)) | (Self::Upper, Bound::AtMost(_))
+            self,
+            Self::Exact | Self::Lower(CertificateRole::Claim) | Self::Upper(CertificateRole::Claim)
         )
     }
+
+    /// Whether a claim-side bound document has the kind opposite to the
+    /// claim's direction.
+    fn misplaced(self, bound: &Bound) -> bool {
+        matches!(
+            (self, bound),
+            (Self::Lower(CertificateRole::Claim), Bound::AtMost(_))
+                | (Self::Upper(CertificateRole::Claim), Bound::AtLeast(_))
+        )
+    }
+}
+
+/// The rejection of a document offered in a role its kind cannot fill.
+fn misplaced_kind() -> ExactProbabilityCertificateCheck {
+    ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+        rule: ProbabilityCertificateRule::Malformed,
+        at: ProbabilityCertificateLocus::Member("kind"),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1865,6 +1919,9 @@ fn check_reachability_values(
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ExactProbabilityGraphError> {
     poll_cancel(cancel)?;
+    if relation.misplaced(bound) {
+        return Ok(misplaced_kind());
+    }
     let values = match certificate_values(graph, certificate, cancel)? {
         CertificateValues::Complete(values) => values,
         CertificateValues::Rejected(rejection) => {
@@ -2047,7 +2104,7 @@ fn check_reachability_values(
             graph.initial.clone(),
         ));
     };
-    let meets_bound = !relation.tests_threshold(bound)
+    let meets_bound = !relation.tests_threshold()
         || match bound {
             Bound::AtLeast(threshold) => initial >= threshold,
             Bound::AtMost(threshold) => initial <= threshold,
@@ -2063,6 +2120,7 @@ fn check_reachability_values(
         ExactProbabilityAcceptance {
             initial_values: None,
             bound: None,
+            policy: Vec::new(),
             document: None,
             value: initial.clone(),
             certificate: certificate.clone(),
@@ -2159,6 +2217,7 @@ fn check_exact_terminal_rewards(
             ExactProbabilityAcceptance {
                 initial_values: None,
                 bound: None,
+                policy: Vec::new(),
                 document: None,
                 value: value.clone(),
                 certificate: certificate.clone(),
@@ -2678,6 +2737,7 @@ mod tests {
             certificate: ExactProbabilityCertificate { values: Vec::new() },
             document: None,
             bound: None,
+            policy: Vec::new(),
             initial_values: Some(CheckedInitialValues {
                 values: vec![(0, None), (1, Some(value.clone()))],
                 bindings: vec![None, None],
@@ -3121,6 +3181,7 @@ mod tests {
             ExactProbabilityCertificateCheck::Accepted(ExactProbabilityAcceptance {
                 initial_values: None,
                 bound: None,
+                policy: Vec::new(),
                 document: None,
                 value: Rational::new(Integer::from(4_i64), Integer::from(5_i64)).unwrap(),
                 side: ProbabilityBoundSide::AtLeast,
