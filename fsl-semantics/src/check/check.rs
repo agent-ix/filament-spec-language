@@ -91,7 +91,7 @@ use filament_semantic_value::absence::AbsenceMode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
     admits_equality_conversion, CompositeShape, EqualityOperand, EqualityOperator,
-    FieldDeclaration, TypeEnvironment,
+    FieldDeclaration, StorageRequest, StorageUnit, TypeEnvironment,
 };
 use filament_semantic_value::enumeration::{EnumDeclaration, EnumMemberIndex, EnumValue};
 use filament_semantic_value::location::{
@@ -2793,42 +2793,68 @@ pub(crate) fn cancelled_refusal(location: &Location) -> CheckRefusal {
 ///
 /// The walk keeps its own stack, so a type nested to any depth the parser
 /// admits does not consume the thread's stack (FR-356-AC-7).
-fn clock_reference_as_leaf(value_type: &ValueType) -> Option<ValueType> {
+#[cfg(test)]
+fn clock_reference_as_leaf(
+    value_type: &ValueType,
+    location: &Location,
+) -> Result<ValueType, CheckRefusal> {
+    fn reserve<T>(values: &mut Vec<T>, location: &Location) -> Result<(), CheckRefusal> {
+        let request = StorageRequest::new(1, StorageUnit::AdditionalElements);
+        values
+            .try_reserve(1)
+            .map_err(|_| refuse(location, CheckCause::TypeCheckAllocation(request)))
+    }
+
     enum Step<'a> {
         Visit(&'a ValueType),
         Option,
         Collection(&'a CollectionType),
         Map(&'a filament_exact::MapType),
     }
-    let mut steps = vec![Step::Visit(value_type)];
+    let mut steps = Vec::new();
+    reserve(&mut steps, location)?;
+    steps.push(Step::Visit(value_type));
     let mut built: Vec<ValueType> = Vec::new();
     while let Some(step) = steps.pop() {
         match step {
             Step::Visit(visited) => match visited {
                 ValueType::ClockReference => {
+                    reserve(&mut built, location)?;
                     built.push(ValueType::Boolean);
                 }
                 ValueType::Option(payload) => {
+                    reserve(&mut steps, location)?;
                     steps.push(Step::Option);
+                    reserve(&mut steps, location)?;
                     steps.push(Step::Visit(payload));
                 }
                 ValueType::Collection(collection) => {
+                    reserve(&mut steps, location)?;
                     steps.push(Step::Collection(collection));
+                    reserve(&mut steps, location)?;
                     steps.push(Step::Visit(collection.element()));
                 }
                 ValueType::Map(map) => {
+                    reserve(&mut steps, location)?;
                     steps.push(Step::Map(map));
+                    reserve(&mut steps, location)?;
                     steps.push(Step::Visit(map.values()));
+                    reserve(&mut steps, location)?;
                     steps.push(Step::Visit(map.key()));
                 }
-                other => built.push(other.clone()),
+                other => {
+                    reserve(&mut built, location)?;
+                    built.push(other.clone());
+                }
             },
             Step::Option => {
-                let payload = built.pop()?;
+                let payload = built.pop().ok_or_else(|| mismatch(location))?;
+                reserve(&mut built, location)?;
                 built.push(ValueType::Option(Arc::new(payload)));
             }
             Step::Collection(collection) => {
-                let element = built.pop()?;
+                let element = built.pop().ok_or_else(|| mismatch(location))?;
+                reserve(&mut built, location)?;
                 built.push(ValueType::collection(CollectionType::new(
                     collection.kind(),
                     element,
@@ -2836,15 +2862,16 @@ fn clock_reference_as_leaf(value_type: &ValueType) -> Option<ValueType> {
                 )));
             }
             Step::Map(map) => {
-                let values = built.pop()?;
-                let key = built.pop()?;
-                built.push(ValueType::Map(Arc::new(
-                    filament_exact::MapType::new(key, values, map.bound()).ok()?,
-                )));
+                let values = built.pop().ok_or_else(|| mismatch(location))?;
+                let key = built.pop().ok_or_else(|| mismatch(location))?;
+                let map_type = filament_exact::MapType::new(key, values, map.bound())
+                    .map_err(|_| mismatch(location))?;
+                reserve(&mut built, location)?;
+                built.push(ValueType::Map(Arc::new(map_type)));
             }
         }
     }
-    built.pop()
+    built.pop().ok_or_else(|| mismatch(location))
 }
 
 fn mismatch(location: &Location) -> CheckRefusal {
@@ -3818,12 +3845,30 @@ impl<'a> Typer<'a> {
     ) -> Result<(), CheckRefusal> {
         // `Reference<Clock>` names no declared object type, so the whole type
         // is checked with each clock reference read as a leaf of its own.
-        let whole = clock_reference_as_leaf(value_type).ok_or_else(|| mismatch(location))?;
-        self.scope
-            .types
-            .try_check_type(&whole)
-            .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?;
-        let mut pending = vec![value_type];
+        // Ask the owner to check the original borrowed type first. This keeps
+        // its fallible traversal reservation ahead of the local conversion
+        // worklist and preserves the owner's native allocation request.
+        let original_check = self.scope.types.try_check_type(value_type);
+        if matches!(
+            &original_check,
+            Err(
+                filament_semantic_value::declaration::TypeCheckError::Allocation(_)
+                    | filament_semantic_value::declaration::TypeCheckError::Capacity(_)
+            )
+        ) {
+            return original_check
+                .map_err(|failure| CheckRefusal::from_type_check(location, failure));
+        }
+        // Validate leaves directly instead of rebuilding an equivalent
+        // ValueType with Arc allocations. Arc::new and the collection/map
+        // constructors abort on allocation failure, so they cannot preserve
+        // the owner's typed allocation refusal (FR-534-AC-2).
+        let mut pending = Vec::new();
+        let request = StorageRequest::new(1, StorageUnit::AdditionalElements);
+        pending
+            .try_reserve(1)
+            .map_err(|_| refuse(location, CheckCause::TypeCheckAllocation(request)))?;
+        pending.push(value_type);
         while let Some(value_type) = pending.pop() {
             match value_type {
                 ValueType::Enum(shape) => {
@@ -3846,17 +3891,47 @@ impl<'a> Typer<'a> {
                     // reference, a native value type with no declaration to
                     // admit (FR-230-AC-71).
                 }
-                ValueType::Option(payload) => pending.push(payload),
-                ValueType::Collection(collection) => pending.push(collection.element()),
+                ValueType::Option(payload) => {
+                    pending
+                        .try_reserve(1)
+                        .map_err(|_| refuse(location, CheckCause::TypeCheckAllocation(request)))?;
+                    pending.push(payload);
+                }
+                ValueType::Collection(collection) => {
+                    // Collection eligibility is checked before the owner
+                    // descends into its element. Recheck this boundary when
+                    // an earlier owner refusal (such as Reference<Clock>)
+                    // might otherwise hide a separate collection refusal.
+                    if original_check.is_err() {
+                        self.scope
+                            .types
+                            .try_check_type(value_type)
+                            .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?;
+                    }
+                    pending
+                        .try_reserve(1)
+                        .map_err(|_| refuse(location, CheckCause::TypeCheckAllocation(request)))?;
+                    pending.push(collection.element());
+                }
                 ValueType::Map(map) => {
+                    pending
+                        .try_reserve(2)
+                        .map_err(|_| refuse(location, CheckCause::TypeCheckAllocation(request)))?;
                     pending.push(map.key());
                     pending.push(map.values());
                 }
-                ValueType::Reference(_) | ValueType::Composite(_) => self
-                    .scope
-                    .types
-                    .try_check_type(value_type)
-                    .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?,
+                // A successful owner walk above has already checked every
+                // reference and composite. Repeat leaf checks only when the
+                // owner stopped at an ordinary refusal (for example, the
+                // synthetic Clock reference), so other invalid leaves
+                // remain detectable without another successful full walk.
+                ValueType::Reference(_) | ValueType::Composite(_) if original_check.is_err() => {
+                    self.scope
+                        .types
+                        .try_check_type(value_type)
+                        .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?
+                }
+                ValueType::Reference(_) | ValueType::Composite(_) => {}
                 ValueType::Boolean
                 | ValueType::Integer
                 | ValueType::Int(_)
@@ -3868,15 +3943,16 @@ impl<'a> Typer<'a> {
                 | ValueType::CarriedQuantity(_)
                 | ValueType::Text(_)
                 | ValueType::String
-                | ValueType::Population(_)
                 | ValueType::Uuid
                 | ValueType::Timestamp
                 | ValueType::Bytes
-                | ValueType::JsonObject => self
+                | ValueType::JsonObject => {}
+                ValueType::Population(_) if original_check.is_err() => self
                     .scope
                     .types
                     .try_check_type(value_type)
                     .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?,
+                ValueType::Population(_) => {}
             }
         }
         Ok(())
@@ -4165,8 +4241,8 @@ impl<'a> Typer<'a> {
                 ));
             }
             if self.scope.names_enum(type_name) {
-                // FR-317-AC-6: an unknown member of a source enum or ordered enum
-                // refuses like an undeclared model variant case.
+                // FR-317-AC-6 gives source enum members the same diagnostic
+                // as undeclared model variant cases.
                 return Err(refuse(
                     location,
                     CheckCause::UndeclaredVariantCase {
@@ -5508,6 +5584,104 @@ impl<'a> Typer<'a> {
         )))
     }
 
+    /// A collection-typed `PlaceReference` is the slot domain of its place and
+    /// is built only here; every other `PlaceReference` is a `ref(..)` that
+    /// [`Self::clock_ref`] types `Reference<Clock>`. Lowering tells them apart
+    /// by that type.
+    ///
+    /// The clock collection `field` of the record element `operand` selects
+    /// (FR-230-AC-67): `operand` is read from an object reference through
+    /// fields and selectors, and the steps with `field` and its slot name a
+    /// clock place of the unit. The node is typed as the collection of clock
+    /// references, as [`Self::clock_collection_field`] types an object's own.
+    fn record_clock_collection(
+        &mut self,
+        operand: &Node,
+        field: &str,
+        location: &Location,
+    ) -> Option<Node> {
+        use super::lowering::PlaceStep;
+        let mut names: Vec<Option<String>> = vec![None, Some(field.to_owned())];
+        // The selector nodes, innermost first while walking; `None` is the
+        // operand itself, which is pushed only once the place is found.
+        let mut slot_nodes: Vec<Option<NodeId>> = Vec::new();
+        let mut current: Option<NodeId> = None;
+        let (owner_id, object) = loop {
+            let node = match current {
+                None => operand,
+                Some(id) => self.body.get(id)?,
+            };
+            let (next, name) = match &node.kind {
+                NodeKind::Index { collection, .. } => {
+                    slot_nodes.push(current);
+                    (*collection, None)
+                }
+                NodeKind::Field {
+                    operand,
+                    field: record_field,
+                    ..
+                } => (*operand, Some(record_field.name().to_owned())),
+                NodeKind::Attribute {
+                    reference, field, ..
+                } => (*reference, Some(field.name.clone())),
+                _ => return None,
+            };
+            names.push(name);
+            current = Some(next);
+            if let ValueType::Reference(object) = &self.body.get(next)?.value_type {
+                break (next, object.clone());
+            }
+        };
+        names.reverse();
+        slot_nodes.reverse();
+        let (shape, place_key) =
+            self.scope
+                .clock_places
+                .iter()
+                .find_map(|(owner, steps, key)| {
+                    (steps.len() == names.len()
+                        && self.scope.types.conforms(object.clone(), owner.clone())
+                        && steps
+                            .iter()
+                            .zip(&names)
+                            .all(|(step, name)| match (step, name) {
+                                (PlaceStep::Field(step), Some(name)) => step == name,
+                                (PlaceStep::Slot(_), None) => true,
+                                _ => false,
+                            }))
+                    .then(|| match steps.last() {
+                        Some(PlaceStep::Slot(shape)) if !shape.map => {
+                            key.clone().map(|key| (*shape, key))
+                        }
+                        _ => None,
+                    })
+                    .flatten()
+                })?;
+        // The slot domain of the collection (FSpec FR-772): the selectors of
+        // its live slots, `Set<Integer>` bounded by the collection's maximum.
+        // Its slot terms are the selectors of the slot steps before the last.
+        let operand_id = self.push(operand.clone());
+        let slot_nodes = slot_nodes
+            .into_iter()
+            .map(|slot| slot.unwrap_or(operand_id))
+            .collect();
+        let cardinality = shape.max.map(CardinalityBound::at_most);
+        let value_type = ValueType::collection(CollectionType::new(
+            CollectionKind::Set,
+            ValueType::Integer,
+            cardinality,
+        ));
+        Some(node(
+            NodeKind::PlaceReference {
+                reference: owner_id,
+                place: place_key,
+                slots: slot_nodes,
+            },
+            value_type,
+            location,
+        ))
+    }
+
     pub(crate) fn is_model_receiver(&self, value_type: &ValueType, name: &str) -> bool {
         match value_type {
             ValueType::Reference(object) => {
@@ -5815,27 +5989,30 @@ impl<'a> Typer<'a> {
         let CompositeShape::Record(fields) = declaration.shape() else {
             return Err(mismatch(location));
         };
-        let declared = fields
-            .iter()
-            .find(|declared| declared.name() == field)
-            .ok_or_else(|| {
-                refuse(
-                    location,
-                    if key.package() == super::plan_value::PLAN_PACKAGE {
-                        CheckCause::PlanUnknownField {
-                            owner: declaration.name().into(),
-                            field: field.into(),
-                            span: member_span,
-                        }
-                    } else {
-                        CheckCause::UnknownField {
-                            owner: declaration.name().into(),
-                            field: field.into(),
-                            span: member_span,
-                        }
-                    },
-                )
-            })?;
+        let Some(declared) = fields.iter().find(|declared| declared.name() == field) else {
+            // A record's clock fields are places, not data (FR-230 "Records,
+            // tuples and unions"): `size(self.ts[0].ys)` reads the size of
+            // the clock collection the selected element holds (FR-230-AC-67).
+            if let Some(collection) = self.record_clock_collection(&operand, field, location) {
+                return Ok(collection);
+            }
+            return Err(refuse(
+                location,
+                if key.package() == super::plan_value::PLAN_PACKAGE {
+                    CheckCause::PlanUnknownField {
+                        owner: declaration.name().into(),
+                        field: field.into(),
+                        span: member_span,
+                    }
+                } else {
+                    CheckCause::UnknownField {
+                        owner: declaration.name().into(),
+                        field: field.into(),
+                        span: member_span,
+                    }
+                },
+            ));
+        };
         let optional = declared.presence() == Presence::Optional;
         let value_type = if optional {
             ValueType::option(declared.value_type().clone())
@@ -6833,16 +7010,20 @@ mod holds_float_tests {
                 let held = nest(clock);
                 let plain = nest(ValueType::Integer);
                 assert!(!Typer::holds_references(&plain));
+                let location = Location::at(Origin::Expression, &[]);
                 // A clock reference is the checker's own `ClockReference` type; the
                 // rewrite turns it into its Boolean leaf at the bottom of the nest.
-                let leafed = clock_reference_as_leaf(&held).expect("a leaf rewrite");
+                let leafed = clock_reference_as_leaf(&held, &location).expect("a leaf rewrite");
                 let (mut depth, mut at) = (0_usize, &leafed);
                 while let ValueType::Option(payload) = at {
                     depth += 1;
                     at = payload;
                 }
                 assert_eq!((depth, at), (100_000, &ValueType::Boolean));
-                assert_eq!(clock_reference_as_leaf(&plain), Some(plain.clone()));
+                assert_eq!(
+                    clock_reference_as_leaf(&plain, &location),
+                    Ok(plain.clone())
+                );
             })
             .expect("the thread spawns")
             .join()

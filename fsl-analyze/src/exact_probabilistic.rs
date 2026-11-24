@@ -107,11 +107,11 @@ pub(crate) fn observe_path_search() {
 pub use build::build_product;
 #[cfg(not(feature = "test-support"))]
 pub(crate) use build::BudgetedProductError;
-#[cfg(feature = "test-support")]
-pub use build::{build_product_with_key_budget, BudgetedProductError};
 pub(crate) use build::{
     automaton_refusal, build_retaining_monitor, build_retaining_monitor_with_budget,
 };
+#[cfg(feature = "test-support")]
+pub use build::{build_product_with_key_budget, BudgetedProductError};
 pub(crate) use digital::model_constraints;
 pub(crate) use digital::ELAPSED_REWARD;
 pub(crate) use fair::bottom_components;
@@ -134,12 +134,14 @@ pub use unbounded::{
     decide_until_threshold, ComponentValue, ExtRational, GainBias, LongRunResult, UnboundedError,
     UnboundedObjective, UnboundedOutcome, UnboundedResult,
 };
+pub(crate) use witness::ProducedRandomizedWitness;
 pub use witness::{
     action_steps, entry_choice, induced_chain, policy_action, produce_witness, witness_scheduler,
     EntryChoice, ProducedPath, ProducedStep, ProducedWitness, WitnessError, WitnessScope,
 };
 pub(crate) use witness::{
-    choice_index, produce_quantile_witness, produce_witness_stopping, WitnessWork,
+    choice_index, produce_quantile_witness, produce_randomized_witness, produce_witness_stopping,
+    WitnessWork,
 };
 
 pub(crate) fn timed_region_route(

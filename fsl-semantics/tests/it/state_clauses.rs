@@ -4938,9 +4938,18 @@ fn collection_a_set_field_refuses_duplicates_bounds_and_other_kinds() {
         "invalid_runtime_input",
         "duplicate-member",
     );
+    use fsl_semantics::model::observation::PathStep;
     assert_eq!(
         record.path,
-        vec![fsl_semantics::model::observation::PathStep::Index(1)]
+        vec![
+            PathStep::Field("populations".to_owned()),
+            PathStep::Index(0),
+            PathStep::Field("objects".to_owned()),
+            PathStep::Index(1),
+            PathStep::Field("fields".to_owned()),
+            PathStep::Field("tags".to_owned()),
+            PathStep::Index(1),
+        ]
     );
     assert_eq!(
         record.fields.get("earlier-index").map(String::as_str),

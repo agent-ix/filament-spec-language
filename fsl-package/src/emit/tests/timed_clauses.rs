@@ -1435,7 +1435,6 @@ fn nested_timer_document() -> Vec<u8> {
 /// `clock_reset` with a slot term per collection level.
 #[trace("TC-2391", "FR-230-AC-67")]
 #[test]
-#[ignore = "QSL-2891: an element reset no single binder selects is refused TimedModelNotEmitted, not written"]
 fn a_reset_below_two_collections_holds_a_slot_per_level() {
     const RESET: &str =
         "post R using v on Config::ConfigVersion::attemptUpdate { self.ts[0].ys[1] = 0 ms }\n";
@@ -1642,7 +1641,8 @@ fn a_point_free_and_a_point_bound_reset_share_one_anchor() {
         .unwrap_or_else(|failure| panic!("the point-bound resets read back: {failure}"));
 }
 
-/// Reads `bytes`, an emitted package over `document`, through I2.
+/// Reads `bytes`, an emitted package over `document`, through I2. A refusal
+/// reads as its code and cause in the wire's spelling, then its locus.
 fn read_presence_package(document: &[u8], bytes: &[u8], wire: &Value) -> Result<(), String> {
     let mut evidence = CheckedPackageEvidence::new();
     for feature in wire["lock"]["required_features"]
@@ -1654,9 +1654,15 @@ fn read_presence_package(document: &[u8], bytes: &[u8], wire: &Value) -> Result<
     evidence
         .insert_domain_package_document(package_identity(document), document.to_vec())
         .expect("a fresh evidence key");
-    crate::checked_v2::read_checked_package_v2(bytes, library(), V2ReadLimits::fixture(), &evidence)
-        .map(|_| ())
-        .map_err(|failure| format!("{failure:?}"))
+    match crate::checked_v2::read_v2(bytes, library(), V2ReadLimits::fixture(), &evidence) {
+        Read::Verified { .. } => Ok(()),
+        Read::Refused(crate::checked_v2::V2ReadRefusal::Envelope { refusal, locus }) => {
+            let code = serde_json::to_value(refusal.code).expect("a code");
+            let cause = serde_json::to_value(refusal.cause).expect("a cause");
+            Err(format!("{code} {cause} {refusal:?} {locus:?}"))
+        }
+        other => Err(format!("{other:?}")),
+    }
 }
 
 /// The members of a clause body or guard part named `name`.
@@ -1786,11 +1792,7 @@ fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
     // FR-930-AC-4, FSpec FR-760-AC-2: lifting the presence binder into the
     // part's binders is refused at the binder target.
     let (_, _, mut wire) = emit(&guard("forall"));
-    let parameter = nodes(&wire)
-        .iter()
-        .find(|node| node["semantic_form"] == "parameter" && node.to_string().contains("\"e\""))
-        .map(|node| node["node_id"].clone())
-        .expect("the quantifier's parameter");
+    let parameter = quantifier_parameter(&wire);
     let guard_id = timed(&wire, "clock_guard")[0]["node_id"].clone();
     let node = wire["semantic_graph"]["nodes"]
         .as_array_mut()
@@ -1798,6 +1800,11 @@ fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
         .iter_mut()
         .find(|node| node["node_id"] == guard_id)
         .expect("the guard");
+    let dependencies = node["dependencies"].as_array_mut().expect("dependencies");
+    dependencies.push(parameter.clone());
+    // A node's dependencies are in id order, whose first segment is its tag.
+    dependencies.sort_by_key(|id| id["path"][0].as_str().map(str::to_owned));
+    dependencies.dedup();
     let part = &mut node["body"]["members"]
         .as_array_mut()
         .expect("members")
@@ -1809,13 +1816,32 @@ fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
         .expect("part members")
         .insert(
             1,
-            json!({"name": "binders", "value": {"term": "aggregate",
+            json!({"name": "binders", "term": "binding", "value": {"term": "aggregate",
             "members": [{"term": "reference", "target": parameter}]}}),
         );
     let bytes = crate::emit::tests::wire_bytes(&wire).expect("JSON");
     let failure = read_presence_package(&document, &bytes, &wire)
         .expect_err("a binder no constraint reads is refused");
     assert!(failure.contains("timed-node-reference"), "{failure}");
+}
+
+/// The id of the binder `parameter` the one `forall` application of `wire`
+/// quantifies with: the slot term of the `presence_read` its body names.
+fn quantifier_parameter(wire: &Value) -> Value {
+    let named = |reference: &Value| {
+        nodes(wire)
+            .iter()
+            .find(|node| node["node_id"] == reference["target"])
+            .unwrap_or_else(|| panic!("{reference} names a node"))
+    };
+    let quantifier = nodes(wire)
+        .iter()
+        .find(|node| node["body"]["operation"]["identity"] == "filament.op.collection.forall")
+        .expect("a forall application");
+    let body = named(&quantifier["body"]["arguments"][1]["value"]);
+    let parameter = named(&body["body"]["arguments"][2]);
+    assert_eq!(parameter["semantic_form"], "parameter");
+    parameter["node_id"].clone()
 }
 
 /// FR-953-AC-1, FSpec FR-772-AC-1: a presence-only quantifier ranges over
@@ -1843,6 +1869,14 @@ fn a_presence_quantifier_is_emitted_over_its_slot_domain() {
         panic!("one slot-domain node shared by the three clauses: {domains:?}");
     };
     assert_eq!(domain["semantic_form"], "presence_read", "{domain}");
+    // The wire as written: the node's own id holds operand slots, which
+    // `wire` resolves to index segments.
+    let at = nodes(&wire)
+        .iter()
+        .position(|node| node == domain)
+        .expect("the domain is a node");
+    let written = crate::emit::tests::raw_wire(&emission);
+    let domain = &written["semantic_graph"]["nodes"][at];
     let path = domain["node_id"]["path"].as_array().expect("a path");
     assert_eq!(
         path.len(),
@@ -1905,6 +1939,14 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
         "the quantifier's operand 0 is the slot-domain node"
     );
     let boolean = base["semantic_graph"]["nodes"][quantifier]["body"]["result_type"].clone();
+    // The presence read the quantifier's body names; its slot term is the binder.
+    let read = nodes(&base)
+        .iter()
+        .position(|node| {
+            node["node_id"]
+                == base["semantic_graph"]["nodes"][quantifier]["body"]["arguments"][1]["value"]["target"]
+        })
+        .expect("the presence read the quantifier's body names");
     let refused = |mutate: &dyn Fn(&mut Value), cause: &str, locus: &str| {
         let mut wire = base.clone();
         mutate(&mut wire);
@@ -1920,7 +1962,24 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
             .expect("arguments")
             .clone()
     };
+    // The arguments and the `dependencies` that name them, in graph order:
+    // the one defect of each case is the one the reader refuses.
     let set_arguments = |wire: &mut Value, node: usize, values: Vec<Value>| {
+        let mut named: Vec<usize> = values
+            .iter()
+            .filter_map(|value| {
+                nodes(wire)
+                    .iter()
+                    .position(|candidate| candidate["node_id"] == value["target"])
+            })
+            .collect();
+        named.sort_unstable();
+        named.dedup();
+        let dependencies: Vec<Value> = named
+            .into_iter()
+            .map(|at| wire["semantic_graph"]["nodes"][at]["node_id"].clone())
+            .collect();
+        wire["semantic_graph"]["nodes"][node]["dependencies"] = Value::Array(dependencies);
         wire["semantic_graph"]["nodes"][node]["body"]["arguments"] = Value::Array(values);
     };
 
@@ -1947,8 +2006,9 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
     // A first argument that is a scalar_type node, not a clock_place node.
     refused(
         &|wire| {
-            wire["semantic_graph"]["nodes"][domain]["body"]["arguments"][0]["target"] =
-                boolean.clone();
+            let mut values = arguments(wire, domain);
+            values[0]["target"] = boolean.clone();
+            set_arguments(wire, domain, values);
         },
         "operator-ineligible",
         &format!("/semantic_graph/nodes/{domain}/body/arguments/0"),
@@ -1956,27 +2016,36 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
     // A binder typed Boolean instead of the slot domain's Integer.
     refused(
         &|wire| {
-            let quantified = wire["semantic_graph"]["nodes"][quantifier].to_string();
-            let parameter = nodes(wire)
-                .iter()
-                .position(|node| {
-                    node["semantic_form"] == "parameter"
-                        && quantified.contains(&node["node_id"].to_string())
-                })
-                .expect("the binder parameter the quantifier names");
+            // The binder is the slot term of the presence read the
+            // quantifier's body names.
+            let at = |wire: &Value, reference: &Value| {
+                nodes(wire)
+                    .iter()
+                    .position(|node| node["node_id"] == reference["target"])
+                    .expect("a node the quantifier reaches")
+            };
+            let quantified = &wire["semantic_graph"]["nodes"][quantifier]["body"]["arguments"];
+            let body = at(wire, &quantified[1]["value"]);
+            let slot = &nodes(wire)[body]["body"]["arguments"][2];
+            let parameter = at(wire, slot);
+            assert_eq!(nodes(wire)[parameter]["semantic_form"], "parameter");
             wire["semantic_graph"]["nodes"][parameter]["semantic_type"] = boolean.clone();
         },
         "type-mismatch",
-        &format!("/semantic_graph/nodes/{quantifier}"),
+        // FSpec FR-772-AC-2: at the binder, the slot term of the presence read.
+        &format!("/semantic_graph/nodes/{read}/body/arguments/2"),
     );
-    // The slot domain as operand 0 of count: quantifier_domain_only.
+    // The slot domain as an operand other than a quantifier's operand 0:
+    // quantifier_domain_only. (FSpec FR-772-AC-2 names `count`; a `count`
+    // application is a `quantify` node whose identity path names its operation,
+    // so the one defect of this case is the second operand.)
     refused(
         &|wire| {
-            wire["semantic_graph"]["nodes"][quantifier]["body"]["operation"]["identity"] =
-                json!("filament.op.collection.count");
+            let values = vec![arguments(wire, quantifier)[0].clone(); 2];
+            set_arguments(wire, quantifier, values);
         },
         "operator-ineligible",
-        &format!("/semantic_graph/nodes/{quantifier}/body/arguments/0"),
+        &format!("/semantic_graph/nodes/{quantifier}/body/arguments/1"),
     );
     // A path that embeds the clock_place node_id object.
     refused(

@@ -403,6 +403,7 @@ impl ElementBinding {
 pub struct ConvexPart {
     data: Option<CheckedTimedPredicate>,
     presences: Vec<(ClockId, bool)>,
+    element_presences: Vec<(ClockId, ElementBinding, bool)>,
     elements: Vec<ElementBinding>,
     binders: Vec<ElementBinding>,
     /// This part includes the size-zero branch of a bounded universal
@@ -456,6 +457,7 @@ impl ClockGuard {
             part.data.is_none()
                 && part.presences.is_empty()
                 && part.elements.is_empty()
+                && part.element_presences.is_empty()
                 && part.families.is_empty()
                 && !part.empty_collection_branch
                 && !part.clocks.is_empty()
@@ -477,6 +479,13 @@ impl ConvexPart {
     /// predicate over the bit, read at the state.
     pub fn presences(&self) -> &[(ClockId, bool)] {
         &self.presences
+    }
+
+    /// Each element place of a collection whose presence the part requires
+    /// at a slot, and whether present: `present(e)` of a quantifier body
+    /// that also constrains the binder's clock (FR-930 "Shared binder").
+    pub fn element_presences(&self) -> &[(ClockId, ElementBinding, bool)] {
+        &self.element_presences
     }
 
     /// The collection elements the data predicate reads, each a parameter
@@ -562,6 +571,9 @@ pub struct ClockReset {
     /// The position of the operation's `Clock` parameter the reset writes,
     /// when it writes one (FR-230 "Operation parameters").
     parameter: Option<usize>,
+    /// The literal slot of each collection level of a reset of a selected
+    /// element, outermost first.
+    slots: Vec<u64>,
 }
 
 /// The slots a reset `forall(e in self.f: P(e) implies e.x = c)` writes:
@@ -621,6 +633,12 @@ impl ClockReset {
     /// The slots the reset writes; `None` for a reset of one clock.
     pub fn selection(&self) -> Option<&SlotSelection> {
         self.selection.as_ref()
+    }
+
+    /// The literal slot of each collection level the reset selects, outermost
+    /// first; empty for a reset of one clock of the receiver.
+    pub fn slots(&self) -> &[u64] {
+        &self.slots
     }
 
     /// The reset clock of the receiver.
@@ -1555,7 +1573,11 @@ impl TimedModel {
                 if !part.elements.is_empty() || !part.families.is_empty() {
                     return Some((Unwritten(Member::QuantifiedClause), guard.span));
                 }
-                if part.clocks.is_empty() && !guard.covered() && !part.empty_collection_branch {
+                if part.clocks.is_empty()
+                    && !guard.covered()
+                    && !part.empty_collection_branch
+                    && part.element_presences.is_empty()
+                {
                     // Located at the disjunct: its data predicate's site.
                     let site = guard_part_site(&self.model, at, index);
                     let span = self
@@ -1591,6 +1613,9 @@ impl TimedModel {
                     .map_or(0, |clock| clock.slots().count());
                 let omission = match &reset.selection {
                     None if slots == 0 => continue,
+                    // The element each literal selector names is written with one
+                    // slot term per level (FR-230-AC-67).
+                    None if reset.slots.len() == slots => continue,
                     // A condition reading the element's presence alone is
                     // the `presence_read` of its place (FSpec `SD-02`).
                     Some(SlotSelection {
@@ -1718,6 +1743,9 @@ struct PartDraft {
     presences: Vec<(ClockId, bool)>,
     /// Each element the data predicate reads, with its quantifier's span.
     elements: Vec<(ElementBinding, Span)>,
+    /// Each element place whose presence the part requires, and whether
+    /// present (FR-930 "Shared binder").
+    element_presences: Vec<(ClockId, ElementBinding, bool)>,
     empty_collection_branch: bool,
     clocks: Vec<ClockConstraint>,
     /// Each quantifier family the part conjoins: its field, whether every
@@ -1800,6 +1828,20 @@ struct ResetDraft {
     selection: Option<SelectionDraft>,
     /// The `Clock` parameter's position, of a reset of one.
     parameter: Option<usize>,
+    /// The literal slot of each collection level of a reset of a selected
+    /// element, outermost first (`self.ts[0].ys[1] = 0 ms`).
+    slots: Vec<SlotTerm>,
+}
+
+/// One literal slot a selector `p[i]` names, with the collection it selects
+/// from and the span of the index as written.
+#[derive(Clone, Debug)]
+struct SlotTerm {
+    value: u64,
+    span: Span,
+    /// The collection's place key: its field names and the literal slots
+    /// above it.
+    collection: Vec<String>,
 }
 
 impl ResetDraft {
@@ -1811,6 +1853,7 @@ impl ResetDraft {
             span,
             selection: None,
             parameter: None,
+            slots: Vec::new(),
         }
     }
 }
@@ -1935,6 +1978,26 @@ impl Clocks<'_> {
             .map(ClockId)
     }
 
+    /// The clock place of an element selected by literal positions,
+    /// `self.ts[0].ys[1]`, with the slot each selector names (FR-230
+    /// "Selection"); `None` when `id` selects no element by literals.
+    fn selected(
+        &self,
+        form: &ExpressionForm,
+        id: ExprId,
+        context: &EffectiveId,
+    ) -> Option<(ClockId, Vec<SlotTerm>)> {
+        let (path, slots) = selection_path(form, id)?;
+        self.fields
+            .iter()
+            .position(|clock| {
+                same_place(&clock.path, &path)
+                    && !clock.guarded
+                    && self.model.conforms(context.clone(), clock.owner.clone())
+            })
+            .map(|at| (ClockId(at), slots))
+    }
+
     /// The `Option<Clock>` place the path `self.v` names at `id` of `form`,
     /// for a clause about `context`: the option, read by `present`, written
     /// by a reset or `absent` (FR-230 "Presence bit").
@@ -1991,21 +2054,58 @@ impl Clocks<'_> {
         if !self.bit_slots(form, *source) {
             return false;
         }
+        let is_binder = |at: ExprId| {
+            matches!(form.expression.get(at).map(|node| node.node()),
+                Some(ExprNode::Name(name)) if name.segments.len() == 1 && name.name == *binder)
+        };
+        let mut presence = false;
+        // The binder as the operand of a comparison, a clock constraint of
+        // the element; any other read of it is not read yet.
+        let mut constrained = false;
+        let mut other_read = false;
         let mut pending = vec![*body];
         while let Some(at) = pending.pop() {
             let Some(node) = form.expression.get(at).map(|node| node.node()) else {
                 continue;
             };
-            if let ExprNode::Present(operand) = node {
-                if matches!(form.expression.get(*operand).map(|node| node.node()),
-                    Some(ExprNode::Name(name)) if name.segments.len() == 1 && name.name == *binder)
-                {
-                    return true;
+            match node {
+                ExprNode::Present(operand) if is_binder(*operand) => presence = true,
+                ExprNode::Binary {
+                    operator:
+                        BinaryOperator::Less
+                        | BinaryOperator::LessOrEqual
+                        | BinaryOperator::Greater
+                        | BinaryOperator::GreaterOrEqual
+                        | BinaryOperator::Equal
+                        | BinaryOperator::NotEqual,
+                    left,
+                    right,
+                } => {
+                    for side in [*left, *right] {
+                        if is_binder(side) {
+                            constrained = true;
+                        } else {
+                            pending.push(side);
+                        }
+                    }
                 }
+                _ if is_binder(at) => other_read = true,
+                _ => pending.extend(node.children()),
             }
-            pending.extend(node.children());
         }
-        false
+        // A body that also constrains the binder's clock (`present(e)
+        // implies e >= 1 ms`) is a quantified guard part read at each slot
+        // of a bounded collection (FR-930 "Shared binder"); only the
+        // unbounded family is still a presence read this slice does not
+        // take.
+        let bounded = matches!(
+            form.expression.get(*source).map(|node| node.node()),
+            Some(ExprNode::Field { field, .. })
+                if self.fields.iter().any(|clock| matches!(clock.path.as_slice(),
+                    [PlaceStep::Field(name), PlaceStep::Slot(shape)]
+                        if name == field && shape.max.is_some()))
+        );
+        presence && !(constrained && !other_read && bounded)
     }
 
     /// Whether `id` of `form` is `r.f`, `f` an `Option<Clock>` field, or
@@ -2339,6 +2439,140 @@ const OPEN_SLOT: CollectionShape = CollectionShape {
     map: false,
 };
 
+/// The place path of `self.f[i].g[j]…` at `id` with each literal selector a
+/// slot step, and the slot each names: at least one, every index an integer
+/// literal.
+fn selection_path(form: &ExpressionForm, id: ExprId) -> Option<(Vec<PlaceStep>, Vec<SlotTerm>)> {
+    let spans = form.spans.of_nodes(&form.expression)?;
+    let mut steps = Vec::new();
+    let mut selectors = Vec::new();
+    let mut at = id;
+    loop {
+        match form.expression.get(at)?.node() {
+            ExprNode::Field { operand, field, .. } => {
+                steps.push(PlaceStep::Field(field.clone()));
+                at = *operand;
+            }
+            ExprNode::Index { operand, index } => {
+                let ExprNode::Integer(position) = form.expression.get(*index)?.node() else {
+                    return None;
+                };
+                steps.push(PlaceStep::Slot(OPEN_SLOT));
+                selectors.push((position.to_u64()?, spans.get(index.index()).copied()?));
+                at = *operand;
+            }
+            ExprNode::SelfRef if !selectors.is_empty() => break,
+            _ => return None,
+        }
+    }
+    steps.reverse();
+    selectors.reverse();
+    // The collection each selector selects from: the names and slots above.
+    let mut key = Vec::new();
+    let mut slots = Vec::with_capacity(selectors.len());
+    let mut next = selectors.into_iter();
+    for step in &steps {
+        match step {
+            PlaceStep::Field(name) | PlaceStep::Union(name) => key.push(name.clone()),
+            PlaceStep::Slot(_) => {
+                let (value, span) = next.next()?;
+                slots.push(SlotTerm {
+                    value,
+                    span,
+                    collection: key.clone(),
+                });
+                key.push(value.to_string());
+            }
+        }
+    }
+    Some((steps, slots))
+}
+
+/// The place key of `self.f[i].g` at `id`, its names and literal slots, in
+/// path order; `None` for anything else.
+fn place_key(form: &ExpressionForm, id: ExprId) -> Option<Vec<String>> {
+    let mut key = Vec::new();
+    let mut at = id;
+    loop {
+        match form.expression.get(at)?.node() {
+            ExprNode::Field { operand, field, .. } => {
+                key.push(field.clone());
+                at = *operand;
+            }
+            ExprNode::Index { operand, index } => {
+                let ExprNode::Integer(position) = form.expression.get(*index)?.node() else {
+                    return None;
+                };
+                key.push(position.to_u64()?.to_string());
+                at = *operand;
+            }
+            ExprNode::SelfRef if !key.is_empty() => break,
+            _ => return None,
+        }
+    }
+    key.reverse();
+    Some(key)
+}
+
+/// The least size the top-level conjuncts of `form` establish for the
+/// collection at place key `collection`: `size(p) >= n`, `size(p) > n`,
+/// `size(p) = n` and their mirrors.
+fn established_size(form: &ExpressionForm, collection: &[String]) -> u64 {
+    let mut least = 0_u64;
+    let mut pending = vec![form.expression.root_id()];
+    while let Some(id) = pending.pop() {
+        let Some(node) = form.expression.get(id).map(|node| node.node()) else {
+            continue;
+        };
+        let ExprNode::Binary {
+            operator,
+            left,
+            right,
+        } = node
+        else {
+            continue;
+        };
+        if *operator == BinaryOperator::And {
+            pending.extend([*left, *right]);
+            continue;
+        }
+        let integer = |side: ExprId| match form.expression.get(side).map(|node| node.node()) {
+            Some(ExprNode::Integer(value)) => value.to_u64(),
+            _ => None,
+        };
+        let size_of = |side: ExprId| match form.expression.get(side).map(|node| node.node()) {
+            Some(ExprNode::Size { operand, .. }) => {
+                place_key(form, *operand).filter(|key| key == collection)
+            }
+            _ => None,
+        };
+        // `size(p) ~ n`, else the mirrored `n ~ size(p)`.
+        let (operator, bound) = match (size_of(*left), integer(*right)) {
+            (Some(_), Some(bound)) => (*operator, bound),
+            _ => match (integer(*left), size_of(*right)) {
+                (Some(bound), Some(_)) => (
+                    match operator {
+                        BinaryOperator::Less => BinaryOperator::Greater,
+                        BinaryOperator::LessOrEqual => BinaryOperator::GreaterOrEqual,
+                        BinaryOperator::Greater => BinaryOperator::Less,
+                        BinaryOperator::GreaterOrEqual => BinaryOperator::LessOrEqual,
+                        other => *other,
+                    },
+                    bound,
+                ),
+                _ => continue,
+            },
+        };
+        let least_of = match operator {
+            BinaryOperator::GreaterOrEqual | BinaryOperator::Equal => bound,
+            BinaryOperator::Greater => bound.saturating_add(1),
+            _ => continue,
+        };
+        least = least.max(least_of);
+    }
+    least
+}
+
 /// Whether two place paths name one place: equal steps, any slot matching
 /// any slot.
 fn same_place(left: &[PlaceStep], right: &[PlaceStep]) -> bool {
@@ -2530,6 +2764,13 @@ impl<'f> Located<'f> {
             }
             if let Some(read) = clocks.read(form, id, context) {
                 clock[id.index()] = Some(read);
+                first[id.index()] = spans.get(id.index()).copied();
+                continue;
+            }
+            // An element selected by literal positions is a clock read at
+            // the selector (FR-230 "Selection"); `resets` takes it as a
+            // reset target.
+            if clocks.selected(form, id, context).is_some() {
                 first[id.index()] = spans.get(id.index()).copied();
                 continue;
             }
@@ -2820,13 +3061,16 @@ enum DataLiteral {
     /// `present(self.v)` of an `Option<Clock>` place: its presence bit
     /// (FR-230 "Presence bit").
     Presence(ClockId),
+    /// `present(e)` of a quantifier's binder at one slot: the presence of
+    /// the element place at the binding's slot.
+    ElementPresence(ClockId, ElementBinding),
 }
 
 impl DataLiteral {
     /// The literal's own form, `None` for a node of the clause.
     fn form(&self) -> Option<&ExpressionForm> {
         match self {
-            Self::Site(_) | Self::Family(_) | Self::Presence(_) => None,
+            Self::Site(_) | Self::Family(_) | Self::Presence(_) | Self::ElementPresence(..) => None,
             Self::Formed(form) | Self::Element(form, ..) => Some(form),
             Self::EmptyCollection(form) => Some(form),
         }
@@ -2848,6 +3092,10 @@ impl PartialEq for DataLiteral {
             }
             (Self::Family(left), Self::Family(right)) => std::rc::Rc::ptr_eq(left, right),
             (Self::Presence(left), Self::Presence(right)) => left == right,
+            (
+                Self::ElementPresence(left, left_binding),
+                Self::ElementPresence(right, right_binding),
+            ) => left == right && left_binding == right_binding,
             _ => false,
         }
     }
@@ -3180,7 +3428,9 @@ fn part_predicate(
                 DataLiteral::EmptyCollection(form) => form.clone(),
                 // A family and a presence bit are read at the state, not by
                 // the data predicate.
-                DataLiteral::Family(_) | DataLiteral::Presence(_) => return None,
+                DataLiteral::Family(_)
+                | DataLiteral::Presence(_)
+                | DataLiteral::ElementPresence(..) => return None,
             };
             if positive {
                 Some(cut)
@@ -3200,6 +3450,18 @@ fn draft_part(
     literals: Vec<(DataLiteral, bool)>,
     clocks: Vec<ClockConstraint>,
 ) -> Result<PartDraft, CheckCause> {
+    let (element_presences, literals): (Vec<_>, Vec<_>) = literals
+        .into_iter()
+        .partition(|(literal, _)| matches!(literal, DataLiteral::ElementPresence(..)));
+    let mut element_presences: Vec<(ClockId, ElementBinding, bool)> = element_presences
+        .into_iter()
+        .filter_map(|(literal, positive)| match literal {
+            DataLiteral::ElementPresence(clock, binding) => Some((clock, binding, positive)),
+            _ => None,
+        })
+        .collect();
+    element_presences.sort_by_key(|(clock, binding, positive)| (*clock, binding.slot, *positive));
+    element_presences.dedup();
     let (presences, literals): (Vec<_>, Vec<_>) = literals
         .into_iter()
         .partition(|(literal, _)| matches!(literal, DataLiteral::Presence(_)));
@@ -3215,9 +3477,14 @@ fn draft_part(
     presences.sort();
     presences.dedup();
     // FR-230-AC-39: a constraint on an `Option<Clock>` reads its clock only
-    // where the part establishes its presence.
+    // where the part establishes its presence, of the place or of the
+    // element at the constraint's own slot.
     if let Some(unproved) = clocks.iter().find(|constraint| {
-        located.bit(constraint.clock) && !presences.contains(&(constraint.clock, true))
+        located.bit(constraint.clock)
+            && !presences.contains(&(constraint.clock, true))
+            && !element_presences.iter().any(|(clock, binding, present)| {
+                *present && *clock == constraint.clock && constraint.binding() == Some(binding)
+            })
     }) {
         return Err(timed(TemporalCause::UnprovedPresence {
             span: unproved.span,
@@ -3268,6 +3535,7 @@ fn draft_part(
     Ok(PartDraft {
         data,
         presences,
+        element_presences,
         elements,
         empty_collection_branch,
         clocks,
@@ -3308,6 +3576,42 @@ struct ResetCut {
     requires: Vec<(ClockId, bool)>,
     /// Each requirement's span, beside `requires`.
     require_spans: Vec<Span>,
+}
+
+/// FR-230 "Selection": each literal slot a reset names keeps its own
+/// presence obligation, `i < size(p)` of the collection it selects from,
+/// which a top-level conjunct of a precondition of the same operation must
+/// establish (`size(p) >= n`, `size(p) > n`, `size(p) = n`); otherwise the
+/// reset refuses `unproved-presence` at the selector.
+fn selection_presence(
+    resets: &[ResetsDraft],
+    state_clauses: &[StateClauseDeclaration],
+) -> Result<(), TemporalCause> {
+    for written in resets {
+        for slot in written.resets.iter().flat_map(|reset| &reset.slots) {
+            let established = state_clauses
+                .iter()
+                .filter(|clause| {
+                    clause.kind == StateClauseKind::Precondition
+                        && clause.operation.as_ref().is_some_and(|operation| {
+                            operation.declaring == written.operation.declaring
+                                && operation.declaration.name()
+                                    == written.operation.declaration.name()
+                        })
+                })
+                .any(|clause| {
+                    let form = ExpressionForm {
+                        expression: clause.body.clone(),
+                        spans: clause.spans.body.clone(),
+                    };
+                    established_size(&form, &slot.collection) > slot.value
+                });
+            if !established {
+                return Err(TemporalCause::UnprovedPresence { span: slot.span });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// FSpec FR-415-AC-21: a postcondition that requires `present(p)` of a
@@ -3587,6 +3891,32 @@ fn resets(
                 reset.parameter = Some(parameter.position);
                 cut.resets.push(reset);
             }
+            continue;
+        }
+        // `self.ts[0].ys[1] = c`: the clock of the element each literal
+        // selector names, reset to the exact constant `c`.
+        if let Some((clock, slots)) = clocks.selected(located.form, *left, &clause.context) {
+            if located.reads_clock(*right) {
+                return Err(TemporalCause::ClockWrite { span });
+            }
+            let value = match located.constant(*right, clocks) {
+                Ok(value) => value,
+                Err(TemporalCause::ClockBoundNotConstant { .. }) => {
+                    return Err(TemporalCause::ClockWrite { span });
+                }
+                Err(cause) => return Err(cause),
+            };
+            let in_frame = clocks
+                .fields
+                .get(clock.0)
+                .is_some_and(|field| written.contains(&field.field));
+            if !in_frame {
+                return Err(TemporalCause::ClockWrite { span });
+            }
+            cut.leaves.insert(conjunct, ExprNode::Boolean(true));
+            let mut reset = ResetDraft::single(clock, value, span);
+            reset.slots = slots;
+            cut.resets.push(reset);
             continue;
         }
         let Some(clock) = located.clock(*left) else {
@@ -3963,8 +4293,58 @@ fn unchecked_selector(
     form: &ExpressionForm,
     clocks: &Clocks<'_>,
     context: &EffectiveId,
+    kind: StateClauseKind,
 ) -> Option<Span> {
     let mut under_ref = BTreeSet::new();
+    // `size(self.ts[0].ys)` reads the size of the collection a literal
+    // selector selects: a data read, which records the presence the
+    // selector proves (FR-230 "Selection").
+    for node in form.expression.iter() {
+        let ExprNode::Size { operand, .. } = node.node() else {
+            continue;
+        };
+        if place_key(form, *operand).is_none() {
+            continue;
+        }
+        let mut at = Some(*operand);
+        while let Some(id) = at.take() {
+            under_ref.insert(id);
+            at = match form.expression.get(id).map(|node| node.node()) {
+                Some(ExprNode::Field { operand, .. } | ExprNode::Index { operand, .. }) => {
+                    Some(*operand)
+                }
+                _ => None,
+            };
+        }
+    }
+    // A postcondition conjunct `self.ts[0].x = c` resets the element its
+    // literal selectors name (FR-230 "Resets by selection"): the selectors
+    // of its left side are checked with the reset.
+    if kind == StateClauseKind::Postcondition {
+        for node in form.expression.iter() {
+            let ExprNode::Binary {
+                operator: BinaryOperator::Equal,
+                left,
+                ..
+            } = node.node()
+            else {
+                continue;
+            };
+            if clocks.selected(form, *left, context).is_none() {
+                continue;
+            }
+            let mut at = Some(*left);
+            while let Some(id) = at.take() {
+                under_ref.insert(id);
+                at = match form.expression.get(id).map(|node| node.node()) {
+                    Some(ExprNode::Field { operand, .. } | ExprNode::Index { operand, .. }) => {
+                        Some(*operand)
+                    }
+                    _ => None,
+                };
+            }
+        }
+    }
     for node in form.expression.iter() {
         if matches!(node.node(), ExprNode::Ref(_)) {
             let mut pending = node.children();
@@ -4011,7 +4391,7 @@ fn read_clause(
         expression: clause.body.clone(),
         spans: clause.spans.body.clone(),
     };
-    if let Some(span) = unchecked_selector(&form, clocks, &clause.context) {
+    if let Some(span) = unchecked_selector(&form, clocks, &clause.context, clause.kind) {
         return Err(timed(TemporalCause::SelectionNotChecked { span }));
     }
     let Some(located) = Located::with_parameters(&form, clocks, &clause.context, parameters) else {
@@ -4942,6 +5322,7 @@ fn prepare_models(
                 }
             }
         }
+        selection_presence(&resets, state_clauses).map_err(timed)?;
         unwritten_presence(&resets, &guards, state_clauses).map_err(timed)?;
         let mut invariants = Vec::new();
         let mut urgency_drafts = Vec::new();
@@ -5271,6 +5652,7 @@ fn check_part(
     Ok(ConvexPart {
         data,
         presences: part.presences,
+        element_presences: part.element_presences,
         elements: part
             .elements
             .into_iter()
@@ -5552,6 +5934,7 @@ pub(crate) fn check(
                     span: reset.span,
                     selection,
                     parameter: reset.parameter,
+                    slots: reset.slots.iter().map(|slot| slot.value).collect(),
                 });
             }
             resets.push(ClockResets {

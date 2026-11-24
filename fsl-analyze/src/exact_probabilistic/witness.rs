@@ -842,6 +842,114 @@ fn produce_with_goal(
         return Err(WitnessError::InvalidState);
     }
     let induced = induce(product, policy, initial, accepting, stopped, control)?;
+    search_induced(induced, scope, initial, accepting, goal, limits, control)
+}
+
+/// A randomized witness: the entry at each state the randomized policy's
+/// chain reaches before accepting, and the path set it induces.
+#[derive(Clone, Debug)]
+pub struct ProducedRandomizedWitness {
+    /// Entries in state order; a state with one certain action carries
+    /// [`EntryChoice::Action`].
+    pub entries: Vec<(ProbStateId, EntryChoice)>,
+    /// The paths, most probable first. Each path's probability, and each
+    /// step's `probability`, includes the entry's choice weight.
+    pub paths: Vec<ProducedPath>,
+}
+
+impl From<ProducedWitness> for ProducedRandomizedWitness {
+    fn from(witness: ProducedWitness) -> Self {
+        Self {
+            entries: witness
+                .entries
+                .into_iter()
+                .map(|(state, action)| (state, EntryChoice::Action(action)))
+                .collect(),
+            paths: witness.paths,
+        }
+    }
+}
+
+/// Produce FR-202's path set on the chain a memoryless randomized `policy`
+/// induces (FR-413 randomized witness): the paths that first reach an
+/// `accepting` state, most probable first, until their exact sum exceeds
+/// `past`, with the randomized entry at each state the chain reaches.
+///
+/// # Errors
+///
+/// [`WitnessError`] when the policy selects no well-formed entry at a reached
+/// state, or a resource limit is exhausted.
+pub(crate) fn produce_randomized_witness(
+    product: &ProbProduct,
+    policy: &[Option<SchedulerChoice>],
+    initial: ProbStateId,
+    accepting: &[bool],
+    past: &Rational,
+    limits: &ExactProbLimits,
+    control: &mut impl FnMut(WitnessWork<'_>) -> Result<(), WitnessError>,
+) -> Result<Option<ProducedRandomizedWitness>, WitnessError> {
+    super::observe_path_search();
+    let entries = witness_scheduler(
+        product,
+        policy,
+        WitnessScope::EveryScheduler,
+        initial,
+        accepting,
+        limits,
+    )?;
+    let mut induced = Induced::new();
+    for (state, entry) in &entries {
+        control(WitnessWork::Visit)?;
+        let alternatives = match entry {
+            EntryChoice::Action(action) => vec![(action.clone(), rational(1))],
+            EntryChoice::Randomized(alternatives) => alternatives.clone(),
+        };
+        let mut folded = Vec::new();
+        for (action, weight) in &alternatives {
+            let steps =
+                action_steps(product, *state, action).ok_or(WitnessError::MalformedAction {
+                    state: state.index(),
+                })?;
+            for mut step in steps {
+                control(WitnessWork::Visit)?;
+                step.probability = step.probability.mul(weight);
+                control(WitnessWork::Rational(&step.probability))?;
+                folded.push(step);
+            }
+        }
+        let placeholder = alternatives
+            .first()
+            .map(|(action, _)| action.clone())
+            .ok_or(WitnessError::NoChoice {
+                state: state.index(),
+            })?;
+        induced.insert(*state, (placeholder, folded));
+    }
+    let found = search_induced(
+        induced,
+        WitnessScope::EveryScheduler,
+        initial,
+        accepting,
+        WitnessGoal::Mass(past),
+        limits,
+        control,
+    )?;
+    Ok(found.map(|witness| ProducedRandomizedWitness {
+        entries,
+        paths: witness.paths,
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn search_induced(
+    induced: Induced,
+    scope: WitnessScope,
+    initial: ProbStateId,
+    accepting: &[bool],
+    goal: WitnessGoal<'_>,
+    limits: &ExactProbLimits,
+    control: &mut impl FnMut(WitnessWork<'_>) -> Result<(), WitnessError>,
+) -> Result<Option<ProducedWitness>, WitnessError> {
     let reaching = reaching(&induced, accepting, control)?;
     let accepts = |state: ProbStateId| accepting.get(state.index()).copied().unwrap_or(false);
     let transition_limit = || WitnessError::Limit {
