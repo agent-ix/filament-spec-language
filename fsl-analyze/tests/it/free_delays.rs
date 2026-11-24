@@ -319,7 +319,7 @@ fn later_guard_race() -> World {
     )
 }
 
-/// FR-204-AC-9 (TC-642 step 5): two rows, given `[1]` and `[3]`,
+/// FR-204-AC-8 (TC-642 step 5): two rows, given `[1]` and `[3]`,
 /// each offering `B` the delays 1 to 3, make nine actions; the maximum `3/4`
 /// and the minimum `1/4` take the least attaining delay of each row.
 #[trace("TC-642", "FR-204-AC-8")]

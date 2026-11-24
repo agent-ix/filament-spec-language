@@ -4569,51 +4569,38 @@ fn price_paths(
         Ok(value)
     }
     #[allow(clippy::too_many_arguments)]
-    fn witness_path_mass(
+    fn witness_path_scheduler(
         graph: &CheckerGraph,
         used: &BTreeMap<ProbabilityProductKey, BTreeSet<ProbabilityProductKey>>,
-        payoff: &Payoff<'_>,
         key: &ProbabilityProductKey,
         chosen: &mut BTreeMap<ProbabilityProductKey, usize>,
-        memo: &mut BTreeMap<ProbabilityProductKey, Rational>,
+        memo: &mut BTreeMap<ProbabilityProductKey, bool>,
         on_path: &mut BTreeSet<ProbabilityProductKey>,
         cancel: &Cancel,
-        check_bits: &dyn Fn(&Rational) -> Result<(), Error>,
         covers: &dyn Fn(&[ProbabilityEdge], &ProbabilityProductKey) -> bool,
-    ) -> Result<Option<Rational>, Error> {
-        if let Some(value) = memo.get(key) {
-            return Ok(Some(value.clone()));
+    ) -> Result<bool, Error> {
+        if let Some(viable) = memo.get(key) {
+            return Ok(*viable);
         }
         poll(cancel).map_err(|_| Error::Graph(ExactProbabilityGraphError::LimitReached))?;
         let state = graph.states.get(key).ok_or(Error::Refused)?;
-        if let Some(verdict) = state.terminal {
-            let value = payoff.weight(key, verdict);
-            memo.insert(key.clone(), value.clone());
-            return Ok(Some(value));
+        if state.terminal.is_some() {
+            memo.insert(key.clone(), true);
+            return Ok(true);
         }
         if !on_path.insert(key.clone()) {
-            return Ok(None);
+            return Ok(false);
         }
         let Some(targets) = used.get(key) else {
             on_path.remove(key);
-            memo.insert(key.clone(), zero());
-            return Ok(Some(zero()));
+            memo.insert(key.clone(), true);
+            return Ok(true);
         };
-        let mut child_values = BTreeMap::new();
+        let mut child_viability = BTreeMap::new();
         for target in targets {
-            let value = witness_path_mass(
-                graph,
-                used,
-                payoff,
-                target,
-                chosen,
-                memo,
-                on_path,
-                cancel,
-                check_bits,
-                covers,
-            )?;
-            child_values.insert(target, value);
+            let viable =
+                witness_path_scheduler(graph, used, target, chosen, memo, on_path, cancel, covers)?;
+            child_viability.insert(target, viable);
         }
         let has_complete_choice = state
             .choices
@@ -4637,21 +4624,23 @@ fn price_paths(
         }
         on_path.remove(key);
         let Some((index, _)) = best else {
-            return Ok(None);
+            memo.insert(key.clone(), false);
+            return Ok(false);
         };
-        let mut value = zero();
         for edge in state.choices[index]
             .iter()
             .filter(|edge| edge.probability > zero())
         {
-            if let Some(Some(child)) = child_values.get(&edge.target) {
-                value = value.add(&edge.probability.mul(child));
-                check_bits(&value)?;
+            if child_viability.get(&edge.target) == Some(&false) {
+                // A cyclic child cannot be treated as zero mass: doing so
+                // could admit a finite witness path through a loop.
+                memo.insert(key.clone(), false);
+                return Ok(false);
             }
         }
         chosen.insert(key.clone(), index);
-        memo.insert(key.clone(), value.clone());
-        Ok(Some(value))
+        memo.insert(key.clone(), true);
+        Ok(true)
     }
     // The choices and the mass a set of paths selects. `None` when a path is
     // not a distinct walk to the forbidden decided state (a Parity case).
@@ -4688,20 +4677,18 @@ fn price_paths(
         }
         let mut chosen = scheduler.clone();
         if matches!(payoff, Payoff::Deadline { .. }) {
-            let Some(_path_mass) = witness_path_mass(
+            if !witness_path_scheduler(
                 graph,
                 &used,
-                payoff,
                 &graph.initial,
                 &mut chosen,
                 &mut BTreeMap::new(),
                 &mut BTreeSet::new(),
                 cancel,
-                &limit_bits,
                 &covers,
-            )? else {
+            )? {
                 return Ok(None);
-            };
+            }
         } else {
             for (key, targets) in &used {
                 let state = graph.states.get(key).ok_or(Error::Refused)?;
@@ -5012,6 +4999,26 @@ mod witness_pricing_tests {
         assert_eq!(
             price(&graph, part(3, 5), &[path(&["ACC"])]),
             Some((vec![0], part(1, 1)))
+        );
+    }
+
+    /// A selected positive-probability child that cycles back to the initial
+    /// state cannot be priced as zero mass and must refuse the path evidence.
+    #[test]
+    fn a_cyclic_selected_child_refuses_deadline_path_pricing() {
+        let graph = graph(vec![
+            (
+                "I",
+                None,
+                vec![vec![edge("X", 1, 2), edge("F", 1, 2)]],
+            ),
+            ("X", None, vec![vec![edge("I", 1, 1)]]),
+            ("F", Some(true), vec![]),
+        ]);
+
+        assert_eq!(
+            price(&graph, part(1, 4), &[path(&["X", "I", "F"])]),
+            None
         );
     }
 
