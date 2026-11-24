@@ -26,14 +26,16 @@ The checker consumes the reviewed finite-state semantics. Presence facts cannot 
 
 **QSL-499 disposition:** the native 0-draft carrier of the retired acceptance criteria below (`native_model`, `model_source`, `located_json`, `link_native` and the native `checking` pipeline) is deleted under ADR-011, ADR-033 and FR-499. Each retired criterion is retained as migration history and is not an active acceptance obligation; its behavior is owned by FR-104 (state-clause definedness, presence and range proofs, `ambiguous-literal`) and FR-172 (hyper and relation clauses), checked by the fsl-semantics suites tagged with those requirements.
 
+**Retired criteria and the matrix.** FR-005-AC-1 to AC-5, FR-006-AC-3 and AC-4, FR-016-AC-1 to AC-10 and FR-099-AC-6 are retired migration history, not scope cuts: each behavior that is still in the product is owned by a live criterion (FR-104-AC-19 for ambiguous scalar inference and Boolean roots, FR-104 for definedness and range proofs, FR-099 and FR-111 for imports and definition bundles), and a test that still exercises it is traced to the live criterion. A retired row is excluded from the computed Test Matrix, so a ticket's per-requirement count of criteria to test is reconciled against the matrix (`quire matrix`), which is the authority: a count that includes retired rows, or that was taken before a criterion was added, differs from the matrix without a defect in either (QSL-2085's FR-106 count of 12 and FR-056 count of 4 against the matrix's 7 and 3). A later task counts from the matrix.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-006-AC-1 | An unguarded optional unwrap receives undefined_expression. | Test (TC-025) |
 | FR-006-AC-2 | A cross-snapshot presence proof is rejected. | Test (TC-026) |
-| FR-006-AC-3 | **RETIRED in QSL-499; historical only.** A guarded in-range addition is admitted. | Test (TC-027) |
-| FR-006-AC-4 | **RETIRED in QSL-499; historical only.** An ambiguous scalar inference receives ill_typed. | Test (TC-028) |
+| FR-006-AC-3 | **RETIRED in QSL-499; historical only.** A guarded in-range addition is admitted. Ruling: the behavior is owned by FR-104 definedness proofs and tested as TC-027 (FR-016-AC-3 trace). | Test (TC-027) |
+| FR-006-AC-4 | **RETIRED in QSL-499; historical only.** An ambiguous scalar inference receives ill_typed. Ruling: carried by FR-104-AC-19 (TC-028). | Test (TC-028) |
 | FR-006-AC-5 | A non-Boolean clause root receives ill_typed. | Test (TC-029) |
 
 ## Dependencies
