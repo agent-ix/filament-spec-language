@@ -49,6 +49,59 @@ fn timed_eventually_with_closed_horizon_settles_at_ninety_nine_percent() {
     ));
 }
 
+#[trace("FR-186-AC-3")]
+#[test]
+fn nested_punctual_always_consumes_the_initial_position() {
+    let claims = "\
+        probabilistic InitialNested using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ eventually[0 ms, 1 ms] always[0 ms, 0 ms] holds(c.late) ] }\n";
+    let package_document = timed_world::document(&["x"], &[("step", &["late", "x"])]);
+    let body = format!(
+        "{}\
+         pre Step using v on M::Call::step {{ true }}\n\
+         post Stepped using v on M::Call::step {{ self.late = false and self.x = 0 ms }}\n\
+         delay M::Call::step ~ discrete {{ 0 ms: 1 }};\n\
+         time invariant ZeroClock when {{ true }} {{ self.x <= 0 ms }}\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    let world = timed_world::world_holding(
+        &package_document,
+        super::PROFILES,
+        &body,
+        &json!({ "late": { "boolean": true } }),
+    );
+    let record = settle(&world, "InitialNested");
+    assert_eq!(proved_value(&record), ratio(1, 1));
+    assert!(accepted(&world, "InitialNested", &document(&record)));
+}
+
+#[trace("FR-186-AC-3")]
+#[test]
+fn nested_punctual_always_keeps_a_true_zero_delay_hop_before_a_false_hop() {
+    let claims = "\
+        probabilistic HopNested using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ eventually[0 ms, 1 ms] always[0 ms, 0 ms] holds(c.late) ] }\n";
+    let package_document = timed_world::document(
+        &["x"],
+        &[("first", &["phase", "late", "x"]), ("second", &["phase", "late", "x"])],
+    );
+    let body = format!(
+        "{}\
+         pre First using v on M::Call::first {{ self.phase = 0 }}\n\
+         post FirstDone using v on M::Call::first {{ self.phase = 1 and self.late = true and self.x = 0 ms }}\n\
+         pre Second using v on M::Call::second {{ self.phase = 1 }}\n\
+         post SecondDone using v on M::Call::second {{ self.phase = 2 and self.late = false and self.x = 0 ms }}\n\
+         delay M::Call::first ~ discrete {{ 0 ms: 1 }};\n\
+         delay M::Call::second ~ discrete {{ 0 ms: 1 }};\n\
+         time invariant ZeroClock when {{ true }} {{ self.x <= 0 ms }}\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    let world = timed_world::world(&package_document, super::PROFILES, &body);
+    let record = settle(&world, "HopNested");
+    assert_eq!(proved_value(&record), ratio(1, 1));
+    assert!(accepted(&world, "HopNested", &document(&record)));
+}
+
 /// A zero-delay cycle with an unchanged false observation has a finite key.
 #[trace("FR-186-AC-7")]
 #[test]

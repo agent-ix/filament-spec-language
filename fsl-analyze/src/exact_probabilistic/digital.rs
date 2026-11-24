@@ -173,6 +173,36 @@ fn fault(invariant: &'static str) -> ProductRefusal {
     ProductRefusal::Internal(InternalFault::new("exact-probabilistic-digital", invariant))
 }
 
+fn advance_nested_deadline(
+    root: &mut TimedOperatorState,
+    nested: &mut TimedOperatorState,
+    truths: &[bool],
+    elapsed: u64,
+) {
+    use fsl_eval::probabilistic::DeadlinePhase;
+
+    let lower = root.lower.saturating_add(nested.lower);
+    let upper = root.upper.saturating_add(nested.upper);
+    if root.phase == DeadlinePhase::Pending && (lower..=upper).contains(&elapsed) {
+        nested.elapsed = elapsed.saturating_sub(root.lower);
+        nested.phase = if truths.first().copied().unwrap_or(false) {
+            root.phase = DeadlinePhase::Accept;
+            DeadlinePhase::Accept
+        } else {
+            DeadlinePhase::Reject
+        };
+    } else {
+        nested.elapsed = elapsed.saturating_sub(root.lower).min(nested.upper);
+        if root.phase == DeadlinePhase::Pending {
+            nested.phase = DeadlinePhase::Pending;
+        }
+    }
+    if root.phase == DeadlinePhase::Pending && elapsed > upper {
+        root.phase = DeadlinePhase::Reject;
+    }
+    root.elapsed = elapsed;
+}
+
 fn one() -> Rational {
     Rational::from_integer(Integer::one())
 }
@@ -1666,24 +1696,30 @@ impl<'c> Builder<'_, '_, 'c> {
                 inner_lower,
                 inner_upper,
                 ..
-            } => Ok(Some(MonitorState::TimedFormula {
-                root: TimedOperatorState {
+            } => {
+                let mut root = TimedOperatorState {
                     occurrence: *outer_occurrence,
                     kind: DeadlineKind::Eventually,
                     lower: self.bound_units(outer_lower)?,
                     upper: self.bound_units(outer_upper)?,
                     elapsed: 0,
                     phase: DeadlinePhase::Pending,
-                },
-                nested: Some(TimedOperatorState {
+                };
+                let mut child = TimedOperatorState {
                     occurrence: *inner_occurrence,
                     kind: DeadlineKind::Always,
                     lower: self.bound_units(inner_lower)?,
                     upper: self.bound_units(inner_upper)?,
                     elapsed: 0,
                     phase: DeadlinePhase::Pending,
-                }),
-            })),
+                };
+                let elapsed = state.deadline.unwrap_or(0);
+                advance_nested_deadline(&mut root, &mut child, truths, elapsed);
+                Ok(Some(MonitorState::TimedFormula {
+                    root,
+                    nested: Some(child),
+                }))
+            }
             Form::MeanTime { .. } | Form::Labels(_) => Ok(None),
         }
     }
@@ -1828,36 +1864,10 @@ impl<'c> Builder<'_, '_, 'c> {
             let Some(mut child) = nested else {
                 return Err(fault("nested-timed-formula-retains-inner-occurrence").into());
             };
-            let lower = root
-                .lower
-                .checked_add(child.lower)
-                .ok_or_else(|| fault("nested-window-lower-fits-u64"))?;
-            let upper = root
-                .upper
-                .checked_add(child.upper)
-                .ok_or_else(|| fault("nested-window-upper-fits-u64"))?;
             let elapsed = reached.deadline.unwrap_or(root.elapsed);
-            let truth = letters
-                .last()
-                .and_then(|truths| truths.first())
-                .copied()
-                .unwrap_or(false);
-            if root.phase == DeadlinePhase::Pending && (lower..=upper).contains(&elapsed) {
-                child.elapsed = elapsed.saturating_sub(root.lower);
-                child.phase = if truth {
-                    root.phase = DeadlinePhase::Accept;
-                    DeadlinePhase::Accept
-                } else {
-                    DeadlinePhase::Reject
-                };
-            } else {
-                child.elapsed = elapsed.saturating_sub(root.lower).min(child.upper);
-                child.phase = DeadlinePhase::Pending;
+            for truths in letters {
+                advance_nested_deadline(&mut root, &mut child, truths, elapsed);
             }
-            if root.phase == DeadlinePhase::Pending && elapsed > upper {
-                root.phase = DeadlinePhase::Reject;
-            }
-            root.elapsed = elapsed;
             nested = Some(child);
             return Ok(Some(MonitorState::TimedFormula { root, nested }));
         }
