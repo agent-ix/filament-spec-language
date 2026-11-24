@@ -65,10 +65,10 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
          probabilistic UndefinedEvery using timed on M over (c: M::Call) under every scheduler on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
              {{ probability >= 0.5 [ always[0 ms, 3 ms] holds(c.phase = 0) ] }}\n\
-         probabilistic UndefinedWeightedLongRun using timed on M over (c: M::Call) under every scheduler on origin\n\
+         probabilistic UndefinedWeightedLongRun using inf on M over (c: M::Call) under every scheduler on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
              {{ long_run_fraction holds(c.phase = 0) weighted by delay >= 0.5 }}\n\
-         probabilistic UndefinedEveryWeightedLongRun using timed on M over (c: M::Call) under every scheduler on origin\n\
+         probabilistic UndefinedEveryWeightedLongRun using inf on M over (c: M::Call) under every scheduler on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
              {{ long_run_fraction holds(c.phase = 0) weighted by R >= 0.5 }}\n\
          probabilistic UndefinedMeanTime using timed on M over (c: M::Call) under every scheduler on origin\n\
@@ -81,7 +81,7 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
     );
     let world = crate::timed_world::world(
         &document.to_string().into_bytes(),
-        "profile timed = \"filament.temporal.timed/v1\";\n",
+        "profile timed = \"filament.temporal.timed/v1\";\nprofile inf = \"filament.temporal.infinite-trace/v1\";\n",
         &body,
     );
     let engines = Engines::fsl().expect("the linked engines are admitted");
