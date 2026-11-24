@@ -15,14 +15,21 @@ and `cargo check --locked --workspace --all-targets` last. Run the printed
 commands in that order. The recipe itself only lists tests; it does not execute
 them. For spec-only changes it prints `NO CARGO: spec-only change.`
 
+`fsl-analyze` integration tests are split across the `it` (analysis and package
+API), `it_monitor_protocol`, `it_probabilistic`, `it_model_check`, and
+`it_refinement` Cargo targets. A normal
+`cargo test -p fsl-analyze` runs every target. The recipe reads every target
+root: root and shared-fixture changes select all its modules, while a changed
+module or consumer filter selects every target containing a matching test.
+
 | Changed paths | Local controls | Consumer controls |
 | --- | --- | --- |
-| `fsl-package/src/emit/**` | `fsl-package` lib `emit` tests, one thread, skip 100k tests and the 2/1000 nested-form stress test | Analyze IT filters `monitor_`, `timed_`, `hyper`, `probabilistic`; command IT `run_requirement_items`; each large emitter and replay control runs alone with timing enabled |
-| `fsl-analyze/src/analyze/exact.rs`, `exact/**` | Touched library module | Analyze IT `probabilistic` and `timed_`; every `fsl-probability-check` IT module |
-| `fsl-analyze/src/exact_probabilistic*` | Touched library module | Analyze IT `probabilistic` and `timed_`; every `fsl-probability-check` IT module |
-| `fsl-semantics/src/check/probabilistic*`, `check/mod.rs` | Touched library module | Analyze IT `timed_`, `timed_within_200`, `timed_within_201`; every `fsl-probability-check` IT module |
+| `fsl-package/src/emit/**` | `fsl-package` lib `emit` tests, one thread, skip 100k tests and the 2/1000 nested-form stress test | `fsl-analyze` `it_monitor_protocol` filter `monitor_`, `it_model_check` filter `timed_`, `it_probabilistic` filters `hyper` and `probabilistic`; command IT `run_requirement_items`; each large emitter and replay control runs alone with timing enabled |
+| `fsl-analyze/src/analyze/exact.rs`, `exact/**` | Touched library module | `fsl-analyze` `it_probabilistic` filter `probabilistic` and `it_model_check` filter `timed_`; every `fsl-probability-check` IT module |
+| `fsl-analyze/src/exact_probabilistic*` | Touched library module | `fsl-analyze` `it_probabilistic` filter `probabilistic` and `it_model_check` filter `timed_`; every `fsl-probability-check` IT module |
+| `fsl-semantics/src/check/probabilistic*`, `check/mod.rs` | Touched library module | `fsl-analyze` `it_model_check` filters `timed_`, `timed_within_200`, `timed_within_201`; every `fsl-probability-check` IT module |
 | `tools/fsl-probability-check/**` | None | `tests/it/<module>.rs` runs that module; the IT root, fixtures and source run every module |
-| `fsl-analyze/src/zone_check/**` | Touched library module | Analyze IT `timed_`, plus the focused `timed_within_200` and `timed_within_201` regressions |
+| `fsl-analyze/src/zone_check/**` | Touched library module | `fsl-analyze` `it_model_check` filter `timed_`, plus the focused `timed_within_200` and `timed_within_201` regressions |
 | `fsl-analyze/src/analyze/request.rs`, `fsl-analyze/src/analyze.rs` | Touched library module | The four analyze IT engine filters plus the source/package parity modules `analyze_package_selection`, `analyze_request_wire`, `analyze_package_provider`, `analyze_composition_cli` |
 | `fsl-analyze/src/analyze/document.rs`, `fsl-analyze/src/analyze/document/**` | Touched library module | As `request.rs` |
 | Other `fsl-analyze/src/**` | Touched library module | All four analyze IT engine filters: `monitor_`, `timed_`, `hyper`, `probabilistic` |
