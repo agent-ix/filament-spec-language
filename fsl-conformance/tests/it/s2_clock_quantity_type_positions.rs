@@ -27,11 +27,11 @@ record C {\n\
 }\n";
 
 fn parsed(text: &str) -> fsl_forms::ParsedUnit {
-    let input = fsl_forms::cst::parse(
+    let input = fsl_cst::parse(
         SourceIdentity::new("agent-ix", "test:qsl-2094-fr393-ac8"),
         "unit.native",
         text.as_bytes(),
-        fsl_forms::cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 accepts the type-position fixture");
     assert!(input.is_admissible(), "{:?}", input.diagnostics());

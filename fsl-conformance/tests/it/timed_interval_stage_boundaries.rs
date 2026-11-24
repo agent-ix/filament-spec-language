@@ -43,11 +43,11 @@ fn source(formula: &str) -> String {
 }
 
 fn forms(text: &str) -> fsl_forms::ParsedUnit {
-    let parsed = fsl_forms::cst::parse(
+    let parsed = fsl_cst::parse(
         SourceIdentity::new("agent-ix", "test:qsl-2094-fr393-ac4"),
         "unit.native",
         text.as_bytes(),
-        fsl_forms::cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 reads the source");
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
@@ -196,7 +196,7 @@ fn decimal_timed_magnitude_builds_and_invalid_meanings_refuse_only_at_s3() {
                 refusals.as_slice(),
                 [refusal]
                     if matches!(
-                        &refusal.cause,
+                        &*refusal.cause,
                         CheckCause::Temporal(cause)
                             if matches!(
                                 **cause,
@@ -231,7 +231,7 @@ fn decimal_timed_magnitude_builds_and_invalid_meanings_refuse_only_at_s3() {
             refusals.as_slice(),
             [refusal]
                 if matches!(
-                    &refusal.cause,
+                    &*refusal.cause,
                     CheckCause::Temporal(cause) if matches!(**cause, TemporalCause::DuplicateTimeSource { .. })
                 )
         ),
@@ -239,11 +239,11 @@ fn decimal_timed_magnitude_builds_and_invalid_meanings_refuse_only_at_s3() {
     );
 
     let malformed = source("eventually[0 ms, x] holds(true)");
-    let parsed = fsl_forms::cst::parse(
+    let parsed = fsl_cst::parse(
         SourceIdentity::new("agent-ix", "test:qsl-2094-fr393-ac4"),
         "unit.native",
         malformed.as_bytes(),
-        fsl_forms::cst::Limits::default(),
+        fsl_cst::Limits::default(),
     )
     .expect("S1 completes with a diagnostic");
     assert!(!parsed.is_admissible(), "the upper bound token is invalid");
