@@ -4,10 +4,12 @@
 
 use filament_eval::FamilyOutcome;
 use filament_exact::{
-    DivisionProfile, Integer, Meter, Outcome, ScalarLimits, Undefined, Value, ValueType,
+    Cancel, CancelCause, DivisionProfile, Integer, Meter, Outcome, ScalarLimits, Undefined, Value,
+    ValueType,
 };
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
+use filament_semantic_value::supplied_stop::{SuppliedLimits, SuppliedRun};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{BodyTerm, CheckCause, CheckedGraph, LawRole, PackageDeclarations};
@@ -90,6 +92,108 @@ fn a_function_compiled_from_source_is_called_by_name() {
             "{:?}",
             Outcome::Completed(Value::Integer(Integer::from(2_i64)))
         )
+    );
+}
+
+/// Partial TC-1121 no-std guard: these AC-4 calls cannot return Unsupported.
+#[test]
+fn fr403_value_call_vectors_never_return_unsupported() {
+    let package = package_of_with_mode(
+        "type Digit = Int[0, 9];\n\
+         function bottom(): Integer pure { 3 }\n\
+         function c2(): Integer pure { bottom() }\n\
+         function c1(): Integer pure { c2() }\n\
+         function count(x: Digit): Integer pure { c1() }\n\
+         function d(x: Digit): Integer pure { 10 div x }\n\
+         function f(x: Digit): Boolean pure { true }",
+        CheckMode::Kernel,
+    );
+    let objects = ObjectEnvironment::default();
+    let function = |name: &str| QualifiedName::unqualified(name).expect("function name");
+    let integer = |n| Value::Integer(Integer::from(n));
+    let no_unsupported = |result: Result<_, fsl_eval::value::CallFailure>, case: &str| {
+        assert!(
+            !matches!(result, Err(fsl_eval::value::CallFailure::Unsupported(_))),
+            "{case} returned CallFailure::Unsupported"
+        );
+    };
+
+    no_unsupported(
+        package.call(
+            &function("count"),
+            vec![integer(3)],
+            &objects,
+            &mut Meter::new(UNLIMITED),
+        ),
+        "count(3)",
+    );
+    no_unsupported(
+        package.call(
+            &function("d"),
+            vec![integer(0)],
+            &objects,
+            &mut Meter::new(UNLIMITED),
+        ),
+        "d(0)",
+    );
+    no_unsupported(
+        package.call(
+            &function("f"),
+            vec![integer(10)],
+            &objects,
+            &mut Meter::new(UNLIMITED),
+        ),
+        "f(10)",
+    );
+    no_unsupported(
+        package.call(
+            &function("f"),
+            vec![integer(3), integer(4)],
+            &objects,
+            &mut Meter::new(UNLIMITED),
+        ),
+        "f(3, 4)",
+    );
+
+    let cancelled = Cancel::new();
+    cancelled.cancel(CancelCause::Requested);
+    no_unsupported(
+        package.call(
+            &function("f"),
+            vec![integer(3)],
+            &objects,
+            &mut Meter::new(UNLIMITED).with_cancel(cancelled),
+        ),
+        "f(3) with a cancelled meter handle",
+    );
+
+    let supplied_cancel = Cancel::new();
+    supplied_cancel.cancel(CancelCause::Requested);
+    let mut supplied = SuppliedRun::new(SuppliedLimits::default(), supplied_cancel)
+        .expect("supplied run initializes");
+    no_unsupported(
+        package.call_supplied(
+            &function("f"),
+            vec![integer(3)],
+            &objects,
+            &mut Meter::new(UNLIMITED),
+            &mut supplied,
+        ),
+        "f(3) with a cancelled supplied-value run",
+    );
+
+    let limited = ScalarLimits {
+        work_units: 3,
+        ..UNLIMITED
+    };
+    no_unsupported(
+        package.call(
+            &function("count"),
+            vec![integer(3)],
+            &objects,
+            &mut Meter::new(limited),
+        ),
+        "count(3) one work unit below its four calls",
     );
 }
 

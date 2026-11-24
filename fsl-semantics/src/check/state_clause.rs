@@ -86,6 +86,11 @@ pub struct ClauseOperation {
 ///     operation: todo!(),
 /// };
 /// ```
+/// Its public name remains usable outside the checker:
+/// ```no_run
+/// use fsl_semantics::check::OperationSelection;
+/// fn holds(selection: OperationSelection) -> OperationSelection { selection }
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperationSelection {
     pub(super) object: DeclarationKey,
