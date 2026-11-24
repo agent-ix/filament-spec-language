@@ -306,7 +306,7 @@ fn external_unbounded_counterexamples_are_called_and_replayed_by_both_entries() 
 #[test]
 fn process_counterexamples_require_replay_agreement_before_terminal_settlement() {
     let reproduced = Fixture::new(UNBOUNDED);
-    let (engines, _) = engines(
+    let (replay_engines, _) = engines(
         ProviderVerdict::Refuted {
             counterexample: large_division_assignment(),
         },
@@ -316,13 +316,13 @@ fn process_counterexamples_require_replay_agreement_before_terminal_settlement()
     );
     let (outcome, _) = both_entries(
         &reproduced,
-        &engines,
+        &replay_engines,
         ExtentClassification::Unbounded {
             finite_bound_available: false,
         },
         false,
     );
-    let descriptor_id = engines
+    let descriptor_id = replay_engines
         .registrations()
         .find(|descriptor| descriptor.id().as_str() == EXTERNAL)
         .expect("the routed process provider has one registered descriptor")
