@@ -24,12 +24,13 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::evaluate::reader_source::ReaderNode;
 use super::evaluate::{Machine, World};
-use super::protocol_slot::{ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply, resolve};
-use super::slot_supply::{AdmittedSupply, SlotHost, SourceView, admit_slot_supply};
+use super::protocol_slot::{resolve, ProtocolSlot, ProtocolSlotEvaluation, ProtocolSupply};
+use super::slot_supply::{admit_slot_supply, AdmittedSupply, SlotHost, SourceView};
 use super::{
-    ApplicationObservation, ApplicationObservationOptions, CheckedPackageEvaluation,
-    ClauseEvaluation, ClauseSetEvaluation, FrameEvaluation, QualifiedName, Separation,
-    SuppliedFailure, SuppliedLimits, SuppliedRun, ValueInvariantEvaluation, unsupported_projection,
+    unsupported_projection, ApplicationObservation, ApplicationObservationOptions,
+    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, FrameEvaluation,
+    QualifiedName, Separation, SuppliedFailure, SuppliedLimits, SuppliedRun,
+    ValueInvariantEvaluation,
 };
 
 /// Evaluate a reader projection over the local frame with the shared
@@ -1578,7 +1579,7 @@ mod tests {
 
     /// Public FR-390 supply admission remains strict. The internal engine
     /// can forward its typed owner value, but absent P never authorizes ref.
-    #[trace("FR-390-AC-23", "TC-3084")]
+    #[trace("FR-390-AC-23", "FR-230-AC-71", "TC-3084")]
     #[test]
     fn generated_owner_without_population_keeps_public_admission_strict_and_clock_closed() {
         use super::super::protocol_slot::{ProtocolSuppliedValue, SuppliedValue};

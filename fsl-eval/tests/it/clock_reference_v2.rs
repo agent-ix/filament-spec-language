@@ -16,14 +16,15 @@ use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits, V2ReadLim
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{
-    AdmissionFailure, AnchorKind, ClauseFacts, ClauseSelection, ClauseSelectionInput, DocumentRef,
-    ObservationLimits, Provisions, SelectedAnchor, SelectedObject, admit_observations,
+    admit_observations, AdmissionFailure, AnchorKind, ClauseFacts, ClauseSelection,
+    ClauseSelectionInput, DocumentRef, ObservationLimits, Provisions, SelectedAnchor,
+    SelectedObject,
 };
 use fsl_semantics::model::state::StateModel;
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
-use crate::ring_queue::{self, CLOCKS, Checked, QUEUE, clock_refinement, key, node};
+use crate::ring_queue::{self, clock_refinement, key, node, Checked, CLOCKS, QUEUE};
 
 const LIMITS: ScalarLimits = ScalarLimits {
     integer_bits: 1 << 20,
@@ -1415,9 +1416,8 @@ fn raw_clock_data_admits_declared_and_refuses_undeclared_identities() {
 
 /// An ordinary snapshot supplies real owner population authority; generated
 /// Clock references do not require accepting transported Clock DATA.
-#[trace("FR-230", "TC-3084")]
+#[trace("FR-230-AC-71", "TC-3084")]
 #[test]
-#[ignore = "QSL-3001: the checker types Reference<Clock> as ValueType::ClockReference; evaluating ref(place) and admitting clock data as Value::ClockReference is slice B"]
 fn source_generates_clock_references_from_ordinary_admitted_owners() {
     let body = format!("{}\nprotocol Places using p over (call: C::Call) on each (opened: Boolean) when (opened) {{
         capture chosen: Reference<Clock> = ref(call.x);
@@ -1454,17 +1454,16 @@ fn source_generates_clock_references_from_ordinary_admitted_owners() {
         BTreeMap::from([(identity(), serde_json::to_vec(&document).expect("snapshot"))]);
     let mut generated = Vec::new();
     for owner in ["c1", "c2"] {
-        let Value::Reference(reference) =
+        let Value::ClockReference(reference) =
             capture(&package, &checked.packages, &snapshots, 0, owner)
         else {
-            panic!("the actual producer returns Clock DATA")
+            panic!("the actual producer returns a clock-place reference")
         };
-        assert_eq!(reference.object().as_str(), expected_place(owner, "x"));
+        assert_eq!(reference.text(), expected_place(owner, "x"));
         generated.push(reference);
     }
     assert_eq!(generated[0].universe(), generated[1].universe());
-    assert_eq!(generated[0].object_type(), generated[1].object_type());
-    assert_ne!(generated[0].object(), generated[1].object());
+    assert_ne!(generated[0].text(), generated[1].text());
 }
 
 /// FR-106-AC-81: a valid `Reference<Clock>` identity whose selector lies
