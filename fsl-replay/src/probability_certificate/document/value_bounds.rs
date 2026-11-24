@@ -74,7 +74,10 @@ fn policy_hints(bytes: &[u8]) -> Result<Vec<PolicyHint>, ProbabilityDocumentErro
         .collect())
 }
 fn is_fair_base(profile: &str) -> bool {
-    profile == "filament.probability-objective/fair-mdp-eventual/v1"
+    matches!(
+        profile,
+        "filament.probability-objective/fair-mdp-eventual/v1" | CYCLIC_MDP_FAIR_PROFILE
+    )
 }
 
 /// Fair-MDP intervals carry a progressing policy on the existential side:

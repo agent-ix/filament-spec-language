@@ -1576,38 +1576,112 @@ fn fair_cyclic_low_rational_budget_proves_with_value_bounds() {
 fn fair_cyclic_rejects_a_flipped_lower_bellman_direction() {
     const CLAIM: &str = "probabilistic FairHalf using inf on M over (w: M::W) under every scheduler fair strong W::go on origin { probability >= 0.4 [ eventually holds(w.g) ] }";
     let world = World::new(&prob_world::fair_bounds_w(CLAIM));
-    let mut request = world.request("FairHalf", ModelCheckLimits::default());
-    request.limits.max_rational_bits = 1;
-    request.limits.precision_bits = 16;
-    request.limits.max_precision_bits = 16;
-    let call = std::cell::Cell::new(0_usize);
-    let touched = std::cell::RefCell::new(None);
-    let item = exact_probabilistic_item_tampered(RequestIndex::new(0), request, |certificate| {
-        if call.get() == 0 {
-            let entry = interior_value(certificate);
-            entry.value = ratio(1, 1);
-            *touched.borrow_mut() = Some(entry.state.clone());
-        }
-        call.set(call.get() + 1);
-    });
-    let engines = Engines::fsl().expect("the linked engines are admitted");
-    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
-    let key = touched
-        .borrow()
-        .clone()
-        .expect("the lower value was changed");
-    assert_eq!(
-        record
-            .terminal()
-            .unwrap_or_else(|| panic!("the analysis emits a terminal record: {record:#?}"))
-            .value(),
-        &TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
-            rule: CertificateRule::InequalityFails,
-            at: CertificateLocus::ProbabilityProductState(key),
-        })
+    let cancel = Cancel::new();
+    let request = world.request("FairHalf", ModelCheckLimits::default());
+    let fsl_analyze::exact_probabilistic::ProductRequest {
+        subject,
+        claim,
+        limits,
+    } = request;
+    let fsl_analyze::exact_probabilistic::ProbBuild::Built(product) =
+        fsl_analyze::exact_probabilistic::build_product(
+            fsl_analyze::exact_probabilistic::ProductRequest {
+                subject,
+                claim,
+                limits,
+            },
+            &cancel,
+        )
+        .expect("the fair product is finite")
+    else {
+        panic!("the fixture builds a complete product");
+    };
+    let target = product
+        .labels
+        .iter()
+        .map(|labels| labels.first().copied().unwrap_or(false))
+        .collect::<Vec<_>>();
+    let solved = fsl_analyze::exact_probabilistic::decide_fair_reachability(
+        &product,
+        None,
+        &target,
+        fsl_analyze::exact_probabilistic::UnboundedObjective::Min,
+        &limits,
+    )
+    .expect("the fair reachability values are exact");
+    let system = ModelSystem::new(world.subject().simulation).expect("the checked model admits");
+    let claims = world.package.graph().probabilistic_model().claims();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim("FairHalf"))
+        .expect("the checked claim has an identity");
+    let binding = claim_binding(&system, world.claim("FairHalf"))
+        .expect("the claim binding is checked")
+        .map(|binding| binding.reference);
+    let io = fsl_replay::ProbabilityDocumentIoLimits {
+        bytes: limits.document.bytes,
+        storage_bytes: limits.document.storage_bytes,
+    };
+    let mut certificate = fsl_replay::ExactProbabilityCertificate {
+        values: product
+            .states
+            .iter()
+            .zip(solved.values)
+            .map(|(state, value)| {
+                let key = match &state.certificate_state {
+                    Some(key) => key.clone(),
+                    None => fsl_replay::ProbabilityProductKey::for_model_state_with_limits(
+                        binding.as_ref(),
+                        &state.model,
+                        io,
+                        &cancel,
+                    )
+                    .expect("the product state has a canonical key"),
+                };
+                let fsl_analyze::exact_probabilistic::ExtRational::Finite(value) = value else {
+                    panic!("reachability probabilities are finite");
+                };
+                fsl_replay::ExactProbabilityValue { state: key, value }
+            })
+            .collect(),
+    };
+    certificate
+        .values
+        .sort_by(|left, right| left.state.cmp(&right.state));
+    let changed = certificate
+        .values
+        .iter_mut()
+        .find(|entry| ratio(0, 1) < entry.value && entry.value < ratio(1, 1))
+        .expect("the initial probability is strictly between zero and one");
+    let key = changed.state.clone();
+    changed.value = ratio(1, 1);
+    let doc_limits = fsl_replay::ProbabilityDocumentLimits::for_exact(
+        &limits,
+        fsl_replay::AccountingLimits::default().0,
     );
-    assert!(record.exact_probabilistic.is_none());
-    assert!(record.probabilistic_counterexample.is_none());
+    let document = fsl_replay::fair_cyclic_probability_proof_document(
+        &system, claims, &item, &certificate, doc_limits, &cancel,
+    )
+    .expect("the unchecked fair cyclic document can be written");
+    let bytes = fsl_replay::write_value_bounds_proof_document(
+        &document,
+        fsl_replay::SubsystemBoundKind::Lower,
+        doc_limits,
+        &cancel,
+    )
+    .expect("the lower proof role is well formed");
+    assert!(matches!(
+        fsl_replay::check_probability_certificate_document_as(
+            &system,
+            claims,
+            &item,
+            &bytes,
+            fsl_replay::CertificateRole::Claim,
+            doc_limits,
+            &cancel,
+        ),
+        Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
+            if rejection.rule == ProbabilityCertificateRule::InequalityFails
+                && rejection.at == fsl_replay::ProbabilityCertificateLocus::ProductState(key)
+    ));
 }
 
 /// FR-1042-AC-22: a strong-enabled state is removed and the remaining fair
