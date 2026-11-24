@@ -28,6 +28,10 @@ const UNLIMITED: ScalarLimits = ScalarLimits {
     result_units: u64::MAX,
 };
 
+/// Marks a declaration list to be checked under `CheckMode::Kernel`, the mode
+/// in which the evaluator, not the checker, meets a zero divisor.
+const KERNEL: &str = "#kernel\n";
+
 #[derive(Debug, PartialEq)]
 enum Expected {
     Boolean(bool),
@@ -45,6 +49,7 @@ enum Expected {
         cause: Option<String>,
     },
     Admitted,
+    Undefined,
 }
 
 #[derive(Debug, PartialEq)]
@@ -177,6 +182,14 @@ fn float_expected(text: &str) -> Expected {
     }
 }
 
+/// The backtick-quoted `Decimal[..]` types of an authored cell, in order.
+fn decimal_types(text: &str) -> Vec<&str> {
+    quoted(text)
+        .into_iter()
+        .filter(|token| token.starts_with("Decimal["))
+        .collect()
+}
+
 fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
     let operands = pairs(vector.inputs);
     let result = match vector.id {
@@ -241,6 +254,200 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 },
             })
             .collect(),
+        "D03" => {
+            let operands = pairs(vector.inputs);
+            let (numerators, denominator) = {
+                let tail = vector
+                    .expected
+                    .split_once("exact_numerator:")
+                    .expect("authored loss numerators")
+                    .1;
+                let numerators: Vec<Integer> = tail
+                    .split(',')
+                    .next()
+                    .expect("numerators")
+                    .trim()
+                    .split('|')
+                    .map(|n| n.parse().expect("authored numerator"))
+                    .collect();
+                let denominator: Integer = tail
+                    .split_once("exact_denominator:")
+                    .expect("authored denominator")
+                    .1
+                    .split(',')
+                    .next()
+                    .expect("denominator")
+                    .trim()
+                    .parse()
+                    .expect("authored denominator");
+                (numerators, denominator)
+            };
+            let mut cases = Vec::new();
+            for row in vector.expected.split(';') {
+                let tokens = quoted(row);
+                let Some(mode) = tokens.first().filter(|name| {
+                    **name == "exact" || DIRECTIONS.contains(name)
+                }) else {
+                    continue;
+                };
+                for (index, operand) in operands.iter().enumerate() {
+                    let expected = if *mode == "exact" {
+                        refusal_expected(row)
+                    } else {
+                        let coefficient: Integer = tokens[1]
+                            .split(',')
+                            .nth(index)
+                            .expect("tabled coefficient")
+                            .trim()
+                            .parse()
+                            .expect("authored coefficient");
+                        Expected::Decimal {
+                            value: DecimalRepresentation::new(coefficient.clone(), 0).normalized(),
+                            losses: vec![DecimalLoss {
+                                numerator: numerators[index].clone(),
+                                denominator: denominator.clone(),
+                                coefficient,
+                                scale: 0,
+                                mode: (*mode).to_owned(),
+                            }],
+                        }
+                    };
+                    cases.push(SourceCase {
+                        declarations: format!(
+                            "function p using v(): Decimal[-100,100;1,1;exact] pure {{ {} }}\n\
+                             function f using v(): Decimal[-100,100;0,0;{mode}] pure {{ convert<Decimal[-100,100;0,0;{mode}]>(p()) }}",
+                            decimal(operand)
+                        ),
+                        expected,
+                    });
+                }
+            }
+            cases
+        }
+        "D06" => {
+            // D15 names the operands and the result type of the zero divisor.
+            let operands = pairs(self::vector("D15").inputs);
+            let result_type = decimal_types(self::vector("D15").inputs)[0];
+            assert!(vector.expected.starts_with("undefined"));
+            vec![SourceCase {
+                declarations: format!(
+                    "{KERNEL}function f using v(): {result_type} pure {{ {} / {} }}",
+                    decimal(&operands[0]),
+                    decimal(&operands[1])
+                ),
+                expected: Expected::Undefined,
+            }]
+        }
+        "D07" => {
+            let tokens = quoted(vector.inputs);
+            let (mode, domain) = (tokens[1], tokens[2].trim_matches(['[', ']']));
+            vec![SourceCase {
+                declarations: format!(
+                    "function p using v(): Decimal[-100,100;1,1;exact] pure {{ {} }}\n\
+                     function f using v(): Decimal[{domain};0,0;{mode}] pure {{ convert<Decimal[{domain};0,0;{mode}]>(p()) }}",
+                    decimal(&pairs(vector.inputs)[0])
+                ),
+                expected: refusal_expected(vector.expected),
+            }]
+        }
+        "D08" => {
+            let tokens = quoted(vector.inputs);
+            let domain = tokens[4].trim_matches(['[', ']']);
+            let refusal = refusal_expected(vector.expected);
+            tokens[..4]
+                .iter()
+                .enumerate()
+                .map(|(index, coefficient)| SourceCase {
+                    declarations: format!(
+                        "{KERNEL}function p using v(): Decimal[-9,9;0,0;exact] pure {{ decimal({coefficient}, 0) }}\n\
+                         function f using v(): Decimal[{domain};0,0;exact] pure {{ convert<Decimal[{domain};0,0;exact]>(p()) }}"
+                    ),
+                    expected: if index < 2 {
+                        Expected::Decimal {
+                            value: DecimalRepresentation::new(
+                                coefficient.parse().expect("authored coefficient"),
+                                0,
+                            )
+                            .normalized(),
+                            losses: Vec::new(),
+                        }
+                    } else {
+                        match &refusal {
+                            Expected::Refused { code, cause } => Expected::Refused {
+                                code: code.clone(),
+                                cause: cause.clone(),
+                            },
+                            _ => unreachable!("refusal_expected returns a refusal"),
+                        }
+                    },
+                })
+                .collect()
+        }
+        "D12" => {
+            let operands = pairs(vector.inputs);
+            let types = decimal_types(vector.inputs);
+            let (first, _) = vector.expected.split_once(';').expect("two outcomes");
+            let (coefficient, scale) = pairs(first).into_iter().next().expect("first result");
+            let loss = quoted(first)[1];
+            let (numerator, denominator) = loss.split_once('/').expect("authored loss ratio");
+            let source = format!("{} / {}", decimal(&operands[0]), decimal(&operands[1]));
+            vec![
+                function(
+                    types[0],
+                    &source,
+                    Expected::Decimal {
+                        value: DecimalRepresentation::new(coefficient.clone(), scale).normalized(),
+                        losses: vec![DecimalLoss {
+                            numerator: numerator.parse().expect("authored numerator"),
+                            denominator: denominator.parse().expect("authored denominator"),
+                            coefficient,
+                            scale,
+                            mode: "nearest-even".to_owned(),
+                        }],
+                    },
+                ),
+                // The second outcome is a refusal on the coefficient, the
+                // code D07 gives for a coefficient outside its domain.
+                function(types[1], &source, refusal_expected(self::vector("D07").expected)),
+            ]
+        }
+        "D28" => {
+            let tokens = quoted(vector.inputs);
+            let refusal = |ty: &str, body: &str| {
+                function(ty, body, refusal_expected(vector.expected))
+            };
+            vec![
+                refusal(tokens[0], tokens[1]),
+                refusal(tokens[2], tokens[3]),
+                function(tokens[0], tokens[4], decimal_expected(self::vector("D26").expected.split_once(';').expect("result").0)),
+            ]
+        }
+        "D29" => {
+            let syntax = refusal_expected(self::vector("T05b").expected);
+            let refused = |declarations: &str| SourceCase {
+                declarations: declarations.to_owned(),
+                expected: match &syntax {
+                    Expected::Refused { code, .. } => Expected::Refused {
+                        code: code.clone(),
+                        cause: None,
+                    },
+                    _ => unreachable!("refusal_expected returns a refusal"),
+                },
+            };
+            let admitted = |declarations: &str| SourceCase {
+                declarations: declarations.to_owned(),
+                expected: Expected::Admitted,
+            };
+            let quantity = "dimension L;\nunit m : L = rational(1, 1);\n";
+            vec![
+                refused("type P = Decimal[0,10;0,0];\nfunction f using v(): Boolean pure { true }"),
+                refused("function f using v(q: Rational[0,2;1,3]): Boolean pure { convert<Decimal[0,100;2,2]>(q) = convert<Decimal[0,100;2,2]>(q) }"),
+                refused(&format!("{quantity}type Q = Quantity<m, Decimal[-100, 100; 2, 2]>;\nfunction f using v(): Boolean pure {{ true }}")),
+                admitted("type P = Decimal[0,10;0,0;exact];\nfunction f using v(): Boolean pure { true }"),
+                admitted("function f using v(q: Rational[0,2;1,3]): Decimal[0,100;2,2;exact] pure { convert<Decimal[0,100;2,2;exact]>(q) }"),
+                admitted(&format!("{quantity}type Q = Quantity<m, Decimal[-100, 100; 2, 2; exact]>;\nfunction f using v(): Boolean pure {{ true }}")),
+            ]
+        }
         "D26" | "D27" => {
             // These rows explicitly supply source-admitted counterparts to
             // evaluator-boundary operands in D13 and D18.
@@ -387,27 +594,299 @@ fn text_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
     Some(cases)
 }
 
+const IEEE: &str = "filament::value::ieee::";
+
+fn float_constant(width: u32, bits: u64) -> String {
+    if width == 32 {
+        format!("float32(bits: {bits:#010x})")
+    } else {
+        format!("float64(bits: {bits:#018x})")
+    }
+}
+
+/// The width a vector's authored text names (`binary32` or `binary64`),
+/// falling back to the digit count of the first authored bit pattern.
+fn float_width(vector: &QualificationVector) -> u32 {
+    if vector.inputs.contains("binary64") {
+        64
+    } else if vector.inputs.contains("binary32") {
+        32
+    } else {
+        let digits = vector.inputs.split("0x").nth(1).map_or(0, |tail| {
+            tail.chars().take_while(char::is_ascii_hexdigit).count()
+        });
+        if digits > 8 {
+            64
+        } else {
+            32
+        }
+    }
+}
+
+const DIRECTIONS: [&str; 5] = [
+    "nearest-even",
+    "toward-zero",
+    "toward-positive",
+    "toward-negative",
+    "nearest-away",
+];
+
+fn float_function(width: u32, mode: &str, expression: &str, expected: Expected) -> SourceCase {
+    function(&format!("Float{width}[{mode}]"), expression, expected)
+}
+
+fn float_flags(words: &str) -> Vec<String> {
+    match float_expected(words) {
+        Expected::Float { flags, .. } => flags,
+        _ => unreachable!("float_expected returns a float"),
+    }
+}
+
+fn float_value(bits: u64, flags: &[String]) -> Expected {
+    Expected::Float {
+        bits,
+        flags: flags.to_vec(),
+    }
+}
+
+/// `direction/direction: bits; ...` rows of a rounding-direction table,
+/// as (direction, bits) pairs.
+fn direction_rows(expected: &str) -> Vec<(String, u64)> {
+    expected
+        .split(';')
+        .filter_map(|row| {
+            let (names, tail) = row.split_once(':')?;
+            let bits = *hexes(tail).first()?;
+            Some(
+                names
+                    .split('/')
+                    .map(|name| (name.trim().to_owned(), bits))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .flatten()
+        .filter(|(name, _)| DIRECTIONS.contains(&name.as_str()))
+        .collect()
+}
+
+fn boolean_case(width: u32, body: &str, expected: bool) -> SourceCase {
+    let _ = width;
+    function("Boolean", body, Expected::Boolean(expected))
+}
+
 fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
     let operands = hexes(vector.inputs);
-    let (width, expression, expected) = match vector.id {
-        "F03" | "F04" => (32, format!("float32(bits: {:#010x}) + float32(bits: {:#010x})", operands[0], operands[1]), float_expected(vector.expected)),
-        "F07" | "F08" | "F10" => {
-            let width = if vector.id == "F10" { 64 } else { 32 };
-            (width, format!("float{width}(bits: {:#x}) + float{width}(bits: {:#x})", operands[0], operands[1]), float_expected(vector.expected))
+    let width = float_width(vector);
+    let constant = |bits: u64| float_constant(width, bits);
+    let add = |left: u64, right: u64| format!("{} + {}", constant(left), constant(right));
+    let cases = match vector.id {
+        "F01" => {
+            let (positive, negative) = (operands[0], operands[1]);
+            vec![
+                boolean_case(width, &format!("{} = {}", constant(negative), constant(positive)), true),
+                boolean_case(
+                    width,
+                    &format!("{IEEE}bitIdentical({}, {})", constant(negative), constant(positive)),
+                    false,
+                ),
+                boolean_case(
+                    width,
+                    &format!("{IEEE}totalOrder({}, {})", constant(negative), constant(positive)),
+                    true,
+                ),
+            ]
         }
-        "F11" => (32, format!("filament::value::ieee::fma(float32(bits: {:#x}), float32(bits: {:#x}), float32(bits: {:#x}))", operands[0], operands[1], operands[2]), float_expected(vector.expected)),
-        "F15" | "F16" => (32, format!("float32(bits: {:#010x}) * float32(bits: {:#010x})", operands[0], operands[1]), float_expected(vector.expected)),
+        "F02" => {
+            let (first, second) = (operands[0], operands[1]);
+            let mut cases = Vec::new();
+            for bits in [first, second] {
+                cases.push(boolean_case(width, &format!("{} = {}", constant(bits), constant(bits)), false));
+                cases.push(boolean_case(
+                    width,
+                    &format!("{IEEE}bitIdentical({}, {})", constant(bits), constant(bits)),
+                    true,
+                ));
+            }
+            cases.push(boolean_case(
+                width,
+                &format!("{IEEE}totalOrder({}, {})", constant(first), constant(second)),
+                true,
+            ));
+            cases
+        }
+        "F02b" => operands
+            .chunks(2)
+            .map(|pair| {
+                boolean_case(
+                    width,
+                    &format!("{IEEE}totalOrder({}, {})", constant(pair[0]), constant(pair[1])),
+                    true,
+                )
+            })
+            .collect(),
+        "F03" | "F04" => vec![float_function(
+            32,
+            "nearest-even",
+            &add(operands[0], operands[1]),
+            float_expected(vector.expected),
+        )],
+        "F04b" => {
+            let flags = float_flags(vector.expected);
+            let bits = *hexes(vector.expected).first().expect("authored result bits");
+            vec![
+                float_function(32, "nearest-even", &add(operands[0], operands[1]), float_value(bits, &flags)),
+                float_function(
+                    32,
+                    "nearest-even",
+                    &format!(
+                        "{IEEE}fma({}, {}, {})",
+                        constant(operands[2]),
+                        constant(operands[3]),
+                        constant(operands[4])
+                    ),
+                    float_value(bits, &flags),
+                ),
+            ]
+        }
+        "F07" | "F08" | "F10" => {
+            let flags = float_flags(vector.expected);
+            direction_rows(vector.expected)
+                .into_iter()
+                .map(|(mode, bits)| {
+                    float_function(width, &mode, &add(operands[0], operands[1]), float_value(bits, &flags))
+                })
+                .collect()
+        }
+        "F09" => {
+            // The first operation is F07's, under `exact`; the second is the
+            // authored exact sum.
+            let first = self::vector("F07");
+            let first_operands = hexes(first.inputs);
+            let result = hexes(vector.expected);
+            let flags = float_flags(
+                vector
+                    .expected
+                    .split_once("second")
+                    .expect("both operations")
+                    .1,
+            );
+            vec![
+                float_function(
+                    32,
+                    "exact",
+                    &add(first_operands[0], first_operands[1]),
+                    refusal_expected(vector.expected),
+                ),
+                float_function(32, "exact", &add(operands[0], operands[1]), float_value(result[0], &flags)),
+            ]
+        }
+        "F11" => vec![float_function(
+            32,
+            "nearest-even",
+            &format!(
+                "{IEEE}fma({}, {}, {})",
+                constant(operands[0]),
+                constant(operands[1]),
+                constant(operands[2])
+            ),
+            float_expected(vector.expected.split_once(';').expect("fused result").0),
+        )],
+        "F12" => {
+            let sources = [
+                format!("{} * {}", constant(operands[0]), constant(operands[1])),
+                format!("{IEEE}sqrt({})", constant(operands[2])),
+            ];
+            let mut cases = Vec::new();
+            for source in &sources {
+                for mode in DIRECTIONS.iter().chain(std::iter::once(&"exact")) {
+                    cases.push(float_function(32, mode, source, float_expected(vector.expected)));
+                }
+            }
+            cases
+        }
+        "F13" => {
+            let results = hexes(vector.expected);
+            let flags = float_flags(vector.expected);
+            let one = |sign: bool| if sign { 0xbf80_0000 } else { 0x3f80_0000 };
+            let zero = |sign: bool| if sign { 0x8000_0000 } else { 0 };
+            let mut cases = Vec::new();
+            for (index, (negative_numerator, negative_zero)) in
+                [(false, false), (true, false), (false, true), (true, true)]
+                    .into_iter()
+                    .enumerate()
+            {
+                let source = format!(
+                    "{} / {}",
+                    constant(one(negative_numerator)),
+                    constant(zero(negative_zero))
+                );
+                for mode in DIRECTIONS.iter().chain(std::iter::once(&"exact")) {
+                    cases.push(float_function(32, mode, &source, float_value(results[index], &flags)));
+                }
+            }
+            cases
+        }
+        "F14" => {
+            let flags = float_flags(vector.expected.split_once(';').expect("two rows").0);
+            vec![
+                float_function(
+                    32,
+                    "nearest-even",
+                    &add(operands[0], operands[1]),
+                    float_value(operands_result(vector.expected), &flags),
+                ),
+                float_function(32, "exact", &add(operands[0], operands[1]), refusal_expected(vector.expected)),
+            ]
+        }
+        "F15" | "F16" => vec![float_function(
+            32,
+            "nearest-even",
+            &format!("{} * {}", constant(operands[0]), constant(operands[1])),
+            float_expected(vector.expected),
+        )],
+        "F23" => {
+            let rows: Vec<&str> = vector.expected.split(';').collect();
+            vec![
+                float_function(
+                    32,
+                    "nearest-even",
+                    &add(operands[0], operands[1]),
+                    float_value(operands_result(rows[0]), &float_flags(rows[0])),
+                ),
+                float_function(
+                    32,
+                    "toward-zero",
+                    &add(operands[0], operands[1]),
+                    float_value(operands_result(rows[1]), &float_flags(rows[1])),
+                ),
+                float_function(32, "exact", &add(operands[0], operands[1]), refusal_expected(self::vector("F14").expected)),
+            ]
+        }
         _ => return None,
     };
-    Some(vec![function(
-        &format!("Float{width}[nearest-even]"),
-        &expression,
-        expected,
-    )])
+    Some(cases)
+}
+
+fn operands_result(text: &str) -> u64 {
+    *hexes(text).first().expect("authored result bits")
 }
 
 fn division_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
     match vector.id {
+        "DIV-01" => Some(
+            ["euclidean", "floor", "truncating"]
+                .into_iter()
+                .flat_map(|law| {
+                    ["div", "rem"].into_iter().map(move |operator| SourceCase {
+                        declarations: format!(
+                            "{KERNEL}profile d = \"filament.value.integer-division.{law}/v1\";\n\
+                             function f using v(): Integer pure {{ 7 {operator} 0 }}"
+                        ),
+                        expected: Expected::Undefined,
+                    })
+                })
+                .collect(),
+        ),
         "DIV-02" => Some(
             ["truncating", "floor", "euclidean"]
                 .into_iter()
@@ -446,6 +925,51 @@ fn division_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                     })
                     .collect(),
             )
+        }
+        _ => None,
+    }
+}
+
+fn quantity_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
+    const UNITS: &str = "dimension L;\nunit m : L = rational(1, 1);\nunit cm : L = rational(1, 100) * m;\ndimension T;\nunit s : T = rational(1, 1);\n";
+    let rational_quantity = |text: &str| {
+        let (amount, unit) = text.split_once(' ').expect("authored quantity");
+        let (numerator, denominator) = amount.split_once('/').unwrap_or((amount, "1"));
+        format!("rational({numerator}, {denominator}) {unit}")
+    };
+    let boolean = |body: String| SourceCase {
+        declarations: format!("{UNITS}function f using v(): Boolean pure {{ {body} }}"),
+        expected: Expected::Boolean(true),
+    };
+    match vector.id {
+        "U01" => {
+            let inputs = quoted(vector.inputs);
+            let results = quoted(vector.expected);
+            Some(vec![
+                boolean(format!(
+                    "convert<Quantity<{}>>({}) = {}",
+                    inputs[1],
+                    inputs[0],
+                    rational_quantity(results[0])
+                )),
+                boolean(format!(
+                    "convert<Quantity<{}>>({}) + {} = {}",
+                    inputs[1],
+                    inputs[0],
+                    inputs[2],
+                    rational_quantity(results[1])
+                )),
+            ])
+        }
+        "U03" => {
+            let inputs = quoted(vector.inputs);
+            Some(vec![SourceCase {
+                declarations: format!(
+                    "{UNITS}function f using v(): Boolean pure {{ {} + {} = {} }}",
+                    inputs[0], inputs[1], inputs[0]
+                ),
+                expected: refusal_expected(vector.expected),
+            }])
         }
         _ => None,
     }
@@ -502,14 +1026,14 @@ fn source_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
     match vector.test_case {
         TestCase::Tc185 => decimal_cases(vector),
         TestCase::Tc186 => text_cases(vector),
-        TestCase::Tc187 => unit_cases(vector),
+        TestCase::Tc187 => unit_cases(vector).or_else(|| quantity_cases(vector)),
         TestCase::Tc192 => division_cases(vector),
         TestCase::Tc193 => float_cases(vector),
     }
 }
 
 fn observed(case: &SourceCase) -> Expected {
-    let source = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{}", case.declarations);
+    let source = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{}", case.declarations.trim_start_matches(KERNEL));
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("qualification", "source"),
         "vector.native",
@@ -549,7 +1073,7 @@ fn observed(case: &SourceCase) -> Expected {
             .expect("public IEEE definition selection"),
     );
     let checked = match declarations.check(
-        CheckMode::Linked,
+        if case.declarations.starts_with(KERNEL) { CheckMode::Kernel } else { CheckMode::Linked },
         CheckingLimits::default(),
         &fsl_eval::value::S6aRewardEvaluator,
     ) {
@@ -619,6 +1143,7 @@ fn observed(case: &SourceCase) -> Expected {
                 flags,
             }
         }
+        Outcome::Undefined(_) => Expected::Undefined,
         Outcome::Refused(refusal) => {
             assert!(
                 evaluation.losses.is_empty(),
@@ -634,18 +1159,15 @@ fn observed(case: &SourceCase) -> Expected {
     }
 }
 
+/// Runs every source case of `vector` and reports each disagreement with the
+/// standard, headed by the vector's test case and identity. A refusal whose
+/// authored expectation names no cause is compared by code alone.
 fn compare(vector: &QualificationVector) -> Result<usize, String> {
     let cases = source_cases(vector).expect("this vector has a source adapter");
     let mut failures = Vec::new();
     for (index, case) in cases.iter().enumerate() {
         let actual = observed(case);
-        let matches = match (&case.expected, &actual) {
-            (Expected::Refused { code, cause: None }, Expected::Refused { code: actual, .. }) => {
-                code == actual
-            }
-            _ => case.expected == actual,
-        };
-        if !matches {
+        if !agrees(&case.expected, &actual) {
             failures.push(format!(
                 "{}:{}[{index}] expected {:?}, actual {actual:?}; source {}",
                 vector.test_case.id(),
@@ -662,6 +1184,15 @@ fn compare(vector: &QualificationVector) -> Result<usize, String> {
     }
 }
 
+fn agrees(expected: &Expected, actual: &Expected) -> bool {
+    match (expected, actual) {
+        (Expected::Refused { code, cause: None }, Expected::Refused { code: actual, .. }) => {
+            code == actual
+        }
+        _ => expected == actual,
+    }
+}
+
 fn vector(id: &str) -> &'static QualificationVector {
     QUALIFICATION_VECTORS
         .iter()
@@ -669,19 +1200,183 @@ fn vector(id: &str) -> &'static QualificationVector {
         .expect("published vector identity")
 }
 
-macro_rules! source_vectors {
-    ($requirement:literal; $( $test:ident => $id:literal ),+ $(,)?) => {$ (
-        #[trace($requirement)]
-        #[test]
-        fn $test() { compare(vector($id)).unwrap_or_else(|failure| panic!("{failure}")); }
-    )+};
+/// A published vector the source language cannot express today. `probe` is
+/// the closest FSL source and `code`/`cause` the typed refusal it meets now.
+/// `key` is the Linear ticket that owns the gap; an entry without one fails
+/// `unexpressible_vectors_carry_ticket_keys`.
+struct Unexpressible {
+    id: &'static str,
+    probe: &'static str,
+    code: &'static str,
+    cause: Option<&'static str>,
+    key: Option<&'static str>,
 }
 
-source_vectors!("FSpec-TC-185"; d01=>"D01", d02=>"D02", d04=>"D04", d05=>"D05", d10=>"D10", d26=>"D26", d27=>"D27");
-source_vectors!("FSpec-TC-186"; t01=>"T01", t02=>"T02", t03=>"T03", t05b=>"T05b", t06b=>"T06b", t12=>"T12");
-source_vectors!("FSpec-TC-187"; u11a=>"U11a", u11b=>"U11b", u11c=>"U11c", u11f=>"U11f", u11h=>"U11h", u11g1=>"U11g1", u11g2=>"U11g2", u11g3=>"U11g3", u11g4=>"U11g4", u11n=>"U11n", u11o=>"U11o", u11w=>"U11w");
-source_vectors!("FSpec-TC-192"; div02=>"DIV-02", div04=>"DIV-04");
-source_vectors!("FSpec-TC-193"; f03=>"F03", f04=>"F04", f07=>"F07", f08=>"F08", f10=>"F10", f11=>"F11", f15=>"F15", f16=>"F16");
+/// The authored text of D13 and D18 says their retained operands are not
+/// members of the result type, so no FSL source form exists; the probes
+/// write those operands anyway.
+const UNEXPRESSIBLE: &[Unexpressible] = &[
+    Unexpressible {
+        id: "D13",
+        probe: "function f using v(): Decimal[-9,9;0,0;toward-zero] pure { decimal(150, 2) * decimal(2, 0) }",
+        code: "ill_typed",
+        cause: Some("type-mismatch"),
+        key: None,
+    },
+    Unexpressible {
+        id: "D18",
+        probe: "function f using v(): Decimal[-1000,1000;0,1;nearest-even] pure { decimal(1234, 3) / decimal(2, 0) }",
+        code: "ill_typed",
+        cause: Some("type-mismatch"),
+        key: None,
+    },
+];
+
+fn unexpressible(id: &str) -> Option<&'static Unexpressible> {
+    UNEXPRESSIBLE.iter().find(|entry| entry.id == id)
+}
+
+#[trace("FSpec-TC-185")]
+#[test]
+fn all_vectors_from_source() {
+    let (mut executed, mut cases, mut recorded) = (0, 0, 0);
+    let (mut failures, mut pending) = (Vec::new(), Vec::new());
+    for vector in QUALIFICATION_VECTORS {
+        if source_cases(vector).is_some() {
+            executed += 1;
+            match compare(vector) {
+                Ok(count) => cases += count,
+                Err(failure) => failures.push(failure),
+            }
+        } else if unexpressible(vector.id).is_some() {
+            recorded += 1;
+        } else {
+            pending.push(format!("{}:{}", vector.test_case.id(), vector.id));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} vector(s) disagree with the standard:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    assert!(cases >= executed, "every executed vector runs a source case");
+    assert!(
+        pending.is_empty(),
+        "{} vector(s) have neither a source adapter nor a recorded refusal: {}",
+        pending.len(),
+        pending.join(", ")
+    );
+    assert_eq!(
+        executed + recorded,
+        QUALIFICATION_VECTORS.len(),
+        "executed vectors plus recorded refusals cover QUALIFICATION_VECTORS"
+    );
+}
+
+#[trace("FSpec-TC-185")]
+#[test]
+fn refusing_vectors_match_codes() {
+    let mut refusals = Vec::new();
+    for vector in QUALIFICATION_VECTORS {
+        let Some(cases) = source_cases(vector) else {
+            continue;
+        };
+        for case in cases {
+            let (code, cause) = match &case.expected {
+                Expected::Refused { code, cause } => (code.as_str(), cause.clone()),
+                Expected::Undefined => ("undefined", None),
+                _ => continue,
+            };
+            let actual = observed(&case);
+            let matches = match (&actual, code) {
+                (Expected::Undefined, "undefined") => true,
+                (Expected::Refused { code: actual, cause: actual_cause }, _) => {
+                    actual == code && cause.as_ref().is_none_or(|cause| Some(cause) == actual_cause.as_ref())
+                }
+                _ => false,
+            };
+            assert!(
+                matches,
+                "{}:{} expected refusal {code} {cause:?}, actual {actual:?}; source {}",
+                vector.test_case.id(),
+                vector.id,
+                case.declarations
+            );
+            refusals.push(code.to_owned());
+        }
+    }
+    for code in [
+        "inexact_decimal",
+        "decimal_out_of_domain",
+        "ieee_not_exact",
+        "ill_typed",
+        "undefined",
+    ] {
+        assert!(
+            refusals.iter().any(|seen| seen == code),
+            "no vector exercised the refusal {code}"
+        );
+    }
+}
+
+#[trace("FSpec-TC-185")]
+#[test]
+fn recorded_refusals_still_occur() {
+    assert!(!UNEXPRESSIBLE.is_empty(), "an empty registry proves nothing");
+    for entry in UNEXPRESSIBLE {
+        let actual = observed(&SourceCase {
+            declarations: entry.probe.to_owned(),
+            expected: Expected::Boolean(true),
+        });
+        assert_eq!(
+            actual,
+            Expected::Refused {
+                code: entry.code.to_owned(),
+                cause: entry.cause.map(str::to_owned),
+            },
+            "{}: the recorded refusal no longer occurs; if the vector became expressible, render it and remove the entry",
+            entry.id
+        );
+    }
+}
+
+#[trace("FSpec-TC-185")]
+#[test]
+fn recorded_vectors_are_published_and_not_also_executed() {
+    for entry in UNEXPRESSIBLE {
+        let published = vector(entry.id);
+        assert!(
+            source_cases(published).is_none(),
+            "{} has a source adapter; drop its registry entry",
+            entry.id
+        );
+    }
+}
+
+#[trace("FSpec-TC-185")]
+#[test]
+fn unexpressible_vectors_carry_ticket_keys() {
+    let unkeyed: Vec<&str> = UNEXPRESSIBLE
+        .iter()
+        .filter(|entry| {
+            !entry.key.is_some_and(|key| {
+                key.split_once('-').is_some_and(|(team, number)| {
+                    !team.is_empty()
+                        && team.chars().all(|c| c.is_ascii_uppercase())
+                        && !number.is_empty()
+                        && number.chars().all(|c| c.is_ascii_digit())
+                })
+            })
+        })
+        .map(|entry| entry.id)
+        .collect();
+    assert!(
+        unkeyed.is_empty(),
+        "unexpressible vectors without a ticket key: {}",
+        unkeyed.join(", ")
+    );
+}
 
 #[trace("FSpec-TC-185")]
 #[test]
@@ -692,62 +1387,4 @@ fn an_altered_standard_expectation_reports_the_vector_identity() {
         compare(&altered).expect_err("real evaluator disagrees with altered expectation");
     assert!(mismatch.starts_with("TC-185:D02[0]"), "{mismatch}");
     assert!(mismatch.contains("999"), "{mismatch}");
-}
-
-#[test]
-fn every_published_vector_has_an_explicit_source_qualification_status() {
-    let mut sampled = Vec::new();
-    let mut unqualified = Vec::new();
-    let mut partial_samples = Vec::new();
-    for vector in QUALIFICATION_VECTORS {
-        let identity = format!("{}:{}", vector.test_case.id(), vector.id);
-        if source_cases(vector).is_some() {
-            if vector.test_case == TestCase::Tc187
-                || matches!(
-                    vector.id,
-                    "D01" | "D26" | "D27" | "T02" | "T06b" | "F07" | "F08" | "F10" | "F11"
-                )
-            {
-                partial_samples.push(identity.clone());
-            }
-            sampled.push(identity);
-        } else {
-            let reason = match (vector.test_case, vector.id) {
-                (TestCase::Tc185, "D13" | "D18") => {
-                    "published evaluator-boundary operands explicitly have no source form"
-                }
-                (TestCase::Tc186, "T06") => {
-                    "invalid UTF-8 reader-boundary input, not a source value"
-                }
-                (TestCase::Tc192, "DIV-03" | "DIV-09") => {
-                    "mutation of an already checked wire definition closure"
-                }
-                (TestCase::Tc192, "DIV-07" | "DIV-14") => {
-                    "backend negotiation rather than source evaluation"
-                }
-                _ => "remaining source/accounting adapter not implemented",
-            };
-            unqualified.push(format!("{identity}: {reason}"));
-        }
-    }
-    assert!(!sampled.is_empty(), "zero source samples cannot pass");
-    assert_eq!(
-        sampled.len() + unqualified.len(),
-        QUALIFICATION_VECTORS.len()
-    );
-    eprintln!(
-        "source samples: {} rows, {} without an adapter; partially sampled rows: {}; unqualified ids/reasons: {}",
-        sampled.len(),
-        unqualified.len(),
-        partial_samples.join(", "),
-        unqualified.join(", ")
-    );
-    if std::env::var_os("FSL_FULL_SOURCE_QUALIFICATION").is_some() {
-        assert!(
-            unqualified.is_empty() && partial_samples.is_empty(),
-            "full source qualification is incomplete; partial samples: {}; no adapter: {}",
-            partial_samples.join(", "),
-            unqualified.join(", ")
-        );
-    }
 }
