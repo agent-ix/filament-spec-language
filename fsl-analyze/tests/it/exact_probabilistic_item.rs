@@ -634,7 +634,7 @@ fn p95_settles_proved_with_its_exact_value() {
 /// FR-203-AC-5 (TC-641): FR-196-AC-5's `Coin` refutation, a claim read
 /// undefined (`absent-key`) at a state of positive probability, settles
 /// `refuted` with its replayed undefined path, whatever the threshold.
-#[trace("TC-641", "FR-203-AC-5", "TC-3153", "FR-202-AC-5", "FR-202-AC-24")]
+#[trace("TC-641", "FR-203-AC-5", "TC-3153", "FR-202-AC-5", "FR-202-AC-24", "FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7", "FSpec-FR-413-AC-11")]
 #[test]
 fn an_undefined_evaluation_settles_refuted_whatever_the_threshold() {
     for threshold in ["0.5", "0.01"] {
@@ -653,10 +653,13 @@ fn an_undefined_evaluation_settles_refuted_whatever_the_threshold() {
             .probabilistic_counterexample
             .as_ref()
             .expect("the replayed undefined path");
-        let text = format!("{counterexample:?}");
-        assert!(
-            text.contains("AbsentKey") || text.contains("absent-key"),
-            "{text}"
+        let undefined = counterexample.undefined().expect("undefined evidence");
+        assert_eq!(undefined.evaluation.site.position, 1);
+        assert_eq!(undefined.path.paths[0].steps.len(), 1);
+        assert_eq!(counterexample.mass(), &ratio(1, 2));
+        assert_eq!(
+            counterexample.wire.as_ref().unwrap()["evidence"]["undefined"]["cause"],
+            "absent-key"
         );
     }
 }
@@ -683,7 +686,7 @@ fn undefined_evidence(world: &World, claim: &str) -> fsl_replay::ProbabilityUnde
     witness.clone()
 }
 
-#[trace("TC-3153", "FR-202-AC-5", "FR-202-AC-24")]
+#[trace("TC-3153", "FR-202-AC-5", "FR-202-AC-24", "FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7", "FSpec-FR-413-AC-11")]
 #[test]
 fn undefined_replay_checks_first_read_location_control_and_package_ownership() {
     use fsl_replay::{
@@ -764,7 +767,7 @@ fn undefined_replay_checks_first_read_location_control_and_package_ownership() {
     ));
 }
 
-#[trace("TC-3153", "FR-202-AC-25", "FR-202-AC-26")]
+#[trace("TC-3153", "FR-202-AC-25", "FR-202-AC-26", "FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7")]
 #[test]
 fn undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices() {
     use fsl_eval::simulation::model::TransitionId;
@@ -897,7 +900,7 @@ fn undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices()
     .is_none());
 }
 
-#[trace("TC-3153", "FR-202-AC-26")]
+#[trace("TC-3153", "FR-202-AC-26", "FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7")]
 #[test]
 fn undefined_replay_preserves_limits_and_cancellation_at_the_final_poll() {
     use fsl_replay::{

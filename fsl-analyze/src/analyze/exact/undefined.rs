@@ -5,7 +5,7 @@ use super::*;
 use crate::exact_probabilistic::{PredicateRole, UndefinedPath, UndefinedRead};
 use fsl_eval::automaton::{Monitor, PropertyAutomaton, QualifiedBoundedMonitor};
 use fsl_eval::simulation::model::{ModelSimulationRequest, PredicateReading};
-use fsl_replay::{replay_probabilistic_undefined, ProbabilityUndefinedWitness};
+use fsl_replay::{ProbabilityUndefinedWitness, replay_probabilistic_undefined};
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run(
@@ -18,16 +18,16 @@ pub(super) fn run(
     subject: SubjectLimits<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
-    // The spec's undefined entry admits every form (FSL FR-202), the producer
-    // below builds the path of these four; for any other form (a long-run
-    // fraction, an expected reward) the undefined path is an unbuilt form, not
-    // an engine fault.
+    // The checked-subject undefined entry is independent of the numerical
+    // threshold and covers each supported product-predicate read.
     if !matches!(
         claim.form,
         ProbForm::Reach { .. }
             | ProbForm::Probability { .. }
             | ProbForm::MeanOfFraction { .. }
             | ProbForm::Quantile { .. }
+            | ProbForm::LongRunFraction { .. }
+            | ProbForm::ExpectedReward { .. }
     ) {
         return not_yet();
     }
@@ -60,6 +60,8 @@ pub(super) fn run(
             let bound = match &claim.form {
                 ProbForm::Reach { bound, .. }
                 | ProbForm::Probability { bound, .. }
+                | ProbForm::LongRunFraction { bound, .. }
+                | ProbForm::ExpectedReward { bound, .. }
                 | ProbForm::MeanOfFraction { bound, .. } => bound,
                 ProbForm::Quantile { q, threshold, .. } => {
                     quantile_bound = match threshold {
@@ -190,6 +192,7 @@ fn materialize_inner(
             )
         }
         (ProbForm::Reach { .. }, None) => None,
+        (ProbForm::LongRunFraction { .. } | ProbForm::ExpectedReward { .. }, None) => None,
         (_, None) if measured => None,
         _ => return Err(ProbabilityWitnessError::Refused),
     };
@@ -255,7 +258,7 @@ fn materialize_inner(
             [PredicateReading::Refused(outcome)] => {
                 return Err(ProbabilityWitnessError::Build(Box::new(
                     ExactProbBuildIssue::Predicate(outcome.clone()),
-                )))
+                )));
             }
             _ => return Err(ProbabilityWitnessError::Refused),
         };
