@@ -364,7 +364,7 @@ fn admit_slot_supply_with(
                                     record: record.clone(),
                                     locus: CallAdmissionLocus::Binder(key),
                                 }),
-                            )))
+                            )));
                         }
                         filament_semantic_value::admission::ObservationAdmission::Incomplete(
                             record,
@@ -376,10 +376,10 @@ fn admit_slot_supply_with(
                                         locus: CallAdmissionLocus::Binder(key),
                                     },
                                 ),
-                            )))
+                            )));
                         }
                         filament_semantic_value::admission::ObservationAdmission::Fault(fault) => {
-                            return Err(CallFailure::Fault(fault.clone()))
+                            return Err(CallFailure::Fault(fault.clone()));
                         }
                     };
                     if !host.holds_model(observation.model_selection()) {

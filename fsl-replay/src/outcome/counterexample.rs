@@ -2010,6 +2010,7 @@ fn assignments_wire_using(
 pub fn probabilistic_wire(
     witness: &crate::ProbabilisticCounterexample,
     bound: &fsl_semantics::check::Bound,
+    claim_type: &str,
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
     state_key: &dyn Fn(
@@ -2020,7 +2021,7 @@ pub fn probabilistic_wire(
         fsl_eval::simulation::model::ScheduledIdentity,
     )],
 ) -> Result<Json, CounterexampleWireError> {
-    probabilistic_wire_using(witness, bound, state_key, scheduler, |value| {
+    probabilistic_wire_using(witness, bound, claim_type, state_key, scheduler, |value| {
         fsl_eval::simulation::model::typed_value_json(value, types, variants)
     })
 }
@@ -2033,6 +2034,7 @@ pub fn probabilistic_wire(
 pub fn probabilistic_wire_with_enum_members(
     witness: &crate::ProbabilisticCounterexample,
     bound: &fsl_semantics::check::Bound,
+    claim_type: &str,
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
     enum_members: &filament_semantic_value::enumeration::EnumMemberIndex,
@@ -2044,7 +2046,7 @@ pub fn probabilistic_wire_with_enum_members(
         fsl_eval::simulation::model::ScheduledIdentity,
     )],
 ) -> Result<Json, CounterexampleWireError> {
-    probabilistic_wire_using(witness, bound, state_key, scheduler, |value| {
+    probabilistic_wire_using(witness, bound, claim_type, state_key, scheduler, |value| {
         fsl_eval::simulation::model::typed_value_json_with_enum_members(
             value,
             types,
@@ -2057,6 +2059,7 @@ pub fn probabilistic_wire_with_enum_members(
 fn probabilistic_wire_using(
     witness: &crate::ProbabilisticCounterexample,
     bound: &fsl_semantics::check::Bound,
+    claim_type: &str,
     state_key: &dyn Fn(
         &fsl_eval::simulation::model::ModelSimState,
     ) -> Option<fsl_eval::simulation::StateKey>,
@@ -2111,14 +2114,14 @@ fn probabilistic_wire_using(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let (comparison, threshold) = match bound {
-        fsl_semantics::check::Bound::AtLeast(threshold) => (">=", threshold),
-        fsl_semantics::check::Bound::AtMost(threshold) => ("<=", threshold),
+        fsl_semantics::check::Bound::AtLeast(threshold) => ("greater-or-equal", threshold),
+        fsl_semantics::check::Bound::AtMost(threshold) => ("less-or-equal", threshold),
     };
     let mut written = json!({
         "type": "probabilistic",
         "initial_state": 0,
         "binding": witness.binding.as_ref().map(reference).transpose()?,
-        "bound": {"comparison": comparison, "threshold": rational(threshold)},
+        "bound": {"type": claim_type, "comparison": comparison, "threshold": rational(threshold)},
         "evidence": {"type": "path-set", "paths": paths},
     });
     if let Some(instance) = &witness.instance {
@@ -2231,6 +2234,7 @@ pub fn probabilistic_undefined_wire(
     witness: &crate::ProbabilityUndefinedWitness,
     claim: &OccurrenceKey,
     bound: &fsl_semantics::check::Bound,
+    claim_type: &str,
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
     state_key: &dyn Fn(
@@ -2242,8 +2246,15 @@ pub fn probabilistic_undefined_wire(
     )],
 ) -> Result<Json, CounterexampleWireError> {
     use base64::Engine;
-    let mut written =
-        probabilistic_wire(&witness.path, bound, types, variants, state_key, scheduler)?;
+    let mut written = probabilistic_wire(
+        &witness.path,
+        bound,
+        claim_type,
+        types,
+        variants,
+        state_key,
+        scheduler,
+    )?;
     let paths = written["evidence"]["paths"].take();
     let mut evaluation = undefined(&witness.evaluation, Some(claim))?;
     evaluation["where"]["product_state"] = json!({"key": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(witness.product_state.as_bytes())});

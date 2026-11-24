@@ -50,16 +50,15 @@ use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, chec
 use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTarget};
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop, TransitionSystem};
 use fsl_replay::{
-    AbstractClass, AbstractProtocolSystem, CandidateFairState, CandidateFairStep,
+    abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
+    check_protocol_state_relations, check_protocol_step, check_step, open_protocol_systems,
+    open_systems, AbstractClass, AbstractProtocolSystem, CandidateFairState, CandidateFairStep,
     CandidateLivenessError, CertifiedEdge, CertifiedPosition, ConcreteStep, CounterexampleKind,
     IncompleteCause, Lasso, LivenessHalf, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
     ModelStep, ProtocolRelationError, ProtocolStateRelation, ProtocolSystemsRefusal, ReachedLimit,
     RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems, RunStats,
     SafetyOutcome, SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal,
     Taken, TemporalCounterexample, UndecidedCause, UndefinedEvaluation, Undetermined,
-    abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
-    check_protocol_state_relations, check_protocol_step, check_step, open_protocol_systems,
-    open_systems,
 };
 
 use super::check::{BOUND_POSITIONS, ModelCheckRefusal, fault, not_simulated, widen};
@@ -152,6 +151,8 @@ struct CandidateNode {
 
 /// Abstract operations enabled at one hidden-field candidate state.
 struct CandidateEnabled {
+    /// Ordinal in this product position's canonical hidden-candidate order.
+    ordinal: usize,
     /// Candidate identity: a model state key, or a protocol configuration key.
     key: Vec<u8>,
     protocol: Option<fsl_replay::ProtocolCandidate>,
@@ -172,7 +173,13 @@ struct CandidateFairnessContext<'a> {
 fn candidate_enables(candidates: &[CandidateEnabled]) -> Vec<CandidateEnables<'_>> {
     candidates
         .iter()
-        .map(|candidate| (candidate.key.as_slice(), candidate.transitions.as_slice()))
+        .map(|candidate| {
+            (
+                candidate.ordinal,
+                candidate.key.as_slice(),
+                candidate.transitions.as_slice(),
+            )
+        })
         .collect()
 }
 
@@ -2382,6 +2389,8 @@ impl Run<'_, '_> {
                 concrete,
                 history,
                 abstract_states,
+                candidate_blocks: None,
+                candidate_clock_blocks: None,
             });
         }
         Ok(SimulationCertificate {
@@ -2520,7 +2529,9 @@ impl Run<'_, '_> {
                     })
                     .collect::<Result<Vec<_>, End>>()?
             };
-            for (key, candidate, protocol_candidate) in candidates {
+            for (ordinal, (key, candidate, protocol_candidate)) in
+                candidates.into_iter().enumerate()
+            {
                 if let (Some(protocol), Some(configuration)) =
                     (self.abstract_protocol, &protocol_candidate)
                 {
@@ -2528,6 +2539,7 @@ impl Run<'_, '_> {
                         self.protocol_enabled(protocol, configuration, &mut transitions)?;
                     here.extend(candidate_transitions.iter().cloned());
                     candidate_enabled.push(CandidateEnabled {
+                        ordinal,
                         key,
                         protocol: protocol_candidate,
                         transitions: candidate_transitions,
@@ -2561,6 +2573,7 @@ impl Run<'_, '_> {
                     .collect::<Vec<_>>();
                 here.extend(candidate_transitions.iter().cloned());
                 candidate_enabled.push(CandidateEnabled {
+                    ordinal,
                     key,
                     protocol: protocol_candidate,
                     transitions: candidate_transitions,
@@ -2900,8 +2913,10 @@ impl Run<'_, '_> {
                 relation = candidate_steps_relation(
                     rows.iter().map(|row| {
                         (
+                            row.pre_candidate,
                             row.pre_state.as_slice(),
                             row.transition.as_ref(),
+                            row.post_candidate,
                             row.post_state.as_slice(),
                         )
                     }),
@@ -2949,7 +2964,10 @@ impl Run<'_, '_> {
                         )?;
                         insert_relation_label(
                             &mut relation,
-                            (candidate.key.clone(), target.key.clone()),
+                            (
+                                (candidate.ordinal, candidate.key.clone()),
+                                (target.ordinal, target.key.clone()),
+                            ),
                             label,
                         );
                     }
@@ -2984,7 +3002,10 @@ impl Run<'_, '_> {
                         )?;
                         insert_relation_label(
                             &mut relation,
-                            (candidate.key.clone(), target.key.clone()),
+                            (
+                                (candidate.ordinal, candidate.key.clone()),
+                                (target.ordinal, target.key.clone()),
+                            ),
                             label,
                         );
                     }
@@ -3053,8 +3074,7 @@ impl Run<'_, '_> {
         scope: FairScope,
     ) -> Result<bool, End> {
         let mut positions = Vec::with_capacity(context.path.len());
-        let mut steps = Vec::with_capacity(context.path.len());
-        for (product, edge_index) in context.path {
+        for (product, _) in context.path {
             let candidates = context
                 .enabled
                 .get(*product)
@@ -3064,6 +3084,7 @@ impl Run<'_, '_> {
                     .iter()
                     .map(|candidate| {
                         Ok(CandidateFairState {
+                            ordinal: candidate.ordinal,
                             key: candidate.key.clone(),
                             enabled: candidate
                                 .transitions
@@ -3078,6 +3099,9 @@ impl Run<'_, '_> {
                     })
                     .collect::<Result<Vec<_>, End>>()?,
             );
+        }
+        let mut steps = Vec::with_capacity(context.path.len());
+        for (product, edge_index) in context.path {
             let edge = self
                 .nodes
                 .get(*product)
@@ -3090,6 +3114,7 @@ impl Run<'_, '_> {
                 rows.iter()
                     .map(|row| {
                         Ok(CandidateFairStep {
+                            pre_candidate: row.pre_candidate,
                             pre_state: row.pre_state.clone(),
                             transition: row
                                 .transition
@@ -3100,6 +3125,7 @@ impl Run<'_, '_> {
                                     })
                                 })
                                 .transpose()?,
+                            post_candidate: row.post_candidate,
                             post_state: row.post_state.clone(),
                             interior: Vec::new(),
                         })
@@ -3411,7 +3437,10 @@ fn candidate_identity_relation<'a>(
     for candidate in candidates {
         insert_relation_label(
             &mut relation,
-            (candidate.key.clone(), candidate.key.clone()),
+            (
+                (candidate.ordinal, candidate.key.clone()),
+                (candidate.ordinal, candidate.key.clone()),
+            ),
             neutral_label(classes),
         );
     }
@@ -3477,7 +3506,7 @@ mod tests {
         ));
 
         let mut relation = CandidateRelation::new();
-        let pair = (vec![0], vec![0]);
+        let pair = ((0, vec![0]), (0, vec![0]));
         insert_relation_label(&mut relation, pair.clone(), enabled_everywhere);
         insert_relation_label(&mut relation, pair.clone(), not_enabled_everywhere.clone());
 

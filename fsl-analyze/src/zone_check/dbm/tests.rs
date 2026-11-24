@@ -832,3 +832,22 @@ fn a_renaming_must_be_a_permutation() {
         Err(DbmError::ClockOutOfRange { clock: 3, dim: 3 })
     );
 }
+
+#[test]
+fn reindex_preserves_relations_and_can_split_a_clock_block() {
+    let mut zone = Dbm::universe(3);
+    zone.up();
+    zone.constrain(X, 0, le(4)).expect("x is a clock");
+    zone.constrain(Y, X, le(-2)).expect("y is a clock");
+
+    let split = zone.reindex(&[0, X, Y, X]).expect("all clocks exist");
+    assert_eq!(split.dim(), 4);
+    assert_eq!(split.bound(3, 1).expect("in range"), &le(0));
+    assert_eq!(split.bound(1, 3).expect("in range"), &le(0));
+    assert_eq!(split.bound(2, 1).expect("in range"), &le(-2));
+
+    let appended = zone.append_zero_clocks(2);
+    assert_eq!(appended.dim(), 5);
+    assert_eq!(appended.bound(3, 0).expect("in range"), &le(0));
+    assert_eq!(appended.bound(4, 0).expect("in range"), &le(0));
+}

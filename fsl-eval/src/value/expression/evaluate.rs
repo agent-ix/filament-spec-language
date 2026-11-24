@@ -47,8 +47,9 @@ use filament_exact::{
     IeeeFlags, IeeeOperation, IeeeValue, IeeeWidth,
 };
 use filament_exact::{
-    compare_keys, form, form_grouped, retain_composite, CollectionValue, CompositeValue,
-    FieldValue, ObjectReference, OptionValue, Quantity, UnionValue, Value, ValueType,
+    compare_keys, form, form_grouped, retain_composite, ClockPlaceReference, CollectionValue,
+    CompositeValue, FieldValue, ObjectReference, OptionValue, Quantity, UnionValue, Value,
+    ValueType,
 };
 use filament_exact::{
     evaluate_boolean, evaluate_integer_arithmetic, evaluate_rational_arithmetic, order_numbers,
@@ -526,11 +527,7 @@ fn population_of<'a, N: NodeSource<'a>>(source: N) -> Result<String, Halt> {
                 source,
                 ..
             } => node = node.at(*source),
-            // A checked Set<Reference<Clock>> `only` query has a collection
-            // expression as its source rather than an FR-139 population.
-            // Keep the catalogued cause well-formed without misrepresenting
-            // that source as a population identity.
-            _ => return Ok("collection".to_owned()),
+            _ => return Err(invariant("only-source-is-a-population")),
         }
     }
 }
@@ -1316,14 +1313,16 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         origins: &ReferenceOrigins,
         place: &NodeKey,
         selectors: Vec<Value>,
-    ) -> Result<filament_exact::ClockPlaceReference, Halt> {
+    ) -> Result<ClockPlaceReference, Halt> {
         use fsl_semantics::model::clock_reference::identity::{
             Decimal, PathEntry, PlaceIdentity, SlotIndex,
         };
-        use fsl_semantics::model::clock_reference::{encode_identity, is_declared_identity};
-        let ValueType::ClockReference = node.value_type() else {
+        use fsl_semantics::model::clock_reference::is_declared_identity;
+        // FSL FR-230-AC-71 gives `Reference<Clock>` its dedicated kernel type.
+        // It is not an object reference to the native Clock declaration.
+        if !matches!(node.value_type(), ValueType::ClockReference) {
             return Err(invariant("place-reference-result-type-expected"));
-        };
+        }
         let unavailable = || unavailable_clock_origin(origins);
         let declarations = self.clock_declarations.as_ref().ok_or_else(unavailable)?;
         let run = declarations.run_place(place).ok_or_else(unavailable)?;
@@ -1387,17 +1386,13 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         ) {
             return Err(Stop::Undefined(Undefined::NoElement).into());
         }
-        let encoded = encode_identity(
-            owner,
-            &identity,
-            quire_canonical::Limits::new(fsl_foundation::IdentityLimits::default().input_bytes),
-        )
-        .map_err(clock_identity_halt)?;
-        filament_exact::ClockPlaceReference::new(
-            owner.universe().clone(),
-            encoded.object().as_str(),
-        )
-        .map_err(|_| invariant("clock-place-reference-identity-is-canonical"))
+        let text = identity
+            .encode(quire_canonical::Limits::new(
+                fsl_foundation::IdentityLimits::default().input_bytes,
+            ))
+            .map_err(clock_identity_halt)?;
+        ClockPlaceReference::new(owner.universe().clone(), &text)
+            .map_err(|_| invariant("checked-clock-place-identity-is-canonical"))
     }
 
     /// FR-1000: evaluate against the reference literals admitted with the
@@ -3757,11 +3752,6 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             || outside_declared_range(*right_node, &right) =>
                     {
                         (l == r) == (*operator == EqualityOperator::Equal)
-                    }
-                    (Value::ClockReference(left), Value::ClockReference(right))
-                        if left.universe() != right.universe() =>
-                    {
-                        false == (*operator == EqualityOperator::Equal)
                     }
                     _ => outcome_into_stop(checked.evaluate(
                         self.world.types(),

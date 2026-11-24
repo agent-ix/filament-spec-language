@@ -28,9 +28,11 @@
 mod build;
 mod digital;
 mod fair;
+mod fair_interval;
 mod finite_horizon;
 pub mod manifest;
 pub(crate) mod plan;
+mod reward_interval;
 mod rows;
 mod settle;
 mod unbounded;
@@ -117,15 +119,19 @@ pub(crate) use digital::ELAPSED_REWARD;
 pub(crate) use fair::bottom_components;
 pub use fair::{
     decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,
-    decide_fair_reachability, deterministic_policy_is_fair, maximal_fair_end_components,
-    ActionChoice, FairBoundedResult, FairEndComponent, FairExpectedRewardResult, FairLongRunResult,
-    FairProductError, FairRandomizedWitness, FairUnboundedResult, SchedulerChoice,
+    decide_fair_reachability, deterministic_policy_is_fair, induced_fair_randomized_chain,
+    maximal_fair_end_components, ActionChoice, FairBoundedResult, FairEndComponent,
+    FairExpectedRewardResult, FairLongRunResult, FairProductError, FairRandomizedWitness,
+    FairUnboundedResult, SchedulerChoice,
 };
+pub use fair_interval::decide_fair_reachability_threshold;
+pub(crate) use finite_horizon::round as round_probability;
 pub use finite_horizon::{
     backward_induction, decide_bounded_event, Dyadic, FhError, FhObjective, FhResult,
 };
 pub(crate) use finite_horizon::{decide_measure_exact, QualifiedFhError};
 pub use fsl_replay::FreeDelayRow;
+pub use reward_interval::{decide_expected_reward_threshold, ExpectedRewardOutcome};
 pub use rows::free_delays_choice;
 pub use settle::settle_product_refusal;
 pub use unbounded::{
@@ -436,7 +442,7 @@ impl Ord for ProbKey {
 }
 
 /// What an MDP chooses at a state, or the one move of a DTMC state.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ProductAction {
     /// A scheduled identity (FR-187): the operation, its receiver and its
     /// non-random arguments.
@@ -633,6 +639,15 @@ pub struct UndefinedPath {
 pub enum ProbBuild {
     /// The product.
     Built(ProbProduct),
+    /// The explored product prefix and its lower-completion for computation
+    /// when `max_states` stopped admission.
+    Partial {
+        /// The product used to construct the partial certificate document.
+        product: ProbProduct,
+        /// A solver-only product that sends omitted successor mass to the
+        /// objective's least continuation value.
+        lower_product: ProbProduct,
+    },
     /// The first product state, in breadth-first order, at which the claim
     /// reads an undefined value.
     Undefined(UndefinedPath),

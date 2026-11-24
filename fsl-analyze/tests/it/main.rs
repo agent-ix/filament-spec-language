@@ -49,6 +49,7 @@ mod exact_probabilistic_zero_binding;
 mod exact_route;
 mod example_units;
 mod fill;
+mod fr114_process_attempt;
 mod finite_hyper_request;
 mod fixture_ids;
 mod flag_world;

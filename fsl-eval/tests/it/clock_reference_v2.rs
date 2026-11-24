@@ -1729,7 +1729,7 @@ fn raw_clock_data_admits_declared_and_refuses_undeclared_identities() {
 
 /// An ordinary snapshot supplies real owner population authority; generated
 /// Clock references do not require accepting transported Clock DATA.
-#[trace("FR-230", "TC-3084", "FR-1040-AC-10")]
+#[trace("FR-230-AC-71", "TC-3084", "FR-1040-AC-10")]
 #[test]
 fn source_generates_clock_references_from_ordinary_admitted_owners() {
     let body = format!("{}
@@ -1826,6 +1826,18 @@ fn source_generates_clock_references_from_ordinary_admitted_owners() {
         compare(clock("c1", "x"), foreign),
         Value::Boolean(false)
     ));
+    let mut generated = Vec::new();
+    for owner in ["c1", "c2"] {
+        let Value::ClockReference(reference) =
+            capture(&package, &checked.packages, &snapshots, 0, owner)
+        else {
+            panic!("the actual producer returns a clock-place reference")
+        };
+        assert_eq!(reference.text(), expected_place(owner, "x"));
+        generated.push(reference);
+    }
+    assert_eq!(generated[0].universe(), generated[1].universe());
+    assert_ne!(generated[0].text(), generated[1].text());
 }
 
 /// FR-1040-AC-11: all four set aggregators consume ClockReference elements in

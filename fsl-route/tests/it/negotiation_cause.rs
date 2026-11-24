@@ -5,11 +5,11 @@
 use std::collections::BTreeSet;
 
 use filament_semantic_value::catalog::CatalogCode;
-use fsl_foundation::bound::DomainKind;
 use fsl_foundation::BackendId;
+use fsl_foundation::bound::DomainKind;
 use fsl_route::{
-    settle_candidates, BackendDescriptor, Candidate, EvidenceKind, Mode, NegotiationCause,
-    NegotiationOutcome, NegotiationSettlement, ProviderOrigin, Registry,
+    BackendDescriptor, Candidate, EvidenceKind, Mode, NegotiationCause, NegotiationOutcome,
+    NegotiationSettlement, ProviderOrigin, Registry, settle_candidates,
 };
 use fsl_semantics::check::Capability;
 use ix_trace_rs::trace;
@@ -32,7 +32,7 @@ fn id(name: &str) -> BackendId {
 }
 
 #[test]
-#[trace("TC-155", "FR-057-AC-15")]
+#[trace("TC-155", "FR-057-AC-15", "FR-575-AC-4")]
 fn outcomes_spell_their_codes_and_causes_carry_payloads() {
     assert_eq!(
         NegotiationOutcome::UnknownBackend.code(),
@@ -68,7 +68,7 @@ fn outcomes_spell_their_codes_and_causes_carry_payloads() {
 }
 
 #[test]
-#[trace("TC-155", "FR-057-AC-15")]
+#[trace("TC-155", "FR-057-AC-15", "FR-575-AC-4")]
 fn settle_candidates_gives_the_table_row_for_each_outcome() {
     let mut registry = Registry::new();
     registry.register(backend("a", KIND)).unwrap();
@@ -99,6 +99,12 @@ fn settle_candidates_gives_the_table_row_for_each_outcome() {
     assert_eq!(
         settle(Some(&id("z"))),
         NegotiationSettlement::Cause(NegotiationCause::UnknownBackend(id("z")))
+    );
+
+    let empty = Registry::new();
+    assert_eq!(
+        settle_candidates(&empty.candidates(KIND, None), KIND, None),
+        NegotiationSettlement::Cause(NegotiationCause::UnsupportedRequestedCapability(KIND, None))
     );
 
     // Two candidates with a named backend: no cause.

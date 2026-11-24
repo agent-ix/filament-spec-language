@@ -146,7 +146,7 @@ fn an_unsound_symmetry_is_refused_not_ignored() {
 fn a_constraint_never_proves_past_its_boundary() {
     let ws = Workspace::new("red-constraint");
     let body = format!(
-        "invariant Low using v on M::Counter at current {{ self.value <= 1 }}\n{}",
+        "constraint Low using v on M::Counter at current {{ self.value <= 1 }}\n{}",
         clause("Holds", "", "always holds(c.value <= 3)")
     );
     let run = analyze(&request(
@@ -159,19 +159,18 @@ fn a_constraint_never_proves_past_its_boundary() {
     assert_ne!(label(&item), "proved", "{item}");
 }
 
-/// TC-581: a named Low selection cuts exploration at the
-/// constraint boundary, records `constraint-reached`, and retains the
-/// selected constraint's node key in its request echo. A request naming the
+/// TC-581: a request naming Low runs AC-1's boundary counterexample and
+/// retains the selected constraint's node key in its request echo. A request naming the
 /// invariant Wide by name or package node key refuses before any state is
 /// expanded, and a constraint anchored at an operation refuses during source
 /// compilation.
-#[trace("TC-581")]
+#[trace("TC-581", "FR-158-AC-6")]
 #[test]
 fn constraint_request_key_truth_and_invalid_selections_are_typed() {
     let body = format!(
         "constraint Low using v on M::Counter at current {{ self.value <= 1 }}\n\
          invariant Wide using v on M::Counter at current {{ self.value <= 3 }}\n{}",
-        clause("Claim", "", "always holds(c.value <= 3)")
+        clause("Claim", "", "always holds(c.value <= 1)")
     );
     let ws = Workspace::new("fr158-constraint-wire-key");
     let selection = request_members(Some(json!([
@@ -207,16 +206,23 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
             .as_bytes(),
     );
     let valid = analyze(&package_path).item(0);
-    assert_eq!(label(&valid), "inconclusive", "{valid}");
+    assert_eq!(label(&valid), "refuted", "{valid}");
+    assert_eq!(valid["record"]["result"], "refuted", "{valid}");
+    assert_eq!(valid["replay"]["reproduced"], true, "{valid}");
     assert_eq!(
-        valid["record"]["cause"]["kind"], "constraint-reached",
-        "{valid}"
-    );
-    assert_eq!(valid["exploration"]["states"], "57", "{valid}");
-    assert_eq!(valid["exploration"]["transitions"], "384", "{valid}");
-    assert!(
-        valid["request"]["reductions"]["constraint"].is_object(),
-        "{valid}"
+        valid["request"]["reductions"]["constraint"],
+        json!({
+            "ordinal": 0,
+            "package": "analyze-unit",
+            "path": [
+                "state",
+                "state_clause",
+                "constraint",
+                {"node": 8},
+                {"node": 22}
+            ]
+        }),
+        "the request echoes Low's canonical node key: {valid}"
     );
     let run_invalid = |name: &str, constraint: Value| {
         let ws = Workspace::new(name);
@@ -343,6 +349,62 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
     assert!(
         source_diagnostic["locus"]["end"].as_u64() > source_diagnostic["locus"]["start"].as_u64(),
         "{diagnostic}"
+    );
+}
+
+/// Partial TC-581 coverage: the constrained and unconstrained requests keep
+/// one obligation identity, have different request identities, and settle
+/// independently. AC-4 remains open for the terminal method member and
+/// equal boundary counts, which the current public outcome API does not expose.
+#[trace("TC-581")]
+#[test]
+fn a_constraint_keeps_obligation_identity_but_has_a_distinct_request_identity() {
+    let ws = Workspace::new("fr158-independent-method-results");
+    let body = format!(
+        "constraint Low using v on M::Counter at current {{ self.value <= 1 }}\n{}",
+        clause("Claim", "", "always holds(c.value <= 3)")
+    );
+    let selections = json!([
+        {"claim": "Claim", "reductions": {"constraint": "Low"}},
+        {"claim": "Claim"}
+    ]);
+    let path = counter_request_with(&ws, &body, request_members(Some(selections.clone())));
+    ws.write(
+        "start.json",
+        &counter_snapshot(&[("a", 0), ("b", 0), ("c", 0)]),
+    );
+    let run = analyze(&path);
+    let constrained = run.item(0);
+    let unconstrained = run.item(1);
+
+    assert_ne!(selections[0], selections[1], "the method requests differ");
+    let constrained_obligation_identity = constrained["request"]["claim"].clone();
+    let unconstrained_obligation_identity = unconstrained["request"]["claim"].clone();
+    assert_eq!(
+        constrained_obligation_identity, unconstrained_obligation_identity,
+        "adding Low leaves the claim's obligation identity unchanged"
+    );
+    let constrained_request_identity = constrained["request_index"]
+        .as_u64()
+        .expect("the constrained item has a request identity");
+    let unconstrained_request_identity = unconstrained["request_index"]
+        .as_u64()
+        .expect("the plain item has a request identity");
+    assert_ne!(
+        constrained_request_identity, unconstrained_request_identity,
+        "the constrained and plain items have distinct request identities"
+    );
+    assert!(constrained["request"]["reductions"]["constraint"].is_object());
+    assert!(unconstrained["request"]["reductions"].is_null());
+    assert_eq!(label(&constrained), "inconclusive", "{constrained}");
+    assert_eq!(
+        constrained["record"]["cause"]["kind"], "constraint-reached",
+        "{constrained}"
+    );
+    assert_eq!(label(&unconstrained), "proved", "{unconstrained}");
+    assert_eq!(
+        unconstrained["record"]["result"], "proved",
+        "{unconstrained}"
     );
 }
 

@@ -1515,6 +1515,12 @@ mod tests {
             Value::ClockReference(x.clone()),
         ]);
         assert_eq!(state_key(&set_xy), state_key(&set_yx));
+        let set_x = set_of(vec![Value::ClockReference(x.clone())]);
+        assert_ne!(
+            state_key(&set_x),
+            state_key(&set_xy),
+            "adding a distinct place changes the Set state key"
+        );
         assert_ne!(
             state_key(&encode(&Value::ClockReference(x))),
             state_key(&encode(&Value::ClockReference(y))),

@@ -132,7 +132,7 @@ use super::concretise::{Lift, LiftStop, PermuterOf};
 use super::fair_walk::{fairness_constraints, tree_path, FairModel};
 use super::graph::{
     retain_reduced_with_key, Ample, Choice, GraphExploration, ProductStateId, RetainedEdge,
-    RetainedGraph,
+    RetainConfig, RetainedGraph,
 };
 use super::product::{ProductKey, ProductTransition};
 use super::quotient::{
@@ -572,15 +572,18 @@ fn retained<'l, S: LiveSubject>(
     ample: Option<&dyn Ample<LassoSystem<'l, S>>>,
     limits: Limits,
 ) -> Result<Exploration<S>, ModelCheckRefusal> {
+    let identity = IdentityLimits::default();
     retain_reduced_with_key(
         product,
         group,
         ample,
-        limits,
-        IdentityLimits::default(),
-        None,
+        RetainConfig {
+            limits,
+            identity,
+            max_depth: None,
+        },
         || run.cancel.poll() && run.cancel.cause().is_some(),
-        |state, identity| product.encoded_key(state, identity),
+        |state| product.encoded_key(state, identity),
     )
     .map_err(|error| {
         ModelCheckRefusal::Encoding(EncodingRefusal::of(&error, IdentityLimits::default()))

@@ -106,6 +106,28 @@ pub(super) fn refute(
             };
             (Role::Avoidance(boundary), threshold)
         }
+        ProbForm::Probability {
+            bound,
+            event:
+                Event::Formula {
+                    formula,
+                    timed_horizon: None,
+                    ..
+                },
+        } if super::is_unbounded_eventually_formula(formula) => {
+            let (accepting, threshold) = match bound {
+                Bound::AtLeast(threshold) => (false, threshold),
+                Bound::AtMost(threshold) => (true, threshold),
+            };
+            let success = (0..count).map(|state| label(state, 0)).collect::<Vec<_>>();
+            let boundary = Boundary {
+                stop: success.clone(),
+                success,
+                undecided_accepts: false,
+                accepting,
+            };
+            (Role::Avoidance(boundary), threshold)
+        }
         ProbForm::ExpectedReward {
             bound: Bound::AtMost(threshold),
             ..
@@ -252,7 +274,10 @@ pub(super) fn refute(
             let ProductAction::Identity(identity) = &action else {
                 // Terminal stutter has no scheduler entry; other actions
                 // belong to products this role does not refute.
-                if matches!(action, ProductAction::TerminalStutter) {
+                if matches!(
+                    action,
+                    ProductAction::TerminalStutter | ProductAction::PostState(_)
+                ) {
                     continue;
                 }
                 return not_yet();

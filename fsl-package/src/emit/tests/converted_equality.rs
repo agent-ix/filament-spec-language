@@ -407,8 +407,7 @@ fn structurally_reused_equality_keys_retain_each_occurrence() {
 fn emission_retains_unit_and_dimension_identity_roles() {
     use filament_exact::UnitDomain;
 
-    let declarations =
-        "dimension Length; dimension Area = Length;\n\
+    let declarations = "dimension Length; dimension Area = Length;\n\
          unit m : Length = rational(1, 1); unit cm : Length = rational(1, 100) * m;\n\
          unit mm : Length = rational(1, 10) * cm;\n\
          unit sqm : Area = rational(1, 1);\n\
@@ -1769,6 +1768,52 @@ fn integer_division_operands_retain_integer_source_witnesses() {
                 sources.iter().any(|(at, value_type)| *at == position
                     && value_type == &Some(filament_exact::ValueType::Integer)),
                 "{body}: operand {position} keeps an Integer Source witness, got {sources:?}"
+            );
+        }
+    }
+}
+
+/// FR-495-AC-26 (TC-2873): independently ranged division operands retain
+/// `Integer` source witnesses through emission and the full I2 reader.
+#[trace("FR-495-AC-26", "TC-2873")]
+#[test]
+fn different_integer_division_ranges_emit_and_read_integer_source_witnesses() {
+    for body in [
+        "n mod 3 = n mod 2",
+        "n mod 3 != n mod 2",
+        "n mod a = n mod 2",
+    ] {
+        let parameters = if body.contains("n mod a") {
+            "n: Int[0, 100], a: Int[1, 3]"
+        } else {
+            "n: Int[0, 100]"
+        };
+        let emission = emitted(&format!(
+            "function f using v({parameters}): Boolean pure {{ {body} }}"
+        ));
+        assert_reader_outcome_for_equality_sidecar(&emission);
+        let source_types: Vec<_> = emission
+            .equality_fact_witness_rows()
+            .iter()
+            .filter_map(|row| match row.fact() {
+                EqualityFactWitness::OperandType {
+                    position,
+                    role: EqualityOperandTypeRole::Source,
+                } if *position < 2 => Some((*position, row.value_type().cloned())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            source_types.len(),
+            2,
+            "{body}: one source witness per operand"
+        );
+        for position in 0..2 {
+            assert!(
+                source_types.iter().any(|(at, value_type)| {
+                    *at == position && value_type == &Some(filament_exact::ValueType::Integer)
+                }),
+                "{body}: operand {position} keeps builtin Integer, got {source_types:?}"
             );
         }
     }

@@ -336,6 +336,50 @@ impl World {
         world
     }
 
+    /// FR-109's state-clause run for one named clause over the §7.3 initial
+    /// snapshot, whose three counters are all zero.
+    pub(crate) fn run_state_clause(&self, name: &str) -> fsl_replay::spine::ClauseRunReport {
+        use fsl_replay::spine::{
+            run_clause, ClauseRunRequest, ClauseRunSelection, ClauseRunSource,
+            SpineLimits,
+        };
+        use fsl_semantics::model::observation::{
+            AnchorKind, ClauseSelection, ClauseSelectionInput, SelectedAnchor, SelectedObject,
+        };
+
+        run_clause(ClauseRunRequest {
+            clocks: Default::default(),
+            source: ClauseRunSource::Program {
+                identity: SourceIdentity::new("agent-ix", "reduction"),
+                path: "reduction.native".to_owned(),
+                bytes: self.text.as_bytes().to_vec(),
+            },
+            package_name: "package".to_owned(),
+            packages: self.packages.clone(),
+            dependencies: Default::default(),
+            snapshots: self.snapshots.clone(),
+            invocations: BTreeMap::new(),
+            selection: ClauseRunSelection::Clause(ClauseSelection {
+                name: name.to_owned(),
+                input: ClauseSelectionInput::Current {
+                    snapshot: self.initial[0].clone(),
+                    anchor: SelectedAnchor {
+                        kind: AnchorKind::Initialization,
+                        name: "start".to_owned(),
+                    },
+                    self_object: Some(SelectedObject {
+                        population: ident("counters"),
+                        key: "a".to_owned(),
+                    }),
+                },
+            }),
+            limits: SpineLimits::default(),
+            observation_limits: ObservationLimits::default(),
+            accounting: self.meter,
+        })
+        .expect("the clause run reports")
+    }
+
     fn snapshot(&mut self, name: &str, objects: &[(&str, Json)]) -> DocumentRef {
         let objects: Vec<Json> = objects
             .iter()

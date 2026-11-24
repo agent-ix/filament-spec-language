@@ -20,12 +20,13 @@ use filament_semantic_value::supplied_stop::{
 };
 
 use super::*;
-use crate::supplied_limits::{read_supplied_limits, SuppliedLimitsRefusal};
+use crate::supplied_limits::{SuppliedLimitsRefusal, read_supplied_limits};
 
 const SOURCE: &str = "function seq using v(xs: Sequence<Boolean>[0, 64]): Boolean pure { false }\n\
      function pair using v(a: Sequence<Boolean>[0, 64], b: Sequence<Boolean>[0, 64]): Boolean pure { false }\n\
      function big using v(xs: Sequence<Boolean>[0, 100000]): Boolean pure { false }\n\
      function digit using v(x: Int[0, 9]): Boolean pure { false }\n\
+     function ratio using v(x: Rational[-3, 7; 1, 12]): Boolean pure { false }\n\
      function money using v(d: Decimal[0, 100; 0, 2; exact]): Boolean pure { false }\n";
 
 struct Unit {
@@ -322,7 +323,7 @@ fn a_wire_supplied_object_is_closed_complete_and_u64() {
 /// unspent, H permits conversion; the denial names the phase, parameter,
 /// event, setting, ceiling, successful spend and denied amount, makes no
 /// call and settles `inconclusive`/`NoValue`.
-#[trace("TC-906", "FR-098-AC-12", "FR-277-AC-4")]
+#[trace("TC-906", "FR-098-AC-12", "FR-277-AC-4", "FR-486-AC-1", "FR-486-AC-7")]
 #[test]
 fn one_less_than_the_conversion_events_denies_the_next_event_and_exact_permits() {
     let unit = unit();
@@ -357,7 +358,7 @@ fn one_less_than_the_conversion_events_denies_the_next_event_and_exact_permits()
 /// FR-277-AC-4: A-1 denies the actual next admission event
 /// unspent and A admits, with other bounds permitting progress; the pre-call
 /// stop reports zero replay charges.
-#[trace("TC-906", "FR-098-AC-12", "FR-277-AC-4")]
+#[trace("TC-906", "FR-098-AC-12", "FR-277-AC-4", "FR-486-AC-1", "FR-486-AC-6")]
 #[test]
 fn one_less_than_the_admission_events_denies_the_next_event_and_exact_admits() {
     let unit = unit();
@@ -389,7 +390,7 @@ fn one_less_than_the_admission_events_denies_the_next_event_and_exact_admits() {
 /// FR-277: H and A are independent budgets and an event has one owner: the
 /// ceiling of the other phase, however generous, neither pays for nor is
 /// spent by an event.
-#[trace("TC-906", "FR-098-AC-12")]
+#[trace("TC-906", "FR-098-AC-12", "FR-486-AC-1")]
 #[test]
 fn the_two_ceilings_are_independent_budgets() {
     let unit = unit();
@@ -525,7 +526,7 @@ fn supplied_stop(result: Result<ReplayResult, ReplayRefusal>) -> SuppliedStop {
 /// FR-277-AC-5 (TC-906, TC-830): the original handle reaches the first
 /// conversion helper: a handle cancelled before the replay stops it with its
 /// original cause, as a cancellation and not as a limit, in each cause.
-#[trace("TC-906", "FR-098-AC-12", "FR-277-AC-5")]
+#[trace("TC-906", "FR-098-AC-12", "FR-277-AC-5", "FR-486-AC-7")]
 #[test]
 fn a_handle_cancelled_before_conversion_stops_it_with_its_original_cause() {
     let unit = unit();
@@ -584,6 +585,53 @@ fn a_cancellation_during_a_later_argument_keeps_its_cause_and_the_spend() {
     }
 }
 
+/// FR-486-AC-6: cancellation that arrives after conversion but on the first
+/// membership event belongs to admission and stops before evaluator charges.
+#[trace("TC-906", "FR-098-AC-12", "FR-486-AC-6")]
+#[test]
+fn cancellation_on_the_first_membership_event_is_owned_by_admission() {
+    let unit = unit();
+    // Conversion also polls once for each helper's recursive admission path;
+    // establish its completed poll count from a replay stopped at the first
+    // admission event, then cancel on that next poll.
+    let (uncancelled, polls) = cancelling_at(u64::MAX, CancelCause::Requested);
+    let calibration = replay_with_cancel(
+        unit.with("seq", vec![booleans(2)], only_a(0)),
+        ReplayLimits::default(),
+        &uncancelled,
+    );
+    assert_eq!(
+        pre_call(&calibration).context.phase,
+        SuppliedPhase::Admission
+    );
+    let conversion_poll_count = polls.load(Ordering::Relaxed);
+    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        let mut found = None;
+        for threshold in conversion_poll_count.saturating_sub(2)..=conversion_poll_count + 2 {
+            let (cancel, polls) = cancelling_at(threshold, cause);
+            let stop = supplied_stop(replay_with_cancel(
+                unit.request("seq", vec![booleans(2)]),
+                ReplayLimits::default(),
+                &cancel,
+            ));
+            if stop.cause == SuppliedCause::Cancelled(cause)
+                && stop.context.phase == SuppliedPhase::Admission
+            {
+                found = Some((stop, polls.load(Ordering::Relaxed), threshold));
+                break;
+            }
+        }
+        let (stop, polls, threshold) = found.expect("the original cancel is observed in admission");
+        assert_eq!(polls, threshold);
+        assert_eq!(stop.cause, SuppliedCause::Cancelled(cause));
+        assert_eq!(stop.context.phase, SuppliedPhase::Admission);
+        assert_eq!(stop.context.parameter, Some(0));
+        assert_eq!(stop.context.event, Some(SuppliedEvent::ValueVisit));
+        assert_eq!(stop.context.consumed, 0);
+        assert!(stop.limit().is_none(), "cancellation is not a budget limit");
+    }
+}
+
 /// FR-098-AC-8 (TC-906), FR-277-AC-4: an invalid argument keeps its
 /// original `WrongValueKind` refusal and parameter, with the conversion
 /// phase context; it is neither a limit nor a failed predicate.
@@ -636,6 +684,74 @@ fn a_decimal_parameter_replays_and_is_bounded_by_b() {
     assert_eq!(limit.limit_kind, SuppliedLimitKind::NumericMagnitudeBits);
     assert_eq!(limit.limit, 1);
     assert!(limit.operand.is_some());
+}
+
+/// FR-486-AC-5: the supplied Decimal path keeps evaluator charging separate
+/// from the admission budget for membership, nonmembership, denial, and the
+/// original cancellation handle.
+#[trace("TC-906", "FR-486-AC-5")]
+#[test]
+fn supplied_decimal_membership_and_stops_leave_evaluation_unentered() {
+    let unit = unit();
+    let decimal = |coefficient: i64| WitnessValue::Decimal {
+        coefficient: Integer::from(coefficient),
+        scale: Integer::from(2_i64),
+    };
+
+    let admitted = run(unit.request("money", vec![decimal(150)]));
+    assert_reproduced(&admitted);
+    assert!(
+        admitted.as_ref().unwrap().charges().work_units > 0,
+        "the supplied argument reached the evaluator"
+    );
+    let same_decimal_with_room = run(unit.with("money", vec![decimal(150)], only_a(100)));
+    assert_reproduced(&same_decimal_with_room);
+    assert_eq!(
+        admitted.as_ref().unwrap().charges(),
+        same_decimal_with_room.as_ref().unwrap().charges(),
+        "membership accounting does not alter evaluator charges"
+    );
+
+    let nonmember = supplied_stop(run(unit.request("money", vec![decimal(15_001)])));
+    assert_eq!(
+        nonmember.cause,
+        SuppliedCause::Input {
+            refusal: filament_semantic_value::call::InputRefusal::WrongValueKind { parameter: 0 },
+            membership: None,
+        }
+    );
+    assert_eq!(nonmember.context.phase, SuppliedPhase::Conversion);
+    assert_eq!(nonmember.context.parameter, Some(0));
+    assert_eq!(
+        nonmember.context.event,
+        Some(SuppliedEvent::WitnessMaterialization)
+    );
+
+    let denied = run(unit.with("money", vec![decimal(150)], only_a(0)));
+    let stop = pre_call(&denied);
+    assert_eq!(stop.context.phase, SuppliedPhase::Admission);
+    assert_eq!(stop.context.parameter, Some(0));
+    assert_eq!(stop.context.consumed, 0);
+    assert_eq!(
+        stop.limit().map(|limit| limit.limit_kind),
+        Some(SuppliedLimitKind::AdmissionWorkUnits)
+    );
+
+    let conversion_polls = 2;
+    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        let (cancel, polls) = cancelling_at(conversion_polls + 1, cause);
+        let stop = supplied_stop(replay_with_cancel(
+            unit.request("money", vec![decimal(150)]),
+            ReplayLimits::default(),
+            &cancel,
+        ));
+        assert_eq!(polls.load(Ordering::Relaxed), conversion_polls + 1);
+        assert_eq!(stop.cause, SuppliedCause::Cancelled(cause));
+        assert_eq!(stop.context.phase, SuppliedPhase::Admission);
+        assert_eq!(stop.context.parameter, Some(0));
+        assert_eq!(stop.context.consumed, 0);
+        assert!(stop.limit().is_none());
+    }
 }
 
 /// FR-277: at their published defaults both ceilings admit a large supplied
@@ -823,13 +939,76 @@ fn exact(bits: u64) -> WitnessValue {
     WitnessValue::ExactInteger(Integer::one().shifted_left(bits - 1))
 }
 
+fn rational_witness(numerator: i64, denominator: i64) -> WitnessValue {
+    WitnessValue::Rational {
+        numerator: Integer::from(numerator),
+        denominator: Integer::from(denominator),
+    }
+}
+
+/// FR-486-AC-4: Integer and Rational supplied membership keep FSL's resolved
+/// magnitude bound on the replay side and do not add a second evaluator charge
+/// sequence; a four-bit bound admits both literal values and a three-bit
+/// bound refuses the Rational denominator before evaluation.
+#[trace("TC-906", "FR-486-AC-4")]
+#[test]
+fn integer_and_rational_membership_keep_the_resolved_bound_and_evaluator_charges() {
+    let unit = unit();
+    let integer = WitnessValue::Integer(3);
+    let rational = rational_witness(7, 12);
+    let default_integer = run(unit.request("digit", vec![integer.clone()]));
+    let explicit_integer = run(unit.with(
+        "digit",
+        vec![integer],
+        SuppliedLimits::default().with_numeric_magnitude_bits(4),
+    ));
+    assert_reproduced(&default_integer);
+    assert_reproduced(&explicit_integer);
+    assert_eq!(
+        default_integer.as_ref().unwrap().charges(),
+        explicit_integer.as_ref().unwrap().charges(),
+        "the Integer helper does not debit the evaluator meter"
+    );
+
+    let default_rational = run(unit.request("ratio", vec![rational.clone()]));
+    let explicit_rational = run(unit.with(
+        "ratio",
+        vec![rational],
+        SuppliedLimits::default().with_numeric_magnitude_bits(4),
+    ));
+    assert_reproduced(&default_rational);
+    assert_reproduced(&explicit_rational);
+    assert_eq!(
+        default_rational.as_ref().unwrap().charges(),
+        explicit_rational.as_ref().unwrap().charges(),
+        "the Rational helper does not debit the evaluator meter"
+    );
+
+    let too_narrow = run(unit.with(
+        "ratio",
+        vec![rational_witness(7, 12)],
+        SuppliedLimits::default().with_numeric_magnitude_bits(3),
+    ));
+    let limit = pre_call(&too_narrow)
+        .limit()
+        .expect("the denominator exceeds B");
+    assert_eq!(limit.limit_kind, SuppliedLimitKind::NumericMagnitudeBits);
+    assert_eq!(limit.field(), "supplied.numeric_magnitude_bits");
+    assert_eq!(limit.limit, 3);
+    assert_eq!(limit.next_charge, 4);
+    assert_eq!(
+        limit.operand.map(|operand| operand.as_str()),
+        Some("value-denominator")
+    );
+}
+
 /// FSpec FR-323 numeric magnitude bound (TC-278 RE-23, RE-24; TC-906 step
 /// 10): at the default B of 4096 a 4096-bit operand passes the bound (the
 /// declared domain then refuses it by kind), and a 4097-bit operand stops
 /// on operand `value` with the `limit` cause for
 /// `supplied.numeric_magnitude_bits`, at event value-visit, as a pre-call
 /// result with zero charges and no kernel `Incomplete`.
-#[trace("TC-906", "FR-098-AC-12", "FR-277-AC-7")]
+#[trace("TC-906", "FR-098-AC-12", "FR-277-AC-7", "FR-486-AC-3")]
 #[test]
 fn the_default_magnitude_bound_admits_4096_bits_and_stops_4097_on_the_value() {
     let unit = unit();

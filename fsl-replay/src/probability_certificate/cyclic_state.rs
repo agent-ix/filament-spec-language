@@ -272,6 +272,7 @@ pub(super) fn certificate_graph(
         initial,
         states,
         scheduler_actions: Default::default(),
+        actions_by_state: None,
     };
     let ranks = match profile {
         Profile::Dtmc => Some(analyze(&mut graph, limits, cancel, meter)?),

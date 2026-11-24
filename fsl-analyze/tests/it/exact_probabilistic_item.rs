@@ -1371,6 +1371,7 @@ fn external_always_probability_certificate_remains_unsupported() {
             value: ratio(1, 1),
         }],
         ranking: vec![(key, 0)],
+        policy: None,
     };
     let limits = fsl_replay::ProbabilityDocumentLimits {
         bytes: 1 << 20,
@@ -1487,6 +1488,10 @@ fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
         method,
         &fsl_replay::BoundsMethod::BackwardInduction { precision_bits: 64 }
     );
+    let fsl_replay::ExactBound::Finite(upper) = upper
+    else {
+        panic!("complete product interval has a finite upper endpoint");
+    };
     let exact = ratio(9_999_999, 10_000_000)
         .pow(&Integer::from(1000_i64))
         .expect("positive integer exponent");
@@ -1499,7 +1504,8 @@ fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
     assert_eq!(entries.len(), 1);
     assert!(matches!(
         &entries[0].value,
-        ExactOrBounds::Bounds { lower: l, upper: u } if l == lower && u == upper
+        ExactOrBounds::Bounds { lower: l, upper: u }
+            if l == lower && u == &fsl_replay::ExactBound::Finite(upper.clone())
     ));
     let kind = |bytes: Option<&[u8]>| {
         let document: serde_json::Value =

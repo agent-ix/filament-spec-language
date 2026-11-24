@@ -1147,3 +1147,42 @@ fn a_hybrid_claim_has_one_name_row_and_no_binding() {
     assert!(wire.get("temporal_bindings").is_none());
     admitted(&emission);
 }
+
+/// FR-447-AC-18: equal hybrid clause bodies share their temporal node while
+/// retaining one name row at each claim occurrence.
+#[trace("FR-447-AC-18")]
+#[test]
+fn equal_hybrid_claim_bodies_keep_both_occurrence_names() {
+    let declarations = format!(
+        "{}{}{}",
+        braking(FLOW),
+        slow_enough_named("First", "t", BODY),
+        slow_enough_named("Second", "t", BODY),
+    );
+    let (emission, wire, checked) = compile_checked(&declarations);
+    let clauses: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "temporal_clause")
+        .collect();
+    let [clause] = clauses.as_slice() else {
+        panic!("one shared temporal_clause node");
+    };
+    let [first, second] = checked.sites.as_slice() else {
+        panic!("two claim occurrences");
+    };
+    assert_ne!(first.claim.ordinal(), second.claim.ordinal());
+    let rows = wire["temporal_clause_names"].as_array().expect("name rows");
+    assert_eq!(rows.len(), 2);
+    let mut expected = vec![
+        (first.claim.ordinal(), "First"),
+        (second.claim.ordinal(), "Second"),
+    ];
+    expected.sort_by_key(|(ordinal, _)| *ordinal);
+    for (row, (ordinal, name)) in rows.iter().zip(expected) {
+        assert_eq!(row["declaration"], clause["node_id"]);
+        assert_eq!(row["occurrence"].as_u64(), Some(ordinal));
+        assert_eq!(row["name"], name);
+    }
+    assert!(wire.get("temporal_bindings").is_none());
+    admitted(&emission);
+}
