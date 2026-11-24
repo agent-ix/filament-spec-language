@@ -2073,7 +2073,12 @@ fn parent_implication_witness_is_independent_of_the_fixture_runner() {
     };
 
     let absent = run("absent-parent-implication", vec![object("root", 1, None)], "root");
-    assert_eq!(absent.disposition.truth(), Some(true), "{:?}", absent.disposition);
+    assert_eq!(
+        absent.disposition.truth(),
+        Some(true),
+        "{:?}",
+        absent.disposition
+    );
     assert_eq!(absent.basis, SettlementBasis::ClosedScope);
     assert_eq!(absent.witness, None);
 
