@@ -2700,14 +2700,16 @@ fn has_state_clause_adapter(vector: &QualificationVector) -> bool {
 
 /// T04, T05 and T13 take runtime payloads through value admission. They are
 /// not source-literal checks, which FR-056-AC-52 specifies separately.
+type TextAdmissionRow<'a> = (
+    &'a str,
+    u64,
+    u64,
+    TextProfile,
+    Result<(&'a str, u64), (&'a str, &'a str)>,
+);
+
 fn compare_text_admission(vector: &QualificationVector) -> Result<usize, String> {
-    let rows: Vec<(
-        &str,
-        u64,
-        u64,
-        TextProfile,
-        Result<(&str, u64), (&str, &str)>,
-    )> = match vector.id {
+    let rows: Vec<TextAdmissionRow<'_>> = match vector.id {
         "T04" => {
             assert!(vector.expected.contains("scalar-profile value succeeds"));
             assert!(vector.expected.contains("text_length_out_of_domain"));
