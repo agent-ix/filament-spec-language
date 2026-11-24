@@ -7256,7 +7256,22 @@ impl PackageDeclarations {
             .zip(&lowered_attempts)
             .flat_map(|(bindings, lowered)| bindings.iter().zip(lowered))
             .map(|(bound, lowered)| (&bound.operation, &lowered.binding));
-        let operation_frames = operation_frames(clause_frames.chain(attempt_frames));
+        // FR-381: a compensation template names its operation too, bound to the
+        // same one anchor and frame node, so a requirement record may reference
+        // an operation only a template names.
+        let template_frames = checked_protocols
+            .iter()
+            .zip(&lowered_templates)
+            .flat_map(|(checked, lowered)| {
+                checked
+                    .obligations
+                    .compensations
+                    .iter()
+                    .zip(lowered)
+                    .map(|(template, lowered)| (&template.operation, &lowered.binding))
+            });
+        let operation_frames =
+            operation_frames(clause_frames.chain(attempt_frames).chain(template_frames));
         // FR-094: `check` is the model correspondence's only writer; it
         // holds exactly the model declaration nodes lowering keyed, and a
         // conflicting entry refused the lowering above (FR-303).

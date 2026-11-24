@@ -16,9 +16,9 @@ use fsl_semantics::check::{Capability, CheckedGraph, NodeTag, RequirementRecord}
 use fsl_semantics::family::ClaimExtent;
 
 use super::{
-    EmitRefusal, GRAPH_V2, OmissionCause, OmittedNode, admitted_key, body_reference_targets,
-    checked_literal_json, checked_occurrence, claim_aggregate, claim_binding, claim_literal, claim_text, encoding,
-    node_id, push_scalar_type, source_artifact,
+    admitted_key, body_reference_targets, checked_literal_json, checked_occurrence,
+    claim_aggregate, claim_binding, claim_literal, encoding, node_id, push_scalar_type,
+    source_artifact, EmitRefusal, OmissionCause, OmittedNode, GRAPH_V2,
 };
 
 mod frames;
@@ -158,9 +158,15 @@ pub(super) fn record_names(
     graph: &CheckedGraph,
 ) -> Result<(Vec<RecordNames>, GuardRows), EmitRefusal> {
     let mut guards = GuardRows::default();
+    // A relation-owned `operation-contract` record is never written (FSpec
+    // FR-825, FR-290), so it names nothing the omission closure could follow.
     let records = graph
         .requirements()
         .iter()
+        .filter(|(claim, source)| {
+            !(source.requirements().kind() == Capability::OperationContract
+                && relation_owned(graph, claim))
+        })
         .map(|(claim, source)| record_names_of(graph, claim, source, Some(&mut guards)))
         .collect::<Result<_, _>>()?;
     Ok((records, guards))
@@ -484,10 +490,11 @@ fn relation_owned(graph: &CheckedGraph, claim: &OccurrenceKey) -> bool {
         refinement
             .requirement_occurrence()
             .is_some_and(|key| key.node() == claim.node())
-    }) || graph
-        .step_relations()
-        .iter()
-        .any(|relation| relation.occurrence().is_some_and(|key| key.node() == claim.node()))
+    }) || graph.step_relations().iter().any(|relation| {
+        relation
+            .occurrence()
+            .is_some_and(|key| key.node() == claim.node())
+    })
 }
 
 pub(super) fn append(
@@ -518,7 +525,7 @@ pub(super) fn append(
         });
     }
     let frames = if has_value_validity {
-        frames::derive(ids, graph, nodes, omitted)?
+        frames::derive(ids, graph, nodes, source_map, omitted)?
     } else {
         frames::Frames::default()
     };
@@ -929,11 +936,11 @@ pub(super) fn rows(
         rows.push((
             claim.node().clone(),
             RequirementItemRow {
-            claim: claim_id,
-            occurrence,
-            kind,
-            extent,
-            record,
+                claim: claim_id,
+                occurrence,
+                kind,
+                extent,
+                record,
             },
         ));
     }
@@ -1099,8 +1106,8 @@ fn frame_owners(
             let slot = owners
                 .get_mut(frame.0)
                 .ok_or(EmitRefusal::RequirementRowCarry(
-                "a carried record cites a frame the table does not hold",
-            ))?;
+                    "a carried record cites a frame the table does not hold",
+                ))?;
             if slot.is_some() {
                 break;
             }

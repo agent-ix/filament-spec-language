@@ -420,7 +420,9 @@ impl<'a> Forms<'a> {
             | ValueType::BoundedQuantity(_)
             | ValueType::CarriedQuantity(_) => self.read_quantity(object, value_type, path),
             ValueType::Reference(declared) => self.read_reference(object, declared, path),
-            ValueType::ClockReference => Err(defect(Code::InvalidRuntimeInput, "wrong-value-kind", path)),
+            ValueType::ClockReference => {
+                Err(defect(Code::InvalidRuntimeInput, "wrong-value-kind", path))
+            }
             ValueType::Population(_) => self.read_population(object, path),
             ValueType::Map(map_type) => self.read_map(object, map_type, path),
         }

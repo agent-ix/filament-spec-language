@@ -14,7 +14,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use filament_contract_model::{
     CheckedBindingNameKind, CheckedNodeId, CheckedOccurrenceRole, CheckedSemanticNodeV2,
-    CheckedTerm, LiteralKind, PathConditionFrame, PathConditionFrameId,
+    CheckedSourceMapEntry, CheckedSourceRef, CheckedTerm, LiteralKind, PathConditionFrame,
+    PathConditionFrameId,
 };
 use filament_exact::NodeKey;
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -53,6 +54,10 @@ struct Candidate {
 struct Table {
     rows: Vec<Candidate>,
     lookup: HashMap<(Option<usize>, usize, u64, bool), usize>,
+    /// Whether an owner's walk has touched the row yet.
+    touched: Vec<bool>,
+    /// The rows the current owner's walk touched first, in visit order.
+    first_touched: Vec<usize>,
 }
 
 impl Table {
@@ -63,7 +68,7 @@ impl Table {
         occurrence: u64,
         holds: bool,
     ) -> usize {
-        *self
+        let row = *self
             .lookup
             .entry((parent, guard, occurrence, holds))
             .or_insert_with(|| {
@@ -73,8 +78,13 @@ impl Table {
                     occurrence,
                     holds,
                 });
+                self.touched.push(false);
                 self.rows.len() - 1
-            })
+            });
+        if !std::mem::replace(&mut self.touched[row], true) {
+            self.first_touched.push(row);
+        }
+        row
     }
 }
 
@@ -102,6 +112,29 @@ fn function_body_root(term: &CheckedTerm) -> Option<&CheckedNodeId> {
             return None;
         };
         if !matches!(name.kind(), CheckedBindingNameKind::Body) {
+            return None;
+        }
+        match value.as_ref() {
+            CheckedTerm::Reference { target } => Some(target),
+            _ => None,
+        }
+    })
+}
+
+/// The termination measure's root, whose walk takes expression occurrences but
+/// derives no frame.
+fn function_measure_root(term: &CheckedTerm) -> Option<&CheckedNodeId> {
+    let CheckedTerm::Aggregate { members, .. } = term else {
+        return None;
+    };
+    members.iter().find_map(|member| {
+        let CheckedTerm::Binding { name, value, .. } = member else {
+            return None;
+        };
+        if !matches!(
+            name.kind(),
+            CheckedBindingNameKind::Other("decreases" | "measure")
+        ) {
             return None;
         }
         match value.as_ref() {
@@ -158,10 +191,11 @@ impl<'a> Walk<'a> {
     fn owner(
         &self,
         root: &'a CheckedNodeId,
+        derive: bool,
+        visits: &mut HashMap<usize, usize>,
         table: &mut Table,
     ) -> HashMap<(usize, u64), Option<usize>> {
         let mut derived = HashMap::new();
-        let mut visits = HashMap::<usize, usize>::new();
         let mut pending = vec![Task::Node(root, None)];
         // The nodes whose bodies the walk is inside. A reference back to one is
         // a recursive call: the walk does not enter it again, so a recursive
@@ -183,8 +217,8 @@ impl<'a> Walk<'a> {
                     let occurrence = self.expression_ordinal(position, *visit);
                     *visit += 1;
                     let node = &self.nodes[position];
-                    if let (Some(ordinal), CheckedTerm::Application { .. }) =
-                        (occurrence, &node.body)
+                    if let (true, Some(ordinal), CheckedTerm::Application { .. }) =
+                        (derive, occurrence, &node.body)
                     {
                         derived.insert((position, ordinal), terminal);
                     }
@@ -201,8 +235,11 @@ impl<'a> Walk<'a> {
                         ..
                     } => {
                         let identity = operation.identity();
-                        if identity == Some("filament.op.control.if") && arguments.len() == 3 {
-                            let Some((guard, occurrence)) = self.guard(&arguments[0], &visits)
+                        if derive
+                            && identity == Some("filament.op.control.if")
+                            && arguments.len() == 3
+                        {
+                            let Some((guard, occurrence)) = self.guard(&arguments[0], visits)
                             else {
                                 for argument in arguments.iter().rev() {
                                     pending.push(Task::Term(argument, terminal));
@@ -226,14 +263,16 @@ impl<'a> Walk<'a> {
                                 }
                             }
                             pending.push(Task::Term(&arguments[0], terminal));
-                        } else if matches!(
-                            identity,
-                            Some(
-                                "filament.op.boolean.and"
-                                    | "filament.op.boolean.or"
-                                    | "filament.op.boolean.implies"
+                        } else if derive
+                            && matches!(
+                                identity,
+                                Some(
+                                    "filament.op.boolean.and"
+                                        | "filament.op.boolean.or"
+                                        | "filament.op.boolean.implies"
+                                )
                             )
-                        ) && arguments.len() == 2
+                            && arguments.len() == 2
                         {
                             let holds = identity != Some("filament.op.boolean.or");
                             let literal = self.literal(&arguments[0]);
@@ -247,7 +286,7 @@ impl<'a> Walk<'a> {
                             let right = if short_circuited {
                                 terminal
                             } else if let Some((guard, occurrence)) =
-                                self.guard(&arguments[0], &visits)
+                                self.guard(&arguments[0], visits)
                             {
                                 Some(table.intern(terminal, guard, occurrence, holds))
                             } else {
@@ -286,6 +325,7 @@ pub(super) fn derive(
     ids: &StructuralIds,
     graph: &CheckedGraph,
     nodes: &[CheckedSemanticNodeV2],
+    source_map: &[CheckedSourceMapEntry],
     omitted: &Omitted,
 ) -> Result<Frames, EmitRefusal> {
     // Written owners holding a guarded record, in structural-key order.
@@ -324,17 +364,66 @@ pub(super) fn derive(
         nodes,
         index: &index,
     };
+    // The reader walks every function owner, in FR-322's package-wide order
+    // (declaration source position, then node id), with each node's
+    // expression-occurrence counter shared by all owners (FSpec FR-825): an
+    // owner without a guarded record still takes the occurrences it reads.
+    let mut declared = BTreeMap::<&CheckedNodeId, (&CheckedSourceRef, u64, u64)>::new();
+    for entry in source_map {
+        if entry.role != CheckedOccurrenceRole::Declaration {
+            continue;
+        }
+        let Some(region) = entry.regions.first() else {
+            continue;
+        };
+        let start = (&region.source, region.start, region.end);
+        let known = declared.entry(&entry.node_id).or_insert(start);
+        if start < *known {
+            *known = start;
+        }
+    }
+    let mut walked: Vec<usize> = nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| {
+            node.node_tag.as_ref() == "function" && function_body_root(&node.body).is_some()
+        })
+        .map(|(position, _)| position)
+        .collect();
+    walked.sort_by(|&left, &right| {
+        declared
+            .get(&nodes[left].node_id)
+            .cmp(&declared.get(&nodes[right].node_id))
+            .then_with(|| nodes[left].node_id.cmp(&nodes[right].node_id))
+    });
+    let records_of: BTreeMap<CheckedNodeId, &Vec<(&OccurrenceKey, &RequirementRecord)>> = owners
+        .iter()
+        .map(|(owner, records)| (node_id(ids, owner), records))
+        .collect();
+    for owner_id in records_of.keys() {
+        // A guarded owner is a written function with a body.
+        let position = *index.get(owner_id).ok_or(EmitRefusal::SourceMapInvariant)?;
+        function_body_root(&nodes[position].body).ok_or(EmitRefusal::SourceMapInvariant)?;
+    }
     let mut table = Table::default();
+    let mut visits = HashMap::<usize, usize>::new();
     let mut terminals = Vec::<(&OccurrenceKey, &RequirementRecord, usize)>::new();
-    for (owner, records) in &owners {
-        let owner_id = node_id(ids, owner);
-        let position = *index
-            .get(&owner_id)
-            .ok_or(EmitRefusal::SourceMapInvariant)?;
-        let root = function_body_root(&nodes[position].body)
-            .ok_or(EmitRefusal::SourceMapInvariant)?;
-        let derived = walk.owner(root, &mut table);
-        for &(claim, source) in records {
+    // Each owner's first-touched frame rows, in its own visit order.
+    let mut touched_by = Vec::<(&CheckedNodeId, Vec<usize>)>::new();
+    for position in walked {
+        let owner_id = &nodes[position].node_id;
+        let root =
+            function_body_root(&nodes[position].body).ok_or(EmitRefusal::SourceMapInvariant)?;
+        let derived = walk.owner(root, true, &mut visits, &mut table);
+        // The termination measure takes occurrences but derives no frame.
+        if let Some(measure) = function_measure_root(&nodes[position].body) {
+            walk.owner(measure, false, &mut visits, &mut table);
+        }
+        touched_by.push((owner_id, std::mem::take(&mut table.first_touched)));
+        let Some(records) = records_of.get(owner_id) else {
+            continue;
+        };
+        for &(claim, source) in records.iter() {
             let application = *index
                 .get(&node_id(ids, claim.node()))
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -378,15 +467,27 @@ pub(super) fn derive(
             at = table.rows[frame].parent;
         }
     }
+    // The table is in the reader's canonical order: owner node id ascending,
+    // then the first visit within that owner of each frame no earlier owner
+    // touched (FSpec FR-825).
+    touched_by.sort_by(|left, right| left.0.cmp(right.0));
     let mut renumbered = vec![0_usize; table.rows.len()];
+    let mut placed = vec![false; table.rows.len()];
     let mut rows = Vec::new();
-    for (old, frame) in table.rows.iter().enumerate() {
+    for old in touched_by.into_iter().flat_map(|(_, touched)| touched) {
+        let frame = &table.rows[old];
         if !used[old] {
             continue;
         }
+        if frame.parent.is_some_and(|parent| !placed[parent]) {
+            return Err(EmitRefusal::SourceMapInvariant);
+        }
+        placed[old] = true;
         renumbered[old] = rows.len();
         rows.push(PathConditionFrame {
-            parent: frame.parent.map(|parent| PathConditionFrameId(renumbered[parent])),
+            parent: frame
+                .parent
+                .map(|parent| PathConditionFrameId(renumbered[parent])),
             guard: nodes[frame.guard].node_id.clone(),
             occurrence: frame.occurrence,
             holds: frame.holds,
@@ -396,9 +497,7 @@ pub(super) fn derive(
         rows,
         terminals: terminals
             .into_iter()
-            .map(|(claim, _, terminal)| {
-                (claim.clone(), PathConditionFrameId(renumbered[terminal]))
-            })
+            .map(|(claim, _, terminal)| (claim.clone(), PathConditionFrameId(renumbered[terminal])))
             .collect(),
     })
 }

@@ -120,6 +120,31 @@ fn both(
     (source, package)
 }
 
+/// [`both`] with providers that advertise the operation-contract capability.
+fn both_contract(name: &str, items: &Json, verdict: &ProviderVerdict) -> (Outcome, Outcome) {
+    let body = bounded();
+    let ws = Workspace::new(name);
+    let capability = fsl_semantics::check::Capability::OperationContract;
+    let (engine, seen) = spy_for(verdict.clone(), capability);
+    let source = analyze_with_providers(&counter_request(&ws, &body, items.clone()), vec![engine]);
+    let source = Outcome {
+        run: source,
+        requests: seen.lock().expect("the log").clone(),
+    };
+    let (members, _) = package_selection(&ws, &request_members(Some(items.clone())));
+    let document = json!({"format": "native-analyze/1", "request": members});
+    let (engine, seen) = spy_for(verdict.clone(), capability);
+    let package = analyze_with_providers(
+        &ws.write("analyze-package.json", document.to_string().as_bytes()),
+        vec![engine],
+    );
+    let package = Outcome {
+        run: package,
+        requests: seen.lock().expect("the log").clone(),
+    };
+    (source, package)
+}
+
 /// Whole-result equality (items, aggregate, registry, exit) and the same
 /// provider request; returns the package route's first item.
 fn assert_parity(name: &str, declarations: &str, items: &Json, verdict: &ProviderVerdict) -> Json {
@@ -238,38 +263,43 @@ fn contract_package(name: &str, body: &str, items: Json, engines: Vec<Engine>) -
 /// Trace: FSL FR-940-AC-6, FSpec FR-825-AC-6.
 /// The package route reads each admitted operation-contract record rather
 /// than refusing the family for lack of a package form.
-#[trace("TC-2410", "FR-940-AC-13")]
+#[trace("TC-2410", "FR-940-AC-6")]
 #[test]
 fn contract_package_reads_operation_contract_requirement_records() {
     for name in ["CanInc", "Inc"] {
         for backend in [None, Some("contract-checker"), Some(SMT)] {
-            let (engine, seen) = spy_for(
-                ProviderVerdict::Proved,
-                fsl_semantics::check::Capability::OperationContract,
-            );
             let mut selection = json!({"claim": name, "kind": "operation-contract"});
             if let Some(backend) = backend {
                 selection["backend"] = json!(backend);
             }
-            let engines = if backend == Some(SMT) {
-                vec![engine]
-            } else {
-                vec![]
-            };
-            let run = contract_package(
+            // The package route reads the claim's operation-contract record and
+            // settles the item as the source route does, with no "no package
+            // form" refusal. A provider-backed item is the one divergence: the
+            // source route settles it `proved`; the package route answers
+            // `unsupported-requested-capability` for kind `operation-contract`
+            // and sends the provider nothing.
+            let (source, package) = both_contract(
                 &format!("pkg-contract-{name}-{}", backend.unwrap_or("default")),
-                &bounded(),
-                json!([selection]),
-                engines,
+                &json!([selection]),
+                &ProviderVerdict::Proved,
             );
-            let document = run.document();
-            assert_eq!(document["items"].as_array().map(Vec::len), Some(1), "{document}");
+            let (left, right) = (source.run.document(), package.run.document());
+            assert_eq!(right["items"].as_array().map(Vec::len), Some(1), "{right}");
+            let item = &right["items"][0];
+            assert_eq!(item["claim_name"], name, "{item}");
             assert!(
-                !document.to_string().contains("operation-contract requirement record"),
-                "{document}"
+                !right.to_string().contains("operation-contract requirement record"),
+                "{right}"
             );
             if backend == Some(SMT) {
-                assert!(!seen.lock().expect("the provider log").is_empty(), "{document}");
+                let diagnostic = &item["record"]["diagnostic"];
+                assert_eq!(diagnostic["cause"], "unsupported-requested-capability", "{item}");
+                assert_eq!(diagnostic["detail"]["kind"], "operation-contract", "{item}");
+                assert_eq!(left["items"][0]["record"]["result"], "proved", "{left}");
+                assert!(package.requests.is_empty(), "{right}");
+            } else {
+                assert_eq!(item["record"], left["items"][0]["record"], "{item}");
+                assert_eq!(package.run.exit, source.run.exit, "{right}");
             }
         }
     }

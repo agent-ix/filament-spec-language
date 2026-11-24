@@ -6829,13 +6829,19 @@ mod holds_float_tests {
                     }
                     value_type
                 };
-                let clock = ValueType::Reference(super::super::clock_reference_target());
+                let clock = ValueType::ClockReference;
                 let held = nest(clock);
                 let plain = nest(ValueType::Integer);
-                assert!(Typer::holds_references(&held));
                 assert!(!Typer::holds_references(&plain));
+                // A clock reference is the checker's own `ClockReference` type; the
+                // rewrite turns it into its Boolean leaf at the bottom of the nest.
                 let leafed = clock_reference_as_leaf(&held).expect("a leaf rewrite");
-                assert!(!Typer::holds_references(&leafed));
+                let (mut depth, mut at) = (0_usize, &leafed);
+                while let ValueType::Option(payload) = at {
+                    depth += 1;
+                    at = payload;
+                }
+                assert_eq!((depth, at), (100_000, &ValueType::Boolean));
                 assert_eq!(clock_reference_as_leaf(&plain), Some(plain.clone()));
             })
             .expect("the thread spawns")

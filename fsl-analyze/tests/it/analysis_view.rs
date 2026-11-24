@@ -185,10 +185,11 @@ fn value_record_views_and_native_charges_equal_the_source() {
     assert_eq!(indices.len(), 2);
     for &index in indices {
         let row = &bare.requirement_items()[index];
-        let Some(filament_contract_model::RequirementRecord::ValueValidity(record)) = row.record.as_ref()
-            else {
-                panic!("a scalar record");
-            };
+        let Some(filament_contract_model::RequirementRecord::ValueValidity(record)) =
+            row.record.as_ref()
+        else {
+            panic!("a scalar record");
+        };
         assert_eq!(&record.owner, owner);
         assert_eq!(record.application, row.claim);
         assert_eq!(record.occurrence, row.occurrence.ordinal);

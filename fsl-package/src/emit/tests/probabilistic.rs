@@ -227,9 +227,11 @@ fn emitted_claims_with_document(
         .as_array()
         .expect("the graph has nodes")
         .iter()
-        .filter(|node| node["node_tag"] == "claim")
+        // FSpec FR-825: the package also carries `claim`/`operation_contract`
+        // record nodes for the unit's operations; only the probabilistic
+        // claims are this helper's subject.
+        .filter(|node| node["node_tag"] == "claim" && node["semantic_form"] == "probabilistic_claim")
         .map(|node| {
-            assert_eq!(node["semantic_form"], "probabilistic_claim");
             (
                 resolved_id(&wire, &node["node_id"], 8),
                 node["occurrences"].clone(),
