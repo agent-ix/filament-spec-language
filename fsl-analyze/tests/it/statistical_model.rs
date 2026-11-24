@@ -1469,7 +1469,7 @@ fn a_non_unique_post_state_is_unsupported_with_its_step() {
 /// test's `undefined` names test 0, that sample's trace index and the first
 /// position after the drop, `absent-key`; the sample is kept as an undefined
 /// witness.
-#[trace("TC-640", "FR-189-AC-6")]
+#[trace("TC-640", "TC-627", "FR-189-AC-6")]
 #[test]
 fn a_dropped_coin_rejects_its_test_at_the_undefined_position() {
     let claim = "probabilistic Kept using ev on M over (c: M::Coin) under Even on origin \
@@ -1488,6 +1488,11 @@ fn a_dropped_coin_rejects_its_test_at_the_undefined_position() {
         panic!("one test: {:?}", verdict.tests);
     };
     assert_eq!(test.decision, Decision::Rejected);
+    assert_eq!(
+        (test.draws, test.samples),
+        (test.samples + 1, test.samples),
+        "the undefined sample is a draw but not a counted sample"
+    );
     let undefined = test.undefined.as_ref().expect("an undefined sample");
     assert_eq!(undefined.test, 0);
     // The run stops at this sample: it is the test's last draw.

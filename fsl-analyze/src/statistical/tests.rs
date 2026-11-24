@@ -986,7 +986,7 @@ impl ClaimSampler for Identical {
 /// half-width rule needs, the run closes exactly `min_cycles` cycles. A
 /// degenerate sample's half-width is `z / n`, so with `min_cycles` 1000 it
 /// stops at exactly 11,632 cycles (FSpec FR-408-AC-12).
-#[trace("TC-625", "FR-190-AC-2", "FR-191-AC-2")]
+#[trace("TC-625", "TC-627", "FR-190-AC-2", "FR-191-AC-2")]
 #[test]
 fn a_transient_start_stops_on_max_cycle_steps_and_min_cycles_is_a_floor() {
     let claim = long_run(Comparison::AtLeast, ratio(999, 1000));
@@ -1101,7 +1101,7 @@ fn a_weighted_long_run_reads_each_position_weight_from_its_leaving_step() {
 /// before drawing, naming `statistical.max_samples`, the configured
 /// 1,000,000 and the required 9,210,341, with no sample counted or drawn;
 /// with 9,210,341 it completes and decides; the default is 16,777,216.
-#[trace("TC-626", "FR-191-AC-1")]
+#[trace("TC-626", "TC-627", "FR-191-AC-1")]
 #[test]
 fn max_samples_stops_a_run_before_its_method_completes() {
     let claim = no_fault();
@@ -1191,7 +1191,7 @@ fn a_max_draws_equal_to_the_sample_count_admits_the_run() {
 /// FR-191-AC-2: the activation variant with SPRT and `max_draws` 1,000 stops
 /// naming `statistical.max_draws`, with the draws reached in `partial`; a
 /// cancelled handle stops `Cancelled`; neither carries a decision.
-#[trace("TC-626", "FR-191-AC-2")]
+#[trace("TC-626", "TC-627", "FR-191-AC-2")]
 #[test]
 fn max_draws_and_cancellation_stop_with_no_decision() {
     let claim = p95();
@@ -1502,7 +1502,7 @@ fn undefined_at(position: u64) -> Sample {
 /// estimate, no counted sample and the undefined evaluation at test 0,
 /// trace 0, position 0, and the verdict has no estimate; with two initial
 /// states, test 1 undefined keeps test 0's Accepted result beside it.
-#[trace("TC-624", "FR-189-AC-8")]
+#[trace("TC-624", "TC-627", "FR-189-AC-8")]
 #[test]
 fn an_undefined_first_sample_rejects_with_no_estimate() {
     let claim = half_claim();
@@ -1701,7 +1701,7 @@ fn the_least_favourable_test_follows_decision_margin_and_index() {
 /// FR-189-AC-12: the activation variant with activation probability 0 and
 /// `max_draws` 1,000 stops `MaxDraws` with no sample counted and no
 /// decision.
-#[trace("TC-624", "FR-189-AC-12")]
+#[trace("TC-624", "TC-627", "FR-189-AC-12")]
 #[test]
 fn a_quantile_claim_never_activated_stops_at_max_draws() {
     let claim = p95();
@@ -1728,7 +1728,7 @@ fn a_quantile_claim_never_activated_stops_at_max_draws() {
 /// without drawing; a
 /// `Stopped` and an `Unsupported` (`Wide`) outcome each carry the run's
 /// provenance; a cancelled handle stops `Cancelled`.
-#[trace("TC-626", "FR-191-AC-5")]
+#[trace("TC-626", "TC-627", "FR-191-AC-5")]
 #[test]
 fn max_samples_stops_before_the_next_draw_and_stops_carry_provenance() {
     let claim = no_fault();
@@ -1807,7 +1807,7 @@ fn max_samples_stops_before_the_next_draw_and_stops_carry_provenance() {
 /// FR-191-AC-1: Clopper-Pearson, which also has a fixed `N` (9,210,341 for
 /// `NoFault`), stops before drawing with
 /// the required `N` and the configured budget, as Okamoto does.
-#[trace("TC-626", "FR-191-AC-1")]
+#[trace("TC-626", "TC-627", "FR-191-AC-1")]
 #[test]
 fn clopper_pearson_compares_its_sample_count_with_the_budgets_before_drawing() {
     let claim = no_fault();
@@ -1905,6 +1905,12 @@ fn a_verdict_carries_the_claims_own_bound() {
             level: None,
         }
     );
+
+    for verdict in [accepted, rejected, undecided] {
+        let expected = verdict.bound.clone();
+        let record = settle(&StatisticalOutcome::Completed(Box::new(verdict)));
+        assert_eq!(measured(&record).bound, expected);
+    }
 }
 
 /// Okamoto refuses a fraction for a Bernoulli test, as SPRT does.
