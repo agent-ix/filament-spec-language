@@ -267,7 +267,7 @@ change, not kept beside it.
 ### Types the bytes cannot project
 
 Payload-free selected model enum declarations and all their members SHALL be
-available through the three required identities/5 channels of FR-531. The native
+available through the three required identities/7 channels of FR-531. The native
 package-local join authenticates their complete canonical shapes before use,
 including selected declarations no slot reads. Enum literals SHALL retain the
 original variant and its canonical rank; source and bare calls SHALL return the
@@ -455,10 +455,12 @@ declaration for it:
   completeness guarantee covers every ordinary record and object type of a
   selected document, but not a state machine, process or systems interface. Such
   a package refuses at step 3, or at step 4 for a snapshot object of such a type.
-- **Tuple rows (FSL):** the identity handoff (FR-531 "The identity file") carries
-  no tuple declaration rows, and the projection is called with none, so a selected
-  model that declares a tuple type refuses at step 3. It closes when the handoff
-  carries the tuple rows and the bare route passes them.
+- **Tuple rows (FSL):** FR-531-AC-51 adds selected model tuple rows to the
+  identities/7 handoff. This protocol-slot path still calls the declaration
+  projection without those rows, so a selected model that declares a tuple type
+  can still refuse at step 3. Its remaining integration closes when this path
+  passes the joined rows to the projection; FR-940-AC-30 separately owns the
+  analyze route's invariant and state-graph parity over tuple payloads.
 - **Population members:** the bare population types are IR's catalog, which
   normalizes a member through the document's aliases and refuses the whole catalog
   for a member it cannot resolve; the source route takes the member types as the
