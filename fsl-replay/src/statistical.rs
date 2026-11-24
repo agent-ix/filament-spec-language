@@ -703,6 +703,9 @@ pub enum StatisticalRefusal {
     /// evidence only (ADR-024 PF-10).
     #[error("a claim with no confidence parameters is decided by exact evidence only")]
     MissingConfidence,
+    /// FR-191: the request selected no sample workers.
+    #[error("statistical.workers must be greater than zero")]
+    Workers,
     /// The method does not decide the claim's form (FR-189, FR-190).
     #[error("{method:?} does not decide a {form:?} claim")]
     NotStatistical {

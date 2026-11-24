@@ -549,6 +549,7 @@ fn service_request<'w>(
     world: &'w crate::prob_world::World,
 ) -> fsl_analyze::statistical::StatisticalRequest<'w> {
     fsl_analyze::statistical::StatisticalRequest {
+        workers: 1,
         subject: world.subject(),
         claim: world.claim("Two"),
         method: fsl_replay::statistical::StatisticalMethod::Okamoto,

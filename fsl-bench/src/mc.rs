@@ -705,6 +705,7 @@ pub fn run_sample(world: &World) -> Result<Work, AxisError> {
         .map_err(|e| fail("sampler", e))?;
     let outcome = check_statistical(
         StatisticalRequest {
+            workers: 1,
             subject: world.subject(),
             claim,
             method: StatisticalMethod::Okamoto,

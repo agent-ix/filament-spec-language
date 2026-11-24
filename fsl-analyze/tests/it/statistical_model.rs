@@ -4,14 +4,15 @@
 //! FR-188's behaviours drawn from the subject, each read by the layer-5
 //! evaluator.
 
+use std::sync::{Arc, Barrier, Condvar, Mutex};
+
 use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Integer, Rational, Value};
 use filament_semantic_value::catalog::UndefinedReason;
 use fsl_analyze::statistical::{
+    BehaviourSampler, DEFAULT_MAX_WITNESSES, Drawn, QuantileComparison, RegenerationWalk, Sample,
+    SampleHalt, SampledRequest, StatisticalClaim, StatisticalRequest, TestSubject, WalkStep,
     check_sampled, check_statistical, witness_reader, witness_reader_with_timed_sampling,
-    BehaviourSampler, Drawn, QuantileComparison, RegenerationWalk, Sample, SampleHalt,
-    SampledRequest, StatisticalClaim, StatisticalRequest, TestSubject, WalkStep,
-    DEFAULT_MAX_WITNESSES,
 };
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::TransitionId;
@@ -19,23 +20,23 @@ use fsl_eval::simulation::model::{ExpansionLimits, TimedSystem};
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
-use fsl_replay::statistical::{
-    replay_sampled_witness, Confidence, Decision, MeasureValue, StatisticalLimit,
-    StatisticalLimits, StatisticalMethod, StatisticalOutcome, StatisticalRefusal, StatisticalStop,
-    StatisticalUnsupported, StatisticalVerdict, UndecidedCause, WitnessReplay, WitnessValue,
-};
-use fsl_replay::statistical::{settle_statistical, settle_statistical_refusal, SubjectLimits};
 use fsl_replay::SymmetryRefusal;
-use fsl_replay::{
-    settle_exact_prob_build_issue, ExactProbBuildIssue, IncompleteCause, ModelCheckLimit,
+use fsl_replay::statistical::{
+    Confidence, Decision, MeasureValue, StatisticalLimit, StatisticalLimits, StatisticalMethod,
+    StatisticalOutcome, StatisticalRefusal, StatisticalStop, StatisticalUnsupported,
+    StatisticalVerdict, UndecidedCause, WitnessReplay, WitnessValue, replay_sampled_witness,
 };
+use fsl_replay::statistical::{SubjectLimits, settle_statistical, settle_statistical_refusal};
 use fsl_replay::{ClaimPredicate, TerminalValue, UndefinedLocus};
+use fsl_replay::{
+    ExactProbBuildIssue, IncompleteCause, ModelCheckLimit, settle_exact_prob_build_issue,
+};
 use fsl_route::reductions::SymmetryDeclaration;
 use fsl_semantics::check::{Event, ProbForm, ProbScheduler};
 use ix_trace_rs::trace;
 use serde_json::json;
 
-use crate::analyze_cli_support::{analyze as analyze_source, request_over, Workspace};
+use crate::analyze_cli_support::{Workspace, analyze as analyze_source, request_over};
 use crate::prob_world::{self, World};
 
 fn ratio(numerator: i64, denominator: i64) -> Rational {
@@ -53,8 +54,20 @@ fn run(
     limits: StatisticalLimits,
     max_witnesses: u32,
 ) -> Result<StatisticalOutcome, StatisticalRefusal> {
+    run_workers(world, claim, method, limits, max_witnesses, 1)
+}
+
+fn run_workers(
+    world: &World,
+    claim: &str,
+    method: StatisticalMethod,
+    limits: StatisticalLimits,
+    max_witnesses: u32,
+    workers: usize,
+) -> Result<StatisticalOutcome, StatisticalRefusal> {
     check_statistical(
         StatisticalRequest {
+            workers,
             subject: world.subject(),
             claim: world.claim(claim),
             method,
@@ -83,6 +96,10 @@ struct CandidateStopSampler;
 impl BehaviourSampler for CandidateStopSampler {
     type Walk = UnusedWalk;
 
+    fn sample_batch_width(&self) -> usize {
+        1
+    }
+
     fn sample(
         &mut self,
         _test: &TestSubject,
@@ -96,6 +113,20 @@ impl BehaviourSampler for CandidateStopSampler {
             ),
             limit: Some(fsl_eval::simulation::ExpansionLimit::MaxCandidates),
         }))
+    }
+
+    fn sample_batch(
+        &mut self,
+        test: &TestSubject,
+        seed: u64,
+        traces: &[u64],
+    ) -> Vec<(u64, Result<Drawn, SampleHalt>)> {
+        traces
+            .first()
+            .copied()
+            .map(|trace| (trace, self.sample(test, seed, trace)))
+            .into_iter()
+            .collect()
     }
 
     fn walk(&mut self, _test: &TestSubject, _seed: u64, _trace: u64) -> Self::Walk {
@@ -126,6 +157,8 @@ struct RecordedSample {
 struct TraceSampler {
     pattern: TracePattern,
     draws: Vec<RecordedSample>,
+    completed: Vec<u64>,
+    cancel_on_trace: Option<(u64, Cancel)>,
 }
 
 impl TraceSampler {
@@ -133,33 +166,140 @@ impl TraceSampler {
         Self {
             pattern,
             draws: Vec::new(),
+            completed: Vec::new(),
+            cancel_on_trace: None,
         }
+    }
+
+    fn draw(pattern: TracePattern, seed: u64, trace: u64) -> Drawn {
+        let holds = match pattern {
+            TracePattern::AlwaysHolds => true,
+            TracePattern::PrefixAroundBoundary if trace >= 100 => true,
+            TracePattern::PrefixAroundBoundary => trace.is_multiple_of(2) == (seed == 7),
+        };
+        Drawn {
+            sample: Sample::Measured {
+                holds,
+                value: MeasureValue::Value(if holds { ratio(4, 1) } else { ratio(6, 1) }),
+            },
+            steps: Vec::new(),
+        }
+    }
+
+    fn cancelling(mut self, trace: u64, cancel: Cancel) -> Self {
+        self.cancel_on_trace = Some((trace, cancel));
+        self
     }
 }
 
 impl BehaviourSampler for TraceSampler {
     type Walk = UnusedWalk;
 
+    fn sample_batch_width(&self) -> usize {
+        64
+    }
+
     fn sample(&mut self, test: &TestSubject, seed: u64, trace: u64) -> Result<Drawn, SampleHalt> {
-        let holds = match self.pattern {
-            TracePattern::AlwaysHolds => true,
-            TracePattern::PrefixAroundBoundary if trace >= 100 => true,
-            TracePattern::PrefixAroundBoundary => trace.is_multiple_of(2) == (seed == 7),
+        let drawn = Self::draw(self.pattern, seed, trace);
+        let Sample::Measured { holds, .. } = &drawn.sample else {
+            unreachable!("the trace sampler always returns a measurement");
         };
         self.draws.push(RecordedSample {
             seed,
             initial: test.initial,
             binding: test.binding.as_ref().map(|instance| instance.key.clone()),
             trace,
-            holds,
+            holds: *holds,
         });
-        Ok(Drawn {
-            sample: Sample::Measured {
-                holds,
-                value: MeasureValue::Value(if holds { ratio(4, 1) } else { ratio(6, 1) }),
-            },
-            steps: Vec::new(),
-        })
+        self.completed.push(trace);
+        if let Some((cancel_at, cancel)) = &self.cancel_on_trace {
+            if trace == *cancel_at {
+                cancel.cancel(filament_exact::CancelCause::Requested);
+            }
+        }
+        Ok(drawn)
+    }
+
+    fn sample_batch(
+        &mut self,
+        test: &TestSubject,
+        seed: u64,
+        traces: &[u64],
+    ) -> Vec<(u64, Result<Drawn, SampleHalt>)> {
+        if traces.len() == 1 {
+            let trace = traces[0];
+            return vec![(trace, self.sample(test, seed, trace))];
+        }
+        let barrier = Arc::new(Barrier::new(traces.len()));
+        let released = Arc::new((Mutex::new(false), Condvar::new()));
+        let completed = Arc::new(Mutex::new(Vec::with_capacity(traces.len())));
+        let pattern = self.pattern;
+        let initial = test.initial;
+        let binding = test.binding.as_ref().map(|instance| instance.key.clone());
+        let cancel_on_trace = self.cancel_on_trace.clone();
+        let max_trace = *traces.iter().max().expect("a worker batch is nonempty");
+        let mut joined = std::thread::scope(|scope| {
+            traces
+                .iter()
+                .copied()
+                .map(|trace| {
+                    let barrier = Arc::clone(&barrier);
+                    let released = Arc::clone(&released);
+                    let completed = Arc::clone(&completed);
+                    let binding = binding.clone();
+                    let cancel_on_trace = cancel_on_trace.clone();
+                    scope.spawn(move || {
+                        barrier.wait();
+                        let is_first = trace == max_trace;
+                        if !is_first {
+                            let (lock, wake) = &*released;
+                            let mut first_finished = lock.lock().expect("completion lock");
+                            while !*first_finished {
+                                first_finished =
+                                    wake.wait(first_finished).expect("completion wait");
+                            }
+                        }
+                        let drawn = Self::draw(pattern, seed, trace);
+                        let Sample::Measured { holds, .. } = &drawn.sample else {
+                            unreachable!("the trace sampler always returns a measurement");
+                        };
+                        completed.lock().expect("completion record").push(trace);
+                        if let Some((cancel_at, cancel)) = &cancel_on_trace {
+                            if trace == *cancel_at {
+                                cancel.cancel(filament_exact::CancelCause::Requested);
+                            }
+                        }
+                        if is_first {
+                            let (lock, wake) = &*released;
+                            *lock.lock().expect("completion lock") = true;
+                            wake.notify_all();
+                        }
+                        (
+                            trace,
+                            RecordedSample {
+                                seed,
+                                initial,
+                                binding,
+                                trace,
+                                holds: *holds,
+                            },
+                            Ok(drawn),
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|handle| handle.join().expect("sample worker completes"))
+                .collect::<Vec<_>>()
+        });
+        self.completed
+            .extend(completed.lock().expect("completion record").iter().copied());
+        self.draws
+            .extend(joined.iter().map(|(_, record, _)| record.clone()));
+        joined
+            .drain(..)
+            .map(|(trace, _, result)| (trace, result))
+            .collect()
     }
 
     fn walk(&mut self, _test: &TestSubject, _seed: u64, _trace: u64) -> Self::Walk {
@@ -186,6 +326,7 @@ fn sampled_request<'a>(
     limits: StatisticalLimits,
 ) -> SampledRequest<'a> {
     SampledRequest {
+        workers: 1,
         claim,
         tests,
         method,
@@ -212,12 +353,13 @@ fn serial_binding_tests_share_the_probability_work_allowance() {
     );
     let one_world = World::new(&model);
     let two_world = World::with_objects(&model, &["a", "b"]);
-    let run_with = |bound, two| {
+    let run_with = |bound, two, workers| {
         let world = if two { &two_world } else { &one_world };
         let mut subject = world.subject();
         subject.simulation.meter.work_units = bound;
         check_statistical(
             StatisticalRequest {
+                workers,
                 subject,
                 claim: world.claim(if two { "Two" } else { "One" }),
                 method: StatisticalMethod::Okamoto,
@@ -239,13 +381,13 @@ fn serial_binding_tests_share_the_probability_work_allowance() {
     // formula or duplicate evaluator is used as a test oracle.
     let (mut low, mut high) = (0, 1_000_000);
     assert!(matches!(
-        run_with(high, false),
+        run_with(high, false, 1),
         Ok(StatisticalOutcome::Completed(_))
     ));
     while low < high {
         let middle = low + (high - low) / 2;
         if matches!(
-            run_with(middle, false),
+            run_with(middle, false, 1),
             Ok(StatisticalOutcome::Completed(_))
         ) {
             high = middle;
@@ -253,11 +395,11 @@ fn serial_binding_tests_share_the_probability_work_allowance() {
             low = middle + 1;
         }
     }
-    let Ok(StatisticalOutcome::Completed(one)) = run_with(low, false) else {
+    let Ok(StatisticalOutcome::Completed(one)) = run_with(low, false, 1) else {
         panic!("one test fits its boundary")
     };
     assert!(one.basis.samples > 0);
-    let two = run_with(low, true);
+    let two = run_with(low, true, 1);
     let Ok(StatisticalOutcome::Stopped {
         stop,
         partial,
@@ -303,6 +445,13 @@ fn serial_binding_tests_share_the_probability_work_allowance() {
         partial: partial.clone(),
         provenance: provenance.clone(),
     };
+    for workers in [2, 4, 64] {
+        assert_eq!(
+            run_with(low, true, workers),
+            Ok(outcome.clone()),
+            "model work retains ascending logical admission with workers={workers}"
+        );
+    }
     let statistical = settle_statistical(&outcome, limits);
     let StatisticalStop::Expansion(expansion) = &stop else {
         panic!("expected an expansion stop, got {stop:?}");
@@ -541,6 +690,228 @@ fn sampled_seven_reproduces_a_stopped_prefix_and_seed_eight_changes_it() {
     // no obligation-identity field exists at this seam to compare by seed.
 }
 
+/// FR-191-AC-6: native model requests preserve the serial model-work order
+/// for every requested worker count, while a real concurrent sampler
+/// completes high trace indices first and is merged in trace order.
+#[trace("TC-1417")]
+#[test]
+fn worker_counts_preserve_model_results_and_merge_concurrent_samples_by_trace() {
+    let service = service();
+    let limited = StatisticalLimits {
+        max_samples: 100,
+        ..StatisticalLimits::default()
+    };
+    let one_worker = run_workers(&service, "P95", StatisticalMethod::Sprt, limited, 0, 1)
+        .expect("the one-worker P95 run");
+    for workers in [2, 4, 64] {
+        let parallel = run_workers(
+            &service,
+            "P95",
+            StatisticalMethod::Sprt,
+            limited,
+            0,
+            workers,
+        )
+        .expect("the requested worker count keeps the same model route");
+        assert_eq!(parallel, one_worker, "workers={workers}");
+        assert_eq!(
+            format!("{parallel:?}").as_bytes(),
+            format!("{one_worker:?}").as_bytes(),
+            "workers={workers}"
+        );
+    }
+    let no_fault = World::new(&prob_world::no_fault(
+        "probabilistic NoFault using ev on M over (n: M::Node) under Steady on origin \
+         with alpha 0.01, beta 0.01, indifference 0.0005 \
+         { probability >= 0.999 [ always[0,1000] holds(n.healthy) ] }",
+    ));
+    let preflight = StatisticalLimits {
+        max_samples: 1_000,
+        ..StatisticalLimits::default()
+    };
+    let baseline = run_workers(
+        &no_fault,
+        "NoFault",
+        StatisticalMethod::Okamoto,
+        preflight,
+        0,
+        1,
+    )
+    .expect("the one-worker fixed-sample preflight");
+    assert!(matches!(
+        &baseline,
+        StatisticalOutcome::Stopped {
+            stop: StatisticalStop::PreflightLimit {
+                limit: StatisticalLimit::MaxSamples,
+                value: 1_000,
+                required: 9_210_341,
+            },
+            partial,
+            ..
+        } if partial.samples == 0 && partial.draws == 0
+    ));
+    for workers in [2, 4, 64] {
+        let parallel = run_workers(
+            &no_fault,
+            "NoFault",
+            StatisticalMethod::Okamoto,
+            preflight,
+            0,
+            workers,
+        )
+        .expect("the requested worker count keeps the same preflight");
+        assert_eq!(parallel, baseline, "workers={workers}");
+        assert_eq!(
+            format!("{parallel:?}").as_bytes(),
+            format!("{baseline:?}").as_bytes(),
+            "workers={workers}"
+        );
+    }
+
+    let claim = sampled_p95();
+    let tests = [TestSubject {
+        initial: 0,
+        binding: None,
+        reference: None,
+    }];
+    let sampler_identity = sampler();
+    let mut concurrent_request = sampled_request(
+        &claim,
+        &tests,
+        &sampler_identity,
+        StatisticalMethod::Sprt,
+        7,
+        limited,
+    );
+    concurrent_request.workers = 4;
+    let mut concurrent_sampler = TraceSampler::new(TracePattern::PrefixAroundBoundary);
+    let concurrent = check_sampled(concurrent_request, &mut concurrent_sampler, &Cancel::new())
+        .expect("the concurrent deterministic sampler completes");
+    let mut serial_sampler = TraceSampler::new(TracePattern::PrefixAroundBoundary);
+    let serial = check_sampled(
+        SampledRequest {
+            workers: 1,
+            ..concurrent_request
+        },
+        &mut serial_sampler,
+        &Cancel::new(),
+    )
+    .expect("the serial deterministic sampler completes");
+    assert_eq!(concurrent, serial);
+    assert_eq!(
+        concurrent_sampler.draws, serial_sampler.draws,
+        "only the merged trace prefix contributes samples"
+    );
+    assert!(concurrent_sampler.draws.len() <= 103);
+    assert!(
+        concurrent_sampler
+            .completed
+            .chunks(4)
+            .all(|batch| batch[0] == *batch.iter().max().expect("nonempty batch"))
+    );
+}
+
+/// FR-191-AC-7: a zero-worker request is refused before the sampler is called.
+#[trace("TC-1417")]
+#[test]
+fn zero_workers_refuses_without_drawing_a_sample() {
+    let claim = sampled_p95();
+    let tests = [TestSubject {
+        initial: 0,
+        binding: None,
+        reference: None,
+    }];
+    let sampler_identity = sampler();
+    let mut request = sampled_request(
+        &claim,
+        &tests,
+        &sampler_identity,
+        StatisticalMethod::Sprt,
+        7,
+        StatisticalLimits::default(),
+    );
+    request.workers = 0;
+    let mut sampler = TraceSampler::new(TracePattern::AlwaysHolds);
+    assert_eq!(
+        check_sampled(request, &mut sampler, &Cancel::new()),
+        Err(StatisticalRefusal::Workers)
+    );
+    assert!(sampler.draws.is_empty());
+    let world = service();
+    assert_eq!(
+        run_workers(
+            &world,
+            "P95",
+            StatisticalMethod::Sprt,
+            StatisticalLimits::default(),
+            0,
+            0,
+        ),
+        Err(StatisticalRefusal::Workers)
+    );
+}
+
+/// FR-191-AC-7: cancellation after a shared prefix retains exactly the
+/// one-worker merged prefix and exposes no speculative higher trace.
+#[trace("TC-1417")]
+#[test]
+fn concurrent_cancellation_discards_unmerged_higher_traces() {
+    let claim = sampled_p95();
+    let tests = [TestSubject {
+        initial: 0,
+        binding: None,
+        reference: None,
+    }];
+    let sampler_identity = sampler();
+    let limits = StatisticalLimits {
+        max_samples: 100,
+        ..StatisticalLimits::default()
+    };
+    let mut concurrent_request = sampled_request(
+        &claim,
+        &tests,
+        &sampler_identity,
+        StatisticalMethod::Sprt,
+        7,
+        limits,
+    );
+    concurrent_request.workers = 4;
+    let concurrent_cancel = Cancel::new();
+    let mut concurrent_sampler = TraceSampler::new(TracePattern::PrefixAroundBoundary)
+        .cancelling(4, concurrent_cancel.clone());
+    let concurrent = check_sampled(
+        concurrent_request,
+        &mut concurrent_sampler,
+        &concurrent_cancel,
+    )
+    .expect("the cancellation is a stopped outcome");
+
+    let serial_cancel = Cancel::new();
+    let mut serial_sampler =
+        TraceSampler::new(TracePattern::PrefixAroundBoundary).cancelling(4, serial_cancel.clone());
+    let serial = check_sampled(
+        SampledRequest {
+            workers: 1,
+            ..concurrent_request
+        },
+        &mut serial_sampler,
+        &serial_cancel,
+    )
+    .expect("the serial cancellation is a stopped outcome");
+    assert_eq!(concurrent, serial);
+    let StatisticalOutcome::Stopped {
+        stop: StatisticalStop::Cancelled(filament_exact::CancelCause::Requested),
+        partial,
+        provenance,
+    } = concurrent
+    else {
+        panic!("cancellation retains the merged prefix: {concurrent:?}");
+    };
+    assert_eq!((partial.samples, partial.draws, partial.tests), (4, 4, 1));
+    assert_eq!(provenance.tests[0].traces.first, 0);
+    assert_eq!(provenance.tests[0].traces.count, 4);
+}
+
 /// FR-191-AC-3: the source route writes one obligation identity for the same
 /// checked P95 claim regardless of its seed, while retaining the selected
 /// seed in each run's provenance.
@@ -731,6 +1102,7 @@ fn run_timed_method_with_limits(
         .expect("the timed claim checks");
     check_statistical(
         StatisticalRequest {
+            workers: 1,
             subject: ModelSubject {
                 simulation: world.request(),
                 proof_bounds: Vec::new(),
@@ -969,6 +1341,7 @@ fn elapsed_measure_reads_the_sampled_timestamp_difference() {
         .expect("the latency claim checks");
     let outcome = check_statistical(
         StatisticalRequest {
+            workers: 1,
             subject: ModelSubject {
                 simulation: world.request(),
                 proof_bounds: Vec::new(),
@@ -1878,6 +2251,7 @@ fn two_symmetric_servers_run_one_test() {
     let symmetric = World::symmetric_objects(&prob_world::service(&claim), &["a", "b"]);
     fn request(world: &World, symmetry: Vec<SymmetryDeclaration>) -> StatisticalRequest<'_> {
         StatisticalRequest {
+            workers: 1,
             subject: world.subject(),
             claim: world.claim("Busy"),
             method: StatisticalMethod::Okamoto,
@@ -1938,6 +2312,7 @@ fn two_symmetric_servers_run_one_test_under_any_operation_weights() {
         let world = World::symmetric_objects(&prob_world::service(&claims(workload)), &["a", "b"]);
         let verdict = completed(check_statistical(
             StatisticalRequest {
+                workers: 1,
                 subject: world.subject(),
                 claim: world.claim("Busy"),
                 method: StatisticalMethod::Okamoto,
@@ -1975,6 +2350,7 @@ fn mirrored_initial_states_merge_into_two_orbits() {
     let run = |symmetry| {
         completed(check_statistical(
             StatisticalRequest {
+                workers: 1,
                 subject: world.subject(),
                 claim: world.claim("Busy"),
                 method: StatisticalMethod::Okamoto,
@@ -2012,6 +2388,7 @@ fn another_sampler_is_refused() {
     let other = DefinitionRef::new("agent-ix", "filament.simulation.other/v1").expect("valid");
     let refusal = check_statistical(
         StatisticalRequest {
+            workers: 1,
             subject: world.subject(),
             claim: world.claim("P95"),
             method: StatisticalMethod::Okamoto,

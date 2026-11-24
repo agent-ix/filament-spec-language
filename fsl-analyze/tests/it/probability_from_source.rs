@@ -1389,6 +1389,7 @@ fn native_probability_reward_admission_preserves_accounting_stop() {
         subject.simulation.meter.work_units = bound;
         let raw_statistical = check_statistical(
             StatisticalRequest {
+                workers: 1,
                 subject,
                 claim: world.claim("Delivered"),
                 method: StatisticalMethod::Okamoto,
@@ -1498,6 +1499,7 @@ fn native_probability_reward_admission_cancellation_keeps_its_cause() {
             statistical_item(
                 RequestIndex::new(0),
                 StatisticalRequest {
+                    workers: 1,
                     subject: world.subject(),
                     claim: world.claim("Delivered"),
                     method: StatisticalMethod::Okamoto,
@@ -2317,6 +2319,7 @@ fn on_each_statistical_cancellation_keeps_its_cause() {
     let item = statistical_item(
         RequestIndex::new(0),
         StatisticalRequest {
+            workers: 1,
             subject: world.subject(),
             claim: world.claim("Sampled"),
             method: StatisticalMethod::Okamoto,
@@ -2357,6 +2360,7 @@ fn on_each_statistical_evidence_builds_no_product() {
     let item = statistical_item(
         RequestIndex::new(0),
         StatisticalRequest {
+            workers: 1,
             subject: world.subject(),
             claim: world.claim("Sampled"),
             method: StatisticalMethod::Okamoto,

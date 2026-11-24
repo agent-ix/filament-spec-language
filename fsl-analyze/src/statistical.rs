@@ -91,6 +91,9 @@ pub struct SampledRequest<'a> {
     pub method: StatisticalMethod,
     /// The seed.
     pub seed: u64,
+    /// The maximum sample workers requested by the caller (FR-191). A
+    /// sampler may retain the serial route while still honoring this input.
+    pub workers: usize,
     /// The sampler identity, recorded in the provenance.
     pub sampler: &'a DefinitionRef,
     /// The budgets.
@@ -273,6 +276,9 @@ pub trait BehaviourSampler {
     /// A regeneration walk.
     type Walk: RegenerationWalk;
 
+    /// The sampler's maximum concurrent sample width.
+    fn sample_batch_width(&self) -> usize;
+
     /// The sample at `trace` under `seed`, from `test`'s initial state,
     /// evaluated against the claim's event, fraction or activation, with
     /// the steps it took.
@@ -282,9 +288,32 @@ pub trait BehaviourSampler {
     /// A [`SampleHalt`] when the sample cannot be drawn to its end.
     fn sample(&mut self, test: &TestSubject, seed: u64, trace: u64) -> Result<Drawn, SampleHalt>;
 
+    /// Draw a bounded speculative batch. Entries may be returned in
+    /// completion order; the engine merges them by trace index.
+    fn sample_batch(
+        &mut self,
+        test: &TestSubject,
+        seed: u64,
+        traces: &[u64],
+    ) -> Vec<(u64, Result<Drawn, SampleHalt>)>;
+
     /// A walk of one behaviour at `trace` under `seed` from `test`'s
     /// initial state, for the regenerative method.
     fn walk(&mut self, test: &TestSubject, seed: u64, trace: u64) -> Self::Walk;
+}
+
+fn serial_sample_batch<S: BehaviourSampler>(
+    sampler: &mut S,
+    test: &TestSubject,
+    seed: u64,
+    traces: &[u64],
+) -> Vec<(u64, Result<Drawn, SampleHalt>)> {
+    traces
+        .first()
+        .copied()
+        .map(|trace| (trace, sampler.sample(test, seed, trace)))
+        .into_iter()
+        .collect()
 }
 
 /// One behaviour sampled step by step (FR-190).
@@ -693,6 +722,7 @@ impl Plan<'_> {
         // `None` when `N` exceeds every count a test can reach, so only a
         // budget ends the test.
         let fixed = count.as_ref().and_then(Integer::to_u64);
+        let mut speculative = BTreeMap::new();
         // A method with a fixed `N` compares it with the budgets before it
         // draws (FR-191): `N` counted samples need at least `N` draws.
         if let (StatisticalMethod::Okamoto | StatisticalMethod::ClopperPearson, Some(required)) =
@@ -771,7 +801,45 @@ impl Plan<'_> {
                     max_draws: limits.max_draws,
                     tests: self.tests,
                 })?;
-            let drawn = sampler.sample(subject, self.request.seed, trace);
+            if !speculative.contains_key(&trace) {
+                let remaining = limits.max_draws.saturating_sub(tally.draws).max(1);
+                let batch_len = self
+                    .request
+                    .workers
+                    .min(sampler.sample_batch_width())
+                    .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+                if batch_len == 0 {
+                    return Err(fault("sampler-declared-zero-sample-batch-width"));
+                }
+                let mut traces = Vec::with_capacity(batch_len);
+                for offset in 0..batch_len {
+                    let sample_trace = tally
+                        .draws
+                        .checked_add(offset as u64)
+                        .and_then(|draw| draw.checked_mul(stride))
+                        .and_then(|base| base.checked_add(u64::from(index)))
+                        .ok_or(StatisticalRefusal::TraceIndexRange {
+                            max_draws: limits.max_draws,
+                            tests: self.tests,
+                        })?;
+                    traces.push(sample_trace);
+                }
+                let batch = sampler.sample_batch(subject, self.request.seed, &traces);
+                if let Some(cause) = cancelled(self.cancel) {
+                    return Ok(TestEnd::Stopped(StatisticalStop::Cancelled(cause)));
+                }
+                for (sample_trace, sample) in batch {
+                    if !traces.contains(&sample_trace) {
+                        return Err(fault("worker-batch-returned-an-unrequested-trace"));
+                    }
+                    if speculative.insert(sample_trace, sample).is_some() {
+                        return Err(fault("worker-batch-returned-a-duplicate-trace"));
+                    }
+                }
+            }
+            let drawn = speculative
+                .remove(&trace)
+                .ok_or(fault("worker-batch-omitted-a-trace"))?;
             tally.draws += 1;
             let Drawn { sample, steps } = match drawn {
                 Err(halt) => return halted(halt),
@@ -1181,6 +1249,9 @@ fn check_sampled_with_meter<S: BehaviourSampler>(
     cancel: &Cancel,
     clause_meter: Meter,
 ) -> Result<StatisticalOutcome, StatisticalRefusal> {
+    if request.workers == 0 {
+        return Err(StatisticalRefusal::Workers);
+    }
     let form = request.claim.form();
     if !form.admits(request.method) {
         return Err(StatisticalRefusal::NotStatistical {

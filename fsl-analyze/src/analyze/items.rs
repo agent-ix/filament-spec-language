@@ -1335,6 +1335,7 @@ pub(super) fn statistical_refusal(
     EngineReport::Refused(match refusal {
         R::Admission(failure) => admission(failure),
         R::Symmetry(_) => symmetry(),
+        R::Workers => named_decline(INVALID_VALUE, "workers", "0".to_owned()),
         R::RequiresBound(_) => Refusal::RequiresBound,
         R::NotStatistical { .. } => Refusal::NotStatistical,
         // FR-192's map settles the rest, a refused predicate by FR-192-AC-7's
