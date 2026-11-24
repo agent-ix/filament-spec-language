@@ -6708,6 +6708,25 @@ impl<'a> Typer<'a> {
                     location,
                 )
             }
+            BinderQuery::Only => {
+                if source_type.kind() != filament_exact::CollectionKind::Set
+                    || !matches!(source_type.element(), ValueType::ClockReference)
+                {
+                    return Err(mismatch(location));
+                }
+                let value_type = body.value_type.clone();
+                node(
+                    NodeKind::Query {
+                        visit: Visit::Only,
+                        slot,
+                        name: self.slot_name(slot, location)?,
+                        source: self.push(source),
+                        body: self.push(body),
+                    },
+                    value_type,
+                    location,
+                )
+            }
         };
         self.unbind(1);
         Ok(typed)

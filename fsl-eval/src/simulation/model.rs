@@ -76,8 +76,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
-    EffectiveId, Incomplete, Integer, IntegerInterval, Meter, NodeKey, ObjectReference, Refusal,
-    ScalarLimits, Undefined, ValueType,
+    ClockPlaceReference, EffectiveId, Incomplete, Integer, IntegerInterval, Meter, NodeKey,
+    ObjectReference, Refusal, ScalarLimits, Undefined, ValueType,
 };
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::declaration::TypeEnvironment;
@@ -813,7 +813,7 @@ impl From<AdmissionFailure> for ProbabilityAdmissionFailure {
 type ClockCandidateCache = std::sync::Mutex<
     BTreeMap<
         Option<domain::ClockSelectorMaxima>,
-        Result<std::sync::Arc<Vec<ObjectReference>>, ClockDomainRefusal>,
+        Result<std::sync::Arc<Vec<ClockPlaceReference>>, ClockDomainRefusal>,
     >,
 >;
 
@@ -2130,8 +2130,7 @@ impl<'a> ModelSystem<'a> {
         objects: &[ObjectReference],
         selectors: Option<&domain::ClockSelectorMaxima>,
     ) -> Option<domain::Domain> {
-        let objects = self.with_clock_candidates(value_type, objects, selectors)?;
-        let objects = objects.as_ref();
+        let clock_references = self.clock_references_for(value_type, selectors)?;
         let bits = match self
             .max_value_bits
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -2139,7 +2138,14 @@ impl<'a> ModelSystem<'a> {
             0 => None,
             bits => Some(bits),
         };
-        domain::Domain::of_bounded(value_type, objects, self.types, &self.record_orders, bits)
+        domain::Domain::of_bounded_with_clock_references(
+            value_type,
+            objects,
+            &clock_references,
+            self.types,
+            &self.record_orders,
+            bits,
+        )
     }
 
     pub(super) fn reset_value_bound_cuts(&self) {

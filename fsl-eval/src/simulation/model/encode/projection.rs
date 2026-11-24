@@ -1417,7 +1417,12 @@ mod tests {
     /// `{"type":"clock_reference","place_id":<text>}` with their own place
     /// texts and so two distinct canonical keys, ordered by the place text's
     /// UTF-8 bytes, and never as the reference triple.
-    #[trace("FSpec-TC-2084", "FSpec-FR-181-AC-35")]
+    #[trace(
+        "FSpec-TC-2084",
+        "FSpec-FR-181-AC-35",
+        "FR-1040-AC-11",
+        "FR-1040-AC-12"
+    )]
     #[test]
     fn clock_references_encode_as_their_place_id_text() {
         let encode = |value: &Value| {
@@ -1466,5 +1471,60 @@ mod tests {
         );
         assert_eq!(set_of(vec![y.clone(), x.clone()]), expected);
         assert_eq!(set_of(vec![x, y]), expected);
+
+        let (Value::ClockReference(x), Value::ClockReference(y)) = (
+            crate::test_clock_reference::clock_reference_of("x"),
+            crate::test_clock_reference::clock_reference_of("y"),
+        ) else {
+            panic!("clock references");
+        };
+        let map_of = |entries| {
+            let map_type = MapType::new(ValueType::ClockReference, ValueType::Boolean, None)
+                .expect("clock references are leaf map keys");
+            let value = filament_exact::from_admitted_map(map_type, entries)
+                .expect("distinct clock-reference keys form a map");
+            encode(&value)
+        };
+        let xy = map_of(vec![
+            (Value::ClockReference(x.clone()), Value::Boolean(false)),
+            (Value::ClockReference(y.clone()), Value::Boolean(true)),
+        ]);
+        let yx = map_of(vec![
+            (Value::ClockReference(y.clone()), Value::Boolean(true)),
+            (Value::ClockReference(x.clone()), Value::Boolean(false)),
+        ]);
+        assert_eq!(
+            xy, yx,
+            "map key order is independent of supplied entry order"
+        );
+
+        let state_key = |value: &Enc| {
+            crate::simulation::key::canonical_state_key(
+                value,
+                fsl_foundation::IdentityLimits::default(),
+            )
+            .expect("a typed clock reference has a state key")
+        };
+        assert_eq!(state_key(&xy), state_key(&yx));
+        let set_xy = set_of(vec![
+            Value::ClockReference(x.clone()),
+            Value::ClockReference(y.clone()),
+        ]);
+        let set_yx = set_of(vec![
+            Value::ClockReference(y.clone()),
+            Value::ClockReference(x.clone()),
+        ]);
+        assert_eq!(state_key(&set_xy), state_key(&set_yx));
+        let set_x = set_of(vec![Value::ClockReference(x.clone())]);
+        assert_ne!(
+            state_key(&set_x),
+            state_key(&set_xy),
+            "adding a distinct place changes the Set state key"
+        );
+        assert_ne!(
+            state_key(&encode(&Value::ClockReference(x))),
+            state_key(&encode(&Value::ClockReference(y))),
+            "two places have different state keys"
+        );
     }
 }

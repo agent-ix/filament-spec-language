@@ -1506,6 +1506,16 @@ fn expressions(g: &mut Grammar) {
                 x(")"),
             ]),
             s(vec![
+                x("only"),
+                x("("),
+                ident(),
+                x("in"),
+                r(P::Expression),
+                x(":"),
+                r(P::Expression),
+                x(")"),
+            ]),
+            s(vec![
                 c(vec![x("flatten"), x("dropFirst")]),
                 x("("),
                 r(P::Expression),

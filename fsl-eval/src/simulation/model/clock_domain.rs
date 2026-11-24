@@ -7,7 +7,9 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use filament_exact::{FieldValue, NodeKey, ObjectId, ObjectReference, Value, ValueType};
+use filament_exact::{
+    ClockPlaceReference, FieldValue, NodeKey, ObjectId, ObjectReference, Value, ValueType,
+};
 use fsl_semantics::model::clock_reference::identity::{
     Decimal, PathEntry, PlaceIdentity, SlotIndex,
 };
@@ -48,7 +50,15 @@ pub enum ClockDomainRefusal {
     InvalidAdmittedSeed,
 }
 
-type Candidates = Result<Vec<ObjectReference>, ClockDomainRefusal>;
+type Candidates = Result<Vec<ClockPlaceReference>, ClockDomainRefusal>;
+
+fn clock_reference_as_object(reference: &ClockPlaceReference) -> Option<ObjectReference> {
+    Some(ObjectReference::new(
+        reference.universe().clone(),
+        fsl_semantics::check::clock_reference_target(),
+        ObjectId::new(reference.text()).ok()?,
+    ))
+}
 
 impl ModelSystem<'_> {
     /// Every valid `Reference<Clock>` identity of this model universe under the
@@ -64,7 +74,13 @@ impl ModelSystem<'_> {
     pub fn clock_reference_identities(
         &self,
     ) -> Result<Arc<Vec<ObjectReference>>, ClockDomainRefusal> {
-        self.clock_reference_candidates(None)
+        Ok(Arc::new(
+            self.clock_reference_candidates(None)?
+                .iter()
+                .map(clock_reference_as_object)
+                .collect::<Option<Vec<_>>>()
+                .ok_or(ClockDomainRefusal::InvalidAdmittedSeed)?,
+        ))
     }
 
     /// [`Self::clock_reference_identities`] under the exploration-derived
@@ -79,7 +95,13 @@ impl ModelSystem<'_> {
         &self,
         maxima: &std::collections::BTreeMap<NodeKey, Vec<u64>>,
     ) -> Result<Arc<Vec<ObjectReference>>, ClockDomainRefusal> {
-        self.clock_reference_candidates(Some(maxima))
+        Ok(Arc::new(
+            self.clock_reference_candidates(Some(maxima))?
+                .iter()
+                .map(clock_reference_as_object)
+                .collect::<Option<Vec<_>>>()
+                .ok_or(ClockDomainRefusal::InvalidAdmittedSeed)?,
+        ))
     }
 
     /// The candidates under the exploration-derived `selectors` when the caller
@@ -88,7 +110,7 @@ impl ModelSystem<'_> {
     pub(super) fn clock_reference_candidates(
         &self,
         selectors: Option<&ClockSelectorMaxima>,
-    ) -> Result<Arc<Vec<ObjectReference>>, ClockDomainRefusal> {
+    ) -> Result<Arc<Vec<ClockPlaceReference>>, ClockDomainRefusal> {
         let mut cache = self
             .clock_candidates
             .lock()
@@ -102,21 +124,17 @@ impl ModelSystem<'_> {
             .clone()
     }
 
-    /// `objects` widened by the clock candidates when `value_type` holds a
-    /// Clock reference; `None` when those candidates cannot be enumerated.
-    pub(super) fn with_clock_candidates<'o>(
+    /// The typed clock-place candidates when `value_type` contains one;
+    /// `None` when those candidates cannot be enumerated.
+    pub(super) fn clock_references_for(
         &self,
         value_type: &ValueType,
-        objects: &'o [ObjectReference],
         selectors: Option<&ClockSelectorMaxima>,
-    ) -> Option<std::borrow::Cow<'o, [ObjectReference]>> {
+    ) -> Option<Arc<Vec<ClockPlaceReference>>> {
         if clock_reference_paths(value_type, self.types).is_empty() {
-            return Some(std::borrow::Cow::Borrowed(objects));
+            return Some(Arc::new(Vec::new()));
         }
-        let candidates = self.clock_reference_candidates(selectors).ok()?;
-        Some(std::borrow::Cow::Owned(
-            [objects, candidates.as_slice()].concat(),
-        ))
+        self.clock_reference_candidates(selectors).ok()
     }
 
     /// Whether `value_type` holds no Clock reference, or this universe's Clock
@@ -135,8 +153,29 @@ impl ModelSystem<'_> {
         value_type: &ValueType,
         objects: &[ObjectReference],
     ) -> Option<Domain> {
-        let objects = self.with_clock_candidates(value_type, objects, None)?;
-        Domain::of(value_type, &objects, self.types, &self.record_orders)
+        let clocks = self.clock_references_for(value_type, None)?;
+        Domain::of_with_clock_references(
+            value_type,
+            objects,
+            &clocks,
+            self.types,
+            &self.record_orders,
+        )
+    }
+
+    pub(super) fn map_size_with_clocks(
+        &self,
+        value_type: &ValueType,
+        objects: &[ObjectReference],
+    ) -> Option<u128> {
+        let clocks = self.clock_references_for(value_type, None)?;
+        Domain::map_size_with_clock_references(
+            value_type,
+            objects,
+            &clocks,
+            self.types,
+            &self.record_orders,
+        )
     }
 
     fn build_clock_reference_candidates(
@@ -203,6 +242,12 @@ impl ModelSystem<'_> {
                         let Ok(reference) = encode_identity(&owner, &identity, limits) else {
                             continue;
                         };
+                        let Ok(reference) = ClockPlaceReference::new(
+                            owner.universe().clone(),
+                            reference.object().as_str(),
+                        ) else {
+                            continue;
+                        };
                         if seen.insert(reference.clone()) {
                             found.push(reference);
                         }
@@ -239,24 +284,21 @@ impl ModelSystem<'_> {
 /// universe and canonical place id.
 fn collect_clock_references(
     value: &Value,
-    references: &mut Vec<ObjectReference>,
+    references: &mut Vec<ClockPlaceReference>,
     work: &mut u128,
     limit: u64,
 ) -> Result<(), ClockDomainRefusal> {
     match value {
         Value::ClockReference(reference) => {
             charge_seed(work, limit)?;
-            let object = ObjectId::new(reference.text())
-                .map_err(|_| ClockDomainRefusal::InvalidAdmittedSeed)?;
-            references.push(ObjectReference::new(
-                reference.universe().clone(),
-                fsl_semantics::check::clock_reference_target(),
-                object,
-            ));
+            references.push(reference.clone());
         }
         Value::Reference(reference) if is_clock_type(reference.object_type()) => {
             charge_seed(work, limit)?;
-            references.push(reference.clone());
+            references.push(
+                ClockPlaceReference::new(reference.universe().clone(), reference.object().as_str())
+                    .map_err(|_| ClockDomainRefusal::InvalidAdmittedSeed)?,
+            );
         }
         Value::Option(option) => {
             if let Some(payload) = option.payload() {
@@ -399,7 +441,7 @@ mod tests {
         collect_clock_references(&nested, &mut references, &mut work, 1)
             .expect("the first seed fits the bound");
         assert_eq!(references.len(), 1);
-        assert_eq!(references[0].object().as_str(), seed_text);
+        assert_eq!(references[0].text(), seed_text);
         assert_eq!(
             collect_clock_references(&nested, &mut references, &mut work, 1),
             Err(ClockDomainRefusal::TooMany { limit: 1 })
@@ -443,6 +485,6 @@ mod tests {
         collect_clock_references(&value_only, &mut references, &mut work, 1)
             .expect("the map value seed fits the bound");
         assert_eq!(references.len(), 1);
-        assert_eq!(references[0].object().as_str(), value.text());
+        assert_eq!(references[0].text(), value.text());
     }
 }
