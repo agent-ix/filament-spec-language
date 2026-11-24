@@ -2530,11 +2530,17 @@ fn settle_fair_interval(
             if let Some(tamper) = tamper {
                 tamper(&mut certificate);
             }
-            let document =
-                probability_proof_document(system, claims, item, &certificate, limits, cancel)?;
+            let document = probability_proof_document(system, claims, item, &certificate, limits, cancel)
+                .map_err(|error| {
+                    eprintln!("interval producer error: {error:?}");
+                    error
+                })?;
             certificate.values = document.document().values.clone();
-            let bytes =
-                fsl_replay::write_value_bounds_proof_document(&document, side, limits, cancel)?;
+            let bytes = fsl_replay::write_value_bounds_proof_document(&document, side, limits, cancel)
+                .map_err(|error| {
+                    eprintln!("interval writer error: {error:?}");
+                    error
+                })?;
             let check = fsl_replay::check_probability_certificate_document_as(
                 system,
                 claims,
@@ -2543,7 +2549,11 @@ fn settle_fair_interval(
                 interval_role(side, bound),
                 limits,
                 cancel,
-            )?;
+            )
+            .map_err(|error| {
+                eprintln!("interval checker error: {error:?}");
+                error
+            })?;
             Ok::<_, ProbabilityDocumentError>((certificate, check))
         })();
         sides.push((side, checked));
