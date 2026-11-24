@@ -126,6 +126,12 @@ fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
     }
 }
 
+fn invalid_target(reason: impl Into<String>) -> RunCause {
+    RunCause::MonitorTargetRequest {
+        reason: reason.into(),
+    }
+}
+
 fn exact_rational(value: fsl_package::number::ExactRational) -> filament_exact::Rational {
     filament_exact::Rational::new(
         filament_exact::Integer::from(value.numerator()),
@@ -613,7 +619,7 @@ fn read_inputs(
         .take()
         .map(|raw| {
             serde_json::from_str::<wire::MonitorTargetWire>(raw.get())
-                .map_err(|_| invalid("/request/target", "invalid MonitorTarget"))
+                .map_err(|_| invalid_target("invalid MonitorTarget"))
         })
         .transpose()?;
     if target.as_ref().is_some_and(|target| {
@@ -622,12 +628,11 @@ fn read_inputs(
             "step" | "event" | "sample" | "position"
         ) && package.graph().time_unit_scale(&target.unit).is_err()
     }) {
-        return Err(invalid("/request/target", "invalid MonitorTarget"));
+        return Err(invalid_target("invalid MonitorTarget"));
     }
     let max_activations = caller.monitor_max_activations();
     if target.is_some() && max_activations.is_none() {
-        return Err(invalid(
-            "/request/target",
+        return Err(invalid_target(
             "monitor.max_activations is required when target is present",
         ));
     }
@@ -650,8 +655,7 @@ fn read_inputs(
     });
     if let Some(target) = target.as_ref() {
         let Some(prepare) = target_preparer.as_mut() else {
-            return Err(invalid(
-                "/request/target",
+            return Err(invalid_target(
                 "a driver target-preparation handoff is required",
             ));
         };

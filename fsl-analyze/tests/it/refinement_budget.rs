@@ -392,7 +392,10 @@ fn a_replay_over_the_budget_settles_incomplete_not_parity() {
 #[trace("TC-521", "FR-126-AC-26")]
 #[test]
 fn refinement_refuses_at_max_states_before_keying_the_later_initial_states() {
-    let world = RingWorld::new();
+    let world = RingWorld::with(
+        Variant::default(),
+        &crate::ring_world::ring_is_queue("items = sequence[];"),
+    );
     let check = |max_states: usize| {
         let mut simulation = world.concrete_request(UNLIMITED);
         let first = simulation.initial[0].clone();
@@ -410,7 +413,7 @@ fn refinement_refuses_at_max_states_before_keying_the_later_initial_states() {
                 abstract_package: world.package(),
                 abstract_initial: vec![world.abstract_initial()].into(),
                 abstract_protocol_binding: None,
-                max_depth: None,
+                max_depth: Some(0),
                 limits,
             },
             &Cancel::new(),
@@ -424,7 +427,7 @@ fn refinement_refuses_at_max_states_before_keying_the_later_initial_states() {
     };
     let (outcome, keyed) = check(ModelCheckLimits::default().limits.max_states);
     assert!(
-        matches!(outcome, SafetyOutcome::Holds { .. }),
+        matches!(outcome, SafetyOutcome::BoundReached { depth: 0, .. }),
         "{outcome:?}"
     );
     assert_eq!(keyed, 3, "every initial state is keyed within the budget");

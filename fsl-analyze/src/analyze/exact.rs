@@ -306,6 +306,24 @@ pub fn exact_probabilistic_item<'a>(
     )
 }
 
+/// Settle one test-only exact engine report without constructing a package
+/// analyzer, so EN-5 refusal paths can be asserted directly.
+#[cfg(feature = "test-support")]
+pub fn settle_exact_engine_report(
+    request: ProductRequest<'_>,
+    cancel: &Cancel,
+) -> super::AnalyzeRecord {
+    let engines = super::Engines::fsl().expect("the linked engines are admitted");
+    let backend = BackendId::new(en5::BACKEND_ID);
+    let engine = engines.get(&backend).expect("EN-5 is linked");
+    super::settle(
+        RequestIndex::new(0),
+        Capability::ProbabilisticSatisfaction,
+        engine,
+        run(request, cancel, None, None),
+    )
+}
+
 /// [`exact_probabilistic_item`] whose certificate `tamper` alters after the
 /// solver built it and before the core's checker sees it: the way a test
 /// shows a rejected certificate never settles `proved`.
@@ -423,20 +441,6 @@ fn rational_bits_limit(
         },
         subject,
     )
-}
-
-fn exact_values_exceed_rational_budget(values: &[ExtRational], max_bits: u64) -> bool {
-    values.iter().any(|value| match value {
-        ExtRational::Finite(value) => {
-            value
-                .numerator()
-                .magnitude_bits()
-                .saturating_add(value.denominator().magnitude_bits())
-                .saturating_add(1)
-                > max_bits
-        }
-        ExtRational::PlusInfinity => false,
-    })
 }
 
 /// How a failed claim-binding, claim-identity or checker-graph step settles: a
@@ -769,7 +773,7 @@ fn run_timed(
         ProbabilityObjective::Workload => None,
     };
     if let Some(first) = interval {
-        return raise_until_accepted(&product, bound, &limits, first, |interval| {
+        return raise_until_accepted(&product, bound, &limits, cancel, first, |interval| {
             let mut extremum = None;
             let mut documents = Vec::with_capacity(2);
             for (side, ends) in [
@@ -1062,6 +1066,7 @@ fn run_timed_mean(
         crate::exact_probabilistic::ELAPSED_REWARD,
         objective,
         &limits,
+        cancel,
     ) {
         Ok(solved) => solved,
         Err(UnboundedError::MaxPolicyIterations) => {
@@ -1614,16 +1619,23 @@ fn run(
                     .iter()
                     .map(|labels| labels.get(1).copied().unwrap_or(false))
                     .collect::<Vec<_>>();
-                decide_until(solve_product, &target, &until, objective, &limits)
+                decide_until(solve_product, &target, &until, objective, &limits, cancel)
             }
             ProbForm::Reach {
                 target: ReachTarget::Always(_),
                 ..
-            } => decide_always(solve_product, &target, objective, &limits),
+            } => decide_always(solve_product, &target, objective, &limits, cancel),
             ProbForm::ExpectedReward { reward, .. } => {
-                decide_expected_reward(solve_product, &target, reward.as_str(), objective, &limits)
+                decide_expected_reward(
+                    solve_product,
+                    &target,
+                    reward.as_str(),
+                    objective,
+                    &limits,
+                    cancel,
+                )
             }
-            _ => decide_reachability(solve_product, &target, objective, &limits),
+            _ => decide_reachability(solve_product, &target, objective, &limits, cancel),
         };
         let result = result.and_then(|solved| {
             let scalar_too_wide = solved.values.iter().any(|value| match value {
@@ -1660,7 +1672,7 @@ fn run(
                             .map(|labels| labels.get(1).copied().unwrap_or(false))
                             .collect::<Vec<_>>();
                         crate::exact_probabilistic::decide_until_threshold(
-                            solve_product, &target, &until, objective, threshold, &limits,
+                            solve_product, &target, &until, objective, threshold, &limits, cancel,
                         )
                     }
                     ProbForm::Reach {
@@ -1680,6 +1692,7 @@ fn run(
                             complement_objective,
                             &complement_threshold,
                             &limits,
+                            cancel,
                         ) {
                             Ok(crate::exact_probabilistic::UnboundedOutcome::Bounds {
                                 lower,
@@ -1705,7 +1718,7 @@ fn run(
                     }
                     ProbForm::ExpectedReward { reward, .. } => {
                         match crate::exact_probabilistic::decide_expected_reward_threshold(
-                            solve_product, &target, reward.as_str(), threshold, &limits,
+                            solve_product, &target, reward.as_str(), threshold, &limits, cancel,
                         ) {
                             Ok(crate::exact_probabilistic::ExpectedRewardOutcome::Bounds {
                                 lower,
@@ -1733,7 +1746,7 @@ fn run(
                         }
                     }
                     _ => crate::exact_probabilistic::decide_reachability_threshold(
-                        solve_product, &target, objective, threshold, &limits,
+                        solve_product, &target, objective, threshold, &limits, cancel,
                     ),
                     };
                 match interval_result {
@@ -2183,7 +2196,7 @@ fn run(
             request_limits: &limits,
         };
         if subject_of.monitor.is_some() {
-            return raise_until_accepted(&product, bound, &limits, interval, |interval| {
+            return raise_until_accepted(&product, bound, &limits, cancel, interval, |interval| {
                 settle_interval(
                     &subject_of,
                     interval,
@@ -2489,6 +2502,7 @@ fn raise_until_accepted(
     product: &ProbProduct,
     bound: &Bound,
     limits: &crate::exact_probabilistic::ExactProbLimits,
+    cancel: &Cancel,
     mut interval: Interval,
     mut settle: impl FnMut(&Interval) -> Result<EngineReport, Box<EngineReport>>,
 ) -> EngineReport {
@@ -3253,10 +3267,23 @@ fn replay_refutation(
         // retry with the one that reaches a failure most, never continuing
         // past a state a direct event has already decided.
         let retried = match stopped.as_deref() {
-            None => decide_reachability(product, &accepting, UnboundedObjective::Max, limits),
+            None => decide_reachability(
+                product,
+                &accepting,
+                UnboundedObjective::Max,
+                limits,
+                cancel,
+            ),
             Some(stopped) => {
                 let open = stopped.iter().map(|stopped| !stopped).collect::<Vec<_>>();
-                decide_until(product, &open, &accepting, UnboundedObjective::Max, limits)
+                decide_until(
+                    product,
+                    &open,
+                    &accepting,
+                    UnboundedObjective::Max,
+                    limits,
+                    cancel,
+                )
             }
         };
         match retried {

@@ -187,6 +187,7 @@ pub(super) fn run(
         &predicate,
         weight.map(|name| name.as_str()),
         &limits,
+        cancel,
     ) {
         Ok(solution) => solution,
         Err(UnboundedError::MaxRationalBits) => {
@@ -538,7 +539,9 @@ fn every_scheduler(
     }
     let chain = induced_chain(product, &policy);
     let solved =
-        match crate::exact_probabilistic::decide_long_run_workload(&chain, predicate, None, limits)
+        match crate::exact_probabilistic::decide_long_run_workload(
+            &chain, predicate, None, limits, cancel,
+        )
         {
             Ok(solved) => solved,
             Err(error) => return stopped(error),
@@ -730,7 +733,7 @@ fn fair_randomized_refutation(
         Ok(chain) => chain,
         Err(_) => return broken(),
     };
-    let solution = match decide_long_run_workload(&chain, predicate, None, limits) {
+    let solution = match decide_long_run_workload(&chain, predicate, None, limits, cancel) {
         Ok(solution) => solution,
         Err(error) => return unbounded_failure(error, limits, subject),
     };

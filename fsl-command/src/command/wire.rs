@@ -1026,7 +1026,7 @@ struct MonitorTargetMembers {
     unit: String,
     width_bits: u32,
     uncertainty: fsl_package::number::ExactRational,
-    max_event_rate: serde_json::Value,
+    max_event_rate: Box<RawValue>,
     max_reading_gap: u64,
 }
 
@@ -1034,14 +1034,14 @@ impl<'de> serde::Deserialize<'de> for MonitorTargetWire {
     fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
         use serde::de::Error as _;
 
-        let members = MonitorTargetMembers::deserialize(decoder)
+        let members = from_object::<_, MonitorTargetMembers>(decoder)
             .map_err(|_| D::Error::custom("invalid MonitorTarget"))?;
-        let max_event_rate = if members.max_event_rate.is_null() {
+        let max_event_rate = if members.max_event_rate.get() == "null" {
             None
         } else {
             Some(
-                serde_json::from_value::<fsl_package::number::ExactRational>(
-                    members.max_event_rate,
+                serde_json::from_str::<fsl_package::number::ExactRational>(
+                    members.max_event_rate.get(),
                 )
                 .map_err(|_| D::Error::custom("invalid MonitorTarget"))?,
             )
@@ -1129,6 +1129,11 @@ mod monitor_target_tests {
             VALID.replace(
                 "\"counter\":\"ticks\",",
                 "\"counter\":\"ticks\",\"counter\":\"again\",",
+            ),
+            r#"["ticks","ms",16,{"kind":"rational","numerator":"0","denominator":"1"},null,1]"#.to_owned(),
+            VALID.replace(
+                "\"max_event_rate\":null",
+                "\"max_event_rate\":{\"kind\":\"rational\",\"numerator\":\"0\",\"numerator\":\"0\",\"denominator\":\"1\"}",
             ),
             VALID.replace(",\"unit\":\"ms\"", ""),
             VALID.replace("\"width_bits\":16", "\"width_bits\":\"wide\""),

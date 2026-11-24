@@ -331,6 +331,7 @@ pub fn decide_fair_reachability(
         &target,
         objective,
         limits,
+        cancel,
     )?;
     result.values = evaluation.restrict(result.values);
     result.components = result
@@ -375,6 +376,7 @@ fn fair_reachability(
     target: &[bool],
     objective: UnboundedObjective,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<FairUnboundedResult, FairProductError> {
     if product.kind != ProductKind::Mdp
         || target.len() != product.states.len()
@@ -591,9 +593,8 @@ pub fn decide_fair_long_run_mdp(
         &collapsed_graph,
         &collapsed_fixed,
         objective,
-        limits.max_policy_iterations,
         initial_policy,
-        limits.max_rational_bits,
+        super::unbounded::PolicyBudget::new(limits, cancel),
     )?;
     let original_policy =
         expand_collapsed_policy(&graph, &deterministic_policy, &state_map, &collapsed)?;
@@ -621,8 +622,9 @@ pub fn decide_fair_long_run_mdp(
         for k in 1..=limits.max_policy_iterations {
             let policy = randomized_fair_policy(&graph, &fair_components, &deterministic_policy, k);
             let induced = induced_chain(product, &graph, &policy)?;
-            let evaluated =
-                super::unbounded::decide_long_run_workload(&induced, predicate, weight, limits)?;
+            let evaluated = super::unbounded::decide_long_run_workload(
+                &induced, predicate, weight, limits, cancel,
+            )?;
             if bound_refuted(product, &evaluated.values, objective, threshold) {
                 found = Some(FairRandomizedWitness {
                     k,

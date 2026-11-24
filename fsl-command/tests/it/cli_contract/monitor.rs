@@ -308,6 +308,12 @@ fn target_validation_and_activation_setting_precede_the_stream() {
     let stream = monitor(&path, &input);
     let refusal = stream.refused();
     assert_eq!(refusal.exit, 20, "{}", refusal.document);
+    assert_eq!(
+        refusal.document["diagnostics"][0]["message"],
+        "invalid request member /request/target: invalid MonitorTarget",
+        "{}",
+        refusal.document
+    );
     assert!(
         refusal
             .document
@@ -389,6 +395,86 @@ fn target_validation_and_activation_setting_precede_the_stream() {
         "{}",
         refusal.document
     );
+}
+
+/// FR-644-AC-17: target admission requires object syntax and a duplicate-free
+/// rational before the driver handoff is invoked.
+#[test]
+#[trace("TC-721", "FR-644-AC-17")]
+fn malformed_target_objects_refuse_before_driver_handoff() {
+    let target = json!({
+        "counter": "tick",
+        "unit": "step",
+        "width_bits": 16,
+        "uncertainty": {"kind": "rational", "numerator": "0", "denominator": "1"},
+        "max_event_rate": null,
+        "max_reading_gap": 1
+    });
+    let mut request_with_target = request();
+    request_with_target["request"]["target"] = target;
+    let valid_request = request_with_target.to_string();
+    let positional = valid_request.replace(
+        r#"{"counter":"tick","max_event_rate":null,"max_reading_gap":1,"uncertainty":{"denominator":"1","kind":"rational","numerator":"0"},"unit":"step","width_bits":16}"#,
+        r#"["tick","step",16,{"kind":"rational","numerator":"0","denominator":"1"},null,1]"#,
+    );
+    let duplicate_rate = valid_request.replace(
+        r#""max_event_rate":null"#,
+        r#""max_event_rate":{"kind":"rational","numerator":"0","numerator":"0","denominator":"1"}"#,
+    );
+    assert_ne!(
+        positional, valid_request,
+        "positional target fixture changed"
+    );
+    assert_ne!(
+        duplicate_rate, valid_request,
+        "duplicate rate fixture changed"
+    );
+
+    let mut caller = fsl_command::command::CommandLimits::monitor(
+        fsl_command::command::MonitorPreparationLimits {
+            work: 17,
+            storage: 29,
+        },
+    );
+    caller
+        .set(
+            fsl_foundation::SettingName::Stage(fsl_foundation::Setting::MonitorMaxActivations),
+            8,
+        )
+        .expect("caller can set activation capacity");
+    let options = fsl_analyze::provider::ProviderOptions::default();
+    for malformed in [positional, duplicate_rate] {
+        let case = Case::new();
+        case.write("load.fsl", SOURCE.as_bytes());
+        let path = case.write("monitor.json", malformed.as_bytes());
+        let prepared = std::cell::Cell::new(false);
+        let mut preparer = |_: &fsl_package::CheckedPackage,
+                            _: &fsl_replay::MonitorTarget,
+                            _: &fsl_command::command::CommandLimits| {
+            prepared.set(true);
+            Ok(())
+        };
+        let error = fsl_command::command::monitor_with_target_preparer(
+            &path,
+            std::io::Cursor::new(records(&[2], true)).split(b'\n'),
+            &mut |_| {},
+            fsl_command::command::MonitorProviders {
+                negotiate: &crate::negotiation::Fr290,
+                providers: Vec::new(),
+                options: &options,
+            },
+            fsl_command::command::RunLimits::default(),
+            &caller,
+            &Cancel::new(),
+            &mut preparer,
+        )
+        .expect_err("malformed target must be refused");
+        assert_eq!(
+            error.to_string(),
+            "invalid request member /request/target: invalid MonitorTarget"
+        );
+        assert!(!prepared.get(), "malformed target must not reach driver");
+    }
 }
 
 #[trace("TC-721", "FR-644-AC-16", "FR-644-AC-17", "FR-255-AC-24")]

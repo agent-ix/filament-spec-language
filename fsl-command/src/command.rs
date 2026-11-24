@@ -891,6 +891,12 @@ pub enum RunCause {
         /// Why this member is invalid.
         reason: String,
     },
+    /// FR-644: an invalid monitor target has one stable request diagnostic.
+    #[error("invalid request member /request/target: {reason}")]
+    MonitorTargetRequest {
+        /// Why the target is invalid.
+        reason: String,
+    },
     /// FR-1039: a member whose run builds states over the package's model
     /// world, selected over a `{file}` package that carries no handoff rows.
     #[error("invalid clause request member {member}: it needs a package selected as a directory")]
@@ -1279,6 +1285,7 @@ impl RunCause {
             Self::Io { .. } => Code::IoError,
             Self::Json(_) => Code::InvalidRequest,
             Self::ClauseRequest { .. }
+            | Self::MonitorTargetRequest { .. }
             | Self::RequiresDirectory { .. }
             | Self::ClocksGivenTwice
             | Self::OutputGivenTwice
@@ -1614,6 +1621,20 @@ impl RunError {
                     .with_details(Some(serde_json::Map::from_iter([(
                         "path".to_owned(),
                         serde_json::Value::String(member.clone()),
+                    )]))),
+                ])
+            }
+            RunCause::MonitorTargetRequest { .. } => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        None,
+                        self.cause.code().as_str(),
+                        None,
+                        self.outcome_message(),
+                    )
+                    .with_details(Some(serde_json::Map::from_iter([(
+                        "path".to_owned(),
+                        serde_json::Value::String("/request/target".to_owned()),
                     )]))),
                 ])
             }

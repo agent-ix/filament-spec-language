@@ -1543,22 +1543,20 @@ fn a_fair_liveness_lasso_may_pass_through_an_instance_limited_state() {
 fn liveness_refuses_before_settling_the_crossing_protocol_root() {
     use fsl_eval::simulation::protocol::constructed_initial_states;
 
-    let run = format!(
-        "sequence Main {{ {} }}",
-        attempt("T", "set", "SetPost", "t", "true")
-    );
-    let claim = "temporal Live using t0 over (k: M::Cell) clock \"model-steps\" on origin { always eventually holds(k.v = 0) }\n";
-    let world = World::new(&(unit(ORIGIN, "", "", &run) + claim), &["c"], &[0, 1, 2, 3]);
+    // Keep this fixture free of equality expressions: the state limit is
+    // about lazy initial protocol roots, while equality metadata is unrelated
+    // to the path and can make the checked package depend on emitter details.
+    let body = "protocol R using p over (k: M::Cell) on origin {\n\
+                role w on M::Cell;\n\
+                run sequence Main { }\n\
+                finish Done as (d: Boolean) { true };\n\
+                }\n\
+                temporal Live using t0 over (k: M::Cell) clock \"model-steps\" on origin { always eventually holds(k.v < 1) }\n";
+    let world = World::new(&body, &["c"], &[0, 1, 2, 3]);
     let letters = CellV { holds: |v| v == 0 };
     let item = world.claim(&letters);
     let subject = world.subject();
-    let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(
-        subject
-            .model
-            .simulation
-            .source_package()
-            .expect("the source-route subject"),
-    );
+    let temporal_clock_selections = Vec::new();
     let mut limits = ModelCheckLimits::default();
     limits.limits.max_states = 1;
     let before = constructed_initial_states();

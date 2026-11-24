@@ -272,6 +272,13 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 ("cause".to_owned(), Value::String(reason.clone())),
             ])),
         ),
+        RunCause::MonitorTargetRequest { .. } => (
+            types::Stage::Request,
+            types::Details::Object(serde_json::Map::from_iter([(
+                "path".to_owned(),
+                Value::String("/request/target".to_owned()),
+            )])),
+        ),
         RunCause::ClauseRequest { member, .. } if member == "/request/target" => (
             types::Stage::Request,
             types::Details::Object(serde_json::Map::from_iter([(
