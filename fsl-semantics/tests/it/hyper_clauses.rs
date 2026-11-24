@@ -735,7 +735,14 @@ fn an_other_hyper_clause_keeps_its_supported_universal_sibling() {
         })
     );
     assert_eq!(sibling.form(), Some(&HyperForm::Universal));
-    assert_eq!(sibling.aliases().iter().map(|alias| alias.as_str()).collect::<Vec<_>>(), ["V"]);
+    assert_eq!(
+        sibling
+            .aliases()
+            .iter()
+            .map(|alias| alias.as_str())
+            .collect::<Vec<_>>(),
+        ["V"]
+    );
 }
 
 /// FR-174-AC-1: noninterference has the copy group `[[a, b]]`; a `<=` body, a
@@ -898,12 +905,8 @@ fn a_bound_step_relation_has_a_code_claim_beside_its_model_claim() {
          operation V::ConfigVersion::step to \"vault::step\" \
          receiver \"self\" (i to \"input\"); }}"
     );
-    let (_, bound_package) = assemble_under(
-        "filament.model.complete/v1",
-        &["V"],
-        INFINITE,
-        &declaration,
-    );
+    let (_, bound_package) =
+        assemble_under("filament.model.complete/v1", &["V"], INFINITE, &declaration);
     let checked = bound_package
         .check(
             CheckMode::Linked,
@@ -2233,7 +2236,13 @@ fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
         .replace("hyper Det", "tuple NotRecord(Int[0, 3]);\nhyper Det")
         .replace("in Obs", "in NotRecord");
     let object = FINITE_DET.replace("in Obs", "in V::ConfigVersion");
-    type Case = (String, Vec<&'static str>, Code, &'static str, fn(&str) -> Span);
+    type Case = (
+        String,
+        Vec<&'static str>,
+        Code,
+        &'static str,
+        fn(&str) -> Span,
+    );
     let cases: [Case; 5] = [
         (
             FINITE_DET.replace("bounded 3", "bounded 0"),
