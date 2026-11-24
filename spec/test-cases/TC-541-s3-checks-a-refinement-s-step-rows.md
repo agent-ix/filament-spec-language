@@ -14,7 +14,7 @@ Verify that every concrete operation, and over a protocol subject every
 concrete step class, needs exactly one written-out step row, and that
 receivers, arguments and results are typed against the abstract operation.
 
-Scope: FR-136-AC-1 to FR-136-AC-12.
+Scope: FR-136-AC-1 to FR-136-AC-13.
 
 ## Test Procedure
 
@@ -51,6 +51,9 @@ protocol subject over a model with operations `incA` and `incB`.
 12. Emit `CasRefinesCounter` over object-type-only models. Then declare two
     `state_machine` records on each side, give each a corresponding `object`
     field-set row, and emit the refinement.
+13. Emit two checked step rows declared as `commitB` then `commitA`, and emit
+    the same refinement with those declarations reversed. Read each emitted
+    `steps` array and compare its entries with the declared row order.
 
 Tag the tests `#[trace("TC-541", "FR-136-AC-n")]`.
 
@@ -96,3 +99,5 @@ Tag the tests `#[trace("TC-541", "FR-136-AC-n")]`.
   and ordinary `Counter` object row, with no synthetic state-machine key.
   The two-machine fixture emits and reads back with both field-set rows in
   canonical order and no missing-subject or ambiguous-subject refusal.
+- Step 13: each emitted `steps` array follows declaration order and retains
+  the checked classes and targets; no digest ordering is applied.
