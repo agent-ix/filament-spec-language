@@ -50,7 +50,8 @@ Tag the tests `#[trace("TC-1500", "<AC id>")]`.
 - Step 3: the comparison fails naming `history-update` and its FR-375 source
   when that correspondence is absent, and names both the stale FR-375
   correspondence and absent parser production when it is changed.
-- Step 4: the comparison fails naming the missing FR-375 source path rather
-  than passing with an incomplete combined inventory.
+- Step 4: the comparison fails naming the missing FR-375 source path and the
+  `history-update` production rather than passing with an incomplete combined
+  inventory.
 - Step 5: both grammar texts are returned holding `ebnf` blocks; the
   unpublished path yields `None`.
