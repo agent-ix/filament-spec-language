@@ -144,35 +144,22 @@ impl CheckedSynthesis {
     }
 }
 
-pub(crate) struct SynthesisCheckContext<'a> {
-    pub(crate) scope: &'a Scope,
-    pub(crate) signatures: &'a Signatures,
-    pub(crate) named: &'a NamedScope,
-    pub(crate) source: &'a fsl_foundation::source::provenance::RawSourceRef,
-    pub(crate) source_owners:
-        &'a std::collections::BTreeMap<String, fsl_foundation::source::provenance::RawSourceRef>,
-    pub(crate) package_name: &'a str,
-    pub(crate) models: &'a [super::lowering::AdmittedModel],
-    pub(crate) dispatch_tables: &'a [super::DispatchTable],
-    pub(crate) sealing_meter: &'a mut filament_exact::Meter,
-}
-
 /// Resolve and type-check each source synthesis declaration (FR-754 S3).
 pub(crate) fn check_forms(
     forms: &[fsl_forms::SynthesisForm],
-    context: SynthesisCheckContext<'_>,
+    scope: &Scope,
+    signatures: &Signatures,
+    named: &NamedScope,
+    source: &fsl_foundation::source::provenance::RawSourceRef,
+    source_owners: &std::collections::BTreeMap<
+        String,
+        fsl_foundation::source::provenance::RawSourceRef,
+    >,
+    package_name: &str,
+    models: &[super::lowering::AdmittedModel],
+    dispatch_tables: &[super::DispatchTable],
+    sealing_meter: &mut filament_exact::Meter,
 ) -> Result<Vec<CheckedSynthesis>, Vec<CheckRefusal>> {
-    let SynthesisCheckContext {
-        scope,
-        signatures,
-        named,
-        source,
-        source_owners,
-        package_name,
-        models,
-        dispatch_tables,
-        sealing_meter,
-    } = context;
     let mut checked = Vec::with_capacity(forms.len());
     for (index, form) in forms.iter().enumerate() {
         let location = super::lowering::synthesis_location(index, &form.name.name);

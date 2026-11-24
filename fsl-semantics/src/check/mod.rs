@@ -3272,17 +3272,15 @@ impl PackageDeclarations {
         let plan_populations = NamedScope::of(&self.models, &scope, None);
         let checked_syntheses = synthesis::check_forms(
             &self.synthesis_forms,
-            synthesis::SynthesisCheckContext {
-                scope: &scope,
-                signatures: &signatures,
-                named: &plan_populations,
-                source: &self.source,
-                source_owners: &self.source_owners,
-                package_name: &self.package_name,
-                models: &self.models,
-                dispatch_tables: &dispatch_tables,
-                sealing_meter: &mut contract_meter,
-            },
+            &scope,
+            &signatures,
+            &plan_populations,
+            &self.source,
+            &self.source_owners,
+            &self.package_name,
+            &self.models,
+            &dispatch_tables,
+            &mut contract_meter,
         )?;
         let mut seen_operations = std::collections::BTreeSet::new();
         for operation in &scope.dispatch_operations {

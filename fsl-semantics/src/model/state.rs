@@ -334,7 +334,7 @@ pub struct StateModel {
 
 #[derive(Debug)]
 pub(crate) enum StateTypes {
-    Owned(Box<TypeEnvironment>),
+    Owned(TypeEnvironment),
     Shared(Arc<TypeEnvironment>),
 }
 
@@ -452,7 +452,7 @@ impl StateModel {
             types =
                 crate::check::dense_model_data_environment(&view.view, source.span, &types, units)?;
         }
-        self.types = StateTypes::Owned(Box::new(types));
+        self.types = StateTypes::Owned(types);
         Ok(&self.types)
     }
 
@@ -542,12 +542,7 @@ impl StateModel {
         budget: &mut NativeJoinBudget,
     ) -> Result<Self, RetainedModelFailure> {
         Self::reserve_retained_wrapper(budget)?;
-        Self::from_retained_parts(
-            selections,
-            StateTypes::Owned(Box::new(types)),
-            owners,
-            budget,
-        )
+        Self::from_retained_parts(selections, StateTypes::Owned(types), owners, budget)
     }
 
     /// Construct a retained model sharing the immutable genuine type environment
@@ -779,7 +774,7 @@ impl StateModel {
     ) -> Result<Self, AdmissionFailure> {
         Ok(Self {
             views: model_views(model_selections, packages, limits)?,
-            types: StateTypes::Owned(Box::new(types.clone())),
+            types: StateTypes::Owned(types.clone()),
             limits,
         })
     }
@@ -794,7 +789,7 @@ impl StateModel {
     ) -> Self {
         Self {
             views: views.into_iter().map(ModelView::new).collect(),
-            types: StateTypes::Owned(Box::new(types.clone())),
+            types: StateTypes::Owned(types.clone()),
             limits,
         }
     }
