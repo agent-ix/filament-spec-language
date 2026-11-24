@@ -2624,7 +2624,10 @@ pub fn inspect_handoff_with_operand(
 }
 
 fn inspect_handoff_result(
-    result: Result<(), crate::checked_handoff::Error>,
+    result: std::result::Result<
+        Box<filament_contract_model::CheckedPackageV2>,
+        crate::checked_handoff::Error,
+    >,
     directory: &Path,
     operand: &str,
 ) -> fsl_replay::OutcomeDocument {
@@ -5664,7 +5667,7 @@ mod tests {
 #[cfg(test)]
 mod host_allocation_tests {
     use super::inspect_handoff_result;
-    use crate::checked_handoff::{self, Error};
+    use crate::checked_handoff;
     use filament_contract_model::{
         CheckedPackageDispatchResult, CheckedPackageHostAllocationFailed, NativeJoinLocus,
         NativeJoinLocusSource, PackageReadStage,
