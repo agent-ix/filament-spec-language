@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-262-AC-1 and AC-2 (TC-734, TC-735): call depth is bounded by work fuel
-//! only, and 100,000-deep values and value types evaluate, key, compare,
-//! clone and drop on a 512 KiB stack.
+//! FR-262-AC-1 (TC-734): call depth is bounded by work fuel only, and
+//! 100,000-deep values and value types evaluate, compare, clone and drop on a
+//! 512 KiB stack.
 //!
 //! Every case runs on a thread spawned with a 512 KiB stack, so a recursive
 //! walk anywhere in the path overflows the test instead of passing quietly.
@@ -181,7 +181,6 @@ fn chain_length(value: &Value) -> u64 {
     }
 }
 
-#[trace("TC-735")]
 #[test]
 fn a_100_000_long_list_evaluates_compares_clones_and_drops() {
     on_small_stack(|| {
@@ -221,7 +220,6 @@ fn a_100_000_long_list_evaluates_compares_clones_and_drops() {
     });
 }
 
-#[trace("TC-735")]
 #[test]
 fn a_100_000_deep_value_type_clones_compares_hashes_formats_and_drops() {
     on_small_stack(|| {

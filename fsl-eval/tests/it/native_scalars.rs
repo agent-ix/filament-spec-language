@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-056 native scalar kinds evaluated from source text: record values
-//! (TC-985), `String` against `UUID` and `Text` (TC-992, FR-056-AC-34) and
+//! `String` against `UUID` and `Text` (TC-992, FR-056-AC-34) and
 //! the `Bytes`, `JsonObject` and `Duration` natives (TC-1231).
 //!
 //! Each equality vector is run as an `=` / `!=` pair and the result of `!=`
@@ -221,7 +221,7 @@ fn string_against_uuid_is_ill_typed_statically_and_wrong_kind_at_runtime() {
     );
 }
 
-// ---- TC-985: record values -------------------------------------------------
+// ---- Record values --------------------------------------------------------
 
 const RECORDS: &str = "\
     record Street { name: Integer; }\n\
@@ -237,7 +237,6 @@ const RECORDS: &str = "\
     function unequal_built using v(): Boolean pure { built(7) != built(8) }\n\
     function absent_differs using v(): Boolean pure { built(7) != bare() }\n";
 
-#[trace("TC-985")]
 #[test]
 fn a_record_value_field_and_its_nested_optional_record_read_and_compare() {
     let package = package(RECORDS);
