@@ -5034,6 +5034,7 @@ fn flow_millisecond_dimension_equivalence_fixture(include_negative_controls: boo
             .expect("the cross-package equivalence checks");
         let emission =
             emit_checked(&CheckedPackage::link(graph)).expect("the selected package operands emit");
+        let raw_wire = raw_wire(&emission);
         let wire = wire(&emission);
         let mut evidence = CheckedPackageEvidence::new();
         for feature in wire["lock"]["required_features"]
@@ -5076,7 +5077,7 @@ fn flow_millisecond_dimension_equivalence_fixture(include_negative_controls: boo
             })
             .cloned()
             .collect::<Vec<_>>();
-        (wire, nodes)
+        (wire, nodes, raw_wire)
     };
 
     let only_equivalence = |nodes: &[filament_contract_model::CheckedSemanticNodeV2]| {
@@ -5142,9 +5143,9 @@ fn flow_millisecond_dimension_equivalence_fixture(include_negative_controls: boo
         )
     };
 
-    let (forward_wire, forward_nodes) =
+    let (forward_wire, forward_nodes, forward_raw_wire) =
         read_equivalence("dimension R::Time ~ F::Time by 1 R::s = 1000 F::ms;");
-    let (reverse_wire, reverse_nodes) =
+    let (reverse_wire, reverse_nodes, _) =
         read_equivalence("dimension F::Time ~ R::Time by 1000 F::ms = 1 R::s;");
     let forward = only_equivalence(&forward_nodes);
     let reverse = only_equivalence(&reverse_nodes);
@@ -5174,7 +5175,8 @@ fn flow_millisecond_dimension_equivalence_fixture(include_negative_controls: boo
     assert_eq!(forward.0, reverse.0);
     assert_eq!(forward_nodes, reverse_nodes);
 
-    let (_, third_nodes) = read_equivalence("dimension R::Time ~ G::Time by 1 R::s = 1000 G::ms;");
+    let (_, third_nodes, _) =
+        read_equivalence("dimension R::Time ~ G::Time by 1 R::s = 1000 G::ms;");
     let third = only_equivalence(&third_nodes);
     assert_eq!(third.1, ["acme/clock", "acme/rpc"]);
     assert_eq!(
@@ -5199,13 +5201,13 @@ fn flow_millisecond_dimension_equivalence_fixture(include_negative_controls: boo
         ]
     );
     assert_eq!(third.3, ("1".to_owned(), "1000".to_owned()));
-    let (_, reverse_third_nodes) =
+    let (_, reverse_third_nodes, _) =
         read_equivalence("dimension G::Time ~ R::Time by 1000 G::ms = 1 R::s;");
     let reverse_third = only_equivalence(&reverse_third_nodes);
     assert_eq!(third.0, reverse_third.0);
     assert_eq!(third_nodes, reverse_third_nodes);
 
-    let (self_wire, self_nodes) = read_equivalence(
+    let (self_wire, self_nodes, _) = read_equivalence(
         "dimension R::Time ~ F::Time by 1 R::s = 1000 F::ms;\n\
          dimension R::Time ~ Time by 1 R::s = 1 s;",
     );
@@ -5271,7 +5273,7 @@ fn flow_millisecond_dimension_equivalence_fixture(include_negative_controls: boo
         .expect("the forward equivalence row");
     let mut invalid_scale_refusals = Vec::new();
     for (numerator, denominator) in [("0", "1"), ("-1", "1"), ("2000", "2")] {
-        let mut invalid = forward_wire.clone();
+        let mut invalid = forward_raw_wire.clone();
         invalid["semantic_graph"]["nodes"][node_position]["body"]["root_scale"] =
             json!({"numerator": numerator, "denominator": denominator});
         let bytes = quire_canonical::to_vec(&invalid, ceiling().canonical())
@@ -5303,15 +5305,14 @@ fn flow_millisecond_dimension_equivalence_fixture(include_negative_controls: boo
         else {
             panic!("nonpositive or unreduced root scales must be refused");
         };
-        let expected_node_id = invalid["semantic_graph"]["nodes"][node_position]["node_id"].clone();
-        invalid_scale_refusals.push((numerator, denominator, expected_node_id, refusal));
+        invalid_scale_refusals.push((numerator, denominator, refusal));
     }
-    let (cycle_wire, _) = read_equivalence(
+    let (_, _, cycle_raw_wire) = read_equivalence(
         "dimension R::Time ~ F::Time by 1 R::s = 1000 F::ms;\n\
          dimension F::Time ~ G::Time by 1 F::ms = 1 G::ms;\n\
          dimension R::Time ~ G::Time by 1 R::s = 1000 G::ms;",
     );
-    let mut inconsistent_cycle = cycle_wire;
+    let mut inconsistent_cycle = cycle_raw_wire;
     let clock_equivalence_position = inconsistent_cycle["semantic_graph"]["nodes"]
         .as_array()
         .expect("the third-package wire nodes")
@@ -5351,15 +5352,10 @@ fn flow_millisecond_dimension_equivalence_fixture(include_negative_controls: boo
     };
     let cycle_code = refusal.code;
     let cycle_path = refusal.loci[0].path.as_ref().map(ToString::to_string);
-    let cycle_locus = refusal
-        .locus
-        .as_ref()
-        .map(serde_json::to_value)
-        .transpose()
-        .expect("the cycle locus serializes");
+    let cycle_cause = refusal.cause;
     let cycle_refusal = refusal;
 
-    let mut missing = forward_wire;
+    let mut missing = forward_raw_wire;
     missing["semantic_graph"]["nodes"][node_position]["body"]
         .as_object_mut()
         .expect("the equivalence body object")
@@ -5411,8 +5407,8 @@ fn flow_millisecond_dimension_equivalence_fixture(include_negative_controls: boo
         Some(format!("/semantic_graph/nodes/{clock_equivalence_position}").as_str()),
         "inconsistent cycle must identify the closing edge's equivalence node"
     );
-    assert_eq!(cycle_locus, Some(mutated_cycle_node["node_id"].clone()));
-    for (numerator, denominator, expected_node_id, refusal) in invalid_scale_refusals {
+    assert_eq!(cycle_cause, None);
+    for (numerator, denominator, refusal) in invalid_scale_refusals {
         let expected_code = if numerator == "2000" {
             filament_contract_model::CheckedPackageRefusalCode::InvalidSemanticGraph
         } else {
@@ -5424,16 +5420,6 @@ fn flow_millisecond_dimension_equivalence_fixture(include_negative_controls: boo
         );
         if expected_code == filament_contract_model::CheckedPackageRefusalCode::InvalidSemanticGraph
         {
-            assert_eq!(
-                refusal
-                    .locus
-                    .as_ref()
-                    .map(serde_json::to_value)
-                    .transpose()
-                    .expect("the root-scale locus serializes"),
-                Some(expected_node_id),
-                "root scale {numerator}/{denominator} must identify its equivalence node"
-            );
             assert_eq!(
                 refusal.loci[0]
                     .path
