@@ -163,6 +163,9 @@ const CORRESPONDENCE: &[(&str, &str)] = &[
     ("urgent-decl", "UrgentDeclaration"),
     ("window", "PastWindow"),
     ("workload-decl", "WorkloadDeclaration"),
+    // The shared grammar's unit-term and dimension-term have identical
+    // syntax; the parser uses its existing DimensionTerm production for both.
+    ("unit-term", "DimensionTerm"),
 ];
 
 /// FR-600's standard-only allow-list: a standard production with no parser
@@ -312,11 +315,6 @@ const STANDARD_ONLY: &[(&str, &str, &str)] = &[
         "unique-path-clause",
         "inlined alternative (FR-600 Behavior): alternative of StateGraphClaim; FR-165-AC-1",
         "FR-165-AC-1",
-    ),
-    (
-        "unit-term",
-        "the parser reuses DimensionTerm for the unit term; the standard names it unit-term; FSpec FR-142-AC-2",
-        "FSpec FR-142-AC-2",
     ),
 ];
 
