@@ -2893,6 +2893,25 @@ impl<'a> Lowering<'a> {
         Ok(LeafTerm::literal(integer, LiteralValue::Integer(value)))
     }
 
+    /// The `literal` node of the `Integer` `value`, a slot term of a timed
+    /// clause naming one held slot of a collection.
+    pub(super) fn slot_literal_node(
+        &mut self,
+        value: u64,
+        location: &Location,
+    ) -> Result<NodeKey, CheckRefusal> {
+        let integer = self.scalar("integer", location)?;
+        let node = self.insert_ref(
+            location,
+            NodeTag::Value,
+            "literal",
+            Some(integer.clone().into()),
+            None,
+            BodyTerm::literal_node(integer.into(), LiteralValue::Integer(Integer::from(value))),
+        )?;
+        require_admitted(node, location)
+    }
+
     /// A text literal typed at the builtin text scalar node (T3).
     fn text_literal(&mut self, value: &str, location: &Location) -> Result<LeafTerm, CheckRefusal> {
         let text = self.scalar("text", location)?;
@@ -5377,16 +5396,19 @@ impl<'a> Lowering<'a> {
                 place,
                 slots,
             } => {
+                // A collection-typed read is the slot domain of the place (FSpec FR-772).
+                let keyed = if matches!(node.value_type(), ValueType::Collection(_)) {
+                    Keyed::Application(Operator::Slots, plain("filament.op.option.slots"))
+                } else {
+                    Keyed::Application(Operator::PlaceRef, plain("filament.op.clock_reference.ref"))
+                };
                 return self.next_operand(
                     Box::new(OperandsFrame {
                         node,
                         operands: Operands::FirstThenEach(reference, slots),
                         next: 0,
                         terms: vec![LeafTerm::reference_node(place.clone().into())],
-                        keyed: Keyed::Application(
-                            Operator::PlaceRef,
-                            plain("filament.op.clock_reference.ref"),
-                        ),
+                        keyed,
                     }),
                     frames,
                 );
@@ -8317,8 +8339,18 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
         | BodyTerm::ImplementationGuarantee(_)
         | BodyTerm::Composition(_) => {}
     }
+    // FSpec FR-772: a slot domain's path ends in the result type's operand
+    // segment once, and its `semantic_type` is that same node.
+    let names_result_type = matches!(
+        &content.body,
+        BodyTerm::Application(application)
+            if application.operator == Operator::Slots
+                && content.semantic_type.as_ref() == Some(&application.result_type)
+    );
     if let Some(semantic_type) = &content.semantic_type {
-        walk.node(semantic_type);
+        if !names_result_type {
+            walk.node(semantic_type);
+        }
     }
     walk.operands
 }

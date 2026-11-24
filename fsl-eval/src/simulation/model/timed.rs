@@ -1126,7 +1126,11 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         let set: Vec<ClockId> = clauses
             .iter()
             .flat_map(|resets| resets.resets())
-            .filter(|reset| reset.selection().is_none() && reset.parameter().is_none())
+            .filter(|reset| {
+                reset.selection().is_none()
+                    && reset.parameter().is_none()
+                    && reset.slots().is_empty()
+            })
             .map(|reset| reset.clock())
             .collect();
         // The places a reset of a `Clock` parameter writes for `instance`.
@@ -1321,6 +1325,26 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
                 .and_then(|place| self.places.get(place))
                 .is_some_and(|place| self.live(place, state));
             live == present
+        })
+    }
+
+    /// Whether each element place of `presences` is live at its binding's
+    /// held slot exactly when it must be present (FR-930 "Shared binder").
+    fn element_presences_hold(
+        &self,
+        state: &ModelSimState,
+        object: &ObjectReference,
+        presences: &[(ClockId, ElementBinding, bool)],
+    ) -> bool {
+        presences.iter().all(|(clock, binding, present)| {
+            let SlotRef::Held(slot) = binding.slot() else {
+                return false;
+            };
+            let live = self
+                .place_at(object, *clock, &[slot])
+                .and_then(|place| self.places.get(place))
+                .is_some_and(|place| self.live(place, state));
+            live == *present
         })
     }
 
@@ -1853,6 +1877,10 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
                                 state,
                                 &vector.receiver,
                                 part.presences().iter().copied(),
+                            ) || !self.element_presences_hold(
+                                state,
+                                &vector.receiver,
+                                part.element_presences(),
                             ) {
                                 continue;
                             }
@@ -1933,6 +1961,9 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
                                             .get(*place)
                                             .is_some_and(|held| held.clock == reset.clock())
                                     }),
+                                None if !reset.slots().is_empty() => {
+                                    self.place_at(&vector.receiver, reset.clock(), reset.slots())
+                                }
                                 None => self.place(&vector.receiver, reset.clock()),
                             };
                             if let Some(place) = place {

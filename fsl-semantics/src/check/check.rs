@@ -5582,6 +5582,104 @@ impl<'a> Typer<'a> {
         )))
     }
 
+    /// A collection-typed `PlaceReference` is the slot domain of its place and
+    /// is built only here; every other `PlaceReference` is a `ref(..)` that
+    /// [`Self::clock_ref`] types `Reference<Clock>`. Lowering tells them apart
+    /// by that type.
+    ///
+    /// The clock collection `field` of the record element `operand` selects
+    /// (FR-230-AC-67): `operand` is read from an object reference through
+    /// fields and selectors, and the steps with `field` and its slot name a
+    /// clock place of the unit. The node is typed as the collection of clock
+    /// references, as [`Self::clock_collection_field`] types an object's own.
+    fn record_clock_collection(
+        &mut self,
+        operand: &Node,
+        field: &str,
+        location: &Location,
+    ) -> Option<Node> {
+        use super::lowering::PlaceStep;
+        let mut names: Vec<Option<String>> = vec![None, Some(field.to_owned())];
+        // The selector nodes, innermost first while walking; `None` is the
+        // operand itself, which is pushed only once the place is found.
+        let mut slot_nodes: Vec<Option<NodeId>> = Vec::new();
+        let mut current: Option<NodeId> = None;
+        let (owner_id, object) = loop {
+            let node = match current {
+                None => operand,
+                Some(id) => self.body.get(id)?,
+            };
+            let (next, name) = match &node.kind {
+                NodeKind::Index { collection, .. } => {
+                    slot_nodes.push(current);
+                    (*collection, None)
+                }
+                NodeKind::Field {
+                    operand,
+                    field: record_field,
+                    ..
+                } => (*operand, Some(record_field.name().to_owned())),
+                NodeKind::Attribute {
+                    reference, field, ..
+                } => (*reference, Some(field.name.clone())),
+                _ => return None,
+            };
+            names.push(name);
+            current = Some(next);
+            if let ValueType::Reference(object) = &self.body.get(next)?.value_type {
+                break (next, object.clone());
+            }
+        };
+        names.reverse();
+        slot_nodes.reverse();
+        let (shape, place_key) =
+            self.scope
+                .clock_places
+                .iter()
+                .find_map(|(owner, steps, key)| {
+                    (steps.len() == names.len()
+                        && self.scope.types.conforms(object.clone(), owner.clone())
+                        && steps
+                            .iter()
+                            .zip(&names)
+                            .all(|(step, name)| match (step, name) {
+                                (PlaceStep::Field(step), Some(name)) => step == name,
+                                (PlaceStep::Slot(_), None) => true,
+                                _ => false,
+                            }))
+                    .then(|| match steps.last() {
+                        Some(PlaceStep::Slot(shape)) if !shape.map => {
+                            key.clone().map(|key| (*shape, key))
+                        }
+                        _ => None,
+                    })
+                    .flatten()
+                })?;
+        // The slot domain of the collection (FSpec FR-772): the selectors of
+        // its live slots, `Set<Integer>` bounded by the collection's maximum.
+        // Its slot terms are the selectors of the slot steps before the last.
+        let operand_id = self.push(operand.clone());
+        let slot_nodes = slot_nodes
+            .into_iter()
+            .map(|slot| slot.unwrap_or(operand_id))
+            .collect();
+        let cardinality = shape.max.map(CardinalityBound::at_most);
+        let value_type = ValueType::collection(CollectionType::new(
+            CollectionKind::Set,
+            ValueType::Integer,
+            cardinality,
+        ));
+        Some(node(
+            NodeKind::PlaceReference {
+                reference: owner_id,
+                place: place_key,
+                slots: slot_nodes,
+            },
+            value_type,
+            location,
+        ))
+    }
+
     pub(crate) fn is_model_receiver(&self, value_type: &ValueType, name: &str) -> bool {
         match value_type {
             ValueType::Reference(object) => {
@@ -5885,27 +5983,30 @@ impl<'a> Typer<'a> {
         let CompositeShape::Record(fields) = declaration.shape() else {
             return Err(mismatch(location));
         };
-        let declared = fields
-            .iter()
-            .find(|declared| declared.name() == field)
-            .ok_or_else(|| {
-                refuse(
-                    location,
-                    if key.package() == super::plan_value::PLAN_PACKAGE {
-                        CheckCause::PlanUnknownField {
-                            owner: declaration.name().into(),
-                            field: field.into(),
-                            span: member_span,
-                        }
-                    } else {
-                        CheckCause::UnknownField {
-                            owner: declaration.name().into(),
-                            field: field.into(),
-                            span: member_span,
-                        }
-                    },
-                )
-            })?;
+        let Some(declared) = fields.iter().find(|declared| declared.name() == field) else {
+            // A record's clock fields are places, not data (FR-230 "Records,
+            // tuples and unions"): `size(self.ts[0].ys)` reads the size of
+            // the clock collection the selected element holds (FR-230-AC-67).
+            if let Some(collection) = self.record_clock_collection(&operand, field, location) {
+                return Ok(collection);
+            }
+            return Err(refuse(
+                location,
+                if key.package() == super::plan_value::PLAN_PACKAGE {
+                    CheckCause::PlanUnknownField {
+                        owner: declaration.name().into(),
+                        field: field.into(),
+                        span: member_span,
+                    }
+                } else {
+                    CheckCause::UnknownField {
+                        owner: declaration.name().into(),
+                        field: field.into(),
+                        span: member_span,
+                    }
+                },
+            ));
+        };
         let optional = declared.presence() == Presence::Optional;
         let value_type = if optional {
             ValueType::option(declared.value_type().clone())
