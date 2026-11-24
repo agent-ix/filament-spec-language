@@ -319,7 +319,7 @@ fn w_proofs() -> (Value, Value, Keys) {
     );
     let keys = keys(&maximum);
     let mut minimum = maximum.clone();
-    replace_source_and_rebind(&mut minimum, &w("<=", "rational(1,4)"));
+    replace_source_and_rebind(&mut minimum, &w(">=", "rational(1,4)"));
     let minimum = edit(&minimum, |doc| {
         doc["objective"]["optimization"] = json!("minimum");
     });
@@ -363,20 +363,6 @@ fn cyclic_mdp_bounds_check_hinted_and_selected_policies() {
         rational(1, 4),
     );
     let wait = selected(&output, &s);
-
-    // The same policy hint accepts as the claim side at its inclusive
-    // `<= 1/4` threshold.
-    let output = accepted(
-        &bound(
-            &minimum,
-            "upper",
-            &[(&s, rational(1, 4))],
-            Some(json!([hint(&s, &wait)])),
-            true,
-        ),
-        rational(1, 4),
-    );
-    assert_eq!(selected(&output, &s), wait);
 
     // AC-3, AC-17: hinted `go` is checked and accepted for the maximum
     // `lower`; hinted `wait` is rank-broken there, and with the value 1 no
@@ -428,7 +414,7 @@ fn cyclic_mdp_bounds_check_hinted_and_selected_policies() {
             "upper",
             &[(&s, rational(1, 4))],
             Some(json!([hint(&s, &wait)])),
-            true,
+            false,
         ),
         rational(1, 4),
     );
@@ -439,7 +425,7 @@ fn cyclic_mdp_bounds_check_hinted_and_selected_policies() {
             "upper",
             &[(&s, rational(1, 4))],
             Some(json!([hint(&s, &go)])),
-            true,
+            false,
         ),
         "inequality-fails",
         at_key(&s),
