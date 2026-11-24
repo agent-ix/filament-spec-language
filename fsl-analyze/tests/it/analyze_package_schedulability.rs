@@ -147,11 +147,13 @@ fn a_package_schedulability_claim_rejects_a_backend_outside_its_requirements() {
     assert_eq!(item["request"]["candidates"]["backends"], json!([]), "{item}");
 }
 
-/// FR-246-AC-5: only a schedulable claim in a released task set is
-/// release-backed in the package rows; a response claim remains unbacked.
+/// FR-246-AC-5, FR-075-AC-23: the package's admitted release-backed marker
+/// reaches candidate resolution, admitting EN-6 for a named task-product
+/// request; a response claim remains unbacked.
 #[trace("TC-3009", "FR-246-AC-5")]
+#[trace("TC-3009", "FR-075-AC-23")]
 #[test]
-fn package_schedulability_rows_preserve_release_backing_by_claim_kind() {
+fn package_release_backing_admits_task_product_candidates() {
     let declarations = "taskset Pair {\n\
         task a periodic 4 ms deadline 3 ms wcet 1 ms priority 1 lo;\n\
         }\n\
@@ -194,6 +196,42 @@ fn package_schedulability_rows_preserve_release_backing_by_claim_kind() {
         .collect::<Vec<_>>();
     markers.sort_unstable_by_key(|(name, _)| *name);
     assert_eq!(markers, [("PairAResponse", false), ("PairFp", true)]);
+
+    let release_backed = rows
+        .iter()
+        .find(|row| {
+            names.iter().any(|name| {
+                name["declaration"] == row["declaration"]
+                    && name["occurrence"]["ordinal"] == row["occurrence"]
+                    && name["name"] == "PairFp"
+            })
+        })
+        .expect("the package row for PairFp")["release_backed"]
+        .as_bool()
+        .expect("release-backed flag");
+    assert!(release_backed, "the admitted package row backs PairFp");
+
+    let engines = fsl_analyze::analyze::Engines::fsl().expect("linked manifests");
+    let mut registry = fsl_route::Registry::new();
+    for descriptor in engines.registrations() {
+        registry
+            .register(descriptor.clone())
+            .expect("the registered backend is valid");
+    }
+    let named_en6 = registry.candidates(
+        fsl_semantics::check::Capability::Schedulability,
+        Some(&fsl_foundation::BackendId::new("en-6")),
+    );
+    let candidates = registry.restrict_to_task_product(named_en6, release_backed);
+    let fsl_route::CandidateOutcome::Candidates(candidates) = candidates else {
+        panic!("a release-backed package claim keeps named EN-6 eligible");
+    };
+    let ids = candidates
+        .candidates()
+        .iter()
+        .map(|candidate| candidate.id().as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, ["en-6"]);
 }
 
 /// FR-850-AC-3 (negative): package bytes missing the claim rows or nodes
