@@ -16,18 +16,13 @@ const P_WITH_ROOT: &str = "language \"ix:native\" edition \"1-draft\";\n\
 const P_WITHOUT_ROOT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     domain \"acme/p\";\n dimension L;\n\
     object Anchor { operation anchor(): Boolean; }\n";
-const P_WITH_DERIVED_DIMENSION: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    domain \"acme/p\";\n dimension L;\n dimension Area = L ^ 2;\n\
-    object Anchor { operation anchor(): Boolean; }\n";
 const P_WITH_TIME_UNITS: &str = "language \"ix:native\" edition \"1-draft\";\n\
     domain \"acme/p\";\n dimension Time;\n\
     unit s : Time = rational(1, 1);\n\
-    unit ms : Time = rational(1, 1000);\n\
     object Anchor { operation anchor(): Boolean; }\n";
 const P_WITH_RATE_AND_LENGTH: &str = "language \"ix:native\" edition \"1-draft\";\n\
     domain \"acme/p\";\n dimension Rate;\n\
     unit us : Rate = rational(1, 1);\n\
-    unit ms : Rate = rational(1000, 1);\n\
     dimension Length;\n\
     object Anchor { operation anchor(): Boolean; }\n";
 const P_WITH_TIME_AND_LENGTH_ROOT: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -47,7 +42,6 @@ const G_WITHOUT_ROOT: &str = "language \"ix:native\" edition \"1-draft\";\n\
 const G_WITH_MILLISECOND_ROOT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     domain \"acme/g\";\n dimension Time;\n\
     unit ms : Time = rational(1, 1);\n\
-    unit s : Time = rational(1000, 1);\n\
     object Anchor { operation anchor(): Boolean; }\n";
 const Q_WITH_TIME_ROOT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     domain \"acme/q\";\n dimension Time;\n\
@@ -56,7 +50,6 @@ const Q_WITH_TIME_ROOT: &str = "language \"ix:native\" edition \"1-draft\";\n\
 const Q_WITH_TIME_AND_MS: &str = "language \"ix:native\" edition \"1-draft\";\n\
     domain \"acme/q\";\n dimension Time;\n\
     unit s : Time = rational(1, 1);\n\
-    unit ms : Time = rational(1, 1000);\n\
     object Anchor { operation anchor(): Boolean; }\n";
 
 fn package_input_from(sources: &[&str]) -> PackageInput {
@@ -74,6 +67,64 @@ fn package_input_from(sources: &[&str]) -> PackageInput {
         documents.push(G_WITHOUT_ROOT.as_bytes());
     }
     package_input(documents).expect("authored domain packages compile into intake documents")
+}
+
+/// Add a target edge to a package unit. The model-unit source adapter emits
+/// roots only, while TC-187's imported multi-unit rows require this FCD wire
+/// shape (`target` plus exact edge scale).
+fn add_package_unit_edge(
+    packages: &mut PackageInput,
+    owner: &str,
+    name: &str,
+    dimension: &str,
+    target: &str,
+    scale: &str,
+) {
+    let bytes = packages.get(owner).expect("the selected package exists");
+    let mut document: serde_json::Value = serde_json::from_slice(bytes).expect("package JSON");
+    let origin = document["types"][0]["origin"].clone();
+    document["units"]
+        .as_array_mut()
+        .expect("unit rows")
+        .push(serde_json::json!({
+            "identity": format!("ix://{owner}/unit/{name}"),
+            "name": name,
+            "dimension": format!("ix://{owner}/dimension/{dimension}"),
+            "target": format!("ix://{owner}/unit/{target}"),
+            "scale": scale,
+            "offset": "0",
+            "origin": origin,
+        }));
+    packages.insert(
+        owner.to_owned(),
+        serde_json::to_vec(&document).expect("package JSON"),
+    );
+}
+
+/// Add one derived dimension directly to a package document. FSpec U11z1
+/// needs an imported derived dimension; FR-710's model-unit parser emits base
+/// dimensions only, so this uses the source-equivalent Semantic IR record.
+fn add_derived_dimension(packages: &mut PackageInput, owner: &str, name: &str, base: &str) {
+    let bytes = packages.get(owner).expect("the selected package exists");
+    let mut document: serde_json::Value = serde_json::from_slice(bytes).expect("package JSON");
+    let origin = document["types"][0]["origin"].clone();
+    document["dimensions"]
+        .as_array_mut()
+        .expect("dimension rows")
+        .push(serde_json::json!({
+            "identity": format!("ix://{owner}/dimension/{name}"),
+            "name": name,
+            "base": false,
+            "terms": [{
+                "dimension": base,
+                "exponent": "2"
+            }],
+            "origin": origin,
+        }));
+    packages.insert(
+        owner.to_owned(),
+        serde_json::to_vec(&document).expect("package JSON"),
+    );
 }
 
 fn vector(id: &str) -> &'static QualificationVector {
@@ -304,7 +355,11 @@ fn imported_dimension_turns_match_u11y_and_u11z1_u11z2() {
     );
     assert_eq!(
         refusal(
-            package_input_from(&[P_WITH_DERIVED_DIMENSION]),
+            {
+                let mut packages = package_input_from(&[P_WITHOUT_ROOT]);
+                add_derived_dimension(&mut packages, "acme/p", "Area", "ix://acme/p/dimension/L");
+                packages
+            },
             "unit m2 : P::Area = rational(1, 1);\n"
         ),
         Some(("missing_declaration".to_owned(), "missing-name".to_owned())),
@@ -328,7 +383,8 @@ fn imported_dimension_turns_match_u11y_and_u11z1_u11z2() {
 #[test]
 fn same_spelled_package_units_keep_their_identity_in_u34() {
     vector_contains("U34", "missing_declaration");
-    let package = package_input_from(&[P_WITH_RATE_AND_LENGTH]);
+    let mut package = package_input_from(&[P_WITH_RATE_AND_LENGTH]);
+    add_package_unit_edge(&mut package, "acme/p", "ms", "Rate", "us", "1000");
     assert_eq!(
         refusal(
             package.clone(),
@@ -529,7 +585,8 @@ fn dimension_equivalence_declarations_match_u37() {
 #[test]
 fn conversions_over_equivalent_dimensions_match_u38() {
     vector_contains("U38", "3000");
-    let packages = package_input_from(&[P_WITH_TIME_AND_LENGTH_ROOT, Q_WITH_TIME_AND_MS]);
+    let mut packages = package_input_from(&[P_WITH_TIME_AND_LENGTH_ROOT, Q_WITH_TIME_AND_MS]);
+    add_package_unit_edge(&mut packages, "acme/q", "ms", "Time", "s", "1/1000");
     let equivalence = "dimension P::Time ~ Q::Time by 1 P::s = 1000 Q::ms;\n";
     assert_eq!(
         refusal(
@@ -569,11 +626,13 @@ fn conversions_over_equivalent_dimensions_match_u38() {
 #[test]
 fn root_ratios_across_three_packages_match_u40() {
     vector_contains("U40", "1000");
-    let packages = package_input_from(&[
+    let mut packages = package_input_from(&[
         P_WITH_TIME_AND_LENGTH_ROOT,
         Q_WITH_TIME_AND_MS,
         G_WITH_MILLISECOND_ROOT,
     ]);
+    add_package_unit_edge(&mut packages, "acme/q", "ms", "Time", "s", "1/1000");
+    add_package_unit_edge(&mut packages, "acme/g", "s", "Time", "ms", "1000");
     for source in [
         "dimension P::Time ~ G::Time by 1 P::s = 1000 G::ms;\n",
         "dimension P::Time ~ G::Time by 1 P::s = 1 G::s;\n",
