@@ -985,8 +985,8 @@ pub(crate) fn process(extra: &str) -> Model {
 }
 
 /// One fair `go` attempt succeeds with probability one half, then disables
-/// itself. Strong fairness is therefore satisfied on both the success and
-/// failure terminal branches without changing the reachability value.
+/// itself. The failed draw deadlocks outside the target, while the successful
+/// draw reaches `Done`; strong fairness is vacuous once `go` is disabled.
 pub(crate) fn one_shot(extra: &str) -> Model {
     Model {
         package: "test/one-shot",
@@ -1009,7 +1009,7 @@ pub(crate) fn one_shot(extra: &str) -> Model {
              post Went using v on M::Once::go {{ self.attempted = true and self.done = success }}\n\
              random Once::go(success) ~ {{ true: 1, false: 1 }};\n\
              terminal Done using v on M when {{ self.done }};\n\
-             terminal Failed using v on M when {{ self.attempted and not self.done }};\n{extra}"
+             {extra}"
         ),
         initial: json!({"attempted": {"boolean": false}, "done": {"boolean": false}}),
     }
