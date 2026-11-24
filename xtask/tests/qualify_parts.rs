@@ -248,8 +248,15 @@ fn every_staging_row_names_its_owner_and_deletion_condition() {
     let rows = table
         .lines()
         .filter_map(|line| {
-            let row = line.trim().strip_prefix('|')?.strip_suffix('|')?;
-            let fields = row.split('|').map(str::trim).collect::<Vec<_>>();
+            let line = line.trim();
+            line.contains('|').then_some(())?;
+            let mut fields = line.split('|').map(str::trim).collect::<Vec<_>>();
+            if fields.first() == Some(&"") {
+                fields.remove(0);
+            }
+            if fields.last() == Some(&"") {
+                fields.pop();
+            }
             let separator = fields == ["---", "---", "---"];
             let header = fields == ["Legacy file or group", "Deleted when", "Owner"];
             (!header && !separator).then_some(fields)
