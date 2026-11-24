@@ -1977,7 +1977,8 @@ impl AdmittedModel {
     /// `value_type` rendered for a `resolved_path` row (FSpec FR-322
     /// "Timed-model nodes"): `Clock` and natives by their `ix://filament/native`
     /// identity, a package type by its identity, an alias as the type it
-    /// aliases and a package sequence type as `Sequence<items>`.
+    /// aliases, a package sequence type as `Sequence<items>`, and a package
+    /// map type as `Map<keys, values>`.
     fn rendered(&self, value_type: &crate::model::domain_package::ValueTypeRef) -> String {
         use crate::model::domain_package::ValueTypeRef;
         let mut wrappers = 0_usize;
@@ -2003,6 +2004,15 @@ impl AdmittedModel {
                     {
                         wrappers += 1;
                         named = &sequence.items;
+                    }
+                    Some(DomainPackageRecord::MapType(map)) => {
+                        let keys = match &map.keys {
+                            ValueTypeRef::Native(native) => native.as_str(),
+                            _ => return key.node.clone(),
+                        };
+                        let keys = if keys == "String" { "Text" } else { keys };
+                        let values = self.rendered(&map.values);
+                        return format!("Map<{keys}, {values}>");
                     }
                     _ => break key.node.clone(),
                 },

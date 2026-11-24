@@ -6122,6 +6122,42 @@ fn option_sequence_world(granted: &[&str], body: &str) -> World {
     )
 }
 
+/// FR-953-AC-2: a presence-only quantifier reads its selector domain: over
+/// an empty sequence `forall` is true and `exists` false; with slot 0 present
+/// and slot 1 absent, `forall` is false and `exists` true.
+#[trace("TC-2663", "FR-953-AC-2")]
+#[test]
+fn a_timed_presence_quantifier_evaluates_over_empty_and_absent_slots() {
+    let enabled = |quantifier: &str, bits: &[bool]| {
+        let body = format!(
+            "pre HasElement using v on M::Call::work {{ \
+             {quantifier}(e in self.q: present(e)) }}\n"
+        );
+        let world = option_sequence_world(&[], &body);
+        let held = system(&world);
+        let timed = TimedSystem::new(&held, "M").expect("a timed subject");
+        let initial = timed
+            .initial()
+            .into_iter()
+            .find(|state| option_bits(state) == bits)
+            .unwrap_or_else(|| panic!("an initial q with presence bits {bits:?}"));
+        timed
+            .steps(&initial)
+            .expect("the state steps")
+            .iter()
+            .any(|(step, _)| step.operation().contains("Call/work\""))
+    };
+
+    for (quantifier, empty, one_absent) in [("forall", true, false), ("exists", false, true)] {
+        assert_eq!(enabled(quantifier, &[]), empty, "{quantifier} over empty q");
+        assert_eq!(
+            enabled(quantifier, &[true, false]),
+            one_absent,
+            "{quantifier} over q with slot 1 absent"
+        );
+    }
+}
+
 /// The presence bits of `c`'s `q` at `state`, one for each element.
 fn option_bits(state: &TimedState) -> Vec<bool> {
     let filament_exact::Value::Collection(bits) = field_of(state, "c", "q") else {

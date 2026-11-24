@@ -1144,6 +1144,51 @@ fn slot_presence_document() -> Vec<u8> {
     crate::emit::tests::wire_bytes(&document).expect("JSON")
 }
 
+/// [`slot_presence_document`] with `q: Map<Text, Clock>[0, 2]`. Membership
+/// supplies the optional presence of each clock-valued map entry.
+fn slot_presence_map_document() -> Vec<u8> {
+    let mut document: Value = serde_json::from_slice(&slot_presence_document()).expect("JSON");
+    let owner = document["types"][1]["identity"]
+        .as_str()
+        .expect("an identity")
+        .to_owned();
+    let package = owner
+        .rsplit_once('/')
+        .map(|(package, _)| package)
+        .expect("the owner has a package identity");
+    let map_identity = format!("{package}/ClockMap");
+    let mut map = json!({
+        "identity": map_identity,
+        "displayName": map_identity,
+        "kind": {"module": "ix://example/config-version", "name": "unused"},
+        "roles": [],
+        "origin": {"generated": {
+            "generatorIdentity": map_identity,
+            "generatorVersion": "1.0.0",
+            "inputIdentities": [map_identity],
+        }},
+        "constraints": [],
+        "extensions": [],
+        "unknownPolicy": "reject",
+        "keys": "ix://filament/native/Text",
+        "values": CLOCK,
+        "bound": {"lower": 0, "upper": 2},
+    });
+    map["kind"] = json!("map");
+    document["types"].as_array_mut().expect("types").push(map);
+    let config = &mut document["types"][1];
+    let q = config["fields"]
+        .as_array_mut()
+        .expect("fields")
+        .iter_mut()
+        .find(|field| field["name"] == "q")
+        .expect("q");
+    q["typeRef"] = json!(map_identity);
+    q["presence"] = json!("required");
+    q["multiplicity"] = json!({"lower": 1, "upper": 1, "ordered": false, "unique": true});
+    crate::emit::tests::wire_bytes(&document).expect("JSON")
+}
+
 /// FSpec FR-322-AC-267 `SD-02`: `forall(e in self.q: present(e) implies e
 /// = 0 ms)` over `q: Sequence<Option<Clock>>[0, 2]` is one `clock_reset`
 /// of `q`'s element place whose one binder `e` is its slot term and whose
@@ -1857,11 +1902,11 @@ fn a_presence_quantifier_is_emitted_over_its_slot_domain() {
                 self.x >= 1 ms and forall(e in self.q: present(e)) }\n\
                 time invariant Held when { forall(e in self.q: present(e)) } { self.x <= 9 ms }\n\
                 urgent Soon when { exists(e in self.q: present(e)) };\n";
-    let (_, checked) = checked(&document, body);
-    let graph = checked.unwrap_or_else(|refusals| panic!("checks: {refusals:?}"));
+    let (_, checked_result) = checked(&document, body);
+    let graph = checked_result.unwrap_or_else(|refusals| panic!("checks: {refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
-    let wire = wire(&emission);
-    let domains: Vec<&Value> = nodes(&wire)
+    let sequence_wire = wire(&emission);
+    let domains: Vec<&Value> = nodes(&sequence_wire)
         .iter()
         .filter(|node| node["body"]["operation"]["identity"] == "filament.op.option.slots")
         .collect();
@@ -1869,9 +1914,10 @@ fn a_presence_quantifier_is_emitted_over_its_slot_domain() {
         panic!("one slot-domain node shared by the three clauses: {domains:?}");
     };
     assert_eq!(domain["semantic_form"], "presence_read", "{domain}");
+    let sequence_domain = domain;
     // The wire as written: the node's own id holds operand slots, which
     // `wire` resolves to index segments.
-    let at = nodes(&wire)
+    let at = nodes(&sequence_wire)
         .iter()
         .position(|node| node == domain)
         .expect("the domain is a node");
@@ -1906,8 +1952,108 @@ fn a_presence_quantifier_is_emitted_over_its_slot_domain() {
             .all(|segment| segment.get("package").is_none()),
         "the path holds no node_id object: {domain}"
     );
-    read_presence_package(&document, emission.package.bytes(), &wire)
+    let domain_type = &domain["semantic_type"];
+    let bound_path = domain_type["path"]
+        .as_array()
+        .expect("bounded collection type path");
+    assert!(
+        bound_path.contains(&json!("collection_bounds")),
+        "{domain_type}"
+    );
+    for bound in ["min", "0", "max", "2"] {
+        assert!(bound_path.contains(&json!(bound)), "{bound}: {domain_type}");
+    }
+    let [place, owner] = sequence_domain["body"]["arguments"]
+        .as_array()
+        .expect("slot-domain arguments")
+        .as_slice()
+    else {
+        panic!("slot-domain place and owner: {domain}");
+    };
+    assert_eq!(
+        target(&sequence_wire, place)["semantic_form"],
+        "clock_place"
+    );
+    assert_eq!(target(&sequence_wire, owner)["semantic_form"], "parameter");
+    let quantifier = nodes(&sequence_wire)
+        .iter()
+        .find(|node| node["body"]["operation"]["identity"] == "filament.op.collection.forall")
+        .expect("forall");
+    assert_eq!(
+        quantifier["body"]["arguments"][0]["target"], sequence_domain["node_id"],
+        "the slot domain is operand 0"
+    );
+    let binding = &quantifier["body"]["arguments"][1];
+    assert_eq!(binding["term"], "binding");
+    let presence = target(&sequence_wire, &binding["value"]);
+    assert_eq!(presence["semantic_form"], "presence_read");
+    let slot = target(&sequence_wire, &presence["body"]["arguments"][2]);
+    assert_eq!(slot["semantic_form"], "parameter");
+    assert_eq!(
+        nodes(&sequence_wire)
+            .iter()
+            .find(|node| node["node_id"] == slot["semantic_type"])
+            .expect("the Integer selector type")["semantic_form"],
+        "integer",
+        "Sequence selectors and the binder are Integer"
+    );
+    read_presence_package(&document, emission.package.bytes(), &sequence_wire)
         .unwrap_or_else(|failure| panic!("I2 admits the slot domain: {failure}"));
+
+    let document = slot_presence_map_document();
+    let (_, map_checked) = checked(
+        &document,
+        "pre HasElement using v on Config::ConfigVersion::attemptUpdate { \
+         self.x >= 1 ms and forall(e in self.q: present(e)) }\n",
+    );
+    let graph = map_checked.unwrap_or_else(|refusals| panic!("Map checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the Map package emits");
+    let map_wire = wire(&emission);
+    let [domain] = nodes(&map_wire)
+        .iter()
+        .filter(|node| node["body"]["operation"]["identity"] == "filament.op.option.slots")
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("one Map slot-domain node");
+    };
+    let [place, owner] = domain["body"]["arguments"]
+        .as_array()
+        .expect("Map slot-domain arguments")
+        .as_slice()
+    else {
+        panic!("Map slot-domain place and owner: {domain}");
+    };
+    assert_eq!(target(&map_wire, place)["semantic_form"], "clock_place");
+    assert_eq!(target(&map_wire, owner)["semantic_form"], "parameter");
+    let domain_type = &domain["semantic_type"];
+    let bound_path = domain_type["path"]
+        .as_array()
+        .expect("bounded Map type path");
+    assert!(
+        bound_path.contains(&json!("collection_bounds")),
+        "{domain_type}"
+    );
+    for bound in ["min", "0", "max", "2"] {
+        assert!(bound_path.contains(&json!(bound)), "{bound}: {domain_type}");
+    }
+    let quantifier = nodes(&map_wire)
+        .iter()
+        .find(|node| node["body"]["operation"]["identity"] == "filament.op.collection.forall")
+        .expect("forall");
+    let binding = &quantifier["body"]["arguments"][1];
+    assert_eq!(binding["term"], "binding");
+    let presence = target(&map_wire, &binding["value"]);
+    let binder = target(&map_wire, &presence["body"]["arguments"][2]);
+    assert_eq!(
+        nodes(&map_wire)
+            .iter()
+            .find(|node| node["node_id"] == binder["semantic_type"])
+            .expect("the Text selector type")["semantic_form"],
+        "text",
+        "Map keys and the binder are Text"
+    );
+    read_presence_package(&document, emission.package.bytes(), &map_wire)
+        .unwrap_or_else(|failure| panic!("I2 admits the Map slot domain: {failure}"));
 }
 
 /// FSpec FR-772-AC-2: each malformed use of the slot-domain node is refused
@@ -1940,14 +2086,6 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
     );
     let boolean = base["semantic_graph"]["nodes"][quantifier]["body"]["result_type"].clone();
     // The presence read the quantifier's body names; its slot term is the binder.
-    let read = nodes(&base)
-        .iter()
-        .position(|node| {
-            node["node_id"]
-                == base["semantic_graph"]["nodes"][quantifier]["body"]["arguments"][1]["value"]
-                    ["target"]
-        })
-        .expect("the presence read the quantifier's body names");
     let refused = |mutate: &dyn Fn(&mut Value), cause: &str, locus: &str| {
         let mut wire = base.clone();
         mutate(&mut wire);
