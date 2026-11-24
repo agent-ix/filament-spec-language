@@ -15,9 +15,10 @@ relationships:
 Verify the model-document form of a Text value type, the order in which
 the Text reader refuses a defective declaration, the value domain every
 surface decides on the retained sequence, and the frame check's comparison of
-each declared type by that type's own equality.
+each declared type by that type's own equality. It also checks source-text
+conversion under each profile and its ScalarLimits accounting order.
 
-Scope: FR-056-AC-37, FR-056-AC-38, FR-056-AC-39, FR-106-AC-40 and FR-106-AC-49. The bare
+Scope: FR-056-AC-37, FR-056-AC-38, FR-056-AC-39, FR-056-AC-69, FR-106-AC-40 and FR-106-AC-49; FSpec-TC-186 T16. The bare
 `ix://filament/native/Text` `typeRef` rows stay with TC-897 step 3, which
 depends on the semantic-IR validator's native vocabulary naming `Text`; this
 case never uses that spelling.
@@ -92,6 +93,18 @@ are decided by the validator or the reader without it and are reachable today.
    the same elements with only the document's whitespace changed; `child.token`
    to another canonical UUID; `child.address`'s `street` from U+00E9 to U+0065
    U+0301 and from `Main` to `Side`.
+5. At the source-text admission boundary, admit U+0065 U+0301 into
+   `Text[1,1;nfd]` with `ScalarLimitsV1 { integer_bits: 0, decimal_digits: 0,
+   scale_expansion: 0, text_input_bytes: 3, text_scalars: 2,
+   normalized_scalars: 2, unit_edges: 0, value_occurrences: 1, work_units: 5,
+   result_units: 1 }`, then set `normalized_scalars` to `1`. Admit the same
+   source into `Text[1,1;unicode-scalars]` with the same tuple except
+   `normalized_scalars: 0, work_units: 2`, then set `text_scalars` to `1`.
+   Admit U+00E9 into `Text[1,1;binary-utf8]` with
+   `ScalarLimitsV1 { integer_bits: 0, decimal_digits: 0, scale_expansion: 0,
+   text_input_bytes: 2, text_scalars: 0, normalized_scalars: 0, unit_edges: 0,
+   value_occurrences: 1, work_units: 1, result_units: 1 }`, then set
+   `text_input_bytes` to `1`.
 
 ## Expected Results
 
@@ -130,3 +143,18 @@ are decided by the validator or the reader without it and are reachable today.
   change admits; the `token` change refuses naming `child` and `token`; the
   `street` change from U+00E9 to U+0065 U+0301 admits as no change, and
   `Main` to `Side` refuses naming `child` and `address`.
+- Step 5: `nfd` retains U+0065 U+0301 as two scalars, then refuses the `[1,1]`
+  bound after both `text.normalize-output` charges and before
+  `text.result-retain`; with `normalized_scalars: 1`, it returns
+  `incomplete { limit_kind: normalized_scalars, limit: 1, consumed: 1,
+  next_charge: 2, charge_point: text.normalize-output }`. `unicode-scalars`
+  retains the same two scalars without normalization and refuses after
+  `text.decode-scalars`; with `text_scalars: 1`, it returns
+  `incomplete { limit_kind: text_scalars, limit: 1, consumed: 0,
+  next_charge: 2, charge_point: text.decode-scalars }`. `binary-utf8` measures
+  U+00E9 as two bytes, refuses after `text.input-bytes`, and with
+  `text_input_bytes: 1` returns
+  `incomplete { limit_kind: text_input_bytes, limit: 1, consumed: 0,
+  next_charge: 2, charge_point: text.input-bytes }`. Each completed length
+  refusal is `text_length_out_of_domain`/`outside-domain`; no incomplete or
+  refused result publishes a partial text (FSpec FR-141 and TC-186 T16).
