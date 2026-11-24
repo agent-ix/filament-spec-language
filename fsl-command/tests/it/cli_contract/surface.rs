@@ -12,6 +12,8 @@
 //! listed, every listed name is accepted, and everything else is refused.
 
 use fsl_foundation::setting::{parse_operands, AccountingSetting, Setting, UsageCause};
+use fsl_foundation::SettingLimits;
+use fsl_replay::{CallerLimits, WorkerCounts};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -91,6 +93,84 @@ fn every_limit_refusal_cause_is_reached() {
         assert_eq!(refusal.cause, cause, "{operands:?}");
         assert_eq!(refusal.operand, operand, "{operands:?}");
     }
+}
+
+/// FR-255-AC-21: the public settings operation returns independent worker
+/// counts, leaves engine bounds unchanged, and refuses invalid worker names.
+#[test]
+#[trace("FR-255-AC-21")]
+fn worker_settings_change_only_their_own_counts() {
+    let limits = CallerLimits::from_operands([
+        "explore.workers=4",
+        "model_check.workers=2",
+        "statistical.workers=8",
+    ])
+    .expect("worker settings are accepted");
+    assert_eq!(
+        limits.workers,
+        WorkerCounts {
+            explore: 4,
+            model_check: 2,
+            statistical: 8,
+        }
+    );
+    assert_eq!(limits.explore.max_states, 10_000_000);
+    let model_check_only = CallerLimits::from_operands(["model_check.workers=2"])
+        .expect("the model-check worker setting is accepted independently");
+    assert_eq!(model_check_only.workers.model_check, 2);
+    assert_eq!(model_check_only.explore.max_states, 10_000_000);
+    let explore_only = CallerLimits::from_operands(["explore.workers=2"])
+        .expect("the exploration worker setting is accepted independently");
+    assert_eq!(explore_only.workers.explore, 2);
+    assert_eq!(explore_only.explore.max_states, 10_000_000);
+    assert!(limits
+        .engines
+        .bounds()
+        .iter()
+        .all(|(setting, _)| !setting.name().ends_with(".workers")));
+    for (operand, workers) in [
+        (
+            "explore.workers=4",
+            WorkerCounts {
+                explore: 4,
+                ..WorkerCounts::default()
+            },
+        ),
+        (
+            "model_check.workers=2",
+            WorkerCounts {
+                model_check: 2,
+                ..WorkerCounts::default()
+            },
+        ),
+        (
+            "statistical.workers=8",
+            WorkerCounts {
+                statistical: 8,
+                ..WorkerCounts::default()
+            },
+        ),
+    ] {
+        let actual =
+            CallerLimits::from_operands([operand]).expect("a single worker setting is accepted");
+        let mut expected = CallerLimits::default();
+        expected.workers = workers;
+        assert_eq!(actual, expected, "{operand}");
+    }
+    for name in [
+        "explore.workers",
+        "model_check.workers",
+        "statistical.workers",
+    ] {
+        assert_eq!(Setting::from_name(name), None);
+    }
+    let zero = CallerLimits::from_operands(["explore.workers=0"]).expect_err("zero workers refuse");
+    assert_eq!(zero.operand, "explore.workers=0");
+    assert_eq!(zero.cause, UsageCause::InvalidWorkerValue);
+    let unknown = CallerLimits::from_operands(["explore.threads=4"])
+        .expect_err("unknown worker setting refuses");
+    assert_eq!(unknown.operand, "explore.threads=4");
+    assert_eq!(unknown.cause, UsageCause::UnknownSetting);
 }
 
 /// The in-process `version` invocation over `arguments`: exit code and
