@@ -78,9 +78,11 @@ pub fn run(
         provision,
         items,
         &std::collections::BTreeMap::new(),
-        engines,
-        limits,
-        cancel,
+        crate::analyze::AnalyzeExecution {
+            engines,
+            limits,
+            cancel,
+        },
     ) {
         Ok(staged) => {
             let outcome = staged.into_value();
@@ -1287,7 +1289,7 @@ pub(crate) fn read_package_with_temporal_selections<'p>(
                 })
             },
             |typed| match typed.host_allocation_failure.as_deref() {
-                Some(failure) => NotAdmitted::HostAllocationFailed(failure.clone()),
+                Some(failure) => NotAdmitted::HostAllocationFailed(*failure),
                 None => NotAdmitted::Refused(typed),
             },
         )

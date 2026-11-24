@@ -51,31 +51,31 @@ use std::collections::{BTreeMap, VecDeque};
 
 use filament_exact::{Cancel, Rational};
 use filament_semantic_value::catalog::InternalFault;
-use fsl_eval::simulation::model::{
-    check_model_bounds, GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem,
-    PlaceConstraint, TimedSubjectRefusal, TimedSystem,
-};
 use fsl_eval::simulation::BOUND_POSITIONS;
+use fsl_eval::simulation::model::{
+    GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem, PlaceConstraint,
+    TimedSubjectRefusal, TimedSystem, check_model_bounds,
+};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    check_initial, check_step, open_systems, CertifiedPosition, ConcreteStep, CounterexampleKind,
-    ReachedLimit, RefinementFailure, RefinementPart, RefinementPosition, RefinementSystems,
-    SilentMove, StepVerdict, SubjectRefusal, Taken, TemporalCounterexample, UndefinedEvaluation,
-    Undetermined, ZoneCertificate,
+    CertifiedPosition, ConcreteStep, CounterexampleKind, ReachedLimit, RefinementFailure,
+    RefinementPart, RefinementPosition, RefinementSystems, SilentMove, StepVerdict, SubjectRefusal,
+    Taken, TemporalCounterexample, UndefinedEvaluation, Undetermined, ZoneCertificate,
+    check_initial, check_step, open_systems,
 };
 use fsl_route::deadlock::ItemObligation;
 use fsl_semantics::check::{CheckedRefinement, ClockOp};
 use fsl_semantics::model::observation::DocumentRef;
 use fsl_semantics::model::state::ModelState;
 
+use super::Dbm;
 use super::certificate::Proof;
-use super::concretise::{concretise, Stage, Target};
+use super::concretise::{Stage, Target, concretise};
 use super::divergence::{Escape, EscapeWitness};
 use super::search::{
-    not_simulated, widen, Arrival, Halt, Inserted, Judged, Run, Searched, ZoneCheckLimit,
-    ZoneCheckLimits, ZoneCheckRefusal, ZoneStats, ZoneStop, ZoneUndecided,
+    Arrival, Halt, Inserted, Judged, Run, Searched, ZoneCheckLimit, ZoneCheckLimits,
+    ZoneCheckRefusal, ZoneStats, ZoneStop, ZoneUndecided, not_simulated, widen,
 };
-use super::Dbm;
 
 mod live;
 
@@ -783,12 +783,14 @@ impl Product<'_, '_> {
                     };
                     let counterexample = self.counterexample(
                         run,
-                        node,
-                        (step, successor.part),
-                        (failure, CounterexampleKind::Formula),
-                        &escape,
-                        None,
-                        Some(failed_zone),
+                        CounterexampleContext {
+                            node,
+                            step: (step, successor.part),
+                            failure: (failure, CounterexampleKind::Formula),
+                            escape: &escape,
+                            before: None,
+                            after: Some(failed_zone),
+                        },
                     )?;
                     return Ok(Some(TimedSafetyOutcome::Violated {
                         counterexample: Box::new(counterexample),
@@ -883,12 +885,14 @@ impl Product<'_, '_> {
                                 };
                                 let counterexample = self.counterexample(
                                     run,
-                                    node,
-                                    (step, successor.part),
-                                    (failure, CounterexampleKind::Formula),
-                                    &escape,
-                                    None,
-                                    Some(failed_zone),
+                                    CounterexampleContext {
+                                        node,
+                                        step: (step, successor.part),
+                                        failure: (failure, CounterexampleKind::Formula),
+                                        escape: &escape,
+                                        before: None,
+                                        after: Some(failed_zone),
+                                    },
                                 )?;
                                 return Ok(Some(TimedSafetyOutcome::Violated {
                                     counterexample: Box::new(counterexample),
@@ -953,12 +957,14 @@ impl Product<'_, '_> {
                     let failed = (**failed).clone();
                     let counterexample = self.counterexample(
                         run,
-                        node,
-                        (step, successor.part),
-                        failed,
-                        &escape,
-                        None,
-                        None,
+                        CounterexampleContext {
+                            node,
+                            step: (step, successor.part),
+                            failure: failed,
+                            escape: &escape,
+                            before: None,
+                            after: None,
+                        },
                     )?;
                     return Ok(Some(TimedSafetyOutcome::Violated {
                         counterexample: Box::new(counterexample),
@@ -1277,7 +1283,7 @@ impl Product<'_, '_> {
         target: usize,
         taken: &Taken,
         zone: Dbm,
-    ) -> Result<(Vec<StepPiece>, Vec<(Dbm, String)>), Halt> {
+    ) -> Result<StepPieces, Halt> {
         let Some(timed) = run.auxiliary_timed else {
             return Ok((
                 vec![StepPiece {
@@ -1539,12 +1545,14 @@ impl Product<'_, '_> {
                         };
                         let counterexample = self.counterexample(
                             run,
-                            node,
-                            (step, successor.part),
-                            (failure, CounterexampleKind::Formula),
-                            &after,
-                            Some(dead.clone()),
-                            None,
+                            CounterexampleContext {
+                                node,
+                                step: (step, successor.part),
+                                failure: (failure, CounterexampleKind::Formula),
+                                escape: &after,
+                                before: Some(dead.clone()),
+                                after: None,
+                            },
                         )?;
                         return Ok(Some(TimedSafetyOutcome::Violated {
                             counterexample: Box::new(counterexample),
@@ -1753,13 +1761,16 @@ impl Product<'_, '_> {
     fn counterexample(
         &self,
         run: &mut Run<'_, '_, '_>,
-        node: usize,
-        (step, part): (&GuardedStep, usize),
-        (failure, kind): (RefinementFailure, CounterexampleKind),
-        escape: &Escape,
-        before: Option<Dbm>,
-        after: Option<Dbm>,
+        context: CounterexampleContext<'_>,
     ) -> Result<TemporalCounterexample, Halt> {
+        let CounterexampleContext {
+            node,
+            step: (step, part),
+            failure: (failure, kind),
+            escape,
+            before,
+            after,
+        } = context;
         let lifted = run.lifted_to(node)?;
         let mut stages = lifted.stages;
         for (stage, edge) in stages.iter_mut().zip(&lifted.edge_indices) {
@@ -1857,6 +1868,17 @@ struct StepPiece {
     /// landing is no run along the behaviour. The liveness half reads it; the
     /// safety half's certificate keeps the edge's own `taken`.
     taken: Taken,
+}
+
+type StepPieces = (Vec<StepPiece>, Vec<(Dbm, String)>);
+
+struct CounterexampleContext<'a> {
+    node: usize,
+    step: (&'a GuardedStep, usize),
+    failure: (RefinementFailure, CounterexampleKind),
+    escape: &'a Escape,
+    before: Option<Dbm>,
+    after: Option<Dbm>,
 }
 
 /// The convex branches whose union negates the conjunction `constraints`:

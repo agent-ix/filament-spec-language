@@ -326,8 +326,8 @@ fn witness_absent() -> EngineReport {
 
 /// Require the witness a refuted bound implies. Keep every producer path on
 /// this classification so a missing witness cannot silently become unbuilt.
-fn require_witness<T>(witness: Option<T>) -> Result<T, EngineReport> {
-    witness.ok_or_else(witness_absent)
+fn require_witness<T>(witness: Option<T>) -> Result<T, Box<EngineReport>> {
+    witness.ok_or_else(|| Box::new(witness_absent()))
 }
 
 fn broken() -> EngineReport {
@@ -718,13 +718,15 @@ fn run_timed(
                 return Ok(broken());
             };
             finish_interval(
-                bound,
-                &limits,
-                lower,
-                upper,
-                binding.as_ref(),
-                extremum,
-                interval.precision_bits,
+                IntervalSettlement {
+                    bound,
+                    limits: &limits,
+                    lower,
+                    upper,
+                    binding: binding.as_ref(),
+                    extremum,
+                    precision_bits: interval.precision_bits,
+                },
                 subject,
             )
         });
@@ -1910,7 +1912,7 @@ fn raise_until_accepted(
     bound: &Bound,
     limits: &crate::exact_probabilistic::ExactProbLimits,
     mut interval: Interval,
-    mut settle: impl FnMut(&Interval) -> Result<EngineReport, EngineReport>,
+    mut settle: impl FnMut(&Interval) -> Result<EngineReport, Box<EngineReport>>,
 ) -> EngineReport {
     loop {
         let rejected = match settle(&interval) {
@@ -1922,11 +1924,11 @@ fn raise_until_accepted(
             .saturating_mul(2)
             .min(limits.max_precision_bits);
         if raised <= interval.precision_bits {
-            return rejected;
+            return *rejected;
         }
         let next = crate::exact_probabilistic::ExactProbLimits {
             precision_bits: raised,
-            ..limits.clone()
+            ..*limits
         };
         match decide_bounded_event(product, bound, &next) {
             Ok(FhResult::Bounds {
@@ -1941,7 +1943,7 @@ fn raise_until_accepted(
                     precision_bits,
                 };
             }
-            _ => return rejected,
+            _ => return *rejected,
         }
     }
 }
@@ -1956,7 +1958,7 @@ fn settle_interval(
     cancel: &Cancel,
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     subject: SubjectLimits<'_>,
-) -> Result<EngineReport, EngineReport> {
+) -> Result<EngineReport, Box<EngineReport>> {
     use fsl_replay::SubsystemBoundKind;
     let io = fsl_replay::ProbabilityDocumentIoLimits {
         bytes: limits.bytes,
@@ -2012,13 +2014,15 @@ fn settle_interval(
         return Ok(broken());
     };
     finish_interval(
-        subject_of.bound,
-        subject_of.request_limits,
-        lower,
-        upper,
-        subject_of.binding,
-        subject_of.extremum,
-        interval.precision_bits,
+        IntervalSettlement {
+            bound: subject_of.bound,
+            limits: subject_of.request_limits,
+            lower,
+            upper,
+            binding: subject_of.binding,
+            extremum: subject_of.extremum,
+            precision_bits: interval.precision_bits,
+        },
         subject,
     )
 }
@@ -2054,19 +2058,32 @@ type IntervalDocument = Result<
     ProbabilityDocumentError,
 >;
 
+struct IntervalSettlement<'a> {
+    bound: &'a Bound,
+    limits: &'a crate::exact_probabilistic::ExactProbLimits,
+    lower: IntervalDocument,
+    upper: IntervalDocument,
+    binding: Option<&'a fsl_replay::ClaimBinding>,
+    extremum: Option<Extremum>,
+    precision_bits: u32,
+}
+
 /// Settle a decided interval from its two checked documents: `proved` with
 /// `ValueBounds` only when the claim side's document and its counterpart are
 /// both accepted, and a rejection of either as that document's rejection.
 fn finish_interval(
-    bound: &Bound,
-    limits: &crate::exact_probabilistic::ExactProbLimits,
-    lower: IntervalDocument,
-    upper: IntervalDocument,
-    binding: Option<&fsl_replay::ClaimBinding>,
-    extremum: Option<Extremum>,
-    precision_bits: u32,
+    settlement: IntervalSettlement<'_>,
     subject: SubjectLimits<'_>,
-) -> Result<EngineReport, EngineReport> {
+) -> Result<EngineReport, Box<EngineReport>> {
+    let IntervalSettlement {
+        bound,
+        limits,
+        lower,
+        upper,
+        binding,
+        extremum,
+        precision_bits,
+    } = settlement;
     let (claim, counterpart) = match bound {
         Bound::AtLeast(_) => (lower, upper),
         Bound::AtMost(_) => (upper, lower),
@@ -2090,13 +2107,13 @@ fn finish_interval(
         None
     };
     if let Some(check) = rejected {
-        return Err(checked_report(
+        return Err(Box::new(checked_report(
             Ok(check),
             certificate,
             binding.cloned(),
             extremum,
             subject,
-        ));
+        )));
     }
     let ExactProbabilityCertificateCheck::Accepted(accepted_claim) = &claim_check else {
         return Ok(broken());
@@ -2656,7 +2673,7 @@ fn replay_refutation(
     };
     let produced = match require_witness(produced) {
         Ok(witness) => witness,
-        Err(report) => return report,
+        Err(report) => return *report,
     };
     replay_produced_witness(
         system,
@@ -2774,7 +2791,7 @@ fn replay_fair_refutation(
     };
     let produced = match require_witness(produced) {
         Ok(witness) => witness,
-        Err(report) => return report,
+        Err(report) => return *report,
     };
     replay_produced_witness(
         system,
@@ -2814,7 +2831,7 @@ fn replay_produced_witness(
     let measure = claim.bounded_measure();
     let item = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(item) => item,
-        Err(error) => return graph_failure(error, &limits, subject),
+        Err(error) => return graph_failure(error, limits, subject),
     };
     let initials = system.initial();
     let [first] = initials.as_slice() else {
@@ -3536,7 +3553,7 @@ fn replay_timed_refutation(
     };
     let produced = match require_witness(produced) {
         Ok(produced) => produced,
-        Err(report) => return report,
+        Err(report) => return *report,
     };
     replay_timed_paths(
         system, claim, product, produced, initial, binding, limits, cancel, subject, tamper,
@@ -3562,7 +3579,7 @@ fn replay_timed_paths(
     use crate::exact_probabilistic::ProductAction;
     let item = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(item) => item,
-        Err(error) => return graph_failure(error, &limits, subject),
+        Err(error) => return graph_failure(error, limits, subject),
     };
     let initials = system.initial();
     let [first] = initials.as_slice() else {

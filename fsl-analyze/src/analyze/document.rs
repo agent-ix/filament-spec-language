@@ -28,7 +28,7 @@ use fsl_route::{CandidateOutcome, EvidenceKind, ItemEvidence, Registry};
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::request::ProtocolAnalysisSelection;
 use super::{
@@ -897,8 +897,7 @@ impl TryFrom<ItemSelectionWire> for ItemSelection {
                 }
                 if temporal.profile.is_some() || temporal.max_history.is_some() {
                     return Err(ItemSelectionReadError {
-                        message:
-                            "a non-protocol item carries an unsupported protocol member or count",
+                        message: "a non-protocol item carries an unsupported protocol member or count",
                     });
                 }
             }
@@ -1711,8 +1710,8 @@ pub use composition_item::{ComponentOwner, CompositionClaim};
 pub use held_identity::HeldIdentityError;
 
 pub use package_run::{
-    settle_package_call, settle_package_run, PackageRun, PackageRunError, PendingFamily,
-    PendingPackageFamily,
+    PackageRun, PackageRunError, PendingFamily, PendingPackageFamily, settle_package_call,
+    settle_package_run,
 };
 
 /// One requirement item of a run call (FR-395 "Item of the call") with the
@@ -2154,7 +2153,7 @@ fn resolve_one(
                 }
             }
             (Some(_), _) if protocol_analysis_kind => {
-                return invalid_member(index, name, "temporal.subject.protocol")
+                return invalid_member(index, name, "temporal.subject.protocol");
             }
             (Some(_), _) => return invalid_value(index, name, "temporal.subject.protocol"),
             (None, _) => None,
@@ -2943,11 +2942,7 @@ fn read_identities<'p>(
                 .any(|universe| universe.population.package == *identity)
         })
         .collect();
-    if read.is_empty() {
-        all
-    } else {
-        read
-    }
+    if read.is_empty() { all } else { read }
 }
 
 fn candidate_list(candidates: &CandidateOutcome) -> Vec<fsl_route::Candidate> {
@@ -3659,9 +3654,11 @@ impl ClaimItem {
                     );
                     member.insert(
                         "max_witnesses".to_owned(),
-                        json!(probabilistic
-                            .max_witnesses
-                            .unwrap_or(crate::statistical::DEFAULT_MAX_WITNESSES)),
+                        json!(
+                            probabilistic
+                                .max_witnesses
+                                .unwrap_or(crate::statistical::DEFAULT_MAX_WITNESSES)
+                        ),
                     );
                     member.insert(
                         "workers".to_owned(),
@@ -3866,9 +3863,11 @@ pub fn settle_run(
         &provision,
         &negotiated,
         &components,
-        engines,
-        &limits,
-        cancel,
+        super::request::AnalyzeExecution {
+            engines,
+            limits: &limits,
+            cancel,
+        },
     )
     .map_err(|failure| match failure {
         fsl_foundation::diagnostic::StageFailure::Refused(refusal) => {
@@ -4720,7 +4719,9 @@ fn certificate_kind(document: &Value) -> &'static str {
             "upper" => Some("upper"),
             _ => None,
         });
-    let profile = document.pointer("/objective/profile").and_then(Value::as_str);
+    let profile = document
+        .pointer("/objective/profile")
+        .and_then(Value::as_str);
     if document.get("kind").and_then(Value::as_str) == Some("conditional")
         && profile.is_some_and(|profile| profile.contains("on-each"))
     {

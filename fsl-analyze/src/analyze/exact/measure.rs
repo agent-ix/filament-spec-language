@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared-control finite-horizon induction and independently accepted proofs.
 use super::*;
-use crate::exact_probabilistic::{decide_measure_exact, FhObjective, QualifiedFhError};
+use crate::exact_probabilistic::{FhObjective, QualifiedFhError, decide_measure_exact};
 use fsl_replay::{
-    conditional_measure_probability_certificate, measure_probability_certificate_document,
-    measure_probability_objective, measure_probability_product_key,
-    write_measure_probability_certificate, MeasurePayoffKind,
+    MeasurePayoffKind, conditional_measure_probability_certificate,
+    measure_probability_certificate_document, measure_probability_objective,
+    measure_probability_product_key, write_measure_probability_certificate,
 };
 
 pub(super) fn run(
@@ -82,7 +82,7 @@ pub(super) fn run(
                 cancel,
                 subject,
                 tamper_witness,
-            )
+            );
         }
         Err(error) => return build_refusal(error, subject),
     };
@@ -367,7 +367,7 @@ fn refute(
     mut storage: u64,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
-        produce_quantile_witness, produce_witness, WitnessError, WitnessScope, WitnessWork,
+        WitnessError, WitnessScope, WitnessWork, produce_quantile_witness, produce_witness,
     };
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
     let kind = if matches!(claim.form, ProbForm::Quantile { .. }) {
@@ -512,7 +512,7 @@ fn refute(
     };
     let produced = match require_witness(produced) {
         Ok(produced) => produced,
-        Err(report) => return report,
+        Err(report) => return *report,
     };
     replay_produced_witness(
         system, claim, product, produced, initial, binding, None, limits, cancel, subject, tamper,

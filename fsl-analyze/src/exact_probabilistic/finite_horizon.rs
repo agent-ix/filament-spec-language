@@ -10,7 +10,7 @@ use num_traits::Zero as _;
 
 use super::rows::Evaluation;
 use super::unbounded::{
-    maximal_end_components_from, policy_iteration, Graph, UnboundedError, UnboundedObjective,
+    Graph, UnboundedError, UnboundedObjective, maximal_end_components_from, policy_iteration,
 };
 use super::{
     ExactProbLimits, MonitorVerdict, ProbEdge, ProbProduct, ProbStateId, ProductAction, ProductKind,
@@ -299,7 +299,7 @@ fn collapse_zero_time_components(
     // in exactly one full-graph component and none overlaps another without
     // nesting. An overlap is therefore a broken invariant of the end-component
     // computation, not a property of the model.
-    found.sort_by(|left, right| right.len().cmp(&left.len()));
+    found.sort_by_key(|value| std::cmp::Reverse(value.len()));
     let mut components: Vec<Vec<usize>> = Vec::new();
     for members in found {
         let mut nested = false;
@@ -952,10 +952,10 @@ impl Arithmetic<'_> {
             match filament_exact::evaluate_rational_arithmetic(operation, None, meter) {
                 filament_exact::Outcome::Completed(value) => value,
                 filament_exact::Outcome::Incomplete(error) => {
-                    return Err(self.failed(QualifiedFhError::Accounting(Box::new(error))))
+                    return Err(self.failed(QualifiedFhError::Accounting(Box::new(error))));
                 }
                 filament_exact::Outcome::Undefined(_) | filament_exact::Outcome::Refused(_) => {
-                    return Err(FhError::InvalidProbability)
+                    return Err(FhError::InvalidProbability);
                 }
             }
         } else {

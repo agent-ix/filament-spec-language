@@ -58,6 +58,7 @@ use crate::zone_check::{Bound, Dbm};
 /// An outcome that ends the liveness half before it decides: undecided,
 /// stopped or a fault (its counts are replaced by the liveness product's).
 type Decided = TimedSafetyOutcome<()>;
+type FairLasso = Result<Vec<(Vec<u8>, Vec<ModelTransition>)>, Decided>;
 
 /// What the liveness half decides.
 pub(super) enum Lived {
@@ -985,7 +986,7 @@ impl Product<'_, '_> {
         run: &mut Run<'_, '_, '_>,
         live: &Live,
         at: usize,
-    ) -> Result<Result<Vec<(Vec<u8>, Vec<ModelTransition>)>, Decided>, Halt> {
+    ) -> Result<FairLasso, Halt> {
         let source = live
             .nodes
             .get(at)

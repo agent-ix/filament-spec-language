@@ -356,26 +356,30 @@ pub(crate) fn global_recording_item<'a>(
 }
 
 /// Recording settlement over authenticated admitted protocol facts.
+pub(crate) struct PackageRecordingRequest<'a> {
+    pub(crate) input: fsl_eval::simulation::model::ModelCheckInput<'a>,
+    pub(crate) selected_protocol: String,
+    pub(crate) recording_identity: Option<fsl_semantics::model::observation::DocumentRef>,
+    pub(crate) recording: Option<&'a [u8]>,
+    pub(crate) population: Option<serde_json::Value>,
+    pub(crate) incremental: bool,
+    pub(crate) replay_limits: ReplayLimits,
+}
+
 pub(crate) fn package_global_recording_item<'a>(
     index: fsl_foundation::RequestIndex,
-    input: fsl_eval::simulation::model::ModelCheckInput<'a>,
-    selected_protocol: String,
-    recording_identity: Option<fsl_semantics::model::observation::DocumentRef>,
-    recording: Option<&'a [u8]>,
-    population: Option<serde_json::Value>,
-    incremental: bool,
-    replay_limits: ReplayLimits,
+    request: PackageRecordingRequest<'a>,
 ) -> crate::analyze::AnalyzeItem<'a> {
     global_recording_item_in(
         index,
-        super::recording_input::Input::Package(Box::new(input)),
-        selected_protocol,
+        super::recording_input::Input::Package(Box::new(request.input)),
+        request.selected_protocol,
         None,
-        recording_identity,
-        recording,
-        population,
-        incremental,
-        replay_limits,
+        request.recording_identity,
+        request.recording,
+        request.population,
+        request.incremental,
+        request.replay_limits,
     )
 }
 

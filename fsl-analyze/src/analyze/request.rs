@@ -555,9 +555,11 @@ pub fn analyze(
         &request.provision,
         &request.items,
         &BTreeMap::new(),
-        engines,
-        limits,
-        cancel,
+        AnalyzeExecution {
+            engines,
+            limits,
+            cancel,
+        },
     )
 }
 
@@ -570,13 +572,16 @@ pub(crate) fn analyze_bound<'a>(
     provision: &SourceProvision,
     requested: &[NegotiatedItem],
     components: &BTreeMap<RequestIndex, Arc<fsl_package::CheckedPackage>>,
-    engines: &super::Engines,
-    limits: &super::AnalyzeLimits,
-    cancel: &filament_exact::Cancel,
+    execution: AnalyzeExecution<'_>,
 ) -> Result<
     fsl_foundation::diagnostic::Staged<super::AnalyzeOutcome>,
     fsl_foundation::diagnostic::StageFailure<super::AnalyzeRefusal>,
 > {
+    let AnalyzeExecution {
+        engines,
+        limits,
+        cancel,
+    } = execution;
     let (package, input) = (analysis.package, &analysis.model);
     use fsl_foundation::diagnostic::{StageFailure, Staged};
     // The compiled package is read back through the strict reader once,
@@ -714,6 +719,12 @@ pub(crate) fn analyze_bound<'a>(
             dependencies: dependency_graphs,
         },
     }))
+}
+
+pub(crate) struct AnalyzeExecution<'a> {
+    pub(crate) engines: &'a super::Engines,
+    pub(crate) limits: &'a super::AnalyzeLimits,
+    pub(crate) cancel: &'a filament_exact::Cancel,
 }
 
 fn check_provision(
@@ -1797,7 +1808,7 @@ mod tests {
     #[trace("FR-741-AC-6", "FR-255-AC-23")]
     #[test]
     fn both_probability_requests_use_the_finite_local_candidate_default() {
-        use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest, SpineLimits};
+        use fsl_replay::spine::{DependencyInput, ParseRequest, SpineLimits, check, parse, select};
 
         let model = include_bytes!(
             "../../../tools/fsl-probability-check/tests/fixtures/link.semantic-ir.json"
@@ -1920,7 +1931,7 @@ mod tests {
     #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14", "TC-845", "FR-335-AC-2")]
     #[test]
     fn request_work_forwards_operation_contract_finite_bound_availability() {
-        use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest, SpineLimits};
+        use fsl_replay::spine::{DependencyInput, ParseRequest, SpineLimits, check, parse, select};
 
         let model = include_bytes!(
             "../../../tools/fsl-probability-check/tests/fixtures/link.semantic-ir.json"

@@ -133,7 +133,9 @@ impl Product<'_, '_> {
                         .and_then(|out| out.get(position))
                         .copied()
                         .ok_or(ZoneCheckRefusal::Fault("walk-edge"))?;
-                    if !relations.contains_key(&arc_index) {
+                    if let std::collections::btree_map::Entry::Vacant(entry) =
+                        relations.entry(arc_index)
+                    {
                         let arc = live
                             .arcs
                             .get(arc_index)
@@ -144,7 +146,7 @@ impl Product<'_, '_> {
                             &enables(vertex_of(&candidates, arc.to)?),
                             classes,
                         )?;
-                        relations.insert(arc_index, relation);
+                        entry.insert(relation);
                     }
                     let edge_relation = relations
                         .get(&arc_index)

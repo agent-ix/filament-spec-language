@@ -79,24 +79,24 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, PropertyForm};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    closure_shape, invariant_atom, is_safety_translated, translate, translate_counted, Atom,
-    AutomatonError, AutomatonKind, BoundedState, BoundedTranslation, Gba, GbaBuilder, Guard,
-    KeyRefusal, Letter, Monitor, SafetyAutomaton, SafetyState, StateId, SubjectKind,
+    Atom, AutomatonError, AutomatonKind, BoundedState, BoundedTranslation, Gba, GbaBuilder, Guard,
+    KeyRefusal, Letter, Monitor, SafetyAutomaton, SafetyState, StateId, SubjectKind, closure_shape,
+    invariant_atom, is_safety_translated, translate, translate_counted,
 };
 use fsl_eval::fairness::{EdgeLabel, Vertex};
 use fsl_eval::model_subject::{
     AtomStop, ModelInstance, ModelLetters, ModelSubject, ProtocolSubject,
 };
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{
-    check_model_bounds, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, TerminalClass,
+    ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, TerminalClass, check_model_bounds,
 };
 use fsl_eval::simulation::protocol::{
-    activates_on_each, check_package_protocol_bounds, check_protocol_bounds, live_instance_bound,
     Capacities, DataRace, MemoryModel, PackageProtocolProgram, ProtocolFairnessError,
     ProtocolRefusal, ProtocolState, ProtocolSystem, ProtocolTransition, Sc, SubjectMemory,
-    UnboundCapacity, WeakAccessShape,
+    UnboundCapacity, WeakAccessShape, activates_on_each, check_package_protocol_bounds,
+    check_protocol_bounds, live_instance_bound,
 };
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
     ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, FairLoop,
     Location, NotSimulated, Permutation, RequiresBound, SubjectSystem, SubjectTransition,
@@ -751,7 +751,7 @@ fn check_safety(
     let max_candidates = request.subject.simulation.expansion.max_candidates;
     let no_initial = request.subject.simulation.initial.is_empty();
     let system =
-        read_system(&request).map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
+        read_system(request).map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS).map_err(not_simulated)?;
     // A loop-proof item is decided over a protocol subject only; a stated
     // subject kind below must not instance it over a model.
@@ -1074,83 +1074,70 @@ pub fn check_protocol_constrained(
         request.max_store_buffer,
         request.max_messages,
     );
-    let built = match memory {
-        SubjectMemory::Sc => new_protocol_system(
-            model,
-            subject,
-            Sc,
-            protocol_run.loop_proof_target(),
-        )
-        .map(|system| {
-            let bound = system.has_channels().then_some(MemoryBound {
-                member: MemoryBoundMember::MaxMessages,
-                value: request
-                    .max_messages
-                    .unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND),
-            });
-            protocol_run.decide(
-                &system
-                    .with_channel_message_bound(
-                        request
-                            .max_messages
-                            .unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND),
-                    )
-                    .with_max_live_instances(live_instances)
-                    .with_cycle_keys(BTreeSet::new()),
-                automaton,
-                bound,
-            )
-        }),
-        SubjectMemory::Tso(tso) => {
-            let bound = MemoryBound {
-                member: MemoryBoundMember::MaxStoreBuffer,
-                value: tso.max_store_buffer(),
-            };
-            new_protocol_system(
-                model,
-                subject,
-                tso,
-                protocol_run.loop_proof_target(),
-            )
-            .map(|system| {
-                protocol_run.decide(
-                    &system
-                        .with_channel_message_bound(
-                            request
+    let built =
+        match memory {
+            SubjectMemory::Sc => {
+                new_protocol_system(model, subject, Sc, protocol_run.loop_proof_target()).map(
+                    |system| {
+                        let bound = system.has_channels().then_some(MemoryBound {
+                            member: MemoryBoundMember::MaxMessages,
+                            value: request
                                 .max_messages
                                 .unwrap_or(fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND),
+                        });
+                        protocol_run.decide(
+                            &system
+                                .with_channel_message_bound(request.max_messages.unwrap_or(
+                                    fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND,
+                                ))
+                                .with_max_live_instances(live_instances)
+                                .with_cycle_keys(BTreeSet::new()),
+                            automaton,
+                            bound,
                         )
-                        .with_max_live_instances(live_instances)
-                        .with_cycle_keys(BTreeSet::new()),
-                    automaton,
-                    Some(bound),
+                    },
                 )
-            })
-        }
-        SubjectMemory::Ra(ra) => {
-            let bound = MemoryBound {
-                member: MemoryBoundMember::MaxMessages,
-                value: ra.max_messages(),
-            };
-            let channel_bound = ra.max_messages();
-            new_protocol_system(
-                model,
-                subject,
-                ra,
-                protocol_run.loop_proof_target(),
-            )
-            .map(|system| {
-                protocol_run.decide(
-                    &system
-                        .with_channel_message_bound(channel_bound)
-                        .with_max_live_instances(live_instances)
-                        .with_cycle_keys(BTreeSet::new()),
-                    automaton,
-                    Some(bound),
+            }
+            SubjectMemory::Tso(tso) => {
+                let bound = MemoryBound {
+                    member: MemoryBoundMember::MaxStoreBuffer,
+                    value: tso.max_store_buffer(),
+                };
+                new_protocol_system(model, subject, tso, protocol_run.loop_proof_target()).map(
+                    |system| {
+                        protocol_run.decide(
+                            &system
+                                .with_channel_message_bound(request.max_messages.unwrap_or(
+                                    fsl_eval::simulation::protocol::DEFAULT_MEMORY_BOUND,
+                                ))
+                                .with_max_live_instances(live_instances)
+                                .with_cycle_keys(BTreeSet::new()),
+                            automaton,
+                            Some(bound),
+                        )
+                    },
                 )
-            })
-        }
-    };
+            }
+            SubjectMemory::Ra(ra) => {
+                let bound = MemoryBound {
+                    member: MemoryBoundMember::MaxMessages,
+                    value: ra.max_messages(),
+                };
+                let channel_bound = ra.max_messages();
+                new_protocol_system(model, subject, ra, protocol_run.loop_proof_target()).map(
+                    |system| {
+                        protocol_run.decide(
+                            &system
+                                .with_channel_message_bound(channel_bound)
+                                .with_max_live_instances(live_instances)
+                                .with_cycle_keys(BTreeSet::new()),
+                            automaton,
+                            Some(bound),
+                        )
+                    },
+                )
+            }
+        };
     built.unwrap_or_else(|refusal| construction_refusal(refusal, &meter, max_candidates))
 }
 
@@ -1558,7 +1545,7 @@ fn check_reduced(
     let max_candidates = request.subject.simulation.expansion.max_candidates;
     let no_initial = request.subject.simulation.initial.is_empty();
     let system =
-        read_system(&request).map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
+        read_system(request).map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS).map_err(not_simulated)?;
     let group = match precheck(reductions, &request.item, &system)? {
         Admitted::Group(group) => group,
@@ -1608,7 +1595,7 @@ fn check_reduced(
         }],
         ModelCheckItem::RaceFreedom => return Err(ModelCheckRefusal::RaceOverModel),
         ModelCheckItem::LoopInvariant { .. } | ModelCheckItem::LoopTermination { .. } => {
-            return Err(ModelCheckRefusal::LoopProofOverModel)
+            return Err(ModelCheckRefusal::LoopProofOverModel);
         }
     };
     refuse_capture_read(request.item)?;
@@ -2390,10 +2377,10 @@ impl<S: SubjectSystem> Run<'_, S> {
                                 cause,
                                 limit,
                                 stats: self.stats(),
-                            })
+                            });
                         }
                         Err(Halt::Finish(_)) => {
-                            return Err(fault("a-concretisation-stops-or-refuses"))
+                            return Err(fault("a-concretisation-stops-or-refuses"));
                         }
                     };
                     return Ok(ModelCheckOutcome::Violated {
@@ -2495,7 +2482,7 @@ impl<S: SubjectSystem> Run<'_, S> {
                             cause,
                             limit,
                             stats: self.stats(),
-                        })
+                        });
                     }
                     Err(Halt::Finish(_)) => return Err(fault("a-concretisation-stops-or-refuses")),
                 };
@@ -2577,10 +2564,10 @@ impl<S: SubjectSystem> Run<'_, S> {
                     }
                     Failure::VariantBelowFloor => fsl_replay::LoopProofFailure::VariantBelowFloor,
                     Failure::EvaluationIncomplete => {
-                        return Err(Finish::Undecided(UndecidedCause::UndecidedSuccessor).into())
+                        return Err(Finish::Undecided(UndecidedCause::UndecidedSuccessor).into());
                     }
                     Failure::EvaluationRefused => {
-                        return Err(fault("a-checked-loop-proof-body-does-not-refuse").into())
+                        return Err(fault("a-checked-loop-proof-body-does-not-refuse").into());
                     }
                 };
                 return Err(Finish::violated(
