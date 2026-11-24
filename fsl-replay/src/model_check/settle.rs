@@ -5,14 +5,16 @@
 //! A `Violated` outcome settles `refuted` only on a replay result (ADR-018
 //! SM-7) that reproduced it against the package the run checked: the
 //! caller's `replay` (in production [`replay_model_trace`]) supplies the
-//! result. A `Holds` outcome settles
-//! only through the core's own checker of its certificate, [`check_closure`],
-//! [`check_components`] or [`check_smt_proof`], which the map runs itself on
-//! the outcome's certificate (ADR-018 PC-3, PC-4, PC-6): accepted is
+//! result. A `Holds` outcome settles only through the core's own checker of
+//! its closure or component certificate, [`check_closure`] or
+//! [`check_components`], which the map runs itself on the outcome's
+//! certificate (ADR-018 PC-3, PC-4): accepted is
 //! `Proved{basis, Certified}`, unchecked proof steps are
 //! `Proved{basis, Uncertified}`, rejected is
 //! `Inconclusive(CertificateRejected{rule, at})`, and a stopped check is
 //! `Incomplete` with its exact limit or cancellation source.
+//! An SMT temporal proof settles through [`settle_smt_proof`], which invokes
+//! FR-314's [`check_smt_proof`] only when the outcome carries a certificate.
 
 use filament_semantic_value::catalog::Category;
 use fsl_foundation::{BackendId, RequestIndex};
@@ -25,7 +27,9 @@ use crate::certificate::closure::{
     ProtocolCertificateRequest, TemporalCertificateCheck,
 };
 use crate::certificate::scc::ProofCertificate;
-use crate::certificate::smt::{check_smt_proof, SmtProofCheck};
+use crate::certificate::smt::{
+    check_smt_proof, validate_smt_proof_basis, SmtProofCheck, SmtProofOutcome,
+};
 use crate::execute::ReplayRefusal;
 use crate::model_check::counterexample::TemporalCounterexample;
 use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits, ReachedLimit};
@@ -284,17 +288,35 @@ pub fn settle_model_check(
                 check_components(certificate, components, limits, cancel),
                 || Row::proved(ProofBasis::Exhaustive, SettlementBasis::ClosedScope),
             ),
-            ProofCertificate::Smt {
-                basis,
-                certificate: proof,
-                limits: check_limits,
-            } => Row::of_smt_check(
-                check_smt_proof(certificate, basis, proof, check_limits, cancel),
-                basis.clone(),
-            ),
         },
         replay,
     )
+}
+
+/// Settle an SMT backend's temporal proof through FR-314. A missing
+/// certificate still requires an admissible bounded-complete horizon, then
+/// settles Uncertified without invoking the checker or spending its limits.
+pub fn settle_smt_proof(
+    request: &CertificateRequest<'_>,
+    outcome: &SmtProofOutcome,
+    limits: &crate::CertificateCheckLimits,
+    cancel: &Cancel,
+) -> TerminalValue {
+    let basis = outcome.basis.proof_basis();
+    if let Err(rejection) = validate_smt_proof_basis(request, &outcome.basis) {
+        return Row::of_smt_check(Err(rejection), basis).value;
+    }
+    let Some(certificate) = &outcome.certificate else {
+        return TerminalValue::Proved {
+            basis,
+            certification: Certification::Uncertified,
+        };
+    };
+    Row::of_smt_check(
+        check_smt_proof(request, &outcome.basis, certificate, limits, cancel),
+        basis,
+    )
+    .value
 }
 
 /// [`settle_model_check`] for an outcome of EN-1's run over the item's
@@ -320,14 +342,6 @@ pub fn settle_model_check_over_stutter_closure(
             ProofCertificate::Component(components) => Row::of_check(
                 check_components_over_stutter_closure(certificate, components, limits, cancel),
                 || Row::proved(ProofBasis::Exhaustive, SettlementBasis::ClosedScope),
-            ),
-            ProofCertificate::Smt {
-                basis,
-                certificate: proof,
-                limits: check_limits,
-            } => Row::of_smt_check(
-                check_smt_proof(certificate, basis, proof, check_limits, cancel),
-                basis.clone(),
             ),
         },
         replay,
@@ -364,7 +378,6 @@ pub fn settle_protocol_check(
                 check_protocol_components(certificate, components, limits, cancel),
                 || Row::proved(ProofBasis::Exhaustive, SettlementBasis::ClosedScope),
             ),
-            ProofCertificate::Smt { .. } => Row::failed(),
         },
         replay,
     );
@@ -687,8 +700,6 @@ fn settle<T: SubjectTransition>(
         ) => match certificate {
             ProofCertificate::Closure(_) => Some(CertificateChecker::Closure),
             ProofCertificate::Component(_) => Some(CertificateChecker::Component),
-            // FR-282 has no checker spelling for FR-314's SMT checker yet.
-            ProofCertificate::Smt { .. } => None,
         },
         _ => None,
     };
@@ -913,29 +924,5 @@ impl Row {
                 Self::inconclusive(InconclusiveCause::CertificateRejected { rule, at })
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod smt_settlement_tests {
-    use super::{ResultLabel, Row};
-    use crate::proof_result::{Certification, ProofBasis, SettlementBasis, TerminalValue};
-
-    /// FR-314-AC-1: the settlement map records a verified bounded proof as
-    /// `proved`, `Certified`, with the engine's basis.
-    #[ix_trace_rs::trace("TC-893", "FR-314-AC-1")]
-    #[test]
-    fn verified_smt_proof_settles_certified() {
-        let basis = ProofBasis::BoundedComplete { depth: 3 };
-        let row = Row::of_smt_check(Ok(super::SmtProofCheck::Verified), basis.clone());
-        assert_eq!(
-            row.value,
-            TerminalValue::Proved {
-                basis,
-                certification: Certification::Certified,
-            }
-        );
-        assert_eq!(row.label, ResultLabel::Proved);
-        assert_eq!(row.basis, SettlementBasis::ClosedScope);
     }
 }

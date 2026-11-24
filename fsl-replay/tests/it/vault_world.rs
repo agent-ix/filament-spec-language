@@ -683,14 +683,15 @@ mod tp4 {
     use fsl_foundation::source::provenance::OccurrenceKey;
     use fsl_replay::ClauseIdentity;
     use fsl_replay::{
-        check_components, check_smt_proof, settle_model_check, CertificateCheckLimits,
+        check_components, check_smt_proof, settle_smt_proof, CertificateCheckLimits,
         CertificateLocus, CertificateRequest, CertificateRule, ClosureCertificate,
-        ComponentCertificate, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ProofBasis,
-        ProofCertificate, ProofFormat, RefutedQuery, RunStats, SmtProofCertificate,
+        ComponentCertificate, ModelCheckItem, ModelCheckLimits, ProofBasis, ProofFormat,
+        RefutedQuery, SmtProofBasis, SmtProofCertificate, SmtProofOutcome,
         TemporalCertificateCheck, TerminalValue,
     };
     use fsl_semantics::check::footprint::{FootprintRefusal, SymbolicLocation};
     use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId};
+    use ix_trace_rs::trace;
 
     use super::{World, FORALL_EXISTS};
 
@@ -877,7 +878,7 @@ mod tp4 {
 
     /// FR-314-AC-1: checked base and step refutations rebuild through FR-315
     /// and settle the inductive TP-1 temporal claim certified.
-    #[ix_trace_rs::trace("TC-893", "FR-314-AC-1")]
+    #[trace("TC-893", "FR-314-AC-1", "TC-1199", "FR-127-AC-14")]
     #[test]
     fn an_inductive_temporal_smt_certificate_settles_certified() {
         let world = infinite_world();
@@ -914,30 +915,24 @@ mod tp4 {
         assert_eq!(
             check_smt_proof(
                 &request,
-                &ProofBasis::Inductive { depth: 1 },
+                &SmtProofBasis::Inductive { depth: 1 },
                 &certificate,
                 &CertificateCheckLimits::default(),
                 &Cancel::new(),
             ),
             Ok(fsl_replay::SmtProofCheck::Verified)
         );
-        let outcome = ModelCheckOutcome::Holds {
-            certificate: ProofCertificate::Smt {
-                basis: ProofBasis::Inductive { depth: 1 },
-                certificate,
-                limits: CertificateCheckLimits::default(),
-            },
-            stats: RunStats::default(),
-        };
-        let record = settle_model_check(
-            &outcome,
-            &ModelCheckLimits::default(),
+        let settled = settle_smt_proof(
             &request,
+            &SmtProofOutcome {
+                basis: SmtProofBasis::Inductive { depth: 1 },
+                certificate: Some(certificate),
+            },
+            &CertificateCheckLimits::default(),
             &Cancel::new(),
-            |_| unreachable!("a holding outcome does not replay a counterexample"),
         );
         assert_eq!(
-            record.value,
+            settled,
             TerminalValue::Proved {
                 basis: ProofBasis::Inductive { depth: 1 },
                 certification: fsl_replay::Certification::Certified,
@@ -967,30 +962,24 @@ mod tp4 {
         assert_eq!(
             check_smt_proof(
                 &bounded_request,
-                &ProofBasis::BoundedComplete { depth: 3 },
+                &SmtProofBasis::BoundedComplete { depth: 3 },
                 &bounded_certificate,
                 &CertificateCheckLimits::default(),
                 &Cancel::new(),
             ),
             Ok(fsl_replay::SmtProofCheck::Verified)
         );
-        let bounded_outcome = ModelCheckOutcome::Holds {
-            certificate: ProofCertificate::Smt {
-                basis: ProofBasis::BoundedComplete { depth: 3 },
-                certificate: bounded_certificate,
-                limits: CertificateCheckLimits::default(),
-            },
-            stats: RunStats::default(),
-        };
-        let bounded_record = settle_model_check(
-            &bounded_outcome,
-            &ModelCheckLimits::default(),
+        let bounded_settled = settle_smt_proof(
             &bounded_request,
+            &SmtProofOutcome {
+                basis: SmtProofBasis::BoundedComplete { depth: 3 },
+                certificate: Some(bounded_certificate),
+            },
+            &CertificateCheckLimits::default(),
             &Cancel::new(),
-            |_| unreachable!("a holding outcome does not replay a counterexample"),
         );
         assert_eq!(
-            bounded_record.value,
+            bounded_settled,
             TerminalValue::Proved {
                 basis: ProofBasis::BoundedComplete { depth: 3 },
                 certification: fsl_replay::Certification::Certified,
@@ -998,9 +987,119 @@ mod tp4 {
         );
     }
 
+    /// FR-127-AC-14: absence of an SMT certificate performs no checker work
+    /// and remains an uncertified proof, even with zero checker budgets.
+    #[trace("TC-1199", "FR-127-AC-14")]
+    #[test]
+    fn temporal_smt_without_certificate_is_uncertified_without_checking() {
+        let world = tp2_world();
+        let request = tp2_request(&world);
+        let limits = CertificateCheckLimits {
+            max_certificate_bytes: 0,
+            max_certificate_edges: 0,
+            ..CertificateCheckLimits::default()
+        };
+        assert_eq!(
+            settle_smt_proof(
+                &request,
+                &SmtProofOutcome {
+                    basis: SmtProofBasis::BoundedComplete { depth: 3 },
+                    certificate: None,
+                },
+                &limits,
+                &Cancel::new(),
+            ),
+            TerminalValue::Proved {
+                basis: ProofBasis::BoundedComplete { depth: 3 },
+                certification: fsl_replay::Certification::Uncertified,
+            }
+        );
+    }
+
+    /// FR-127-AC-15: bounded basis horizons are checked before certificate
+    /// work, including when no certificate was returned.
+    #[trace("TC-1201", "FR-127-AC-15")]
+    #[test]
+    fn temporal_smt_bounded_basis_rejects_an_inadequate_shape_before_checking() {
+        let nested = "temporal Bounded using ep over (v: V::Vault) clock \"model-steps\" on origin { always[0,3] eventually[0,1] holds(v.l = v.l) }";
+        let horizon_world = World::new(&["v"], false, &format!("{FORALL_EXISTS}\n{nested}"));
+        let horizon_request = tp2_request(&horizon_world);
+        let overlaid_limits = CertificateCheckLimits {
+            max_certificate_bytes: 0,
+            max_certificate_edges: 0,
+            ..CertificateCheckLimits::default()
+        };
+        for certificate in [
+            None,
+            Some(SmtProofCertificate::BoundedComplete {
+                format: ProofFormat::Alethe,
+                unrolling: RefutedQuery {
+                    query: vec![],
+                    proof: vec![],
+                },
+            }),
+        ] {
+            assert_eq!(
+                settle_smt_proof(
+                    &horizon_request,
+                    &SmtProofOutcome {
+                        basis: SmtProofBasis::BoundedComplete { depth: 0 },
+                        certificate,
+                    },
+                    &overlaid_limits,
+                    &Cancel::new(),
+                ),
+                TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::CertificateRejected {
+                    rule: CertificateRule::ShapeMismatch,
+                    at: CertificateLocus::Query {
+                        part: fsl_replay::QueryPart::Unrolling,
+                    },
+                })
+            );
+        }
+
+        let invariant_world = infinite_world();
+        let invariant_request = temporal_request(&invariant_world);
+        assert!(matches!(
+            settle_smt_proof(
+                &invariant_request,
+                &SmtProofOutcome {
+                    basis: SmtProofBasis::BoundedComplete { depth: 3 },
+                    certificate: None,
+                },
+                &overlaid_limits,
+                &Cancel::new(),
+            ),
+            TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::CertificateRejected {
+                rule: CertificateRule::ShapeMismatch,
+                at: CertificateLocus::Query {
+                    part: fsl_replay::QueryPart::Unrolling,
+                },
+            })
+        ));
+
+        let complete_world = tp2_world();
+        let complete_request = tp2_request(&complete_world);
+        assert_eq!(
+            settle_smt_proof(
+                &complete_request,
+                &SmtProofOutcome {
+                    basis: SmtProofBasis::BoundedComplete { depth: 3 },
+                    certificate: None,
+                },
+                &overlaid_limits,
+                &Cancel::new(),
+            ),
+            TerminalValue::Proved {
+                basis: ProofBasis::BoundedComplete { depth: 3 },
+                certification: fsl_replay::Certification::Uncertified,
+            }
+        );
+    }
+
     /// FR-314-AC-8: bounded-complete evidence below the TP-2 horizon is
     /// rejected before the carried query or proof is inspected.
-    #[ix_trace_rs::trace("TC-893", "FR-314-AC-8")]
+    #[trace("TC-893", "FR-314-AC-8", "TC-1201", "FR-127-AC-15")]
     #[test]
     fn bounded_smt_certificate_must_reach_the_tp2_horizon() {
         let world = tp2_world();
@@ -1015,7 +1114,7 @@ mod tp4 {
         assert_eq!(
             check_smt_proof(
                 &request,
-                &ProofBasis::BoundedComplete { depth: 2 },
+                &SmtProofBasis::BoundedComplete { depth: 2 },
                 &certificate,
                 &CertificateCheckLimits::default(),
                 &Cancel::new(),
@@ -1031,7 +1130,7 @@ mod tp4 {
 
     /// FR-314-AC-6: a carried temporal query is compared with FR-315's
     /// canonical query and reports the exact rejected locus.
-    #[ix_trace_rs::trace("TC-1199", "FR-314-AC-6")]
+    #[trace("TC-1199", "FR-314-AC-6", "TC-1199", "FR-127-AC-14")]
     #[test]
     fn temporal_smt_certificate_rejects_a_query_mismatch() {
         let world = tp2_world();
@@ -1046,7 +1145,7 @@ mod tp4 {
         assert_eq!(
             check_smt_proof(
                 &request,
-                &ProofBasis::BoundedComplete { depth: 3 },
+                &SmtProofBasis::BoundedComplete { depth: 3 },
                 &certificate,
                 &CertificateCheckLimits::default(),
                 &Cancel::new(),
@@ -1062,7 +1161,7 @@ mod tp4 {
 
     /// FR-314-AC-5: the rebuilt query bytes are charged against the
     /// certificate-check budget before query comparison or proof reading.
-    #[ix_trace_rs::trace("TC-1165", "FR-314-AC-5")]
+    #[trace("TC-1165", "FR-314-AC-5", "TC-1199", "FR-127-AC-14")]
     #[test]
     fn temporal_smt_certificate_stops_at_the_query_byte_limit() {
         let world = tp2_world();
@@ -1075,13 +1174,13 @@ mod tp4 {
             },
         };
         let limits = CertificateCheckLimits {
-            max_certificate_bytes: 0,
+            max_certificate_bytes: 1,
             ..CertificateCheckLimits::default()
         };
         assert!(matches!(
             check_smt_proof(
                 &request,
-                &ProofBasis::BoundedComplete { depth: 3 },
+                &SmtProofBasis::BoundedComplete { depth: 3 },
                 &certificate,
                 &limits,
                 &Cancel::new(),
@@ -1089,16 +1188,32 @@ mod tp4 {
             Ok(fsl_replay::SmtProofCheck::Stopped(
                 fsl_replay::IncompleteCause::LimitReached {
                     limit: fsl_replay::ModelCheckLimit::CertificateMaxBytes,
-                    value: 0,
+                    value: 1,
                     ..
                 }
             ))
+        ));
+        assert!(matches!(
+            settle_smt_proof(
+                &request,
+                &SmtProofOutcome {
+                    basis: SmtProofBasis::BoundedComplete { depth: 3 },
+                    certificate: Some(certificate),
+                },
+                &limits,
+                &Cancel::new(),
+            ),
+            TerminalValue::Incomplete(fsl_replay::IncompleteCause::LimitReached {
+                limit: fsl_replay::ModelCheckLimit::CertificateMaxBytes,
+                value: 1,
+                ..
+            })
         ));
     }
 
     /// FR-314-AC-7: the request's recorded encoding limits determine the
     /// rebuilt query; a query encoded under different limits is rejected.
-    #[ix_trace_rs::trace("TC-1250", "FR-314-AC-7")]
+    #[trace("TC-1250", "FR-314-AC-7")]
     #[test]
     fn temporal_smt_certificate_rebuilds_with_recorded_encoding_limits() {
         let world = tp2_world();
@@ -1125,7 +1240,7 @@ mod tp4 {
         assert!(matches!(
             check_smt_proof(
                 &request,
-                &ProofBasis::BoundedComplete { depth: 3 },
+                &SmtProofBasis::BoundedComplete { depth: 3 },
                 &certificate,
                 &CertificateCheckLimits::default(),
                 &Cancel::new(),
@@ -1141,7 +1256,7 @@ mod tp4 {
 
     /// FR-314-AC-3: proof locations use flattened command order and do not
     /// depend on Alethe command IDs.
-    #[ix_trace_rs::trace("TC-893", "FR-314-AC-3")]
+    #[trace("TC-893", "FR-314-AC-3")]
     #[test]
     fn temporal_smt_certificate_names_the_first_invalid_flattened_command() {
         let world = tp2_world();
@@ -1180,7 +1295,7 @@ mod tp4 {
         assert_eq!(
             check_smt_proof(
                 &request,
-                &ProofBasis::BoundedComplete { depth: 3 },
+                &SmtProofBasis::BoundedComplete { depth: 3 },
                 &certificate,
                 &CertificateCheckLimits::default(),
                 &Cancel::new(),
@@ -1197,35 +1312,28 @@ mod tp4 {
 
     /// FR-314-AC-6: a rejected temporal proof settles inconclusive rather
     /// than certifying the engine's claim.
-    #[ix_trace_rs::trace("TC-1199", "FR-314-AC-6")]
+    #[trace("TC-1199", "FR-314-AC-6", "TC-1199", "FR-127-AC-14")]
     #[test]
     fn temporal_smt_rejection_settles_inconclusive() {
         let world = tp2_world();
         let request = tp2_request(&world);
-        let certificate = ProofCertificate::Smt {
-            basis: ProofBasis::BoundedComplete { depth: 3 },
-            certificate: SmtProofCertificate::BoundedComplete {
-                format: ProofFormat::Alethe,
-                unrolling: RefutedQuery {
-                    query: b"(check-sat)\\n".to_vec(),
-                    proof: vec![],
-                },
-            },
-            limits: CertificateCheckLimits::default(),
-        };
-        let outcome = ModelCheckOutcome::Holds {
-            certificate,
-            stats: RunStats::default(),
-        };
-        let record = settle_model_check(
-            &outcome,
-            &ModelCheckLimits::default(),
+        let settled = settle_smt_proof(
             &request,
+            &SmtProofOutcome {
+                basis: SmtProofBasis::BoundedComplete { depth: 3 },
+                certificate: Some(SmtProofCertificate::BoundedComplete {
+                    format: ProofFormat::Alethe,
+                    unrolling: RefutedQuery {
+                        query: b"(check-sat)\\n".to_vec(),
+                        proof: vec![],
+                    },
+                }),
+            },
+            &CertificateCheckLimits::default(),
             &Cancel::new(),
-            |_| unreachable!("a holding outcome does not replay a counterexample"),
         );
         assert_eq!(
-            record.value,
+            settled,
             TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::CertificateRejected {
                 rule: CertificateRule::QueryMismatch,
                 at: CertificateLocus::Query {
@@ -1237,7 +1345,7 @@ mod tp4 {
 
     /// FR-314-AC-6: an unchecked Alethe rule keeps the engine result proved
     /// but marks it uncertified.
-    #[ix_trace_rs::trace("TC-1199", "FR-314-AC-6")]
+    #[trace("TC-1199", "FR-314-AC-6", "TC-1199", "FR-127-AC-14")]
     #[test]
     fn temporal_smt_unverifiable_proof_settles_uncertified() {
         let world = tp2_world();
@@ -1253,29 +1361,23 @@ mod tp4 {
             &request.smt_encoding,
         )
         .expect("default encoding admits the query");
-        let outcome = ModelCheckOutcome::Holds {
-            certificate: ProofCertificate::Smt {
-                basis: ProofBasis::BoundedComplete { depth: 3 },
-                certificate: SmtProofCertificate::BoundedComplete {
+        let settled = settle_smt_proof(
+            &request,
+            &SmtProofOutcome {
+                basis: SmtProofBasis::BoundedComplete { depth: 3 },
+                certificate: Some(SmtProofCertificate::BoundedComplete {
                     format: ProofFormat::Alethe,
                     unrolling: RefutedQuery {
                         query,
                         proof: b"(step t0 (cl) :rule hole)".to_vec(),
                     },
-                },
-                limits: CertificateCheckLimits::default(),
+                }),
             },
-            stats: RunStats::default(),
-        };
-        let record = settle_model_check(
-            &outcome,
-            &ModelCheckLimits::default(),
-            &request,
+            &CertificateCheckLimits::default(),
             &Cancel::new(),
-            |_| unreachable!("a holding outcome does not replay a counterexample"),
         );
         assert_eq!(
-            record.value,
+            settled,
             TerminalValue::Proved {
                 basis: ProofBasis::BoundedComplete { depth: 3 },
                 certification: fsl_replay::Certification::Uncertified,

@@ -44,7 +44,43 @@ use crate::certificate::closure::CertificateRequest;
 use crate::model_check::item::ModelCheckItem;
 use crate::model_check::limits::ModelCheckLimit;
 use crate::proof_result::IncompleteCause;
-use crate::proof_result::ProofBasis;
+
+/// The bases an SMT backend may report for a temporal proof (FR-127).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SmtProofBasis {
+    /// A bounded unrolling closed at or beyond the item's horizon.
+    BoundedComplete {
+        /// Number of transitions unrolled.
+        depth: u64,
+    },
+    /// A checked induction base and step at this depth.
+    Inductive {
+        /// Number of transitions used in the base and step.
+        depth: u64,
+    },
+}
+
+impl SmtProofBasis {
+    /// The terminal-record basis corresponding to this SMT basis.
+    #[must_use]
+    pub const fn proof_basis(self) -> crate::proof_result::ProofBasis {
+        match self {
+            Self::BoundedComplete { depth } => {
+                crate::proof_result::ProofBasis::BoundedComplete { depth }
+            }
+            Self::Inductive { depth } => crate::proof_result::ProofBasis::Inductive { depth },
+        }
+    }
+}
+
+/// What the SMT backend hands FR-127 for a temporal proof.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SmtProofOutcome {
+    /// The proof basis reported by the backend.
+    pub basis: SmtProofBasis,
+    /// The solver certificate, when the backend returned one.
+    pub certificate: Option<SmtProofCertificate>,
+}
 
 /// The proof format of an SMT proof certificate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -245,7 +281,7 @@ pub fn check_refinement_smt_proof(
 /// limits have one canonical representation.
 pub fn check_smt_proof(
     request: &CertificateRequest<'_>,
-    basis: &ProofBasis,
+    basis: &SmtProofBasis,
     certificate: &SmtProofCertificate,
     limits: &CertificateCheckLimits,
     cancel: &Cancel,
@@ -263,42 +299,52 @@ pub fn check_smt_proof(
     }
 }
 
+/// Validate the bounded-complete basis before any certificate work. FR-127
+/// uses this for outcomes without a certificate as well, so an inadequate
+/// horizon cannot become an uncertified proof.
+pub(crate) fn validate_smt_proof_basis(
+    request: &CertificateRequest<'_>,
+    basis: &SmtProofBasis,
+) -> Result<(), CertificateRejection> {
+    let SmtProofBasis::BoundedComplete { depth } = basis else {
+        return Ok(());
+    };
+    let ModelCheckItem::Clause { clause, .. } = request.item else {
+        return Err(CertificateRejection {
+            rule: CertificateRule::ShapeMismatch,
+            at: CertificateLocus::Query {
+                part: QueryPart::Unrolling,
+            },
+        });
+    };
+    let horizon = fsl_eval::automaton::bounded_shape(clause).map(|(_, upper, _)| upper);
+    if clause.profile() != TemporalProfile::EventPositionFalseExtension
+        || !matches!(clause.activation(), Activation::Origin)
+        || horizon.is_none_or(|horizon| *depth < horizon)
+    {
+        return Err(CertificateRejection {
+            rule: CertificateRule::ShapeMismatch,
+            at: CertificateLocus::Query {
+                part: QueryPart::Unrolling,
+            },
+        });
+    }
+    Ok(())
+}
+
 fn check_temporal(
     request: &CertificateRequest<'_>,
-    basis: &ProofBasis,
+    basis: &SmtProofBasis,
     certificate: &SmtProofCertificate,
     budget: &Budget<'_>,
 ) -> Result<SmtProofCheck, Halt> {
     let (format, carried): (ProofFormat, Vec<(QueryPart, SmtQueryKind, &RefutedQuery)>) =
         match (basis, certificate) {
             (
-                ProofBasis::BoundedComplete { depth },
+                SmtProofBasis::BoundedComplete { depth },
                 SmtProofCertificate::BoundedComplete { format, unrolling },
             ) => {
-                let temporal = match request.item {
-                    ModelCheckItem::Clause { clause, .. } => clause,
-                    _ => {
-                        return Err(reject(
-                            CertificateRule::ShapeMismatch,
-                            CertificateLocus::Query {
-                                part: QueryPart::Unrolling,
-                            },
-                        ));
-                    }
-                };
-                let horizon =
-                    fsl_eval::automaton::bounded_shape(temporal).map(|(_, upper, _)| upper);
-                if temporal.profile() != TemporalProfile::EventPositionFalseExtension
-                    || !matches!(temporal.activation(), Activation::Origin)
-                    || horizon.is_none_or(|horizon| *depth < horizon)
-                {
-                    return Err(reject(
-                        CertificateRule::ShapeMismatch,
-                        CertificateLocus::Query {
-                            part: QueryPart::Unrolling,
-                        },
-                    ));
-                }
+                validate_smt_proof_basis(request, basis).map_err(Halt::Rejected)?;
                 (
                     *format,
                     vec![(
@@ -309,7 +355,7 @@ fn check_temporal(
                 )
             }
             (
-                ProofBasis::Inductive { depth },
+                SmtProofBasis::Inductive { depth },
                 SmtProofCertificate::Inductive { format, base, step },
             ) => (
                 *format,
@@ -326,7 +372,7 @@ fn check_temporal(
                     ),
                 ],
             ),
-            (ProofBasis::BoundedComplete { .. }, _) => {
+            (SmtProofBasis::BoundedComplete { .. }, _) => {
                 return Err(reject(
                     CertificateRule::ShapeMismatch,
                     CertificateLocus::Query {
@@ -334,19 +380,11 @@ fn check_temporal(
                     },
                 ));
             }
-            (ProofBasis::Inductive { .. }, _) => {
+            (SmtProofBasis::Inductive { .. }, _) => {
                 return Err(reject(
                     CertificateRule::ShapeMismatch,
                     CertificateLocus::Query {
                         part: QueryPart::Base,
-                    },
-                ));
-            }
-            _ => {
-                return Err(reject(
-                    CertificateRule::ShapeMismatch,
-                    CertificateLocus::Query {
-                        part: QueryPart::Unrolling,
                     },
                 ));
             }
