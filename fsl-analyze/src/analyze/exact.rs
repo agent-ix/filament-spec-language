@@ -37,7 +37,6 @@ use fsl_replay::{
     ProbabilisticCounterexample, ProbabilityWitnessError, ProbabilityWitnessPath,
     ProbabilityWitnessReplay, ProbabilityWitnessStep, ReproducedProbabilityWitness,
 };
-use fsl_replay::{CertificateLocus, CertificateRule};
 use fsl_replay::{InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule};
 use fsl_route::Mode;
 use fsl_semantics::check::{
