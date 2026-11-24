@@ -1145,11 +1145,6 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
             .map_err(|refusal| self.record(Halt::Refusal(ModelCheckRefusal::Encoding(refusal))))
     }
 
-    /// The letter of `state` for this binding, read once per model state.
-    fn reading(&self, state: &S::State) -> Result<Reading, ExpansionStop> {
-        self.reading_at(state, false).map(|(_, reading)| reading)
-    }
-
     /// The letter of `state`, `initial` when it is position 0 of the trace.
     /// Only an `on origin` clause's captures read differently there.
     fn reading_at(
