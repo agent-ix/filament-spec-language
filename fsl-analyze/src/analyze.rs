@@ -5090,8 +5090,9 @@ mod host_allocation_tests {
             consumed: 64,
         });
 
-        assert_eq!(refusal.document().category(), Category::InternalFailure);
-        let diagnostic = &refusal.document().diagnostics()[0];
+        let document = refusal.document();
+        assert_eq!(document.category(), Category::InternalFailure);
+        let diagnostic = &document.diagnostics()[0];
         assert_eq!(diagnostic.code(), "runtime_invariant");
         assert!(diagnostic.message().contains("Envelope"));
         assert!(diagnostic.message().contains("32 bytes"));

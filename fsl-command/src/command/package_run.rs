@@ -128,6 +128,17 @@ fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
 /// The request-stage refusal of a package the strict reader refused, with
 /// the reader's pointer under `/request/package` (FR-1039).
 fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
+    if let Some(failure) = refusal.host_allocation_failure {
+        return RunCause::AnalyzePackage {
+            code: fsl_foundation::Code::RuntimeInvariant,
+            cause: None,
+            pointer: None,
+            message: format!(
+                "host allocation failed during {:?}: requested {} bytes after {} bytes were admitted",
+                failure.stage, failure.requested, failure.consumed
+            ),
+        };
+    }
     let fsl_package::PackageAdmissionRefusal {
         code,
         cause,

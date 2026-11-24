@@ -2628,18 +2628,23 @@ pub fn inspect_handoff_with_operand(
                 member,
                 pointer,
             });
-            let category = if matches!(
-                error,
-                crate::checked_handoff::Error::ReaderHostAllocationFailed(_)
-            ) {
-                Category::InternalFailure
-            } else {
-                Category::Refusal
-            };
+            let category = inspect_handoff_category(&error);
             OutcomeDocument::new(Operation::Inspect, None, category).with_diagnostics(vec![
                 OutcomeDiagnostic::new(None, error.code_name(), locus, error.to_string()),
             ])
         }
+    }
+}
+
+fn inspect_handoff_category(
+    error: &crate::checked_handoff::Error,
+) -> filament_semantic_value::catalog::Category {
+    use filament_semantic_value::catalog::Category;
+
+    if matches!(error, crate::checked_handoff::Error::ReaderHostAllocationFailed(_)) {
+        Category::InternalFailure
+    } else {
+        Category::Refusal
     }
 }
 
@@ -5638,5 +5643,38 @@ mod tests {
         ] {
             assert!(read(malformed).is_err(), "{malformed} must refuse");
         }
+    }
+}
+
+#[cfg(test)]
+mod host_allocation_tests {
+    use super::inspect_handoff_category;
+    use crate::checked_handoff::Error;
+    use filament_contract_model::{
+        CheckedPackageHostAllocationFailed, NativeJoinLocus, NativeJoinLocusSource,
+        PackageReadStage,
+    };
+    use filament_semantic_value::catalog::Category;
+    use ix_trace_rs::trace;
+
+    /// FSpec FR-330-AC-17: a reader host allocation failure is an internal
+    /// tool failure, not a package refusal.
+    #[trace("FR-330-AC-17")]
+    #[test]
+    fn inspect_classifies_host_allocation_failure_as_internal() {
+        let error = Error::ReaderHostAllocationFailed(CheckedPackageHostAllocationFailed {
+            stage: PackageReadStage::Envelope,
+            locus: NativeJoinLocus {
+                source: NativeJoinLocusSource::PackageRead(PackageReadStage::Envelope, 0),
+                form: "package_bytes",
+            },
+            requested: 32,
+            consumed: 64,
+        });
+
+        assert_eq!(inspect_handoff_category(&error), Category::InternalFailure);
+        assert!(error.to_string().contains("Envelope"));
+        assert!(error.to_string().contains("32 bytes"));
+        assert_eq!(error.code_name(), "runtime_invariant");
     }
 }

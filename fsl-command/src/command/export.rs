@@ -820,6 +820,17 @@ fn assembled(
 /// The cause of an admission refusal of the compiled package: the refusal's
 /// own catalogued code, typed cause and pointer, and the identity at fault.
 fn admission_cause(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
+    if let Some(failure) = refusal.host_allocation_failure {
+        return RunCause::AnalyzePackage {
+            code: fsl_foundation::Code::RuntimeInvariant,
+            cause: None,
+            pointer: None,
+            message: format!(
+                "host allocation failed during {:?}: requested {} bytes after {} bytes were admitted",
+                failure.stage, failure.requested, failure.consumed
+            ),
+        };
+    }
     let fsl_package::PackageAdmissionRefusal {
         code,
         cause,

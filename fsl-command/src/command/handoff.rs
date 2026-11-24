@@ -150,6 +150,17 @@ pub(super) fn read_file(
 }
 
 fn package_failure(file: &str, error: fsl_package::PackageAdmissionRefusal) -> RunCause {
+    if let Some(failure) = error.host_allocation_failure {
+        return RunCause::AnalyzePackage {
+            code: fsl_foundation::Code::RuntimeInvariant,
+            cause: None,
+            pointer: None,
+            message: format!(
+                "host allocation failed during {:?}: requested {} bytes after {} bytes were admitted",
+                failure.stage, failure.requested, failure.consumed
+            ),
+        };
+    }
     if let Some(limit) = &error.limit {
         return RunCause::AnalyzePackage {
             code: error.code,
