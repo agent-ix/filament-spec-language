@@ -720,21 +720,25 @@ fn weak_correlation_parity<M: fill::Explored + Default>(memory: &str, inside: bo
     });
 }
 
+#[trace("FR-1048-AC-1")]
 #[test]
 fn tso_correlation_outside_parallel_matches_source() {
     weak_correlation_parity::<Tso>("tso", false);
 }
 
+#[trace("FR-1048-AC-1")]
 #[test]
 fn ra_correlation_outside_parallel_matches_source() {
     weak_correlation_parity::<Ra>("ra", false);
 }
 
+#[trace("FR-1048-AC-1")]
 #[test]
 fn tso_correlation_inside_parallel_matches_source() {
     weak_correlation_parity::<Tso>("tso", true);
 }
 
+#[trace("FR-1048-AC-1")]
 #[test]
 fn ra_correlation_inside_parallel_matches_source() {
     weak_correlation_parity::<Ra>("ra", true);
@@ -830,6 +834,7 @@ fn weak_model_read_refusal<M: fill::Explored + Default>(memory: &str) {
     }
 }
 
+#[trace("FR-1048-AC-1")]
 #[test]
 fn weak_model_read_correlation_has_the_same_named_refusal_on_both_routes() {
     weak_model_read_refusal::<Tso>("tso");
@@ -905,6 +910,7 @@ fn weak_premises<M: fill::Explored + Default>(memory: &str) {
     });
 }
 
+#[trace("FR-1048-AC-1")]
 #[test]
 fn weak_correlation_preserves_false_undefined_and_live_binder_premises() {
     weak_premises::<Tso>("tso");
@@ -957,13 +963,14 @@ fn weak_attempt_candidates<M: fill::Explored + Default>(memory: &str) {
         .any(|(step, _)| step.kind() == StepKind::Attempt));
 }
 
+#[trace("FR-1048-AC-1")]
 #[test]
 fn weak_correlation_attempt_preserves_candidate_frames_and_poststates() {
     weak_attempt_candidates::<Tso>("tso");
     weak_attempt_candidates::<Ra>("ra");
 }
 
-#[trace("FR-940-AC-6", "FR-731-AC-1")]
+#[trace("FR-1048-AC-1")]
 #[test]
 fn weak_package_profile_admits_correlation_outside_parallel_and_sc_override_executes() {
     for control in [controls("related by Owns (k, k)", ""), "attempt Tx by w on M::Cell::touch contracts [] as (worked: Boolean) related by Owns (k, k) { true };".to_owned()] {
@@ -1173,6 +1180,7 @@ fn sc_attempt_package_analysis_executes_after_source_removal() {
     package_analysis_without_source(&fixture, "attempt-correlation-source-absent");
 }
 
+#[trace("FR-1048-AC-1")]
 #[test]
 fn weak_correlation_package_analysis_preserves_whole_result_without_source() {
     for memory in ["tso", "ra"] {
@@ -1236,6 +1244,7 @@ fn package_analysis_without_source(fixture: &Fixture, name: &str) {
     assert_eq!(native.item(0)["replay"]["reproduced"], true);
 }
 
+#[trace("FR-1048-AC-1")]
 #[test]
 fn weak_correlation_replay_preserves_alias_order_and_constraint_precedence() {
     for memory in ["tso", "ra"] {
