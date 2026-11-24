@@ -195,6 +195,32 @@ impl<'a> AbstractProtocolSystem<'a> {
         )
     }
 
+    /// The declared types of the binders of the step node a row spells
+    /// `node`, in the order of its record: the type of the field each
+    /// node-row argument fills (FR-141-AC-15). `node` is a full control path
+    /// when it has a `/`, else the node's own name, which must name exactly
+    /// one control; otherwise no types are returned.
+    pub fn node_binder_types(&self, node: &str) -> Vec<filament_exact::ValueType> {
+        let protocol = self.protocol();
+        let mut named = protocol.controls.controls.iter().filter(|control| {
+            if node.contains('/') {
+                control.path.join("/") == node
+            } else {
+                control.path.last().is_some_and(|last| last == node)
+            }
+        });
+        let (Some(control), None) = (named.next(), named.next()) else {
+            return Vec::new();
+        };
+        protocol
+            .slots
+            .binders
+            .iter()
+            .filter(|binder| binder.node == Some(control.node))
+            .map(|binder| binder.value_type.clone())
+            .collect()
+    }
+
     /// FR-148's specification environment assumptions: the protocol's
     /// derived scheduler and memory fairness members. Authored protocol
     /// constraints are supplied by the checked request when present.

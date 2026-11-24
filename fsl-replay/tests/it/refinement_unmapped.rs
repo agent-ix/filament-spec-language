@@ -612,7 +612,7 @@ fn an_undefined_row_outranks_an_unmapped_type_that_sorts_first() {
 #[trace("TC-1086", "FR-140-AC-12")]
 #[test]
 fn a_population_reference_row_maps_element_by_element() {
-    let world = MapWorld::new(&format!("{ITEMS}\ncells = R::slots;"));
+    let world = MapWorld::new(&format!("{ITEMS_ROW}\ncells = R::slots;"));
     let concrete = world.concrete_system();
     let abstracted = world.abstract_system();
     let state = crate::ring_world::ring_state(&concrete, 1, 2, [0, 1]);
@@ -945,4 +945,151 @@ fn an_internal_fault_replaces_the_row_outcome_a_state_would_give() {
         panic!("a dangling reference is a fault");
     };
     assert_eq!(code, fault);
+}
+
+/// The world over the `subtypes` variant with `refinement`.
+fn subtype_world(refinement: &str) -> RingWorld {
+    RingWorld::with(
+        Variant {
+            subtypes: true,
+            ..Variant::default()
+        },
+        refinement,
+    )
+}
+
+/// FR-140-AC-18 (TC-1086): with `queues` admitting `Queue` and its subtype
+/// `FastQueue`, both rows naming `Ring`, the ring maps to the `FastQueue`
+/// object whichever row is written first, and swapping the rows changes no
+/// mapped state key.
+#[trace("TC-1086", "FR-140-AC-18")]
+#[test]
+fn the_most_specific_admitted_row_maps_the_object_whatever_the_row_order() {
+    let mut keys = Vec::new();
+    for fast_first in [false, true] {
+        let queue = format!("object Q::Queue from R::Ring {{ {ITEMS_ROW} }}");
+        let fast = format!("object Q::FastQueue from R::Ring {{ {ITEMS_ROW} }}");
+        let (first, second) = if fast_first {
+            (fast, queue)
+        } else {
+            (queue, fast)
+        };
+        let world = subtype_world(&subtype_refinement(
+            [&first, &second],
+            ["Q::Queue", "Q::Queue"],
+        ));
+        let concrete = world.concrete_system(UNLIMITED);
+        let abstracted = world.abstract_system(UNLIMITED);
+        let state = ring_state(&concrete, 0, 0, [0, 0]);
+        let mapped = map_state(
+            world.refinement(),
+            &concrete,
+            &abstracted,
+            &state,
+            &HistoryValues::default(),
+        )
+        .expect("the state maps")
+        .visible;
+        let queues = &mapped.populations[&key(QUEUE, "queues")];
+        assert_eq!(queues["r"].type_identity, key(QUEUE, "FastQueue"));
+        keys.push(abstracted.state_key_of(&mapped).expect("a key").0);
+    }
+    assert_eq!(keys[0], keys[1]);
+}
+
+/// FR-141-AC-16 (TC-546 step 11): `put -> FastQueue::enq(self.ring, x)` and
+/// `put2 -> SlowQueue::enq(self.ring, x)`, both the one abstract `enq`
+/// inherited from `Queue`, are each decided with the receiver lifted against
+/// the row's own target type, so each applies `enq` to its subtype's object
+/// and neither is a `Fault`.
+#[trace("TC-546", "FR-141-AC-16")]
+#[test]
+fn an_inherited_operation_row_lifts_its_receiver_against_its_target_subtype() {
+    let queue = format!("object Q::Queue from R::Ring {{ {ITEMS_ROW} }}");
+    let fast = format!("object Q::FastQueue from R::Ring {{ {ITEMS_ROW} }}");
+    let world = subtype_world(&subtype_refinement(
+        [&queue, &fast],
+        ["Q::FastQueue", "Q::SlowQueue"],
+    ));
+    let concrete = world.concrete_system(UNLIMITED);
+    let abstracted = world.abstract_system(UNLIMITED);
+    let (pre, post) = (
+        ring_state(&concrete, 0, 0, [0, 0]),
+        ring_state(&concrete, 0, 1, [1, 0]),
+    );
+    let wanted = concrete.state_key_of(&post).expect("a key").0;
+    let mapped = |state: &ModelState| {
+        map_state(
+            world.refinement(),
+            &concrete,
+            &abstracted,
+            state,
+            &HistoryValues::default(),
+        )
+        .expect("the state maps")
+        .visible
+    };
+    for (operation, subtype) in [("Slot/put", "FastQueue"), ("Slot/put2", "SlowQueue")] {
+        let identity = operation_identity_text(&key(RING, operation)).expect("an identity text");
+        let (transition, reached) = concrete
+            .expand_state(&pre)
+            .expect("the state expands")
+            .successors
+            .into_iter()
+            .find(|(transition, reached)| {
+                transition.operation() == identity
+                    && concrete.state_key_of(reached.state()).expect("a key").0 == wanted
+            })
+            .unwrap_or_else(|| panic!("{operation} is enabled"));
+        let verdict = check_step(
+            world.refinement(),
+            &concrete,
+            &abstracted,
+            &RefinementPosition {
+                concrete: pre.clone(),
+                history: HistoryValues::default(),
+                abstract_states: vec![mapped(&pre)],
+                abstract_protocol_states: Vec::new(),
+            },
+            &ConcreteStep {
+                position: 1,
+                transition: Some(&transition),
+                post: &reached,
+            },
+        )
+        .verdict;
+        let StepVerdict::Passes { taken, .. } = verdict else {
+            panic!("{operation} passes: {verdict:?}");
+        };
+        let Taken::Abstract(taken) = *taken else {
+            panic!("{operation} takes an abstract step");
+        };
+        assert_eq!(taken.len(), 1);
+        let receiver: serde_json::Value =
+            serde_json::from_str(taken[0].receiver().expect("a receiver")).expect("JSON");
+        assert_eq!(
+            receiver["object_type"]["original"]["node"],
+            format!("ix://example/ring-queue-spec/{subtype}")
+        );
+    }
+}
+
+/// The refinement of the `subtypes` variant: `queues` takes the two object
+/// rows `objects` in order, `slows` the `SlowQueue` row; `put` and `put2` apply
+/// the inherited `enq` on the types `targets` names.
+fn subtype_refinement(objects: [&str; 2], targets: [&str; 2]) -> String {
+    let [first, second] = objects;
+    let [put, put2] = targets;
+    format!(
+        "invariant Anything using v on R::Ring at current {{ true }}\n\
+         refinement RingIsQueue using inf abstract Q concrete R {{\n\
+         population Q::queues from R::rings;\n\
+         population Q::slows from R::rings;\n\
+         {first}\n{second}\n\
+         object Q::SlowQueue from R::Ring {{ {ITEMS_ROW} }}\n\
+         step R::Slot::put -> {put}::enq(self.ring, x);\n\
+         step R::Slot::put2 -> {put2}::enq(self.ring, x);\n\
+         step R::Slot::take -> Q::FastQueue::deq(self.ring);\n\
+         }}"
+    )
 }

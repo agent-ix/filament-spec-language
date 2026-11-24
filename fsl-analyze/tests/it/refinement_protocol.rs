@@ -22,8 +22,8 @@ use ix_trace_rs::trace;
 use crate::refinement_fixture::{cas_refines_counter, World, UNLIMITED};
 use crate::refinement_fixture::{key, Variant, CAS, SPEC};
 use crate::ring_world::{
-    key as ring_key, twin_refinement, RingWorld, Variant as RingVariant, QUEUE as RING_QUEUE,
-    RING as RING_MODEL, UNLIMITED as RING_UNLIMITED,
+    key as ring_key, RingWorld, Variant as RingVariant, QUEUE as RING_QUEUE, RING as RING_MODEL,
+    UNLIMITED as RING_UNLIMITED,
 };
 
 pub(crate) fn cas_twice(peek: bool, lost_update: bool) -> String {
@@ -2227,30 +2227,42 @@ fn a_node_row_matches_the_attempt_identity_and_binder() {
     assert_eq!(counter_value(&post.abstract_states[0]), 1);
 }
 
-/// FR-141-AC-15 (TC-546): a protocol node-row argument has no declared
-/// abstract target type in replay, so several object rows for its reference
-/// type fault instead of selecting by row order.
-#[trace("TC-546", "FR-141-AC-15")]
-#[test]
-fn a_protocol_node_row_faults_when_its_reference_type_has_multiple_object_rows() {
-    let protocol = "profile p = \"filament.protocol.finite-global/v1\";\n\
-        protocol P using p over (q: Q::Queue) on origin {\n\
+/// The verdict of the `put` step through the protocol node row `E(self.ring)`
+/// whose node field `r` is declared `Reference<declared>`, over the `twin`
+/// models with the object rows in the order `cell_first` says.
+fn node_row_verdict(
+    declared: &str,
+    cell_first: bool,
+) -> (StepVerdict, Option<filament_exact::EffectiveId>) {
+    let protocol = format!(
+        "profile p = \"filament.protocol.finite-global/v1\";\n\
+        protocol P using p over (q: Q::Queue) on origin {{\n\
         role w on Q::Queue; scheduling adversarial;\n\
-        run sequence Main {\n\
-        attempt a1 by w on Q::Queue::deq contracts [] as (x: Q::Digit) { true };\n\
-        }\n\
-        finish Done as (d: Boolean) { true };\n\
-        }\n";
-    let refinement = twin_refinement(true)
-        .replace("abstract Q concrete R", "abstract Q::P concrete R")
-        .replace(
-            "step R::Slot::put -> Q::Queue::enq(self.ring, x);",
-            "step R::Slot::put -> node Q::P::a1(self.ring, x);",
-        )
-        .replace(
-            "step R::Slot::take -> Q::Queue::deq(self.ring);",
-            "step R::Slot::take -> stutter;",
-        );
+        run sequence Main {{\n\
+        event E by w as (r: {declared}) {{ true }};\n\
+        }}\n\
+        finish Done as (d: Boolean) {{ true }};\n\
+        }}\n"
+    );
+    // The `Queue` row leaves `items` hidden, so the `put` step changes no
+    // visible state and the protocol event can be its node.
+    let queue = "object Q::Queue from R::Ring { twin = self; }";
+    let cell = "object Q::Cell from R::Ring { value = self.head; }";
+    let (first, second) = if cell_first {
+        (cell, queue)
+    } else {
+        (queue, cell)
+    };
+    let refinement = format!(
+        "invariant Anything using v on R::Ring at current {{ true }}\n\
+         refinement RingIsQueue using inf abstract Q::P concrete R {{\n\
+         population Q::queues from R::rings;\n\
+         population Q::cells from R::rings;\n\
+          {first}\n{second}\n\
+         step R::Slot::put -> node Q::P::E(self.ring);\n\
+         step R::Slot::take -> stutter;\n\
+         }}"
+    );
     let source = format!("{protocol}{refinement}");
     let world = RingWorld::with(
         RingVariant {
@@ -2310,11 +2322,45 @@ fn a_protocol_node_row_faults_when_its_reference_type_has_multiple_object_rows()
             post: &post,
         },
     );
-    assert!(
-        matches!(result.verdict, StepVerdict::Fault(_)),
-        "the node-row argument must fault instead of choosing an object row: {:?}",
-        result.verdict
-    );
+    let expected = systems
+        .abstract_system
+        .type_identity(&ring_key(RING_QUEUE, declared.trim_start_matches("Q::")));
+    (result.verdict, expected)
+}
+
+/// FR-141-AC-15 (TC-546 step 10), FR-141-AC-16 (step 11): the node row's
+/// argument lifts by the node field's declared type, never by row order.
+#[trace("TC-546", "FR-141-AC-16")]
+#[trace("TC-546", "FR-141-AC-15")]
+#[test]
+fn a_protocol_node_row_lifts_by_the_declared_field_type() {
+    for cell_first in [true, false] {
+        for declared in ["Q::Queue", "Q::Cell"] {
+            let (verdict, expected) = node_row_verdict(declared, cell_first);
+            let StepVerdict::Passes { taken, .. } = verdict else {
+                panic!("{declared} (cell_first {cell_first}) lifts: {verdict:?}");
+            };
+            // The matched node transition carries `r` lifted to the declared
+            // type's reference.
+            let fsl_replay::Taken::ProtocolTraces(traces) = *taken else {
+                panic!("the node row takes a protocol trace");
+            };
+            let record = traces
+                .iter()
+                .flat_map(|trace| &trace.transitions)
+                .find_map(|transition| transition.binder_record())
+                .expect("the node transition has a binder record");
+            let expected = expected.expect("the declared type is an abstract type");
+            let filament_exact::Value::Reference(lifted) = record else {
+                panic!("{declared} (cell_first {cell_first}): r is a reference: {record:?}");
+            };
+            assert_eq!(
+                lifted.object_type(),
+                &expected,
+                "{declared} (cell_first {cell_first}): r lifts to the declared type"
+            );
+        }
+    }
 }
 
 fn counter_value(state: &fsl_semantics::model::state::ModelState) -> i64 {

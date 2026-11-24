@@ -257,10 +257,24 @@ pub fn map_state(
                         })
                     })
             };
-            let Some(object_row) = refinement
+            // Among the admitted rows one no other row is more specific than:
+            // an admitted row whose abstract type is a proper subtype of
+            // another's outranks it, whatever the source order (FR-140-AC-18);
+            // rows no one outranks keep source order.
+            let admitted: Vec<&dyn ObjectMapping> = refinement
                 .objects()
                 .filter(|candidate| candidate.concrete_type() == &object.type_identity)
-                .find(admits)
+                .filter(admits)
+                .collect();
+            let outranks = |sub: &dyn ObjectMapping, sup: &dyn ObjectMapping| {
+                abstract_system.type_conforms(sub.abstract_type(), sup.abstract_type())
+                    && !abstract_system.type_conforms(sup.abstract_type(), sub.abstract_type())
+            };
+            let Some(object_row) = admitted
+                .iter()
+                .copied()
+                .find(|row| !admitted.iter().any(|other| outranks(*other, *row)))
+                .or_else(|| admitted.first().copied())
             else {
                 outcomes.record(unmapped(&object.type_identity, at));
                 continue;
@@ -688,13 +702,15 @@ fn choose_row<T: Copy>(
 /// `value` as the abstract model reads it: a reference maps to the abstract
 /// reference with the same key (RM-3), and so does a reference nested in an
 /// option, collection or map; any other value is unchanged. Used for the
-/// receiver and arguments of an abstract-operation `step` row. `declared` is
-/// the abstract parameter's declared type, or for the receiver the type that
-/// declares the operation, which picks the object row where a concrete type
-/// is the source of several (RM-2, RM-3); a protocol node row has none here,
-/// so the abstract type is the value's own type with each reference type
-/// replaced by the abstract type of the one object row that maps it, and a
-/// type several rows map is a fault.
+/// receiver and arguments of an abstract-operation `step` row and for the
+/// arguments of a protocol node row. `declared` is the abstract parameter's
+/// declared type, for the receiver the row's target type (the declaring type
+/// when the row carries none), and for a node-row argument the declared type
+/// of the node field it fills; it picks the object row where a concrete type
+/// is the source of several (RM-2, RM-3). Without a declared type the
+/// abstract type is the value's own type with each reference type replaced by
+/// the abstract type of the one object row that maps it, and a type several
+/// rows map is a fault.
 pub(super) fn lift_value(
     refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
@@ -1271,5 +1287,31 @@ mod tests {
             Value::Boolean(true),
         );
         assert!(matches!(kept, Ok(Value::Boolean(true))));
+    }
+
+    /// Among rows `Queue` and `Cell`, a declared type that conforms to
+    /// neither picks no row, which `check_protocol_step` reports as a
+    /// `StepVerdict::Fault`; a declared type one row conforms to picks that
+    /// row whatever the source order. This is a unit test of the row choice
+    /// only: it does not cover FR-141-AC-15's Fault clause through
+    /// `check_protocol_step`, which no checked source reaches (S3 refuses the
+    /// declared type).
+    #[test]
+    fn a_protocol_node_row_faults_when_no_object_row_conforms() {
+        let queue = effective("Queue");
+        let cell = effective("Cell");
+        let other = effective("Other");
+        let conforms = |sub: &EffectiveId, sup: &EffectiveId| sub == sup;
+        for rows in [
+            [("queue", Some(queue.clone())), ("cell", Some(cell.clone()))],
+            [("cell", Some(cell.clone())), ("queue", Some(queue.clone()))],
+        ] {
+            assert_eq!(
+                choose_row(&rows, Some(&other), &conforms),
+                Err(RowChoice::Ambiguous)
+            );
+            assert_eq!(choose_row(&rows, Some(&queue), &conforms), Ok("queue"));
+            assert_eq!(choose_row(&rows, Some(&cell), &conforms), Ok("cell"));
+        }
     }
 }

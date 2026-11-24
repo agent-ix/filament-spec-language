@@ -1263,6 +1263,7 @@ fn every_concrete_operation_has_a_checked_step_row() {
         match &step.target {
             StepTarget::Abstract {
                 operation,
+                target_type: _,
                 receiver,
                 arguments,
                 binds_result,
