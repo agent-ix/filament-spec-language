@@ -5422,8 +5422,10 @@ fn a_unit_reaches_no_package_through_another_units_alias() {
 /// FR-480-AC-2, AC-5, AC-8: the aggregate assembler resolves a function
 /// signature against another unit, keeps the declaring unit on the type
 /// node and its source region, and assigns stable identities in canonical
-/// source order independent of request order.
-#[trace("FR-480-AC-2", "FR-480-AC-5", "FR-480-AC-8")]
+/// source order independent of request order. FR-001-AC-7: the literal node
+/// key for `Point` stays `{package: test/package, path: [Point], ordinal: 0}`
+/// when bytes, authority, or identity vary independently.
+#[trace("FR-480-AC-2", "FR-480-AC-5", "FR-480-AC-8", "TC-424", "FR-001-AC-7")]
 #[test]
 fn aggregate_units_resolve_types_and_retain_the_declaring_source() {
     let a_text = text("", "record Point { x: Int[0, 9]; }");
@@ -5482,17 +5484,32 @@ fn aggregate_units_resolve_types_and_retain_the_declaring_source() {
     let second_point = second.checked_type_nodes().next().unwrap().node();
     assert_eq!(first_point, second_point);
 
-    let moved_text = text(
-        PROFILE_V,
-        "record Point { x: Int[0, 9]; }\nfunction px using v(p: Point): Int[0, 9] pure { p.x }",
-    );
-    let (source_b, moved_unit) = parsed_unit_as("repo", "b", &moved_text);
-    let moved = assemble(vec![(source_b.clone(), moved_unit)]);
-    let moved_point = moved.checked_type_nodes().next().unwrap().node();
+    let expected_point = filament_exact::NodeKey::new(
+        "test/package",
+        vec![filament_exact::PathSegment::Text("Point".into())],
+        0,
+    )
+    .expect("the literal Point node key is valid");
     assert_eq!(
-        first_point, moved_point,
-        "the structural node identity remains stable when ownership moves"
+        first_point, expected_point,
+        "the original source has the literal Point node key"
     );
+    let assert_literal_point_key = |authority: &str,
+                                    identity: &str,
+                                    unit_text: &str,
+                                    variation: &str| {
+        let (source, unit) = parsed_unit_as(authority, identity, unit_text);
+        let graph = assemble(vec![(source.clone(), unit)]);
+        let point = graph.checked_type_nodes().next().unwrap().node();
+        assert_eq!(point, expected_point, "{variation}");
+        (graph, source)
+    };
+    let byte_variant = text("", "record Point { x: Int[0, 10]; }");
+    let _ = assert_literal_point_key("repo", "a", &byte_variant, "bytes alone vary");
+    let (authority_variant, source_c) =
+        assert_literal_point_key("c", "a", &a_text, "authority alone varies");
+    let (identity_variant, source_v) =
+        assert_literal_point_key("repo", "v", &a_text, "identity alone varies");
     let point_owner = |graph: &crate::check::CheckedGraph| {
         graph
             .semantic_graph()
@@ -5513,8 +5530,12 @@ fn aggregate_units_resolve_types_and_retain_the_declaring_source() {
         Owner::Source(SourceOwner::from(&source_a))
     );
     assert_eq!(
-        point_owner(&moved),
-        Owner::Source(SourceOwner::from(&source_b))
+        point_owner(&authority_variant),
+        Owner::Source(SourceOwner::from(&source_c))
+    );
+    assert_eq!(
+        point_owner(&identity_variant),
+        Owner::Source(SourceOwner::from(&source_v))
     );
     let px_owner = first
         .semantic_graph()
@@ -5530,12 +5551,12 @@ fn aggregate_units_resolve_types_and_retain_the_declaring_source() {
         .cloned()
         .expect("px's checked node retains its source owner");
     assert_eq!(px_owner, Owner::Source(SourceOwner::from(&source_b)));
-    let moved_region = moved
+    let moved_region = authority_variant
         .region(&Location::root(Origin::TypeDeclaration {
             name: "Point".to_owned(),
         }))
-        .expect("moved Point resolves to its new source region");
-    assert_eq!(moved_region.source(), &source_b);
+        .expect("Point resolves to its new authority's source region");
+    assert_eq!(moved_region.source(), &source_c);
 }
 
 /// FR-480-AC-2: a duplicate declaration is still ambiguous after the
