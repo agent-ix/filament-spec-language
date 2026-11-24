@@ -11,7 +11,6 @@ use serde_json::Value;
     "FR-202-AC-25",
     "FR-196-AC-13",
     "FR-203-AC-5",
-    "FR-202-AC-26",
     "FSpec-FR-411-AC-12",
     "FSpec-FR-413-AC-7",
     "FSpec-FR-413-AC-11"
@@ -352,6 +351,20 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
         ))
     ));
 
+    let mut forged_timed_key = undefined.clone();
+    forged_timed_key.path.paths[0].steps[0].post_key = forged_timed_key.path.initial_key.clone();
+    assert!(matches!(
+        fsl_replay::replay_probabilistic_undefined(
+            &world.package,
+            &system,
+            &forged_timed_key.path.item,
+            &forged_timed_key,
+            &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+            &Cancel::new(),
+        ),
+        Ok(fsl_replay::ProbabilityWitnessReplay::Parity)
+    ));
+
     let mut forged_position = undefined.clone();
     forged_position.evaluation.site.position = 0;
     assert!(matches!(
@@ -369,11 +382,8 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
 
 /// A tied digital race retains and replays every identity in its exact order.
 #[trace(
-    "FR-202-AC-24",
-    "FR-202-AC-25",
     "FR-196-AC-13",
     "FR-203-AC-5",
-    "FR-202-AC-26",
     "FSpec-FR-411-AC-12",
     "FSpec-FR-413-AC-7",
     "FSpec-FR-413-AC-11"
@@ -478,11 +488,8 @@ fn timed_undefined_replays_every_hop_of_a_tied_race() {
 /// A rational delay selects the region certificate and preserves its exact
 /// pre-read time through checked replay.
 #[trace(
-    "FR-202-AC-24",
-    "FR-202-AC-25",
     "FR-196-AC-13",
     "FR-203-AC-5",
-    "FR-202-AC-26",
     "FSpec-FR-411-AC-12",
     "FSpec-FR-413-AC-7",
     "FSpec-FR-413-AC-11"
