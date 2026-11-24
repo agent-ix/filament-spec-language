@@ -191,7 +191,7 @@ fn a_timed_clause_over_a_model_without_a_time_source_refuses() {
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
     };
-    let fsl_semantics::check::CheckCause::Temporal(cause) = &refusal.cause else {
+    let fsl_semantics::check::CheckCause::Temporal(cause) = &*refusal.cause else {
         panic!("a temporal refusal: {refusal:?}");
     };
     let fsl_semantics::check::TemporalCause::ModelTimeOnUntimedModel { model, span } = &**cause

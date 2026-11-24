@@ -132,7 +132,7 @@ fn refusal(cause: ProtocolAnchorCause) -> CheckRefusal {
         // `region::DeclarationRegions::refusal_region` reads the cause's own
         // span.
         location: Location::root(Origin::Expression),
-        cause: CheckCause::ProtocolAnchor(Box::new(cause)),
+        cause: Box::new(CheckCause::ProtocolAnchor(Box::new(cause))),
     }
 }
 

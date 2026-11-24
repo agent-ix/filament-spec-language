@@ -211,7 +211,7 @@ fn a_side_effect_under_observe_only_refuses() {
     let found = located_refusals(&nested);
     let actions: Vec<_> = found
         .iter()
-        .filter_map(|(refusal, at)| match &refusal.cause {
+        .filter_map(|(refusal, at)| match refusal.cause.as_ref() {
             CheckCause::ProtocolAnchor(cause) => match cause.as_ref() {
                 crate::check::refusal::ProtocolAnchorCause::ObserveOnlyAction {
                     action,
@@ -243,7 +243,7 @@ fn a_side_effect_under_observe_only_refuses() {
     let found = located_refusals(&observed_role);
     let refusals: Vec<_> = found
         .iter()
-        .filter_map(|(refusal, at)| match &refusal.cause {
+        .filter_map(|(refusal, at)| match refusal.cause.as_ref() {
             CheckCause::ProtocolAnchor(cause) => match cause.as_ref() {
                 crate::check::refusal::ProtocolAnchorCause::ObserveOnlyAction {
                     action,

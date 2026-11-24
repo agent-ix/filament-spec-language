@@ -491,7 +491,7 @@ fn ieee_intrinsic_calls_refuse_bad_arity_types_and_unknown_names() {
         panic!("an unknown intrinsic refuses at checking");
     };
     assert!(matches!(
-        &refusals[0].cause,
+        refusals[0].cause.as_ref(),
         CheckCause::MissingQualifiedName(name) if name.name == "filament::value::ieee::cbrt"
     ));
 }
@@ -541,7 +541,10 @@ fn profile_admission_precedes_intrinsic_arity_and_argument_typing() {
             panic!("{call}: the call refuses at checking");
         };
         assert!(
-            matches!(refusals[0].cause, CheckCause::IeeeProfileNotAdmitted),
+            matches!(
+                refusals[0].cause.as_ref(),
+                CheckCause::IeeeProfileNotAdmitted
+            ),
             "{call}: {:?}",
             refusals[0].cause
         );
@@ -1137,13 +1140,12 @@ fn the_published_fma_vectors_get_their_published_decision_from_the_strict_reader
         let id = case["id"].as_str().unwrap();
         let identity = case["identity"].as_str().unwrap();
         let mut wire = base.clone();
-        let original = if identity == "filament.op.ieee.float32.fma"
-            && case["expected"] == "admitted"
-        {
-            "filament.op.ieee.float32.fma"
-        } else {
-            "filament.op.ieee.float64.fma"
-        };
+        let original =
+            if identity == "filament.op.ieee.float32.fma" && case["expected"] == "admitted" {
+                "filament.op.ieee.float32.fma"
+            } else {
+                "filament.op.ieee.float64.fma"
+            };
         let node = application_mut(&mut wire, original);
         node["body"]["operation"]["identity"] = json!(identity);
         if case["mode"].is_null() {

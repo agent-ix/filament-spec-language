@@ -897,7 +897,7 @@ mod checked {
 
     fn cause(result: Result<CheckedExpression, CheckRefusal>) -> CheckCause {
         match result {
-            Err(refusal) => refusal.cause,
+            Err(refusal) => *refusal.cause,
             Ok(_) => panic!("a refusal, not a checked expression"),
         }
     }
@@ -1226,7 +1226,7 @@ mod checked {
         .unwrap();
         let only = |result: Result<CheckedPackage, Vec<CheckRefusal>>| match result {
             Err(refusals) => match refusals.as_slice() {
-                [refusal] => refusal.cause.clone(),
+                [refusal] => refusal.cause.as_ref().clone(),
                 other => panic!("one refusal, not {other:?}"),
             },
             Ok(_) => panic!("a refusal, not an admitted package"),

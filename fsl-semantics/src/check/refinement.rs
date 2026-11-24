@@ -2079,11 +2079,11 @@ impl Findings {
     fn refuse(&mut self, span: Span, cause: RefinementCause) {
         self.refusals.push(CheckRefusal {
             location: Location::root(Origin::Expression),
-            cause: CheckCause::Refinement(Box::new(RefinementRefusal {
+            cause: Box::new(CheckCause::Refinement(Box::new(RefinementRefusal {
                 refinement: self.refinement.clone(),
                 span,
                 cause,
-            })),
+            }))),
         });
     }
 
@@ -2118,9 +2118,8 @@ impl Findings {
     fn fault(&mut self, invariant: &'static str) {
         self.refusals.push(CheckRefusal {
             location: Location::root(Origin::Expression),
-            cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(InternalFault::new(
-                "check.refinement",
-                invariant,
+            cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                InternalFault::new("check.refinement", invariant),
             )))),
         });
     }
@@ -2410,7 +2409,9 @@ pub(crate) fn check_refinement<'f: 'c, 'a, 'c>(
             return (
                 RefinementCheck::Refused(vec![CheckRefusal {
                     location: Location::root(Origin::Expression),
-                    cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(fault))),
+                    cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                        fault,
+                    )))),
                 }]),
                 nodes,
             );
@@ -3488,7 +3489,7 @@ impl<'c, 'a> Checker<'c, 'a> {
                 {
                     Some(span) => self
                         .findings
-                        .refuse(span, RefinementCause::Check(refusal.cause)),
+                        .refuse(span, RefinementCause::Check(*refusal.cause)),
                     None => self.fault("row-expression-has-a-span"),
                 }
                 None
@@ -4116,7 +4117,7 @@ struct RowContext {
 fn refuse_with(location: &Location, cause: CheckCause) -> CheckRefusal {
     CheckRefusal {
         location: location.clone(),
-        cause,
+        cause: Box::new(cause),
     }
 }
 
@@ -4324,7 +4325,7 @@ fn relaxed_conforms(types: &TypeEnvironment, actual: &ValueType, required: &Valu
 pub(crate) fn not_emitted(name: String, span: Span) -> CheckRefusal {
     CheckRefusal {
         location: Location::root(Origin::Expression),
-        cause: CheckCause::RefinementNotEmitted { name, span },
+        cause: Box::new(CheckCause::RefinementNotEmitted { name, span }),
     }
 }
 

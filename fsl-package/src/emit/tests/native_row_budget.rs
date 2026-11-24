@@ -870,9 +870,8 @@ fn shared_value_validity_application_uses_each_occurrence_region() {
         .take(COUNT)
         .collect::<Vec<_>>()
         .join(" and ");
-    let declarations = format!(
-        "function repeated using v(x: Int[0, 9]): Boolean pure {{ {expressions} }}"
-    );
+    let declarations =
+        format!("function repeated using v(x: Int[0, 9]): Boolean pure {{ {expressions} }}");
     let source_text = format!("{HEADER}{declarations}\n");
     let graph = super::converted_equality::checked_graph(&declarations);
     let placements: HashMap<_, _> = graph
@@ -923,7 +922,7 @@ fn shared_value_validity_application_uses_each_occurrence_region() {
                     .get(usize::try_from(start).ok()?..usize::try_from(end).ok()?)?,
                 b"x + 1" | b"x + 1 = 0"
             )
-                .then_some((start, end))
+            .then_some((start, end))
         })
         .collect();
     let five_byte_regions = expression_regions

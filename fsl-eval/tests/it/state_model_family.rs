@@ -381,7 +381,7 @@ fn five_negative_source_units_refuse_at_s3_with_owned_raw_catalog_pairs_and_loci
         let refusals = declarations.check(CheckMode::Linked, CheckingLimits::default(),
             &fsl_eval::value::S6aRewardEvaluator).expect_err("S3 must refuse, after successful assembly");
         let [refusal] = refusals.as_slice() else { panic!("one refusal: {refusals:?}"); };
-        let CheckCause::StateModel(cause) = &refusal.cause else { panic!("StateModel ownership: {refusal:?}"); };
+        let CheckCause::StateModel(cause) = &*refusal.cause else { panic!("StateModel ownership: {refusal:?}"); };
         assert_eq!(cause.family(), FamilyKind::StateModel);
         let catalog = cause.catalog_code().unwrap();
         assert_eq!((catalog.code(), catalog.cause()), (raw_code, raw_cause));
@@ -413,7 +413,10 @@ fn record_field_stays_a_value_and_standalone_deref_is_not_a_value() {
             &fsl_eval::value::S6aRewardEvaluator,
         )
         .expect_err("deref needs a member read");
-    assert!(!matches!(refusals[0].cause, CheckCause::StateModel(_)));
+    assert!(!matches!(
+        refusals[0].cause.as_ref(),
+        CheckCause::StateModel(_)
+    ));
 }
 
 /// Available native source producers; this does not qualify the five-form obligation.
@@ -498,7 +501,7 @@ fn available_source_attribute_and_reaches_negatives_have_owned_raw_pairs_and_loc
         let [refusal] = refusals.as_slice() else {
             panic!("one refusal: {refusals:?}");
         };
-        let CheckCause::StateModel(cause) = &refusal.cause else {
+        let CheckCause::StateModel(cause) = &*refusal.cause else {
             panic!("StateModel ownership: {refusal:?}");
         };
         assert_eq!(cause.family(), FamilyKind::StateModel);
@@ -802,7 +805,7 @@ fn source_reaches_context_refuses_before_operand_name_resolution() {
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal: {refusals:?}");
     };
-    let CheckCause::StateModel(cause) = &refusal.cause else {
+    let CheckCause::StateModel(cause) = &*refusal.cause else {
         panic!("model ownership: {refusal:?}");
     };
     let code = cause.catalog_code().unwrap();
@@ -920,7 +923,7 @@ fn a_population_binding_over_a_non_object_target_refuses_type_mismatch() {
     };
     assert!(
         matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(IllTypedCause::TypeMismatch)
         ),
         "{refusal:?}"

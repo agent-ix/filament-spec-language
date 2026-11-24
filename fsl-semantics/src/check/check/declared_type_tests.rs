@@ -72,7 +72,7 @@ fn owner_traversal_denial_retains_request_and_allows_identical_retry() {
     assert_eq!(denied, owner_denied);
     let failure = failed.expect_err("the real owner root-worklist reservation must fail");
     assert_eq!(failure.location, location);
-    assert_eq!(failure.cause, CheckCause::TypeCheckAllocation(request));
+    assert_eq!(*failure.cause, CheckCause::TypeCheckAllocation(request));
     assert_eq!(
         failure.cause.code(),
         fsl_foundation::diagnostic::Code::ResourceExhausted
@@ -113,12 +113,11 @@ fn local_clock_type_walk_denial_is_a_typed_refusal() {
     // Find the owner's successful reservation count, then deny the first
     // allocation in the checker's own clock-reference walk.
     let owner_allocations = (0..32)
-        .find_map(|successful| {
-            fsv_failing_allocator::arm(successful);
+        .find(|successful| {
+            fsv_failing_allocator::arm(*successful);
             let owner = scope.types.try_check_type(&ty);
             let denied = fsv_failing_allocator::disarm();
-            (denied.is_none() && matches!(owner, Err(TypeCheckError::Refused(_))))
-                .then_some(successful)
+            denied.is_none() && matches!(owner, Err(TypeCheckError::Refused(_)))
         })
         .expect("the owner's bounded traversal fits within the probe");
     fsv_failing_allocator::arm(owner_allocations);
@@ -129,7 +128,7 @@ fn local_clock_type_walk_denial_is_a_typed_refusal() {
     assert!(denied.is_some_and(|bytes| bytes >= core::mem::size_of::<&ValueType>()));
     assert_eq!(refusal.location, location);
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::TypeCheckAllocation(StorageRequest::new(1, StorageUnit::AdditionalElements))
     );
 }
@@ -159,7 +158,7 @@ fn owner_storage_classes_and_units_survive_conversion() {
         ] {
             let refusal = CheckRefusal::from_type_check(&location, error);
             assert_eq!(refusal.location, location);
-            assert_eq!(refusal.cause, expected);
+            assert_eq!(*refusal.cause, expected);
             assert_eq!(
                 refusal.cause.type_check_stage(),
                 Some(CheckingStage::Typing)

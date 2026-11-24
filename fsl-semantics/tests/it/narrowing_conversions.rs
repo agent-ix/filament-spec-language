@@ -293,7 +293,7 @@ fn explicit_narrowing_of_an_application_keys_the_direct_conversion_context() {
 fn required_bounds(source: &str) -> (Option<String>, Option<String>) {
     use fsl_semantics::check::{CheckCause, Obligation};
     let errors = check(source, CheckMode::Linked).expect_err("narrowing needs proof");
-    let CheckCause::Unproved(Obligation::Range { required, .. }) = &errors[0].cause else {
+    let CheckCause::Unproved(Obligation::Range { required, .. }) = errors[0].cause.as_ref() else {
         panic!("not a range obligation: {errors:?}");
     };
     (

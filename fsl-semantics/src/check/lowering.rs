@@ -1326,7 +1326,7 @@ fn data_at_lowered_types(
 fn refuse(location: &Location, cause: CheckCause) -> CheckRefusal {
     CheckRefusal {
         location: location.clone(),
-        cause,
+        cause: Box::new(cause),
     }
 }
 
@@ -3177,9 +3177,9 @@ impl<'a> Lowering<'a> {
                 .map(NodeRef::from),
             // FR-230-AC-71: the clock-place reference is its own native
             // scalar node, never a reference to an object type.
-            ValueType::ClockReference => self
-                .scalar("clock_reference", location)
-                .map(NodeRef::from),
+            ValueType::ClockReference => {
+                self.scalar("clock_reference", location).map(NodeRef::from)
+            }
             // FR-094: a `Population<T>[N]` node is built from its binding's
             // resolved type form ([`Self::binder_type`]); the checked type
             // alone carries no `T`.

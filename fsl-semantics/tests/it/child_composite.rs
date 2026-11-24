@@ -80,7 +80,7 @@ fn mismatch() -> CheckCause {
 fn refused_at(declarations: &str, function: &str, path: &[usize]) {
     let refusals = check(declarations).expect_err("the unit does not check");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
-    assert_eq!(refusals[0].cause, mismatch(), "{refusals:?}");
+    assert_eq!(*refusals[0].cause, mismatch(), "{refusals:?}");
     assert!(
         matches!(&refusals[0].location.origin,
             Origin::Body { function: found, .. } if found == function),
@@ -122,7 +122,7 @@ fn a_parent_typed_read_of_a_child_field_is_refused() {
     assert_eq!(cause.code(), fsl_foundation::diagnostic::Code::IllTyped);
     assert_eq!(cause.cause(), Some("type-mismatch"));
     assert!(
-        matches!(cause, CheckCause::UnknownField { owner, field, .. }
+        matches!(cause.as_ref(), CheckCause::UnknownField { owner, field, .. }
             if owner.ends_with("OrderPlaced") && &**field == "promised_by"),
         "names the field: {cause:?}"
     );
@@ -303,7 +303,7 @@ fn equality_over_event_operands_stays_refused() {
         assert_eq!(refusals.len(), 1, "{function}: {refusals:?}");
         assert_eq!(
             refusals[0].cause,
-            CheckCause::IllTyped(IllTypedCause::OperatorIneligible),
+            Box::new(CheckCause::IllTyped(IllTypedCause::OperatorIneligible)),
             "{function}"
         );
         assert!(
@@ -328,8 +328,8 @@ fn a_set_bag_or_ordered_set_of_events_is_operator_ineligible() {
         let refusals = refused_with_events(&declaration);
         assert!(
             !refusals.is_empty()
-                && refusals.iter().all(|refusal| refusal.cause
-                    == CheckCause::IllTyped(IllTypedCause::OperatorIneligible)),
+                && refusals.iter().all(|refusal| refusal.cause.as_ref()
+                    == &CheckCause::IllTyped(IllTypedCause::OperatorIneligible)),
             "{kind}: {refusals:?}"
         );
     }

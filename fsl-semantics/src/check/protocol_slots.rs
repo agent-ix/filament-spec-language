@@ -344,7 +344,7 @@ fn refusal(cause: ProtocolAnchorCause) -> CheckRefusal {
         // `region::DeclarationRegions::refusal_region` reads the cause's own
         // span.
         location: Location::root(Origin::Expression),
-        cause: CheckCause::ProtocolAnchor(Box::new(cause)),
+        cause: Box::new(CheckCause::ProtocolAnchor(Box::new(cause))),
     }
 }
 
@@ -575,14 +575,14 @@ impl Checker<'_, '_> {
                     self.refuse(ProtocolAnchorCause::SlotClause {
                         node: node_name,
                         slot: slot.kind,
-                        cause: Box::new(cause),
+                        cause: Box::new(*cause),
                         span,
                     });
                 } else if let CheckCause::MissingSegment {
                     name,
                     offset,
                     span: None,
-                } = cause
+                } = cause.as_ref()
                 {
                     // A population name that names nothing keeps its own
                     // cause, located at its second segment through the
@@ -593,13 +593,19 @@ impl Checker<'_, '_> {
                         .form
                         .spans
                         .span_at(&location)
-                        .filter(|named| named.start.saturating_add(offset) < named.end);
+                        .filter(|named| named.start.saturating_add(*offset) < named.end);
                     let cause = CheckCause::MissingSegment {
-                        name,
-                        offset,
+                        name: name.clone(),
+                        offset: *offset,
                         span: named,
                     };
-                    self.refusals.push((span, CheckRefusal { location, cause }));
+                    self.refusals.push((
+                        span,
+                        CheckRefusal {
+                            location,
+                            cause: Box::new(cause),
+                        },
+                    ));
                 } else {
                     // A reached limit, a cancellation or a fault keeps its
                     // own cause.
@@ -1747,14 +1753,14 @@ pub(crate) fn check(
                         repeat.name.span,
                         CheckRefusal {
                             location: Location::root(Origin::Expression),
-                            cause: CheckCause::InternalFault(Box::new(
+                            cause: Box::new(CheckCause::InternalFault(Box::new(
                                 super::refusal::KeyFault::StageFault(
                                     filament_semantic_value::catalog::InternalFault::new(
                                         "check.protocol",
                                         "repeat-guard-atoms",
                                     ),
                                 ),
-                            )),
+                            ))),
                         },
                     ));
                     break;
@@ -1915,14 +1921,14 @@ fn work_limit(
 ) -> CheckRefusal {
     CheckRefusal {
         location: Location::root(Origin::Expression),
-        cause: super::limit_cause(
+        cause: Box::new(super::limit_cause(
             &fsl_foundation::diagnostic::LimitExceeded::new(
                 fsl_foundation::Setting::S3WorkUnits,
                 limit,
                 u128::from(consumed) + 1,
             )
             .at(regions.at_span(span).map(Locus::Region)),
-        ),
+        )),
     }
 }
 
@@ -2068,14 +2074,14 @@ fn partition(
         .collect::<Vec<_>>();
     let too_large = |limit: u64, consumed: u64| CheckRefusal {
         location: Location::root(Origin::Expression),
-        cause: super::limit_cause(
+        cause: Box::new(super::limit_cause(
             &fsl_foundation::diagnostic::LimitExceeded::new(
                 fsl_foundation::Setting::S3WorkUnits,
                 limit,
                 u128::from(consumed) + 1,
             )
             .at(regions.at_span(choice.name.span).map(Locus::Region)),
-        ),
+        )),
     };
     let mut missing = false;
     let mut duplicate = false;
@@ -2097,14 +2103,14 @@ fn partition(
             else {
                 return Err(CheckRefusal {
                     location: Location::root(Origin::Expression),
-                    cause: CheckCause::InternalFault(Box::new(
+                    cause: Box::new(CheckCause::InternalFault(Box::new(
                         super::refusal::KeyFault::StageFault(
                             filament_semantic_value::catalog::InternalFault::new(
                                 "check.protocol",
                                 "choice-guard-atoms",
                             ),
                         ),
-                    )),
+                    ))),
                 });
             };
             if value {

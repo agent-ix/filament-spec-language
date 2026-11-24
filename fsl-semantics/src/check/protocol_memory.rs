@@ -97,7 +97,7 @@ pub struct CheckedMemory {
 fn refusal(cause: ProtocolAnchorCause) -> CheckRefusal {
     CheckRefusal {
         location: Location::root(Origin::Expression),
-        cause: CheckCause::ProtocolAnchor(Box::new(cause)),
+        cause: Box::new(CheckCause::ProtocolAnchor(Box::new(cause))),
     }
 }
 

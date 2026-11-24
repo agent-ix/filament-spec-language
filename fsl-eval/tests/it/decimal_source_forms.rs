@@ -740,7 +740,7 @@ fn limit_refusal(
     };
     assert_eq!(refusal.cause.code().as_str(), "stage_limit_exceeded");
     assert_eq!(refusal.cause.cause(), Some("work-budget-exceeded"));
-    let CheckCause::ResourceExhausted(stop) = &refusal.cause else {
+    let CheckCause::ResourceExhausted(stop) = &*refusal.cause else {
         panic!("a stage limit, got {:?}", refusal.cause);
     };
     (stop.kind, stop.limit, stop.actual)

@@ -61,9 +61,9 @@ fn fault(invariant: &'static str) -> Vec<(Span, CheckRefusal)> {
             location: filament_semantic_value::location::ExpressionLocation::root(
                 filament_semantic_value::location::ExpressionOwner::Expression,
             ),
-            cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+            cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                 filament_semantic_value::catalog::InternalFault::new("check.protocol", invariant),
-            ))),
+            )))),
         },
     )]
 }

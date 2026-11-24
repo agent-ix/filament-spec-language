@@ -330,7 +330,9 @@ fn a_skippable_nested_repeat_gives_no_progress() {
         catalog(&refusal),
         ("unsupported_construct", Some("declaration-form"))
     );
-    assert!(matches!(&cause, ProtocolAnchorCause::NoProgress { repeat, .. } if repeat == "Outer"));
+    assert!(
+        matches!(cause, ProtocolAnchorCause::NoProgress { ref repeat, .. } if repeat == "Outer")
+    );
     assert_eq!(located(&text, &cause), "Outer");
 
     checks(&flow(
@@ -525,7 +527,7 @@ fn an_await_matches_an_event_in_a_closed_window_under_a_temporal_profile() {
         .into_iter()
         .filter(|refusal| {
             !matches!(
-                            &refusal.cause,
+                            refusal.cause.as_ref(),
             crate::check::CheckCause::ProtocolReference(cause)
             if matches!(**cause, crate::check::refusal::ProtocolReferenceCause::NotEmitted { .. })
                         )
@@ -709,7 +711,7 @@ fn a_choice_owner_is_a_role_and_its_constant_guards_partition() {
         ),
     );
     let (_, _, cause) = only(&repeat);
-    assert!(matches!(&cause, ProtocolAnchorCause::NodeRole { node, .. } if node == "Loop"));
+    assert!(matches!(cause, ProtocolAnchorCause::NodeRole { node, .. } if node == "Loop"));
 
     for (first, second, failed, cases) in [
         (
@@ -776,7 +778,7 @@ fn a_node_role_and_a_check_profile_resolve() {
             catalog(&refusal),
             ("missing_declaration", Some("missing-name"))
         );
-        assert!(matches!(&cause, ProtocolAnchorCause::NodeRole { node, .. } if node == name));
+        assert!(matches!(cause, ProtocolAnchorCause::NodeRole { ref node, .. } if node == name));
         assert_eq!(located(&text, &cause), "Nobody");
     }
     let source = flow("", "sequence Main { check Fine using nothing { true }; }");

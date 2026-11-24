@@ -360,7 +360,7 @@ fn duplicate_function_name_is_refused_ambiguous_name() {
     );
     let refusals = result.expect_err("a duplicate name must be refused, not admitted");
     assert!(refusals.iter().any(|refusal: &CheckRefusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::AmbiguousName { name, .. } if name == "one"
     )));
 }

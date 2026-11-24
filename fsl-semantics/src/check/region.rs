@@ -308,7 +308,7 @@ impl DeclarationRegions {
     /// order (FSpec FR-272's `related`): both workloads of a repeated
     /// workload name (FR-185); none for every other refusal.
     pub fn related_regions(&self, refusal: &CheckRefusal) -> Vec<SourceRegion> {
-        let related = match &refusal.cause {
+        let related = match refusal.cause.as_ref() {
             CheckCause::Probabilistic(cause) => cause.related().to_vec(),
             CheckCause::StateGraph(cause) => cause.related(),
             _ => return Vec::new(),
@@ -326,7 +326,7 @@ impl DeclarationRegions {
     /// expression tree for a `Location` path to walk; every other refusal
     /// is located by its `location`.
     pub fn refusal_region(&self, refusal: &CheckRefusal) -> Option<SourceRegion> {
-        match &refusal.cause {
+        match refusal.cause.as_ref() {
             CheckCause::LayerEquality {
                 span: Some(span), ..
             } => region(&self.source, self.embedding.as_deref(), *span),
@@ -1156,7 +1156,7 @@ mod tests {
             let [refusal] = refusals.as_slice() else {
                 panic!("one refusal, got {refusals:?}");
             };
-            let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+            let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
                 panic!("a stage limit, got {refusal:?}");
             };
             assert_eq!(limit.kind, kind);
@@ -1228,7 +1228,7 @@ mod tests {
             let [refusal] = refusals.as_slice() else {
                 panic!("one refusal, got {refusals:?}");
             };
-            let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+            let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
                 panic!("a stage limit, got {refusal:?}");
             };
             assert_eq!(limit.kind, CheckingLimitKind::WorkBudget);
@@ -1321,7 +1321,7 @@ mod tests {
         let [refusal] = refusals.as_slice() else {
             panic!("one refusal, got {refusals:?}");
         };
-        let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+        let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
             panic!("a stage limit, got {refusal:?}");
         };
         assert_eq!(limit.kind, CheckingLimitKind::Nodes);

@@ -923,12 +923,12 @@ fn unsupported_quantified_invariant_forms_refuse_without_partial_output() {
     let refusal = refusals
         .iter()
         .find(|refusal| {
-            matches!(&refusal.cause, CheckCause::Temporal(cause)
+            matches!(refusal.cause.as_ref(), CheckCause::Temporal(cause)
             if matches!(&**cause, TemporalCause::TimeInvariantShape { .. }))
         })
         .unwrap_or_else(|| panic!("the invariant refusal is reported: {refusals:?}"));
     assert_eq!(refusal.cause.code(), Code::InvalidTimedModel);
-    let CheckCause::Temporal(cause) = &refusal.cause else {
+    let CheckCause::Temporal(cause) = &*refusal.cause else {
         unreachable!()
     };
     let TemporalCause::TimeInvariantShape { span } = &**cause else {
@@ -1008,7 +1008,7 @@ fn a_mixed_quantified_invariant_bound_refuses_before_partial_emission() {
     assert_eq!(refusals.len(), 1, "no partial timed model is produced");
     let refusal = &refusals[0];
     assert_eq!(refusal.cause.code(), Code::InvalidTimedModel);
-    let CheckCause::Temporal(cause) = &refusal.cause else {
+    let CheckCause::Temporal(cause) = &*refusal.cause else {
         panic!("temporal refusal: {:?}", refusal.cause);
     };
     let TemporalCause::TimeInvariantShape { span } = &**cause else {
@@ -1080,7 +1080,7 @@ fn a_reset_by_selection_binds_its_slot() {
 fn excluded(document: &[u8], body: &str) -> (fsl_semantics::check::ExcludedClauseForm, String) {
     let (unit, checked) = checked(document, body);
     let refusals = checked.expect_err("the form is excluded");
-    let found = refusals.iter().find_map(|refusal| match &refusal.cause {
+    let found = refusals.iter().find_map(|refusal| match &*refusal.cause {
         fsl_semantics::check::CheckCause::Temporal(cause) => match &**cause {
             fsl_semantics::check::TemporalCause::ExcludedClauseForm { form, span, .. } => {
                 assert_eq!(
@@ -1452,7 +1452,7 @@ fn a_reset_below_two_collections_holds_a_slot_per_level() {
             format!("{refusal:?}").contains("nproved"),
             "unproved-presence: {refusal:?}"
         );
-        let fsl_semantics::check::CheckCause::Temporal(cause) = &refusal.cause else {
+        let fsl_semantics::check::CheckCause::Temporal(cause) = &*refusal.cause else {
             panic!("a timed refusal: {refusal:?}");
         };
         let span = cause.span();

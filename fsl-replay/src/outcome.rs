@@ -2253,7 +2253,7 @@ fn has_timed_trace_subject_refusal(refusal: &CompileRefusal) -> bool {
     };
     refusals.iter().any(|refusal| {
         matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             fsl_semantics::check::CheckCause::Temporal(cause)
                 if matches!(
                     cause.as_ref(),

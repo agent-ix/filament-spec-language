@@ -85,10 +85,10 @@ fn refused(declarations: &str) -> MeasureObligation {
         Err(refusals) => refusals,
     };
     match refusals.as_slice() {
-        [CheckRefusal {
-            cause: CheckCause::UnprovedDecrease { obligation, .. },
-            ..
-        }] => *obligation,
+        [CheckRefusal { cause, .. }] => match cause.as_ref() {
+            CheckCause::UnprovedDecrease { obligation, .. } => *obligation,
+            cause => panic!("{declarations}: one unproved-decrease, not {cause:?}"),
+        },
         other => panic!("{declarations}: one unproved-decrease, not {other:?}"),
     }
 }

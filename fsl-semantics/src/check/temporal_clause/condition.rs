@@ -272,7 +272,9 @@ fn check_conditions_into(
                     .is_some_and(|value| family(value.body.root().value_type()).is_none())
                     .then(|| CheckRefusal {
                         location: at(AggregatePart::Value),
-                        cause: CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch),
+                        cause: Box::new(CheckCause::IllTyped(
+                            filament_exact::IllTypedCause::TypeMismatch,
+                        )),
                     });
                 let aggregate_value_type =
                     value
@@ -363,7 +365,7 @@ fn check_conditions_into(
                 if let Some(cause) = mismatch {
                     return Err(CheckRefusal {
                         location: at(AggregatePart::Threshold),
-                        cause,
+                        cause: Box::new(cause),
                     });
                 }
                 conditions.aggregates.insert(
@@ -580,7 +582,7 @@ fn type_condition(
                 if body.root().value_type() != &ValueType::Boolean {
                     return Err(CheckRefusal {
                         location,
-                        cause: CheckCause::NonBooleanRoot,
+                        cause: Box::new(CheckCause::NonBooleanRoot),
                     });
                 }
                 body

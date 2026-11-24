@@ -163,7 +163,7 @@ fn a_binder_read_after_its_body_is_a_missing_name() {
         assert!(
             refusals
                 .iter()
-                .any(|refusal| refusal.cause == CheckCause::MissingName(name.to_owned())),
+                .any(|refusal| refusal.cause.as_ref() == &CheckCause::MissingName(name.to_owned())),
             "{binder:?} then `{name}`: {refusals:?}"
         );
     }
@@ -235,7 +235,7 @@ fn an_obligation_in_one_branch_is_walked() {
         assert_eq!(
             refusals
                 .iter()
-                .map(|refusal| &refusal.cause)
+                .map(|refusal| refusal.cause.as_ref())
                 .collect::<Vec<_>>(),
             [&CheckCause::Unproved(Obligation::Presence)]
         );

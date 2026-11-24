@@ -254,6 +254,8 @@ fn extent_record(
 fn fault(location: &Location) -> CheckRefusal {
     CheckRefusal {
         location: location.clone(),
-        cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+        cause: Box::new(CheckCause::InternalFault(Box::new(
+            KeyFault::UnkeyableRequirements,
+        ))),
     }
 }

@@ -736,8 +736,9 @@ pub(super) fn write_claim_bodies(
         let distributions = refs(&reads.distributions).ok_or_else(missing)?;
         let delays = refs(&reads.delays).ok_or_else(missing)?;
         let statement = claim.statement().ok_or_else(unkeyed)?;
-        let CheckedTerm::Aggregate { members: stated, .. } =
-            statement_term(ids, nodes, &text, statement).ok_or_else(missing)??
+        let CheckedTerm::Aggregate {
+            members: stated, ..
+        } = statement_term(ids, nodes, &text, statement).ok_or_else(missing)??
         else {
             return Err(EmitRefusal::SourceMapInvariant);
         };

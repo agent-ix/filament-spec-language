@@ -153,7 +153,7 @@ fn bounded_quantity_missing_reversed_or_compound_endpoints_are_refused() {
                 .type_node(ty, &generated_location())
                 .expect_err("unsupported bounded form");
             assert_eq!(
-                refusal.cause,
+                *refusal.cause,
                 CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
             );
         }
@@ -248,8 +248,10 @@ fn bounded_quantity_ordering_keeps_dimension_and_unit_refusals() {
         )
         .expect_err("distinct dimensions refuse");
     assert!(
-        refusals.iter().any(|refusal| refusal.cause
-            == CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)),
+        refusals.iter().any(|refusal| {
+            refusal.cause.as_ref()
+                == &CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
+        }),
         "existing dimensional refusal: {refusals:?}"
     );
 }
@@ -291,7 +293,7 @@ fn bounded_quantity_negation_is_operator_ineligible() {
         .expect_err("a bounded operand refuses");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert_eq!(
-        refusals[0].cause,
+        *refusals[0].cause,
         CheckCause::IllTyped(filament_exact::IllTypedCause::OperatorIneligible)
     );
 }

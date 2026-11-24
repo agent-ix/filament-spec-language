@@ -285,12 +285,11 @@ fn weak_and_strong_stay_apart_and_strong_needs_an_infinite_trace() {
     let constraint = format!("fair strong {ACQUIRE};");
     let body = format!("{constraint} eventually[0,5] holds(m.owner = 1)");
     let (text, outcome) = check_in(EVENT, &body);
-    let Err(StageFailure::Refused(CheckRefusal {
-        cause: CheckCause::Temporal(cause),
-        ..
-    })) = outcome
-    else {
+    let Err(StageFailure::Refused(refusal)) = outcome else {
         panic!("{body}: a temporal refusal, not {outcome:?}");
+    };
+    let CheckCause::Temporal(cause) = *refusal.cause else {
+        panic!("{body}: a temporal refusal, not {refusal:?}");
     };
     let start = text
         .find(&constraint)

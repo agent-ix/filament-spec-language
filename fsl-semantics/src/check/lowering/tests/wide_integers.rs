@@ -142,7 +142,7 @@ fn a_literal_outside_i128_refuses_naming_the_limit_it_crosses() {
         let refusals = compared_with(literal.clone()).expect_err("the literal is outside i128");
         assert_eq!(refusals.len(), 1, "{literal}");
         assert_eq!(
-            refusals[0].cause,
+            *refusals[0].cause,
             CheckCause::IntegerOutsideI128(IntegerOutsideI128 {
                 site: IntegerSite::Literal,
                 value: literal.to_string(),

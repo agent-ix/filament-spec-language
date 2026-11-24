@@ -1723,8 +1723,8 @@ fn a_declared_name_segment_that_is_no_identifier_refuses_by_that_segment() {
         )
         .expect_err("the name has no identifier segments");
     assert!(
-        refusals.iter().any(|refusal| refusal.cause
-            == fsl_semantics::check::CheckCause::NodePreimage(
+        refusals.iter().any(|refusal| refusal.cause.as_ref()
+            == &fsl_semantics::check::CheckCause::NodePreimage(
                 fsl_semantics::check::NodeKeyRefusal::InvalidQualifiedNameSegment {
                     segment: "1Point".to_owned(),
                 }
@@ -2000,10 +2000,8 @@ fn an_empty_package_refuses_during_check() {
             .expect_err("an empty package has no graph to emit");
     assert!(matches!(
         refusals.as_slice(),
-        [CheckRefusal {
-            cause: fsl_semantics::check::CheckCause::EmptyPackage { .. },
-            ..
-        }]
+        [CheckRefusal { cause, .. }]
+            if matches!(cause.as_ref(), fsl_semantics::check::CheckCause::EmptyPackage { .. })
     ));
 }
 
@@ -2090,7 +2088,9 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             Err(EmitRefusal::TimedModelWriterInvariant(_)) => Seen::TimedModelWriterInvariant,
             Err(EmitRefusal::MonitorPlanInvariant(_)) => Seen::MonitorPlanInvariant,
             Err(EmitRefusal::RequirementRowCarry(_)) => {
-                panic!("emit_checked writes its own requirement rows; only a re-encoder carries them")
+                panic!(
+                    "emit_checked writes its own requirement rows; only a re-encoder carries them"
+                )
             }
             Err(EmitRefusal::MonitorPlanAmbiguous { .. }) => Seen::MonitorPlanAmbiguous,
             Err(EmitRefusal::MonitorBaseRefused(_)) => Seen::MonitorBaseRefused,
@@ -3054,7 +3054,7 @@ fn every_text_literal_vector_emits_normalized_or_is_refused_at_the_call() {
                     max,
                     retained_length,
                     ..
-                } = &refusals[0].cause
+                } = &*refusals[0].cause
                 else {
                     panic!("{id}: {:?}", refusals[0].cause);
                 };

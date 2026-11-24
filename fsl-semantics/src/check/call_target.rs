@@ -97,10 +97,12 @@ pub(crate) fn resolve_target<'a, V>(
             .collect();
         return Err(CheckRefusal {
             location: location.clone(),
-            cause: CheckCause::AmbiguousQualified(Box::new(AmbiguousQualified {
-                name: name.to_owned(),
-                candidates,
-            })),
+            cause: Box::new(CheckCause::AmbiguousQualified(Box::new(
+                AmbiguousQualified {
+                    name: name.to_owned(),
+                    candidates,
+                },
+            ))),
         });
     }
     if let ([(declaration, position)], true) = (&declared[..], enums.is_empty() && import.is_none())

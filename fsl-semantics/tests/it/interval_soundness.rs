@@ -70,7 +70,7 @@ fn check(declarations: &str) -> Verdict {
 
 fn cause_of(refusals: &[CheckRefusal]) -> String {
     let first = refusals.first().expect("a refusal");
-    match &first.cause {
+    match &*first.cause {
         CheckCause::InternalFault(_) => format!("internal fault: {refusals:?}"),
         other => other
             .cause()

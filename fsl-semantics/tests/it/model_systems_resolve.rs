@@ -563,7 +563,7 @@ fn y05_a_connection_narrowing_its_port_multiplicity_does_not_resolve() {
     assert_eq!(failures.len(), 1);
     assert_eq!(failures[0].code, Code::IllTyped);
     assert!(matches!(
-        failures[0].cause,
+        &failures[0].cause,
         ModelRefusalCause::MultiplicityNarrowing { .. }
     ));
 }

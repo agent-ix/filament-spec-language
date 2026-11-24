@@ -23,7 +23,7 @@ fn assert_locus(source: &str, code: &str, cause: &str, token: &str, subject: &st
     assert!(!selected.is_empty(), "missing {code}/{cause}: {found:?}");
     for (refusal, region) in selected {
         assert_eq!(region, token, "{refusal:?}");
-        let CheckCause::ProtocolAnchor(anchor) = &refusal.cause else {
+        let CheckCause::ProtocolAnchor(anchor) = refusal.cause.as_ref() else {
             panic!("expected a source protocol refusal: {refusal:?}");
         };
         let span = anchor.span();
@@ -148,7 +148,7 @@ fn receiving_role_uses_a_visible_fact_but_sender_cannot_use_its_guard() {
     for (refusal, at) in reads {
         assert_eq!(refusal.cause.cause(), Some("wrong-observation"));
         assert_eq!(at, "accepted");
-        let CheckCause::ProtocolAnchor(anchor) = &refusal.cause else {
+        let CheckCause::ProtocolAnchor(anchor) = refusal.cause.as_ref() else {
             panic!("{refusal:?}");
         };
         let span = anchor.span();
@@ -225,7 +225,7 @@ fn nonadjacent_duplicate_roles_report_both_declaration_names() {
         .map(|(refusal, at)| {
             assert_eq!(refusal.cause.cause(), Some("ambiguous-name"));
             assert_eq!(at, "Courier");
-            let CheckCause::ProtocolAnchor(anchor) = &refusal.cause else {
+            let CheckCause::ProtocolAnchor(anchor) = refusal.cause.as_ref() else {
                 panic!("{refusal:?}");
             };
             let span = anchor.span();
@@ -312,7 +312,7 @@ fn replicated_role_selects_the_declared_population_and_rejects_an_absent_one() {
                 .collect();
             assert_eq!(matches.len(), 1, "{found:?}");
             let refusal = matches[0];
-            let CheckCause::ProtocolAnchor(anchor) = &refusal.cause else {
+            let CheckCause::ProtocolAnchor(anchor) = refusal.cause.as_ref() else {
                 panic!("{refusal:?}");
             };
             let expected = text

@@ -100,7 +100,10 @@ fn division_by_zero() -> String {
 fn only_nonzero(refusals: &[CheckRefusal]) {
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert!(
-        matches!(refusals[0].cause, CheckCause::Unproved(Obligation::Nonzero)),
+        matches!(
+            refusals[0].cause.as_ref(),
+            CheckCause::Unproved(Obligation::Nonzero)
+        ),
         "{refusals:?}"
     );
 }

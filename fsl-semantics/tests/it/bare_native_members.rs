@@ -130,7 +130,7 @@ fn untyped(
     refusals
         .iter()
         .map(|refusal| {
-            let inner = match &refusal.cause {
+            let inner = match refusal.cause.as_ref() {
                 CheckCause::StateModel(state) => &state.cause,
                 other => other,
             };

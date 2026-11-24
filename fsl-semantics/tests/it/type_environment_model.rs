@@ -206,7 +206,7 @@ fn is_ancestor_steps(outcome: &LookupOutcome, limit: u64) -> bool {
         outcome,
         LookupOutcome::Refused(refusal)
             if refusal.code == Code::ResourceExhausted
-                && matches!(refusal.cause, ModelRefusalCause::AncestorSteps { limit: l, .. } if l == limit)
+                && matches!(& refusal.cause, ModelRefusalCause::AncestorSteps { limit: l, .. } if *l == limit)
     )
 }
 
@@ -304,7 +304,7 @@ fn divergence_generalization_cycle_refuses_at_check_and_at_evaluation() {
         NormalizeOutcome::Refused(refusals) => {
             assert!(
                 refusals.iter().all(|refusal| matches!(
-                    refusal.cause,
+                    &refusal.cause,
                     ModelRefusalCause::SpecializationCycle { .. }
                 )),
                 "every refusal is the cycle: {refusals:?}"

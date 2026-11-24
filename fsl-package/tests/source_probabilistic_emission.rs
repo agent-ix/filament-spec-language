@@ -264,7 +264,7 @@ fn refused(body: &str) -> ProbabilisticCause {
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
     };
-    let CheckCause::Probabilistic(cause) = &refusal.cause else {
+    let CheckCause::Probabilistic(cause) = &*refusal.cause else {
         panic!("a probabilistic cause: {refusal:?}");
     };
     (**cause).clone()
@@ -434,7 +434,7 @@ fn a_workload_on_a_source_subtype_requires_each_ambiguous_ancestor_operation() {
     };
     let omitted: Vec<&str> = refusals
         .iter()
-        .filter_map(|refusal| match &refusal.cause {
+        .filter_map(|refusal| match &*refusal.cause {
             CheckCause::Probabilistic(cause) => match &**cause {
                 ProbabilisticCause::IncompleteWorkload { operation, .. } => {
                     Some(operation.as_str())
@@ -453,7 +453,7 @@ fn a_workload_on_a_source_subtype_requires_each_ambiguous_ancestor_operation() {
     };
     assert!(
         refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::Probabilistic(cause)
                 if matches!(&**cause, ProbabilisticCause::AmbiguousOperation { name, .. } if name == "D::x")
         )),
@@ -760,11 +760,10 @@ fn refused_cause(units: &[(&str, &str)]) -> ProbabilisticCause {
         Ok(_) => panic!("S3 admits a declaration on another unit's type"),
         Err(refusals) => refusals,
     };
-    let [CheckRefusal {
-        cause: CheckCause::Probabilistic(cause),
-        ..
-    }] = refusals.as_slice()
-    else {
+    let [CheckRefusal { cause, .. }] = refusals.as_slice() else {
+        panic!("one probabilistic refusal: {refusals:?}");
+    };
+    let CheckCause::Probabilistic(cause) = cause.as_ref() else {
         panic!("one probabilistic refusal: {refusals:?}");
     };
     (**cause).clone()

@@ -765,7 +765,7 @@ fn nested_constructs_of_other_families_refuse_with_their_own_causes() {
     let refusals = checked("function f using v(x: Int[0, 9]): Boolean pure { deref(x) }");
     assert!(
         refusals.iter().any(|refusal| matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
         )),
         "{refusals:?}"
@@ -1637,7 +1637,7 @@ fn present_over_a_zero_one_collection_refuses_ill_typed() {
             .expect_err("a bounded collection has no presence");
     assert!(
         refusals.iter().any(|refusal| matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
         )),
         "{refusals:?}"
@@ -2353,7 +2353,7 @@ fn enum_types_and_members_check_and_a_case_the_enum_lacks_refuses() {
             refusal.cause.code() == fsl_foundation::Code::IllTyped
                 && refusal.cause.cause() == Some("type-mismatch")
                 && matches!(
-                    &refusal.cause,
+                    refusal.cause.as_ref(),
                     CheckCause::UndeclaredVariantCase { owner, case }
                         if owner == "Status" && case == "GONE"
                 )
@@ -2501,7 +2501,7 @@ fn a_predicate_assembles_as_a_function_of_kind_predicate() {
         .expect_err("a recursive predicate has no measure");
     assert!(
         refusals.iter().any(|refusal| matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::UnprovedDecrease {
                 obligation: crate::check::MeasureObligation::MissingMeasure,
                 ..
@@ -3828,7 +3828,7 @@ fn quantity_literal_refusals_name_the_name_and_the_limit() {
             CheckingLimits::default(),
         );
         assert!(
-            matches!(&cause, CheckCause::UnresolvedUnitName { name: found, packages } if found == name && packages.is_empty()),
+            matches!(cause.as_ref(), CheckCause::UnresolvedUnitName { name: found, packages } if found == name && packages.is_empty()),
             "{name}: {cause:?}"
         );
     }
@@ -3836,7 +3836,7 @@ fn quantity_literal_refusals_name_the_name_and_the_limit() {
         "function g using v(): Boolean pure { f(rational(1, 100000) ms) }",
         CheckingLimits::default().with_rational_bits(16),
     );
-    let CheckCause::ResourceExhausted(limit) = &cause else {
+    let CheckCause::ResourceExhausted(limit) = cause.as_ref() else {
         panic!("a limit refusal: {cause:?}");
     };
     assert_eq!(

@@ -458,7 +458,7 @@ fn refusal(cause: ObligationCause) -> CheckRefusal {
         // `region::DeclarationRegions::refusal_region` reads the cause's own
         // span, so this `Location` is never resolved.
         location: Location::root(Origin::Expression),
-        cause: CheckCause::ProtocolObligation(Box::new(cause)),
+        cause: Box::new(CheckCause::ProtocolObligation(Box::new(cause))),
     }
 }
 
@@ -1343,7 +1343,7 @@ impl Checker<'_, '_> {
         if let (
             CheckCause::IllTyped(IllTypedCause::TypeMismatch),
             Goal::Declared { capture, declared },
-        ) = (&cause, goal)
+        ) = (cause.as_ref(), goal)
         {
             if location.depth() == 0 {
                 let mut nodes = self.nodes;
@@ -1361,7 +1361,7 @@ impl Checker<'_, '_> {
                 }
             }
         }
-        match cause {
+        match *cause {
             CheckCause::MissingName(name) => {
                 let read = self.universe.classify(&name, site);
                 self.refuse(ObligationCause::StageRead {
@@ -1380,7 +1380,13 @@ impl Checker<'_, '_> {
             }),
             // A reached limit, a cancellation or a fault keeps its own
             // cause, which the callers classify by kind.
-            cause => self.refusals.push((span, CheckRefusal { location, cause })),
+            cause => self.refusals.push((
+                span,
+                CheckRefusal {
+                    location,
+                    cause: Box::new(cause),
+                },
+            )),
         }
     }
 }
@@ -1390,7 +1396,7 @@ impl Checker<'_, '_> {
 /// like).
 pub(super) fn wraps(cause: &CheckCause) -> bool {
     matches!(
-        cause,
+        *cause,
         CheckCause::IllTyped(_)
             | CheckCause::IdentityObservingForm(_)
             | CheckCause::NonBooleanRoot
@@ -1468,7 +1474,7 @@ pub(super) fn type_named_body(
             if body.root().value_type() != &ValueType::Boolean {
                 return Err(CheckRefusal {
                     location: input.location.clone(),
-                    cause: CheckCause::NonBooleanRoot,
+                    cause: Box::new(CheckCause::NonBooleanRoot),
                 });
             }
             body
@@ -1556,11 +1562,11 @@ fn is_record(scope: &Scope, value_type: &ValueType) -> bool {
 pub(crate) fn unresolved_fault() -> CheckRefusal {
     CheckRefusal {
         location: Location::root(Origin::Expression),
-        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
             filament_semantic_value::catalog::InternalFault::new(
                 "check.protocol",
                 "obligation-types-resolved",
             ),
-        ))),
+        )))),
     }
 }

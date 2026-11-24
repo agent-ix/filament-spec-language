@@ -216,7 +216,10 @@ fn independent_draw_costs_accept_value_preserving_swap_and_reject_changed_equati
         let (stale_code, stale) = run(&changed);
         assert_eq!(stale_code, 2, "{cost}: {stale}");
         assert_eq!(stale["status"], "refused");
-        assert_eq!(stale["reason"], "conflicting_identity: probability certificate");
+        assert_eq!(
+            stale["reason"],
+            "conflicting_identity: probability certificate"
+        );
         super::bounded::replace_source_and_rebind(&mut changed, &edited);
         let (actual, output) = run(&changed);
         assert_eq!(actual, code, "{cost}: {output}");
@@ -233,7 +236,10 @@ fn independent_draw_costs_accept_value_preserving_swap_and_reject_changed_equati
     let (stale_code, stale) = run(&changed_weights);
     assert_eq!(stale_code, 2, "{stale}");
     assert_eq!(stale["status"], "refused");
-    assert_eq!(stale["reason"], "conflicting_identity: probability certificate");
+    assert_eq!(
+        stale["reason"],
+        "conflicting_identity: probability certificate"
+    );
     super::bounded::replace_source_and_rebind(&mut changed_weights, &edited_weights);
     let (code, output) = run(&changed_weights);
     assert_eq!(code, 1, "{output}");
@@ -484,15 +490,13 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
             let fsl_foundation::diagnostic::StageFailure::Refused(refusal) = &failure else {
                 panic!("the negative reward retains its S3 refusal: {failure:?}");
             };
-            let fsl_replay::spine::CompileRefusal::Check { refusals, .. } = refusal.as_ref()
-            else {
+            let fsl_replay::spine::CompileRefusal::Check { refusals, .. } = refusal.as_ref() else {
                 panic!("the negative reward is a checking refusal: {refusal:?}");
             };
-            let [fsl_semantics::check::CheckRefusal {
-                cause: fsl_semantics::check::CheckCause::Probabilistic(cause),
-                ..
-            }] = refusals.as_slice()
-            else {
+            let [fsl_semantics::check::CheckRefusal { cause, .. }] = refusals.as_slice() else {
+                panic!("one negative-reward refusal: {refusals:?}");
+            };
+            let fsl_semantics::check::CheckCause::Probabilistic(cause) = cause.as_ref() else {
                 panic!("one negative-reward refusal: {refusals:?}");
             };
             assert_eq!(

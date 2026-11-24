@@ -1101,7 +1101,7 @@ fn refusal(cause: TemporalCause) -> CheckRefusal {
         // `region::DeclarationRegions::refusal_region` reads a `Temporal`
         // cause's own span directly, so this `Location` is never resolved.
         location: Location::root(Origin::Expression),
-        cause: CheckCause::Temporal(Box::new(cause)),
+        cause: Box::new(CheckCause::Temporal(Box::new(cause))),
     }
 }
 
@@ -2571,7 +2571,7 @@ pub(crate) fn refuses_after_activation(form: &TemporalClauseForm, refusal: &Chec
     let ActivationForm::Each { parameter, .. } = &form.activation else {
         return false;
     };
-    let CheckCause::Temporal(cause) = &refusal.cause else {
+    let CheckCause::Temporal(cause) = refusal.cause.as_ref() else {
         return false;
     };
     cause.span().start > parameter.name.span.end

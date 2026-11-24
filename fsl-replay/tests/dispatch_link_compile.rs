@@ -354,7 +354,7 @@ fn execution_point_refuses_unknown_clause_keys_and_mismatched_operation_names() 
             CompileRefusal::Check { refusals, .. }
                 | CompileRefusal::CheckDiagnostics { refusals, .. }
                 if refusals.iter().any(|refusal| matches!(
-                    refusal.cause,
+                    refusal.cause.as_ref(),
                     CheckCause::AmbiguousName { ref name, .. } if name == "Before"
                 ))
         ),
@@ -367,7 +367,7 @@ fn execution_point_refuses_unknown_clause_keys_and_mismatched_operation_names() 
         | CompileRefusal::CheckDiagnostics { refusals, .. } => assert!(
             refusals.iter().any(|refusal| {
                 matches!(
-                    refusal.cause,
+                    refusal.cause.as_ref(),
                     CheckCause::AmbiguousName { ref name, .. } if name == "Before"
                 )
             }),
@@ -380,7 +380,7 @@ fn execution_point_refuses_unknown_clause_keys_and_mismatched_operation_names() 
     match refusal.as_ref() {
         CompileRefusal::Check { refusals, region } => {
             assert!(matches!(
-                refusals[0].cause,
+                refusals[0].cause.as_ref(),
                 CheckCause::MissingName(ref name) if name == "NotAClause"
             ));
             assert_eq!(region.as_ref().map(|region| region.start()), Some(0));
@@ -401,7 +401,7 @@ fn execution_point_refuses_unknown_clause_keys_and_mismatched_operation_names() 
     match refusal.as_ref() {
         CompileRefusal::Check { refusals, region } => {
             assert!(matches!(
-                refusals[0].cause,
+                refusals[0].cause.as_ref(),
                 CheckCause::ExecutionPointBinding(_)
             ));
             let source = unit(&document, declaration).0;
@@ -430,7 +430,7 @@ fn execution_point_refuses_unknown_clause_keys_and_mismatched_operation_names() 
     match refusal.as_ref() {
         CompileRefusal::Check { refusals, region } => {
             assert!(matches!(
-                refusals[0].cause,
+                refusals[0].cause.as_ref(),
                 CheckCause::ExecutionPointBinding(
                     fsl_semantics::check::ExecutionPointRefusal::InapplicableVariant
                 )
@@ -632,7 +632,7 @@ fn unit_compile_refuses_a_family_past_the_callers_family_steps() {
     let [failed] = refusals.as_slice() else {
         panic!("one failed family, got {refusals:?}");
     };
-    let CheckCause::DispatchLink(cause) = &failed.cause else {
+    let CheckCause::DispatchLink(cause) = &*failed.cause else {
         panic!("a dispatch link refusal, got {:?}", failed.cause);
     };
     assert_eq!(cause.code, Code::ResourceExhausted);
@@ -817,7 +817,7 @@ fn a_family_with_no_body_for_a_concrete_subtype_refuses_at_s3() {
     let [refusal] = refusals.as_slice() else {
         panic!("one failed family, got {refusals:?}");
     };
-    let CheckCause::DispatchLink(cause) = &refusal.cause else {
+    let CheckCause::DispatchLink(cause) = &*refusal.cause else {
         panic!("a dispatch link refusal, got {:?}", refusal.cause);
     };
     assert_eq!(cause.catalog.cause(), "no-applicable");
@@ -916,7 +916,7 @@ fn refused_family(refusal: &CompileRefusal) -> &fsl_semantics::check::DispatchLi
     let [failed] = refusals.as_slice() else {
         panic!("one failed family, got {refusals:?}");
     };
-    let CheckCause::DispatchLink(cause) = &failed.cause else {
+    let CheckCause::DispatchLink(cause) = &*failed.cause else {
         panic!("a dispatch link refusal, got {:?}", failed.cause);
     };
     cause
@@ -1217,7 +1217,7 @@ fn failures(refusal: &CompileRefusal) -> Vec<(String, &'static str, String)> {
     refusals
         .iter()
         .map(|refusal| {
-            let CheckCause::DispatchLink(cause) = &refusal.cause else {
+            let CheckCause::DispatchLink(cause) = &*refusal.cause else {
                 panic!("a dispatch link refusal, got {:?}", refusal.cause);
             };
             assert_eq!(cause.code, Code::AmbiguousDispatch);

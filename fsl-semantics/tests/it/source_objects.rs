@@ -513,7 +513,7 @@ fn a_binder_named_like_a_population_is_ambiguous() {
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
     };
-    let CheckCause::AmbiguousName { name, loci } = &refusal.cause else {
+    let CheckCause::AmbiguousName { name, loci } = &*refusal.cause else {
         panic!("an ambiguous name: {refusal:?}");
     };
     assert_eq!(name, "orders");
@@ -668,7 +668,7 @@ fn a_redefinition_with_a_narrower_parameter_refuses_variance_parameter() {
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
     };
-    let CheckCause::ModelConformance(failure) = &refusal.cause else {
+    let CheckCause::ModelConformance(failure) = &*refusal.cause else {
         panic!("a conformance failure: {refusal:?}");
     };
     assert!(failure.member.node.ends_with("/Sub/scaled"), "{failure:?}");
@@ -943,7 +943,7 @@ fn a_redefinition_that_widens_the_frame_refuses_effect_escape_on_both_routes() {
         let [refusal] = &refusals[..] else {
             panic!("{route}: one refusal: {refusals:?}");
         };
-        let CheckCause::ModelConformance(failure) = &refusal.cause else {
+        let CheckCause::ModelConformance(failure) = &*refusal.cause else {
             panic!("{route}: a conformance failure: {refusal:?}");
         };
         assert_eq!(
@@ -960,7 +960,7 @@ fn a_redefinition_that_widens_the_frame_refuses_effect_escape_on_both_routes() {
             "{route}: {failure:?}"
         );
         assert!(
-            matches!(&failure.cause, ModelRefusalCause::EffectEscape { field } if field.node.ends_with("/Order/note")),
+            matches!(& failure.cause, ModelRefusalCause::EffectEscape { field } if field.node.ends_with("/Order/note")),
             "{route}: {failure:?}"
         );
     }
@@ -987,7 +987,7 @@ fn a_bare_and_a_qualified_context_see_different_field_sets() {
     let refusals = both("invariant OnModel using P on M::Order at current { self.extra >= 0 }\n")
         .expect_err("`on M::Order` does not");
     assert!(
-        matches!(&refusals[..], [refusal] if matches!(&refusal.cause, CheckCause::StateModel(_) | CheckCause::MissingName(_))),
+        matches!(&refusals[..], [refusal] if matches!(&*refusal.cause, CheckCause::StateModel(_) | CheckCause::MissingName(_))),
         "{refusals:?}"
     );
     // The model's `note` is seen by both.
@@ -1113,7 +1113,7 @@ fn a_source_type_is_visible_only_in_the_unit_that_declares_it() {
             panic!("one refusal: {refusal:?}");
         };
         assert!(
-            matches!(&error.cause, AssemblyCause::UnresolvedTypeName { name } if name == "Order"),
+            matches!(& error.cause, AssemblyCause::UnresolvedTypeName { name } if name == "Order"),
             "{error:?}"
         );
         assert_eq!(
@@ -1160,7 +1160,7 @@ fn a_source_population_is_visible_only_in_the_unit_that_declares_it() {
     };
     // It is refused as a name nothing declares is.
     assert!(
-        matches!(&refusal.cause, CheckCause::MissingName(name) if name == "orders"),
+        matches!(&*refusal.cause, CheckCause::MissingName(name) if name == "orders"),
         "{refusal:?}"
     );
 
@@ -1201,7 +1201,7 @@ fn a_temporal_clause_sees_only_its_own_units_populations() {
     let refusals = finish(declarations).expect_err("`orders` is not visible in unit b");
     assert!(
         refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
+            &*refusal.cause,
             CheckCause::MissingName(name) if name == "orders"
         )),
         "{refusals:?}"
@@ -1241,7 +1241,7 @@ fn a_role_and_an_over_see_only_their_own_units_source_types() {
                 assert!(!refusal.errors.is_empty(), "{variant}");
                 for error in &refusal.errors {
                     assert!(
-                        matches!(&error.cause, AssemblyCause::UnresolvedTypeName { name } if name == "Order"),
+                        matches!(& error.cause, AssemblyCause::UnresolvedTypeName { name } if name == "Order"),
                         "{variant}: {error:?}"
                     );
                     assert_eq!(
@@ -1254,7 +1254,7 @@ fn a_role_and_an_over_see_only_their_own_units_source_types() {
             Ok(declarations) => {
                 let refusals = finish(declarations).expect_err(variant);
                 assert!(
-                    refusals.iter().all(|refusal| match &refusal.cause {
+                    refusals.iter().all(|refusal| match &*refusal.cause {
                         CheckCause::MissingName(name) => name == "Order",
                         CheckCause::ProtocolAnchor(anchor) => {
                             {
@@ -2032,7 +2032,7 @@ fn temporal_tags(declarations: &str) -> Vec<&'static str> {
         .expect_err("the unit is refused");
     refusals
         .iter()
-        .filter_map(|refusal| match &refusal.cause {
+        .filter_map(|refusal| match &*refusal.cause {
             CheckCause::Temporal(cause) => Some(cause.tag()),
             _ => None,
         })
@@ -2103,7 +2103,7 @@ fn a_source_object_type_name_times_the_source_model() {
         .expect_err("unknown source type refuses");
     let failure = failures
         .iter()
-        .find_map(|refusal| match &refusal.cause {
+        .find_map(|refusal| match &*refusal.cause {
             CheckCause::Temporal(cause) if cause.tag() == "missing-name" => Some(cause),
             _ => None,
         })
@@ -2128,7 +2128,7 @@ fn a_source_object_type_name_times_the_source_model() {
             .expect_err("a clock requires source dense time");
         let (field, span) = refusals
             .iter()
-            .find_map(|refusal| match &refusal.cause {
+            .find_map(|refusal| match &*refusal.cause {
                 CheckCause::Temporal(cause) => match cause.as_ref() {
                     fsl_semantics::check::TemporalCause::ClockWithoutDenseTime { field, span } => {
                         Some((field, span))
@@ -2162,7 +2162,7 @@ fn a_selected_models_dense_time_does_not_time_source_clocks() {
             .expect_err("selected model time does not cover source clocks");
     let (field, span) = failures
         .iter()
-        .find_map(|refusal| match &refusal.cause {
+        .find_map(|refusal| match &*refusal.cause {
             CheckCause::Temporal(cause) => match cause.as_ref() {
                 fsl_semantics::check::TemporalCause::ClockWithoutDenseTime { field, span } => {
                     Some((field, span))
@@ -2449,7 +2449,7 @@ fn resolved_source_member_spellings_keep_aliases_without_changing_identity() {
     };
     let failure = failures
         .iter()
-        .find(|failure| matches!(failure.cause, ModelRefusalCause::VarianceParameter { .. }))
+        .find(|failure| matches!(&failure.cause, ModelRefusalCause::VarianceParameter { .. }))
         .expect("variance parameter");
     assert!(failure.detail.contains("Money"), "{}", failure.detail);
     assert!(

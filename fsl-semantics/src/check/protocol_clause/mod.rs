@@ -82,7 +82,7 @@ fn refusal(cause: ProtocolAnchorCause) -> CheckRefusal {
         // `ProtocolAnchor` cause's own span directly instead, so this
         // `Location` is never resolved.
         location: filament_semantic_value::location::ExpressionLocation::root(Origin::Expression),
-        cause: CheckCause::ProtocolAnchor(Box::new(cause)),
+        cause: Box::new(CheckCause::ProtocolAnchor(Box::new(cause))),
     }
 }
 

@@ -517,7 +517,7 @@ fn the_capture_types_without_an_initializer_refuse_where_written() {
         checked(text, false)
             .expect_err(text)
             .into_iter()
-            .map(|refusal| refusal.cause)
+            .map(|refusal| *refusal.cause)
             .collect()
     };
     let text = capture_of(&declarations, "Text[0, 5; nfc]", "\"abc\"");
@@ -559,7 +559,7 @@ fn a_non_boolean_guard_and_a_guard_reading_over_refuse_at_the_check() {
         let mut causes: Vec<CheckCause> = checked(&text, false)
             .expect_err(guard)
             .into_iter()
-            .map(|refusal| refusal.cause)
+            .map(|refusal| *refusal.cause)
             .collect();
         let last = causes.pop();
         let (Some(CheckCause::ProtocolObligation(cause)), None) = (last, causes.pop()) else {
@@ -600,7 +600,7 @@ fn a_fifo_binder_named_like_a_readable_binder_refuses() {
         checked(text, false)
             .expect_err(text)
             .into_iter()
-            .map(|refusal| refusal.cause)
+            .map(|refusal| *refusal.cause)
             .collect()
     };
     let each = "on each (t: Tick)";

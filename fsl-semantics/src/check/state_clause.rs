@@ -517,7 +517,7 @@ pub(crate) fn check_type_invariant<'a>(
     {
         return Err(invariant.refusal(CheckRefusal {
             location: declarations.location.clone(),
-            cause: CheckCause::ObjectReadInValueInvariant,
+            cause: Box::new(CheckCause::ObjectReadInValueInvariant),
         }));
     }
     Ok((
@@ -804,10 +804,12 @@ fn walked_bound(
 fn state_model_refusal(refusal: CheckRefusal) -> CheckRefusal {
     CheckRefusal {
         location: refusal.location,
-        cause: CheckCause::StateModel(Box::new(super::state_model::StateModelRefusal {
-            cause: refusal.cause,
-            receiver: None,
-        })),
+        cause: Box::new(CheckCause::StateModel(Box::new(
+            super::state_model::StateModelRefusal {
+                cause: *refusal.cause,
+                receiver: None,
+            },
+        ))),
     }
 }
 
@@ -826,10 +828,10 @@ fn ambiguous_population(
     let populations: Vec<&str> = populations.iter().map(|key| key.node.as_str()).collect();
     CheckRefusal {
         location: location.clone(),
-        cause: CheckCause::AmbiguousName {
+        cause: Box::new(CheckCause::AmbiguousName {
             name: format!("{name} ({})", populations.join(", ")),
             loci: vec![location.clone()],
-        },
+        }),
     }
 }
 
@@ -878,7 +880,7 @@ fn parent_slot_refusal(
     };
     CheckRefusal {
         location: location.clone(),
-        cause,
+        cause: Box::new(cause),
     }
 }
 
@@ -933,7 +935,7 @@ fn check_clause_in(
     check_clause_typed(form, input, cx, named).map_err(|refusal| {
         // FR-056-AC-43: a clause naming a parameter of its operation that has
         // no checked type reaches an untyped member, not a missing name.
-        let CheckCause::MissingName(name) = &refusal.cause else {
+        let CheckCause::MissingName(name) = refusal.cause.as_ref() else {
             return refusal;
         };
         let Some(operation) = form.operation.as_ref() else {
@@ -963,7 +965,7 @@ fn check_clause_in(
         match untyped {
             Some(cause) => CheckRefusal {
                 location: refusal.location,
-                cause,
+                cause: Box::new(cause),
             },
             None => refusal,
         }
@@ -1025,7 +1027,7 @@ fn check_clause_typed(
     if body.root().value_type() != &ValueType::Boolean {
         return Err(CheckRefusal {
             location: location.clone(),
-            cause: CheckCause::NonBooleanRoot,
+            cause: Box::new(CheckCause::NonBooleanRoot),
         });
     }
     let slots = typer.slots();
@@ -1431,11 +1433,13 @@ pub(crate) fn classify_refusal(failure: ClassifyFailure, location: &Location) ->
     match failure {
         ClassifyFailure::Limit(exceeded) => CheckRefusal {
             location: location.clone(),
-            cause: super::limit_cause(&exceeded),
+            cause: Box::new(super::limit_cause(&exceeded)),
         },
         ClassifyFailure::Fault(fault) => CheckRefusal {
             location: location.clone(),
-            cause: CheckCause::InternalFault(Box::new(KeyFault::UnclassifiedExtent(fault))),
+            cause: Box::new(CheckCause::InternalFault(Box::new(
+                KeyFault::UnclassifiedExtent(fault),
+            ))),
         },
     }
 }
@@ -1524,7 +1528,9 @@ pub(crate) fn clause_records(
     };
     let unkeyable = || CheckRefusal {
         location: location.clone(),
-        cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+        cause: Box::new(CheckCause::InternalFault(Box::new(
+            KeyFault::UnkeyableRequirements,
+        ))),
     };
     let classify = |failure: ClassifyFailure| classify_refusal(failure, location);
     let mut keyed = Vec::with_capacity(claims.len());

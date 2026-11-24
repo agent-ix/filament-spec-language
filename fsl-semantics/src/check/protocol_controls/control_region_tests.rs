@@ -96,7 +96,7 @@ fn exact(text: &str, make: Cap, kind: CheckingLimitKind) -> u64 {
             panic!("one limit refusal, got {refusals:?}");
         };
         assert!(
-            matches!(&refusal.cause, CheckCause::ResourceExhausted(limit)
+            matches!(refusal.cause.as_ref(), CheckCause::ResourceExhausted(limit)
                 if limit.kind == kind && limit.limit == below),
             "{refusal:?}"
         );

@@ -117,10 +117,7 @@ impl<'c, 'a> Checker<'c, 'a> {
     /// The history rows of `form` whose type, name and initial literal
     /// check. Their fields are in the typer's scope from here on, so every
     /// row and update is typed with every field in view.
-    pub(super) fn history_headers(
-        &mut self,
-        form: &'c RefinementForm,
-    ) -> Vec<Header<'c>> {
+    pub(super) fn history_headers(&mut self, form: &'c RefinementForm) -> Vec<Header<'c>> {
         let types = self.types();
         let concrete_types = {
             let found = self.concrete_side.object_types(types);
@@ -178,7 +175,7 @@ impl<'c, 'a> Checker<'c, 'a> {
                 Ok(declared) => declared,
                 Err(refusal) => {
                     self.findings
-                        .refuse(row.ty.span, RefinementCause::Check(refusal.cause));
+                        .refuse(row.ty.span, RefinementCause::Check(*refusal.cause));
                     continue;
                 }
             };
@@ -274,7 +271,11 @@ impl<'c, 'a> Checker<'c, 'a> {
                     .map_err(|_| mismatch())
             }
             (literal, ValueType::Option(payload)) => {
-                let inner = Self::literal(literal, payload, written.and_then(|written| written.arguments.first()))?;
+                let inner = Self::literal(
+                    literal,
+                    payload,
+                    written.and_then(|written| written.arguments.first()),
+                )?;
                 OptionValue::present((**payload).clone(), inner).map_err(|_| mismatch())
             }
             _ => Err(mismatch()),

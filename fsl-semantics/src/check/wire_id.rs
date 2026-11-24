@@ -1183,7 +1183,7 @@ pub fn component_key_structural(
         }
         let mut resolved = Vec::with_capacity(ids.len());
         for (at, (id, peer)) in ids.iter().zip(peers).enumerate() {
-            range(&format!("{ASSUMPTIONS}/{at}"), id, *peer)?;
+            range(&format!("{ASSUMPTIONS}/{at}"), id, peer)?;
             resolved.push(
                 peer.structural_value(id)
                     .map_err(ComponentKeyRefusal::Unresolved)?,
@@ -2045,7 +2045,7 @@ mod tests {
             filament_specification::published_files("proposals/checked-package-v2/fixtures/")
                 .find(|(path, _)| path.ends_with("positive-dependency-library.json"))
                 .expect("the published library fixture");
-        WireGraph::of_package_bytes(&bytes).expect("the library's graph")
+        WireGraph::of_package_bytes(bytes).expect("the library's graph")
     }
 
     const LIBRARY: &str = "test/predicates";

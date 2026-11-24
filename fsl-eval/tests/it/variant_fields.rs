@@ -385,7 +385,7 @@ fn a_cross_type_equality_refuses_at_check_and_never_evaluates() {
         .expect_err("two different variant types do not compare");
     assert_eq!(
         refusal.cause,
-        CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+        Box::new(CheckCause::IllTyped(IllTypedCause::TypeMismatch))
     );
 }
 

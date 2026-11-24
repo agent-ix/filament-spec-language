@@ -588,7 +588,7 @@ pub(crate) fn check_refusal(body: &str) -> CheckRefusal {
 
 /// The temporal cause of `refusal`.
 pub(crate) fn temporal(refusal: &CheckRefusal) -> &TemporalCause {
-    match &refusal.cause {
+    match &*refusal.cause {
         CheckCause::Temporal(cause) => cause,
         other => panic!("{other:?}"),
     }
@@ -710,7 +710,7 @@ fn protocol_targets_resolve_and_classes_hold_their_threads_steps() {
         (Code::AmbiguousDeclaration, Some("ambiguous-name")),
         "{twice:?}"
     );
-    let CheckCause::ProtocolAnchor(anchor) = &twice.cause else {
+    let CheckCause::ProtocolAnchor(anchor) = &*twice.cause else {
         panic!("{twice:?}");
     };
     let ProtocolAnchorCause::Ambiguous { name, loci, span } = anchor.as_ref() else {

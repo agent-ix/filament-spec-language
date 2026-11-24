@@ -218,7 +218,7 @@ fn minimal_protocol_construct_pairs_check_and_refuse_at_their_subject() {
     );
     let causes: Vec<_> = located_refusals(&over)
         .into_iter()
-        .filter_map(|(refusal, region)| match &refusal.cause {
+        .filter_map(|(refusal, region)| match refusal.cause.as_ref() {
             crate::check::CheckCause::ProtocolAnchor(cause)
                 if matches!(cause.as_ref(), ProtocolAnchorCause::SlotModelState { node, .. } if node == "Pick") =>
             {

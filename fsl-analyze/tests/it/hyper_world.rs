@@ -489,7 +489,7 @@ pub(crate) fn assert_hyper_division_refused_in(
 
     assert_eq!(refusal.cause.code().as_str(), "undefined_expression");
     assert_eq!(refusal.cause.cause(), Some("unproved-nonzero"));
-    let span = match &refusal.cause {
+    let span = match &*refusal.cause {
         CheckCause::Hyper(cause) => cause.span().expect("the refusal has an expression span"),
         other => panic!("expected a hyper refusal, got {other:?}"),
     };

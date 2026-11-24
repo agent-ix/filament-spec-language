@@ -66,8 +66,7 @@ fn a_non_tail_recursive_reading_unfolds_and_a_deep_one_refuses() {
     assert!(
         matches!(
             refusals.as_slice(),
-            [CheckRefusal { cause: CheckCause::ResourceExhausted(limit), .. }]
-                if limit.kind == CheckingLimitKind::Nodes
+            [refusal] if matches!(refusal.cause.as_ref(), CheckCause::ResourceExhausted(limit) if limit.kind == CheckingLimitKind::Nodes)
         ),
         "{refusals:?}"
     );
@@ -146,8 +145,7 @@ fn a_constant_past_the_rational_bits_refuses_that_limit() {
     assert!(
         matches!(
             refusals.as_slice(),
-            [CheckRefusal { cause: CheckCause::ResourceExhausted(limit), .. }]
-                if limit.kind == CheckingLimitKind::RationalBits
+            [refusal] if matches!(refusal.cause.as_ref(), CheckCause::ResourceExhausted(limit) if limit.kind == CheckingLimitKind::RationalBits)
         ),
         "{refusals:?}"
     );

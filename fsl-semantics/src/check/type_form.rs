@@ -244,7 +244,7 @@ impl TypeFormError {
         };
         CheckRefusal {
             location: location.clone(),
-            cause,
+            cause: Box::new(cause),
         }
     }
 }
@@ -1014,7 +1014,7 @@ mod tests {
         let refusal = resolve(&invalid).expect_err("a collection map key is refused");
         assert!(
             matches!(
-                refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::IllTyped(IllTypedCause::OperatorIneligible)
             ),
             "unexpected cause: {:?}",
@@ -1039,7 +1039,7 @@ mod tests {
         let refusal = resolve(form).expect_err("the form is malformed");
         assert!(
             matches!(
-                refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::IllTyped(IllTypedCause::TypeMismatch)
             ),
             "{form:?} refused with {:?}",
@@ -1308,7 +1308,7 @@ mod tests {
                 .into_refusal(&root_location());
             assert!(
                 matches!(
-                    refusal.cause,
+                    refusal.cause.as_ref(),
                     CheckCause::IllTyped(IllTypedCause::TypeMismatch)
                 ),
                 "Quantity<m, Rational{bounds:?}> refused with {:?}",
@@ -1380,7 +1380,7 @@ mod tests {
         let refusal = resolve(&collection(CollectionKind::Set, &["3", "2"]))
             .expect_err("an inverted bound refuses");
         assert!(matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
         ));
     }
@@ -1447,7 +1447,7 @@ mod tests {
         );
         let refusal = resolve_in(&scope, &reference("M::B")).unwrap_err();
         assert!(
-            matches!(refusal.cause, CheckCause::MissingQualifiedName(name) if name.name == "M::B")
+            matches!(refusal.cause.as_ref(), CheckCause::MissingQualifiedName(name) if name.name == "M::B")
         );
     }
 
@@ -1457,9 +1457,11 @@ mod tests {
     fn names_resolve_uniquely_or_are_refused() {
         let scope = scope_with(object_type("X"), vec![("X".to_owned(), ValueType::Boolean)]);
         let refusal = resolve_in(&scope, &TypeForm::name("X", SPAN)).unwrap_err();
-        assert!(matches!(refusal.cause, CheckCause::AmbiguousName { name, .. } if name == "X"));
+        assert!(
+            matches!(refusal.cause.as_ref(), CheckCause::AmbiguousName { name, .. } if name == "X")
+        );
         let refusal = resolve(&TypeForm::name("Y", SPAN)).unwrap_err();
-        assert!(matches!(refusal.cause, CheckCause::MissingName(name) if name == "Y"));
+        assert!(matches!(refusal.cause.as_ref(), CheckCause::MissingName(name) if name == "Y"));
     }
 
     /// `Population<T>[N]` has its own head, so a user type named

@@ -331,7 +331,7 @@ fn a_relationship_end_naming_a_record_value_type_refuses_malformed() {
         .refusals
         .iter()
         .filter(|refusal| {
-            matches!(&refusal.cause, ModelRefusalCause::IntakeMalformedDeclaration { node, .. }
+            matches!(& refusal.cause, ModelRefusalCause::IntakeMalformedDeclaration { node, .. }
                 if node == "model.Sys.owes")
         })
         .collect();
@@ -377,7 +377,7 @@ fn a_relationship_source_end_naming_a_record_value_type_refuses_malformed() {
         .refusals
         .iter()
         .filter(|refusal| {
-            matches!(&refusal.cause, ModelRefusalCause::IntakeMalformedDeclaration { node, .. }
+            matches!(& refusal.cause, ModelRefusalCause::IntakeMalformedDeclaration { node, .. }
                 if node == "model.Sys.owes")
         })
         .collect();

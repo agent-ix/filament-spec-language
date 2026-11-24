@@ -448,7 +448,7 @@ fn a_qualified_edge_naming_an_unknown_edge_refuses_missing_name() {
             "missing-name",
             vec![],
         );
-        let CheckCause::StateModel(model) = refusal.cause else {
+        let CheckCause::StateModel(model) = *refusal.cause else {
             panic!("a state model refusal");
         };
         assert_eq!(model.cause.code().category().exit_code(), 20);
@@ -479,7 +479,7 @@ fn a_qualified_edge_retains_member_ambiguity() {
             "ambiguous-name",
             vec![],
         );
-        let CheckCause::StateModel(model) = refusal.cause else {
+        let CheckCause::StateModel(model) = *refusal.cause else {
             panic!("a state model refusal");
         };
         let CheckCause::AmbiguousMember(ambiguous) = model.cause else {
@@ -701,7 +701,7 @@ fn c15_the_walked_population_is_added_once_and_two_cover_ambiguously() {
         "ambiguous-name",
         vec![],
     );
-    let CheckCause::StateModel(model) = &refusal.cause else {
+    let CheckCause::StateModel(model) = &*refusal.cause else {
         panic!("a StateModel refusal: {refusal:?}");
     };
     let CheckCause::AmbiguousName { name, .. } = &model.cause else {

@@ -125,7 +125,7 @@ fn check_refusals(declarations: &str) -> (String, Result<CheckedGraph, Vec<Check
     let (text, assembled) = assemble(declarations);
     let not_emission = |refusal: &CheckRefusal| {
         !matches!(
-                    &refusal.cause,
+                    refusal.cause.as_ref(),
         CheckCause::ProtocolReference(cause)
         if matches!(**cause, crate::check::refusal::ProtocolReferenceCause::NotEmitted { .. })
                 )
@@ -205,7 +205,7 @@ fn only_cause(declarations: &str) -> (CheckRefusal, ProtocolAnchorCause) {
 fn protocol_causes(refusals: &[CheckRefusal]) -> Vec<&ProtocolAnchorCause> {
     refusals
         .iter()
-        .map(|refusal| match &refusal.cause {
+        .map(|refusal| match refusal.cause.as_ref() {
             CheckCause::ProtocolAnchor(cause) => cause.as_ref(),
             other => panic!("a ProtocolAnchor cause, got {other:?}"),
         })

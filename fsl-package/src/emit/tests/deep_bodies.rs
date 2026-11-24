@@ -266,7 +266,10 @@ fn frame_shape(emission: &crate::emit::Emission) -> (usize, usize, usize) {
     let records = shape.semantic_graph.nodes.iter().filter_map(|node| node.0);
     let (mut all, mut guarded) = (0, 0);
     for members in records {
-        assert!(members <= 1, "a record cites one terminal frame id, not a guard list");
+        assert!(
+            members <= 1,
+            "a record cites one terminal frame id, not a guard list"
+        );
         all += 1;
         guarded += members;
     }
@@ -617,8 +620,16 @@ fn distinct_guards_shape(levels: usize) -> (usize, usize, usize, usize) {
 fn nested_guards_emit_shared_frames_and_linear_bytes() {
     let (half_frames, half_guarded, _, half_bytes) = distinct_guards_shape(500);
     let (frames, guarded, records, bytes) = distinct_guards_shape(1_000);
-    assert_eq!((half_frames, frames), (499, 999), "one frame per nested guard level but the last");
-    assert_eq!((half_guarded, guarded), (998, 1_998), "two guarded records per level but the last");
+    assert_eq!(
+        (half_frames, frames),
+        (499, 999),
+        "one frame per nested guard level but the last"
+    );
+    assert_eq!(
+        (half_guarded, guarded),
+        (998, 1_998),
+        "two guarded records per level but the last"
+    );
     assert_eq!(records, 2_000, "two scalar records per level");
     assert!(
         bytes <= 20_000_000,
@@ -652,7 +663,10 @@ fn omission_names_share_one_guard_row_per_edge_at_1000_levels() {
             let names: usize = records.iter().map(|record| record.names.len()).sum();
             assert_eq!(records.len(), 2_000);
             assert_eq!(guards.rows.len(), 999, "one row per nested guard edge");
-            assert!(names <= 16 * records.len(), "{names} names are not linear in the records");
+            assert!(
+                names <= 16 * records.len(),
+                "{names} names are not linear in the records"
+            );
         })
         .expect("the thread spawns")
         .join()

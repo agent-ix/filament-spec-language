@@ -103,7 +103,7 @@ fn only_refusal(declarations: &str) -> (String, ProtocolAnchorCause, &'static st
     let [refusal] = &found[..] else {
         panic!("{declarations}: one refusal, got {found:?}");
     };
-    let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+    let CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() else {
         panic!("a ProtocolAnchor cause, got {:?}", refusal.cause);
     };
     (
@@ -576,7 +576,7 @@ fn refused(source: &str) -> (String, Vec<ProtocolAnchorCause>) {
         .map(|refusal| {
             assert_eq!(
                 (refusal.cause.code().as_str(), refusal.cause.cause()),
-                match &refusal.cause {
+                match refusal.cause.as_ref() {
                     CheckCause::ProtocolAnchor(cause) => match cause.as_ref() {
                         ProtocolAnchorCause::AccessOrdering { .. } =>
                             ("ill_typed", Some("operator-ineligible")),
@@ -587,7 +587,7 @@ fn refused(source: &str) -> (String, Vec<ProtocolAnchorCause>) {
                     other => panic!("a ProtocolAnchor cause, got {other:?}"),
                 }
             );
-            match &refusal.cause {
+            match refusal.cause.as_ref() {
                 CheckCause::ProtocolAnchor(cause) => cause.as_ref().clone(),
                 _ => unreachable!(),
             }

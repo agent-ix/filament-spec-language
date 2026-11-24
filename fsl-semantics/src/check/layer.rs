@@ -112,12 +112,11 @@ pub(super) fn typed_equalities(
         if let Some(required) = required {
             return Some(super::CheckRefusal {
                 location: node.location().clone(),
-                cause: super::CheckCause::LayerEquality {
+                cause: Box::new(super::CheckCause::LayerEquality {
                     selected,
                     required,
-                    span: spans
-                        .and_then(|spans| spans.operator_span_at(node.location())),
-                },
+                    span: spans.and_then(|spans| spans.operator_span_at(node.location())),
+                }),
             });
         }
     }

@@ -237,7 +237,7 @@ fn assert_malformed(refusal: &ModelRefusal, node: &str, member: &str) {
     assert_eq!(refusal.code, Code::InvalidModelBinding);
     assert!(
         matches!(
-            refusal.cause,
+            &refusal.cause,
             ModelRefusalCause::IntakeMalformedDeclaration { .. }
         ),
         "{refusal:?}"
@@ -407,7 +407,7 @@ fn a_unit_payload_refuses_as_unsupported_at_its_member() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].code, Code::UnsupportedConstruct);
     assert!(matches!(
-        found[0].cause,
+        &found[0].cause,
         ModelRefusalCause::UnsupportedDeclarationForm { .. }
     ));
     assert_eq!(node_of(&found[0]), id("variant/Tier-Gold"));
@@ -604,7 +604,7 @@ fn a_case_with_no_name_is_refused_by_the_reader_schema() {
     for refusal in &found {
         assert_eq!(refusal.code, Code::InvalidModelBinding);
         assert!(matches!(
-            refusal.cause,
+            &refusal.cause,
             ModelRefusalCause::IntakeMalformedDeclaration { .. }
         ));
     }

@@ -441,7 +441,7 @@ fn refusal(cause: StateGraphCause) -> CheckRefusal {
         // refusal_region` reads it directly, so this `Location` is never
         // resolved.
         location: Location::root(Origin::Expression),
-        cause: CheckCause::StateGraph(Box::new(cause)),
+        cause: Box::new(CheckCause::StateGraph(Box::new(cause))),
     }
 }
 
@@ -619,7 +619,7 @@ fn unresolved_name<'a>(
                 continue;
             };
             if !matches!(
-                inner.cause,
+                inner.cause.as_ref(),
                 CheckCause::MissingName(_) | CheckCause::MissingQualifiedName(_)
             ) {
                 continue;
@@ -636,7 +636,7 @@ fn unresolved_name<'a>(
                     StateGraphCause::Predicate {
                         role,
                         span,
-                        cause: Box::new(inner.cause),
+                        cause: Box::new(*inner.cause),
                     },
                 ));
             }
@@ -693,7 +693,7 @@ fn check_predicate<'a>(
             }
         })
         .map_err(|inner| {
-            let operator = match &inner.cause {
+            let operator = match inner.cause.as_ref() {
                 CheckCause::LayerEquality { span, .. } => *span,
                 _ => None,
             };
@@ -704,7 +704,7 @@ fn check_predicate<'a>(
             refuse(StateGraphCause::Predicate {
                 role,
                 span,
-                cause: Box::new(inner.cause),
+                cause: Box::new(*inner.cause),
             })
         })?;
     Ok((

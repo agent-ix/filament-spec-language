@@ -167,7 +167,7 @@ fn checked_conversions_run_the_compound_pivot_in_the_retained_frame() {
         )
         .expect_err("Torque-to-Energy conversion refuses despite equal base dimensions");
     assert!(matches!(
-        named_dimension_mismatch.cause,
+        named_dimension_mismatch.cause.as_ref(),
         CheckCause::IllTyped(_)
     ));
 
@@ -297,7 +297,7 @@ fn checked_conversions_run_the_compound_pivot_in_the_retained_frame() {
             CheckingLimits::default(),
         )
         .expect_err("an unretained compound target refuses during checking");
-    assert!(matches!(unknown.cause, CheckCause::IllTyped(_)));
+    assert!(matches!(unknown.cause.as_ref(), CheckCause::IllTyped(_)));
 
     let mismatch = graph
         .check_quantity_conversion(
@@ -310,7 +310,7 @@ fn checked_conversions_run_the_compound_pivot_in_the_retained_frame() {
         )
         .expect_err("an N_m quantity cannot convert to Length");
     assert!(
-        matches!(mismatch.cause, CheckCause::IllTyped(_)),
+        matches!(mismatch.cause.as_ref(), CheckCause::IllTyped(_)),
         "incompatible Energy-to-Length target has a typed refusal: {mismatch:?}"
     );
 }

@@ -2302,7 +2302,7 @@ fn check_in(
 /// The cause of a checking refusal.
 fn refused(result: Result<CheckedExpression, CheckRefusal>) -> CheckCause {
     match result {
-        Err(refusal) => refusal.cause,
+        Err(refusal) => *refusal.cause,
         Ok(_) => panic!("a checking refusal"),
     }
 }

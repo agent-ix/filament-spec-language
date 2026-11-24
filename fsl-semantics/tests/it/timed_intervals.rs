@@ -118,10 +118,10 @@ fn checked(body: &str) -> (String, CheckedTemporalClause) {
 
 fn cause_of(outcome: Outcome) -> TemporalCause {
     match outcome {
-        Err(StageFailure::Refused(CheckRefusal {
-            cause: CheckCause::Temporal(cause),
-            ..
-        })) => *cause,
+        Err(StageFailure::Refused(refusal)) => match *refusal.cause {
+            CheckCause::Temporal(cause) => *cause,
+            other => panic!("a temporal refusal, not {other:?}"),
+        },
         other => panic!("a temporal refusal, not {other:?}"),
     }
 }

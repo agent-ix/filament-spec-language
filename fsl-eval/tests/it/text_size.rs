@@ -74,7 +74,7 @@ fn refused(declarations: &str) -> (IllTypedCause, usize) {
     let [refusal] = refusals.as_slice() else {
         panic!("{declarations}: one refusal, not {refusals:?}");
     };
-    let CheckCause::IllTyped(cause) = &refusal.cause else {
+    let CheckCause::IllTyped(cause) = &*refusal.cause else {
         panic!("{declarations}: ill_typed, not {refusal:?}");
     };
     (*cause, refusal.location.depth())

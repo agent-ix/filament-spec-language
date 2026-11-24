@@ -509,10 +509,9 @@ impl Lowering<'_> {
         let location = protocol.location();
         let law = match self.law(LawRole::ProtocolProfile, &location) {
             Ok(law) => law,
-            Err(CheckRefusal {
-                cause: CheckCause::MissingSelection { .. },
-                ..
-            }) => {
+            Err(CheckRefusal { cause, .. })
+                if matches!(cause.as_ref(), CheckCause::MissingSelection { .. }) =>
+            {
                 self.set_protocol_key(index, ProtocolKey::Unselected);
                 return Ok(Vec::new());
             }
@@ -572,7 +571,7 @@ impl Lowering<'_> {
             // A protocol this one refers to has no node (its refusal is
             // reported at its own declaration): this one has none either,
             // and the reference is refused where it stands.
-            Err(refusal) => match &refusal.cause {
+            Err(refusal) => match refusal.cause.as_ref() {
                 CheckCause::ProtocolReference(cause) if cause.construct().is_some() => {
                     if let Some(construct) = cause.construct() {
                         self.set_protocol_key(index, ProtocolKey::NotEmitted(construct));
@@ -2386,7 +2385,7 @@ mod requirement_key_tests {
             refusal.cause.code(),
             fsl_foundation::Code::MissingDeclaration
         );
-        assert_eq!(refusal.cause, CheckCause::MissingName("Due".to_owned()));
+        assert_eq!(*refusal.cause, CheckCause::MissingName("Due".to_owned()));
     }
 
     /// A required clause whose own lowering refused leaves the protocol

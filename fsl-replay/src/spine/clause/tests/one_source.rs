@@ -86,7 +86,7 @@ fn causes(refused: crate::spine::FrontEndFailure) -> Vec<CheckCause> {
     };
     match *refusal {
         CompileRefusal::Check { refusals, .. } => {
-            refusals.into_iter().map(|refusal| refusal.cause).collect()
+            refusals.into_iter().map(|refusal| *refusal.cause).collect()
         }
         other => panic!("a check refusal, not {other:?}"),
     }

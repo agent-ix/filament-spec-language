@@ -321,8 +321,7 @@ fn refuse_cycles(forms: &[ExtensionForm], checked: &mut Checked) {
     for (index, form) in checked.forms.iter_mut().enumerate() {
         if checked.refusals.iter().any(|refusal| {
             refusal.location == extension_location(index)
-                && matches!(
-                    refusal.cause,
+                && matches!(refusal.cause.as_ref(),
                     CheckCause::Extension(ref cause) if matches!(**cause, ExtensionCause::Cycle { .. })
                 )
         }) {
@@ -360,7 +359,7 @@ fn production<'h>(
 fn refusal(index: usize, cause: ExtensionCause) -> CheckRefusal {
     CheckRefusal {
         location: extension_location(index),
-        cause: CheckCause::Extension(Box::new(cause)),
+        cause: Box::new(CheckCause::Extension(Box::new(cause))),
     }
 }
 
@@ -540,10 +539,12 @@ impl Builder<'_, '_, '_> {
                     })),
                 })
             }
-            Err(CheckRefusal {
-                cause: CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch),
-                ..
-            }) => {
+            Err(CheckRefusal { cause, .. })
+                if matches!(
+                    cause.as_ref(),
+                    CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
+                ) =>
+            {
                 let actual = literal_range
                     .take()
                     .unwrap_or_else(|| self.actual_type(clause, &location));
@@ -699,7 +700,7 @@ impl Builder<'_, '_, '_> {
         match self.declared.get(&name.name) {
             None => Err(CheckRefusal {
                 location: location.clone(),
-                cause: CheckCause::MissingName(name.name.clone()),
+                cause: Box::new(CheckCause::MissingName(name.name.clone())),
             }),
             Some((_, actual, _)) if actual != node_kind => Err(refusal(
                 self.index,

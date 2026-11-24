@@ -345,11 +345,13 @@ impl<'a> CaseBuilder<'a> {
         if let Some((obligation, location)) = failure {
             return Err(CheckRefusal {
                 location,
-                cause: CheckCause::SumCase(Box::new(SumCaseCause::UnprovedExhaustiveness {
-                    union: self.union.declaration,
-                    arms: self.names,
-                    obligation,
-                })),
+                cause: Box::new(CheckCause::SumCase(Box::new(
+                    SumCaseCause::UnprovedExhaustiveness {
+                        union: self.union.declaration,
+                        arms: self.names,
+                        obligation,
+                    },
+                ))),
             });
         }
         // Every head resolved, no member repeats and none is missing, so each
@@ -367,9 +369,9 @@ impl<'a> CaseBuilder<'a> {
 fn fault(location: &Location, invariant: &'static str) -> CheckRefusal {
     CheckRefusal {
         location: location.clone(),
-        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
             filament_semantic_value::catalog::InternalFault::new("S3", invariant),
-        ))),
+        )))),
     }
 }
 

@@ -16,9 +16,11 @@ fn timed_clause_over_snapshots_has_a_specific_item_message() {
     let refusal = CompileRefusal::Check {
         refusals: vec![CheckRefusal {
             location: ExpressionLocation::root(ExpressionOwner::Expression),
-            cause: CheckCause::Temporal(Box::new(TemporalCause::TimedTraceSubject {
-                span: fsl_foundation::Span { start: 0, end: 1 },
-            })),
+            cause: Box::new(CheckCause::Temporal(Box::new(
+                TemporalCause::TimedTraceSubject {
+                    span: fsl_foundation::Span { start: 0, end: 1 },
+                },
+            ))),
         }],
         region: None,
     };

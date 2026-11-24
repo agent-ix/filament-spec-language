@@ -88,7 +88,7 @@ impl Found {
     }
 
     fn refinement(&self) -> &RefinementCause {
-        let CheckCause::Refinement(refusal) = &self.refusal.cause else {
+        let CheckCause::Refinement(refusal) = self.refusal.cause.as_ref() else {
             panic!("a refinement refusal: {:?}", self.refusal);
         };
         &refusal.cause
@@ -424,7 +424,7 @@ fn an_invalid_protocol_temporal_requirement_refuses_during_s3() {
         assert_eq!(refusal.at.as_deref(), Some(missing));
         assert!(found
             .iter()
-            .all(|refusal| { !matches!(refusal.refusal.cause, CheckCause::Refinement(_)) }));
+            .all(|refusal| { !matches!(&*refusal.refusal.cause, CheckCause::Refinement(_)) }));
     }
 }
 
@@ -738,10 +738,7 @@ fn a_build_without_the_protocol_side_refuses_it_at_the_protocol_name() {
     assert_eq!(side.code_and_cause(), UNSUPPORTED);
     assert_eq!(side.feature(), "protocol-abstract-side");
     assert_eq!(side.at.as_deref(), Some("Twice"));
-    let RefinementCause::Unsupported {
-        profile, ..
-    } = side.refinement()
-    else {
+    let RefinementCause::Unsupported { profile, .. } = side.refinement() else {
         panic!("unsupported");
     };
     assert_eq!(profile, "filament.temporal.infinite-trace/v1");
@@ -910,7 +907,7 @@ fn the_protocol_is_checked_before_the_refinement_whatever_the_source_order() {
 
 impl Found {
     fn refinement_or_none(&self) -> Option<&RefinementCause> {
-        match &self.refusal.cause {
+        match self.refusal.cause.as_ref() {
             CheckCause::Refinement(refusal) => Some(&refusal.cause),
             _ => None,
         }
@@ -1255,13 +1252,12 @@ fn the_list_refusal_names_the_feature_the_refinement_and_no_subject() {
     let list = only(&found);
     assert_eq!(list.code_and_cause(), UNSUPPORTED);
     assert_eq!(list.at.as_deref(), Some("Spec"));
-    let CheckCause::Refinement(refusal) = &list.refusal.cause else {
+    let CheckCause::Refinement(refusal) = list.refusal.cause.as_ref() else {
         panic!("a refinement refusal");
     };
     assert_eq!(refusal.refinement, "CasTwice");
     let RefinementCause::Unsupported {
-        feature,
-        profile, ..
+        feature, profile, ..
     } = &refusal.cause
     else {
         panic!("not yet implemented: {:?}", refusal.cause);

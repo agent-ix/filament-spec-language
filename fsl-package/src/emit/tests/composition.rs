@@ -227,11 +227,10 @@ impl World {
         let Err(Failure::Check(refusals)) = self.compile(declaration) else {
             panic!("{declaration}: a check refusal");
         };
-        let [CheckRefusal {
-            cause: CheckCause::Abstraction(cause),
-            ..
-        }] = &refusals[..]
-        else {
+        let [CheckRefusal { cause, .. }] = &refusals[..] else {
+            panic!("{declaration}: one composition refusal: {refusals:?}");
+        };
+        let CheckCause::Abstraction(cause) = cause.as_ref() else {
             panic!("{declaration}: one composition refusal: {refusals:?}");
         };
         let AbstractionRefusal::Composition(refusal) = &**cause else {

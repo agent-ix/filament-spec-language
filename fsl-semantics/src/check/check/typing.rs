@@ -122,10 +122,10 @@ fn int_type(low: Integer, high: Integer, location: &Location) -> Result<ValueTyp
 /// the enum both declare. Neither declaration is a position of the checked
 /// tree, so the one locus is the name.
 fn qualified_name_refusal(refusal: CheckRefusal, name: &NameForm) -> CheckRefusal {
-    if name.is_qualified() && matches!(refusal.cause, CheckCause::MissingName(_)) {
+    if name.is_qualified() && matches!(refusal.cause.as_ref(), CheckCause::MissingName(_)) {
         CheckRefusal {
             location: refusal.location,
-            cause: CheckCause::MissingQualifiedName(name.clone()),
+            cause: Box::new(CheckCause::MissingQualifiedName(name.clone())),
         }
     } else {
         refusal
@@ -1480,7 +1480,7 @@ impl<'a> Typer<'a> {
                 if let Some(outside) = IntegerOutsideI128::of(IntegerSite::Literal, value) {
                     return Err(CheckRefusal {
                         location,
-                        cause: CheckCause::IntegerOutsideI128(outside),
+                        cause: Box::new(CheckCause::IntegerOutsideI128(outside)),
                     });
                 }
                 node(
@@ -1513,10 +1513,10 @@ impl<'a> Typer<'a> {
                 else {
                     return Err(CheckRefusal {
                         location,
-                        cause: CheckCause::ReferenceLiteralTypeMismatch {
+                        cause: Box::new(CheckCause::ReferenceLiteralTypeMismatch {
                             name: type_name.clone(),
                             actual: Box::new(declared),
-                        },
+                        }),
                     });
                 };
                 let identity = key.text().as_bytes().to_vec();
@@ -1531,7 +1531,9 @@ impl<'a> Typer<'a> {
                     Err(filament_checked::construct::ReferenceLiteralError::EmptyIdentity) => {
                         return Err(CheckRefusal {
                             location,
-                            cause: CheckCause::EmptyReferenceLiteralKey { span: *key_span },
+                            cause: Box::new(CheckCause::EmptyReferenceLiteralKey {
+                                span: *key_span,
+                            }),
                         });
                     }
                     Err(
@@ -1542,10 +1544,12 @@ impl<'a> Typer<'a> {
                         // own UTF-8 contract.
                         return Err(CheckRefusal {
                             location,
-                            cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
-                                filament_semantic_value::catalog::InternalFault::new(
-                                    "FR-480",
-                                    "decoded-reference-key-is-valid-utf8",
+                            cause: Box::new(CheckCause::InternalFault(Box::new(
+                                KeyFault::StageFault(
+                                    filament_semantic_value::catalog::InternalFault::new(
+                                        "FR-480",
+                                        "decoded-reference-key-is-valid-utf8",
+                                    ),
                                 ),
                             ))),
                         });
@@ -1563,7 +1567,7 @@ impl<'a> Typer<'a> {
             ExprNode::Null => {
                 return Err(CheckRefusal {
                     location,
-                    cause: CheckCause::NullExpression,
+                    cause: Box::new(CheckCause::NullExpression),
                 });
             }
             // FR-185: a quantity literal is its magnitude, measured and
@@ -1580,7 +1584,7 @@ impl<'a> Typer<'a> {
                 else {
                     return Err(CheckRefusal {
                         location,
-                        cause: if quantity.unit.is_qualified() {
+                        cause: Box::new(if quantity.unit.is_qualified() {
                             CheckCause::MissingQualifiedName(quantity.unit.clone())
                         } else {
                             CheckCause::UnresolvedUnitName {
@@ -1589,7 +1593,7 @@ impl<'a> Typer<'a> {
                                     .scope
                                     .unit_packages(self.source_owner.as_ref(), &quantity.unit.name),
                             }
-                        },
+                        }),
                     });
                 };
                 node(
@@ -1687,7 +1691,8 @@ impl<'a> Typer<'a> {
                     .is_some_and(|named| named.is_under_alias(&name.name));
                 match resolved {
                     Err(refusal)
-                        if under_alias && matches!(refusal.cause, CheckCause::MissingName(_)) =>
+                        if under_alias
+                            && matches!(refusal.cause.as_ref(), CheckCause::MissingName(_)) =>
                     {
                         return Err(missing_segment(&name.name, &location));
                     }
@@ -1701,9 +1706,9 @@ impl<'a> Typer<'a> {
             ExprNode::Indexed { .. } | ExprNode::StepLabel { .. } | ExprNode::Stutter => {
                 return Err(CheckRefusal {
                     location,
-                    cause: CheckCause::Hyper(Box::new(
+                    cause: Box::new(CheckCause::Hyper(Box::new(
                         crate::check::hyper_clause::HyperCause::OutsideHyperClause,
-                    )),
+                    ))),
                 });
             }
             ExprNode::Case(case) => {
@@ -1793,7 +1798,7 @@ impl<'a> Typer<'a> {
                 if let Some(outside) = IntegerOutsideI128::of(IntegerSite::Literal, exponent) {
                     return Err(CheckRefusal {
                         location,
-                        cause: CheckCause::IntegerOutsideI128(outside),
+                        cause: Box::new(CheckCause::IntegerOutsideI128(outside)),
                     });
                 }
                 let goal = Goal::Infer(expression.at(*base), None, location.child(0));
@@ -1837,9 +1842,9 @@ impl<'a> Typer<'a> {
             {
                 return Err(CheckRefusal {
                     location,
-                    cause: CheckCause::Hyper(Box::new(
+                    cause: Box::new(CheckCause::Hyper(Box::new(
                         crate::check::hyper_clause::HyperCause::OutsideHyperClause,
-                    )),
+                    ))),
                 });
             }
             ExprNode::Field {
@@ -2704,13 +2709,15 @@ impl<'a> Typer<'a> {
                     ) {
                         return Err(CheckRefusal {
                             location: location.clone(),
-                            cause: CheckCause::ResourceExhausted(Box::new(StageLimitCause {
-                                stage: CheckingStage::Typing,
-                                kind: CheckingLimitKind::WorkBudget,
-                                limit: incomplete.limit,
-                                actual: u128::from(incomplete.consumed) + 1,
-                                region: None,
-                            })),
+                            cause: Box::new(CheckCause::ResourceExhausted(Box::new(
+                                StageLimitCause {
+                                    stage: CheckingStage::Typing,
+                                    kind: CheckingLimitKind::WorkBudget,
+                                    limit: incomplete.limit,
+                                    actual: u128::from(incomplete.consumed) + 1,
+                                    region: None,
+                                },
+                            ))),
                         });
                     }
                 }
@@ -2723,12 +2730,12 @@ impl<'a> Typer<'a> {
             Err(super::modulo_interval::ModuloRangeError::Refused(refusal)) => Err(refusal),
             Err(super::modulo_interval::ModuloRangeError::Invariant(_)) => Err(CheckRefusal {
                 location: location.clone(),
-                cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                     filament_semantic_value::catalog::InternalFault::new(
                         "check.integer-modulo",
                         "range-invariant",
                     ),
-                ))),
+                )))),
             }),
         }
     }

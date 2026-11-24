@@ -2864,7 +2864,6 @@ impl TryFrom<Setting> for CheckingLimitKind {
             | Setting::MonitorPreparationWorkUnits
             | Setting::MonitorPreparationStorage
             | Setting::InspectMaxViewEntries
-
             | Setting::SimulationMaxSteps
             | Setting::ExactProbMaxStates
             | Setting::ExactProbMaxTransitions
@@ -4208,7 +4207,7 @@ pub struct CheckRefusal {
     /// Where the refusal originates.
     pub location: Location,
     /// The typed cause.
-    pub cause: CheckCause,
+    pub cause: Box<CheckCause>,
 }
 
 /// A member with no checked type used in a clause (FR-056-AC-43): the object
@@ -4251,14 +4250,14 @@ impl CheckRefusal {
         };
         Self {
             location: location.clone(),
-            cause,
+            cause: Box::new(cause),
         }
     }
 
     pub(crate) fn ill_typed(location: &Location, cause: IllTypedCause) -> Self {
         Self {
             location: location.clone(),
-            cause: CheckCause::IllTyped(cause),
+            cause: Box::new(CheckCause::IllTyped(cause)),
         }
     }
 
@@ -4309,7 +4308,10 @@ mod tests {
             actual: Box::new(actual.clone()),
         };
         let location = ExpressionLocation::at(Origin::Expression, &[2, 4]);
-        let refusal = super::CheckRefusal { location, cause };
+        let refusal = super::CheckRefusal {
+            location,
+            cause: Box::new(cause),
+        };
         assert_eq!(refusal.cause.code(), Code::IllTyped);
         assert_eq!(refusal.cause.cause(), Some("type-mismatch"));
         assert_eq!(
@@ -4321,13 +4323,15 @@ mod tests {
         );
         let equivalent = super::CheckRefusal {
             location: refusal.location.clone(),
-            cause: CheckCause::ReferenceLiteralTypeMismatch {
+            cause: Box::new(CheckCause::ReferenceLiteralTypeMismatch {
                 name,
                 actual: Box::new(ValueType::Boolean),
-            },
+            }),
         };
         assert_eq!(refusal, equivalent);
-        let CheckCause::ReferenceLiteralTypeMismatch { actual: stored, .. } = &refusal.cause else {
+        let CheckCause::ReferenceLiteralTypeMismatch { actual: stored, .. } =
+            refusal.cause.as_ref()
+        else {
             unreachable!("the reference-literal cause")
         };
         assert_eq!(stored.as_ref(), &actual);

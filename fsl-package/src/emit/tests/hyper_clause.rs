@@ -734,7 +734,7 @@ fn a_fairness_set_under_a_bounded_profile_is_not_emitted() {
     let refusals = refusals(&unit(EVENT, &declarations));
     assert!(
         refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::Temporal(cause) if matches!(**cause, TemporalCause::NotEmitted { .. })
         )),
         "{refusals:?}"
@@ -1498,11 +1498,10 @@ fn admitted(built: &Built) -> std::sync::Arc<filament_contract_model::CheckedPac
 
 /// The text a not-emitted refusal's span covers in `text`.
 fn not_emitted_text<'t>(text: &'t str, refusals: &[CheckRefusal]) -> &'t str {
-    let [CheckRefusal {
-        cause: CheckCause::Temporal(cause),
-        ..
-    }] = refusals
-    else {
+    let [CheckRefusal { cause, .. }] = refusals else {
+        panic!("one temporal refusal: {refusals:?}");
+    };
+    let CheckCause::Temporal(cause) = cause.as_ref() else {
         panic!("one temporal refusal: {refusals:?}");
     };
     let TemporalCause::NotEmitted { span, .. } = &**cause else {
@@ -1900,7 +1899,7 @@ fn the_emitted_nodes_count_against_the_node_ceiling_exactly() {
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
     };
-    let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+    let CheckCause::ResourceExhausted(limit) = &*refusal.cause else {
         panic!("a node limit: {refusal:?}");
     };
     assert_eq!(limit.kind, CheckingLimitKind::Nodes);

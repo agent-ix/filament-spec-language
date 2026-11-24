@@ -288,7 +288,7 @@ fn two_populations_covering_the_edge_type_refuse_ambiguous_name() {
     assert_eq!(refusal.cause.cause(), Some("ambiguous-name"));
     // At the `reaches`: the one operand of the clause body's root `not`.
     assert_eq!(refusal.location.path(), [0]);
-    let fsl_semantics::check::CheckCause::AmbiguousName { name, .. } = &refusal.cause else {
+    let fsl_semantics::check::CheckCause::AmbiguousName { name, .. } = &*refusal.cause else {
         panic!("an ambiguous name outside the StateModel family: {refusal:?}");
     };
     assert_eq!(

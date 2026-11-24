@@ -93,7 +93,10 @@ fn a_typed_size_is_typed_at_its_domain_and_proves_its_range() {
         "unproved-range",
     );
     assert!(
-        matches!(narrow.cause, CheckCause::Unproved(Obligation::Range { .. })),
+        matches!(
+            narrow.cause.as_ref(),
+            CheckCause::Unproved(Obligation::Range { .. })
+        ),
         "{narrow:?}"
     );
     assert_checks(&sized(
@@ -127,8 +130,8 @@ fn typed_size_does_not_infer_a_sequence_literal_element_type() {
         "ambiguous-literal",
     );
     assert_eq!(
-        ambiguous.cause,
-        CheckCause::IllTyped(filament_exact::IllTypedCause::AmbiguousLiteral)
+        ambiguous.cause.as_ref(),
+        &CheckCause::IllTyped(filament_exact::IllTypedCause::AmbiguousLiteral)
     );
     assert!(
         matches!(&ambiguous.location.origin, Origin::Body { function, index: 0, .. } if function == "f"),

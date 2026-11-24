@@ -507,7 +507,7 @@ fn a_timed_clause_cannot_hold_an_aggregate_atom() {
     let fsl_replay::spine::CompileRefusal::Check { refusals, .. } = *compile else {
         panic!("a check refusal");
     };
-    let CheckCause::Temporal(cause) = &refusals[0].cause else {
+    let CheckCause::Temporal(cause) = &*refusals[0].cause else {
         panic!("a temporal refusal: {:?}", refusals[0].cause);
     };
     assert!(

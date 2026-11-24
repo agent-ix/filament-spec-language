@@ -353,7 +353,7 @@ fn mixed_mode_refusal(result: &str, body: &str) -> CheckCause {
         )
         .expect_err("mixed-mode operands refuse");
     assert_eq!(refusals.len(), 1, "{body}: {refusals:?}");
-    let cause = refusals.into_iter().next().expect("one refusal").cause;
+    let cause = *refusals.into_iter().next().expect("one refusal").cause;
     assert_eq!(cause.code().as_str(), "ill_typed", "{body}");
     assert_eq!(cause.cause(), Some("type-mismatch"), "{body}");
     cause

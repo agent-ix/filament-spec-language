@@ -61,7 +61,7 @@ fn refused(declarations: &str) -> Vec<(Code, &'static str, String)> {
         .expect_err("S3 refuses")
         .iter()
         .map(|refusal| {
-            let CheckCause::Temporal(cause) = &refusal.cause else {
+            let CheckCause::Temporal(cause) = refusal.cause.as_ref() else {
                 panic!("a temporal refusal: {refusal:?}");
             };
             let span = cause.span();
@@ -293,7 +293,7 @@ fn a_release_is_refused_unless_the_timed_facet_is_selected() {
     .expect_err("the facet gate refuses");
     let found = refusals.iter().any(|refusal| {
         matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::Temporal(cause) if matches!(
                 &**cause,
                 TemporalCause::TimedFacetRequired { construct: TimedConstruct::Release, .. }
@@ -333,7 +333,7 @@ fn an_operation_inherited_from_two_unrelated_types_is_ambiguous() {
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
     };
-    let CheckCause::Temporal(cause) = &refusal.cause else {
+    let CheckCause::Temporal(cause) = refusal.cause.as_ref() else {
         panic!("a temporal refusal: {refusal:?}");
     };
     assert_eq!(
@@ -443,7 +443,7 @@ fn a_mode_switch_on_an_ambiguous_operation_refuses_ambiguous_name() {
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
     };
-    let CheckCause::Temporal(cause) = &refusal.cause else {
+    let CheckCause::Temporal(cause) = refusal.cause.as_ref() else {
         panic!("a temporal refusal: {refusal:?}");
     };
     assert_eq!(
@@ -470,7 +470,7 @@ fn a_mode_switch_is_refused_unless_the_timed_facet_is_selected() {
     .expect_err("the facet gate refuses");
     let found = refusals.iter().any(|refusal| {
         matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::Temporal(cause) if matches!(
                 &**cause,
                 TemporalCause::TimedFacetRequired { construct: TimedConstruct::ModeSwitch, .. }

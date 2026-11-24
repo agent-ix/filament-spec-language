@@ -188,7 +188,7 @@ fn relation(declaration: &str) -> CheckedModelRelation {
 /// The refusal `declaration` gets and the unit text its span indexes.
 fn refusal(aliases: &[&str], declaration: &str) -> (String, CheckCause) {
     match check_under(aliases, INFINITE, declaration) {
-        (text, Err(StageFailure::Refused(refusal))) => (text, refusal.cause),
+        (text, Err(StageFailure::Refused(refusal))) => (text, *refusal.cause),
         (_, other) => panic!("{declaration}: a refusal, not {other:?}"),
     }
 }
@@ -918,11 +918,10 @@ fn an_examined_body_refuses_by_its_own_fault_under_either_profile() {
                     &crate::reward_evaluator::ZeroRewardEvaluator,
                 )
                 .expect_err("an ill-typed body refuses");
-            let [CheckRefusal {
-                cause: CheckCause::Hyper(cause),
-                ..
-            }] = &refusals[..]
-            else {
+            let [refusal] = &refusals[..] else {
+                panic!("{layer}: {declaration}: one body fault, not {refusals:?}");
+            };
+            let CheckCause::Hyper(cause) = refusal.cause.as_ref() else {
                 panic!("{layer}: {declaration}: one body fault, not {refusals:?}");
             };
             assert!(
@@ -1120,7 +1119,7 @@ fn body_outcome(declarations: &str) -> Result<(), Vec<HyperCause>> {
     };
     let mut faults = Vec::new();
     for refusal in refusals {
-        match refusal.cause {
+        match *refusal.cause {
             CheckCause::Temporal(cause) if matches!(*cause, TemporalCause::NotEmitted { .. }) => {}
             CheckCause::Hyper(cause) => faults.push(*cause),
             other => panic!("{declarations}: neither a body fault nor not-emitted: {other:?}"),
@@ -1974,13 +1973,10 @@ fn a_timed_interval_in_a_hyper_clause_refuses_by_how_the_clause_counts() {
     let body = "hyper H using inf over behaviours (v: V::ConfigVersion) \
          forall trace a of V { eventually[0 ms, 3 ms] holds(v.versionNumber @ a = 0) }";
     let (text, cause) = match check_under(&["V"], INFINITE, body) {
-        (
-            text,
-            Err(StageFailure::Refused(CheckRefusal {
-                cause: CheckCause::Temporal(cause),
-                ..
-            })),
-        ) => (text, *cause),
+        (text, Err(StageFailure::Refused(refusal))) => match *refusal.cause {
+            CheckCause::Temporal(cause) => (text, *cause),
+            other => panic!("a temporal refusal, not {other:?}"),
+        },
         (_, other) => panic!("a temporal refusal, not {other:?}"),
     };
     assert_eq!(
@@ -1995,13 +1991,10 @@ fn a_timed_interval_in_a_hyper_clause_refuses_by_how_the_clause_counts() {
     );
 
     let (text, cause) = match check_under(&["V"], "filament.temporal.timed/v1", body) {
-        (
-            text,
-            Err(StageFailure::Refused(CheckRefusal {
-                cause: CheckCause::Temporal(cause),
-                ..
-            })),
-        ) => (text, *cause),
+        (text, Err(StageFailure::Refused(refusal))) => match *refusal.cause {
+            CheckCause::Temporal(cause) => (text, *cause),
+            other => panic!("a temporal refusal, not {other:?}"),
+        },
         (_, other) => panic!("a temporal refusal, not {other:?}"),
     };
     assert_eq!(
@@ -2115,7 +2108,7 @@ fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
         let Err(StageFailure::Refused(refusal)) = outcome else {
             panic!("{declaration}: a refusal, not {outcome:?}");
         };
-        let CheckCause::Hyper(cause) = &refusal.cause else {
+        let CheckCause::Hyper(cause) = refusal.cause.as_ref() else {
             panic!("{declaration}: a hyper cause, not {:?}", refusal.cause);
         };
         assert!(
@@ -2169,7 +2162,7 @@ fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
         let Err(StageFailure::Refused(refusal)) = outcome else {
             panic!("{declaration}: a refusal, not {outcome:?}");
         };
-        let CheckCause::Hyper(cause) = &refusal.cause else {
+        let CheckCause::Hyper(cause) = refusal.cause.as_ref() else {
             panic!("{declaration}: a hyper cause, not {:?}", refusal.cause);
         };
         assert_eq!(cause.code(), code, "{declaration}");

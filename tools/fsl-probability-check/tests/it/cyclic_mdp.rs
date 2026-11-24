@@ -219,11 +219,10 @@ fn strict_rows_boundaries_and_quantitative_source_scope_are_closed() {
         let fsl_replay::spine::CompileRefusal::Check { refusals, .. } = refusal.as_ref() else {
             panic!("threshold {threshold} is a checking refusal: {refusal:?}");
         };
-        let [fsl_semantics::check::CheckRefusal {
-            cause: fsl_semantics::check::CheckCause::Probabilistic(cause),
-            ..
-        }] = refusals.as_slice()
-        else {
+        let [fsl_semantics::check::CheckRefusal { cause, .. }] = refusals.as_slice() else {
+            panic!("one refusal for threshold {threshold}: {refusals:?}");
+        };
+        let fsl_semantics::check::CheckCause::Probabilistic(cause) = cause.as_ref() else {
             panic!("one refusal for threshold {threshold}: {refusals:?}");
         };
         let fsl_semantics::check::ProbabilisticCause::QualitativeThreshold {

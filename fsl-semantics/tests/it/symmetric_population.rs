@@ -140,7 +140,7 @@ fn identity_refusal(document: &[u8], body: &str, needle: &str) -> IdentityObserv
         (node.start as u64, node.end as u64),
         "the refusal is at the refused node"
     );
-    match &refusal.cause {
+    match &*refusal.cause {
         CheckCause::IdentityObservingForm(payload) => payload.as_ref().clone(),
         other => panic!("{body}: an identity-observing-form cause, not {other:?}"),
     }

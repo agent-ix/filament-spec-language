@@ -166,7 +166,7 @@ fn two_templates_register_twice_and_a_wrong_target_refuses() {
     let (text, found) = refusals(&same_name);
     let ambiguous: Vec<&str> = found
         .iter()
-        .filter_map(|refusal| match &refusal.cause {
+        .filter_map(|refusal| match refusal.cause.as_ref() {
             CheckCause::ProtocolAnchor(cause) => match cause.as_ref() {
                 ProtocolAnchorCause::Ambiguous { name, span, .. } if name == "Refund" => {
                     Some(&text[span.start..span.end])
@@ -178,7 +178,7 @@ fn two_templates_register_twice_and_a_wrong_target_refuses() {
         .collect();
     assert_eq!(ambiguous, ["Refund", "Refund"], "{found:?}");
     for refusal in &found {
-        if let CheckCause::ProtocolAnchor(cause) = &refusal.cause {
+        if let CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() {
             if let ProtocolAnchorCause::Ambiguous { .. } = cause.as_ref() {
                 assert_eq!(refusal.cause.code(), Code::AmbiguousDeclaration);
                 assert_eq!(refusal.cause.cause(), Some("ambiguous-name"));
@@ -200,7 +200,7 @@ fn two_templates_register_twice_and_a_wrong_target_refuses() {
         let (text, found) = refusals(&source);
         let wrong: Vec<(&str, &str)> = found
             .iter()
-            .filter_map(|refusal| match &refusal.cause {
+            .filter_map(|refusal| match refusal.cause.as_ref() {
                 CheckCause::ProtocolAnchor(cause) => match cause.as_ref() {
                     ProtocolAnchorCause::WrongKind {
                         site,
@@ -223,7 +223,7 @@ fn two_templates_register_twice_and_a_wrong_target_refuses() {
     let (_, found) = refusals(&commit_effect);
     assert!(
         found.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::ProtocolAnchor(cause) if matches!(
                 cause.as_ref(),
                 ProtocolAnchorCause::WrongKind { site: "compensate-commit", actual: "effect", .. }
@@ -257,7 +257,7 @@ fn a_template_for_a_send_refuses_at_its_target() {
     let (text, found) = refusals(&source);
     let wrong: Vec<&str> = found
         .iter()
-        .filter_map(|refusal| match &refusal.cause {
+        .filter_map(|refusal| match refusal.cause.as_ref() {
             CheckCause::ProtocolAnchor(cause) => match cause.as_ref() {
                 ProtocolAnchorCause::WrongKind {
                     site: "compensate-for",
@@ -565,7 +565,7 @@ fn a_full_and_a_partial_recovery_are_two_compensations() {
     let (_, found) = refusals(&refused);
     let names: Vec<&str> = found
         .iter()
-        .map(|refusal| match &refusal.cause {
+        .map(|refusal| match refusal.cause.as_ref() {
             CheckCause::ProtocolObligation(cause) => match cause.as_ref() {
                 ObligationCause::ZeroAttempts { compensation, .. } => compensation.as_str(),
                 other => panic!("a zero count, got {other:?}"),

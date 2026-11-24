@@ -1761,7 +1761,7 @@ pub(crate) struct ModelViewData {
 
 #[derive(Debug)]
 enum ModelViewStorage {
-    Owned(ModelViewData),
+    Owned(Box<ModelViewData>),
     Retained {
         owners: std::sync::Arc<Vec<NormalizedModel>>,
         index: usize,
@@ -1804,11 +1804,11 @@ impl ModelView {
             .map(|(key, effective)| (effective.clone(), key.clone()))
             .collect();
         Self {
-            storage: ModelViewStorage::Owned(ModelViewData {
+            storage: ModelViewStorage::Owned(Box::new(ModelViewData {
                 view,
                 by_effective_id,
                 clock_declarations: Default::default(),
-            }),
+            })),
             provenance: None,
             clock_places: std::sync::Arc::default(),
             source: false,
@@ -2384,7 +2384,7 @@ pub fn admit_current_snapshot_with_views<'a>(
             views
                 .into_iter()
                 .map(|view| match view.storage {
-                    ModelViewStorage::Owned(data) => Ok(data.view),
+                    ModelViewStorage::Owned(data) => Ok((*data).view),
                     ModelViewStorage::Retained { .. } => {
                         Err(fault("snapshot-owns-normalized-view"))
                     }
@@ -2427,7 +2427,7 @@ pub fn admit_current_snapshot_with_provenance<'a>(
                 return Err(fault("snapshot-owns-normalized-view"));
             };
             Ok(NormalizedModel::from_parts(
-                data,
+                *data,
                 provenance,
                 view.clock_places,
                 view.source,

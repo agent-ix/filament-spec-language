@@ -156,7 +156,7 @@ fn a_negation_of_an_affine_or_non_quantity_operand_refuses_without_a_node() {
     ] {
         let refusal = refusal(functions);
         assert!(
-            matches!(&refusal.cause, CheckCause::IllTyped(found) if *found == cause),
+            matches!(refusal.cause.as_ref(), CheckCause::IllTyped(found) if *found == cause),
             "{functions}: {refusal:?}"
         );
     }
@@ -182,7 +182,10 @@ fn a_division_by_a_negation_not_rooted_in_a_nonzero_literal_refuses() {
     ] {
         let refusal = refusal(functions);
         assert!(
-            matches!(refusal.cause, CheckCause::Unproved(Obligation::Nonzero)),
+            matches!(
+                refusal.cause.as_ref(),
+                CheckCause::Unproved(Obligation::Nonzero)
+            ),
             "{functions}: {refusal:?}"
         );
         assert_at(&refusal, &[0]);

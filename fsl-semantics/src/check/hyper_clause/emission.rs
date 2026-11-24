@@ -28,10 +28,10 @@ use filament_semantic_value::location::ExpressionOwner as Origin;
 fn refusal(clause: &CheckedHyperClause, span: Span) -> CheckRefusal {
     CheckRefusal {
         location: Location::root(Origin::Expression),
-        cause: CheckCause::Temporal(Box::new(TemporalCause::NotEmitted {
+        cause: Box::new(CheckCause::Temporal(Box::new(TemporalCause::NotEmitted {
             name: clause.name().to_owned(),
             span,
-        })),
+        }))),
     }
 }
 

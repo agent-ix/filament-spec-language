@@ -713,13 +713,13 @@ struct Excess {
 fn limit_refusal(excess: Excess, location: Location) -> CheckRefusal {
     CheckRefusal {
         location,
-        cause: CheckCause::ResourceExhausted(Box::new(StageLimitCause {
+        cause: Box::new(CheckCause::ResourceExhausted(Box::new(StageLimitCause {
             stage: CheckingStage::Typing,
             kind: CheckingLimitKind::RationalBits,
             limit: excess.ceiling,
             actual: u128::from(excess.bits),
             region: None,
-        })),
+        }))),
     }
 }
 
@@ -729,13 +729,13 @@ fn limit_refusal(excess: Excess, location: Location) -> CheckRefusal {
 fn horizon_refusal(actual: u128, location: Location) -> CheckRefusal {
     CheckRefusal {
         location,
-        cause: CheckCause::ResourceExhausted(Box::new(StageLimitCause {
+        cause: Box::new(CheckCause::ResourceExhausted(Box::new(StageLimitCause {
             stage: CheckingStage::Typing,
             kind: CheckingLimitKind::WorkBudget,
             limit: u64::MAX,
             actual,
             region: None,
-        })),
+        }))),
     }
 }
 
@@ -766,7 +766,7 @@ pub(crate) fn quantity_magnitude(
     exact::value(magnitude, ceiling).map_err(|fault| match fault {
         exact::ExactFault::ZeroDenominator => CheckRefusal {
             location: location.clone(),
-            cause: CheckCause::Unproved(Obligation::Nonzero),
+            cause: Box::new(CheckCause::Unproved(Obligation::Nonzero)),
         },
         exact::ExactFault::AboveCeiling { bits } => {
             limit_refusal(Excess { bits, ceiling }, location.clone())
@@ -780,7 +780,7 @@ fn refusal(cause: ProbabilisticCause) -> CheckRefusal {
         // walk; `region::DeclarationRegions::refusal_region` reads the
         // cause's own span, so this `Location` is never resolved.
         location: Location::root(Origin::Expression),
-        cause: CheckCause::Probabilistic(Box::new(cause)),
+        cause: Box::new(CheckCause::Probabilistic(Box::new(cause))),
     }
 }
 

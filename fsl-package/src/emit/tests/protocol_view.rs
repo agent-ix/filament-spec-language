@@ -1225,7 +1225,10 @@ fn the_execution_view_reads_attempt_facts_from_package_nodes() {
     else {
         panic!("an attempt has its checked package form");
     };
-    assert_eq!(name(package, role), path(&["OrderFlow", "role", "Payments"]));
+    assert_eq!(
+        name(package, role),
+        path(&["OrderFlow", "role", "Payments"])
+    );
     assert_eq!(&*node(package, operation).semantic_form, "operation_anchor");
     let operation = bare
         .protocol_operation(operation)

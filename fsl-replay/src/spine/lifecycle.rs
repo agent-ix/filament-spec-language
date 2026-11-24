@@ -848,16 +848,12 @@ fn name_operand(
     region: Option<&SourceRegion>,
     sources: &[ParsedUnitSource],
 ) {
-    let (
-        Some(CheckRefusal {
-            cause:
-                CheckCause::Unproved(Obligation::Range {
-                    required, operand, ..
-                }),
-            ..
-        }),
-        Some(region),
-    ) = (refusals.first_mut(), region)
+    let (Some(CheckRefusal { cause, .. }), Some(region)) = (refusals.first_mut(), region) else {
+        return;
+    };
+    let CheckCause::Unproved(Obligation::Range {
+        required, operand, ..
+    }) = cause.as_mut()
     else {
         return;
     };
@@ -1227,9 +1223,8 @@ fn type_report(graph: &fsl_semantics::check::CheckedGraph, source: &RawSourceRef
     let owns = |node: &fsl_semantics::check::SemanticNode| {
         node.owner() == Some(&Owner::Source(owner.clone()))
     };
-    let regions = |location: &filament_semantic_value::location::ExpressionLocation| {
-        graph.region(location)
-    };
+    let regions =
+        |location: &filament_semantic_value::location::ExpressionLocation| graph.region(location);
     let occurrence_span = |key: &filament_exact::NodeKey,
                            origin: &filament_exact::Origin|
      -> Option<fsl_foundation::Span> {
@@ -3291,7 +3286,7 @@ fn protocol_check_outcome(
                 // FR-096 / FR-884: protocol refusals carry the subject span
                 // on their typed cause. Keep the protocol declaration span
                 // only as a fallback for causes without a located subject.
-                let subject_span = match &primary.cause {
+                let subject_span = match &*primary.cause {
                     CheckCause::ProtocolAnchor(cause) => Some(cause.span()),
                     CheckCause::ProtocolObligation(cause) => Some(cause.span()),
                     CheckCause::Temporal(cause) => Some(cause.span()),
@@ -3367,7 +3362,7 @@ fn protocol_check_outcome(
             .map(|refusal| regions(&refusal.location))
             .collect();
         let region = graph.unit_refusal_region().cloned().or_else(|| {
-            refusals.first().and_then(|refusal| match &refusal.cause {
+            refusals.first().and_then(|refusal| match &*refusal.cause {
                 CheckCause::LayerEquality {
                     span: Some(span), ..
                 } => region(parsed.source().reference(), *span),
@@ -4428,14 +4423,14 @@ impl<'a> Resolution<'a> {
                 }
             }
             let mut refusals = refusals;
-            let region = refusals.first().and_then(|refusal| match &refusal.cause {
+            let region = refusals.first().and_then(|refusal| match &*refusal.cause {
                 CheckCause::EmptyPackage { .. } => frame
                     .source_units
                     .first()
                     .and_then(|unit| region(unit.source().reference(), language_header_span(unit))),
                 _ => regions
                     .refusal_region(refusal)
-                    .or_else(|| match &refusal.cause {
+                    .or_else(|| match &*refusal.cause {
                         CheckCause::MissingName(name)
                             if frame.execution_points.contains_key(name) =>
                         {

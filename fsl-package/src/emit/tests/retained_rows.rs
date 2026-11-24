@@ -192,7 +192,10 @@ fn renames_of(
     }
     for row in &emission.selected_source_record_rows {
         push(&row.structural_node);
-        row.members.iter().filter_map(|m| m.type_node.as_ref()).for_each(|node| push(node));
+        row.members
+            .iter()
+            .filter_map(|m| m.type_node.as_ref())
+            .for_each(|node| push(node));
     }
     for row in &emission.selected_source_union_rows {
         push(&row.structural_node);

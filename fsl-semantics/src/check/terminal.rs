@@ -199,10 +199,10 @@ pub(crate) fn check_terminal<'a>(
     )
     .map_err(|refusal| CheckRefusal {
         location: refusal.location,
-        cause: CheckCause::Terminal(Box::new(TerminalRefusal {
+        cause: Box::new(CheckCause::Terminal(Box::new(TerminalRefusal {
             declaration: index,
-            cause: refusal.cause,
-        })),
+            cause: *refusal.cause,
+        }))),
     })?;
     Ok((
         TerminalDeclaration::When(CheckedTerminalPredicate {

@@ -46,8 +46,8 @@ fn outcome(checked: Result<CheckedGraph, Vec<CheckRefusal>>) -> Result<(), Vec<C
     checked.map(|_| ()).map_err(|refusals| {
         let mut causes: Vec<CheckCause> = Vec::new();
         for refusal in refusals {
-            if !causes.contains(&refusal.cause) {
-                causes.push(refusal.cause);
+            if !causes.contains(refusal.cause.as_ref()) {
+                causes.push(*refusal.cause);
             }
         }
         causes
@@ -148,7 +148,7 @@ fn a_postcondition_pre_over_1000_levels_refuses_on_a_small_stack() {
             .expect("the check completes on a 512 KiB stack")
     });
     assert_eq!(
-        refused.expect_err("no eligible read").cause,
+        *refused.expect_err("no eligible read").cause,
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     );
 }

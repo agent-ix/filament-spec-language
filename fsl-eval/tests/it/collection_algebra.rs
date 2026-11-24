@@ -723,10 +723,10 @@ mod checked {
         expression: &Expression,
     ) -> IllTypedCause {
         match check(package, parameters, expression).map(|_| ()) {
-            Err(CheckRefusal {
-                cause: CheckCause::IllTyped(cause),
-                ..
-            }) => cause,
+            Err(CheckRefusal { cause, .. }) => match *cause {
+                CheckCause::IllTyped(cause) => cause,
+                cause => panic!("an ill_typed refusal, not {cause:?}"),
+            },
             other => panic!("an ill_typed refusal, not {other:?}"),
         }
     }

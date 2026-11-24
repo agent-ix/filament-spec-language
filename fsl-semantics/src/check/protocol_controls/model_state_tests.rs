@@ -79,7 +79,7 @@ fn check_with_limits(
         .into_iter()
         .filter(|refusal| {
             !matches!(
-                            &refusal.cause,
+                            refusal.cause.as_ref(),
             CheckCause::ProtocolReference(cause)
             if matches!(**cause, crate::check::refusal::ProtocolReferenceCause::NotEmitted { .. })
                         )
@@ -116,7 +116,7 @@ fn only(
     let [refusal] = refusals.as_slice() else {
         panic!("{text}: one refusal, got {refusals:?}");
     };
-    let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+    let CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() else {
         panic!("a protocol cause, got {refusal:?}");
     };
     let span = cause.span();
@@ -166,7 +166,7 @@ fn a_fifo_key_is_checked_over_its_binder() {
     let text = with_channel("M::Hop", "fifo by (m: M::Hop) { m.node.total = 1 }");
     let (cause, pair, at) = only(&text);
     assert_eq!(pair, ("ill_typed", Some("operator-ineligible")));
-    assert!(matches!(&cause, ProtocolAnchorCause::KeyModelState { channel, .. } if channel == "Q"));
+    assert!(matches!(cause, ProtocolAnchorCause::KeyModelState { channel, .. } if channel == "Q"));
     assert_eq!(at, "m.node.total");
 }
 
@@ -325,7 +325,7 @@ fn choice_partition_charges_once_per_valuation() {
         let [refusal] = refusals.as_slice() else {
             panic!("one limit refusal, got {refusals:?}");
         };
-        let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+        let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
             panic!("a work-budget refusal, got {refusal:?}");
         };
         assert_eq!(limit.kind.setting(), Setting::S3WorkUnits);
@@ -356,7 +356,7 @@ fn nested_repeat_feasibility_is_independent_and_budgeted() {
     let feasible_exit = nested_repeat_with_guard("a");
     let refusals = check(&feasible_exit).expect_err("the inner repeat may skip its body");
     assert!(refusals.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), ProtocolAnchorCause::NoProgress { repeat, .. } if repeat == "Outer")
     )));
@@ -393,7 +393,7 @@ fn nested_repeat_feasibility_is_independent_and_budgeted() {
     .expect_err("the proof completes at four units, before later S3 work");
     assert!(!exact.is_empty(), "later S3 work still needs its own units");
     for refusal in &exact {
-        let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+        let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
             panic!("a typed later work limit, got {refusal:?}");
         };
         assert_eq!(limit.kind.setting(), Setting::S3WorkUnits);
@@ -402,14 +402,14 @@ fn nested_repeat_feasibility_is_independent_and_budgeted() {
         assert!(limit.region.is_none(), "the repeat proof already completed");
     }
     assert!(!exact.iter().any(|refusal| {
-        matches!(&refusal.cause, CheckCause::ResourceExhausted(limit) if limit.region.as_ref().is_some_and(|region| {
+        matches!(refusal.cause.as_ref(), CheckCause::ResourceExhausted(limit) if limit.region.as_ref().is_some_and(|region| {
             let start = usize::try_from(region.start()).expect("region start fits usize");
             let end = usize::try_from(region.end()).expect("region end fits usize");
             &guard_false_infeasible[start..end] == "Inner"
         }))
     }));
     assert!(!exact.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), ProtocolAnchorCause::NoProgress { repeat, .. } if repeat == "Outer")
     )));
@@ -419,7 +419,7 @@ fn assert_resource_work_limit(refusals: &[CheckRefusal], bound: u64) {
     let [refusal] = refusals else {
         panic!("one resource refusal, got {refusals:?}");
     };
-    let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+    let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
         panic!("a work-budget refusal, got {refusal:?}");
     };
     assert_eq!(limit.kind.setting(), Setting::S3WorkUnits);
@@ -431,7 +431,7 @@ fn assert_limit_region(text: &str, refusals: &[CheckRefusal], expected: &str) {
     let [refusal] = refusals else {
         panic!("one limit refusal, got {refusals:?}");
     };
-    let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+    let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
         panic!("a work-budget refusal, got {refusal:?}");
     };
     let region = limit
@@ -465,7 +465,7 @@ fn a_guard_reads_no_model_state_and_partitions_its_facts() {
     let reads: Vec<&str> = refusals
         .iter()
         .map(|refusal| {
-            let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+            let CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() else {
                 panic!("a protocol cause, got {refusal:?}");
             };
             assert!(
@@ -547,7 +547,7 @@ fn an_object_or_reference_read_is_model_state() {
         refusals
             .iter()
             .map(|refusal| {
-                let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+                let CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() else {
                     panic!("a protocol cause, got {refusal:?}");
                 };
                 let ProtocolAnchorCause::SlotModelState { node, slot, span } = cause.as_ref()
@@ -643,7 +643,7 @@ fn refuses_outer(text: &str) {
     let refusals = check(text).expect_err("the outer repeat has no progress");
     assert!(
         refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::ProtocolAnchor(cause)
                 if matches!(cause.as_ref(), ProtocolAnchorCause::NoProgress { repeat, .. } if repeat == "Outer")
         )),
@@ -703,7 +703,7 @@ fn no_progress(text: &str) -> Vec<String> {
         .err()
         .unwrap_or_default()
         .iter()
-        .filter_map(|refusal| match &refusal.cause {
+        .filter_map(|refusal| match refusal.cause.as_ref() {
             CheckCause::ProtocolAnchor(cause) => match cause.as_ref() {
                 ProtocolAnchorCause::NoProgress { repeat, .. } => Some(repeat.clone()),
                 _ => None,

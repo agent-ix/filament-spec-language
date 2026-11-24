@@ -77,7 +77,7 @@ const SCALAR_UNLIMITED: ScalarLimits = ScalarLimits {
 };
 
 fn assert_state_model_ill_typed(refusal: &CheckRefusal, expected: IllTypedCause, raw: &str) {
-    let CheckCause::StateModel(owner) = &refusal.cause else {
+    let CheckCause::StateModel(owner) = &*refusal.cause else {
         panic!("StateModel ownership: {refusal:?}");
     };
     assert_eq!(owner.family(), FamilyKind::StateModel);
@@ -400,7 +400,7 @@ fn d07_own_shape_a_dispatch_call_inside_an_ordinary_function_body_is_refused() {
         .expect_err("a dispatch call inside an ordinary function body must be refused");
     let refusal = refusals
         .iter()
-        .find(|refusal| matches!(&refusal.cause, CheckCause::StateModel(owner) if owner.cause == CheckCause::IllTyped(IllTypedCause::OperatorIneligible)))
+        .find(|refusal| matches!(refusal.cause.as_ref(), CheckCause::StateModel(owner) if owner.cause == CheckCause::IllTyped(IllTypedCause::OperatorIneligible)))
         .unwrap_or_else(|| panic!("expected a StateModel OperatorIneligible refusal, got {refusals:?}"));
     assert_state_model_ill_typed(
         refusal,
@@ -874,8 +874,10 @@ fn synthesized_dispatch_candidate_is_not_callable_by_name() {
         )
         .expect_err("a synthesized candidate body must not be callable by name");
     assert!(
-        refusals.iter().any(|refusal: &CheckRefusal| refusal.cause
-            == CheckCause::MissingName("candidate.body".to_owned())),
+        refusals
+            .iter()
+            .any(|refusal: &CheckRefusal| refusal.cause.as_ref()
+                == &CheckCause::MissingName("candidate.body".to_owned())),
         "expected a MissingName(\"candidate.body\") refusal, got {refusals:?}"
     );
 }
@@ -1016,7 +1018,7 @@ fn dispatch_candidate_with_an_out_of_range_body_index_is_refused_invalid_dispatc
         .expect_err("an out-of-range candidate body index must be refused");
     assert!(
         refusals.iter().any(|refusal: &CheckRefusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::InvalidDispatchDeclaration(detail)
                 if matches!(
                     **detail,
@@ -1052,7 +1054,7 @@ fn dispatch_candidate_with_a_mismatched_arity_is_refused_invalid_dispatch() {
         .expect_err("a candidate/operation arity mismatch must be refused");
     assert!(
         refusals.iter().any(|refusal: &CheckRefusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::InvalidDispatchDeclaration(detail)
                 if matches!(
                     **detail,
@@ -1070,7 +1072,7 @@ fn dispatch_candidate_with_a_mismatched_arity_is_refused_invalid_dispatch() {
         .iter()
         .find(|refusal| {
             matches!(
-                &refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::InvalidDispatchDeclaration(detail)
                     if matches!(**detail, InvalidDispatchDeclaration::Arity { .. })
             )
@@ -1120,7 +1122,7 @@ fn dispatch_candidate_with_a_mismatched_parameter_type_is_refused_invalid_dispat
         .expect_err("a candidate/operation parameter type mismatch must be refused");
     let location = refusals
         .iter()
-        .find_map(|refusal| match &refusal.cause {
+        .find_map(|refusal| match &*refusal.cause {
             CheckCause::InvalidDispatchDeclaration(detail)
                 if matches!(
                     **detail,
@@ -1166,7 +1168,7 @@ fn dispatch_candidate_with_a_mismatched_result_type_is_refused_invalid_dispatch(
         .expect_err("a candidate/operation result type mismatch must be refused");
     let location = refusals
         .iter()
-        .find_map(|refusal| match &refusal.cause {
+        .find_map(|refusal| match &*refusal.cause {
             CheckCause::InvalidDispatchDeclaration(detail)
                 if matches!(
                     **detail,
@@ -1625,10 +1627,12 @@ fn d08_a_cycle_through_a_dispatch_edge_is_refused_definition_cycle() {
         .expect_err("a dispatch-edge cycle must be refused");
     let refusal = refusals
         .iter()
-        .find(|refusal: &&CheckRefusal| matches!(refusal.cause, CheckCause::DefinitionCycle { .. }))
+        .find(|refusal: &&CheckRefusal| {
+            matches!(refusal.cause.as_ref(), CheckCause::DefinitionCycle { .. })
+        })
         .unwrap_or_else(|| panic!("expected a DefinitionCycle refusal, got {refusals:?}"));
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::DefinitionCycle {
             edges: vec![(
                 "candidate.precondition".to_owned(),
@@ -1776,10 +1780,12 @@ fn d08_bridge_self_recursive_precondition_is_refused_definition_cycle() {
         .expect_err("a dispatch-edge cycle through the bridge must be refused");
     let refusal = refusals
         .iter()
-        .find(|refusal: &&CheckRefusal| matches!(refusal.cause, CheckCause::DefinitionCycle { .. }))
+        .find(|refusal: &&CheckRefusal| {
+            matches!(refusal.cause.as_ref(), CheckCause::DefinitionCycle { .. })
+        })
         .unwrap_or_else(|| panic!("expected a DefinitionCycle refusal, got {refusals:?}"));
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::DefinitionCycle {
             edges: vec![(
                 "ix://test/orders/A/size.precondition".to_owned(),
@@ -1819,10 +1825,12 @@ fn d08_bridge_ancestor_cycle_survives_a_sibling_combinator() {
         .expect_err("a dispatch-edge cycle through the bridge must be refused");
     let refusal = refusals
         .iter()
-        .find(|refusal: &&CheckRefusal| matches!(refusal.cause, CheckCause::DefinitionCycle { .. }))
+        .find(|refusal: &&CheckRefusal| {
+            matches!(refusal.cause.as_ref(), CheckCause::DefinitionCycle { .. })
+        })
         .unwrap_or_else(|| panic!("expected a DefinitionCycle refusal, got {refusals:?}"));
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::DefinitionCycle {
             edges: vec![(
                 "ix://test/orders/A/size.precondition".to_owned(),
@@ -3426,12 +3434,12 @@ fn dispatch_declaration_refusals_are_the_same_under_both_check_modes() {
     assert!(
         matches!(
             linked.as_slice(),
-            [CheckRefusal {
-                cause: CheckCause::InvalidDispatchDeclaration(detail),
-                ..
-            }] if matches!(
-                **detail,
+            [CheckRefusal { cause, .. }] if matches!(
+                cause.as_ref(),
+                CheckCause::InvalidDispatchDeclaration(detail) if matches!(
+                    **detail,
                 InvalidDispatchDeclaration::TableOutOfRange { table: 0, .. }
+                )
             )
         ),
         "{linked:?}"
@@ -3443,15 +3451,15 @@ fn dispatch_declaration_refusals_are_the_same_under_both_check_modes() {
     assert!(
         matches!(
             linked.as_slice(),
-            [CheckRefusal {
-                cause: CheckCause::InvalidDispatchDeclaration(detail),
-                ..
-            }] if matches!(
-                **detail,
+            [CheckRefusal { cause, .. }] if matches!(
+                cause.as_ref(),
+                CheckCause::InvalidDispatchDeclaration(detail) if matches!(
+                    **detail,
                 InvalidDispatchDeclaration::FunctionOutOfRange {
                     role: DispatchFunctionRole::Body,
                     index,
                 } if index == functions
+                )
             )
         ),
         "{linked:?}"
