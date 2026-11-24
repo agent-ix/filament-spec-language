@@ -199,7 +199,7 @@ impl Model {
     /// the model-layer axes, then compile a source unit that selects these
     /// package identities. Keeping this encoding here makes fixture shape
     /// changes visible to both workloads.
-    pub fn document(&self) -> Vec<u8> {
+    pub(crate) fn document(&self) -> Vec<u8> {
         let mut kinds = vec![
             ("object_type", meaning::OBJECT_TYPE),
             ("population", meaning::POPULATION),

@@ -94,12 +94,7 @@ fn report(target: &Path, only_axis: Option<&str>) -> Result<(), Box<dyn Error>> 
     for size in SIZES {
         let probe_path = probes.join(format!("replay-{size}"));
         match fs::read_to_string(probe_path) {
-            Ok(probe)
-                if probe.contains("peak_rss_kib=")
-                    && probe.contains("parse_calls_per_source_document=")
-                    && probe.contains("source_documents=1")
-                    && probe.contains("succeeded=true") =>
-            {
+            Ok(probe) if complete_probe_report(&probe) => {
                 println!("replay/request isolated {probe}");
             }
             _ => missing.push(format!("replay/request probe M={size}")),
@@ -112,6 +107,23 @@ fn report(target: &Path, only_axis: Option<&str>) -> Result<(), Box<dyn Error>> 
         .into());
     }
     Ok(())
+}
+
+fn complete_probe_report(report: &str) -> bool {
+    let field = |name: &str| {
+        report.split_whitespace().find_map(|part| {
+            part.strip_prefix(name)
+                .and_then(|value| value.strip_prefix('='))
+        })
+    };
+    field("peak_rss_kib")
+        .and_then(|value| value.parse::<u64>().ok())
+        .is_some_and(|value| value > 0)
+        && field("parse_calls_per_source_document")
+            .and_then(|value| value.parse::<u64>().ok())
+            .is_some_and(|value| value > 0)
+        && field("source_documents") == Some("1")
+        && field("succeeded") == Some("true")
 }
 
 fn estimate(
@@ -136,4 +148,23 @@ fn estimate(
         .as_f64()
         .map(Some)
         .ok_or_else(|| io::Error::other("Criterion estimate has no mean point estimate").into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::complete_probe_report;
+    use ix_trace_rs::trace;
+
+    #[trace("NFR-141-AC-4")]
+    #[test]
+    fn isolated_replay_probe_report_requires_numeric_peak_rss() {
+        let measured = "M=1 wall_ms=12.500 peak_rss_kib=32768 parse_calls_per_source_document=1 source_documents=1 succeeded=true";
+        assert!(complete_probe_report(measured));
+
+        let unavailable = "M=1 wall_ms=12.500 peak_rss_kib=unavailable parse_calls_per_source_document=1 source_documents=1 succeeded=true";
+        assert!(!complete_probe_report(unavailable));
+
+        let missing = "M=1 wall_ms=12.500 parse_calls_per_source_document=1 source_documents=1 succeeded=true";
+        assert!(!complete_probe_report(missing));
+    }
 }

@@ -223,7 +223,7 @@ mod tests {
         assert!(!fixture.emission.package().bytes().is_empty());
     }
 
-    #[trace("NFR-141-AC-3", "NFR-141-AC-5")]
+    #[trace("NFR-141-AC-3")]
     #[test]
     fn every_package_size_compiles_emits_and_replays() {
         for count in MODEL_COUNTS {

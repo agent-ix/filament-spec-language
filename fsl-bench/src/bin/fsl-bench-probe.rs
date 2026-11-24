@@ -274,6 +274,10 @@ fn probe_package(axis: &str, count: usize) -> ExitCode {
             );
         }
     }
+    if axis == "replay/request" && peak_rss == "unavailable" {
+        eprintln!("replay/request requires a numeric peak RSS measurement");
+        return ExitCode::FAILURE;
+    }
     if succeeded {
         ExitCode::SUCCESS
     } else {
