@@ -70,10 +70,6 @@ pub(super) fn clock_reference_paths(
                 paths.push(path);
                 continue;
             }
-            ValueType::ClockReference => {
-                paths.push(path);
-                continue;
-            }
             ValueType::Option(payload) => vec![payload],
             ValueType::Collection(collection) => vec![collection.element()],
             ValueType::Map(map) => vec![map.values()],
