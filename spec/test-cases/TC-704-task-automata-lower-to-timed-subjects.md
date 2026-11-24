@@ -28,7 +28,7 @@ evidence, and release admission. This replaces the former
 `Unsupported(StopwatchRequired)` expectation.
 
 Scope: FR-249-AC-1 to FR-249-AC-6, FR-249-AC-11 to FR-249-AC-16,
-FR-237-AC-7 to FR-237-AC-12, FSpec FR-364-AC-21, FSpec FR-364-AC-22 (its
+FR-237-AC-7 to FR-237-AC-13, FSpec FR-364-AC-21, FSpec FR-364-AC-22 (its
 `queue_growth` cycle case), FSpec FR-364-AC-23, FSpec FR-364-AC-24,
 FR-239-AC-6,
 FR-235-AC-6, FR-128-AC-9, and FR-230-AC-7.
@@ -96,10 +96,15 @@ a two-job preemption scenario, a mixed-criticality task with distinct
     activations with each FSpec FR-364-AC-23 mutation.
 18. Replay each FR-237-AC-12 and FSpec FR-364-AC-24 member tamper through
     the document form.
+19. Admit the FR-249-AC-9 checked package from its package bytes, resolve its
+    task-product item, and replay the counterexample's matching
+    `TaskProductTransition` and source-only `ModelTransition` projection
+    through the package-byte replay route.
 
 Tag executable tests with the criterion IDs in scope, for example
 `#[trace("TC-704", "FR-249-AC-3")]`; a schema-only task-search check is not
 evidence that the runtime provider implements the search semantics.
+Tag step 19 with `#[trace("TC-704", "FR-237-AC-13")]`.
 
 ## Expected Results
 
@@ -180,3 +185,8 @@ evidence that the runtime provider implements the search semantics.
 - Step 18: each tamper refuses `invalid_runtime_input`/`invalid-value` at its
   named member, naming the supplied and the recomputed value, and never
   only as a step that is not enabled.
+- Step 19: the matching task-product form replays under the resolved item's
+  task-product alphabet; the source-only form refuses
+  `invalid_runtime_input`/`invalid-value` with
+  `ModelTraceRefusal::TraceAlphabet`, naming required and supplied
+  alphabets, before any step replays. Neither mismatch reproduces.
