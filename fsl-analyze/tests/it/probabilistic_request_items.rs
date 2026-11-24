@@ -156,21 +156,20 @@ fn summary(
         .collect()
 }
 
-/// Checks FR-075-AC-18 (TC-1163 step 3): over `P95`, `FairTerminates`-like
-/// `Every` and a `value-validity` record, in key order, with EN-4 `{statistical}`
-/// and EN-5 `{exact}` registered: no selection names each record's kind;
-/// `exact` makes both probabilistic items `exact` (EN-5 only); both kinds
-/// append the other-kind item of each probabilistic record, and the
-/// `value-validity` item names no kind under every selection.
-#[trace("TC-1163", "FR-075-AC-18")]
+/// Checks TC-1163 step 3 and FR-075-AC-18: P95, FairTerminates, Reach and a
+/// value-validity record, in key order, with EN-4 `{statistical}` and EN-5
+/// `{exact}` registered. Each evidence selection preserves those occurrences;
+/// `both` appends the other evidence item for each probabilistic record.
+#[trace("TC-1163", "FR-075-AC-18", "FR-195-AC-6")]
 #[test]
 fn the_request_builder_names_the_evidence_kind_of_each_probabilistic_item() {
     let world = World::new(&prob_world::service(CLAIMS));
     let records: RequirementMap = [
         (key(1), record(&world, "P95", 1)),
-        (key(2), record(&world, "Every", 2)),
+        (key(2), record(&world, "FairTerminates", 2)),
+        (key(3), record(&world, "Reach", 3)),
         (
-            key(3),
+            key(4),
             RequirementRecord::model_claim(
                 Requirements::new(Capability::ValueValidity, ClaimExtent::Bounded),
                 node(99),
@@ -195,48 +194,69 @@ fn the_request_builder_names_the_evidence_kind_of_each_probabilistic_item() {
     let build = |selection| summary(&items_with_evidence(&records, &registry, None, selection));
 
     let record_kinds = build(EvidenceSelection::Record);
-    assert_eq!(record_kinds.len(), 3);
+    assert_eq!(record_kinds.len(), 4);
     assert_eq!(
         record_kinds
             .iter()
             .map(|i| (i.0, i.1, i.2.clone()))
-            .take(2)
             .collect::<Vec<_>>(),
-        [(0, stat, en4.clone()), (1, exact, en5.clone())]
+        [
+            (0, stat, en4.clone()),
+            (1, exact, en5.clone()),
+            (2, exact, en5.clone()),
+            (3, None, vec![]),
+        ]
     );
-    assert_eq!(record_kinds[2].0, 2);
-    assert_eq!(record_kinds[2].1, None);
     assert_eq!(record_kinds[0].3, key(1), "P95 keeps its occurrence identity");
+    assert_eq!(record_kinds[1].3, key(2));
+    assert_eq!(record_kinds[2].3, key(3));
+    assert_eq!(record_kinds[3].3, key(4));
 
     let only_exact = build(EvidenceSelection::One(EvidenceKind::Exact));
-    assert_eq!(only_exact.len(), 3);
+    assert_eq!(only_exact.len(), 4);
     assert_eq!(
         only_exact
             .iter()
             .map(|i| (i.0, i.1, i.2.clone()))
-            .take(2)
             .collect::<Vec<_>>(),
-        [(0, exact, en5.clone()), (1, exact, en5.clone())]
+        [
+            (0, exact, en5.clone()),
+            (1, exact, en5.clone()),
+            (2, exact, en5.clone()),
+            (3, None, vec![]),
+        ]
     );
-    assert_eq!(only_exact[2].1, None);
     assert_eq!(only_exact[0].3, key(1), "P95 keeps its occurrence identity");
+    assert_eq!(only_exact[1].3, key(2));
+    assert_eq!(only_exact[2].3, key(3));
+    assert_eq!(only_exact[3].3, key(4));
 
     let both = build(EvidenceSelection::Both);
-    assert_eq!(both.len(), 5);
-    assert_eq!(both[..3], record_kinds[..]);
-    assert_eq!((both[3].0, both[3].1, both[3].2.clone()), (3, exact, en5));
-    assert_eq!((both[4].0, both[4].1, both[4].2.clone()), (4, stat, en4));
-    assert_eq!(both[3].3, key(1));
-    assert_eq!(both[4].3, key(2));
+    assert_eq!(both.len(), 7);
+    assert_eq!(both[..4], record_kinds[..]);
+    assert_eq!(
+        both[4..]
+            .iter()
+            .map(|i| (i.0, i.1, i.2.clone()))
+            .collect::<Vec<_>>(),
+        [
+            (4, exact, en5.clone()),
+            (5, stat, en4.clone()),
+            (6, stat, en4.clone()),
+        ]
+    );
+    assert_eq!(both[4].3, key(1));
+    assert_eq!(both[5].3, key(2));
+    assert_eq!(both[6].3, key(3));
     assert_eq!(record_kinds[0].3, only_exact[0].3);
     assert_eq!(record_kinds[0].3, both[0].3);
-    assert_eq!(record_kinds[0].3, both[3].3);
+    assert_eq!(record_kinds[0].3, both[4].3);
 
     for item in [
         &record_items[0],
         &exact_items[0],
         &both_items[0],
-        &both_items[3],
+        &both_items[4],
     ] {
         assert_eq!(item.kind(), Capability::ProbabilisticSatisfaction);
         assert_eq!(
