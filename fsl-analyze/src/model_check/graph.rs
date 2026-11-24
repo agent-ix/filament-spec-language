@@ -176,6 +176,12 @@ type RetainResult<S> = Result<
     quire_canonical::Error,
 >;
 
+pub(super) struct RetainConfig {
+    pub(super) limits: Limits,
+    pub(super) identity: IdentityLimits,
+    pub(super) max_depth: Option<usize>,
+}
+
 fn encode(
     value: &impl Encode,
     identity: IdentityLimits,
@@ -257,11 +263,13 @@ pub fn retain_reduced<S: TransitionSystem>(
         system,
         group,
         ample,
-        limits,
-        identity,
-        max_depth,
+        RetainConfig {
+            limits,
+            identity,
+            max_depth,
+        },
         poll,
-        |state, identity| encode(&system.key(state), identity),
+        |state| encode(&system.key(state), identity),
     )
 }
 
@@ -271,12 +279,15 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
     system: &S,
     group: &SymmetryGroup,
     ample: Option<&dyn Ample<S>>,
-    limits: Limits,
-    identity: IdentityLimits,
-    max_depth: Option<usize>,
+    config: RetainConfig,
     mut poll: impl FnMut() -> bool,
-    key: impl Fn(&S::State, IdentityLimits) -> Result<Vec<u8>, quire_canonical::Error>,
+    key: impl Fn(&S::State) -> Result<Vec<u8>, quire_canonical::Error>,
 ) -> RetainResult<S> {
+    let RetainConfig {
+        limits,
+        identity,
+        max_depth,
+    } = config;
     let mut graph = RetainedGraph {
         states: Vec::new(),
         edges: Vec::new(),
@@ -296,7 +307,7 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
                 return Ok(GraphExploration { graph, outcome });
             }
         };
-        initial.push((key(&state, identity)?, state));
+        initial.push((key(&state)?, state));
     }
     initial.sort_by(|(a, _), (b, _)| a.cmp(b));
     initial.dedup_by(|(a, _), (b, _)| a == b);
@@ -363,7 +374,7 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
                 }
             };
             let order = encode(&transition, identity)?;
-            let state_key = key(&state, identity)?;
+            let state_key = key(&state)?;
             successors.push((order, state_key, transition, state, permutation));
         }
         successors.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
