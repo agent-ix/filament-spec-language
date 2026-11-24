@@ -97,7 +97,7 @@ fn snapshot() -> Value {
 }
 
 #[test]
-#[trace("TC-985", "TC-992", "TC-1231")]
+#[trace("TC-985", "TC-992", "TC-1231", "FR-106-AC-61")]
 fn record_native_fields_distinguish_string_uuid_and_payload_kinds() {
     let (checked, packages) = checked("function marker using v(): Integer pure { 41 }");
     let graph = checked.package().graph();

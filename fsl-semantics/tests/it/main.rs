@@ -47,6 +47,7 @@ mod hyper_clauses;
 mod identity_golden_vectors;
 mod ieee_profiles;
 mod import_view_names;
+mod imported_call;
 mod integer_division;
 mod interval_soundness;
 mod library_resolution;
@@ -99,6 +100,7 @@ mod operation_bodies;
 mod operation_clauses;
 mod operation_uniqueness;
 mod option_values;
+mod optionals;
 #[cfg(feature = "test-support")]
 mod population_bound;
 mod probabilistic_declarations;
