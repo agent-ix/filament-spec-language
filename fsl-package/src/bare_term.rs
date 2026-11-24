@@ -181,7 +181,7 @@ struct FormParts<'a, 'p> {
     profile: &'p filament_contract_model::CheckedSelection,
 }
 
-type FormAtomSpan<'a, W> = dyn for<'p, 'entry> FnMut(
+type FormAtomSpan<'a, W: FormWork> = dyn for<'p, 'entry> FnMut(
         usize,
         &'entry crate::checked_views::FormulaNodeUse<'p>,
         &mut W,
