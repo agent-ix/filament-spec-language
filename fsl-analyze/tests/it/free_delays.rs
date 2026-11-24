@@ -1053,7 +1053,7 @@ fn timed_detour_refutation_replays_its_free_delay_scheduler() {
         "eventually[0 ms, 2 ms] holds(c.late)",
     ));
     let engines = Engines::fsl().expect("the linked engines are admitted");
-    let claim = world
+    let max_claim = world
         .package
         .graph()
         .probabilistic_model()
@@ -1066,18 +1066,18 @@ fn timed_detour_refutation_replays_its_free_delay_scheduler() {
                 simulation: world.request(),
                 proof_bounds: Vec::new(),
             },
-            claim,
+            claim: max_claim,
             limits: ExactProbLimits::default(),
         },
     );
     let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
-    let witness = record
+    let replayed_witness = record
         .probabilistic_counterexample
         .as_ref()
         .unwrap_or_else(|| panic!("expected replayed Detour witness: {record:#?}"));
-    assert_eq!(witness.mass(), &ratio(3, 4));
+    assert_eq!(replayed_witness.mass(), &ratio(3, 4));
     assert!(
-        witness
+        replayed_witness
             .evidence()
             .scheduler
             .iter()
@@ -1098,7 +1098,7 @@ fn timed_detour_refutation_replays_its_free_delay_scheduler() {
                 _ => false,
             })
     );
-    let mut path_lengths: Vec<_> = witness
+    let mut path_lengths: Vec<_> = replayed_witness
         .evidence()
         .paths
         .iter()
