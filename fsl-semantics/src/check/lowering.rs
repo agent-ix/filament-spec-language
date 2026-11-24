@@ -4631,9 +4631,11 @@ impl<'a> Lowering<'a> {
             NodeRef::Pending(handle) => self.drafts.get(handle).map(|draft| &draft.content.body),
         }?;
         let application = body.application_term()?;
-        (application.operation.identity == "filament.op.numeric.narrow")
-            .then(|| application.result_type.admitted().cloned())
-            .flatten()
+        if application.operation.identity != "filament.op.numeric.narrow" {
+            return None;
+        }
+        let result_type = application.result_type.admitted()?.clone();
+        Some(result_type)
     }
 
     /// Key an application node typed at `result_type`, denoted by the
