@@ -218,6 +218,7 @@ pub use unit::{
     UnitIntakeRefusal,
 };
 pub(crate) use unit::{normalize_model_with_provenance, NormalizedModelProvenance};
+pub(crate) use unit::SelectedModelsParts;
 
 /// A Quire meaning id (FR-208): the sole legitimate way to determine what a
 /// construct or type definition IS. Kind names and modules are never

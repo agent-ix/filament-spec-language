@@ -781,8 +781,14 @@ impl PackageDeclarations {
         identity: fsl_foundation::IdentityLimits,
         selected: crate::model::intake::SelectedModels,
     ) -> Self {
-        let (entries, versions, meter, exact_declarations, exact_fields, tuple_declarations) =
-            selected.into_parts();
+        let crate::model::intake::SelectedModelsParts {
+            entries,
+            versions,
+            meter,
+            exact_declarations,
+            exact_fields,
+            tuple_declarations,
+        } = selected.into_parts();
         let mut declarations = Self::new(source, package_name, identity);
         declarations.models = entries
             .iter()

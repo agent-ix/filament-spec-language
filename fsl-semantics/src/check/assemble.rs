@@ -89,7 +89,7 @@ use crate::model::domain_package::{
     ScalarValueDomain, SequenceTypeRecord, ValueTypeRef, unaliased,
 };
 use crate::model::intake::{
-    SelectedModel, SelectedModels, member_identity_name, type_identity_segment,
+    SelectedModel, SelectedModels, SelectedModelsParts, member_identity_name, type_identity_segment,
 };
 use crate::model::operation::{OperationDeclaration, OperationLookup, OperationTable};
 use crate::value::enumeration::{
@@ -4636,14 +4636,14 @@ impl PackageDeclarations {
         let (mut selections, forms) = unit.into_parts();
         // The models and the one meter their admission counted on; checking
         // continues that meter into the conformance stage.
-        let (
-            mut models,
-            model_versions,
-            mut model_meter,
+        let SelectedModelsParts {
+            entries: mut models,
+            versions: model_versions,
+            meter: mut model_meter,
             exact_declarations,
             exact_fields,
             tuple_declarations,
-        ) = models.into().into_parts();
+        } = models.into().into_parts();
         // FR-230 "Clock-typed positions": a package record type that holds a
         // clock is clock-bearing where the unit's own source writes it.
         let package_bearing: BTreeSet<String> = selections
