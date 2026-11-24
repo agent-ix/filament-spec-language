@@ -44,9 +44,7 @@ mod source_journeys {
     use std::path::{Path, PathBuf};
 
     pub(super) fn rover_root() -> PathBuf {
-        let directory = std::env::var_os("FSL_EXAMPLES_DIR")
-            .expect("set FSL_EXAMPLES_DIR to the authoritative filament-examples checkout");
-        let root = PathBuf::from(directory).join("examples/rover");
+        let root = crate::examples::examples_root().join("examples/rover");
         assert!(
             root.join("example.toml").is_file(),
             "{} is not the rover example",

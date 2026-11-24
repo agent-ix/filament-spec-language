@@ -8,10 +8,7 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 fn saga() -> PathBuf {
-    let root = std::env::var_os("FSL_EXAMPLES_DIR")
-        .map(PathBuf::from)
-        .expect("FSL_EXAMPLES_DIR must point to the authoritative filament-examples checkout");
-    root.join("examples/parts-saga")
+    crate::examples::examples_root().join("examples/parts-saga")
 }
 
 fn corpus(file: &str) -> PathBuf {
