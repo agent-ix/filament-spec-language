@@ -23,6 +23,7 @@ use crate::{
     StateClauseCounterexample, StateClauseReplayResult, ValuePathStep, ValuePathSubject, Verdict,
     WitnessEnvelope, WitnessFailure, WitnessSettlement,
 };
+use filament_checked::node::{Connective, ConnectiveOrigin, NodeKind};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::checking::CheckMode;
 use fsl_eval::value::ClauseEvaluation;
@@ -1554,6 +1555,30 @@ fn a_float_ordering_ends_the_path(clause: &str, truth: bool) {
         panic!("{clause} completes a Boolean");
     };
     assert_eq!(*settled, truth, "{clause}");
+    if clause == "FloatAndOperand" {
+        let graph = unit.compiled.package.graph();
+        let body = graph.state_clause(clause).unwrap().body();
+        let NodeKind::Connective(Connective::And, ConnectiveOrigin::Authored, _, right) =
+            body.kind()
+        else {
+            panic!(
+                "FloatAndOperand begins with its authored `and`: {:?}",
+                body.kind()
+            );
+        };
+        assert_eq!(
+            evaluation.decision(body.location()),
+            Some(true),
+            "the authored `and` records its true left operand and evaluates the right"
+        );
+        assert!(
+            matches!(
+                body.at(*right).kind(),
+                NodeKind::Connective(_, ConnectiveOrigin::Synthesized, _, _)
+            ),
+            "the right operand begins at the Float ordering's synthesized connective"
+        );
+    }
     assert_eq!(
         derive(&unit, clause, Snapshot::High, "mid"),
         closed(),
@@ -1561,7 +1586,7 @@ fn a_float_ordering_ends_the_path(clause: &str, truth: bool) {
     );
 }
 
-#[trace("TC-740", "FR-265-AC-3")]
+#[trace("TC-740", "FR-265-AC-3", "FR-265-AC-8")]
 #[test]
 fn tc_740_a_float_ordering_clause_ends_the_path_at_closed_scope() {
     a_float_ordering_ends_the_path("FloatOrder", true);
@@ -1585,7 +1610,7 @@ fn tc_740_a_float_ordering_as_a_walked_or_operand_ends_the_path_at_closed_scope(
     a_float_ordering_ends_the_path("FloatOrOperand", true);
 }
 
-#[trace("TC-740", "FR-265-AC-3")]
+#[trace("TC-740", "FR-265-AC-3", "FR-265-AC-9")]
 #[test]
 fn tc_740_a_float_ordering_as_a_walked_and_operand_ends_the_path_at_closed_scope() {
     a_float_ordering_ends_the_path("FloatAndOperand", true);
