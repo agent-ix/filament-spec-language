@@ -10,7 +10,7 @@ use filament_exact::{Cancel, CancelCause};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-use super::{monitor, monitor_under, Case, INVALID_UTF8};
+use super::{monitor, monitor_under, monitor_under_limits, Case, INVALID_UTF8};
 
 const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile t = \"filament.temporal.infinite-trace/v1\";\n\
@@ -282,6 +282,81 @@ fn whole_request_defects_refuse_before_the_stream() {
         let stream = monitor(&path, &records(&[2], true));
         stream.refused().expect("monitor", "refusal", 20);
     }
+}
+
+/// FR-644-AC-16/17 and FR-255-AC-24: target defects normalize before records,
+/// a target requires caller activation capacity, and that setting is
+/// operation-unavailable when the request omits its target.
+#[test]
+#[trace(
+    "TC-721",
+    "FR-644-AC-16",
+    "FR-644-AC-17",
+    "FR-255-AC-24"
+)]
+fn target_validation_and_activation_setting_precede_the_stream() {
+    let target = json!({
+        "counter": "tick",
+        "unit": "step",
+        "width_bits": 16,
+        "uncertainty": {"kind": "rational", "numerator": "0", "denominator": "1"},
+        "max_event_rate": null,
+        "max_reading_gap": 1
+    });
+    let input = records(&[2], true);
+
+    let mut malformed = request();
+    malformed["request"]["target"] = target.clone();
+    malformed["request"]["target"]["unknown"] = json!(true);
+    let (_case, path) = case_with(SOURCE.as_bytes(), &malformed);
+    let stream = monitor(&path, &input);
+    let refusal = stream.refused();
+    assert_eq!(refusal.exit, 20, "{}", refusal.document);
+    assert!(
+        refusal.document.to_string().contains("invalid MonitorTarget"),
+        "{}",
+        refusal.document
+    );
+
+    let mut missing_setting = request();
+    missing_setting["request"]["target"] = target;
+    let (_case, path) = case_with(SOURCE.as_bytes(), &missing_setting);
+    let stream = monitor(&path, &input);
+    let refusal = stream.refused();
+    assert_eq!(refusal.exit, 20, "{}", refusal.document);
+    assert!(
+        refusal
+            .document
+            .to_string()
+            .contains("monitor.max_activations is required"),
+        "{}",
+        refusal.document
+    );
+
+    let mut unavailable = fsl_command::command::CommandLimits::monitor(
+        fsl_command::command::MonitorPreparationLimits {
+            work: 16_777_216,
+            storage: 268_435_456,
+        },
+    );
+    unavailable
+        .set(
+            fsl_foundation::SettingName::Stage(fsl_foundation::Setting::MonitorMaxActivations),
+            8,
+        )
+        .expect("caller can set activation capacity");
+    let (_case, path) = load();
+    let stream = monitor_under_limits(&path, &input, &Cancel::new(), &unavailable);
+    let refusal = stream.refused();
+    assert_eq!(refusal.exit, 20, "{}", refusal.document);
+    assert!(
+        refusal
+            .document
+            .to_string()
+            .contains("unavailable without target"),
+        "{}",
+        refusal.document
+    );
 }
 
 /// FR-624 (SIGINT/SIGTERM end the stream as a cancelled run): a handle

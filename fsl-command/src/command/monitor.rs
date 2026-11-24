@@ -126,6 +126,14 @@ fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
     }
 }
 
+fn exact_rational(value: fsl_package::number::ExactRational) -> filament_exact::Rational {
+    filament_exact::Rational::new(
+        filament_exact::Integer::from(value.numerator()),
+        filament_exact::Integer::from(value.denominator()),
+    )
+    .expect("the wire target admits a reduced rational with positive denominator")
+}
+
 /// The request-stage cause a session refusal stands for.
 fn cause_of(failure: StageFailure<MonitorRefusal>) -> RunCause {
     match failure {
@@ -534,12 +542,13 @@ fn read_routed(
     intake: &mut super::Intake<'_>,
     request: &mut wire::MonitorRequest,
     caller: &CommandLimits,
+    has_target: bool,
 ) -> Result<Option<super::analyze::RoutedItems>> {
     let Some(items) = request.items.take() else {
         // FR-255: a monitor run without routed items takes no engine or emit
         // setting; the request is read, so the refusal is made here, before work.
         caller
-            .require_no_routed_only()
+            .require_no_routed_only_with_target(has_target)
             .map_err(|unavailable| invalid("limits", unavailable.to_string()))?;
         let beside = [
             ("subject", request.subject.is_some()),
@@ -581,6 +590,8 @@ struct Inputs {
     ledger: Option<fsl_replay::spine::ProgressLedger>,
     state: Option<MonitorState>,
     snapshots: BTreeMap<String, Vec<u8>>,
+    /// The admitted timed-plan target, when the request supplies one.
+    _target: Option<fsl_replay::MonitorTarget>,
     /// The provider-routed `items` and what they read, when the request
     /// carries `items` (FR-644 "Provider-routed items").
     routed: Option<super::analyze::RoutedItems>,
@@ -590,8 +601,46 @@ fn read_inputs(
     intake: &mut super::Intake<'_>,
     mut request: wire::MonitorRequest,
     caller: &CommandLimits,
+    package: &fsl_package::CheckedPackage,
 ) -> Result<Inputs> {
-    let routed = read_routed(intake, &mut request, caller)?;
+    let target = request
+        .target
+        .take()
+        .map(|raw| {
+            serde_json::from_str::<wire::MonitorTargetWire>(raw.get())
+                .map_err(|_| invalid("/request/target", "invalid MonitorTarget"))
+        })
+        .transpose()?;
+    if target.as_ref().is_some_and(|target| {
+        !matches!(target.unit.as_str(), "step" | "event" | "sample" | "position")
+            && package.graph().time_unit_scale(&target.unit).is_err()
+    }) {
+        return Err(invalid("/request/target", "invalid MonitorTarget"));
+    }
+    let max_activations = caller.monitor_max_activations();
+    if target.is_some() && max_activations.is_none() {
+        return Err(invalid(
+            "limits",
+            "monitor.max_activations is required when target is present",
+        ));
+    }
+    let has_target = target.is_some();
+    if !has_target && max_activations.is_some() {
+        return Err(invalid(
+            "limits",
+            "setting `monitor.max_activations` is unavailable without target",
+        ));
+    }
+    let routed = read_routed(intake, &mut request, caller, has_target)?;
+    let target = target.map(|target| fsl_replay::MonitorTarget {
+        counter: target.counter,
+        unit: target.unit,
+        width_bits: target.width_bits,
+        uncertainty: exact_rational(target.uncertainty),
+        max_event_rate: target.max_event_rate.map(exact_rational),
+        max_reading_gap: target.max_reading_gap,
+        max_activations: max_activations.expect("a target requires caller activation capacity"),
+    });
     let kind = match request.trace.kind {
         wire::MonitorKindWire::Finite => MonitorTraceKind::Finite,
         wire::MonitorKindWire::Progressed => MonitorTraceKind::Progressed,
@@ -649,6 +698,7 @@ fn read_inputs(
         ledger,
         state,
         snapshots,
+        _target: target,
         routed,
     })
 }
@@ -749,7 +799,7 @@ fn drive(
                 }
                 Records::Stream(records) => records,
             };
-            let inputs = read_inputs(intake, request, caller)?;
+            let inputs = read_inputs(intake, request, caller, checked.package())?;
             // FR-644 "Provider-routed items": the items settle after the
             // program compiles and before the first record is read.
             let items = inputs

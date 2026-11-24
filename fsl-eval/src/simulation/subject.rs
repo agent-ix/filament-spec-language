@@ -116,6 +116,9 @@ pub enum InitialStateRefusal {
     /// An initial root has no canonical encoding.
     #[error(transparent)]
     Encoding(#[from] EncodingRefusal),
+    /// Canonicalizing a root stopped.
+    #[error("initial-state canonicalization stopped: {0:?}")]
+    Expansion(ExpansionStop),
     /// The original refusal from settling the root.
     #[error(transparent)]
     Construction(crate::simulation::protocol::ProtocolRefusal),
@@ -134,6 +137,17 @@ pub trait SubjectSystem:
     ) -> impl Iterator<Item = Result<Self::State, InitialStateRefusal>> + '_ {
         self.initial_iter()
             .map(|state| state.map_err(|error| InitialStateRefusal::Construction(error.into())))
+    }
+
+    /// [`Self::initial_for_check`] under the symmetry policy this check uses
+    /// when it keys roots. Subjects without a specialized initial recipe use
+    /// the ordinary iterator.
+    fn initial_for_check_with_symmetry<'a>(
+        &'a self,
+        max_states: usize,
+        _symmetry: &'a crate::simulation::SymmetryGroup,
+    ) -> impl Iterator<Item = Result<Self::State, InitialStateRefusal>> + 'a {
+        self.initial_for_check(max_states)
     }
 
     /// A target-specific loop-proof violation encoded in `state`, if this
@@ -299,6 +313,21 @@ pub trait SubjectSystem:
 }
 
 impl SubjectSystem for ModelSystem<'_> {
+    fn initial_for_check(
+        &self,
+        max_states: usize,
+    ) -> impl Iterator<Item = Result<Self::State, InitialStateRefusal>> + '_ {
+        self.generated_initial_for_check(max_states, None)
+    }
+
+    fn initial_for_check_with_symmetry<'a>(
+        &'a self,
+        max_states: usize,
+        symmetry: &'a crate::simulation::SymmetryGroup,
+    ) -> impl Iterator<Item = Result<Self::State, InitialStateRefusal>> + 'a {
+        self.generated_initial_for_check(max_states, Some(symmetry))
+    }
+
     fn state_key(
         &self,
         state: &ModelSimState,

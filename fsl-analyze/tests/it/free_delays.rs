@@ -1168,6 +1168,7 @@ fn timed_detour_refutation_replays_its_free_delay_scheduler() {
         &minimum_product,
         &Bound::AtLeast(ratio(9, 20)),
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("the digital product is acyclic")
     else {

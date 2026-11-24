@@ -4415,7 +4415,7 @@ fn timed_step_failure(
     }
 }
 #[cfg(test)]
-mod tests {
+mod threshold_tests {
     use super::*;
     use fsl_replay::{ProbabilityCertificateRejection, TerminalValue};
     use ix_trace_rs::trace;

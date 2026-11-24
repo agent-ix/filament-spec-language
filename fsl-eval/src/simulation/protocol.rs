@@ -64,13 +64,13 @@ use crate::simulation::explore::TransitionSystem;
 use crate::simulation::footprint::Location;
 use crate::simulation::key::{self, EncodingRefusal};
 use crate::simulation::model::encode::{
-    self, map_enc, reference_enc, value_enc, Canonicalizer, Enc,
+    self, Canonicalizer, Enc, map_enc, reference_enc, value_enc,
 };
 use crate::simulation::model::{
-    verdict, BoundedDomain, ClauseOutcome, ModelEvaluator, ModelFinding, ModelSimState,
-    ModelSystem, Observed, TerminalClass, Verdict, BROKEN,
+    BROKEN, BoundedDomain, ClauseOutcome, ModelEvaluator, ModelFinding, ModelSimState, ModelSystem,
+    Observed, TerminalClass, Verdict, verdict,
 };
-use crate::simulation::not_simulated::{check_requires_bound, NotSimulated, RequiresBound};
+use crate::simulation::not_simulated::{NotSimulated, RequiresBound, check_requires_bound};
 use crate::simulation::progress::ZeroProgressError;
 use crate::simulation::subject::ConstraintError;
 use crate::simulation::subject::{Bounded, Cut, InitialStateRefusal, SubjectSystem};
@@ -81,13 +81,13 @@ pub use access::{
     AccessShape, AttemptInstance, InstanceAccess, LoadBufferingShape, WeakAccessFailure,
     WeakAccessShape, WeakAccesses, WeakAttempt,
 };
-pub use capacity::{capacity_value, Capacities, CapacityRefusal, UnboundCapacity};
+pub use capacity::{Capacities, CapacityRefusal, UnboundCapacity, capacity_value};
 pub use fairness::{
-    protocol_constraints, FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError,
-    ProtocolTarget,
+    FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError, ProtocolTarget,
+    protocol_constraints,
 };
 pub use footprint::{
-    visible, AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation,
+    AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation, visible,
 };
 pub use identity::{
     Actor, BlockedThread, BusinessEffectOccurrence, CarriedComponent, DeliveryIdentity,
@@ -110,7 +110,7 @@ pub use reach::{ReachRefusal, Reachable, ReachedState};
 pub use selection::{
     MemorySelection, MemorySelectionRefusal, ResolvedMemory, ResolvedParallel, SubjectMemory,
 };
-pub use tso::{Buffered, Tso, TsoComponent, DEFAULT_MEMORY_BOUND};
+pub use tso::{Buffered, DEFAULT_MEMORY_BOUND, Tso, TsoComponent};
 pub use wire::{
     blocked_json, fairness_json, location_json, over_reference, send_record_json, transition_json,
 };
@@ -3344,7 +3344,7 @@ impl<M: MemoryModel> SubjectSystem for ProtocolSystem<'_, M> {
         &self,
         max_states: usize,
     ) -> impl Iterator<Item = Result<Self::State, InitialStateRefusal>> + '_ {
-        let mut admitted = BTreeSet::new();
+        let mut admitted = BTreeMap::new();
         self.model
             .generated_initial()
             .flat_map(|model| {
@@ -3506,17 +3506,21 @@ impl<M: MemoryModel> SubjectSystem for ProtocolSystem<'_, M> {
 }
 
 /// Admit a protocol root's identity before settling its control or memory.
-fn admit_initial_root<T>(
-    admitted: &mut BTreeSet<Vec<u8>>,
+fn admit_initial_root<T: Clone>(
+    admitted: &mut BTreeMap<Vec<u8>, T>,
     key: Vec<u8>,
     max_states: usize,
     settle: impl FnOnce() -> Result<T, ProtocolRefusal>,
 ) -> Result<T, InitialStateRefusal> {
-    if admitted.len() == max_states && !admitted.contains(&key) {
+    if let Some(state) = admitted.get(&key) {
+        return Ok(state.clone());
+    }
+    if admitted.len() >= max_states {
         return Err(InitialStateRefusal::OverBudget(max_states));
     }
-    admitted.insert(key);
-    settle().map_err(InitialStateRefusal::Construction)
+    let state = settle().map_err(InitialStateRefusal::Construction)?;
+    admitted.insert(key, state.clone());
+    Ok(state)
 }
 
 impl<M: MemoryModel> ProtocolSystem<'_, M> {
@@ -3623,7 +3627,7 @@ mod tests {
     fn protocol_initial_faults_follow_distinct_root_admission() {
         let fault = ProtocolRefusal::fault("settling-reaches-a-rest-point");
         let run = |limit| {
-            let mut admitted = BTreeSet::new();
+            let mut admitted = BTreeMap::new();
             let mut settled = 0;
             let result = [0, 0, 1, 2].into_iter().try_for_each(|root| {
                 admit_initial_root(&mut admitted, vec![root], limit, || {

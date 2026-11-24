@@ -14,7 +14,7 @@ use filament_exact::{Cancel, Meter, Value};
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::location::ExpressionOwner;
 use fsl_analyze::model_check::{
-    check_protocol, ProtocolCheckRequest, SubjectContext, SubjectIdentity,
+    ProtocolCheckRequest, SubjectContext, SubjectIdentity, check_protocol,
 };
 use fsl_eval::model_subject::{
     AtomStop, ModelInstance, ModelLetters, ProtocolSubject, RoleBinding,
@@ -23,22 +23,23 @@ use fsl_eval::simulation::model::{
     ExpansionLimits, ModelFinding, ModelSimState, ModelSystem, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
-    visible, AnchorName, BlockedThread, ClaimReads, ProtocolLocation, ProtocolRefusal,
-    ProtocolSystem, ProtocolTransition, RestKind, RestPoint, Sc, StepKind, ThreadPath, Tso,
-    Unsupported, WaitCause,
+    AnchorName, BlockedThread, ClaimReads, ProtocolLocation, ProtocolRefusal, ProtocolSystem,
+    ProtocolTransition, RestKind, RestPoint, Sc, StepKind, ThreadPath, Tso, Unsupported, WaitCause,
+    visible,
 };
 use fsl_eval::simulation::{Location, SubjectSystem, TransitionSystem};
 use fsl_eval::temporal::AtomReading;
+use fsl_foundation::MemoryModelName;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::MemoryModelName;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    node_occurrence, replay_protocol_trace, settle_protocol_check, CounterexampleKind, Execution,
-    InconclusiveCause, InstanceBound, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome,
-    ModelCheckRecord, ModelTraceReplayResult, ModelTraceSubject, ProtocolCertificateRequest,
-    ProtocolTraceSubject, ReplayLimits, ReplayRefusal, ResultLabel, StatedInstanceBound,
-    TemporalCounterexample, TerminalValue, Truth, UndecidedCause, UndefinedLocus,
+    CounterexampleKind, Execution, IncompleteCause, InconclusiveCause, InstanceBound,
+    ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord,
+    ModelTraceReplayResult,
+    ModelTraceSubject, ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits,
+    ReplayRefusal, ResultLabel, StatedInstanceBound, TemporalCounterexample, TerminalValue, Truth,
+    UndecidedCause, UndefinedLocus, node_occurrence, replay_protocol_trace, settle_protocol_check,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::model_request::ModelRequest;
@@ -48,11 +49,11 @@ use ix_trace_rs::trace;
 use serde_json::Value as Json;
 
 use crate::fill::{
-    attempt, check_refusals, class_of, contracts, document, instance, json_of, model_subject,
-    package_with, reachable, sc_system, source_memory, universe, v, Documents, Reached, PACKAGE,
+    Documents, PACKAGE, Reached, attempt, check_refusals, class_of, contracts, document, instance,
+    json_of, model_subject, package_with, reachable, sc_system, source_memory, universe, v,
 };
 use crate::model_settle::{envelope_at, protocol_anchor, request};
-use crate::protocol_compensation::{pay_run, refund, REFUND};
+use crate::protocol_compensation::{REFUND, pay_run, refund};
 use crate::protocol_system::touch;
 
 /// `activation on origin`.
@@ -601,19 +602,23 @@ fn workflow_and_scope_lifetimes_retire_in_the_step_that_ends_them() {
         .expect("a finish step");
     assert!(!reached[finished].state.has_live_instance());
     assert!(statuses(&system, &reached[finished]).is_empty());
-    assert!(reached.iter().all(|state| state
-        .steps
-        .iter()
-        .all(|(step, _)| step.kind() != StepKind::Retire)));
+    assert!(reached.iter().all(|state| {
+        state
+            .steps
+            .iter()
+            .all(|(step, _)| step.kind() != StepKind::Retire)
+    }));
 
     let scoped = World::new(&unit(ORIGIN, &role(1, "scope"), "", &run), &["c"], &[0]);
     let subject = scoped.subject();
     let system = sc_system(&subject);
     let reached = reachable(&system);
-    assert!(reached.iter().all(|state| state
-        .steps
-        .iter()
-        .all(|(step, _)| step.kind() != StepKind::Retire)));
+    assert!(reached.iter().all(|state| {
+        state
+            .steps
+            .iter()
+            .all(|(step, _)| step.kind() != StepKind::Retire)
+    }));
     let spawned = after(&system, &reached, 0, StepKind::Spawn, "c");
     assert_eq!(
         statuses(&system, &reached[spawned]),
@@ -683,9 +688,11 @@ fn a_node_owned_by_a_role_with_no_instance_waits_with_no_role_instance() {
 
     // At the initial state `spawn` is enabled: no `NoRoleInstance`.
     let initial = SubjectSystem::blocked(&system, &reached[0].state, &[]).expect("blocked");
-    assert!(initial
-        .iter()
-        .all(|thread| !matches!(thread.cause, WaitCause::NoRoleInstance { .. })));
+    assert!(
+        initial
+            .iter()
+            .all(|thread| !matches!(thread.cause, WaitCause::NoRoleInstance { .. }))
+    );
     assert_eq!(
         class_of(&system, &reached[0].state),
         TerminalClass::NotTerminal
@@ -802,10 +809,12 @@ fn a_receive_with_nothing_queued_owned_by_a_role_with_no_instance_gives_no_role_
     let subject = world.subject();
     let system = sc_system(&subject);
     let reached = reachable(&system);
-    assert!(reached.iter().all(|state| state
-        .steps
-        .iter()
-        .all(|(step, _)| step.kind() != StepKind::Send)));
+    assert!(reached.iter().all(|state| {
+        state
+            .steps
+            .iter()
+            .all(|(step, _)| step.kind() != StepKind::Send)
+    }));
     assert_eq!(
         deadlocked_at(&system, &reached, "Both/q/Rx"),
         [no_role_instance()]
@@ -897,9 +906,11 @@ fn a_scope_role_stays_live_for_the_compensation_attempt_it_owns() {
         .filter(|state| state.steps.is_empty() && state.state.has_live_instance())
     {
         let blocked = SubjectSystem::blocked(&system, &state.state, &[]).expect("blocked");
-        assert!(blocked
-            .iter()
-            .all(|thread| thread.cause != no_role_instance()));
+        assert!(
+            blocked
+                .iter()
+                .all(|thread| thread.cause != no_role_instance())
+        );
     }
 }
 
@@ -929,15 +940,19 @@ fn an_on_each_protocol_starts_with_no_instance() {
         assert!(!state.has_live_instance());
         let (bytes, _) = SubjectSystem::state_key(&system, state).expect("a key");
         let key = json_of(&bytes);
-        assert!(key["control"]["entries"]
-            .as_array()
-            .expect("a map")
-            .is_empty());
+        assert!(
+            key["control"]["entries"]
+                .as_array()
+                .expect("a map")
+                .is_empty()
+        );
     }
     let reached = reachable(&system);
-    assert!(kinds(&reached, 0)
-        .iter()
-        .all(|kind| *kind == StepKind::Activate));
+    assert!(
+        kinds(&reached, 0)
+            .iter()
+            .all(|kind| *kind == StepKind::Activate)
+    );
     let started = reached[0].steps[0].1;
     assert!(reached[started].state.has_live_instance());
     assert_eq!(
@@ -969,9 +984,11 @@ fn an_on_each_state_that_can_only_activate_is_a_deadlock() {
 
     assert_eq!(class(0), TerminalClass::NotTerminal);
     let one = reached[0].steps[0].1;
-    assert!(kinds(&reached, one)
-        .iter()
-        .all(|kind| *kind == StepKind::Activate));
+    assert!(
+        kinds(&reached, one)
+            .iter()
+            .all(|kind| *kind == StepKind::Activate)
+    );
     assert_eq!(class(one), TerminalClass::Deadlocked);
     assert_eq!(
         SubjectSystem::blocked(&system, &reached[one].state, &[]).expect("blocked"),
@@ -989,12 +1006,16 @@ fn an_on_each_state_that_can_only_activate_is_a_deadlock() {
 
     let two = reached[one].steps[0].1;
     assert!(reached[two].steps.is_empty());
-    assert!(system
-        .instance_limited(&reached[two].state)
-        .expect("limited"));
-    assert!(!system
-        .instance_limited(&reached[one].state)
-        .expect("limited"));
+    assert!(
+        system
+            .instance_limited(&reached[two].state)
+            .expect("limited")
+    );
+    assert!(
+        !system
+            .instance_limited(&reached[one].state)
+            .expect("limited")
+    );
     assert_eq!(class(two), TerminalClass::NotTerminal);
 }
 
@@ -1042,9 +1063,11 @@ fn an_instance_takes_the_smallest_free_ordinal_and_the_bound_is_no_deadlock() {
     let second = activate(first);
     assert_eq!(live(second), [0, 1]);
     assert!(!kinds(&reached, second).contains(&StepKind::Activate));
-    assert!(system
-        .instance_limited(&reached[second].state)
-        .expect("limited"));
+    assert!(
+        system
+            .instance_limited(&reached[second].state)
+            .expect("limited")
+    );
 
     // Instance 0 touches and finishes; the next activation takes ordinal 0.
     let mut at = second;
@@ -1132,9 +1155,11 @@ fn role_and_activation_steps_have_role_and_instance_footprints() {
         .expect("a footprint");
     let live = Location::Protocol(ProtocolLocation::LiveInstances);
     assert!(activating.reads.contains(&live) && activating.writes.contains(&live));
-    assert!(activating
-        .writes
-        .contains(&Location::Protocol(ProtocolLocation::Control(root()))));
+    assert!(
+        activating
+            .writes
+            .contains(&Location::Protocol(ProtocolLocation::Control(root())))
+    );
 }
 
 /// The claim `always holds(condition)` over `k: M::Cell`.
@@ -1275,10 +1300,12 @@ fn the_instance_bound_settles_v6_naming_max_live_instances_and_defaults_to_three
             .len()
     };
     assert_eq!((0..reached.len()).map(live).max(), Some(3));
-    assert!((0..reached.len()).any(|at| live(at) == 3
-        && system
-            .instance_limited(&reached[at].state)
-            .expect("limited")));
+    assert!((0..reached.len()).any(|at| {
+        live(at) == 3
+            && system
+                .instance_limited(&reached[at].state)
+                .expect("limited")
+    }));
 }
 
 /// FR-209-AC-2 (TC-654): the same protocol with the guard `false` has no
@@ -1299,10 +1326,12 @@ fn a_run_with_no_activation_proves_and_a_counterexample_is_real_under_any_bound(
     let item = never.claim(&letters);
     let subject = never.subject();
     let system = sc_system(&subject);
-    assert!(reachable(&system).iter().all(|state| state
-        .steps
-        .iter()
-        .all(|(step, _)| step.kind() != StepKind::Activate)));
+    assert!(reachable(&system).iter().all(|state| {
+        state
+            .steps
+            .iter()
+            .all(|(step, _)| step.kind() != StepKind::Activate)
+    }));
     let outcome = never.check(item, None, None);
     assert!(
         matches!(outcome, ModelCheckOutcome::Holds { .. }),
@@ -1504,6 +1533,66 @@ fn a_fair_liveness_lasso_may_pass_through_an_instance_limited_state() {
             reached: true,
         })
     );
+}
+
+/// FR-209-AC-7 (TC-654): an infinite repeat of an enabled self-loop remains
+/// fair at an instance-limited state even though `activate` is unexpanded.
+/// FR-126-AC-26: liveness refuses before settling the crossing protocol root.
+#[trace("TC-521", "FR-126-AC-26")]
+#[test]
+fn liveness_refuses_before_settling_the_crossing_protocol_root() {
+    use fsl_eval::simulation::protocol::constructed_initial_states;
+
+    let run = format!(
+        "sequence Main {{ {} }}",
+        attempt("T", "set", "SetPost", "t", "true")
+    );
+    let claim = "temporal Live using t0 over (k: M::Cell) clock \"model-steps\" on origin { always eventually holds(k.v = 0) }\n";
+    let world = World::new(&(unit(ORIGIN, "", "", &run) + claim), &["c"], &[0, 1, 2, 3]);
+    let letters = CellV { holds: |v| v == 0 };
+    let item = world.claim(&letters);
+    let subject = world.subject();
+    let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(
+        subject
+            .model
+            .simulation
+            .source_package()
+            .expect("the source-route subject"),
+    );
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_states = 1;
+    let before = constructed_initial_states();
+    let outcome = check_protocol(
+        ProtocolCheckRequest {
+            temporal_clock_selections: &temporal_clock_selections,
+            subject,
+            item,
+            max_depth: None,
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+            limits,
+            ignore_memory_constraints: false,
+        },
+        &Cancel::new(),
+    )
+    .expect("the liveness item checks");
+
+    assert!(
+        matches!(
+            outcome,
+            ModelCheckOutcome::Stopped {
+                cause: IncompleteCause::ResourceExhausted,
+                limit: Some(fsl_replay::ReachedLimit {
+                    limit: ModelCheckLimit::MaxStates,
+                    value: 1,
+                }),
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(constructed_initial_states() - before, 1);
 }
 
 /// FR-209-AC-7 (TC-654): an infinite repeat of an enabled self-loop remains
@@ -1792,10 +1881,12 @@ fn a_send_from_a_role_over_an_empty_universe_waits_with_no_role_instance() {
     let subject = world.subject();
     let system = sc_system(&subject);
     let reached = reachable(&system);
-    assert!(reached.iter().all(|state| state
-        .steps
-        .iter()
-        .all(|(step, _)| step.kind() != StepKind::Spawn)));
+    assert!(reached.iter().all(|state| {
+        state
+            .steps
+            .iter()
+            .all(|(step, _)| step.kind() != StepKind::Spawn)
+    }));
     assert_eq!(
         deadlocked_at(&system, &reached, "Main/Tx"),
         [no_role_instance()]
@@ -1812,7 +1903,7 @@ fn a_send_from_a_role_over_an_empty_universe_waits_with_no_role_instance() {
 #[test]
 fn a_protocol_derived_items_max_live_instances_reaches_the_run_and_the_check() {
     use crate::derived_request::{items_of_kind, protocol_request_under, settled};
-    use fsl_analyze::analyze::{analyze_items, derived_protocol_item, Engines, ProtocolItem};
+    use fsl_analyze::analyze::{Engines, ProtocolItem, analyze_items, derived_protocol_item};
     use fsl_route::deadlock::ProtocolTemporalItem;
     use fsl_route::request::{DerivedLimits, ItemKind};
 
@@ -2439,17 +2530,19 @@ fn a_non_object_over_ranges_over_each_finite_value() {
         .collect::<Vec<_>>();
     booleans.sort_unstable();
     assert_eq!(booleans, [false, true]);
-    assert!(system
-        .try_initial()
-        .expect("initial states settle")
-        .iter()
-        .all(|state| {
-            !system
-                .successors(state)
-                .expect("expands")
-                .successors
-                .is_empty()
-        }));
+    assert!(
+        system
+            .try_initial()
+            .expect("initial states settle")
+            .iter()
+            .all(|state| {
+                !system
+                    .successors(state)
+                    .expect("expands")
+                    .successors
+                    .is_empty()
+            })
+    );
 }
 
 /// FR-882-AC-4 (TC-2506): a checked Boolean attempt binder is present while

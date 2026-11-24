@@ -4265,10 +4265,7 @@ fn generated<'s>(
     let states = base
         .iter()
         .flat_map(move |state| through(state.clone(), stages));
-    #[cfg(feature = "test-support")]
-    let states = states.inspect(|_| {
-        GENERATED_INITIAL.with(|count| count.set(count.get().saturating_add(1)));
-    });
+    let states = states.inspect(|_| count_generated_initial_state());
     Box::new(states)
 }
 
@@ -4281,6 +4278,11 @@ thread_local! {
 #[cfg(feature = "test-support")]
 pub fn generated_initial_states() -> u64 {
     GENERATED_INITIAL.with(std::cell::Cell::get)
+}
+
+pub(super) fn count_generated_initial_state() {
+    #[cfg(feature = "test-support")]
+    GENERATED_INITIAL.with(|count| count.set(count.get().saturating_add(1)));
 }
 
 #[cfg(test)]

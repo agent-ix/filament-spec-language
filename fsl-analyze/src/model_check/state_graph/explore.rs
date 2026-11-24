@@ -27,7 +27,9 @@ use filament_exact::Cancel;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{SafetyState, SafetyTranslation};
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, TerminalClass};
-use fsl_eval::simulation::{ExpansionStop, SymmetryGroup, TransitionSystem};
+use fsl_eval::simulation::{
+    ExpansionStop, InitialStateRefusal, SubjectSystem, SymmetryGroup, TransitionSystem,
+};
 use fsl_replay::{
     ClosureCertificate, CounterexampleKind, ItemRefusal, ModelCheckLimit, ModelCheckLimits,
     ModelCheckOutcome, ModelStep, OpenCause, ProductStateRef, RunEnd, RunStats,
@@ -36,12 +38,12 @@ use fsl_replay::{
 
 use super::super::ample::Por;
 use super::{
-    cancelled, expansion_stop, stopped, Budgets, ExploredStateGraph, GraphEdge, GraphNode,
-    GraphStats, Halt, InstanceView, NodeIndex, PredicateLabel,
+    Budgets, ExploredStateGraph, GraphEdge, GraphNode, GraphStats, Halt, InstanceView, NodeIndex,
+    PredicateLabel, cancelled, expansion_stop, stopped,
 };
-use crate::model_check::check::{fault, widen};
-use crate::model_check::initial::{admit_initial, Refused};
 use crate::model_check::ModelCheckRefusal;
+use crate::model_check::check::{fault, widen};
+use crate::model_check::initial::{Refused, admit_initial};
 
 /// Why keying one initial state failed.
 enum Keying {
@@ -70,19 +72,23 @@ impl Initial {
     ) -> Result<Result<Self, Halt>, ModelCheckRefusal> {
         let mut keys = Vec::new();
         let mut starts = Vec::new();
-        let nodes = admit_initial(system.initial_iter(), max_states, |_, start| {
-            let (state, _) = system
-                .canonicalise(&start, symmetry)
-                .map_err(Keying::Stop)?;
-            let (key, _) = system
-                .state_key(&state)
-                .map_err(|refused| Keying::Refused(refused.into()))?;
-            keys.push(key.clone());
-            if retain_starts {
-                starts.push(start);
-            }
-            Ok((key, state))
-        });
+        let nodes = admit_initial(
+            system.initial_for_check_with_symmetry(max_states, symmetry),
+            max_states,
+            |_, start| {
+                let (state, _) = system
+                    .canonicalise(&start, symmetry)
+                    .map_err(Keying::Stop)?;
+                let (key, _) = system
+                    .state_key(&state)
+                    .map_err(|refused| Keying::Refused(refused.into()))?;
+                keys.push(key.clone());
+                if retain_starts {
+                    starts.push(start);
+                }
+                Ok((key, state))
+            },
+        );
         match nodes {
             Ok(nodes) => Ok(Ok(Self {
                 nodes,
@@ -92,7 +98,18 @@ impl Initial {
             Err(Refused::OverBudget) => {
                 Ok(Err(stopped(ModelCheckLimit::MaxStates, widen(max_states))))
             }
-            Err(Refused::Construction(never)) => match never {},
+            Err(Refused::Construction(InitialStateRefusal::OverBudget(_))) => {
+                Ok(Err(stopped(ModelCheckLimit::MaxStates, widen(max_states))))
+            }
+            Err(Refused::Construction(InitialStateRefusal::Encoding(refusal))) => {
+                Err(ModelCheckRefusal::Encoding(refusal))
+            }
+            Err(Refused::Construction(InitialStateRefusal::Expansion(stop))) => {
+                Ok(Err(expansion_stop(&stop, budgets)?))
+            }
+            Err(Refused::Construction(InitialStateRefusal::Construction(refusal))) => {
+                Err(ModelCheckRefusal::Protocol(refusal))
+            }
             Err(Refused::Keying(Keying::Stop(stop))) => Ok(Err(expansion_stop(&stop, budgets)?)),
             Err(Refused::Keying(Keying::Refused(refusal))) => Err(refusal),
         }

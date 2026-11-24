@@ -92,32 +92,32 @@ use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    translate, Atom, AutomatonError, AutomatonKind, Letter, PropertyAutomaton, StateId, SubjectKind,
+    Atom, AutomatonError, AutomatonKind, Letter, PropertyAutomaton, StateId, SubjectKind, translate,
 };
 use fsl_eval::fairness::{
-    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
+    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex, analyze,
 };
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ProtocolSubject};
-use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
-use fsl_eval::simulation::protocol::{
-    protocol_constraints, FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem,
-    ProtocolTransition,
-};
 use fsl_eval::simulation::ConstraintValue;
 use fsl_eval::simulation::StateKey;
+use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, check_model_bounds};
+use fsl_eval::simulation::protocol::{
+    FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem, ProtocolTransition,
+    protocol_constraints,
+};
 use fsl_eval::simulation::{
-    Bounded, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, Footprint, Limit,
-    Limits, OfferedReductions, Outcome, Permutation, SubjectSystem, SubjectTransition,
-    SymmetryGroup, TransitionSystem,
+    Bounded, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, Footprint,
+    InitialStateRefusal, Limit, Limits, OfferedReductions, Outcome, Permutation, SubjectSystem,
+    SubjectTransition, SymmetryGroup, TransitionSystem,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_foundation::IdentityLimits;
 use fsl_replay::{
-    undefined_finding, AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter,
-    CounterexampleKind, IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound,
-    MemoryBoundMember, MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep,
-    ProofCertificate, Proviso, ReachedLimit, ReductionCause, RunStats, StepSite,
-    TemporalCounterexample, UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
+    AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter, CounterexampleKind,
+    IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound, MemoryBoundMember,
+    MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep, ProofCertificate,
+    Proviso, ReachedLimit, ReductionCause, RunStats, StepSite, TemporalCounterexample,
+    UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite, undefined_finding,
 };
 use fsl_semantics::check::{CaptureSite, CheckedTemporalClause, FormulaNodeId};
 use quire_canonical::{Encode, Sink, Writer};
@@ -125,11 +125,11 @@ use quire_canonical_api as canonical_api;
 
 use super::ample::{Atoms, Por};
 use super::check::{
-    atom_refusal, not_simulated, precheck, refuse_capture_read, Admitted, ModelCheckRefusal,
-    ModelCheckRequest, BOUND_POSITIONS,
+    Admitted, BOUND_POSITIONS, ModelCheckRefusal, ModelCheckRequest, atom_refusal, not_simulated,
+    precheck, refuse_capture_read,
 };
 use super::concretise::{Lift, LiftStop, PermuterOf};
-use super::fair_walk::{fairness_constraints, tree_path, FairModel};
+use super::fair_walk::{FairModel, fairness_constraints, tree_path};
 use super::graph::{
     retain_reduced_with_key, Ample, Choice, GraphExploration, ProductStateId, RetainedEdge,
     RetainConfig, RetainedGraph,
@@ -1304,7 +1304,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
                 return Ok(vec![Property::Undefined {
                     locus: locus.clone(),
                     cause: cause.clone(),
-                }])
+                }]);
             }
             Reading::Defined(letter) => *letter,
         };
@@ -1332,14 +1332,19 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
     ) -> Result<(), ExpansionStop> {
         let mut initial = BTreeMap::new();
         let identity = IdentityLimits::default();
-        for model in self.system.initial_for_check(max_states) {
+        for model in self
+            .system
+            .initial_for_check_with_symmetry(max_states, group)
+        {
             let model = model.map_err(|refusal| match refusal {
                 InitialStateRefusal::OverBudget(_) => self.record(Halt::InitialStates),
                 InitialStateRefusal::Encoding(refusal) => {
                     self.record(Halt::Refusal(ModelCheckRefusal::Encoding(refusal)))
                 }
-                InitialStateRefusal::Construction(refusal) => self
-                    .record(Halt::Refusal(ModelCheckRefusal::Protocol(refusal.into()))),
+                InitialStateRefusal::Expansion(stop) => self.record(Halt::Expansion(stop)),
+                InitialStateRefusal::Construction(refusal) => {
+                    self.record(Halt::Refusal(ModelCheckRefusal::Protocol(refusal)))
+                }
             })?;
             let (model_key, reading) = self.reading_at(&model, true)?;
             let properties = self.step(Before::Start, &reading)?;
@@ -1527,7 +1532,7 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                 return Ok(Expansion {
                     successors: Vec::new(),
                     findings: Vec::new(),
-                })
+                });
             }
             Property::After(at) => Before::At(*at),
         };
@@ -2034,7 +2039,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                         IncompleteCause::Cancelled { source },
                         None,
                         totals.stats(),
-                    ))
+                    ));
                 }
                 Second::Stopped(cause, limit) => return Ok(stopped(cause, limit, totals.stats())),
                 Second::NoneFair => {}
@@ -2198,7 +2203,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     ModelCheckLimit::MaxAutomatonStates,
                     limit,
                     totals.stats(),
-                )))
+                )));
             }
             Err(other) => return Err(LivenessRefusal::from(other).into()),
         };
@@ -2278,7 +2283,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 None => return Err(fault("a-stopped-expansion-recorded-its-halt")),
             },
             Outcome::BoundReached { .. } => {
-                return Err(fault("the-horizon-is-the-product-s-not-the-exploration-s"))
+                return Err(fault("the-horizon-is-the-product-s-not-the-exploration-s"));
             }
         };
         Ok(Ok(Explored {
@@ -2342,7 +2347,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     reached(ModelCheckLimit::MaxCandidates, self.request.max_candidates)
                 }
                 None if stop.is_internal_failure() => {
-                    return Err(fault("model-expansion-invariant"))
+                    return Err(fault("model-expansion-invariant"));
                 }
                 None => Ending::Stopped(IncompleteCause::ResourceExhausted, None),
             },
@@ -2930,7 +2935,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             Ok(analyses) => analyses,
             Err(FairnessError::Cancelled) => return self.cancelled(),
             Err(FairnessError::UnknownVertex { .. } | FairnessError::EmptyLoop) => {
-                return Err(fault("the-fairness-graph-is-built-from-retained-states"))
+                return Err(fault("the-fairness-graph-is-built-from-retained-states"));
             }
         };
         let Some(passing) = Analysis::first_fair_in(&analyses) else {
@@ -2948,7 +2953,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 Ok(analyses) => analyses,
                 Err(FairnessError::Cancelled) => return self.cancelled(),
                 Err(FairnessError::UnknownVertex { .. } | FairnessError::EmptyLoop) => {
-                    return Err(fault("the-fairness-graph-is-built-from-retained-states"))
+                    return Err(fault("the-fairness-graph-is-built-from-retained-states"));
                 }
             };
             let Some(full_passing) = Analysis::first_fair_in(&full_analyses) else {

@@ -48,7 +48,9 @@ use fsl_eval::fairness::{
 use fsl_eval::model_subject::{CapacityBinding, ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, check_model_bounds};
 use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTarget};
-use fsl_eval::simulation::{ExpansionLimit, ExpansionStop, TransitionSystem};
+use fsl_eval::simulation::{
+    ExpansionLimit, ExpansionStop, InitialStateRefusal, SubjectSystem, TransitionSystem,
+};
 use fsl_replay::{
     abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
     check_protocol_state_relations, check_protocol_step, check_step,
@@ -70,8 +72,8 @@ use super::fair_summary::{
     compose_fair_labels, concrete_label_is_fair, idempotent_has_fair_candidate,
     idempotent_has_fair_candidate_in, insert_relation_label, insert_walk_summary, neutral_label,
 };
-use super::fair_walk::{fairness_constraints, FairModel};
-use super::initial::{admit_initial, Refused};
+use super::fair_walk::{FairModel, fairness_constraints};
+use super::initial::{Refused, admit_initial};
 
 /// One refinement safety run (FR-142 Inputs).
 pub struct RefinementCheckRequest<'a> {
@@ -360,7 +362,9 @@ fn check_with(
         horizon_cut: false,
         classes_of,
     };
-    let mut initial = concrete.initial_iter().peekable();
+    let mut initial = concrete
+        .initial_for_check(request.limits.limits.max_states)
+        .peekable();
     let safety = if initial.peek().is_none() {
         SafetyOutcome::Undecided {
             cause: SafetyUndecided::NoInitialState,
@@ -1934,7 +1938,7 @@ impl Run<'_, '_> {
     /// The breadth-first safety phase.
     fn explore(
         &mut self,
-        states: impl Iterator<Item = Result<ModelSimState, std::convert::Infallible>>,
+        states: impl Iterator<Item = Result<ModelSimState, InitialStateRefusal>>,
     ) -> Result<(), End> {
         self.poll()?;
         let mut keys: Vec<Vec<u8>> = Vec::new();
@@ -1947,11 +1951,21 @@ impl Run<'_, '_> {
             Ok::<_, End>((key, state))
         })
         .map_err(|refused| match refused {
-            Refused::OverBudget => Self::stopped(
-                ModelCheckLimit::MaxStates,
-                widen(self.limits.limits.max_states),
-            ),
-            Refused::Construction(never) => match never {},
+            Refused::OverBudget | Refused::Construction(InitialStateRefusal::OverBudget(_)) => {
+                Self::stopped(
+                    ModelCheckLimit::MaxStates,
+                    widen(self.limits.limits.max_states),
+                )
+            }
+            Refused::Construction(InitialStateRefusal::Encoding(refusal)) => {
+                End::Refusal(ModelCheckRefusal::Encoding(refusal))
+            }
+            Refused::Construction(InitialStateRefusal::Expansion(stop)) => {
+                expansion_end(stop, &self.meter, self.max_candidates)
+            }
+            Refused::Construction(InitialStateRefusal::Construction(refusal)) => {
+                End::Refusal(ModelCheckRefusal::Protocol(refusal))
+            }
             Refused::Keying(end) => end,
         })?;
         for (key, index, state) in initial {

@@ -17,7 +17,7 @@
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, PoisonError, RwLock};
@@ -27,7 +27,7 @@ use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::explore::TransitionSystem;
 use crate::simulation::frontier::Limit;
 use crate::simulation::key::{EncodingRefusal, StateKey};
-use crate::simulation::subject::SubjectSystem;
+use crate::simulation::subject::{InitialStateRefusal, SubjectSystem};
 
 /// One reachable state: the state, its canonical state key, and each of its
 /// successors' transition and state index, in transition-identity order.
@@ -149,8 +149,13 @@ where
     M: MemoryModel + Sync,
     M::Component: Send + Sync,
 {
-    let initial = system.initial_iter().map(|state| {
-        let state = state?;
+    let initial = system.initial_for_check(max_states).map(|state| {
+        let state = state.map_err(|error| match error {
+            InitialStateRefusal::OverBudget(limit) => ReachRefusal::Limit(Limit::States(limit)),
+            InitialStateRefusal::Encoding(refusal) => ReachRefusal::Encoding(refusal),
+            InitialStateRefusal::Expansion(stop) => ReachRefusal::Expansion(stop),
+            InitialStateRefusal::Construction(refusal) => ReachRefusal::Initial(refusal),
+        })?;
         Ok((system.canonical_state_key(&state)?, state))
     });
     let (nodes, workers) = search(
@@ -350,7 +355,7 @@ fn broken() -> ReachRefusal {
 
 #[cfg(test)]
 mod tests {
-    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::time::Duration;
 
     use ix_trace_rs::trace;

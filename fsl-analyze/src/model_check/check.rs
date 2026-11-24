@@ -2814,7 +2814,8 @@ where
         // Equal keys coalesce into the first initial state that has the key;
         // the budget refuses before the remaining states are constructed.
         let initial = admit_initial(
-            self.system.initial_for_check(self.limits.limits.max_states),
+            self.system
+                .initial_for_check_with_symmetry(self.limits.limits.max_states, &self.group),
             self.limits.limits.max_states,
             |_, state| {
                 let (state, permutation) = self.canonical(state)?;
@@ -2834,6 +2835,9 @@ where
                 ModelCheckRefusal::Protocol(refusal).into()
             }
             Refused::Construction(InitialStateRefusal::Encoding(refusal)) => refusal.into(),
+            Refused::Construction(InitialStateRefusal::Expansion(stop)) => {
+                self.expansion_stop(stop).into()
+            }
             Refused::Keying(halt) => halt,
         })?;
         let before = vec![start; self.item.instance_count()];

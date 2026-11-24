@@ -142,6 +142,7 @@ settings! {
     MonitorMaxWindowValues => "monitor.max_window_values", "monitor window aggregates", NodeCount;
     MonitorRetainedPositions => "monitor.retained_positions", "monitor evidence retention", NodeCount;
     MonitorRetainedIdentities => "monitor.retained_identities", "monitor evidence retention", NodeCount;
+    MonitorMaxActivations => "monitor.max_activations", "timed monitor plan", NodeCount;
     MonitorPreparationWorkUnits => "monitor.preparation_work_units", "monitor plan preparation", WorkBudget;
     MonitorPreparationStorage => "monitor.preparation_storage", "monitor plan read storage", LogicalStorage;
     InspectMaxViewEntries => "inspect.max_view_entries", "typed view construction", NodeCount;

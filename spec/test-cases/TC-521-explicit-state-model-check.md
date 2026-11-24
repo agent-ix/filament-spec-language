@@ -78,14 +78,17 @@ to 1,000,000 (TC-472's 1,000 would stop the example at its first expansion); the
     each with the settings operation's `accounting.work_units=1000000` and
     `expansion.max_candidates=1000000` settings.
 12. A thousand distinct initial states under `max_states` 1 through the shared
-    initial-set admission, counting the states pulled and keyed; a 2^40-combination clock-range set pulled three states deep; then two
+    initial-set admission, counting generated roots and keyed states; assert
+    that the second root is not constructed. A 2^40-combination
+    clock-range set pulled three states deep; then two
     initial states under `max_states` 0 through `check_model`,
     `check_refinement` (three equal initial states) and the state-graph
     explorer, counting the states keyed. Run a protocol check with four
     distinct initial states and `max_states` 1 and count its root settlements.
     Repeat with a duplicate of the first root before the second distinct root.
-    Place a typed construction failure on a root admitted under one limit and
-    denied under the lower limit. Run model checks with partial-order
+    Place a typed construction failure on an admitted root and assert the
+    original variant and location, then place it at or after the crossing
+    root and assert `MaxStates` wins without constructing it. Run model checks with partial-order
     reduction and nontrivial symmetry, and sampled state-graph requests with
     and without symmetry, with distinct initial states past the limit. Run a
     state-graph request with four initial states within the budget and one
