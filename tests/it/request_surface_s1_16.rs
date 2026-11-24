@@ -3536,7 +3536,7 @@ fn package_remainder_caller_sources_admit_and_leave_tl_atoms_canonical() {
 }
 
 #[test]
-#[trace("TC-3019", "FR-026-AC-8")]
+#[trace("TC-3019", "FR-026-AC-8", "NFR-009-M-4")]
 fn package_remainder_caller_sources_share_intake_limits_at_the_boundary() {
     use fsl_command::command::{prepare_run, RunLimits};
     let directory = tempfile::tempdir().unwrap();

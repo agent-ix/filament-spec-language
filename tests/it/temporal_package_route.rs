@@ -66,7 +66,7 @@ mod source_journeys {
     /// Source, model, observations and request paths are read in place from
     /// their owning repository; none is copied into the language repository.
     #[test]
-    #[trace("FR-330", "FR-328", "FR-329")]
+    #[trace("FR-330", "FR-328", "FR-329", "NFR-003-M-1", "NFR-003-M-2")]
     fn rover_examples_match_baseline() {
         let root = rover_root();
         for (case, exit, result) in [

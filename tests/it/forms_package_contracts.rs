@@ -257,7 +257,7 @@ fn chain_index(edges: usize) -> ModelIndex {
     ModelIndex::build(package(records))
 }
 
-#[trace("FR-082-AC-3", "TC-220")]
+#[trace("FR-082-AC-3", "TC-220", "NFR-012-M-6")]
 #[test]
 fn conformance_ancestor_limit_denies_the_next_edge_then_accepts_the_exact_bound() {
     let index = chain_index(3);
@@ -284,6 +284,114 @@ fn conformance_ancestor_limit_denies_the_next_edge_then_accepts_the_exact_bound(
         ),
         ConformanceCheckOutcome::Completed(ConformanceOutcome::Compatible)
     );
+}
+
+/// NFR-012-M-1/-2/-3/-5: each normalization ceiling denies its own first
+/// charge on a concrete declaration, without producing an effective view.
+#[trace("NFR-012-M-1", "NFR-012-M-2", "NFR-012-M-3", "NFR-012-M-5")]
+#[test]
+fn normalization_size_and_work_ceilings_refuse_at_their_typed_charge_points() {
+    let input = package(vec![object("Bounded", &[])]);
+    let cases = [
+        (
+            NormalizationLimitKind::DeclarationRecords,
+            "model.declaration_records",
+            "normalize.record",
+        ),
+        (
+            NormalizationLimitKind::DerivationFacts,
+            "model.derivation_facts",
+            "normalize.fact",
+        ),
+        (
+            NormalizationLimitKind::EffectiveDeclarations,
+            "model.effective_declarations",
+            "normalize.declaration",
+        ),
+        (
+            NormalizationLimitKind::WorkUnits,
+            "model.work_units",
+            "normalize.record",
+        ),
+    ];
+
+    for (expected_kind, expected_setting, expected_charge_point) in cases {
+        let mut limits = ModelNormalizationLimits::default();
+        match expected_kind {
+            NormalizationLimitKind::DeclarationRecords => limits.declaration_records = 0,
+            NormalizationLimitKind::DerivationFacts => limits.derivation_facts = 0,
+            NormalizationLimitKind::EffectiveDeclarations => limits.effective_declarations = 0,
+            NormalizationLimitKind::WorkUnits => limits.work_units = 0,
+            other => panic!("unexpected normalization ceiling: {other:?}"),
+        }
+        let NormalizeOutcome::Incomplete(stop) = normalize::normalize(&input, limits) else {
+            panic!("{expected_setting} ceiling must refuse without an effective view")
+        };
+        assert_eq!(stop.limit_kind, expected_kind);
+        assert_eq!((stop.limit, stop.consumed, stop.next_charge), (0, 0, 1));
+        assert_eq!(stop.denial().setting().name(), expected_setting);
+        assert_eq!(stop.charge_point.as_str(), expected_charge_point);
+    }
+}
+
+/// NFR-012-M-4/-7: the operation-family fixture reaches a real dispatch
+/// candidate and a real redefinition edge, each denied before traversal.
+#[test]
+#[trace("NFR-012-M-4", "NFR-012-M-7")]
+fn dispatch_candidate_and_family_edge_ceilings_return_their_typed_stops() {
+    use fsl_semantics::model::dispatch::{self, GeneralizationClosure, LinkCheckOutcome};
+
+    let mut base = operation("Base");
+    base.has_body = true;
+    let mut child = operation("Child");
+    child.has_body = true;
+    let domain = package(vec![
+        object("Base", &[]),
+        object("Child", &["Base"]),
+        DomainPackageRecord::OperationMember(base),
+        DomainPackageRecord::OperationMember(child),
+    ]);
+    let view = completed(&domain);
+
+    let mut candidates =
+        NormalizationMeter::new(ModelNormalizationLimits::default().with_dispatch_candidates(0));
+    let LinkCheckOutcome::Incomplete(candidate_stop) = dispatch::link_dispatch(
+        &view,
+        &key("Base/update"),
+        GeneralizationClosure::Closed,
+        &mut candidates,
+    ) else {
+        panic!("zero dispatch-candidate budget refuses before the candidate is checked")
+    };
+    assert_eq!(
+        candidate_stop.limit_kind,
+        NormalizationLimitKind::DispatchCandidates
+    );
+    assert_eq!(
+        (
+            candidate_stop.limit,
+            candidate_stop.consumed,
+            candidate_stop.next_charge
+        ),
+        (0, 0, 1)
+    );
+    assert_eq!(candidate_stop.charge_point.as_str(), "dispatch.candidate");
+
+    let mut family =
+        NormalizationMeter::new(ModelNormalizationLimits::default().with_family_steps(0));
+    let LinkCheckOutcome::Refused(refusal) = dispatch::link_dispatch(
+        &view,
+        &key("Base/update"),
+        GeneralizationClosure::Closed,
+        &mut family,
+    ) else {
+        panic!("zero family-step budget refuses before following the child edge")
+    };
+    assert!(matches!(
+        refusal.cause,
+        ModelRefusalCause::FamilySteps { original, limit: 0, reached: 1, .. }
+            if original == key("Base/update")
+    ));
 }
 
 #[trace("FR-082-AC-3", "TC-220")]
