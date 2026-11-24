@@ -342,7 +342,7 @@ fn sampled_request<'a>(
 /// Two real binding tests execute serially with the same per-test
 /// confidence. The minimum allowance that completes either alone cannot be
 /// replenished when the second test starts.
-#[trace("FR-120-AC-35", "FR-191-AC-8", "FR-192-AC-8")]
+#[trace("FR-120-AC-35", "FR-192-AC-8")]
 #[test]
 fn serial_binding_tests_share_the_probability_work_allowance() {
     let claims = "probabilistic One using ev on M over (n: M::Node) under Steady on origin with alpha 0.2, beta 0.2, indifference 0.4 { probability >= 0.5 [ always[0,0] holds(n.healthy) ] }\nprobabilistic Two using ev on M over (n: M::Node) under Steady on origin with alpha 0.4, beta 0.4, indifference 0.4 { probability >= 0.5 [ always[0,0] holds(n.healthy) ] }";
@@ -803,7 +803,31 @@ fn worker_counts_preserve_model_results_and_merge_concurrent_samples_by_trace() 
         concurrent_sampler.draws, serial_sampler.draws,
         "only the merged trace prefix contributes samples"
     );
-    assert!(concurrent_sampler.draws.len() <= 103);
+    let StatisticalOutcome::Stopped {
+        stop:
+            StatisticalStop::Limit {
+                limit: StatisticalLimit::MaxSamples,
+                value: 100,
+            },
+        partial,
+        provenance,
+    } = &concurrent
+    else {
+        panic!("the parallel run stops at max_samples 100: {concurrent:?}");
+    };
+    assert_eq!((partial.samples, partial.draws), (100, 100));
+    assert_eq!(concurrent_sampler.draws.len(), 100);
+    assert_eq!(
+        concurrent_sampler
+            .draws
+            .iter()
+            .map(|sample| sample.trace)
+            .collect::<Vec<_>>(),
+        (0..100).collect::<Vec<_>>(),
+        "the merged and recorded trace prefix is exactly 0 through 99"
+    );
+    assert_eq!(provenance.tests[0].traces.first, 0);
+    assert_eq!(provenance.tests[0].traces.count, 100);
     assert!(concurrent_sampler
         .completed
         .chunks(4)
