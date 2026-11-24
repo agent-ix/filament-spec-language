@@ -125,7 +125,6 @@ fn an_ineligible_bound_is_enumerated_over_the_whole_range() {
 
 /// FR-851-AC-4: the rover liveness item proves at EN-1's published defaults
 /// within 60 seconds.
-#[trace("TC-2411", "FR-851-AC-4")]
 #[test]
 fn the_rover_mode_machine_item_proves_at_default_limits() {
     let started = Instant::now();
