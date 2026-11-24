@@ -582,7 +582,11 @@ fn admit_package(
     bytes: &[u8],
     context: &HybridProcessPackageContext,
 ) -> Result<Box<CheckedPackageV2>, HybridProcessRequestRefusal> {
-    map_dispatch_result(read_checked_package(bytes, context.limits, &context.evidence))
+    map_dispatch_result(read_checked_package(
+        bytes,
+        context.limits,
+        &context.evidence,
+    ))
 }
 
 fn map_dispatch_result(
@@ -605,7 +609,7 @@ fn map_dispatch_result(
 mod host_allocation_tests {
     use super::{map_dispatch_result, HybridProcessRequestRefusal};
     use filament_contract_model::{
-        CheckedPackageHostAllocationFailed, CheckedPackageDispatchResult, NativeJoinLocus,
+        CheckedPackageDispatchResult, CheckedPackageHostAllocationFailed, NativeJoinLocus,
         NativeJoinLocusSource, PackageReadStage,
     };
     use ix_trace_rs::trace;
@@ -624,9 +628,8 @@ mod host_allocation_tests {
             requested: 32,
             consumed: 64,
         };
-        let result = map_dispatch_result(CheckedPackageDispatchResult::HostAllocationFailed(
-            failure,
-        ));
+        let result =
+            map_dispatch_result(CheckedPackageDispatchResult::HostAllocationFailed(failure));
 
         let Err(HybridProcessRequestRefusal::HostAllocationFailed(found)) = result else {
             panic!("reader allocation failure must remain a host failure");
