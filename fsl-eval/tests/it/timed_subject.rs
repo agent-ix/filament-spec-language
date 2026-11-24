@@ -1336,7 +1336,8 @@ fn unbounded_clock_reference_document() -> Json {
 /// domain holds exactly the canonical identities of the declared scalar places
 /// `x` and `y` of the admitted owner `c`; an unbounded collection slot `q`
 /// refuses the domain and returns `RequiresBound` naming its
-/// `ClockReferenceDomain`.#[trace("TC-3084")]
+/// `ClockReferenceDomain`.
+#[trace("FR-106-AC-78", "FR-106-AC-80", "TC-3084")]
 #[test]
 fn clock_reference_enumeration_on_the_source_route() {
     fn bounds<'a>(

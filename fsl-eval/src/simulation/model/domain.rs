@@ -4,9 +4,9 @@
 //! product of domains one element at a time.
 
 use filament_exact::{
-    from_admitted, from_admitted_slots, CollectionKind, CollectionType, EnumMember, FieldValue,
-    Integer, NodeKey, ObjectReference, OptionValue, Presence, TextType, UnionMember, UnionValue,
-    Value, ValueType,
+    from_admitted, from_admitted_slots, ClockPlaceReference, CollectionKind, CollectionType,
+    EnumMember, FieldValue, Integer, NodeKey, ObjectReference, OptionValue, Presence, TextType,
+    UnionMember, UnionValue, Value, ValueType,
 };
 use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, TypeEnvironment, UnionMemberDeclaration,
@@ -60,6 +60,10 @@ pub(super) fn clock_reference_paths(
     let mut pending = vec![(value_type, Vec::new(), Vec::new())];
     while let Some((value_type, path, mut entered)) = pending.pop() {
         let children: Vec<&ValueType> = match value_type {
+            ValueType::ClockReference => {
+                paths.push(path);
+                continue;
+            }
             ValueType::Reference(target)
                 if fsl_semantics::model::clock_reference::is_clock_type(target) =>
             {
@@ -460,6 +464,7 @@ pub(super) enum Domain {
         inner: Box<Domain>,
     },
     Reference(Vec<ObjectReference>),
+    ClockReference(Vec<ClockPlaceReference>),
     Sequence {
         collection: CollectionType,
         element: Box<Domain>,
@@ -546,6 +551,21 @@ impl Domain {
                         .collect(),
                 ))
             }
+            ValueType::ClockReference => Some(Self::ClockReference(
+                objects
+                    .iter()
+                    .filter(|object| {
+                        fsl_semantics::model::clock_reference::is_clock_type(object.object_type())
+                    })
+                    .map(|object| {
+                        ClockPlaceReference::new(
+                            object.universe().clone(),
+                            object.object().as_str(),
+                        )
+                        .ok()
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            )),
             ValueType::Reference(target) => Some(Self::Reference(
                 objects
                     .iter()
@@ -638,6 +658,7 @@ impl Domain {
             Self::Int { len, .. } => *len,
             Self::Option { inner, .. } => inner.len().saturating_add(1),
             Self::Reference(objects) => objects.len() as u128,
+            Self::ClockReference(references) => references.len() as u128,
             Self::Listed(values) => values.len() as u128,
             Self::Space(space) => space.len(),
             Self::Sequence {
@@ -704,6 +725,10 @@ impl Domain {
                 .get(usize::try_from(index).ok()?)
                 .cloned()
                 .map(Value::Reference),
+            Self::ClockReference(references) => references
+                .get(usize::try_from(index).ok()?)
+                .cloned()
+                .map(Value::ClockReference),
             Self::Listed(values) => values.get(usize::try_from(index).ok()?).cloned(),
             Self::Space(space) => space.nth(index),
             Self::Sequence {
@@ -2521,8 +2546,9 @@ mod tests {
 
 #[cfg(test)]
 mod clock_reference_tests {
-    use super::enumerable;
-    use filament_exact::ValueType;
+    use super::{clock_reference_paths, enumerable, Domain, RecordOrders};
+    use filament_exact::{ObjectReference, Value, ValueType};
+    use filament_semantic_value::declaration::TypeEnvironment;
     use ix_trace_rs::trace;
 
     /// FR-230-AC-71: a clock-place reference carrier is not enumerated by the
@@ -2532,5 +2558,40 @@ mod clock_reference_tests {
     fn a_clock_reference_is_not_ordinarily_enumerable() {
         assert!(!enumerable(&ValueType::ClockReference));
         assert!(!enumerable(&ValueType::option(ValueType::ClockReference)));
+    }
+
+    /// The checked ClockReference type ranges over the canonical identities
+    /// supplied by the model system and produces kernel ClockReference values.
+    #[trace("FR-106-AC-80", "TC-3084")]
+    #[test]
+    fn kernel_clock_reference_domain_contains_the_supplied_place_values() {
+        let Value::ClockReference(expected) = crate::test_clock_reference::clock_reference_of("x")
+        else {
+            panic!("a clock-reference fixture");
+        };
+        let candidate = ObjectReference::new(
+            expected.universe().clone(),
+            fsl_semantics::check::clock_reference_target(),
+            filament_exact::ObjectId::new(expected.text()).expect("canonical place id"),
+        );
+        let types = TypeEnvironment::new([], []).expect("an empty environment admits");
+        let domain = Domain::of(
+            &ValueType::ClockReference,
+            &[candidate],
+            &types,
+            &RecordOrders::new(),
+        )
+        .expect("the model supplies a finite ClockReference domain");
+        assert_eq!(domain.len(), 1);
+        let Some(Value::ClockReference(actual)) = domain.nth(0) else {
+            panic!("the candidate is a kernel ClockReference value");
+        };
+        assert_eq!(actual, expected);
+        assert!(domain.nth(1).is_none());
+        assert_eq!(
+            clock_reference_paths(&ValueType::option(ValueType::ClockReference), &types),
+            vec![vec![0]],
+            "ClockReference remains discoverable through its option wrapper"
+        );
     }
 }
