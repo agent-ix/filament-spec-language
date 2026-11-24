@@ -309,6 +309,22 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 })
                 .collect()
         }
+        "D13" => vec![function(
+            "Decimal[-9,9;0,0;toward-zero]",
+            "decimal(150, 2) * decimal(2, 0)",
+            Expected::Refused {
+                code: "ill_typed".to_owned(),
+                cause: Some("type-mismatch".to_owned()),
+            },
+        )],
+        "D18" => vec![function(
+            "Decimal[-1000,1000;0,1;nearest-even]",
+            "decimal(1234, 3) / decimal(2, 0)",
+            Expected::Refused {
+                code: "ill_typed".to_owned(),
+                cause: Some("type-mismatch".to_owned()),
+            },
+        )],
         "D10" => quoted(vector.inputs)
             .into_iter()
             .map(|ty| SourceCase {
@@ -358,6 +374,29 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 .into_iter()
                 .map(|ty| function(ty, expression, decimal_expected(first_result)))
                 .collect()
+        }
+        "D28" => {
+            let tokens = quoted(vector.inputs);
+            assert_eq!(tokens.len(), 5);
+            let refusal = || Expected::Refused {
+                code: "ill_typed".to_owned(),
+                cause: Some("type-mismatch".to_owned()),
+            };
+            vec![
+                function(tokens[0], tokens[1], refusal()),
+                function(tokens[2], tokens[3], refusal()),
+                function(
+                    tokens[0],
+                    tokens[4],
+                    decimal_expected(
+                        self::vector("D26")
+                            .expected
+                            .split_once(';')
+                            .expect("D26 result before accounting variants")
+                            .0,
+                    ),
+                ),
+            ]
         }
         _ => return None,
     };
@@ -3599,6 +3638,34 @@ fn source_runner_applies_node_budget_after_function_call() {
     assert_eq!(actual.result, case.expected);
     assert_eq!(actual.node_charges, case.expected_charges.unwrap());
     assert_eq!(actual.function_call_charges, 1);
+}
+
+#[trace("FSpec-FR-140-AC-8", "FSpec-TC-185")]
+#[test]
+fn d13_source_form_refuses_at_type_check() {
+    compare(vector("D13")).unwrap_or_else(|failure| panic!("D13: {failure}"));
+}
+
+#[trace("FSpec-FR-140-AC-8", "FSpec-TC-185")]
+#[test]
+fn d18_source_form_refuses_at_type_check() {
+    compare(vector("D18")).unwrap_or_else(|failure| panic!("D18: {failure}"));
+}
+
+#[trace("FSpec-FR-140-AC-8", "FSpec-TC-185")]
+#[test]
+fn d28_checks_both_source_refusals_and_the_admitted_counterpart() {
+    let cases = source_cases(vector("D28")).expect("D28 has a source adapter");
+    assert_eq!(cases.len(), 3);
+    for refusal in &cases[..2] {
+        assert!(matches!(
+            &refusal.expected,
+            Expected::Refused { code, cause }
+                if code == "ill_typed" && cause.as_deref() == Some("type-mismatch")
+        ));
+    }
+    assert!(matches!(&cases[2].expected, Expected::Decimal { .. }));
+    compare(vector("D28")).unwrap_or_else(|failure| panic!("D28: {failure}"));
 }
 
 #[trace("FSpec-TC-185")]
