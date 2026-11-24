@@ -347,7 +347,7 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
                     stats: graph.stats(transitions),
                     frontier: graph.frontier(source, &queue),
                     cause: stop.cause,
-                }
+                };
             }
         };
         let mut successors = Vec::with_capacity(expansion.successors.len());
@@ -359,7 +359,7 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
                         stats: graph.stats(transitions),
                         frontier: graph.frontier(source, &queue),
                         cause,
-                    }
+                    };
                 }
             };
             let order = encode(&transition, identity)?;
@@ -387,7 +387,7 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
                         stats: graph.stats(transitions),
                         frontier: graph.frontier(source, &queue),
                         cause: stop.cause,
-                    }
+                    };
                 }
             }
         }

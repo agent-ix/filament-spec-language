@@ -92,19 +92,19 @@ use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    translate, Atom, AutomatonError, AutomatonKind, Letter, PropertyAutomaton, StateId, SubjectKind,
+    Atom, AutomatonError, AutomatonKind, Letter, PropertyAutomaton, StateId, SubjectKind, translate,
 };
 use fsl_eval::fairness::{
-    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
+    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex, analyze,
 };
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ProtocolSubject};
-use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
-use fsl_eval::simulation::protocol::{
-    protocol_constraints, FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem,
-    ProtocolTransition,
-};
 use fsl_eval::simulation::ConstraintValue;
 use fsl_eval::simulation::StateKey;
+use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, check_model_bounds};
+use fsl_eval::simulation::protocol::{
+    FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem, ProtocolTransition,
+    protocol_constraints,
+};
 use fsl_eval::simulation::{
     Bounded, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, Footprint, Limit,
     Limits, OfferedReductions, Outcome, Permutation, SubjectSystem, SubjectTransition,
@@ -113,11 +113,11 @@ use fsl_eval::simulation::{
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_foundation::IdentityLimits;
 use fsl_replay::{
-    undefined_finding, AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter,
-    CounterexampleKind, IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound,
-    MemoryBoundMember, MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep,
-    ProofCertificate, Proviso, ReachedLimit, ReductionCause, RunStats, StepSite,
-    TemporalCounterexample, UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
+    AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter, CounterexampleKind,
+    IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound, MemoryBoundMember,
+    MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep, ProofCertificate,
+    Proviso, ReachedLimit, ReductionCause, RunStats, StepSite, TemporalCounterexample,
+    UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite, undefined_finding,
 };
 use fsl_semantics::check::{CaptureSite, CheckedTemporalClause, FormulaNodeId};
 use quire_canonical::{Encode, Sink, Writer};
@@ -125,11 +125,11 @@ use quire_canonical_api as canonical_api;
 
 use super::ample::{Atoms, Por};
 use super::check::{
-    atom_refusal, not_simulated, precheck, refuse_capture_read, Admitted, ModelCheckRefusal,
-    ModelCheckRequest, BOUND_POSITIONS,
+    Admitted, BOUND_POSITIONS, ModelCheckRefusal, ModelCheckRequest, atom_refusal, not_simulated,
+    precheck, refuse_capture_read,
 };
 use super::concretise::{Lift, LiftStop, PermuterOf};
-use super::fair_walk::{fairness_constraints, tree_path, FairModel};
+use super::fair_walk::{FairModel, fairness_constraints, tree_path};
 use super::graph::{
     retain_reduced_with_key, Ample, Choice, GraphExploration, ProductStateId, RetainedEdge,
     RetainedGraph,
@@ -1217,7 +1217,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
                 return Ok(vec![Property::Undefined {
                     locus: locus.clone(),
                     cause: cause.clone(),
-                }])
+                }]);
             }
             Reading::Defined(letter) => *letter,
         };
@@ -1403,7 +1403,7 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                 return Ok(Expansion {
                     successors: Vec::new(),
                     findings: Vec::new(),
-                })
+                });
             }
             Property::After(at) => Before::At(*at),
         };
@@ -1910,7 +1910,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                         IncompleteCause::Cancelled { source },
                         None,
                         totals.stats(),
-                    ))
+                    ));
                 }
                 Second::Stopped(cause, limit) => return Ok(stopped(cause, limit, totals.stats())),
                 Second::NoneFair => {}
@@ -2074,7 +2074,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     ModelCheckLimit::MaxAutomatonStates,
                     limit,
                     totals.stats(),
-                )))
+                )));
             }
             Err(other) => return Err(LivenessRefusal::from(other).into()),
         };
@@ -2155,7 +2155,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 None => return Err(fault("a-stopped-expansion-recorded-its-halt")),
             },
             Outcome::BoundReached { .. } => {
-                return Err(fault("the-horizon-is-the-product-s-not-the-exploration-s"))
+                return Err(fault("the-horizon-is-the-product-s-not-the-exploration-s"));
             }
         };
         Ok(Ok(Explored {
@@ -2215,7 +2215,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     reached(ModelCheckLimit::MaxCandidates, self.request.max_candidates)
                 }
                 None if stop.is_internal_failure() => {
-                    return Err(fault("model-expansion-invariant"))
+                    return Err(fault("model-expansion-invariant"));
                 }
                 None => Ending::Stopped(IncompleteCause::ResourceExhausted, None),
             },
@@ -2775,7 +2775,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             Ok(analyses) => analyses,
             Err(FairnessError::Cancelled) => return self.cancelled(),
             Err(FairnessError::UnknownVertex { .. } | FairnessError::EmptyLoop) => {
-                return Err(fault("the-fairness-graph-is-built-from-retained-states"))
+                return Err(fault("the-fairness-graph-is-built-from-retained-states"));
             }
         };
         let Some(passing) = Analysis::first_fair_in(&analyses) else {
@@ -2793,7 +2793,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 Ok(analyses) => analyses,
                 Err(FairnessError::Cancelled) => return self.cancelled(),
                 Err(FairnessError::UnknownVertex { .. } | FairnessError::EmptyLoop) => {
-                    return Err(fault("the-fairness-graph-is-built-from-retained-states"))
+                    return Err(fault("the-fairness-graph-is-built-from-retained-states"));
                 }
             };
             let Some(full_passing) = Analysis::first_fair_in(&full_analyses) else {
@@ -3209,5 +3209,68 @@ impl FairModel {
                 .map_err(|_| fault("an-acceptance-member-is-a-vertex"))?;
         }
         Ok(fair)
+    }
+}
+
+#[cfg(test)]
+mod key_encoding_tests {
+    use super::{PropertyKey, compose_product_key};
+    use crate::model_check::product::ProductKey;
+    use fsl_eval::automaton::GbaBuilder;
+    use fsl_foundation::IdentityLimits;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn composed_product_key_matches_the_typed_canonical_encoding() {
+        let mut automaton = GbaBuilder::new();
+        let after = automaton.add_state();
+        let properties = [PropertyKey::Undefined, PropertyKey::After(after.index())];
+        for model in [
+            json!({"type": "simulation-state", "objects": [{"key": "rover", "speed": 300}]}),
+            json!({"type": "simulation-state", "label": "quote \" and slash \\", "empty": []}),
+        ] {
+            let identity = IdentityLimits::default();
+            let model_bytes =
+                quire_canonical::to_vec(&model, quire_canonical::Limits::new(identity.input_bytes))
+                    .expect("the representative model key is canonical");
+            for property in properties {
+                let expected = quire_canonical::to_vec(
+                    &ProductKey {
+                        model: model.clone(),
+                        property,
+                    },
+                    quire_canonical::Limits::new(identity.input_bytes),
+                )
+                .expect("the representative product key is canonical");
+
+                let composed = compose_product_key(&model_bytes, &property, identity)
+                    .expect("the component keys compose within the identity limit");
+                assert_eq!(composed, expected);
+
+                let decoded: Value = serde_json::from_slice(&composed)
+                    .expect("the composed bytes remain valid canonical JSON");
+                assert_eq!(decoded[0], model);
+
+                let boundary = identity.with_input_bytes(
+                    u64::try_from(expected.len().saturating_sub(1))
+                        .expect("the representative key length fits u64"),
+                );
+                let composed_error = compose_product_key(&model_bytes, &property, boundary)
+                    .expect_err("the composed key exceeds the one-byte-short limit");
+                let typed_error = quire_canonical::to_vec(
+                    &ProductKey {
+                        model: model.clone(),
+                        property,
+                    },
+                    quire_canonical::Limits::new(boundary.input_bytes),
+                )
+                .expect_err("the typed product key exceeds the same limit");
+                assert!(matches!(
+                    (composed_error, typed_error),
+                    (quire_canonical::Error::Limit(left), quire_canonical::Error::Limit(right))
+                        if left == right
+                ));
+            }
+        }
     }
 }
