@@ -242,9 +242,10 @@ fn malformed_positions_refuse_at_admission() {
             ClauseRunStage::Admit,
             "{disposition:?}"
         );
-        let ClauseDisposition::Admit(fsl_semantics::model::observation::AdmissionFailure::Refused(
-            record,
-        )) = &disposition
+        let ClauseDisposition::SnapshotAdmission {
+            failure: fsl_semantics::model::observation::AdmissionFailure::Refused(record),
+            ..
+        } = &disposition
         else {
             panic!("an admission refusal: {disposition:?}");
         };
@@ -295,9 +296,10 @@ fn malformed_position_wire_shapes_refuse_at_their_member() {
         ),
     ] {
         let disposition = run_order([target(7), Some(position), target(5)]);
-        let ClauseDisposition::Admit(fsl_semantics::model::observation::AdmissionFailure::Refused(
-            record,
-        )) = &disposition
+        let ClauseDisposition::SnapshotAdmission {
+            failure: fsl_semantics::model::observation::AdmissionFailure::Refused(record),
+            ..
+        } = &disposition
         else {
             panic!("an admission refusal: {disposition:?}");
         };
