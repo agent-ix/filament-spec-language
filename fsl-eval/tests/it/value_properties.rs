@@ -2065,10 +2065,10 @@ fn p5_min_max_aggregates_equal_the_reference_fold_in_any_order() {
             if matches!(case.aggregate, Aggregate::Min | Aggregate::Max)
                 && case.kind != CollKind::Sequence
             {
-                let identity = if matches!(case.aggregate, Aggregate::Min) {
-                    "9"
+                let empty_expected = if matches!(case.aggregate, Aggregate::Min) {
+                    show(&Rv::Int(9))
                 } else {
-                    "-9"
+                    show(&Rv::Int(-9))
                 };
                 let empty = [Arg::Coll {
                     kind: case.kind,
@@ -2077,7 +2077,7 @@ fn p5_min_max_aggregates_equal_the_reference_fold_in_any_order() {
                 }];
                 proptest::prop_assert_eq!(
                     evaluate(&package, &empty),
-                    Ok(identity.to_owned()),
+                    Ok(empty_expected),
                     "empty fold\n{}",
                     source
                 );

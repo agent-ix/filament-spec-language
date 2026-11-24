@@ -1670,6 +1670,9 @@ fn expressions(g: &mut Grammar) {
                 r(P::QualifiedName),
                 x(")"),
             ]),
+            // FR-701-AC-3: `max` is a reserved word elsewhere in the
+            // language, but is also the spelling of the Set/Bag fold step.
+            s(vec![x("max"), args.clone()]),
             s(vec![ident(), args]),
             // `qualified-name '(' ')'`: the empty call of a qualified name
             // (FSpec FR-339-AC-1). A nonempty one is a `TupleValue` and an

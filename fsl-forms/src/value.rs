@@ -2100,6 +2100,11 @@ impl<'c> Mapping<'c> {
                         operands,
                     )
                 }
+                TokenKind::Max => self.with_children(
+                    Shape::Call(NameForm::new("max", token.span())),
+                    &task,
+                    operands,
+                ),
                 TokenKind::Grammar
                 | TokenKind::HexPrefix
                 | TokenKind::HexDigit

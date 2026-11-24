@@ -3616,15 +3616,14 @@ impl<'a> Typer<'a> {
         &mut self,
         mut frame: Box<MinMaxFrame<'e>>,
         typed: Node,
-        _frames: &mut Vec<Frame<'e, 'r>>,
+        frames: &mut Vec<Frame<'e, 'r>>,
     ) -> Result<Step<'e, 'r>, CheckRefusal> {
         let Some(first) = frame.first.take() else {
             frame.first = Some(typed);
-            return Ok(Step::Descend(Goal::Infer(
-                frame.second,
-                None,
-                frame.location.child(1),
-            )));
+            let second = frame.second;
+            let location = frame.location.child(1);
+            frames.push(Frame::MinMax(frame));
+            return Ok(Step::Descend(Goal::Infer(second, None, location)));
         };
         if first.value_type != typed.value_type {
             return Err(mismatch(&typed.location));
