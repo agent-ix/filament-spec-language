@@ -3511,7 +3511,7 @@ pub fn recording_predicate_package(
     meter: &mut Meter,
 ) -> Option<Value> {
     recording_predicate(
-        &CheckedPackage::Package(input.clone()),
+        &CheckedPackage::Package(Box::new(input.clone())),
         bytes,
         node,
         position,

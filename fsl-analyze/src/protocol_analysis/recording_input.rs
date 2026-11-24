@@ -22,7 +22,7 @@ impl<'a> From<&Body<'a>> for Body<'a> {
     fn from(body: &Body<'a>) -> Self {
         match body {
             Body::Source(body) => Self::Source(body),
-            Body::Package(slot) => Self::Package(Box::new(slot.clone())),
+            Body::Package(slot) => Self::Package(slot.clone()),
         }
     }
 }
