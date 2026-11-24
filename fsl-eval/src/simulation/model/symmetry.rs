@@ -410,9 +410,11 @@ impl ModelSystem<'_> {
 #[cfg(test)]
 mod tests {
     use filament_checked::key::DeclarationKey;
+    use filament_exact::{Integer, Value};
     use ix_trace_rs::trace;
     use serde_json::json;
 
+    use crate::simulation::model::{ModelSimState, ModelSystem};
     use crate::simulation::sampled::world::{Model, World};
     use crate::simulation::{Permutation, SymmetryClass, SymmetryGroup, TransitionSystem};
 
@@ -423,7 +425,7 @@ mod tests {
             object: "Counter",
             population: "counters",
             key: "a",
-            integers: vec![("Level", 0, 1)],
+            integers: vec![("Level", 0, 2)],
             fields: vec![("value", format!("ix://{package}/Level"))],
             operations: Vec::new(),
             body: String::new(),
@@ -433,71 +435,131 @@ mod tests {
             package: package.to_owned(),
             node: format!("ix://{package}/counters"),
         };
-        let world = World::new(&model).with_universe_keys(&["a", "b"]);
+        let world = World::new(&model).with_universe_keys(&["a", "b", "c"]);
         let group = SymmetryGroup {
             classes: vec![SymmetryClass {
                 population,
-                keys: vec!["a".to_owned(), "b".to_owned()],
+                keys: vec!["a".to_owned(), "b".to_owned(), "c".to_owned()],
             }],
         };
         (world, group)
     }
 
+    fn distinct_state(system: &ModelSystem<'_>, group: &SymmetryGroup) -> ModelSimState {
+        let class = &group.classes[0];
+        let mut state = system.initial().into_iter().next().expect("initial state");
+        let objects = state
+            .state
+            .populations
+            .get_mut(&class.population)
+            .expect("class population exists");
+        let template = objects
+            .get(&class.keys[0])
+            .expect("initial class object exists")
+            .clone();
+        let value_key = template
+            .fields
+            .keys()
+            .find(|field| field.node.ends_with("/value"))
+            .expect("value field exists")
+            .clone();
+        for (identity, value) in class.keys.iter().zip([0_i64, 1, 2]) {
+            let mut object = template.clone();
+            object
+                .fields
+                .insert(value_key.clone(), Value::Integer(Integer::from(value)));
+            objects.insert(identity.clone(), object);
+        }
+        state
+    }
+
+    fn permutations() -> [[usize; 3]; 6] {
+        [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ]
+    }
+
+    fn permute(
+        system: &ModelSystem<'_>,
+        state: &ModelSimState,
+        group: &SymmetryGroup,
+        images: [usize; 3],
+    ) -> ModelSimState {
+        system
+            .permute(
+                state,
+                &Permutation::of(
+                    &group.classes[0].population,
+                    group.classes[0]
+                        .keys
+                        .iter()
+                        .zip(images)
+                        .map(|(from, to)| (from.clone(), group.classes[0].keys[to].clone())),
+                ),
+            )
+            .expect("permutation applies")
+    }
+
     /// FR-152-AC-2: the evaluator canonicaliser maps permuted states to one
     /// representative of the same symmetry orbit.
-    #[trace("TC-1583", "FR-152-AC-2")]
+    #[trace("TC-569", "FR-152-AC-2")]
     #[test]
     fn canonicalise_is_permutation_invariant() {
         let (world, group) = fixture();
         let system = world.system();
-        let state = system.initial().into_iter().next().expect("initial state");
-        let permuted = system
-            .permute(
-                &state,
-                &Permutation::of(
-                    &group.classes[0].population,
-                    [("a", "b"), ("b", "a")]
-                        .into_iter()
-                        .map(|(from, to)| (from.to_owned(), to.to_owned())),
-                ),
-            )
-            .expect("permutation applies");
-        let canonical = system
+        let state = distinct_state(&system, &group);
+        let canonical_key = system
             .canonicalise(&state, &group)
-            .expect("state canonicalises")
+            .expect("canonicalises")
             .0;
-        let canonical_permuted = system
-            .canonicalise(&permuted, &group)
-            .expect("permuted state canonicalises")
-            .0;
-        assert_eq!(
-            system.state_key(&canonical).expect("canonical key").0,
-            system
+        let canonical_key = system.state_key(&canonical_key).expect("canonical key").0;
+        for images in permutations() {
+            let permuted = permute(&system, &state, &group, images);
+            let canonical_permuted = system
+                .canonicalise(&permuted, &group)
+                .expect("permuted state canonicalises")
+                .0;
+            let shares_canonical_key = system
                 .state_key(&canonical_permuted)
                 .expect("permuted canonical key")
-                .0,
-        );
+                .0
+                == canonical_key;
+            assert!(
+                shares_canonical_key,
+                "permutation {images:?} of distinct values must share one representative",
+            );
+        }
     }
 
     /// FR-152-AC-4: canonicalising an evaluator state twice preserves its
     /// canonical key.
-    #[trace("TC-1583", "FR-152-AC-4")]
+    #[trace("TC-569", "FR-152-AC-4")]
     #[test]
     fn canonicalise_is_idempotent() {
         let (world, group) = fixture();
         let system = world.system();
-        let state = system.initial().into_iter().next().expect("initial state");
-        let once = system
-            .canonicalise(&state, &group)
-            .expect("state canonicalises")
-            .0;
-        let twice = system
-            .canonicalise(&once, &group)
-            .expect("canonical state canonicalises")
-            .0;
-        assert_eq!(
-            system.state_key(&once).expect("canonical key").0,
-            system.state_key(&twice).expect("twice canonical key").0,
-        );
+        let state = distinct_state(&system, &group);
+        for images in permutations() {
+            let permuted = permute(&system, &state, &group, images);
+            let once = system
+                .canonicalise(&permuted, &group)
+                .expect("state canonicalises")
+                .0;
+            let twice = system
+                .canonicalise(&once, &group)
+                .expect("canonical state canonicalises")
+                .0;
+            let keys_are_equal = system.state_key(&once).expect("canonical key").0
+                == system.state_key(&twice).expect("twice canonical key").0;
+            assert!(
+                keys_are_equal,
+                "canonicalising permutation {images:?} twice preserves its key",
+            );
+        }
     }
 }

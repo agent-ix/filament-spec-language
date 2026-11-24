@@ -4,6 +4,7 @@
 //! typed refusal of that item alone. The selections are enumerated over every
 //! combination rather than sampled.
 
+use fsl_eval::simulation::TransitionSystem;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -11,6 +12,29 @@ use crate::analyze_cli_support::{
     analyze, clause, counter_request_with, label, request_members, Workspace,
 };
 use crate::counter::{document, symmetric_document};
+
+/// States reachable from the initial snapshot, bounded to `limit` unique keys.
+pub(crate) fn reachable_states(
+    system: &fsl_eval::simulation::model::ModelSystem<'_>,
+    limit: usize,
+) -> Vec<fsl_eval::simulation::model::ModelSimState> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut states = Vec::new();
+    let mut queue = system.initial();
+    while let Some(state) = queue.pop() {
+        let key = system.state_key(&state).expect("state encodes").0;
+        if !seen.insert(key) {
+            continue;
+        }
+        if states.len() == limit {
+            break;
+        }
+        let expansion = system.successors(&state).expect("the state expands");
+        queue.extend(expansion.successors.into_iter().map(|(_, next)| next));
+        states.push(state);
+    }
+    states
+}
 
 /// The Counter request over two interchangeable counters `a` and `b`.
 fn two_counters(ws: &Workspace, body: &str, items: Value) -> std::path::PathBuf {
@@ -615,7 +639,7 @@ mod generated {
     // -------------------------------------------------------- canonical form
 
     use fsl_eval::simulation::model::ModelSimState;
-    use fsl_eval::simulation::{Permutation, SymmetryClass, SymmetryGroup, TransitionSystem};
+    use fsl_eval::simulation::{Permutation, SymmetryClass, SymmetryGroup};
 
     fn group(subject: &Subject) -> SymmetryGroup {
         SymmetryGroup {
@@ -624,23 +648,6 @@ mod generated {
                 keys: subject.keys().iter().map(|k| (*k).to_owned()).collect(),
             }],
         }
-    }
-
-    /// Every state reachable from the subject's start, at most 64 of them.
-    fn reachable(system: &fsl_eval::simulation::model::ModelSystem<'_>) -> Vec<ModelSimState> {
-        let key = |state: &ModelSimState| system.state_key(state).expect("encodes").0;
-        let mut seen = std::collections::BTreeSet::new();
-        let mut states = Vec::new();
-        let mut queue: Vec<ModelSimState> = system.initial();
-        while let Some(state) = queue.pop() {
-            if states.len() >= 64 || !seen.insert(key(&state)) {
-                continue;
-            }
-            let expansion = system.successors(&state).expect("the state expands");
-            queue.extend(expansion.successors.into_iter().map(|(_, next)| next));
-            states.push(state);
-        }
-        states
     }
 
     /// The permutation sending key `i` to key `images[i]`.
@@ -670,7 +677,7 @@ mod generated {
         let world = subject.world();
         let system = world.system();
         let group = group(subject);
-        let states = reachable(&system);
+        let states = super::reachable_states(&system, 64);
         let state = &states[pick % states.len()];
         let key = |state: &ModelSimState| system.state_key(state).expect("encodes").0;
         let canon =
@@ -725,7 +732,7 @@ mod generated {
 
     /// QSL-2061 P3 and P4 (FR-152): the sort canonicaliser is permutation
     /// invariant, idempotent, and returns a member of the state's orbit.
-    #[trace("TC-1583", "FR-152-AC-2")]
+    #[trace("TC-569", "FR-152-AC-2")]
     #[test]
     fn canonicalise_is_permutation_invariant() {
         prop::run(
@@ -740,7 +747,7 @@ mod generated {
     }
 
     /// QSL-2061 P4 (FR-152): `canon(canon(s)) = canon(s)` over every reachable state.
-    #[trace("TC-1583", "FR-152-AC-4")]
+    #[trace("TC-569", "FR-152-AC-4")]
     #[test]
     fn canonicalise_is_idempotent() {
         prop::run(
@@ -752,7 +759,7 @@ mod generated {
                 let system = world.system();
                 let group = group(&subject);
                 let key = |s: &ModelSimState| system.state_key(s).expect("encodes").0;
-                for state in reachable(&system) {
+                for state in super::reachable_states(&system, 64) {
                     let once = system
                         .canonicalise(&state, &group)
                         .expect("canonicalises")
