@@ -10,10 +10,7 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use std::path::Path;
 
-#[path = "../../fsl-semantics/tests/support/tc235_k2.rs"]
-#[allow(dead_code)]
-mod tc235_k2;
-
+use crate::support::probabilistic_model::base as tc235_k2;
 use tc235_k2::{clause, id, mutate_k2, origin, type_named_mut, BUSINESS, PACKAGE};
 
 fn source(file: &str, document: &str) -> Value {

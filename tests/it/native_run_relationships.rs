@@ -2,17 +2,17 @@
 //! FR-1045: native-run relationship selection request admission.
 
 use crate::workflow_relationship_navigation::{
-    ORDER, PAYMENT_ATTEMPT, PAYMENTS, SHIPMENT, SHIPMENTS, canonical_argument_reference, instance,
-    relationship_row, run_selected, run_selected_typed,
+    canonical_argument_reference, instance, relationship_row, run_selected, run_selected_typed,
+    ORDER, PAYMENTS, PAYMENT_ATTEMPT, SHIPMENT, SHIPMENTS,
 };
 use filament_observation::{
-    PRODUCER_INTERFACE_VERSION, ProducerConfiguration, ProducerDigest, RelationshipDeclaration,
-    RelationshipEndpointDeclaration, Revision, StaticProducerBundle,
+    ProducerConfiguration, ProducerDigest, RelationshipDeclaration,
+    RelationshipEndpointDeclaration, Revision, StaticProducerBundle, PRODUCER_INTERFACE_VERSION,
 };
 use fsl_command::command::{self, RunLimits};
 use fsl_replay::Operation;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn refused(request: Value) -> (Value, Value) {
     refused_bytes(serde_json::to_vec(&request).expect("request JSON"))
@@ -23,8 +23,7 @@ fn refused_bytes(bytes: Vec<u8>) -> (Value, Value) {
     let path = directory.path().join("request.json");
     std::fs::write(&path, bytes).expect("request file");
     let error = command::run_with_limits(&path, RunLimits::default(), &crate::negotiation::Fr290)
-        .err()
-        .expect("malformed relationship selection refuses");
+        .expect_err("malformed relationship selection refuses");
     let document = error
         .outcome_document(Operation::Execute)
         .to_bytes()

@@ -17,7 +17,7 @@ use serde_json::{json, Value};
     clippy::duplicate_mod,
     reason = "a test binary also loads the K2 builder directly"
 )]
-mod base;
+pub(crate) mod base;
 pub(crate) use base::{id, PACKAGE};
 
 const INTEGER: &str = "ix://filament/native/Integer";
