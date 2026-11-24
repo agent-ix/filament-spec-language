@@ -25,11 +25,10 @@ use std::sync::Arc;
 
 use super::native_literal::NativeConstructor;
 use super::{
-    LocalKind, Typer, catalogued_step, contains_pre_eligible_read, contextual, ineligible,
-    is_integer, mismatch, node, refuse,
+    catalogued_step, contains_pre_eligible_read, contextual, ineligible, is_integer, mismatch,
+    node, refuse, LocalKind, Typer,
 };
-use crate::check::DispatchOperation;
-use crate::check::call_target::{ResolvedTarget, resolve_target};
+use crate::check::call_target::{resolve_target, ResolvedTarget};
 use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
 use crate::check::refusal::{
@@ -38,6 +37,7 @@ use crate::check::refusal::{
 };
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
+use crate::check::DispatchOperation;
 use filament_exact::Cancel;
 use filament_exact::{
     ArithmeticOperator, CollectionKind, CollectionType, DecimalType, FloatType, IeeeValue,
@@ -1810,13 +1810,23 @@ impl<'a> Typer<'a> {
                 );
             }
             ExprNode::Negate(operand) => {
-                // A negated `decimal(c, s)` literal takes its operand's
-                // decimal type from the expected one (FR-104-AC-16).
+                // Negated decimal and IEEE literals take their operand type
+                // from the expected result. IEEE rounding mode is contextual
+                // (FR-397-AC-24), including when negation is the outer node.
                 let operand = expression.at(*operand);
-                let operand_hint = hint.clone().filter(|each| {
-                    matches!(**each, ValueType::Decimal(_))
-                        && matches!(operand.node(), ExprNode::DecimalValue { .. })
-                });
+                let operand_hint =
+                    hint.clone()
+                        .filter(|each| match (each.as_ref(), operand.node()) {
+                            (ValueType::Decimal(_), ExprNode::DecimalValue { .. }) => true,
+                            (ValueType::Float(float), ExprNode::Float32(_)) => {
+                                float.width() == filament_exact::IeeeWidth::Binary32
+                            }
+                            (ValueType::Float(float), ExprNode::Float64(_)) => {
+                                float.width() == filament_exact::IeeeWidth::Binary64
+                            }
+                            (ValueType::Float(_), ExprNode::Negate(_)) => true,
+                            _ => false,
+                        });
                 let goal = Goal::Infer(operand, operand_hint, location.child(0));
                 return Ok(Self::unary(Unary::Negate(hint), goal, location, frames));
             }

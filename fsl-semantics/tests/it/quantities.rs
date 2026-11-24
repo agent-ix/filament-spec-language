@@ -1003,6 +1003,40 @@ fn u02_dimension_maps_normalize() {
     assert_eq!(length.multiply(time).exponents().count(), 2);
 }
 
+/// FSpec FR-142-AC-2 and AC-4 (TC-187 U02): equal normalized base maps do
+/// not make two distinct declared dimension identities directly convertible.
+#[trace("FSpec-TC-187", "FSpec-FR-142-AC-2", "FSpec-FR-142-AC-4")]
+#[test]
+fn a_normalized_derived_dimension_keeps_its_declared_conversion_boundary() {
+    let checked = check_quantity_scale_source(
+        "dimension Length; dimension Derived = Length * Time / Time;\n\
+         unit m : Length = rational(1, 1);\n\
+         unit derived : Derived = rational(1, 1);\n\
+         function convert_direct using v(q: Quantity<derived>): Quantity<m> pure { convert<Quantity<m>>(q) }",
+    );
+    let Err(refusals) = checked else {
+        panic!("direct conversion across distinct dimension nodes must refuse");
+    };
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert!(
+        matches!(
+            refusals[0].cause.as_ref(),
+            fsl_semantics::check::CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
+        ),
+        "{refusals:?}"
+    );
+
+    let fixture = fixture();
+    let length = fixture.graph.dimension(fixture.length).unwrap();
+    let time = fixture.graph.dimension(fixture.time).unwrap();
+    let derived = length.multiply(time).divide(time);
+    assert_eq!(
+        derived.exponents().collect::<Vec<_>>(),
+        length.exponents().collect::<Vec<_>>(),
+        "the standard vector's (L*T)/T normalized map equals L"
+    );
+}
+
 #[trace("FSpec-TC-187", "FSpec-FR-142-AC-2")]
 #[test]
 fn u03_incompatible_dimensions_refuse_before_arithmetic() {
