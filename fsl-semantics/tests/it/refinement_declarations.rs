@@ -721,8 +721,10 @@ fn cas_key(node_name: &str) -> DeclarationKey {
 
 /// FR-135-AC-1 (TC-540 step 1): the local-model case of `CasRefinesCounter`
 /// checks to one population row, one object row with `value = self.value`
-/// and no hidden field.
-#[trace("TC-540", "FR-135-AC-1", "FR-135-AC-12")]
+/// and no hidden field. This covers only the local-model half of FR-135-AC-1;
+/// the model-subject dependency half has no dependency variant in the current
+/// checked model-binding representation and remains uncovered.
+#[trace("TC-540", "FR-135-AC-12")]
 #[test]
 fn the_counter_refinement_checks_to_one_population_and_one_object_row() {
     let graph = checked_counter(&cas_refines_counter());
