@@ -11,7 +11,11 @@
 //!
 //! * the sources are `edition "0-draft"` with the `state-finite/0-draft`
 //!   profile; [`modern`] rewrites those header lines and nothing else, and
-//!   a case named `source/<file>` checks the verbatim source as published;
+//!   a case named `source/<file>` checks the verbatim source as published.
+//!   FSL has no `state-finite` profile, so every executed case runs under
+//!   `filament.model.complete/v1` instead: a refusal the state-finite profile
+//!   would add is not observable here. The run prints this substitution and
+//!   the number of cases it applies to;
 //! * the domain package `example/config` is FSL's ConfigVersion example
 //!   renamed, with the frame of each invocation taken from its frame file;
 //! * a fixture snapshot is written in the compiler's snapshot format.
@@ -116,11 +120,12 @@ fn observe(disposition: &ClauseDisposition) -> Observed {
             (true, code) => Observed::Incomplete(code),
             (false, code) => Observed::Refused(code),
         },
-        ClauseDisposition::Evaluate(CallOutcome::Incomplete(incomplete)) => {
-            match incomplete.limits_field() {
-                "work_units" => Observed::Incomplete("resource_exhausted".to_owned()),
-                other => Observed::Incomplete(other.to_owned()),
-            }
+        // The compiler's own outcome document (`fsl-replay` outcome.rs, the
+        // `filament-outcome/1` classification) reports every incomplete
+        // evaluation, whichever accounting limit it hit, as the code
+        // `resource_exhausted`; this is its classification, not the runner's.
+        ClauseDisposition::Evaluate(CallOutcome::Incomplete(_)) => {
+            Observed::Incomplete("resource_exhausted".to_owned())
         }
         other => match other.truth() {
             Some(value) => Observed::Completed(value),
@@ -148,28 +153,25 @@ fn expected_observation(expected: &Value) -> Result<Observed, String> {
     }
 }
 
-/// Boundary and typing fixtures state a diagnostic code and an absent value,
-/// not a category: the codes are compared.
-fn compare_code(id: &str, wanted: &Observed, actual: &Observed) -> Settled {
-    match (code_only(wanted), code_only(actual)) {
-        (Some(wanted_code), Some(actual_code)) if wanted_code == actual_code => Settled::Matched,
-        _ => Settled::Mismatch(format!("{id}: expected {wanted:?}, actual {actual:?}")),
+/// The disposition a boundary fixture's diagnostic implies. The standard
+/// (boundary.md, "Proposed codes") says invalid input and unsupported
+/// capability refuse a requested operation, while missing observations and
+/// exhausted resources leave it incomplete.
+fn boundary_wanted(code: &str) -> Observed {
+    match code {
+        "resource_exhausted"
+        | "unavailable_observation"
+        | "cancelled"
+        | "incomplete_population" => Observed::Incomplete(code.to_owned()),
+        _ => Observed::Refused(code.to_owned()),
     }
 }
 
-fn compare(id: &str, wanted: &Observed, actual: &Observed) -> Settled {
+fn compare(wanted: &Observed, actual: &Observed) -> Settled {
     if wanted == actual {
         Settled::Matched
     } else {
-        Settled::Mismatch(format!("{id}: expected {wanted:?}, actual {actual:?}"))
-    }
-}
-
-/// The code of a refusal or incomplete result, whichever it is.
-fn code_only(observed: &Observed) -> Option<&str> {
-    match observed {
-        Observed::Refused(code) | Observed::Incomplete(code) => Some(code),
-        Observed::Completed(_) | Observed::Other(_) => None,
+        Settled::Mismatch(format!("expected {wanted:?}, actual {actual:?}"))
     }
 }
 
@@ -220,21 +222,25 @@ fn clause_body(source: &str, name: &str) -> Result<String, String> {
 }
 
 /// The domain package `example/config`, with the frame of the operation.
-fn model<S: AsRef<str>>(modifies: &[S], may_delete: bool) -> String {
+fn model<S: AsRef<str>>(modifies: &[S], may_delete: bool) -> Result<String, String> {
     let mut document: Value = serde_json::from_str(
         &include_str!("../../../examples/config-version/model.semantic-ir.json")
             .replace("example/config-version", PACKAGE),
     )
-    .expect("the ConfigVersion example is JSON");
+    .map_err(|error| format!("the ConfigVersion example is not JSON: {error}"))?;
     let fields: Vec<Value> = modifies
         .iter()
         .map(|field| json!(format!("{CONFIG_VERSION}/{}", field.as_ref())))
         .collect();
-    document["types"][1]["operations"][0]["frame"]["modifies"] = Value::Array(fields);
+    let frame = document
+        .pointer_mut("/types/1/operations/0/frame")
+        .and_then(Value::as_object_mut)
+        .ok_or("the ConfigVersion example has no operation frame at types[1].operations[0]")?;
+    frame.insert("modifies".to_owned(), Value::Array(fields));
     if may_delete {
-        document["types"][1]["operations"][0]["frame"]["deletes"] = json!([CONFIG_VERSION]);
+        frame.insert("deletes".to_owned(), json!([CONFIG_VERSION]));
     }
-    document.to_string()
+    Ok(document.to_string())
 }
 
 fn label(authority: &str, identity: &str) -> DocumentRef {
@@ -368,9 +374,15 @@ fn run_state(case: &Value) -> Result<Settled, String> {
     let selection = match case["primitive"].as_str() {
         None => current_selection(clause, &identity, case["self"].as_str()),
         Some("identity-equality") => {
-            let operands = case["operands"]
+            let [first, second] = case["operands"]
                 .as_array()
-                .ok_or("identity-equality needs operands")?;
+                .map(Vec::as_slice)
+                .ok_or("identity-equality needs operands")?
+            else {
+                return Err(format!(
+                    "{id}: identity-equality needs exactly two operands"
+                ));
+            };
             let argument = |parameter: &str, key: &Value| ClauseArgument {
                 parameter: parameter.to_owned(),
                 value: ClauseArgumentValue::Reference {
@@ -380,7 +392,7 @@ fn run_state(case: &Value) -> Result<Settled, String> {
             };
             ClauseRunSelection::Function {
                 name: "sameIdentity".to_owned(),
-                arguments: vec![argument("a", &operands[0]), argument("b", &operands[1])],
+                arguments: vec![argument("a", first), argument("b", second)],
                 snapshot: identity.clone(),
                 snapshot_path: None,
             }
@@ -389,17 +401,13 @@ fn run_state(case: &Value) -> Result<Settled, String> {
     };
     let actual = run(Run {
         unit,
-        model: Some(model(&["versionNumber"], false)),
+        model: Some(model(&["versionNumber"], false)?),
         snapshots: BTreeMap::from([(identity, bytes)]),
         invocations: BTreeMap::new(),
         selection,
         work: WORK,
     })?;
-    Ok(compare(
-        id,
-        &expected_observation(&case["expected"])?,
-        &actual,
-    ))
+    Ok(compare(&expected_observation(&case["expected"])?, &actual))
 }
 
 fn artifact(reference: &Value) -> DocumentRef {
@@ -482,7 +490,7 @@ fn run_invocation(case: &Value) -> Result<Settled, String> {
         .unwrap_or("VersionUnchanged");
     let actual = run(Run {
         unit: modern(&text("version-update.native")?),
-        model: Some(model(&changed, !deleted.is_empty())),
+        model: Some(model(&changed, !deleted.is_empty())?),
         snapshots,
         invocations: BTreeMap::from([(invocation.clone(), document.to_string().into_bytes())]),
         selection: ClauseRunSelection::Clause(ClauseSelection {
@@ -491,11 +499,7 @@ fn run_invocation(case: &Value) -> Result<Settled, String> {
         }),
         work: WORK,
     })?;
-    Ok(compare(
-        id,
-        &expected_observation(&case["expected"])?,
-        &actual,
-    ))
+    Ok(compare(&expected_observation(&case["expected"])?, &actual))
 }
 
 /// Parses and checks a unit against the model; the observation is a
@@ -548,20 +552,20 @@ fn refusal_of(failure: spine::FrontEndFailure) -> Observed {
 
 fn run_boundary(case: &Value) -> Result<Settled, String> {
     let id = id_of(case)?;
-    let wanted = Observed::Refused(
+    let wanted = boundary_wanted(
         case["expectedDiagnostic"]
             .as_str()
-            .ok_or("a boundary case names its diagnostic")?
-            .to_owned(),
+            .ok_or("a boundary case names its diagnostic")?,
     );
     let published = text("parent-order.native")?;
     let good = modern(&published);
-    let model_json = model(&["versionNumber"], false);
+    let model_json = model(&["versionNumber"], false)?;
     let actual = match id {
-        "unknown-language-profile" => check_unit(
-            &good.replace("filament.model.complete/v1", "filament.model.complete/v999"),
-            Some(model_json),
-        )?,
+        "unknown-language-profile" => {
+            return Ok(Settled::Unsupported(format!(
+                "{id}: the fixture sets profile.version of subject.json to 999 and no FSL reader accepts the subject wire; renaming the source profile is a different input"
+            )))
+        }
         "missing-model" => check_unit(&good, None)?,
         "unsupported-collect" => check_unit(
             &good.replace(
@@ -579,18 +583,26 @@ fn run_boundary(case: &Value) -> Result<Settled, String> {
             Some(model_json),
         )?,
         "foreign-import" => {
-            let mutated = model_json.replace(
-                &format!("\"typeRef\":\"{CONFIG_VERSION}\""),
-                "\"typeRef\":\"ix://foreign/config/type/Hidden\"",
-            );
-            checked_then_run(&good, mutated)?
+            // The fixture sets the parent target to a foreign type: only the
+            // `parent` field's typeRef changes, no other reference.
+            let mut document: Value =
+                serde_json::from_str(&model_json).map_err(|error| error.to_string())?;
+            let parent = document
+                .pointer_mut("/types/1/fields")
+                .and_then(Value::as_array_mut)
+                .and_then(|fields| fields.iter_mut().find(|field| field["name"] == "parent"))
+                .ok_or("the ConfigVersion example has no parent field")?;
+            parent["typeRef"] = json!("ix://foreign/config/type/Hidden");
+            checked_then_run(&good, document.to_string())?
         }
         "ambiguous-export" => {
             let mut document: Value =
                 serde_json::from_str(&model_json).map_err(|error| error.to_string())?;
             // Two exported type identities under the name ConfigVersion.
             let duplicate: Value = serde_json::from_str(
-                &document["types"][1]
+                &document
+                    .pointer("/types/1")
+                    .ok_or("the model has no second type")?
                     .to_string()
                     .replace(CONFIG_VERSION, "ix://example/config/other/ConfigVersion"),
             )
@@ -604,13 +616,19 @@ fn run_boundary(case: &Value) -> Result<Settled, String> {
         "unbounded-integer" => {
             let mut document: Value =
                 serde_json::from_str(&model_json).map_err(|error| error.to_string())?;
-            document["types"][0]["constraints"]
-                .as_array_mut()
-                .ok_or("constraints")?
+            document
+                .pointer_mut("/types/0/constraints")
+                .and_then(Value::as_array_mut)
+                .ok_or("the first type has no constraints")?
                 .pop();
             checked_then_run(&good, document.to_string())?
         }
-        "wrong-invocation" | "deleted-object" | "exhausted-evaluation" => return run_future_input(id, &wanted),
+        "deleted-object" => {
+            return Ok(Settled::Unsupported(format!(
+                "{id}: the fixture dereferences a removed object in the post snapshot of a future operation; a dangling parent in a current snapshot is a different input"
+            )))
+        }
+        "wrong-invocation" | "exhausted-evaluation" => return run_future_input(id, &wanted),
         "unavailable-observation" => {
             return Ok(Settled::Unsupported(format!(
                 "{id}: the snapshot wire has no unavailable field value; only a whole missing document is unavailable"
@@ -623,7 +641,7 @@ fn run_boundary(case: &Value) -> Result<Settled, String> {
             )))
         }
     };
-    Ok(compare_code(id, &wanted, &actual))
+    Ok(compare(&wanted, &actual))
 }
 
 /// A model mutation is refused when the unit is checked against it or, if
@@ -661,10 +679,6 @@ fn run_future_input(id: &str, wanted: &Observed) -> Result<Settled, String> {
         }]})
     };
     let (document, work) = match id {
-        "deleted-object" => (
-            objects(true, json!({"type": FIXTURE_TYPE, "object": "gone"})),
-            WORK,
-        ),
         "exhausted-evaluation" => (objects(true, Value::Null), 0),
         _ => {
             return Ok(Settled::Unsupported(format!(
@@ -674,13 +688,13 @@ fn run_future_input(id: &str, wanted: &Observed) -> Result<Settled, String> {
     };
     let actual = run(Run {
         unit,
-        model: Some(model(&["versionNumber"], false)),
+        model: Some(model(&["versionNumber"], false)?),
         snapshots: BTreeMap::from([(identity.clone(), snapshot(&document, "current", &identity))]),
         invocations: BTreeMap::new(),
         selection: current_selection(clause, &identity, Some("a")),
         work,
     })?;
-    Ok(compare_code(id, wanted, &actual))
+    Ok(compare(wanted, &actual))
 }
 
 /// Names the ConfigVersion model does not declare: a typing case that uses
@@ -729,7 +743,7 @@ fn run_typing(case: &Value) -> Result<Settled, String> {
         "invariant Case using v on M::ConfigVersion at current {{ {source} }}\n"
     ));
     let expected = &case["expected"];
-    let compiled = check_unit(&unit, Some(model(&["versionNumber"], false)))?;
+    let compiled = check_unit(&unit, Some(model(&["versionNumber"], false)?))?;
     let wanted_typing = expected["typing"].as_str().unwrap_or_default();
     if wanted_typing != "accepted-under-hypotheses" {
         let wanted = Observed::Refused(
@@ -738,7 +752,7 @@ fn run_typing(case: &Value) -> Result<Settled, String> {
                 .unwrap_or_default()
                 .to_owned(),
         );
-        return Ok(compare_code(id, &wanted, &compiled));
+        return Ok(compare(&wanted, &compiled));
     }
     if compiled != Observed::Completed(true) {
         return Ok(Settled::Mismatch(format!(
@@ -771,7 +785,7 @@ fn run_typing(case: &Value) -> Result<Settled, String> {
     );
     let actual = run(Run {
         unit,
-        model: Some(model(&["versionNumber"], false)),
+        model: Some(model(&["versionNumber"], false)?),
         snapshots: BTreeMap::from([(identity.clone(), bytes)]),
         invocations: BTreeMap::new(),
         selection: current_selection("Case", &identity, Some("self")),
@@ -792,7 +806,7 @@ fn run_typing(case: &Value) -> Result<Settled, String> {
         ),
         other => return unsupported(&format!("evaluation state {other:?}")),
     };
-    Ok(compare(id, &wanted, &actual))
+    Ok(compare(&wanted, &actual))
 }
 
 fn run_reference(case: &Value) -> Result<Settled, String> {
@@ -822,7 +836,7 @@ fn run_all(files: &[File]) -> Vec<(String, Settled)> {
         let run = runner_for(file.name);
         for case in &file.cases {
             let id = id_of(case).unwrap_or("?");
-            let settled = run(case).unwrap_or_else(|error| Settled::Mismatch(error));
+            let settled = run(case).unwrap_or_else(Settled::Error);
             results.push((format!("{}/{id}", file.name), settled));
         }
     }
@@ -835,8 +849,8 @@ fn run_sources() -> Vec<(String, Settled)> {
         .into_iter()
         .map(|file| {
             let settled = text(file)
-                .and_then(|source| check_unit(&source, Some(model(&["versionNumber"], false))))
-                .map_or_else(Settled::Mismatch, |observed| match observed {
+                .and_then(|source| check_unit(&source, Some(model(&["versionNumber"], false)?)))
+                .map_or_else(Settled::Error, |observed| match observed {
                     Observed::Completed(true) => Settled::Matched,
                     other => Settled::Mismatch(format!(
                         "source/{file}: the published source should parse and check, actual {other:?}"
@@ -847,19 +861,72 @@ fn run_sources() -> Vec<(String, Settled)> {
         .collect()
 }
 
+/// The cases per file the published standard holds. The test below derives
+/// the same counts from the fixture bytes and requires them to be equal, so
+/// a changed package fails loudly instead of running fewer cases.
+const PUBLISHED_COUNTS: [(&str, usize); 5] = [
+    ("typing", 51),
+    ("state", 9),
+    ("boundary", 17),
+    ("reference", 10),
+    ("invocation", 7),
+];
+
+/// One full run: the case ids each file lists, and what every case and
+/// published source produced. Computed once and shared by the tests.
+struct Outcome {
+    listed: Vec<String>,
+    counts: Vec<(&'static str, usize)>,
+    results: Vec<(String, Settled)>,
+}
+
+fn full_run() -> Result<Outcome, String> {
+    let files = load()?;
+    let mut listed = Vec::new();
+    for file in &files {
+        for case in &file.cases {
+            let id = format!("{}/{}", file.name, id_of(case)?);
+            if listed.contains(&id) {
+                return Err(format!("the fixtures list the case {id} twice"));
+            }
+            listed.push(id);
+        }
+    }
+    let counts = files.iter().map(|f| (f.name, f.cases.len())).collect();
+    let mut results = run_all(&files);
+    results.extend(run_sources());
+    Ok(Outcome {
+        listed,
+        counts,
+        results,
+    })
+}
+
+fn outcome() -> &'static Outcome {
+    static OUTCOME: std::sync::OnceLock<Result<Outcome, String>> = std::sync::OnceLock::new();
+    OUTCOME
+        .get_or_init(full_run)
+        .as_ref()
+        .unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// AC gap: QSL-3074. FR-350 has no acceptance criterion for the state-core
+/// runner or the ticket-key registry (AC-20 and AC-21 are about the
+/// finite-window `window` group only), so the tests below carry the
+/// requirement id `FR-350` and no AC id.
+///
 /// Provenance: QSL-2048. Every state-core case runs through the compiler.
-#[trace("FR-350-AC-20", "FR-350-AC-21")]
+#[trace("FR-350")]
 #[test]
 fn conformance_fspec_state_core_source_cases() {
-    let files = load().unwrap_or_else(|error| panic!("{error}"));
-    let listed: usize = files.iter().map(|file| file.cases.len()).sum();
-    let mut results = run_all(&files);
-    assert_eq!(results.len(), listed, "a case was not executed or reported");
-    results.extend(run_sources());
-    let tally = fspec_standard::settle(RUNNER, results, fspec_standard::registry());
+    let outcome = outcome();
+    let tally = fspec_standard::settle(RUNNER, outcome.results.clone(), fspec_standard::registry());
     for id in &tally.matched {
         println!("passed: {id}");
     }
+    println!(
+        "adapter: sources run under filament.model.complete/v1 in place of state-finite/0-draft (FSL has no state-finite profile); applies to every case that executes",
+    );
     if let Err(error) = fspec_standard::report(RUNNER, &tally) {
         panic!("{error}");
     }
@@ -869,83 +936,143 @@ fn conformance_fspec_state_core_source_cases() {
     );
 }
 
-/// Provenance: QSL-2048. Executed plus reported-skipped cases equal the
-/// cases the fixtures hold, so a case cannot disappear silently.
-#[trace("FR-350-AC-20")]
+/// AC gap: QSL-3074. Provenance: QSL-2048. The cases run equal the cases the
+/// fixtures list, once each, and equal the published package's shape.
+#[trace("FR-350")]
 #[test]
 fn executed_and_reported_cases_equal_the_cases_in_the_fixtures() {
-    let files = load().unwrap_or_else(|error| panic!("{error}"));
-    let counts: Vec<(&str, usize)> = files.iter().map(|f| (f.name, f.cases.len())).collect();
+    let outcome = outcome();
+    let mut derived = Vec::new();
+    for (file, _) in PUBLISHED_COUNTS {
+        let document = fspec_standard::json(&format!("{ROOT}{file}-cases.json"))
+            .unwrap_or_else(|error| panic!("{error}"));
+        derived.push((file, document["cases"].as_array().map_or(0, Vec::len)));
+    }
     assert_eq!(
-        counts,
-        [
-            ("typing", 51),
-            ("state", 9),
-            ("boundary", 17),
-            ("reference", 10),
-            ("invocation", 7)
-        ],
+        derived, PUBLISHED_COUNTS,
         "the published fixtures changed shape; the count is the standard's"
     );
-    let results = run_all(&files);
-    let skipped = results
+    assert_eq!(outcome.counts, derived);
+    // Every listed case has exactly one result, and nothing else ran but
+    // the two published sources.
+    let mut ran: Vec<&str> = outcome
+        .results
         .iter()
-        .filter(|(_, settled)| matches!(settled, Settled::Unsupported(_)))
-        .count();
-    let executed = results.len() - skipped;
-    let listed: usize = counts.iter().map(|(_, count)| count).sum();
-    assert_eq!(executed + skipped, listed);
-    for (id, settled) in &results {
+        .map(|(id, _)| id.as_str())
+        .filter(|id| !id.starts_with("source/"))
+        .collect();
+    let mut listed: Vec<&str> = outcome.listed.iter().map(String::as_str).collect();
+    ran.sort_unstable();
+    listed.sort_unstable();
+    assert_eq!(ran, listed, "the cases run are not the cases listed");
+    assert_eq!(outcome.results.len(), listed.len() + 2);
+    for (id, settled) in &outcome.results {
         if let Settled::Unsupported(reason) = settled {
             println!("reported-skipped: {id}: {reason}");
         }
     }
 }
 
-/// Provenance: QSL-2048. An altered expected code is a mismatch in each file.
-#[trace("FR-350-AC-20")]
+/// The case with the fields each runner reads altered: the expected
+/// diagnostic (typing reads `expected.diagnostic`, boundary reads
+/// `expectedDiagnostic`, state and invocation read `expected.diagnostic`
+/// and `expected.value`, typing reads `expected.evaluation.value`).
+fn altered(case: &Value) -> Value {
+    let mut case = case.clone();
+    if let Some(code) = case.get_mut("expectedDiagnostic") {
+        *code = json!("altered_code");
+    }
+    if let Some(expected) = case.get_mut("expected").and_then(Value::as_object_mut) {
+        if let Some(code) = expected.get_mut("diagnostic") {
+            *code = json!("altered_code");
+        }
+        if let Some(value) = expected.get("value").and_then(Value::as_bool) {
+            expected.insert("value".to_owned(), json!(!value));
+        }
+        if let Some(evaluation) = expected
+            .get_mut("evaluation")
+            .and_then(Value::as_object_mut)
+        {
+            if let Some(value) = evaluation.get("value").and_then(Value::as_bool) {
+                evaluation.insert("value".to_owned(), json!(!value));
+            }
+        }
+    }
+    case
+}
+
+/// AC gap: QSL-3074. Provenance: QSL-2048. For every file that has a case
+/// matching its fixture, each matching case, altered in the fields its runner
+/// reads, is reported as a mismatch. The reference file has no matching case
+/// and is covered by the next test.
+#[trace("FR-350")]
 #[test]
-fn an_altered_expected_code_is_a_mismatch_in_each_file() {
+fn an_altered_expectation_is_a_mismatch_for_every_matched_case_of_each_file() {
+    let outcome = outcome();
     let files = load().unwrap_or_else(|error| panic!("{error}"));
     for file in &files {
         let run = runner_for(file.name);
-        let altered = |case: &Value| -> Value {
-            let mut case = case.clone();
-            for key in ["expected", "expectedDiagnostic"] {
-                match &mut case[key] {
-                    Value::String(code) => *code = "altered_code".to_owned(),
-                    Value::Object(expected) => {
-                        expected.insert("diagnostic".into(), json!("altered_code"));
-                        expected.insert("execution".into(), json!("refused"));
-                        expected.remove("value");
-                    }
-                    _ => {}
-                }
+        let mut checked = 0;
+        for case in &file.cases {
+            let id = format!("{}/{}", file.name, id_of(case).expect("a case id"));
+            if !outcome
+                .results
+                .iter()
+                .any(|(name, settled)| *name == id && *settled == Settled::Matched)
+            {
+                continue;
             }
-            case
-        };
-        // The first case the runner executes. A file whose cases are all
-        // reported unsupported has none: its altered case must still not
-        // match, and it is reported unsupported, not matched.
-        let executed = file
-            .cases
-            .iter()
-            .find(|case| matches!(run(case), Ok(Settled::Matched) | Ok(Settled::Mismatch(_))))
-            .unwrap_or(&file.cases[0]);
-        let result = run(&altered(executed)).expect("the altered case runs");
-        let reported = matches!(result, Settled::Mismatch(_))
-            || (file.name == "reference" && matches!(result, Settled::Unsupported(_)));
-        assert!(
-            reported,
-            "{}: an altered expected code was not reported: {result:?}",
-            file.name
-        );
+            let changed = altered(case);
+            assert_ne!(&changed, case, "{id}: the alteration changed nothing");
+            let result = run(&changed);
+            assert!(
+                matches!(result, Ok(Settled::Mismatch(_))),
+                "{id}: an altered expectation was not reported as a mismatch: {result:?}"
+            );
+            checked += 1;
+        }
+        if file.name == "reference" {
+            assert_eq!(
+                checked, 0,
+                "the reference file now has matching cases; cover them here"
+            );
+        } else {
+            assert!(checked > 0, "{}: no matching case to alter", file.name);
+        }
     }
 }
 
-/// Provenance: QSL-2048. A missing standard fails with a message, and no
-/// run passes with zero cases.
-#[trace("FR-350-AC-20")]
+/// AC gap: QSL-3074. Provenance: QSL-2048. The reference file executes no
+/// case today. This is not an altered-expectation test: it asserts that every
+/// reference case is reported unsupported and pinned by the registry, so one
+/// that starts to execute, or to fail differently, fails the run.
+#[trace("FR-350")]
+#[test]
+fn every_reference_case_is_unsupported_and_pinned_by_the_registry() {
+    let outcome = outcome();
+    let reference: Vec<(String, Settled)> = outcome
+        .results
+        .iter()
+        .filter(|(id, _)| id.starts_with("reference/"))
+        .cloned()
+        .collect();
+    assert_eq!(reference.len(), 10);
+    assert!(reference
+        .iter()
+        .all(|(_, settled)| matches!(settled, Settled::Unsupported(_))));
+    let tally = fspec_standard::settle(RUNNER, reference, fspec_standard::registry());
+    let reference_only: Vec<&String> = tally
+        .failures
+        .iter()
+        .filter(|text| !text.contains("which is no case of the fixtures"))
+        .collect();
+    assert!(reference_only.is_empty(), "{reference_only:?}");
+    assert_eq!(tally.keyed.len(), 10);
+}
+
+/// AC gap: QSL-3074. Provenance: QSL-2048. A missing standard fails with a
+/// message, and no run passes with zero cases.
+#[trace("FR-350")]
 #[test]
 fn a_missing_standard_fails_clearly_and_never_runs_zero_cases() {
     let missing = std::path::Path::new("/nonexistent/fspec-dir-for-the-self-test");
