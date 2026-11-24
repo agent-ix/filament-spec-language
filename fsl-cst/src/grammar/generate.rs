@@ -283,7 +283,7 @@ pub fn covering_derivations() -> Vec<Derivation> {
     let mut normal = vec![INFINITE; Production::all().len()];
     for _ in 0..grammar.len() {
         let previous = normal.clone();
-        for (production, rule) in &grammar {
+        for (production, rule) in grammar {
             normal[*production as usize] = cost(rule, &previous).saturating_add(1).min(INFINITE);
         }
         if normal == previous {
