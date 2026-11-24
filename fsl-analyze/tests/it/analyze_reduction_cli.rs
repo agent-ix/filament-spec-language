@@ -161,8 +161,8 @@ fn a_constraint_never_proves_past_its_boundary() {
 
 /// Partial TC-581 coverage: a named Low selection cuts exploration at the
 /// constraint boundary, records `constraint-reached`, and retains the
-/// selected constraint name in its request echo. A selection naming
-/// invariant Wide refuses before any state is expanded, and a constraint
+/// selected constraint name in its request echo. A selection naming absent
+/// constraint Absent refuses before any state is expanded, and a constraint
 /// anchored at an operation refuses during source compilation.
 /// FR-158-AC-6 remains open for node-key request and refusal behavior.
 #[trace("TC-581")]
@@ -206,10 +206,10 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
         ws.write("start.json", &counter_snapshot(&[("a", 0), ("b", 0), ("c", 0)]));
         analyze(&path).item(0)
     };
-    let item = run_invalid("state-constraint-invalid", json!("Wide"));
+    let item = run_invalid("state-constraint-invalid", json!("Absent"));
     assert_eq!(item["record"]["diagnostic"]["code"], "invalid_runtime_input", "{item}");
     assert_eq!(item["record"]["diagnostic"]["cause"], "invalid-value", "{item}");
-    assert_eq!(item["record"]["diagnostic"]["detail"]["name"], "Wide", "{item}");
+    assert_eq!(item["record"]["diagnostic"]["detail"]["name"], "Absent", "{item}");
     assert!(item["exploration"].is_null(), "no state was expanded: {item}");
 
     let bad_ws = Workspace::new("state-constraint-operation-anchor");
