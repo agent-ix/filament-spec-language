@@ -129,7 +129,13 @@ fn timestamp(text: &str) -> Value {
     Value::Timestamp(Timestamp::from_canonical_text(text).expect("canonical Timestamp"))
 }
 
-#[trace("TC-1231", "FR-091-AC-78", "FR-093-AC-78", "FSpec-FR-322-AC-103", "FSpec-TC-280")]
+#[trace(
+    "TC-1231",
+    "FR-091-AC-78",
+    "FR-093-AC-78",
+    "FSpec-FR-322-AC-103",
+    "FSpec-TC-280"
+)]
 #[test]
 fn checked_bytes_length_and_concat_evaluate_in_source_order() {
     let fixture = fixture_of(BYTES_FUNCTIONS);

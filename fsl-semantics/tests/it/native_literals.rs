@@ -12,7 +12,7 @@ use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{
-    ApplicationTerm, BodyTerm, CheckCause, CheckRefusal, CheckedGraph, I128Limit,
+    ApplicationTerm, BindingValue, BodyTerm, CheckCause, CheckRefusal, CheckedGraph, I128Limit,
     IntegerOutsideI128, IntegerSite, LawRole, LeafTerm, LiteralValue, MemberTerm, NodeTag,
     OperationMode, PackageDeclarations, SemanticNode,
 };
@@ -90,6 +90,32 @@ fn literals<'a>(all: &[&'a SemanticNode], kind: &str) -> Vec<(&'a SemanticNode, 
             (found == kind).then_some((*node, value))
         })
         .collect()
+}
+
+/// The name of the parameter referenced by an operation argument.
+fn referenced_parameter_name(graph: &CheckedGraph, argument: &MemberTerm) -> String {
+    let MemberTerm::Leaf(LeafTerm::Reference { target }) = argument else {
+        panic!("the operation argument is a reference: {argument:?}");
+    };
+    let parameter = graph
+        .semantic_graph()
+        .node(target.admitted().expect("admitted reference").clone())
+        .expect("the parameter node exists");
+    assert_eq!(parameter.semantic_form(), "parameter");
+    let BodyTerm::Aggregate(body) = parameter.body() else {
+        panic!("the parameter has aggregate form: {parameter:?}");
+    };
+    let Some(MemberTerm::Binding(binding)) = body.members.first() else {
+        panic!("the parameter begins with its name: {parameter:?}");
+    };
+    let BindingValue::Leaf(LeafTerm::Literal {
+        value: LiteralValue::Text(name),
+        ..
+    }) = &binding.value
+    else {
+        panic!("the parameter name is text: {parameter:?}");
+    };
+    name.clone()
 }
 
 /// FR-091-AC-41, FR-093-AC-29, TC-1052 steps 1 and 5: each literal lowers to
@@ -536,7 +562,7 @@ fn text_literals_share_one_node_and_compare_by_the_profile_equality() {
 #[test]
 fn bytes_length_and_concat_lower_to_native_operations() {
     let graph = check(
-        "function len using v(a: Bytes): Integer pure { length(a) }\n\
+        "function len using v(a: Bytes, b: Bytes): Integer pure { length(b) }\n\
          function cat using v(a: Bytes, b: Bytes): Bytes pure { concat(a, b) }",
     )
     .expect("both native calls check");
@@ -565,23 +591,20 @@ fn bytes_length_and_concat_lower_to_native_operations() {
         .find(|term| term.operation.identity() == "filament.op.bytes.length")
         .expect("length operation");
     assert_eq!(length.arguments.len(), 1);
+    assert_eq!(referenced_parameter_name(&graph, &length.arguments[0]), "b");
     let concat = operations
         .iter()
         .find(|term| term.operation.identity() == "filament.op.bytes.concat")
         .expect("concat operation");
     assert_eq!(concat.arguments.len(), 2);
-    let targets = concat
-        .arguments
-        .iter()
-        .map(|argument| match argument {
-            MemberTerm::Leaf(LeafTerm::Reference { target }) => target.admitted().cloned(),
-            other => panic!("argument is a reference: {other:?}"),
-        })
-        .collect::<Vec<_>>();
-    assert!(targets.iter().all(Option::is_some));
-    assert_ne!(
-        targets[0], targets[1],
-        "left then right parameter references"
+    assert_eq!(
+        concat
+            .arguments
+            .iter()
+            .map(|argument| referenced_parameter_name(&graph, argument))
+            .collect::<Vec<_>>(),
+        vec!["a".to_owned(), "b".to_owned()],
+        "the references are [ref(a), ref(b)] in source order"
     );
 }
 
