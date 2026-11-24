@@ -1216,6 +1216,7 @@ pub(super) fn check_with_value_bound_control<'a, 'control>(
     claims: &[CheckedProbabilisticClaim],
     item: &ObligationIdentity,
     bytes: &[u8],
+    offer: Offer<'_>,
     side: SubsystemBoundKind,
     limits: ProbabilityDocumentLimits,
     cancel: &'a Cancel,
@@ -1224,7 +1225,7 @@ pub(super) fn check_with_value_bound_control<'a, 'control>(
     let mut cx = Context::new(limits, cancel, None);
     cx.reward_control = Some(control);
     cx.bound_side = Some(side);
-    check_with_context(system, claims, item, bytes, cx)
+    check_with_context(system, claims, item, bytes, offer, cx)
 }
 
 fn check_with_context(

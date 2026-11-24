@@ -2131,11 +2131,11 @@ fn check_document_bytes(
         ProfileDispatch::FairMdp => {
             if let Some(side) = bound_side {
                 return mdp::check_with_value_bound_control(
-                    system, claims, item, bytes, side, limits, cancel, control,
+                    system, claims, item, bytes, offer, side, limits, cancel, control,
                 );
             }
             return mdp::check_with_reward_control(
-                system, claims, item, bytes, limits, cancel, control,
+                system, claims, item, bytes, offer, limits, cancel, control,
             );
         }
         ProfileDispatch::Exact | ProfileDispatch::BoundedFair => {}
