@@ -31,6 +31,9 @@
 mod abstraction_declaration;
 mod clause_text;
 mod composition_declaration;
+/// FR-710's model-unit parsing seam, which wraps layer-1 source and token
+/// evidence without re-exporting any `fsl-cst` types.
+pub mod cst;
 mod dispatch;
 mod extension_declaration;
 mod guarantee_declaration;
@@ -58,17 +61,6 @@ mod temporal_clause;
 mod terminal_declaration;
 mod time_model;
 mod value;
-
-/// Layer-1 parsing entry points and evidence types needed by source-driven
-/// semantic intake. Layer 3 depends on S2, so it obtains these through this
-/// narrow S2 surface instead of naming `fsl-cst` as a direct dependency.
-pub mod cst {
-    pub use fsl_cst::diagnostic::{error, read_source, resource_exhausted};
-    pub use fsl_cst::{
-        parse, parse_source, CompleteCause, CompleteCode, CompleteDiagnostic, Limits, ParsedSource,
-        TokenClass,
-    };
-}
 
 pub use abstraction_declaration::{
     AbstractionBindingForm, AbstractionDeclarationForm, FieldBindingForm, FrameBindingForm,

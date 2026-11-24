@@ -954,7 +954,7 @@ pub enum RunCause {
     Source(#[source] Box<SourceFailure>),
     /// A model-unit compiler refusal at I1, retaining its exact source cause.
     #[error("{0}")]
-    ModelUnit(#[source] Box<SourceFailure>),
+    ModelUnit(#[source] Box<ModelUnitFailure>),
     /// A package-input refusal while parsing selected Semantic IR documents.
     #[error("model package input refusal: {0:?}")]
     ModelPackageInput(Box<fsl_semantics::model::normalize::ModelRefusal>),
@@ -1193,6 +1193,15 @@ pub struct SourceFailure {
     #[source]
     native: Box<Diagnostic>,
     diagnostic: Box<fsl_cst::diagnostic::CompleteDiagnostic>,
+}
+
+/// A model-unit refusal projected from the forms-owned S1 wrapper.
+#[derive(Debug, thiserror::Error)]
+#[error("{native}")]
+pub struct ModelUnitFailure {
+    #[source]
+    native: Box<Diagnostic>,
+    diagnostic: Box<fsl_forms::cst::CompleteDiagnostic>,
 }
 
 /// A request selection FR-100 does not admit for a `1-draft` program's
@@ -1468,9 +1477,7 @@ impl RunError {
                 Some(fsl_replay::OutcomeStage::I1),
                 self.category(),
             )
-            .with_diagnostics(vec![OutcomeDiagnostic::from_source_diagnostic(
-                &failure.diagnostic,
-            )]),
+            .with_diagnostics(vec![model_unit_outcome_diagnostic(&failure.diagnostic)]),
             RunCause::ModelPackageInput(refusal) => OutcomeDocument::new(
                 operation,
                 Some(fsl_replay::OutcomeStage::I1),
@@ -3458,10 +3465,7 @@ fn require_native_header(source: &Source) -> Result<()> {
     Ok(())
 }
 
-fn model_unit_refusal(
-    source: &Source,
-    diagnostic: fsl_cst::diagnostic::CompleteDiagnostic,
-) -> RunCause {
+fn model_unit_refusal(source: &Source, diagnostic: fsl_forms::cst::CompleteDiagnostic) -> RunCause {
     let span = diagnostic
         .byte_span()
         .unwrap_or(fsl_foundation::Span { start: 0, end: 0 });
@@ -3474,17 +3478,35 @@ fn model_unit_refusal(
         span.end,
         diagnostic.message.clone(),
     );
-    RunCause::ModelUnit(Box::new(SourceFailure {
+    RunCause::ModelUnit(Box::new(ModelUnitFailure {
         native,
         diagnostic: Box::new(diagnostic),
     }))
 }
 
+fn model_unit_outcome_diagnostic(
+    diagnostic: &fsl_forms::cst::CompleteDiagnostic,
+) -> fsl_replay::OutcomeDiagnostic {
+    let locus = diagnostic.source_region().map(|region| {
+        fsl_replay::OutcomeLocus::from(&fsl_foundation::diagnostic::Locus::Region(
+            region.clone(),
+        ))
+    });
+    fsl_replay::OutcomeDiagnostic::new(
+        Some(diagnostic.cause().as_str()),
+        diagnostic.code.as_str(),
+        locus,
+        diagnostic.message.clone(),
+    )
+    .with_source_label(diagnostic.cause().identity_label())
+}
+
 fn compile_formal_model_unit(
     source: &FormalSource,
 ) -> std::result::Result<fsl_semantics::model::intake::CompiledModelUnit, RunCause> {
-    let parsed = fsl_cst::parse_source(source.source().clone(), fsl_cst::Limits::default())
-        .map_err(|diagnostic| model_unit_refusal(source.source(), *diagnostic))?;
+    let parsed =
+        fsl_forms::cst::parse_source(source.source().clone(), fsl_forms::cst::Limits::default())
+            .map_err(|diagnostic| model_unit_refusal(source.source(), *diagnostic))?;
     fsl_semantics::model::intake::compile_model_unit_with_causes(
         &parsed,
         fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
@@ -3600,10 +3622,10 @@ fn model_unit_format_refusal(source: &Source, message: &str) -> RunCause {
     let end = text[start..]
         .find(';')
         .map_or(start, |offset| start + offset + 1);
-    let diagnostic = *fsl_cst::diagnostic::error(
+    let diagnostic = *fsl_forms::cst::diagnostic::error(
         source,
-        fsl_cst::CompleteCode::InvalidModelBinding,
-        fsl_cst::CompleteCause::MalformedDeclaration,
+        fsl_forms::cst::CompleteCode::InvalidModelBinding,
+        fsl_forms::cst::CompleteCause::MalformedDeclaration,
         fsl_foundation::Phase::Parse,
         start,
         end,
@@ -5400,6 +5422,44 @@ mod tests {
     use super::*;
     use filament_semantic_value::catalog::InternalFault;
     use ix_trace_rs::trace;
+
+    /// FR-286-AC-15: the command's forms wrapper preserves a blank source
+    /// label without inventing a region, and retains the exact region for a
+    /// located model-unit source diagnostic.
+    #[test]
+    #[trace("TC-3112", "FR-286-AC-15")]
+    fn model_unit_source_projection_preserves_optional_region_and_blank_label() {
+        let blank = fsl_forms::cst::diagnostic::read_source(
+            fsl_foundation::SourceIdentity::new("", "model"),
+            "model.fsl",
+            b"",
+            usize::MAX,
+        )
+        .expect_err("a blank authority is refused before reading source");
+        let blank_json = serde_json::to_value(model_unit_outcome_diagnostic(&blank))
+            .expect("the blank-label outcome diagnostic serializes");
+        assert_eq!(blank_json["cause"], "blank-label");
+        assert_eq!(blank_json["label"], "authority");
+        assert!(blank_json["locus"].is_null(), "{blank_json}");
+
+        let parsed = fsl_forms::cst::parse(
+            fsl_foundation::SourceIdentity::new("agent-ix", "test:model"),
+            "model.fsl",
+            b"@",
+            fsl_forms::cst::Limits::default(),
+        )
+        .expect("the source is read");
+        let diagnostics = parsed.diagnostics();
+        let [located] = diagnostics.as_slice() else {
+            panic!("one invalid-token diagnostic is retained");
+        };
+        let located_json = serde_json::to_value(model_unit_outcome_diagnostic(located))
+            .expect("the located outcome diagnostic serializes");
+        assert_eq!(located_json["locus"]["kind"], "region");
+        assert_eq!(located_json["locus"]["start"], 0);
+        assert_eq!(located_json["locus"]["end"], 1);
+        assert!(located_json.get("label").is_none(), "{located_json}");
+    }
 
     /// FR-621-AC-17: a result whose package has no graph for its node ids ends
     /// the run with the emission cause and a category that is no internal

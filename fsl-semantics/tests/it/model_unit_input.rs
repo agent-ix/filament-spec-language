@@ -157,11 +157,11 @@ fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
         fsl_cst::Limits::default().source_bytes,
     )
     .expect("source metadata admitted");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_forms::cst::parse(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:shop-model"),
         "shop.fsl",
         SHOP.as_bytes(),
-        fsl_cst::Limits::default(),
+        fsl_forms::cst::Limits::default(),
     )
     .expect("source metadata admitted");
     let compiled = compile_model_unit(&parsed, ModelNormalizationLimits::default())
@@ -342,11 +342,11 @@ domain "example/graph";
 object Node { rank: Int[0, 9]; relationship next: Node [0, 1]; }
 population nodes: Node;
 "#;
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_forms::cst::parse(
         fsl_foundation::SourceIdentity::new("test", "graph-model"),
         "graph.fsl",
         source.as_bytes(),
-        fsl_cst::Limits::default(),
+        fsl_forms::cst::Limits::default(),
     )
     .expect("source metadata admitted");
     let compiled = compile_model_unit(&parsed, ModelNormalizationLimits::default())
@@ -457,11 +457,11 @@ fn a_model_unit_with_an_unresolved_relationship_target_refuses_at_the_name() {
 domain "example/graph";
 object Node { relationship next: Ghost [0, 1]; }
 "#;
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_forms::cst::parse(
         fsl_foundation::SourceIdentity::new("test", "ghost-model"),
         "ghost.fsl",
         source.as_bytes(),
-        fsl_cst::Limits::default(),
+        fsl_forms::cst::Limits::default(),
     )
     .expect("source metadata admitted");
     let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
@@ -472,15 +472,14 @@ object Node { relationship next: Ghost [0, 1]; }
     let [diagnostic] = diagnostics.as_slice() else {
         panic!("one located refusal: {diagnostics:?}");
     };
-    assert_eq!(diagnostic.code, fsl_cst::CompleteCode::MissingDeclaration);
-    assert_eq!(diagnostic.cause.as_str(), "missing-name");
-    let region = diagnostic.region.as_ref().expect("located refusal");
-    let span = parsed
-        .source()
-        .render(region)
-        .expect("source region renders");
-    assert_eq!(span.start.byte, source.find("Ghost").expect("target name"));
-    assert_eq!(span.end.byte, span.start.byte + "Ghost".len());
+    assert_eq!(
+        diagnostic.code,
+        fsl_forms::cst::CompleteCode::MissingDeclaration
+    );
+    assert_eq!(diagnostic.cause().as_str(), "missing-name");
+    let span = diagnostic.byte_span().expect("located refusal");
+    assert_eq!(span.start, source.find("Ghost").expect("target name"));
+    assert_eq!(span.end, span.start + "Ghost".len());
 }
 
 #[trace("FR-710-AC-4", "TC-1943")]
@@ -491,11 +490,11 @@ domain "example/graph";
 object Node { }
 object Node { }
 "#;
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_forms::cst::parse(
         fsl_foundation::SourceIdentity::new("test", "duplicate-model"),
         "duplicate.fsl",
         source.as_bytes(),
-        fsl_cst::Limits::default(),
+        fsl_forms::cst::Limits::default(),
     )
     .expect("source metadata admitted");
     let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
@@ -506,15 +505,15 @@ object Node { }
     let [diagnostic] = diagnostics.as_slice() else {
         panic!("one located refusal: {diagnostics:?}");
     };
-    assert_eq!(diagnostic.code, fsl_cst::CompleteCode::AmbiguousDeclaration);
-    assert_eq!(diagnostic.cause.as_str(), "ambiguous-name");
-    let span = parsed
-        .source()
-        .render(diagnostic.region.as_ref().expect("located refusal"))
-        .expect("source region renders");
+    assert_eq!(
+        diagnostic.code,
+        fsl_forms::cst::CompleteCode::AmbiguousDeclaration
+    );
+    assert_eq!(diagnostic.cause().as_str(), "ambiguous-name");
+    let span = diagnostic.byte_span().expect("located refusal");
     let second_name = source.rfind("Node").expect("second declaration name");
-    assert_eq!(span.start.byte, second_name);
-    assert_eq!(span.end.byte, second_name + "Node".len());
+    assert_eq!(span.start, second_name);
+    assert_eq!(span.end, second_name + "Node".len());
 }
 
 #[trace("FR-710-AC-4", "TC-1943")]
@@ -524,11 +523,11 @@ fn an_operation_on_a_record_refuses_as_an_unsupported_construct() {
 domain "example/records";
 record Row { amount: Integer; operation update(); }
 "#;
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_forms::cst::parse(
         fsl_foundation::SourceIdentity::new("test", "record-operation-model"),
         "records.fsl",
         source.as_bytes(),
-        fsl_cst::Limits::default(),
+        fsl_forms::cst::Limits::default(),
     )
     .expect("source metadata admitted");
     let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
@@ -539,15 +538,15 @@ record Row { amount: Integer; operation update(); }
     let [diagnostic] = diagnostics.as_slice() else {
         panic!("one located refusal: {diagnostics:?}");
     };
-    assert_eq!(diagnostic.code, fsl_cst::CompleteCode::UnsupportedConstruct);
-    assert_eq!(diagnostic.cause.as_str(), "declaration-form");
-    let span = parsed
-        .source()
-        .render(diagnostic.region.as_ref().expect("located refusal"))
-        .expect("source region renders");
+    assert_eq!(
+        diagnostic.code,
+        fsl_forms::cst::CompleteCode::UnsupportedConstruct
+    );
+    assert_eq!(diagnostic.cause().as_str(), "declaration-form");
+    let span = diagnostic.byte_span().expect("located refusal");
     let operation = source.find("operation").expect("operation token");
-    assert_eq!(span.start.byte, operation);
-    assert_eq!(span.end.byte, operation + "operation".len());
+    assert_eq!(span.start, operation);
+    assert_eq!(span.end, operation + "operation".len());
 }
 
 #[trace("FR-710-AC-4", "TC-1943")]
@@ -556,11 +555,11 @@ fn a_reserved_domain_identity_refuses_at_the_string() {
     let source = r#"language "ix:native" edition "1-draft";
 domain "filament/native/x";
 "#;
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_forms::cst::parse(
         fsl_foundation::SourceIdentity::new("test", "reserved-model-unit"),
         "reserved.fsl",
         source.as_bytes(),
-        fsl_cst::Limits::default(),
+        fsl_forms::cst::Limits::default(),
     )
     .expect("source metadata admitted");
     let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
@@ -571,17 +570,17 @@ domain "filament/native/x";
     let [diagnostic] = diagnostics.as_slice() else {
         panic!("one located refusal: {diagnostics:?}");
     };
-    assert_eq!(diagnostic.code, fsl_cst::CompleteCode::InvalidModelBinding);
-    assert_eq!(diagnostic.cause.as_str(), "malformed-declaration");
-    let span = parsed
-        .source()
-        .render(diagnostic.region.as_ref().expect("located refusal"))
-        .expect("source region renders");
+    assert_eq!(
+        diagnostic.code,
+        fsl_forms::cst::CompleteCode::InvalidModelBinding
+    );
+    assert_eq!(diagnostic.cause().as_str(), "malformed-declaration");
+    let span = diagnostic.byte_span().expect("located refusal");
     let identity = source
         .find("\"filament/native/x\"")
         .expect("domain identity");
-    assert_eq!(span.start.byte, identity);
-    assert_eq!(span.end.byte, identity + "\"filament/native/x\"".len());
+    assert_eq!(span.start, identity);
+    assert_eq!(span.end, identity + "\"filament/native/x\"".len());
 }
 
 #[trace("FR-710-AC-3", "TC-1942")]
@@ -593,11 +592,11 @@ type Small = Int[0, 3];
 object Item { amount: Small; }
 population items: Item;
 "#;
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_forms::cst::parse(
         fsl_foundation::SourceIdentity::new("test", "scalar-model"),
         "scalar.fsl",
         source.as_bytes(),
-        fsl_cst::Limits::default(),
+        fsl_forms::cst::Limits::default(),
     )
     .expect("source metadata admitted");
     let compiled = compile_model_unit(&parsed, ModelNormalizationLimits::default())
@@ -1143,11 +1142,11 @@ fn inline_integer_fields_retain_exact_admitted_bounds_and_origins() {
     let mut admitted_types = Vec::new();
     for (declaration, field_type) in [("", "Int[-2,3]"), ("type Amount = Int[-2,3];\n", "Amount")] {
         let source = format!("language \"ix:native\" edition \"1-draft\";\ndomain \"example/shop\";\n{declaration}object Order {{ total: {field_type}; }}\npopulation orders: Order;\n");
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_forms::cst::parse(
             fsl_foundation::SourceIdentity::new("test", "inline-bounds"),
             "inline.native",
             source.as_bytes(),
-            fsl_cst::Limits::default(),
+            fsl_forms::cst::Limits::default(),
         )
         .unwrap();
         let compiled = compile_model_unit(&parsed, ModelNormalizationLimits::default())
@@ -1245,11 +1244,11 @@ fn inline_integer_fields_refuse_invalid_intervals_at_the_authored_type() {
         "Int[-170141183460469231731687303715884105729,3]",
     ] {
         let source = format!("language \"ix:native\" edition \"1-draft\";\ndomain \"example/shop\";\nobject Order {{ total: {interval}; }}\npopulation orders: Order;\n");
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_forms::cst::parse(
             fsl_foundation::SourceIdentity::new("test", "invalid-inline-bounds"),
             "inline.native",
             source.as_bytes(),
-            fsl_cst::Limits::default(),
+            fsl_forms::cst::Limits::default(),
         )
         .unwrap();
         let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
@@ -1260,13 +1259,13 @@ fn inline_integer_fields_refuse_invalid_intervals_at_the_authored_type() {
         let [diagnostic] = diagnostics.as_slice() else {
             panic!("one located bound refusal: {diagnostics:?}");
         };
-        assert_eq!(diagnostic.code, fsl_cst::CompleteCode::InvalidModelBinding);
-        assert_eq!(diagnostic.cause.as_str(), "malformed-declaration");
-        let span = parsed
-            .source()
-            .render(diagnostic.region.as_ref().unwrap())
-            .unwrap();
-        assert_eq!(&source[span.start.byte..span.end.byte], interval);
+        assert_eq!(
+            diagnostic.code,
+            fsl_forms::cst::CompleteCode::InvalidModelBinding
+        );
+        assert_eq!(diagnostic.cause().as_str(), "malformed-declaration");
+        let span = diagnostic.byte_span().expect("located refusal");
+        assert_eq!(&source[span.start..span.end], interval);
     }
 }
 
@@ -1285,11 +1284,11 @@ fn inline_integer_fields_refuse_constrained_alias_identity_collisions() {
         let source = format!(
             "language \"ix:native\" edition \"1-draft\"; domain \"example/shop\"; {declarations}"
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_forms::cst::parse(
             fsl_foundation::SourceIdentity::new("test", "inline-collision"),
             "inline.native",
             source.as_bytes(),
-            fsl_cst::Limits::default(),
+            fsl_forms::cst::Limits::default(),
         )
         .unwrap();
         let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
@@ -1300,13 +1299,13 @@ fn inline_integer_fields_refuse_constrained_alias_identity_collisions() {
         let [diagnostic] = diagnostics.as_slice() else {
             panic!("one collision refusal: {diagnostics:?}");
         };
-        assert_eq!(diagnostic.code, fsl_cst::CompleteCode::AmbiguousDeclaration);
-        assert_eq!(diagnostic.cause.as_str(), "ambiguous-name");
-        let span = parsed
-            .source()
-            .render(diagnostic.region.as_ref().unwrap())
-            .unwrap();
-        assert_eq!(&source[span.start.byte..span.end.byte], "Int[0,3]");
+        assert_eq!(
+            diagnostic.code,
+            fsl_forms::cst::CompleteCode::AmbiguousDeclaration
+        );
+        assert_eq!(diagnostic.cause().as_str(), "ambiguous-name");
+        let span = diagnostic.byte_span().expect("located refusal");
+        assert_eq!(&source[span.start..span.end], "Int[0,3]");
     }
 }
 
@@ -1329,11 +1328,11 @@ fn inline_integer_machine_and_process_fields_preserve_admitted_intervals() {
         ),
     ] {
         let source = format!("language \"ix:native\" edition \"1-draft\";\ndomain \"example/bounded\";\n{declaration}\n");
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_forms::cst::parse(
             fsl_foundation::SourceIdentity::new("test", "bounded-owners"),
             "bounded.native",
             source.as_bytes(),
-            fsl_cst::Limits::default(),
+            fsl_forms::cst::Limits::default(),
         )
         .unwrap();
         let compiled = compile_model_unit(&parsed, ModelNormalizationLimits::default())
@@ -1440,7 +1439,7 @@ fn inline_integer_machine_and_process_fields_refuse_invalid_intervals() {
             let source = format!("language \"ix:native\" edition \"1-draft\"; domain \"example/bounded\"; {kind} Level {{ number: {interval}; {body} }}");
             assert_inline_integer_refusal(
                 &source,
-                fsl_cst::CompleteCode::InvalidModelBinding,
+                fsl_forms::cst::CompleteCode::InvalidModelBinding,
                 "malformed-declaration",
                 interval,
             );
@@ -1469,7 +1468,7 @@ fn inline_integer_machine_and_process_fields_refuse_identity_collisions() {
             let source = format!("language \"ix:native\" edition \"1-draft\"; domain \"example/bounded\"; {declarations}");
             assert_inline_integer_refusal(
                 &source,
-                fsl_cst::CompleteCode::AmbiguousDeclaration,
+                fsl_forms::cst::CompleteCode::AmbiguousDeclaration,
                 "ambiguous-name",
                 "Int[0,3]",
             );
@@ -1479,15 +1478,15 @@ fn inline_integer_machine_and_process_fields_refuse_identity_collisions() {
 
 fn assert_inline_integer_refusal(
     source: &str,
-    code: fsl_cst::CompleteCode,
+    code: fsl_forms::cst::CompleteCode,
     cause: &str,
     inline_type: &str,
 ) {
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_forms::cst::parse(
         fsl_foundation::SourceIdentity::new("test", "inline-owner-refusal"),
         "inline.native",
         source.as_bytes(),
-        fsl_cst::Limits::default(),
+        fsl_forms::cst::Limits::default(),
     )
     .unwrap();
     let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
@@ -1499,10 +1498,7 @@ fn assert_inline_integer_refusal(
         panic!("one located inline refusal: {diagnostics:?}");
     };
     assert_eq!(diagnostic.code, code);
-    assert_eq!(diagnostic.cause.as_str(), cause);
-    let span = parsed
-        .source()
-        .render(diagnostic.region.as_ref().unwrap())
-        .unwrap();
-    assert_eq!(&source[span.start.byte..span.end.byte], inline_type);
+    assert_eq!(diagnostic.cause().as_str(), cause);
+    let span = diagnostic.byte_span().expect("located refusal");
+    assert_eq!(&source[span.start..span.end], inline_type);
 }

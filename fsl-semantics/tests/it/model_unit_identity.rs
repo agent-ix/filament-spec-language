@@ -17,11 +17,11 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\ndomain \"exam
 
 fn selected(declarations: &str) -> Result<SelectedModels, UnitIntakeRefusal> {
     let source = format!("{HEADER}{declarations}");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_forms::cst::parse(
         SourceIdentity::new("test", "identity-model"),
         "identity.fsl",
         source.as_bytes(),
-        fsl_cst::Limits::default(),
+        fsl_forms::cst::Limits::default(),
     )
     .expect("model source metadata admits");
     compile_model_unit_with_causes(&parsed, ModelNormalizationLimits::default())

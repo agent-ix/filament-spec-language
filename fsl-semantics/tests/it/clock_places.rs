@@ -3533,13 +3533,17 @@ fn timer_clock_sequence() -> Vec<u8> {
 /// map-key domain of a slot-presence quantifier. Map membership itself is
 /// the optional presence of each clock place.
 fn timer_map_clock_document() -> Vec<u8> {
+    timer_map_clock_document_with_key("Text")
+}
+
+fn timer_map_clock_document_with_key(key_type: &str) -> Vec<u8> {
     timer_document(|document: &mut Value| {
         let map = package("ClockMap");
         let mut map_type = wire_type(
             &map,
             "unused",
             json!({
-                "keys": "ix://filament/native/Text",
+                "keys": format!("ix://filament/native/{key_type}"),
                 "values": "ix://filament/native/Clock",
                 "bound": {"lower": 0, "upper": 2},
             }),
@@ -4664,11 +4668,11 @@ fn native_target_constraint_refusals_name_the_keyword() {
 #[test]
 fn a_model_unit_emits_a_clock_reference_definition() {
     let source = "language \"ix:native\" edition \"1-draft\"; domain \"acme/rpc\"; object Call { x: Clock; r: Reference<Clock>; }";
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_forms::cst::parse(
         fsl_foundation::SourceIdentity::new("test", "clock-reference"),
         "model.fsl",
         source.as_bytes(),
-        fsl_cst::Limits::default(),
+        fsl_forms::cst::Limits::default(),
     )
     .expect("source parses");
     let compiled = fsl_semantics::model::intake::compile_model_unit(
@@ -4822,6 +4826,46 @@ fn quantified_presence_over_a_clock_map_uses_its_key_domain() {
         .node(selector.semantic_type().expect("typed map selector"))
         .expect("map selector type exists");
     assert_eq!(selector_type.semantic_form(), "text");
+}
+
+/// FR-953-AC-1: Boolean map keys are retained as the selector type of a
+/// clock-map slot-presence quantifier.
+#[trace("TC-3084", "FR-953-AC-1")]
+#[test]
+fn quantified_presence_over_a_boolean_clock_map_uses_boolean_keys() {
+    let document = timer_map_clock_document_with_key("Boolean");
+    let graph = check(
+        &document,
+        &format!(
+            "{UNITS}{DENSE}time invariant P when {{ \
+             exists(k in self.mo : present(k)) }} {{ self.x <= 5 ms }}\n"
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("Map<Boolean, Clock> slot presence: {refusals:?}"));
+    let semantic_graph = graph.semantic_graph();
+    let presence = semantic_graph
+        .nodes()
+        .find_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.option.present" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .expect("the slot-presence application exists");
+    let [_, _, MemberTerm::Leaf(LeafTerm::Reference { target })] =
+        presence.arguments.as_slice()
+    else {
+        panic!("option.present has a parameter selector: {presence:?}");
+    };
+    let selector = semantic_graph
+        .node(target.admitted().expect("selector reference is admitted").clone())
+        .expect("selector parameter exists");
+    let selector_type = semantic_graph
+        .node(selector.semantic_type().expect("selector is typed"))
+        .expect("selector type exists");
+    assert_eq!(selector_type.semantic_form(), "boolean");
 }
 
 /// Native clock presence belongs to the map slot, so wrapping its value in

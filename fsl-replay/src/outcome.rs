@@ -2525,6 +2525,13 @@ impl OutcomeDiagnostic {
         }
     }
 
+    /// This diagnostic with the source label a blank-label refusal names.
+    #[must_use]
+    pub fn with_source_label(mut self, label: Option<SourceLabel>) -> Self {
+        self.label = label;
+        self
+    }
+
     /// This diagnostic with the kind of the missing thing (FR-286 "Missing
     /// selections") and the hint of that kind's catalog row. A `None` kind
     /// leaves the diagnostic as built, and so does a diagnostic that is not

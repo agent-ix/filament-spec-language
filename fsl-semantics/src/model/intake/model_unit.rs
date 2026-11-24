@@ -32,9 +32,9 @@ pub(super) fn looks_like_model_unit(bytes: &[u8]) -> bool {
     ) else {
         return false;
     };
-    let tokens = parsed
-        .cst()
-        .tokens()
+    let cst = parsed.cst();
+    let token_views = cst.tokens();
+    let tokens = token_views
         .iter()
         .filter(|token| token.class() == cst::TokenClass::Token)
         .map(|token| token.spelling())
@@ -70,11 +70,11 @@ pub(super) fn compile_model_unit_bytes(
         .get(6)
         .and_then(|value| serde_json::from_str::<String>(value).ok())
         .ok_or_else(|| refusal("model-unit domain identity is missing"))?;
-    let source = cst::read_source(
+    let source = cst::diagnostic::read_source(
         SourceIdentity::new("filament", identity),
         "model-unit.fsl",
         bytes,
-        cst::Limits::default().source_bytes,
+        cst::Limits::default().source_bytes(),
     )
     .map_err(|error| refusal(format!("{error}")))?;
     let parsed = cst::parse_source(source, cst::Limits::default())
@@ -1298,7 +1298,7 @@ fn project_link_refusal(
 ) -> CompleteDiagnostic {
     if let super::ModelRefusalCause::IntakeLimitExceeded { bound, .. } = refusal.cause {
         if let Ok(bound) = usize::try_from(bound) {
-            let mut reported = *cst::resource_exhausted(
+            let mut reported = *cst::diagnostic::resource_exhausted(
                 parsed.source(),
                 Phase::Parse,
                 span,
@@ -3322,7 +3322,7 @@ fn diagnostic(
     span: Span,
     message: impl Into<String>,
 ) -> CompleteDiagnostic {
-    *cst::error(
+    *cst::diagnostic::error(
         parsed.source(),
         code,
         cause,
