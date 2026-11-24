@@ -603,6 +603,12 @@ impl Run<'_, '_> {
                     })
                     .collect::<Result<BTreeSet<_>, _>>()?;
                 match &edge.taken {
+                    Taken::Failing => {
+                        return Err(End::Fault(InternalFault::new(
+                            "refinement-check",
+                            "a-model-edge-is-never-failing",
+                        )));
+                    }
                     Taken::Stutter => {
                         let (key, _) = protocol.state_key(candidate).map_err(|_| {
                             End::Fault(InternalFault::new(
@@ -2874,6 +2880,7 @@ impl Run<'_, '_> {
             .ok_or_else(|| fault("candidate-edge-target-is-retained"))?;
         let mut relation = CandidateRelation::new();
         match taken {
+            Taken::Failing => return Err(fault("a-model-edge-is-never-failing").into()),
             Taken::CandidateSteps(rows) => {
                 relation = candidate_steps_relation(
                     rows.iter().map(|row| {
@@ -3329,6 +3336,7 @@ impl Run<'_, '_> {
                 Taken::Stutter => false,
                 Taken::CandidateSteps(steps) => steps.iter().any(|step| step.transition.is_some()),
                 Taken::Abstract(_) | Taken::Protocol(_) | Taken::ProtocolTraces(_) => true,
+                Taken::Failing => false,
             };
             match transition {
                 Some(transition) => {

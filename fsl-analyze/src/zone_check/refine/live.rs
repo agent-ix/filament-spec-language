@@ -283,7 +283,7 @@ impl Product<'_, '_> {
                         .iter()
                         .filter_map(|step| step.transition.as_ref())
                         .collect(),
-                    Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) => Vec::new(),
+                    Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => Vec::new(),
                 })
             }))
         {
@@ -1085,7 +1085,7 @@ impl Product<'_, '_> {
                 Some(Taken::CandidateSteps(rows)) => {
                     transitions.extend(rows.iter().filter_map(|row| row.transition.clone()));
                 }
-                Some(Taken::Stutter) | None => {}
+                Some(Taken::Stutter | Taken::Failing) | None => {}
                 Some(Taken::Abstract(_)) => {
                     return Err(ZoneCheckRefusal::Fault(
                         "hidden-model-edge-retains-candidate-steps",
@@ -1157,7 +1157,7 @@ impl Product<'_, '_> {
                             })
                         })
                         .collect::<Result<Vec<_>, ZoneCheckRefusal>>()?,
-                    Some(Taken::Stutter) | None => source
+                    Some(Taken::Stutter | Taken::Failing) | None => source
                         .iter()
                         .filter(|(key, _)| next.iter().any(|(held, _)| held == key))
                         .map(|(key, _)| CandidateFairStep {

@@ -168,7 +168,7 @@ impl AbstractClass {
     /// takes none.
     pub fn is_taken_by(&self, taken: &Taken) -> bool {
         match taken {
-            Taken::Stutter => false,
+            Taken::Stutter | Taken::Failing => false,
             Taken::Abstract(transitions) => {
                 transitions.iter().any(|transition| self.covers(transition))
             }

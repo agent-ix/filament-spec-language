@@ -245,7 +245,9 @@ fn the_treq_certificate_is_a_refinement_form_the_checker_accepts() {
 /// FR-245 accepts it. With the `locked` mark removed from that node it is
 /// `Rejected` `StepFails` at the `undo` edge (FR-245-AC-8).
 #[trace("TC-699", "FR-244-AC-5")]
+#[trace("TC-699", "FR-244-AC-8")]
 #[trace("TC-700", "FR-245-AC-8")]
+#[trace("TC-700", "FR-245-AC-12")]
 #[trace("TC-1170", "FR-430-AC-8")]
 #[test]
 fn the_locked_undo_post_state_is_a_locked_entry_node() {
@@ -270,7 +272,8 @@ fn the_locked_undo_post_state_is_a_locked_entry_node() {
         panic!("one edge into the entry node: {into:?}");
     };
     assert_eq!(operation(&certificate, *undo), "undo");
-    assert_eq!(part.taken[*undo], None);
+    // FR-244-AC-8: the failing edge into the entry lists `Taken::Failing`.
+    assert_eq!(part.taken[*undo], Some(Taken::Failing));
     let source = certificate.edges[*undo].from;
     assert!(certificate.nodes[source].automaton_state < reserved);
     assert_eq!(
@@ -285,6 +288,34 @@ fn the_locked_undo_post_state_is_a_locked_entry_node() {
         verdict(&world, &unmarked),
         rejected(CertificateRule::StepFails, edge(*undo))
     );
+
+    // FR-245-AC-12 (TC-700 step 9): `None` for the failing edge into the
+    // entry, `Taken::Failing` on an edge inside the locked region and on a
+    // passing edge are each `Rejected` `PostDiffers` at that edge.
+    let tamper = |at: usize, taken: Option<Taken>| {
+        let mut forged = certificate.clone();
+        forged.refinement.as_mut().expect("the part").taken[at] = taken;
+        verdict(&world, &forged)
+    };
+    assert_eq!(
+        tamper(*undo, None),
+        rejected(CertificateRule::PostDiffers, edge(*undo))
+    );
+    assert_ne!(Some(Taken::Failing), None, "the two serialize differently");
+    let inside: Vec<usize> = (0..certificate.edges.len())
+        .filter(|&at| certificate.edges[at].from == *entry)
+        .collect();
+    let passing: Vec<usize> = (0..certificate.edges.len())
+        .filter(|&at| at != *undo && certificate.edges[at].from != *entry)
+        .collect();
+    assert!(!passing.is_empty(), "a passing edge exists");
+    for at in inside.into_iter().chain(passing) {
+        assert_eq!(
+            tamper(at, Some(Taken::Failing)),
+            rejected(CertificateRule::PostDiffers, edge(at)),
+            "Taken::Failing at edge {at}"
+        );
+    }
 }
 
 /// FR-245-AC-8 and FR-430-AC-8 (TC-700): the `TReq` certificate with its
