@@ -233,7 +233,14 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
             .expect("the typed refusal serializes"),
     )
     .expect("the refusal document is JSON");
-    assert_eq!(diagnostic["disposition"]["refusal"]["code"], "invalid_syntax");
+    let source_diagnostic = &diagnostic["diagnostics"][0];
+    assert_eq!(source_diagnostic["code"], "invalid_syntax", "{diagnostic}");
+    assert_eq!(source_diagnostic["locus"]["kind"], "region", "{diagnostic}");
+    assert!(source_diagnostic["locus"]["source"].is_object(), "{diagnostic}");
+    assert!(source_diagnostic["locus"]["start"].as_u64().is_some(), "{diagnostic}");
+    assert!(source_diagnostic["locus"]["end"].as_u64().is_some(), "{diagnostic}");
+    assert!(source_diagnostic["locus"]["end"].as_u64()
+        > source_diagnostic["locus"]["start"].as_u64(), "{diagnostic}");
 }
 
 /// FR-621 "The record's `backend` member": a malformed reduction selection
