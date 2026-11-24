@@ -1116,7 +1116,7 @@ fn field_kind_matches(raw: &SnapshotValue, value_type: &filament_exact::ValueTyp
             )
             | (
                 RawForm::Reference(_),
-                filament_exact::ValueType::Reference(_)
+                filament_exact::ValueType::Reference(_) | filament_exact::ValueType::ClockReference
             )
             | (
                 RawForm::Absent | RawForm::Present(_),
@@ -1171,7 +1171,7 @@ fn object_field_kind_matches(
             )
             | (
                 RawForm::Reference(_),
-                filament_exact::ValueType::Reference(_)
+                filament_exact::ValueType::Reference(_) | filament_exact::ValueType::ClockReference
             )
             | (
                 RawForm::Collection(..),
@@ -1669,14 +1669,18 @@ fn admit_leaf(
                 .resolve(reference, type_identity.clone())
                 .map(Value::Reference)
         }
-        // FR-230-AC-71: the value is the kernel's clock-place reference, built
-        // from the snapshot's universe and place id. That admission is
-        // QSL-3002; until then the reference is refused, typed, never read as
-        // an object reference.
-        (RawForm::Reference(_), filament_exact::ValueType::ClockReference) => Err(
-            admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
-                .with("reason", "clock-reference-admission-pending-qsl-3002"),
-        ),
+        // A Clock-place reference is data, never an object reference. This
+        // route has no route-neutral place identity with which to admit it.
+        (RawForm::Reference(reference), filament_exact::ValueType::ClockReference) => {
+            let record = admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+                .with("reason", "missing-route-neutral-place-identity");
+            Err(match &references.document {
+                Some(document) => record
+                    .with("document", document.clone())
+                    .with("target", reference.key.clone()),
+                None => record,
+            })
+        }
         (RawForm::Variant(variant), filament_exact::ValueType::Enum(slot)) => {
             admit_variant(references, variant, slot)
         }
@@ -5171,10 +5175,7 @@ mod tests {
             assert_eq!(record.catalog.cause(), "unsupported-feature");
             assert_eq!(
                 record.fields,
-                BTreeMap::from([(
-                    "reason",
-                    "clock-reference-admission-pending-qsl-3002".to_owned()
-                )])
+                BTreeMap::from([("reason", "missing-route-neutral-place-identity".to_owned())])
             );
             assert_eq!(record.path, path);
         }
