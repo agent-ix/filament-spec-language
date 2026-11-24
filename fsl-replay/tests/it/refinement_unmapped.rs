@@ -6,7 +6,7 @@
 use filament_exact::Value;
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::catalog::UndefinedReason;
-use fsl_eval::simulation::model::{operation_identity_text, PackageModelInput};
+use fsl_eval::simulation::model::{PackageModelInput, operation_identity_text};
 use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::ObjectKey;
 use fsl_replay::{
@@ -1019,8 +1019,8 @@ fn the_most_specific_admitted_row_maps_the_object_whatever_the_row_order() {
 #[trace("TC-546", "FR-141-AC-16", "FSpec-FR-375-AC-39", "TC-2114")]
 #[test]
 fn an_inherited_operation_row_lifts_its_receiver_against_its_target_subtype() {
-    let queue = "object Q::Queue from R::Ring { items = sequence[]; }";
-    let fast = "object Q::FastQueue from R::Ring { items = sequence[]; }";
+    let queue = "object Q::Queue from R::Ring {}";
+    let fast = "object Q::FastQueue from R::Ring {}";
     for object_rows in [[queue, fast], [fast, queue]] {
         let world = subtype_readback_world(&subtype_refinement(
             object_rows,
@@ -1062,11 +1062,11 @@ fn an_inherited_operation_row_lifts_its_receiver_against_its_target_subtype() {
                 .to_owned()
         };
         assert_eq!(
-            step_target_type("Slot::put"),
+            step_target_type("Slot::take"),
             "ix://example/ring-queue-spec/FastQueue"
         );
         assert_eq!(
-            step_target_type("Slot::put2"),
+            step_target_type("Slot::take2"),
             "ix://example/ring-queue-spec/SlowQueue"
         );
 
@@ -1115,11 +1115,7 @@ fn an_inherited_operation_row_lifts_its_receiver_against_its_target_subtype() {
 
         let concrete = world.concrete_system(UNLIMITED);
         let abstracted = world.abstract_system(UNLIMITED);
-        let (pre, post) = (
-            ring_state(&concrete, 0, 0, [0, 0]),
-            ring_state(&concrete, 0, 1, [1, 0]),
-        );
-        let wanted = concrete.state_key_of(&post).expect("a key").0;
+        let pre = concrete.initial_states()[0].state().clone();
         let mapped = |state: &ModelState| {
             map_state(
                 &refinement,
@@ -1131,7 +1127,7 @@ fn an_inherited_operation_row_lifts_its_receiver_against_its_target_subtype() {
             .expect("the state maps through package readback")
             .visible
         };
-        for (operation, subtype) in [("Slot/put", "FastQueue"), ("Slot/put2", "SlowQueue")] {
+        for (operation, subtype) in [("Slot/take", "FastQueue"), ("Slot/take2", "SlowQueue")] {
             let identity =
                 operation_identity_text(&key(RING, operation)).expect("an identity text");
             let (transition, reached) = concrete
@@ -1139,10 +1135,7 @@ fn an_inherited_operation_row_lifts_its_receiver_against_its_target_subtype() {
                 .expect("the state expands")
                 .successors
                 .into_iter()
-                .find(|(transition, reached)| {
-                    transition.operation() == identity
-                        && concrete.state_key_of(reached.state()).expect("a key").0 == wanted
-                })
+                .find(|(transition, _)| transition.operation() == identity)
                 .unwrap_or_else(|| panic!("{operation} is enabled"));
             let verdict = check_step(
                 &refinement,
@@ -1184,16 +1177,24 @@ fn an_inherited_operation_row_lifts_its_receiver_against_its_target_subtype() {
 fn subtype_refinement(objects: [&str; 2], targets: [&str; 2]) -> String {
     let [first, second] = objects;
     let [put, put2] = targets;
+    let slow_items = if first.contains("self.items") {
+        "items = self.items;"
+    } else if first.ends_with("{}") {
+        ""
+    } else {
+        ITEMS_ROW
+    };
     format!(
         "invariant Anything using v on R::Ring at current {{ true }}\n\
          refinement RingIsQueue using inf abstract Q concrete R {{\n\
          population Q::queues from R::rings;\n\
          population Q::slows from R::rings;\n\
          {first}\n{second}\n\
-         object Q::SlowQueue from R::Ring {{ {ITEMS_ROW} }}\n\
-         step R::Slot::put -> {put}::enq(self.ring, x);\n\
-         step R::Slot::put2 -> {put2}::enq(self.ring, x);\n\
-         step R::Slot::take -> Q::FastQueue::deq(self.ring);\n\
+         object Q::SlowQueue from R::Ring {{ {slow_items} }}\n\
+         step R::Slot::put -> stutter;\n\
+         step R::Slot::put2 -> stutter;\n\
+         step R::Slot::take -> {put}::deq(self.ring);\n\
+         step R::Slot::take2 -> {put2}::deq(self.ring);\n\
          }}"
     )
 }

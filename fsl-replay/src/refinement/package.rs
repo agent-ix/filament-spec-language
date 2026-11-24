@@ -3,10 +3,10 @@
 
 use filament_checked::key::DeclarationKey;
 use filament_contract_model::{CheckedNodeId, CheckedTerm, RefinementKey, RefinementStepTarget};
-use filament_exact::{NodeKey, Value};
+use filament_exact::{MemberOwner, NodeKey, Value};
 use filament_semantic_value::fairness::FairnessConstraint;
-use fsl_eval::simulation::model::{ModelSystem, PackageModelInput, RowReading, StateObservation};
 use fsl_eval::simulation::ExpansionStop;
+use fsl_eval::simulation::model::{ModelSystem, PackageModelInput, RowReading, StateObservation};
 use fsl_package::{
     BarePackage, BareWorld, ReaderProtocolProjection, RefinementRowRefusal, RefinementView,
 };
@@ -280,20 +280,46 @@ impl<'a> PackageRefinement<'a> {
         }
         let mut objects = Vec::new();
         for row in view.objects() {
-            let abstract_type = object_key(package, local(&row.abstract_type)?)?;
+            let abstract_node = local(&row.abstract_type)?;
+            let abstract_type = object_key(package, abstract_node)?;
             let concrete_type = object_key(package, &row.concrete_type)?;
-            let declared = input
-                .refinement_model()
-                .fields(&abstract_type)
-                .map_err(|_| unsupported("abstract field declarations"))?
-                .ok_or_else(|| unsupported("abstract field declarations"))?;
+            let declared = package
+                .package()
+                .model_object_fields(abstract_node)
+                .map_err(|_| unsupported("abstract field declarations"))?;
+            let identities = package
+                .identities()
+                .ok_or_else(|| unsupported("abstract field identities"))?;
+            let identity_key = |field: &filament_contract_model::CheckedModelField|
+             -> Result<DeclarationKey, PackageRefinementRefusal> {
+                let owner = package
+                    .node_key(field.declaring_node_id())
+                    .ok_or_else(|| unsupported("abstract field owner identity"))?;
+                let identity = identities
+                    .field_rows()
+                    .iter()
+                    .find(|identity| {
+                        identity.record_node == *abstract_node
+                            && identity.member_id.member() == field.name()
+                            && identity.member_id.owner() == &MemberOwner::Node(owner.clone())
+                    })
+                    .ok_or_else(|| unsupported("abstract field identity"))?;
+                Ok(DeclarationKey {
+                    package: identity.selected_document.to_string(),
+                    node: identity.field_original_identity.to_string(),
+                })
+            };
+            let declared_keys = declared
+                .fields()
+                .iter()
+                .map(identity_key)
+                .collect::<Result<Vec<_>, _>>()?;
             let mut fields = Vec::new();
             for field in &row.fields {
-                let key = declared
-                    .iter()
-                    .find(|declared| declared.name == field.name.as_ref())
-                    .map(|declared| declared.key.clone())
+                let admitted = declared
+                    .field(field.name.as_ref())
                     .ok_or_else(|| unsupported("abstract field identity"))?;
+                let key = identity_key(admitted)?;
                 fields.push(Field {
                     key,
                     expression: Expression {
@@ -306,10 +332,9 @@ impl<'a> PackageRefinement<'a> {
                     },
                 });
             }
-            let hidden = declared
+            let hidden = declared_keys
                 .into_iter()
-                .filter(|declared| !fields.iter().any(|field| field.key == declared.key))
-                .map(|declared| declared.key)
+                .filter(|key| !fields.iter().any(|field| field.key == *key))
                 .collect();
             objects.push(Object {
                 abstract_type,
@@ -371,7 +396,7 @@ impl<'a> PackageRefinement<'a> {
                 RefinementStepTarget::Stutter => Target::Stutter,
                 RefinementStepTarget::Any => Target::Any,
                 RefinementStepTarget::ProtocolStep { .. } => {
-                    return Err(unsupported("protocol step"))
+                    return Err(unsupported("protocol step"));
                 }
             };
             steps.push(Step {
