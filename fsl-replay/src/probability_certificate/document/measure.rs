@@ -2102,6 +2102,7 @@ fn acceptance(
 ) -> ExactProbabilityCertificateCheck {
     ExactProbabilityCertificateCheck::Accepted(ExactProbabilityAcceptance {
         initial_values: None,
+        bound: None,
         value,
         side,
         certificate: ExactProbabilityCertificate {
@@ -2366,8 +2367,9 @@ pub(super) fn check(
                 key: binding.instance.key,
             });
             token.initial_values = Some(CheckedInitialValues {
+                bindings: vec![binding; coverage.len()],
+                instances: vec![None; coverage.len()],
                 values: coverage,
-                binding,
             });
         }
         return Ok(accepted);

@@ -533,7 +533,7 @@ fn relation_pre_eligible(expression: ExprRef<'_>, hyper: &super::HyperTyping) ->
 /// value constructor. This is a source-spelling intake point, like the native
 /// literal classifier.
 #[ix_trace_rs::string_edge]
-fn is_option_some_constructor(name: &str) -> bool {
+pub(super) fn is_option_some_constructor(name: &str) -> bool {
     name == "Some"
 }
 
@@ -3854,7 +3854,21 @@ impl<'a> Typer<'a> {
             } => match pair {
                 Pair::First(second, second_location) => {
                     let peer = typed.value_type.clone();
-                    let second_hint = if matches!(
+                    // Only a literal takes its peer's domain (FR-495-AC-27): a nested
+                    // Rational `+`, `-` or `*` keeps the domain its own operands give it.
+                    let nested_rational = matches!(&peer, ValueType::Rational(_))
+                        && matches!(
+                            second.node(),
+                            ExprNode::Binary {
+                                operator: BinaryOperator::Add
+                                    | BinaryOperator::Subtract
+                                    | BinaryOperator::Multiply,
+                                ..
+                            }
+                        );
+                    let second_hint = if nested_rational {
+                        None
+                    } else if matches!(
                         operator,
                         ArithmeticOperator::Multiply | ArithmeticOperator::Divide
                     ) && matches!(&peer, ValueType::Quantity(_))
@@ -3862,9 +3876,9 @@ impl<'a> Typer<'a> {
                         exact_rational_literal_type(second)
                             .or_else(|| exact_decimal_literal_type(second))
                             .map(Cow::Owned)
-                            .unwrap_or_else(|| Cow::Owned(peer))
+                            .or_else(|| Some(Cow::Owned(peer)))
                     } else {
-                        Cow::Owned(peer)
+                        Some(Cow::Owned(peer))
                     };
                     frames.push(Frame::Peer(Box::new(PeerFrame {
                         form: PeerForm::Arithmetic {
@@ -3877,7 +3891,7 @@ impl<'a> Typer<'a> {
                     })));
                     Ok(Step::Descend(Goal::Infer(
                         second,
-                        Some(second_hint),
+                        second_hint,
                         second_location,
                     )))
                 }
@@ -4471,7 +4485,7 @@ impl<'a> Typer<'a> {
                     Some(_) if self.shadows_source_population(population, Some(binder)) => {
                         return Err(ambiguous_source_population(population, &location));
                     }
-                    Some(named) => self.population_domain(&named, &location.child(0))?,
+                    Some(named) => self.population_domain(&named, &location)?,
                     None if named.is_under_alias(population) => {
                         return Err(missing_segment_at(
                             population,

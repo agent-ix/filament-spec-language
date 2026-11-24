@@ -108,9 +108,10 @@ pub(crate) use model::{
     record_node_key, strictly_below, QuantityKind, SourceClockLayout, SourceClockPlace,
 };
 pub use model::{
-    collection_kind, model_root_key, AdmittedModel, CollectionShape, ForeignView, ModelClause,
-    PlaceRow, PlaceStep, SelectedModelEnumDeclaration, SelectedModelEnumMember, SelectedModelUnion,
-    SelectedModelUnionCase, SelectedModelUnionPayload, SelectedOperationMember,
+    clock_field_member_type, collection_kind, model_root_key, AdmittedModel, CollectionShape,
+    ForeignView, ModelClause, PlaceRow, PlaceStep, SelectedModelEnumDeclaration,
+    SelectedModelEnumMember, SelectedModelUnion, SelectedModelUnionCase, SelectedModelUnionPayload,
+    SelectedOperationMember, SourceClockEntry, SourceClockMembers,
 };
 pub(crate) use model::{model_node_content, population_node_content};
 pub(crate) use protocol::{
@@ -1035,6 +1036,9 @@ pub(crate) struct Lowered {
     /// the slot it binds: the roots a claim's extent is keyed by.
     pub(crate) binders: BTreeMap<BinderSite, NodeKey>,
     pub(crate) parameter_spans: BTreeMap<(NodeKey, OccurrenceOrigin), fsl_foundation::Span>,
+    /// Each data parameter of each source object operation, by the object's
+    /// node, the operation name and the parameter name: its type's node.
+    pub(crate) source_parameter_nodes: BTreeMap<(NodeKey, String, String), NodeKey>,
     /// Each `bounded_domain`/`model_population` node lowering built (FR-094,
     /// FR-380), whose `Type` occurrences take their ordinals in ascending
     /// source order.
@@ -1160,6 +1164,9 @@ pub(crate) struct Lowering<'a> {
     /// Authored function parameters, located by the same binder site whose
     /// node is resolved when a recursion group settles.
     parameter_spans: BTreeMap<BinderSite, fsl_foundation::Span>,
+    /// Each data parameter of each source object operation, by the object's
+    /// node, the operation name and the parameter name: its type's node.
+    source_parameter_nodes: BTreeMap<(NodeKey, String, String), NodeKey>,
     /// The checking stage's work meter (`CheckingLimits::work_budget`):
     /// each node built and each group keyed charges it.
     meter: &'a mut Meter,
@@ -2301,6 +2308,7 @@ impl<'a> Lowering<'a> {
             draft_binders: Vec::new(),
             peeked_declarations: BTreeMap::new(),
             parameter_spans: BTreeMap::new(),
+            source_parameter_nodes: BTreeMap::new(),
             meter,
             node_limit: u64::MAX,
             node_budget: u64::MAX,
@@ -2426,6 +2434,7 @@ impl<'a> Lowering<'a> {
                 .collect(),
             binders: self.binders,
             parameter_spans,
+            source_parameter_nodes: self.source_parameter_nodes,
             population_nodes: self.population_nodes,
             // Ranked first, so collecting compares each key with one neighbour.
             composites,
@@ -4149,6 +4158,9 @@ impl<'a> Lowering<'a> {
         }
         for members in self.protocol_members.values_mut() {
             members.clause = resolve(&members.clause).map_err(|()| unresolved(&root))?;
+            if let Some(terminal) = &members.terminal {
+                members.terminal = Some(resolve(terminal).map_err(|()| unresolved(&root))?);
+            }
             for node in members.nodes.values_mut() {
                 *node = resolve(node).map_err(|()| unresolved(&root))?;
             }
@@ -4579,19 +4591,26 @@ impl<'a> Lowering<'a> {
         semantic_type: NodeRef,
         body: BodyTerm,
     ) -> Result<LeafTerm, CheckRefusal> {
+        self.value_node_at(node.location(), form, semantic_type, body)
+    }
+
+    /// Key a `value` node located at `location` and return a reference to it.
+    pub(super) fn value_node_at(
+        &mut self,
+        location: &Location,
+        form: &'static str,
+        semantic_type: NodeRef,
+        body: BodyTerm,
+    ) -> Result<LeafTerm, CheckRefusal> {
         let key = self.insert_ref(
-            node.location(),
+            location,
             NodeTag::Value,
             form,
             Some(semantic_type),
             None,
             body,
         )?;
-        self.record(
-            key.clone(),
-            OccurrenceRole::Expression,
-            node.location().clone(),
-        );
+        self.record(key.clone(), OccurrenceRole::Expression, location.clone());
         Ok(LeafTerm::reference_node(key))
     }
 
@@ -5399,13 +5418,33 @@ impl<'a> Lowering<'a> {
                 frames.push(LowerFrame::SlotPresence { node, field, all });
                 return Ok(LowerStep::Descend(owner));
             }
-            NodeKind::History { .. } => {
-                return Err(refuse(
-                    node.location(),
-                    CheckCause::UnsupportedFeature {
-                        loci: vec![node.location().clone()],
-                    },
-                ));
+            NodeKind::History {
+                reference,
+                object_type,
+                field,
+            } => {
+                // FSpec FR-322 "Refinement row expressions": a history read
+                // is `filament.op.refinement.history` over the receiver,
+                // naming the field by the model node of the concrete type
+                // the refinement adds it to. The refinement does not enter
+                // the node's key.
+                let declaration = self.object_node(object_type.clone(), node.location())?;
+                let name = Identifier::new(field.clone()).map_err(|_| {
+                    refuse(
+                        node.location(),
+                        CheckCause::NodePreimage(NodeKeyRefusal::EmptyBindingName),
+                    )
+                })?;
+                (
+                    Keyed::Application(
+                        Operator::Query,
+                        Operation {
+                            member: Some(Member::History { declaration, name }),
+                            ..plain("filament.op.refinement.history")
+                        },
+                    ),
+                    Operands::One(reference),
+                )
             }
             NodeKind::Present(operand) => (
                 Keyed::Application(Operator::Present, plain("filament.op.option.present")),
@@ -7244,6 +7283,19 @@ impl<'a> Lowering<'a> {
         declared: &ValueType,
         scalar: Option<&'static str>,
     ) -> Result<LeafTerm, CheckRefusal> {
+        self.literal_at(node.location(), value, declared, scalar)
+    }
+
+    /// The literal term of `value` typed at `declared`, located at
+    /// `location`: the one value-to-literal decision a checked literal node
+    /// and a refinement history row's initial value both use.
+    pub(super) fn literal_at(
+        &mut self,
+        location: &Location,
+        value: &Value,
+        declared: &ValueType,
+        scalar: Option<&'static str>,
+    ) -> Result<LeafTerm, CheckRefusal> {
         let literal = match value {
             Value::Boolean(value) => LiteralValue::Boolean(*value),
             Value::Integer(value) => LiteralValue::Integer(value.clone()),
@@ -7259,7 +7311,7 @@ impl<'a> Lowering<'a> {
                 // FR-093: the enum member's FSpec `enum_value` node, whose
                 // key is its `VariantId` (ADR-013 O-14). A model variant
                 // type's nodes are built where it is first named, here.
-                self.type_ref(declared, node.location())?;
+                self.type_ref(declared, location)?;
                 let variant = member.variant();
                 let key = crate::value::enumeration::enum_value_key_in(
                     &self.package_name,
@@ -7268,15 +7320,11 @@ impl<'a> Lowering<'a> {
                 )
                 .map_err(|_| {
                     fault(
-                        node.location(),
+                        location,
                         KeyFault::InvalidMemberKey(variant.owner().clone()),
                     )
                 })?;
-                self.record(
-                    key.clone(),
-                    OccurrenceRole::Expression,
-                    node.location().clone(),
-                );
+                self.record(key.clone(), OccurrenceRole::Expression, location.clone());
                 return Ok(LeafTerm::reference_node(key.into()));
             }
             // FR-093-AC-33: a quantity literal is a `quantity` literal typed
@@ -7293,8 +7341,8 @@ impl<'a> Lowering<'a> {
             | Value::Collection(_)
             | Value::Reference(_)
             | Value::Population(_)
-            | Value::Union(_) => return Err(fault(node.location(), KeyFault::UnbuiltLiteral)),
-            Value::Map(_) => return Err(Self::unbuilt_map_literal(node.location())),
+            | Value::Union(_) => return Err(fault(location, KeyFault::UnbuiltLiteral)),
+            Value::Map(_) => return Err(Self::unbuilt_map_literal(location)),
             Value::Uuid(value) => LiteralValue::Uuid(*value),
             Value::Timestamp(value) => LiteralValue::Timestamp(*value),
             Value::Bytes(value) => {
@@ -7307,11 +7355,11 @@ impl<'a> Lowering<'a> {
             Value::String(value) => LiteralValue::String(value.clone()),
         };
         let semantic_type = match scalar {
-            Some(form) => NodeRef::from(self.scalar(form, node.location())?),
-            None => self.type_ref(declared, node.location())?,
+            Some(form) => NodeRef::from(self.scalar(form, location)?),
+            None => self.type_ref(declared, location)?,
         };
-        self.value_node(
-            node,
+        self.value_node_at(
+            location,
             "literal",
             semantic_type.clone(),
             BodyTerm::literal_node(semantic_type, literal),

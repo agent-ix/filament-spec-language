@@ -294,9 +294,11 @@ fn collapse_zero_time_components(
             maximal_end_components_from(&graph, all_states).map_err(|_| FhError::InvalidState)?,
         );
     }
-    // A zero-time component lies inside one maximal end component; it is
-    // subsumed by it. Components that overlap without nesting have no single
-    // value for the shared states, so the claim is not decided here.
+    // A zero-time end component is an end component of the full graph, and
+    // maximal end components are disjoint, so every zero-time component nests
+    // in exactly one full-graph component and none overlaps another without
+    // nesting. An overlap is therefore a broken invariant of the end-component
+    // computation, not a property of the model.
     found.sort_by(|left, right| right.len().cmp(&left.len()));
     let mut components: Vec<Vec<usize>> = Vec::new();
     for members in found {
@@ -308,7 +310,7 @@ fn collapse_zero_time_components(
                 break;
             }
             if overlap > 0 {
-                return Err(FhError::Cycle);
+                return Err(FhError::InvalidState);
             }
         }
         if !nested {
@@ -320,6 +322,14 @@ fn collapse_zero_time_components(
         if !has_cycle(&zero_graph)? {
             return Ok(None);
         }
+        // This branch is the production path for a product with a zero-delay
+        // cycle and no end component, such as the guardless, resetless `Retx`.
+        // Reaching it means no closed class exists: a product with a deadline
+        // monitor has had every full-graph end component collected, and an
+        // untimed product has only zero-delay edges, so its closed classes are
+        // the zero-time end components collected. Every policy is then proper,
+        // so its linear system is regular and `UnboundedError::Singular`
+        // cannot arise.
         let graph = Graph::with_terminals(product, terminal).map_err(|error| match error {
             UnboundedError::InvalidState => FhError::InvalidState,
             UnboundedError::MissingAction => FhError::MissingAction,
@@ -342,17 +352,7 @@ fn collapse_zero_time_components(
             policy,
             max_rational_bits,
         )
-        .map_err(|error| match error {
-            UnboundedError::InvalidState => FhError::InvalidState,
-            UnboundedError::MissingAction => FhError::MissingAction,
-            UnboundedError::InvalidProbability | UnboundedError::MaxRationalBits => {
-                FhError::InvalidProbability
-            }
-            UnboundedError::MaxPolicyIterations => FhError::PolicyIterationLimit,
-            UnboundedError::Singular
-            | UnboundedError::MissingReward
-            | UnboundedError::ZeroWeightComponent => FhError::Cycle,
-        })?;
+        .map_err(policy_failure)?;
         return Ok(Some((values, policy)));
     }
     let mut solver = ZeroTimeSolver {
@@ -361,7 +361,7 @@ fn collapse_zero_time_components(
         objective,
         max_rational_bits,
         component_of: vec![None; product.states.len()],
-        components,
+        components: components.clone(),
         values: vec![None; product.states.len()],
         policy: vec![None; product.states.len()],
         visiting: vec![false; product.states.len()],
@@ -376,7 +376,25 @@ fn collapse_zero_time_components(
         }
     }
     for state in 0..product.states.len() {
-        solver.value(state)?;
+        match solver.value(state) {
+            Ok(_) => {}
+            // A state outside every component revisits itself through a
+            // zero-delay cycle that leaves with positive probability: the
+            // depth-first order has no leaf to start from, so the collapsed
+            // graph is decided as one policy iteration.
+            Err(FhError::Cycle) => {
+                return solve_collapsed(
+                    product,
+                    terminal,
+                    objective,
+                    max_rational_bits,
+                    max_policy_iterations,
+                    &components,
+                )
+                .map(Some);
+            }
+            Err(error) => return Err(error),
+        }
     }
     let values = solver
         .values
@@ -384,6 +402,157 @@ fn collapse_zero_time_components(
         .map(|value| value.ok_or(FhError::InvalidState))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Some((values, solver.policy)))
+}
+
+fn policy_failure(error: UnboundedError) -> FhError {
+    match error {
+        UnboundedError::InvalidState => FhError::InvalidState,
+        UnboundedError::MissingAction => FhError::MissingAction,
+        UnboundedError::InvalidProbability | UnboundedError::MaxRationalBits => {
+            FhError::InvalidProbability
+        }
+        UnboundedError::MaxPolicyIterations => FhError::PolicyIterationLimit,
+        UnboundedError::Singular
+        | UnboundedError::MissingReward
+        | UnboundedError::ZeroWeightComponent => FhError::Cycle,
+    }
+}
+
+/// Decide the graph in which every end component is one state, by policy
+/// iteration. A component's representative (its least member) takes the
+/// component's exit actions as its own actions, with every edge into a member
+/// retargeted to the representative, so an exit that stays in the component
+/// with some probability is a leaking action of one state. A component with
+/// no exit is a time lock of value 0. Every other state keeps its actions, so
+/// a zero-delay cycle outside the components is solved together with them.
+/// No closed class remains: each is inside a component, and every collapsed
+/// action leaves with positive probability, so every policy is proper.
+fn solve_collapsed(
+    product: &ProbProduct,
+    terminal: &[Option<Rational>],
+    objective: FhObjective,
+    max_rational_bits: u64,
+    max_policy_iterations: u64,
+    components: &[Vec<usize>],
+) -> Result<ComponentPolicy, FhError> {
+    let count = product.states.len();
+    let graph = Graph::with_terminals(product, terminal).map_err(policy_failure)?;
+    let mut representative: Vec<usize> = (0..count).collect();
+    let mut component_of = vec![None; count];
+    for (index, members) in components.iter().enumerate() {
+        let least = members.iter().copied().min().ok_or(FhError::InvalidState)?;
+        for member in members {
+            *representative
+                .get_mut(*member)
+                .ok_or(FhError::InvalidState)? = least;
+            *component_of.get_mut(*member).ok_or(FhError::InvalidState)? = Some(index);
+        }
+    }
+    // The retargeted edges of every kept action, in action order; `origin`
+    // names the state and action index each kept action came from.
+    let mut store: Vec<super::ProbEdge> = Vec::new();
+    let mut kept: Vec<Vec<(usize, usize)>> = vec![Vec::new(); count];
+    let mut origin: Vec<Vec<(usize, usize)>> = vec![Vec::new(); count];
+    for (state, choices) in graph.choices.iter().enumerate() {
+        let owner = *representative.get(state).ok_or(FhError::InvalidState)?;
+        let member = component_of.get(state).copied().flatten();
+        for (index, choice) in choices.iter().enumerate() {
+            let internal = member.is_some()
+                && choice
+                    .edges
+                    .iter()
+                    .all(|edge| component_of.get(edge.to.index()).copied().flatten() == member);
+            if internal {
+                continue;
+            }
+            let start = store.len();
+            for edge in &choice.edges {
+                let mut edge = (*edge).clone();
+                edge.from = ProbStateId(owner);
+                edge.to = ProbStateId(
+                    *representative
+                        .get(edge.to.index())
+                        .ok_or(FhError::InvalidState)?,
+                );
+                store.push(edge);
+            }
+            kept.get_mut(owner)
+                .ok_or(FhError::InvalidState)?
+                .push((start, store.len()));
+            origin
+                .get_mut(owner)
+                .ok_or(FhError::InvalidState)?
+                .push((state, index));
+        }
+    }
+    let collapsed = Graph {
+        product,
+        choices: kept
+            .iter()
+            .map(|actions| {
+                actions
+                    .iter()
+                    .filter_map(|(start, end)| store.get(*start..*end))
+                    .map(|edges| super::unbounded::Choice {
+                        edges: edges.iter().collect(),
+                    })
+                    .collect()
+            })
+            .collect(),
+    };
+    let mut fixed = terminal.to_vec();
+    for state in 0..count {
+        let absorbed = representative.get(state).copied() != Some(state);
+        let locked = component_of.get(state).copied().flatten().is_some()
+            && collapsed.choices.get(state).is_some_and(Vec::is_empty);
+        if absorbed || locked {
+            *fixed.get_mut(state).ok_or(FhError::InvalidState)? = Some(rational_zero());
+        }
+    }
+    let policy = fixed
+        .iter()
+        .zip(&collapsed.choices)
+        .map(|(value, choices)| (value.is_none() && !choices.is_empty()).then_some(0))
+        .collect();
+    let objective = match objective {
+        FhObjective::Min => UnboundedObjective::Min,
+        FhObjective::Max => UnboundedObjective::Max,
+    };
+    let (solved, chosen, _) = policy_iteration(
+        &collapsed,
+        &fixed,
+        objective,
+        max_policy_iterations,
+        policy,
+        max_rational_bits,
+    )
+    .map_err(policy_failure)?;
+    let mut values = Vec::with_capacity(count);
+    for state in 0..count {
+        let owner = *representative.get(state).ok_or(FhError::InvalidState)?;
+        values.push(solved.get(owner).cloned().ok_or(FhError::InvalidState)?);
+    }
+    let mut policy = vec![None; count];
+    for (state, slot) in policy.iter_mut().enumerate() {
+        if component_of.get(state).copied().flatten().is_some() {
+            continue;
+        }
+        *slot = chosen.get(state).copied().flatten();
+    }
+    for members in components {
+        let owner = *members.iter().min().ok_or(FhError::InvalidState)?;
+        let Some(exit) = chosen.get(owner).copied().flatten() else {
+            continue;
+        };
+        let (exit_state, exit_choice) = origin
+            .get(owner)
+            .and_then(|actions| actions.get(exit))
+            .copied()
+            .ok_or(FhError::InvalidState)?;
+        *policy.get_mut(exit_state).ok_or(FhError::InvalidState)? = Some(exit_choice);
+        expand_zero_time_component_policy(product, members, exit_state, &mut policy)?;
+    }
+    Ok((values, policy))
 }
 
 fn has_cycle(graph: &Graph<'_>) -> Result<bool, FhError> {
@@ -1708,5 +1877,109 @@ mod tests {
         assert_eq!(limits.max_rational_bits, 65_536);
         assert_eq!(limits.max_policy_iterations, 10_000);
         assert_eq!(limits.max_witness_paths, 1_024);
+    }
+
+    /// A product with a zero-delay cycle outside every end component, beside
+    /// an end component whose exit leads back to it. States: 0 `s`, 1 and 2 the
+    /// end component {a, b}, 3 accepts, 4 rejects. `s` has two actions:
+    /// `P` stays with 1/2, enters the component with 1/4, rejects with 1/4;
+    /// `Q` stays with 1/4, accepts with 1/2, rejects with 1/4. `a` and `b`
+    /// swap at zero delay; `a` exits by `E` (stay 1/2, `s` 1/4, accept 1/4) and
+    /// `b` exits by `F` (stay 1/2, reject 1/2).
+    fn leaky_cycle_beside_an_end_component() -> ProbProduct {
+        let key = |model| super::super::ProbKey {
+            binding: None,
+            model: vec![model],
+            monitor: None,
+            accumulator: None,
+            pending: None,
+            certificate_state: None,
+        };
+        let mut edges = Vec::new();
+        let mut action = |from: usize, name: u8, targets: &[(usize, i64, i64)]| {
+            for (to, numerator, denominator) in targets {
+                edges.push(ProbEdge {
+                    from: ProbStateId(from),
+                    choice: ProductAction::PostState(Box::new(key(100 + name))),
+                    action: None,
+                    draw: None,
+                    to: ProbStateId(*to),
+                    probability: rational(*numerator, *denominator),
+                    elapsed: rational(0, 1),
+                    rewards: Vec::new(),
+                });
+            }
+        };
+        action(0, 0, &[(0, 1, 2), (1, 1, 4), (4, 1, 4)]);
+        action(0, 1, &[(0, 1, 4), (3, 1, 2), (4, 1, 4)]);
+        action(1, 2, &[(2, 1, 1)]);
+        action(1, 3, &[(1, 1, 2), (0, 1, 4), (3, 1, 4)]);
+        action(2, 4, &[(1, 1, 1)]);
+        action(2, 5, &[(2, 1, 2), (4, 1, 2)]);
+        ProbProduct {
+            states: (0..5_u8).map(key).collect(),
+            kind: ProductKind::Mdp,
+            edges,
+            initial: vec![(0, None, ProbStateId(0))],
+            decided: Vec::new(),
+            labels: vec![Vec::new(); 5],
+            fairness_operations: Vec::new(),
+            fairness: Vec::new(),
+        }
+    }
+
+    fn settle_leaky_cycle_beside_an_end_component(
+        objective: FhObjective,
+    ) -> (Vec<Rational>, Vec<Option<usize>>) {
+        let terminal = [None, None, None, Some(rational(1, 1)), Some(rational(0, 1))];
+        let result = backward_induction_with_policy_limit(
+            &leaky_cycle_beside_an_end_component(),
+            &terminal,
+            objective,
+            &rational(1, 2),
+            64,
+            4,
+            8,
+            10_000,
+        );
+        match result {
+            Ok(FhResult::Exact { values, policy }) => (values, policy),
+            other => panic!("expected an exact result, got {other:?}"),
+        }
+    }
+
+    /// FR-204-AC-16: a zero-delay cycle outside every end component is decided
+    /// beside an end component. With `v` the value of `s` and `c` that of the
+    /// component, `E` gives `c = (v/4 + 1/4) / (1/2) = v/2 + 1/2` and `F` gives
+    /// 0. Maximum: `Q` gives `v = v/4 + 1/2`, so `v = 2/3`, `c = 5/6` through
+    /// `E`; `P` is worse, `v/2 + c/4 = 13/24`. Minimum: `F` gives `c = 0`, then
+    /// `P` gives `v = v/2`, so `v = 0`.
+    #[trace("TC-2175", "FR-204-AC-16")]
+    #[test]
+    fn zero_delay_cycle_outside_an_end_component_is_decided_with_it() {
+        let (values, policy) = settle_leaky_cycle_beside_an_end_component(FhObjective::Max);
+        assert_eq!(
+            values,
+            [
+                rational(2, 3),
+                rational(5, 6),
+                rational(5, 6),
+                rational(1, 1),
+                rational(0, 1)
+            ]
+        );
+        assert_eq!(policy, [Some(1), Some(1), Some(0), None, None]);
+        let (values, policy) = settle_leaky_cycle_beside_an_end_component(FhObjective::Min);
+        assert_eq!(
+            values,
+            [
+                rational(0, 1),
+                rational(0, 1),
+                rational(0, 1),
+                rational(1, 1),
+                rational(0, 1)
+            ]
+        );
+        assert_eq!(policy, [Some(0), Some(0), Some(1), None, None]);
     }
 }

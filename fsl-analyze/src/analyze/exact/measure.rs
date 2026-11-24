@@ -628,6 +628,7 @@ fn refute_mean(
     let mut witness = ProbabilisticCounterexample {
         item: item.clone(),
         binding: binding.cloned(),
+        instance: None,
         initial: first.clone(),
         initial_key,
         scheduler: scheduler

@@ -40,6 +40,22 @@ const LIMITS: ScalarLimits = ScalarLimits {
 };
 
 fn fixture(remove_x: bool) -> Checked {
+    fixture_with(remove_x, QSlots::None)
+}
+
+/// The `q: Sequence<Clock>` place a fixture adds.
+#[derive(Clone, Copy)]
+enum QSlots {
+    /// No `q`.
+    None,
+    /// No declared maximum (FR-106-AC-81).
+    Unbounded,
+    /// A declared maximum.
+    Max(u32),
+}
+
+/// The fixture with the `q` place `q` names.
+fn fixture_with(remove_x: bool, q_slots: QSlots) -> Checked {
     let add_reference = |bytes: Vec<u8>, domain: &str, owner: &str, name: &str| {
         let mut document: Json = serde_json::from_slice(&bytes).expect("model JSON");
         let mut reference = ring_queue::declaration(
@@ -92,6 +108,14 @@ fn fixture(remove_x: bool) -> Checked {
         &node(CLOCKS, "ClockRef"),
         (0, 3, true),
     ));
+    if !matches!(q_slots, QSlots::None) {
+        let mut q = ring_queue::single(CLOCKS, "Call", "q", "ix://filament/native/Clock");
+        q["multiplicity"] = json!({"lower": 0, "ordered": true, "unique": false});
+        if let QSlots::Max(upper) = q_slots {
+            q["multiplicity"]["upper"] = json!(upper);
+        }
+        fields.push(q);
+    }
     if remove_x {
         fields.retain(|field| field["name"] != "x");
     }
@@ -431,7 +455,7 @@ fn assert_supplied_clock_data(
 /// complete-population admission still precedes declared-place membership.
 #[trace("FR-390-AC-23", "TC-464")]
 #[test]
-#[ignore = "QSL-2897: end-to-end raw-v2 Clock reference support remains unsupported (Source missing-route-neutral-place-identity; Bare missing-type-representation)"]
+#[ignore = "QSL-2776: Bare cannot read a Reference<Clock> data member (Contract IR object-field projection)"]
 fn supplied_clock_data_validates_owner_population_on_source_and_bare() {
     let checked = fixture(false);
     let package = CheckedPackage::link(checked.graph);
@@ -530,7 +554,7 @@ fn supplied_clock_data_validates_owner_population_on_source_and_bare() {
 
 #[trace("TC-464", "TC-3084", "FR-106-AC-72", "FR-106-AC-76")]
 #[test]
-#[ignore = "QSL-2897: end-to-end raw-v2 Clock reference support remains unsupported (Source missing-route-neutral-place-identity; Bare missing-type-representation)"]
+#[ignore = "QSL-2776: Bare cannot read a Reference<Clock> data member (Contract IR object-field projection); the Source half passes"]
 fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
     let checked = fixture(false);
     let package = CheckedPackage::link(checked.graph);
@@ -704,7 +728,7 @@ fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
 
 #[trace("TC-464", "FR-106-AC-73", "FR-106-AC-76")]
 #[test]
-#[ignore = "QSL-2897: end-to-end raw-v2 Clock reference support remains unsupported (Source missing-route-neutral-place-identity; Bare missing-type-representation)"]
+#[ignore = "QSL-2776: Bare cannot read a Reference<Clock> data member (Contract IR object-field projection)"]
 fn removing_x_never_rebinds_its_actual_reference_to_y_at_the_reused_ordinal() {
     let checked = fixture(false);
     let package = CheckedPackage::link(checked.graph);
@@ -888,7 +912,7 @@ fn removing_x_never_rebinds_its_actual_reference_to_y_at_the_reused_ordinal() {
 /// dangling outcome for an old field removed from the correct declaration.
 #[trace("TC-464", "FR-230-AC-45")]
 #[test]
-#[ignore = "QSL-2897: end-to-end raw-v2 Clock reference support remains unsupported (Source missing-route-neutral-place-identity; Bare missing-type-representation)"]
+#[ignore = "QSL-2776: Bare cannot read a Reference<Clock> data member (Contract IR object-field projection)"]
 fn clock_reference_scope_disagreement_is_invalid_input_on_source_and_bare() {
     use filament_eval::{CallAdmissionFailure, CallAdmissionLocus, CallFailure};
     use fsl_semantics::model::clock_reference::identity::{DeclarationScope, PlaceIdentity};
@@ -1148,7 +1172,7 @@ fn clock_reference_scope_disagreement_is_invalid_input_on_source_and_bare() {
 /// each same original declaration retain one entry and admit real data.
 #[trace("FR-106-AC-77", "TC-464")]
 #[test]
-#[ignore = "QSL-2897: end-to-end raw-v2 Clock reference support remains unsupported (Source missing-route-neutral-place-identity; Bare missing-type-representation)"]
+#[ignore = "QSL-2776: Bare cannot read a Reference<Clock> data member (Contract IR object-field projection)"]
 fn declared_table_collision_refuses_both_origins_and_aliases_admit_on_both_routes() {
     use fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable;
     use fsl_semantics::model::observation::ModelSelections;
@@ -1265,11 +1289,12 @@ fn declared_table_collision_refuses_both_origins_and_aliases_admit_on_both_route
     }
 }
 
-/// RAW Clock DATA is an explicit implementation boundary. Source refusal
-/// keeps its actual value locus; Bare may stop earlier at type projection.
+/// Source admits a declared Clock identity and refuses an undeclared or
+/// malformed one at its actual value locus (FR-106 AC-72, AC-73). The Bare
+/// route stops earlier, at type projection.
 #[trace("FR-106", "TC-464")]
 #[test]
-fn raw_clock_data_has_explicit_source_and_bare_refusals() {
+fn raw_clock_data_admits_declared_and_refuses_undeclared_identities() {
     let checked = fixture(false);
     let package = CheckedPackage::link(checked.graph);
     let read = fsl_package::read_evaluation_package(
@@ -1320,33 +1345,48 @@ fn raw_clock_data_has_explicit_source_and_bare_refusals() {
             &identity(),
             ObservationLimits::default(),
         );
-        let ObservationAdmission::Refused(record) = source else {
-            panic!("explicit Source boundary: {source:?}")
+        let catalog = if target == expected_place("c1", "x") {
+            assert!(
+                matches!(source, ObservationAdmission::Admitted(_)),
+                "the declared place admits: {source:?}"
+            );
+            None
+        } else if target.starts_with("place/v2/") {
+            Some(CatalogCode::new(
+                "dangling_reference",
+                "absent-target-in-complete-population",
+            ))
+        } else {
+            Some(CatalogCode::new("invalid_runtime_input", "invalid-value"))
         };
-        assert_eq!(
-            record,
-            AdmissionRecord {
-                catalog: CatalogCode::new("unknown_required_feature", "unsupported-feature"),
-                fields: BTreeMap::from([
-                    ("reason", "missing-route-neutral-place-identity".to_owned()),
-                    ("document", identity().identity),
-                    ("population", node(CLOCKS, "calls")),
-                    ("object", "c1".to_owned()),
-                    ("field", "r".to_owned()),
-                    ("target", target),
-                    ("path", "/populations/0/objects/0/fields/r".to_owned()),
-                ]),
-                path: vec![
-                    PathStep::Field("populations".to_owned()),
-                    PathStep::Index(0),
-                    PathStep::Field("objects".to_owned()),
-                    PathStep::Index(0),
-                    PathStep::Field("fields".to_owned()),
-                    PathStep::Field("r".to_owned())
-                ],
-                kernel: None,
-            }
-        );
+        if let Some(catalog) = catalog {
+            let ObservationAdmission::Refused(record) = source else {
+                panic!("typed Source refusal: {source:?}")
+            };
+            assert_eq!(
+                record,
+                AdmissionRecord {
+                    catalog,
+                    fields: BTreeMap::from([
+                        ("document", identity().identity),
+                        ("population", node(CLOCKS, "calls")),
+                        ("object", "c1".to_owned()),
+                        ("field", "r".to_owned()),
+                        ("target", target),
+                        ("path", "/populations/0/objects/0/fields/r".to_owned()),
+                    ]),
+                    path: vec![
+                        PathStep::Field("populations".to_owned()),
+                        PathStep::Index(0),
+                        PathStep::Field("objects".to_owned()),
+                        PathStep::Index(0),
+                        PathStep::Field("fields".to_owned()),
+                        PathStep::Field("r".to_owned())
+                    ],
+                    kernel: None,
+                }
+            );
+        }
         let admission = bare.admit_protocol_observation(
             &selected,
             &checked.packages,
@@ -1424,4 +1464,510 @@ fn source_generates_clock_references_from_ordinary_admitted_owners() {
     assert_eq!(generated[0].universe(), generated[1].universe());
     assert_eq!(generated[0].object_type(), generated[1].object_type());
     assert_ne!(generated[0].object(), generated[1].object());
+}
+
+/// FR-106-AC-81: a valid `Reference<Clock>` identity whose selector lies
+/// beyond the exploration-derived range is admitted as data. `q` declares no
+/// maximum, so slot 7 is valid for its template although `max_clocks` 4 with
+/// four live scalar places derives a smaller range; the seed is never refused
+/// or truncated, and reading it back preserves the exact identity.
+#[trace("TC-464", "TC-3084", "FR-106-AC-80", "FR-106-AC-81")]
+#[test]
+#[ignore = "QSL-2776: the Bare half cannot read a Reference<Clock> data member (Contract IR object-field projection); the Source half runs with --ignored"]
+fn clock_reference_seed_ref_outside_timed_selector_range_remains_admitted() {
+    use fsl_semantics::model::clock_reference::identity::{
+        Decimal, PathEntry, PlaceIdentity, SlotIndex,
+    };
+    let checked = fixture_with(false, QSlots::Unbounded);
+    let package = CheckedPackage::link(checked.graph);
+    let table = package.graph().clock_declaration_table();
+    let template = table
+        .entries()
+        .map(|(template, _)| template)
+        .find(|template| matches!(template.path.last(), Some(PathEntry::Collection { .. })))
+        .expect("the declared Call.q collection-of-Clock place");
+    let population = PlaceIdentity::decode(
+        &expected_place("c1", "x"),
+        quire_canonical::Limits::new(1 << 16),
+    )
+    .expect("canonical producer identity")
+    .population;
+    let seed = PlaceIdentity {
+        population,
+        owner: "c1".to_owned(),
+        template: template.clone(),
+        indices: vec![SlotIndex {
+            path_position: Decimal::new("1").expect("decimal"),
+            index: Decimal::new("7").expect("decimal"),
+        }],
+    }
+    .encode(quire_canonical::Limits::new(1 << 16))
+    .expect("canonical seed identity");
+    assert!(seed.starts_with("place/v2/"));
+    let snapshots = snapshot(&seed, &expected_place("c2", "x"), true);
+    let model = StateModel::new(
+        package.graph().model_inputs(),
+        package.graph().scope().types(),
+        &checked.packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("model");
+    let (state, _) = model
+        .admit_initial(&snapshots, &identity(), ObservationLimits::default())
+        .expect("Source retains the out-of-range reference as data");
+    let stored = &state.populations[&key(CLOCKS, "calls")]["c1"].fields[&key(CLOCKS, "Call/r")];
+    let Value::Reference(stored) = stored else {
+        panic!("a stored Clock reference");
+    };
+    assert_eq!(stored.object().as_str(), seed);
+    let observation = model
+        .observation(&state, identity())
+        .expect("the admitted state observes");
+    let function = QualifiedName::unqualified("stored").expect("function");
+    let read = completed(
+        package
+            .call(
+                &function,
+                vec![Value::Reference(owner(&observation.environment, "c1"))],
+                &observation.environment,
+                &mut Meter::new(LIMITS),
+            )
+            .expect("stored-data call"),
+    );
+    assert_value(&read, &Value::Reference(stored.clone()));
+    // The Bare route admits the same snapshot and reads the same identity.
+    let read = fsl_package::read_evaluation_package(
+        &package,
+        fsl_semantics::library::LibraryName::new(package.graph().package_name()).expect("name"),
+        &checked.packages,
+        V2ReadLimits::fixture(),
+        EmitLimits::fixture(),
+    )
+    .expect("package read");
+    let rows = read
+        .emission()
+        .identity_rows(
+            read.admitted(),
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("rows");
+    let equality = read
+        .emission()
+        .equality_witness(
+            read.admitted(),
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("equality");
+    let bare = BarePackage::new(read.admitted())
+        .with_supply(
+            BareSupply {
+                identities: &rows,
+                equality: Some(&equality),
+            },
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("Bare supply");
+    let (bytes, _) = bare
+        .admit_call_snapshot(
+            &checked.packages,
+            ModelNormalizationLimits::default(),
+            &snapshots,
+            &identity(),
+            ObservationLimits::default(),
+        )
+        .expect("Bare retains the out-of-range reference as data");
+    let bare_value = completed(
+        bare.call(
+            &function,
+            vec![Value::Reference(owner(&bytes, "c1"))],
+            &bytes,
+            &mut Meter::new(LIMITS),
+        )
+        .expect("Bare stored-data call"),
+    );
+    assert_value(&bare_value, &Value::Reference(stored.clone()));
+}
+
+/// The canonical identity of the declared `Call.q` place of `owner` with the
+/// given `(path position, index)` selectors.
+fn q_identity(package: &CheckedPackage, owner: &str, selectors: &[(&str, &str)]) -> String {
+    use fsl_semantics::model::clock_reference::identity::{
+        Decimal, PathEntry, PlaceIdentity, SlotIndex,
+    };
+    let template = package
+        .graph()
+        .clock_declaration_table()
+        .entries()
+        .map(|(template, _)| template)
+        .find(|template| matches!(template.path.last(), Some(PathEntry::Collection { .. })))
+        .expect("the declared Call.q place");
+    let population = PlaceIdentity::decode(
+        &expected_place("c1", "x"),
+        quire_canonical::Limits::new(1 << 16),
+    )
+    .expect("canonical producer identity")
+    .population;
+    PlaceIdentity {
+        population,
+        owner: owner.to_owned(),
+        template: template.clone(),
+        indices: selectors
+            .iter()
+            .map(|(position, index)| SlotIndex {
+                path_position: Decimal::new(position).expect("decimal"),
+                index: Decimal::new(index).expect("decimal"),
+            })
+            .collect(),
+    }
+    .encode(quire_canonical::Limits::new(1 << 16))
+    .expect("canonical identity")
+}
+
+/// The `Call.q` identity of `owner` whose selector component is the raw JSON
+/// `indices`, bypassing the codec's own validation (a hostile payload).
+fn q_identity_raw(package: &CheckedPackage, owner: &str, indices: &str) -> String {
+    let valid = q_identity(package, owner, &[("1", "0")]);
+    let (head, _) = valid.rsplit_once('/').expect("five components");
+    let mut text = format!("{head}/");
+    for byte in indices.bytes() {
+        text.push_str(&format!("{byte:02x}"));
+    }
+    text
+}
+
+/// `identity` retargeted to another owner key.
+fn retargeted(identity: &str, owner: &str) -> String {
+    let mut decoded = fsl_semantics::model::clock_reference::identity::PlaceIdentity::decode(
+        identity,
+        quire_canonical::Limits::new(1 << 16),
+    )
+    .expect("canonical identity");
+    decoded.owner = owner.to_owned();
+    decoded
+        .encode(quire_canonical::Limits::new(1 << 16))
+        .expect("canonical identity")
+}
+
+/// The snapshot with `field` of `c1` holding `reference` (nested as the field
+/// needs), and the population's `complete` flag.
+fn snapshot_with(
+    base: &BTreeMap<DocumentRef, Vec<u8>>,
+    field: &str,
+    reference: &str,
+    complete: bool,
+) -> BTreeMap<DocumentRef, Vec<u8>> {
+    let mut document: Json = serde_json::from_slice(&base[&identity()]).expect("snapshot");
+    let hostile = raw_reference(reference);
+    document["populations"][0]["objects"][0]["fields"][field] = match field {
+        "r" => hostile,
+        "maybe" => json!({"present": hostile}),
+        "refs" => json!({"sequence": [hostile, raw_reference(&expected_place("c2", "x"))]}),
+        _ => unreachable!("three transport fields"),
+    };
+    document["populations"][0]["complete"] = json!(complete);
+    BTreeMap::from([(identity(), serde_json::to_vec(&document).expect("snapshot"))])
+}
+
+/// The exact Source refusal record of `field` of `c1` naming `target`.
+fn source_record(catalog: CatalogCode, field: &str, target: &str) -> AdmissionRecord {
+    let mut path = vec![
+        PathStep::Field("populations".to_owned()),
+        PathStep::Index(0),
+        PathStep::Field("objects".to_owned()),
+        PathStep::Index(0),
+        PathStep::Field("fields".to_owned()),
+        PathStep::Field(field.to_owned()),
+    ];
+    let suffix = match field {
+        "maybe" => {
+            path.push(PathStep::OptionValue);
+            "/present"
+        }
+        "refs" => {
+            path.push(PathStep::Index(0));
+            "/sequence/0"
+        }
+        _ => "",
+    };
+    AdmissionRecord {
+        catalog,
+        fields: BTreeMap::from([
+            ("document", identity().identity),
+            ("target", target.to_owned()),
+            ("population", node(CLOCKS, "calls")),
+            ("object", "c1".to_owned()),
+            ("field", field.to_owned()),
+            (
+                "path",
+                format!("/populations/0/objects/0/fields/{field}{suffix}"),
+            ),
+        ]),
+        path,
+        kernel: None,
+    }
+}
+
+fn source_model(
+    packages: &fsl_semantics::model::intake::PackageInput,
+    package: &CheckedPackage,
+) -> StateModel {
+    StateModel::new(
+        package.graph().model_inputs(),
+        package.graph().scope().types(),
+        packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("model")
+}
+
+/// The Source protocol observation of `snapshots`, which admits an incomplete
+/// population that an initial state refuses.
+fn observe<'p>(
+    package: &'p CheckedPackage,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    snapshots: &BTreeMap<DocumentRef, Vec<u8>>,
+) -> ObservationAdmission<fsl_package::AdmittedProtocolObservation<'p>> {
+    package.evaluation_view().admit_protocol_observation(
+        &fsl_semantics::model::domain_package::DomainPackageRef {
+            identity: CLOCKS.to_owned(),
+        },
+        packages,
+        ModelNormalizationLimits::default(),
+        snapshots,
+        &identity(),
+        ObservationLimits::default(),
+    )
+}
+
+fn refused_with(
+    model: &StateModel,
+    snapshots: &BTreeMap<DocumentRef, Vec<u8>>,
+    what: &str,
+) -> AdmissionRecord {
+    let failure = model
+        .admit_initial(snapshots, &identity(), ObservationLimits::default())
+        .expect_err(what);
+    let AdmissionFailure::Refused(record) = failure else {
+        panic!("{what}: a typed refusal")
+    };
+    *record
+}
+
+/// FR-106-AC-80: a selector the declared template does not admit refuses
+/// `invalid_runtime_input`/`invalid-value` on Source, whatever the shape of
+/// the fault; a valid selector, and any selector of an unbounded slot, admits.
+#[trace("TC-464", "FR-106-AC-80")]
+#[test]
+fn invalid_clock_selectors_refuse_invalid_value_on_source() {
+    let invalid = CatalogCode::new("invalid_runtime_input", "invalid-value");
+    let checked = fixture_with(false, QSlots::Max(2));
+    let package = CheckedPackage::link(checked.graph);
+    let model = source_model(&checked.packages, &package);
+    let base = snapshot(&expected_place("c1", "x"), &expected_place("c2", "x"), true);
+    for (what, indices) in [
+        ("a missing selector", r#"[]"#),
+        (
+            "an extra selector",
+            r#"[["slot","1","0"],["slot","1","0"]]"#,
+        ),
+        ("a wrong path position", r#"[["slot","0","0"]]"#),
+        ("an index at the declared maximum", r#"[["slot","1","2"]]"#),
+        (
+            "an index above the declared maximum",
+            r#"[["slot","1","7"]]"#,
+        ),
+    ] {
+        let target = q_identity_raw(&package, "c1", indices);
+        for field in ["r", "maybe", "refs"] {
+            let snapshots = snapshot_with(&base, field, &target, true);
+            assert_eq!(
+                refused_with(&model, &snapshots, what),
+                source_record(invalid.clone(), field, &target),
+                "{what} in {field}"
+            );
+        }
+    }
+    for index in ["0", "1"] {
+        let target = q_identity(&package, "c1", &[("1", index)]);
+        let snapshots = snapshot_with(&base, "r", &target, true);
+        let (state, _) = model
+            .admit_initial(&snapshots, &identity(), ObservationLimits::default())
+            .expect("a valid selector admits");
+        let stored = &state.populations[&key(CLOCKS, "calls")]["c1"].fields[&key(CLOCKS, "Call/r")];
+        let Value::Reference(stored) = stored else {
+            panic!("a stored Clock reference");
+        };
+        assert_eq!(stored.object().as_str(), target);
+    }
+}
+
+/// FR-106-AC-80 and AC-81, Source half: an unbounded slot admits any index.
+#[trace("TC-464", "FR-106-AC-81")]
+#[test]
+fn any_selector_of_an_unbounded_clock_slot_admits_on_source() {
+    let checked = fixture_with(false, QSlots::Unbounded);
+    let package = CheckedPackage::link(checked.graph);
+    let model = source_model(&checked.packages, &package);
+    let base = snapshot(&expected_place("c1", "x"), &expected_place("c2", "x"), true);
+    let target = q_identity(&package, "c1", &[("1", "7")]);
+    let (state, _) = model
+        .admit_initial(
+            &snapshot_with(&base, "r", &target, true),
+            &identity(),
+            ObservationLimits::default(),
+        )
+        .expect("slot 7 of an unbounded slot admits");
+    let stored = &state.populations[&key(CLOCKS, "calls")]["c1"].fields[&key(CLOCKS, "Call/r")];
+    let Value::Reference(stored) = stored else {
+        panic!("a stored Clock reference");
+    };
+    assert_eq!(stored.object().as_str(), target);
+}
+
+/// FR-230-AC-45, Source half: a population or scope that disagrees with the
+/// authenticated declaration is invalid input at the field's nested locus.
+#[trace("TC-464", "FR-230-AC-45")]
+#[test]
+fn clock_scope_disagreement_is_invalid_input_at_the_nested_locus_on_source() {
+    use fsl_semantics::model::clock_reference::identity::{DeclarationScope, PlaceIdentity};
+    let checked = fixture(false);
+    let package = CheckedPackage::link(checked.graph);
+    let model = source_model(&checked.packages, &package);
+    let base = snapshot(&expected_place("c1", "x"), &expected_place("c2", "x"), true);
+    for component in ["population", "scope"] {
+        let mut changed = PlaceIdentity::decode(
+            &expected_place("c1", "x"),
+            quire_canonical::Limits::new(4096),
+        )
+        .expect("canonical identity");
+        if component == "population" {
+            changed.population = DeclarationScope::Model {
+                identity: QUEUE.to_owned(),
+                declaration: node(QUEUE, "queues"),
+            };
+        } else {
+            changed.template.scope = DeclarationScope::Model {
+                identity: QUEUE.to_owned(),
+                declaration: node(QUEUE, "Queue"),
+            };
+        }
+        let target = changed
+            .encode(quire_canonical::Limits::new(4096))
+            .expect("canonical identity");
+        for field in ["r", "maybe", "refs"] {
+            assert_eq!(
+                refused_with(
+                    &model,
+                    &snapshot_with(&base, field, &target, true),
+                    "scope disagreement",
+                ),
+                source_record(
+                    CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                    field,
+                    &target,
+                ),
+                "{component} disagreement in {field}"
+            );
+        }
+    }
+}
+
+/// An owner the population does not list: dangling in a complete population,
+/// tolerated in an incomplete one with the scope and template checks still
+/// applied (FR-106 check 7).
+#[trace("TC-464", "FR-106-AC-72", "FR-106-AC-73")]
+#[test]
+fn an_unlisted_clock_owner_is_dangling_when_complete_and_tolerated_when_incomplete() {
+    let dangling = CatalogCode::new("dangling_reference", "absent-target-in-complete-population");
+    let invalid = CatalogCode::new("invalid_runtime_input", "invalid-value");
+    let checked = fixture(false);
+    let package = CheckedPackage::link(checked.graph);
+    let model = source_model(&checked.packages, &package);
+    let base = snapshot(&expected_place("c1", "x"), &expected_place("c2", "x"), true);
+    let unlisted = retargeted(&expected_place("c1", "x"), "c9");
+    for field in ["r", "maybe", "refs"] {
+        assert_eq!(
+            refused_with(
+                &model,
+                &snapshot_with(&base, field, &unlisted, true),
+                "complete",
+            ),
+            source_record(dangling.clone(), field, &unlisted),
+            "an unlisted owner is dangling in a complete population ({field})"
+        );
+        let admitted = observe(
+            &package,
+            &checked.packages,
+            &snapshot_with(&base, field, &unlisted, false),
+        );
+        let ObservationAdmission::Admitted(admitted) = admitted else {
+            panic!("an unlisted owner is tolerated in an incomplete population: {admitted:?}");
+        };
+        let rendered = format!("{:?}", admitted.environment());
+        assert!(
+            rendered.contains(&unlisted),
+            "the tolerated identity is retained in {field}"
+        );
+    }
+    let undeclared = retargeted(&expected_place("c1", "removed"), "c9");
+    let ObservationAdmission::Refused(record) = observe(
+        &package,
+        &checked.packages,
+        &snapshot_with(&base, "r", &undeclared, false),
+    ) else {
+        panic!("an undeclared place is refused");
+    };
+    assert_eq!(
+        record,
+        source_record(dangling, "r", &undeclared),
+        "an unlisted owner does not excuse an undeclared place"
+    );
+    let mut changed = fsl_semantics::model::clock_reference::identity::PlaceIdentity::decode(
+        &unlisted,
+        quire_canonical::Limits::new(4096),
+    )
+    .expect("canonical identity");
+    changed.template.scope =
+        fsl_semantics::model::clock_reference::identity::DeclarationScope::Model {
+            identity: QUEUE.to_owned(),
+            declaration: node(QUEUE, "Queue"),
+        };
+    let mismatched = changed
+        .encode(quire_canonical::Limits::new(4096))
+        .expect("canonical identity");
+    let ObservationAdmission::Refused(record) = observe(
+        &package,
+        &checked.packages,
+        &snapshot_with(&base, "r", &mismatched, false),
+    ) else {
+        panic!("a scope disagreement is refused");
+    };
+    assert_eq!(
+        record,
+        source_record(invalid, "r", &mismatched),
+        "an unlisted owner does not excuse a scope disagreement"
+    );
+}
+
+/// FR-106-AC-73, Source half: after `x` is removed, every stored old `x`
+/// identity refuses dangling at its nested locus, never resolving to `y`.
+#[trace("TC-464", "FR-106-AC-73")]
+#[test]
+fn a_removed_clock_place_is_dangling_at_the_nested_locus_on_source() {
+    let dangling = CatalogCode::new("dangling_reference", "absent-target-in-complete-population");
+    let changed = fixture(true);
+    let next = CheckedPackage::link(changed.graph);
+    let model = source_model(&changed.packages, &next);
+    let valid = snapshot(&expected_place("c1", "y"), &expected_place("c2", "y"), true);
+    model
+        .admit_initial(&valid, &identity(), ObservationLimits::default())
+        .expect("the retained y admits");
+    let old_x = expected_place("c1", "x");
+    for field in ["r", "maybe", "refs"] {
+        assert_eq!(
+            refused_with(&model, &snapshot_with(&valid, field, &old_x, true), "old x"),
+            source_record(dangling.clone(), field, &old_x),
+            "old x in {field}"
+        );
+    }
 }

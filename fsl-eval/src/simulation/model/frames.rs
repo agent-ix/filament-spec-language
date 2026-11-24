@@ -2336,8 +2336,15 @@ fn is_closed(
         return Ok(true);
     }
     let present: BTreeSet<&ObjectReference> = references.iter().collect();
-    let clocks =
-        fsl_semantics::model::clock_reference::DeclaredClockPlaces::new(system.input.timed_models);
+    let clocks = match system.input.clock_declarations {
+        Some(table) => fsl_semantics::model::clock_reference::DeclaredClockPlaces::with_declaration_table(
+            system.input.timed_models,
+            table,
+        ),
+        None => fsl_semantics::model::clock_reference::DeclaredClockPlaces::new(
+            system.input.timed_models,
+        ),
+    };
     Ok(named.into_iter().all(|reference| {
         present.contains(reference)
             || references
@@ -2347,7 +2354,7 @@ fn is_closed(
 }
 
 /// Every object reference `value` holds.
-fn collect_references<'v>(
+pub(super) fn collect_references<'v>(
     value: &'v Value,
     out: &mut Vec<&'v ObjectReference>,
 ) -> Result<(), ExpansionStop> {

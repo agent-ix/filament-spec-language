@@ -78,6 +78,21 @@ impl ModelSystem<'_> {
         self.state_predicates_impl(state, predicates, Some(cancel))
     }
 
+    /// [`Self::state_predicates_with_cancel`] for predicates whose slots after
+    /// `over` are bound to further values, in order: the `on each` instance
+    /// of an activated claim (FR-875).
+    ///
+    /// # Errors
+    /// The same observation/evaluation stops as [`Self::state_predicates`].
+    pub fn state_predicates_bound_with_cancel<P: StatePredicate>(
+        &self,
+        state: &ModelSimState,
+        predicates: &[(&P, Option<&ObjectReference>, Vec<filament_exact::Value>)],
+        cancel: &filament_exact::Cancel,
+    ) -> Result<Vec<PredicateReading>, ExpansionStop> {
+        self.state_predicates_with_impl(state, predicates, PlacePresences::default(), Some(cancel))
+    }
+
     /// FR-940 "Package form of a state-graph claim": each of `predicates`,
     /// a claim's predicate of one role with the claim's `over` binding, at
     /// `state`, in order, as [`Self::state_predicates`] reads them. The

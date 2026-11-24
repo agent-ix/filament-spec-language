@@ -134,6 +134,12 @@ pub enum StepClassKeyword {
     Join,
     /// `cend`.
     Cend,
+    /// `cfail`.
+    Cfail,
+    /// `ctimeout`.
+    Ctimeout,
+    /// `cexpire`.
+    Cexpire,
     /// `duplicate`.
     Duplicate,
     /// `lose`.
@@ -147,10 +153,13 @@ pub enum StepClassKeyword {
 }
 
 impl StepClassKeyword {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 11] = [
         Self::Fork,
         Self::Join,
         Self::Cend,
+        Self::Cfail,
+        Self::Ctimeout,
+        Self::Cexpire,
         Self::Duplicate,
         Self::Lose,
         Self::Spawn,
@@ -164,6 +173,9 @@ impl StepClassKeyword {
             Self::Fork => "fork",
             Self::Join => "join",
             Self::Cend => "cend",
+            Self::Cfail => "cfail",
+            Self::Ctimeout => "ctimeout",
+            Self::Cexpire => "cexpire",
             Self::Duplicate => "duplicate",
             Self::Lose => "lose",
             Self::Spawn => "spawn",

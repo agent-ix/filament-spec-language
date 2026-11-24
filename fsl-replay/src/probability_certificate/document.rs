@@ -16,8 +16,10 @@ pub use measure::{
     write_measure_probability_certificate, MeasurePayoffKind, MeasureProbabilityDocument,
 };
 mod fairness;
+pub(super) mod instances;
 #[cfg(feature = "test-support")]
 pub use fairness::BoundedFairProbabilityPhase;
+pub use instances::{on_each_outcome, replay_on_each_witness, OnEachOutcome};
 mod key;
 mod mdp;
 #[cfg(feature = "test-support")]
@@ -28,7 +30,8 @@ pub use mdp::{
 pub use mdp::{
     cyclic_mdp_probability_certificate_document,
     cyclic_mdp_reward_probability_certificate_document, probability_proof_document,
-    read_probability_proof_document, write_probability_proof_document, ProbabilityProofDocument,
+    read_probability_proof_document, write_probability_proof_document,
+    write_value_bounds_proof_document, ProbabilityProofDocument,
 };
 pub(super) mod long_run;
 pub(super) mod refutation;
@@ -47,11 +50,13 @@ pub use long_run::{
 pub use refutation::SubsystemBoundKind;
 mod timed;
 pub use timed::digital_key_clocks;
-pub(super) use timed::{is_timed_deadline_claim, replay_timed_witness};
+pub(super) use timed::{is_timed_witness_claim, replay_timed_witness};
 mod unit;
+mod value_bounds;
 mod writer;
 pub(super) use key::{
-    formula_product_key_with_budget, model_product_key, model_product_key_with_budget,
+    activated_product_key, formula_product_key_with_budget, model_product_key,
+    model_product_key_with_budget,
 };
 
 const PROFILE: &str = "filament.probability-objective/reachability/v1";
@@ -60,6 +65,9 @@ const REWARD_PROFILE: &str = "filament.probability-objective/expected-reward/v1"
 const CYCLIC_REWARD_PROFILE: &str = "filament.probability-objective/dtmc-expected-reward/v1";
 const CYCLIC_PROFILE: &str = "filament.probability-objective/cyclic-dtmc-eventual/v1";
 const CYCLIC_MDP_PROFILE: &str = "filament.probability-objective/cyclic-mdp-eventual/v1";
+const CYCLIC_STATE_PROFILE: &str = "filament.probability-objective/cyclic-dtmc-state-predicate/v1";
+const CYCLIC_MDP_STATE_PROFILE: &str =
+    "filament.probability-objective/cyclic-mdp-state-predicate/v1";
 const CYCLIC_MDP_REWARD_PROFILE: &str =
     "filament.probability-objective/cyclic-mdp-expected-reward/v1";
 const BOUNDED_FAIR_PROFILE: &str = "filament.probability-objective/bounded-fair-eventual/v1";
@@ -228,6 +236,13 @@ pub struct ProbabilityDocumentLimits {
     pub accounting: filament_exact::ScalarLimits,
 }
 
+/// The scalar bits a document may carry per bit of interval precision. A
+/// value-bounds interval's ends lie on a `2^-precision_bits` grid and the
+/// checker multiplies them into the product's probabilities, so the exact
+/// pass's `max_rational_bits` alone cannot bound documents written at the
+/// caller's `max_precision_bits`.
+const INTERVAL_BITS_PER_PRECISION_BIT: u64 = 16;
+
 impl ProbabilityDocumentLimits {
     /// Project the existing exact-probability ceilings into the document checker
     /// while retaining the caller's actual scalar accounting scope.
@@ -239,6 +254,41 @@ impl ProbabilityDocumentLimits {
             edges: limits.model.limits.max_transitions,
             scalar_bits: limits.max_rational_bits,
             accounting,
+        }
+    }
+
+    /// The ceilings of a dyadic value-bounds document: `for_exact`'s, with the
+    /// scalar bound widened to the larger of `max_rational_bits` and
+    /// `INTERVAL_BITS_PER_PRECISION_BIT` times `max_precision_bits`.
+    pub fn for_interval(
+        limits: &ExactProbLimits,
+        accounting: filament_exact::ScalarLimits,
+    ) -> Self {
+        Self {
+            scalar_bits: limits.max_rational_bits.max(
+                INTERVAL_BITS_PER_PRECISION_BIT
+                    .saturating_mul(u64::from(limits.max_precision_bits)),
+            ),
+            ..Self::for_exact(limits, accounting)
+        }
+    }
+
+    /// The setting that raises `for_interval`'s scalar bound, with its value:
+    /// `max_precision_bits` when its widened term is the binding one,
+    /// otherwise `max_rational_bits` (FR-255).
+    pub fn interval_scalar_setting(limits: &ExactProbLimits) -> (crate::ModelCheckLimit, u64) {
+        let widened =
+            INTERVAL_BITS_PER_PRECISION_BIT.saturating_mul(u64::from(limits.max_precision_bits));
+        if widened > limits.max_rational_bits {
+            (
+                crate::ModelCheckLimit::ExactProbMaxPrecisionBits,
+                u64::from(limits.max_precision_bits),
+            )
+        } else {
+            (
+                crate::ModelCheckLimit::ExactProbMaxRationalBits,
+                limits.max_rational_bits,
+            )
         }
     }
 }
@@ -515,6 +565,7 @@ enum ProfileDispatch {
     CyclicMdp,
     CyclicMdpReward,
     BoundedFair,
+    OnEach,
 }
 
 fn profile_dispatch(
@@ -552,7 +603,10 @@ fn profile_dispatch(
             }
             Some(quire_canonical::Node::String(measure::PROFILE)) => ProfileDispatch::Measure,
             Some(quire_canonical::Node::String(TIMED_PROFILE)) => ProfileDispatch::Timed,
-            Some(quire_canonical::Node::String(CYCLIC_MDP_PROFILE)) => ProfileDispatch::CyclicMdp,
+            Some(quire_canonical::Node::String(instances::PROFILE)) => ProfileDispatch::OnEach,
+            Some(quire_canonical::Node::String(CYCLIC_MDP_PROFILE | CYCLIC_MDP_STATE_PROFILE)) => {
+                ProfileDispatch::CyclicMdp
+            }
             Some(quire_canonical::Node::String(CYCLIC_MDP_REWARD_PROFILE)) => {
                 ProfileDispatch::CyclicMdpReward
             }
@@ -625,6 +679,14 @@ fn decode_key(
     text: &str,
     limits: ProbabilityDocumentLimits,
 ) -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
+    decode_key_with(text, limits, false)
+}
+
+fn decode_key_with(
+    text: &str,
+    limits: ProbabilityDocumentLimits,
+    on_each: bool,
+) -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
     let bytes = URL_SAFE_NO_PAD
         .decode(text)
         .map_err(|_| ProbabilityDocumentError::Malformed)?;
@@ -664,7 +726,7 @@ fn decode_key(
     {
         return Err(ProbabilityDocumentError::Unsupported);
     }
-    key::admit_parts(&parts)?;
+    key::admit_parts(&parts, on_each)?;
     Ok(ProbabilityProductKey::from_canonical_bytes(bytes))
 }
 
@@ -843,7 +905,7 @@ fn read_document_profile(
     let root = parsed.root();
     let objective = root.get("objective");
     let outside_profile = matches!(root.get("kind").map(|node| node.node()), Some(quire_canonical::Node::String(kind)) if kind != "exact" && kind != "upper")
-        || matches!(objective.and_then(|node| node.get("profile")).map(|node| node.node()), Some(quire_canonical::Node::String(profile)) if if cyclic_mdp { !matches!(profile, CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE) } else { !(allow_fair && profile == BOUNDED_FAIR_PROFILE) && profile != PROFILE && profile != STATE_PROFILE && profile != REWARD_PROFILE && profile != CYCLIC_PROFILE && profile != CYCLIC_REWARD_PROFILE && profile != TIMED_PROFILE })
+        || matches!(objective.and_then(|node| node.get("profile")).map(|node| node.node()), Some(quire_canonical::Node::String(profile)) if if cyclic_mdp { !matches!(profile, CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE | CYCLIC_MDP_STATE_PROFILE) } else { !(allow_fair && profile == BOUNDED_FAIR_PROFILE) && profile != PROFILE && profile != STATE_PROFILE && profile != REWARD_PROFILE && profile != CYCLIC_PROFILE && profile != CYCLIC_REWARD_PROFILE && profile != CYCLIC_STATE_PROFILE && profile != TIMED_PROFILE })
         || matches!(objective.and_then(|node| node.get("event")).map(|node| node.node()), Some(quire_canonical::Node::String(event)) if !matches!(event, "until" | "always"))
         || matches!(objective.and_then(|node| node.get("optimization")).map(|node| node.node()), Some(quire_canonical::Node::String(operator)) if !matches!(operator, "minimum" | "maximum" | "workload" | "workload-minimum" | "workload-maximum"))
         || match objective
@@ -954,7 +1016,7 @@ fn read_document_profile(
         || if cyclic_mdp {
             !matches!(
                 wire.objective.profile.as_str(),
-                CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE
+                CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE | CYCLIC_MDP_STATE_PROFILE
             )
         } else {
             !matches!(
@@ -964,6 +1026,7 @@ fn read_document_profile(
                     | REWARD_PROFILE
                     | CYCLIC_PROFILE
                     | CYCLIC_REWARD_PROFILE
+                    | CYCLIC_STATE_PROFILE
                     | TIMED_PROFILE
             ) && !(allow_fair && wire.objective.profile == BOUNDED_FAIR_PROFILE)
         }
@@ -979,12 +1042,16 @@ fn read_document_profile(
         }
     }
     let state_profile = wire.objective.profile == STATE_PROFILE;
+    let cyclic_state_profile = matches!(
+        wire.objective.profile.as_str(),
+        CYCLIC_STATE_PROFILE | CYCLIC_MDP_STATE_PROFILE
+    );
     let timed_profile = wire.objective.profile == TIMED_PROFILE;
     let reward_profile = matches!(
         wire.objective.profile.as_str(),
         REWARD_PROFILE | CYCLIC_REWARD_PROFILE | CYCLIC_MDP_REWARD_PROFILE
     );
-    if state_profile != wire.objective.event.is_some()
+    if (state_profile || cyclic_state_profile) != wire.objective.event.is_some()
         || state_profile != wire.objective.failures.is_some()
         || reward_profile != wire.objective.reward.is_some()
         || reward_profile != wire.objective.unit.is_some()
@@ -1019,7 +1086,7 @@ fn read_document_profile(
             .map(|key| decode_key(key, limits))
             .collect::<Result<Vec<_>, _>>()?,
     )?;
-    if cyclic_mdp && wire.objective.optimization == "workload" {
+    if cyclic_mdp && !cyclic_state_profile && wire.objective.optimization == "workload" {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let optimization = match wire.objective.optimization.as_str() {
@@ -1094,7 +1161,7 @@ fn read_document_profile(
     Ok(ProbabilityCertificateDocument {
         cyclic_dtmc: matches!(
             wire.objective.profile.as_str(),
-            CYCLIC_PROFILE | CYCLIC_REWARD_PROFILE
+            CYCLIC_PROFILE | CYCLIC_REWARD_PROFILE | CYCLIC_STATE_PROFILE
         ),
         identity,
         targets,
@@ -1106,6 +1173,19 @@ fn read_document_profile(
         values,
         ranking,
     })
+}
+
+/// FR-1042: write `document`, whose values are one end of an interval, as the
+/// proof-role document of `side`: the base profile's strict canonical form with
+/// the side stated. Writing never produces an acceptance token.
+pub fn write_value_bounds_certificate(
+    document: &ProbabilityCertificateDocument,
+    side: SubsystemBoundKind,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<Vec<u8>, ProbabilityDocumentError> {
+    let exact = writer::write(document, limits, cancel)?;
+    value_bounds::wrap(&exact, side, limits)
 }
 
 /// Write the single RFC 8785 representation admitted by the profile reader.
@@ -1150,7 +1230,9 @@ fn subject_graph_with_identity(
         && (!matches!(
             claim.form,
             ProbForm::Reach {
-                target: ReachTarget::Eventually(_),
+                target: ReachTarget::Eventually(_)
+                    | ReachTarget::Until(..)
+                    | ReachTarget::Always(_),
                 ..
             } | ProbForm::ExpectedReward { .. }
         ) || fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
@@ -1184,6 +1266,7 @@ fn subject_graph_with_identity(
     let mut state_event = None;
     let mut failures = Vec::new();
     let mut reward = None;
+    let mut violated = None;
     let (bound, enumerated) = match &claim.form {
         ProbForm::ExpectedReward {
             bound,
@@ -1217,6 +1300,31 @@ fn subject_graph_with_identity(
             .map(|(graph, ranks, costs)| {
                 reward = Some(costs);
                 (graph, Some(ranks))
+            });
+            (bound, result)
+        }
+        ProbForm::Reach {
+            bound,
+            target: ReachTarget::Until(..) | ReachTarget::Always(_),
+        } if cyclic_dtmc => {
+            let result = super::cyclic_state::certificate_graph(
+                system,
+                claim,
+                super::cyclic_state::Profile::Dtmc,
+                reference,
+                workload,
+                limits,
+                cancel,
+                identity,
+                meter,
+                storage,
+                &mut |_| Ok(()),
+            )
+            .and_then(|subject| {
+                let bound = super::cyclic_state::violated_bound(bound, limits, cancel, meter)?;
+                state_event = Some(subject.event);
+                violated = Some((subject.objective, bound));
+                Ok((subject.graph, subject.ranks))
             });
             (bound, result)
         }
@@ -1348,10 +1456,12 @@ fn subject_graph_with_identity(
     if reward.is_none() && !cyclic_dtmc {
         topological_order(&graph, cancel)?;
     }
+    let (objective, bound) =
+        violated.unwrap_or_else(|| (claim_objective(&claim.scheduler, bound), bound.clone()));
     Ok((
         graph,
-        claim_objective(&claim.scheduler, bound),
-        bound.clone(),
+        objective,
+        bound,
         bounded_ranks,
         state_event,
         failures,
@@ -1647,6 +1757,28 @@ fn construct_document(
             ranks.insert(key, rank);
         }
     }
+    let values = if cyclic_dtmc && event.is_some() {
+        let claim_bound = match &bind_claim(claims, item, cancel)?.form {
+            ProbForm::Reach { bound, .. } => bound.clone(),
+            _ => return Err(ProbabilityDocumentError::Unsupported),
+        };
+        super::cyclic_state::violated_values(
+            &graph,
+            certificate,
+            &claim_bound,
+            limits,
+            cancel,
+            meter,
+        )?
+        .values
+    } else {
+        certificate
+            .values
+            .iter()
+            .filter(|row| !stopped || graph.states.contains_key(&row.state))
+            .cloned()
+            .collect()
+    };
     Ok(ProbabilityCertificateDocument {
         cyclic_dtmc,
         identity: item.clone(),
@@ -1656,12 +1788,7 @@ fn construct_document(
         reward: reward.map(|reward| reward.objective),
         optimization,
         timed: None,
-        values: certificate
-            .values
-            .iter()
-            .filter(|row| !stopped || graph.states.contains_key(&row.state))
-            .cloned()
-            .collect(),
+        values,
         ranking: ranks.into_iter().collect(),
     })
 }
@@ -1751,11 +1878,57 @@ fn check_document_with_control(
     control: &super::reward::RewardControl<'_>,
     fair_control: &fairness::Control<'_>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    let (bound, inner) = match value_bounds::unwrap(bytes, limits, cancel) {
+        Ok(Some((side, inner))) => (Some(side), Some(inner)),
+        Ok(None) => (None, None),
+        Err(error) => return document_admission_error(error),
+    };
+    let mut check = check_document_bytes(
+        system,
+        claims,
+        item,
+        inner.as_deref().unwrap_or(bytes),
+        bound,
+        limits,
+        cancel,
+        control,
+        fair_control,
+    )?;
+    if let ExactProbabilityCertificateCheck::Accepted(accepted) = &mut check {
+        if bound.is_some() {
+            accepted.document = Some(bytes.into());
+            accepted.bound = bound;
+        }
+    }
+    Ok(check)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_document_bytes(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    bytes: &[u8],
+    bound_side: Option<SubsystemBoundKind>,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    control: &super::reward::RewardControl<'_>,
+    fair_control: &fairness::Control<'_>,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     match profile_dispatch(bytes, limits, cancel)? {
         ProfileDispatch::Measure => {
-            return measure::check(system, claims, item, bytes, limits, cancel)
+            if bound_side.is_some() {
+                return Err(ProbabilityDocumentError::Unsupported);
+            }
+            return measure::check(system, claims, item, bytes, limits, cancel);
         }
-        ProfileDispatch::Timed => return timed::check(system, claims, item, bytes, limits, cancel),
+        ProfileDispatch::Timed => {
+            return timed::check(system, claims, item, bytes, bound_side, limits, cancel)
+        }
+        ProfileDispatch::OnEach => {
+            return instances::check(system, claims, item, bytes, limits, cancel)
+                .or_else(document_admission_error);
+        }
         ProfileDispatch::LongRun => {
             return long_run::check(system, claims, item, bytes, limits, cancel);
         }
@@ -1833,6 +2006,16 @@ fn check_document_with_control(
     {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
+    // FR-1042: only a bounded base's acyclic product bounds a value by the
+    // one-step inequalities alone.
+    if bound_side.is_some()
+        && (bounded_ranks.is_none()
+            || reward.is_some()
+            || document.cyclic_dtmc
+            || !fairness_records.is_empty())
+    {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
     fair_control.phase(fairness::BoundedFairProbabilityPhase::Equality)?;
     let ranks: BTreeMap<_, _> = document.ranking.into_iter().collect();
     let certificate = ExactProbabilityCertificate {
@@ -1844,7 +2027,8 @@ fn check_document_with_control(
             return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
     };
-    for (key, state) in &graph.states {
+    let ranked = bound_side != Some(SubsystemBoundKind::Upper);
+    for (key, state) in graph.states.iter().filter(|_| ranked) {
         if !ranks.contains_key(key) {
             return Ok(
                 if bounded_ranks.is_none()
@@ -1859,10 +2043,13 @@ fn check_document_with_control(
             );
         }
     }
-    if ranks.len() != graph.states.len() {
+    if ranked && ranks.len() != graph.states.len() {
         return Ok(malformed_ranking());
     }
-    if let Some(expected) = bounded_ranks.filter(|_| !(document.cyclic_dtmc && reward.is_some())) {
+    if let Some(expected) = bounded_ranks
+        .filter(|_| ranked)
+        .filter(|_| !(document.cyclic_dtmc && reward.is_some()))
+    {
         for (key, actual) in &expected {
             poll(cancel)?;
             if ranks.get(key) != Some(actual) {
@@ -1873,7 +2060,7 @@ fn check_document_with_control(
             }
         }
     }
-    for (key, state) in &graph.states {
+    for (key, state) in graph.states.iter().filter(|_| bound_side.is_none()) {
         poll(cancel)?;
         if document.cyclic_dtmc && reward.is_some() {
             control.phase(super::reward::RewardProbabilityPhase::Progress)?;
@@ -1929,12 +2116,25 @@ fn check_document_with_control(
         &values,
         objective,
         &bound,
+        match bound_side {
+            None => ValueRelation::Exact,
+            Some(SubsystemBoundKind::Lower) => ValueRelation::Lower,
+            Some(SubsystemBoundKind::Upper) => ValueRelation::Upper,
+        },
         reward.as_ref(),
         limits,
         cancel,
         &mut meter,
         control,
     )?;
+    if document.cyclic_dtmc && event.is_some() {
+        let claim_bound = match &claim.form {
+            ProbForm::Reach { bound, .. } => bound,
+            _ => return Err(ProbabilityDocumentError::Unsupported),
+        };
+        check =
+            super::cyclic_state::claim_acceptance(check, claim_bound, limits, cancel, &mut meter)?;
+    }
     if let ExactProbabilityCertificateCheck::Accepted(accepted) = &mut check {
         accepted.document = Some(bytes.into());
     }
@@ -2061,6 +2261,7 @@ fn check_document_equalities(
     values: &BTreeMap<ProbabilityProductKey, Rational>,
     objective: ProbabilityObjective,
     bound: &Bound,
+    relation: ValueRelation,
     reward: Option<&super::reward::RewardGraph>,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
@@ -2108,20 +2309,33 @@ fn check_document_equalities(
                 expected.ok_or(ProbabilityDocumentError::Malformed)?
             }
         };
-        if value != &expected {
+        let state_relation = if state.terminal.is_some() {
+            ValueRelation::Exact
+        } else {
+            relation
+        };
+        if !state_relation.holds(value, &expected) {
             return Ok(rejected(
                 ProbabilityCertificateRule::InequalityFails,
                 key.clone(),
             ));
         }
     }
-    check_threshold(graph, values, bound, limits, cancel)
+    check_threshold(
+        graph,
+        values,
+        bound,
+        relation.tests_threshold(bound),
+        limits,
+        cancel,
+    )
 }
 
 fn check_threshold(
     graph: &CheckerGraph,
     values: &BTreeMap<ProbabilityProductKey, Rational>,
     bound: &Bound,
+    check_bound: bool,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
@@ -2132,10 +2346,11 @@ fn check_threshold(
         Bound::AtLeast(value) | Bound::AtMost(value) => value,
     };
     check_scalar(threshold, limits)?;
-    let meets = match bound {
-        Bound::AtLeast(threshold) => initial >= threshold,
-        Bound::AtMost(threshold) => initial <= threshold,
-    };
+    let meets = !check_bound
+        || match bound {
+            Bound::AtLeast(threshold) => initial >= threshold,
+            Bound::AtMost(threshold) => initial <= threshold,
+        };
     if !meets {
         return Ok(rejected(
             ProbabilityCertificateRule::ThresholdMissed,
@@ -2146,6 +2361,7 @@ fn check_threshold(
     Ok(ExactProbabilityCertificateCheck::Accepted(
         ExactProbabilityAcceptance {
             initial_values: None,
+            bound: None,
             certificate: ExactProbabilityCertificate {
                 values: values
                     .iter()
@@ -2189,8 +2405,16 @@ pub(super) fn certificate_identity(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ObligationIdentity, ProbabilityDocumentError> {
+    // A proof-role bound document names its claim by its base document's identity.
+    let unwrapped = value_bounds::unwrap(bytes, limits, cancel)?;
+    let bytes = unwrapped
+        .as_ref()
+        .map_or(bytes, |(_, exact)| exact.as_slice());
     if profile_dispatch(bytes, limits, cancel)? == ProfileDispatch::Measure {
         return measure::identity(bytes, limits, cancel);
+    }
+    if profile_dispatch(bytes, limits, cancel)? == ProfileDispatch::OnEach {
+        return instances::identity(bytes, limits, cancel);
     }
     if profile_dispatch(bytes, limits, cancel)? == ProfileDispatch::LongRun {
         return long_run::certificate_identity(bytes, limits, cancel);
@@ -2562,6 +2786,7 @@ mod tests {
                 &values,
                 ProbabilityObjective::Minimum,
                 &Bound::AtLeast(rational(1)),
+                ValueRelation::Exact,
                 None,
                 limits,
                 &cancel,

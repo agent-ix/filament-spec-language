@@ -76,6 +76,11 @@ pub(super) struct CompileRequest {
     /// `rem` nodes; imported libraries retain their own selection.
     #[serde(default, deserialize_with = "present_json_value")]
     pub integer_division: Option<serde_json::Value>,
+    /// FR-027: the imported-function selection located over the compiled
+    /// package; validated by the command, which names `call_site` on a
+    /// malformed value.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub call_site: Option<serde_json::Value>,
     /// FR-952: the mode every function body of the unit is checked under;
     /// `Linked` when absent.
     #[serde(default = "linked", deserialize_with = "check_mode")]

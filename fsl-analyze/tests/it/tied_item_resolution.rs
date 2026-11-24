@@ -334,9 +334,21 @@ impl fsl_analyze::provider::ExternalProvider for Answering {
             }
         }
         request
-            .items()
+            .targets()
             .iter()
-            .map(|_| self.verdict.clone())
+            .map(|target| {
+                let mut verdict = self.verdict.clone();
+                // A provider that refutes a contract claim names that claim as
+                // the one the counterexample violates.
+                if let (
+                    fsl_analyze::provider::ProviderVerdict::RefutedContract { counterexample },
+                    fsl_analyze::provider::ProviderTarget::Contract(claim),
+                ) = (&mut verdict, target)
+                {
+                    counterexample.violated = claim.claim().clone();
+                }
+                verdict
+            })
             .collect()
     }
 }
@@ -454,13 +466,78 @@ enum ContractRow {
 }
 
 /// The verdict a provider returns to refute `Wrong` with `row`'s FSpec
-/// FR-485 `contract-counterexample` (FR-968 "Verdicts").
-/// `ProviderVerdict` has no variant that carries one yet: QSL-2564 adds it
-/// and builds `row`'s counterexample here. Until then the verdict carries no
-/// counterexample, so every row that expects a replay fails.
+/// FR-485 `contract-counterexample` (FR-968 "Verdicts"): the counterexample
+/// the linked contract arm reproduces for `Wrong` (one execution of `inc`
+/// from `value = 1` to `value = 2`), with the post-state of
+/// [`ContractRow::PremiseFails`] or the `bound` flag of [`ContractRow::Bound`]
+/// changed as the row states.
 fn contract_verdict(row: ContractRow) -> fsl_analyze::provider::ProviderVerdict {
-    let _ = row;
-    fsl_analyze::provider::ProviderVerdict::Unknown
+    use fsl_analyze::analyze::{analyze_items, contract_item, Engines};
+    use fsl_analyze::contract_check::ContractRequest;
+    use fsl_replay::contract_check::select_contract;
+
+    let document = crate::counter::document(false);
+    let package =
+        crate::counter::package(&document, &format!("{}{WRONG}", crate::counter::CONTRACT));
+    let mut documents = crate::counter::Documents::new(document);
+    let start = documents.start("start", &[("a", 0)]);
+    let subject = crate::counter::subject(
+        &package,
+        &documents,
+        vec![start],
+        &["a"],
+        crate::counter::UNLIMITED,
+    );
+    let clause = package
+        .graph()
+        .state_clauses()
+        .iter()
+        .find(|clause| clause.name() == "Wrong")
+        .expect("the clause Wrong is checked");
+    let claim = fsl_replay::OccurrenceKey::new(clause.identity().clone(), clause.claim().clone());
+    let request = select_contract(&package, &claim).map(|selected| ContractRequest {
+        package: &package,
+        claim: selected,
+        subject: subject.simulation,
+        abstract_subject: None,
+        max_cases: None,
+    });
+    let record = analyze_items(
+        &Engines::fsl().expect("the linked engines register"),
+        vec![contract_item(
+            fsl_foundation::RequestIndex::new(0),
+            &package,
+            &claim,
+            request,
+        )],
+        &filament_exact::Cancel::new(),
+    )
+    .remove(0);
+    let mut found = record
+        .contract_check
+        .as_deref()
+        .expect("the contract arm refutes Wrong")
+        .clone();
+    match row {
+        ContractRow::Reproduces => {}
+        ContractRow::PremiseFails => {
+            let post = found.executions[0]
+                .post_state
+                .as_mut()
+                .expect("a preservation violation reads its post-state");
+            let value = post
+                .populations
+                .get_mut(&crate::counter::key("counters"))
+                .and_then(|objects| objects.get_mut("a"))
+                .and_then(|object| object.fields.get_mut(&crate::counter::key("Counter/value")))
+                .expect("the counter holds value");
+            *value = filament_exact::Value::Integer(1_i64.into());
+        }
+        ContractRow::Bound => found.bound = true,
+    }
+    fsl_analyze::provider::ProviderVerdict::RefutedContract {
+        counterexample: Box::new(found),
+    }
 }
 
 /// FR-968-AC-3: a provider's verdict on an `operation-contract` item settles
@@ -472,7 +549,6 @@ fn contract_verdict(row: ContractRow) -> fsl_analyze::provider::ProviderVerdict 
 /// none of the last three recording a counterexample.
 #[trace("TC-2725", "FR-968-AC-3")]
 #[test]
-#[ignore = "QSL-2889: no operation-contract item reaches a provider, ProviderVerdict carries no contract counterexample (contract_verdict), and the verdict is not settled by FR-968"]
 fn a_provider_contract_verdict_settles_after_replay() {
     use fsl_analyze::provider::ProviderVerdict;
     let settle = |name: &str, verdict: ProviderVerdict| {
@@ -489,6 +565,7 @@ fn a_provider_contract_verdict_settles_after_replay() {
         let item = &document["items"][0];
         assert_eq!(label(item), "inconclusive", "{item}");
         assert!(item["record"].to_string().contains(cause), "{item}");
+        assert!(item.get("counterexample").is_none(), "{item}");
         assert!(
             document["counterexamples"]
                 .as_array()
@@ -513,11 +590,8 @@ fn a_provider_contract_verdict_settles_after_replay() {
     let item = &refuted["items"][0];
     assert_eq!(label(item), "refuted", "{item}");
     assert_eq!(item["record"]["backend"], "fsl.test-contract", "{item}");
-    let counterexamples = refuted["counterexamples"]
-        .as_array()
-        .expect("a refuted item's counterexample");
-    assert_eq!(counterexamples.len(), 1, "{refuted}");
-    let counterexample = &counterexamples[0]["counterexample"];
+    // FR-286: a refuted item carries its one `counterexample` member.
+    let counterexample = &item["counterexample"];
     assert_eq!(
         counterexample["type"], "contract-counterexample",
         "{refuted}"
@@ -570,6 +644,7 @@ fn a_provider_contract_assignments_counterexample_settles_replay_parity() {
         item["record"].to_string().contains("replay-parity"),
         "{item}"
     );
+    assert!(item.get("counterexample").is_none(), "{item}");
     assert!(
         document["counterexamples"]
             .as_array()

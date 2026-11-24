@@ -150,6 +150,8 @@ fn admitted_source(source: &str, slot: ValueType) -> Result<Value, AdmissionReco
         unresolved: Vec::new(),
         clock_references: Vec::new(),
         population_nodes: BTreeMap::new(),
+        population_keys: BTreeMap::new(),
+        population_members: BTreeMap::new(),
         origins: crate::model::object_environment::ReferenceOriginBuilder::default(),
         parameter_origins: BTreeMap::new(),
         result_origins: ReferenceOrigins::default(),
@@ -237,7 +239,7 @@ fn native_collection_decimal_retains_ordered_spelling_and_checks_value_membershi
         assert_eq!(refusal.catalog.cause(), "invalid-value");
         assert_eq!(
             refusal.fields.get("expected").map(String::as_str),
-            Some("Decimal[0, 10000; 2, 2]")
+            Some("Decimal[0, 10000; 2, 2; exact]")
         );
     }
     let nested = collection(

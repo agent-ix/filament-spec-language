@@ -277,12 +277,7 @@ impl<'a> ModelSystem<'a> {
                 .iter()
                 .enumerate()
                 .map(|(declared, field)| {
-                    let domain = Domain::of(
-                        &field.value_type,
-                        &references,
-                        self.types,
-                        &self.record_orders,
-                    );
+                    let domain = self.domain_with_clocks(&field.value_type, &references);
                     let domain_len = domain.as_ref().map(Domain::len);
                     let values = domain
                         .filter(|domain| domain.len() <= MAX_FIELD_VALUES)
@@ -406,12 +401,7 @@ impl<'a> ModelSystem<'a> {
                         position,
                     ) {
                         Some(support) => ParameterValues::Values(support.values()),
-                        None => match Domain::of(
-                            value_type,
-                            references,
-                            self.types,
-                            &self.record_orders,
-                        ) {
+                        None => match self.domain_with_clocks(value_type, references) {
                             Some(domain) => ordered(domain, false)?,
                             None => match Domain::map_size(
                                 value_type,
@@ -429,7 +419,7 @@ impl<'a> ModelSystem<'a> {
             let result = match application.declaration.result() {
                 None => ResultValues::None,
                 Some(result_type) => ResultValues::Declared(
-                    match Domain::of(result_type, references, self.types, &self.record_orders) {
+                    match self.domain_with_clocks(result_type, references) {
                         Some(domain) => ordered(domain, true)?,
                         None => match Domain::map_size(
                             result_type,

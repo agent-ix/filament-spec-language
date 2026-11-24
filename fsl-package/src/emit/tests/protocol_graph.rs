@@ -6,11 +6,11 @@
 //! binder types and the one-queue-per-channel membership rule.
 
 use super::population_bound::document;
-use super::protocol_reference::{clause_argument, node_by_id, node_of, not_emitted};
+use super::protocol_reference::{clause_argument, node_by_id, node_of};
 use super::reachability::{lower_package, lower_with, model_node, Lowered};
 use super::*;
 use filament_semantic_value::checking::CheckMode;
-use fsl_semantics::check::{CheckCause, CheckRefusal, ProtocolAnchorCause, ProtocolConstruct};
+use fsl_semantics::check::{CheckCause, CheckRefusal, ProtocolAnchorCause};
 
 pub(super) const PROFILES: &str = "profile p = \"filament.protocol.finite-global/v1\";\n\
                          profile e = \"filament.temporal.timed/v1\";\n";
@@ -621,87 +621,6 @@ pub(super) fn checked_package(
         CheckingLimits::default(),
         &fsl_semantics::check::test_support::ZeroRewardEvaluator,
     )
-}
-
-/// FR-092-AC-18, FR-383: every construct whose node is still not written
-/// refuses the protocol typed (`unsupported_construct`/`not-yet-implemented`,
-/// once, naming the construct and its ticket), and with the gate open writes
-/// no `protocol_clause` node, so a protocol is never written without part of
-/// its graph. The same protocol with only the written constructs checks and
-/// writes the clause.
-/// Relationships are checked separately in fsl-semantics because a real
-/// model package cannot yet name one (QSL-1141). Requirements and
-/// compensations are emitted and exercised by their positive package tests.
-#[trace("FR-092-AC-18", "TC-1021")]
-#[test]
-fn every_remaining_unwritten_construct_refuses_typed_and_writes_no_clause() {
-    use ProtocolConstruct as C;
-    // A capture is written before the roles, every other member after.
-    let plain = |activation: &str, members: &str, run: &str, finish: &str| {
-        let (captures, members) = if members.starts_with("capture ") {
-            (members, "")
-        } else {
-            ("", members)
-        };
-        format!(
-            "function ok using v(): Boolean pure {{ true }}\n\
-             protocol Flow using p over (input: M::Order) {activation} {{\n\
-             {captures}\n{BUYER}\n{members}\nrun {run}\nfinish End as (outcome: Boolean) {{ {finish} }};\n}}\n"
-        )
-    };
-    let main = "sequence Main { }";
-    let cases = [(
-        C::ProtocolReferenceInBody,
-        "QSL-1121g",
-        vec![C::ProtocolReferenceInBody],
-        false,
-        plain("on origin", "", main, "protocol Flow"),
-    )];
-    let clauses = |graph: &fsl_semantics::check::CheckedGraph| {
-        graph
-            .semantic_graph()
-            .nodes()
-            .filter(|node| node.semantic_form() == "protocol_clause")
-            .count()
-    };
-    let written = checked(&plain("on origin", "", main, "true"), false)
-        .unwrap_or_else(|refusals| panic!("{refusals:?}"));
-    assert_eq!(clauses(&written), 1);
-    for (construct, ticket, expected, read_back, text) in cases {
-        assert_eq!(construct.tracking(), ticket, "{construct:?}");
-        let refusals = checked(&text, false).expect_err(&text);
-        // The protocol's declaration is refused once per construct it names,
-        // and a function that reads the protocol back is refused at its
-        // reference.
-        assert_eq!(
-            refusals
-                .iter()
-                .map(|refusal| refusal.cause.clone())
-                .collect::<Vec<_>>(),
-            expected.iter().map(|c| not_emitted(*c)).collect::<Vec<_>>(),
-            "{text}"
-        );
-        let open = checked(&text, true);
-        if read_back {
-            // The function's reference to the unwritten protocol is refused
-            // whatever the opt-in; only the function's refusal remains.
-            let open = open.expect_err(&text);
-            assert_eq!(
-                open.iter().map(|r| r.cause.clone()).collect::<Vec<_>>(),
-                [not_emitted(construct)],
-                "{text}"
-            );
-            continue;
-        }
-        let open = open.unwrap_or_else(|refusals| panic!("{text}: {refusals:?}"));
-        // Only the second protocol the case declares, if any, is written.
-        let others = text.matches("protocol Other using").count();
-        assert_eq!(
-            clauses(&open),
-            others,
-            "{construct:?} writes no clause node for Flow"
-        );
-    }
 }
 
 /// Declarations the `carries` cases use: a record, a nominal enum and a unit.

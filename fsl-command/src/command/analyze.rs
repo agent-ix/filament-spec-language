@@ -852,6 +852,7 @@ fn read<'d>(
         output: None,
         handoff: None,
         integer_division: None,
+        call_site: None,
         check_mode: filament_semantic_value::checking::CheckMode::Linked,
     };
     Ok(Readout::Source(
@@ -1537,6 +1538,12 @@ pub(super) fn validate_items(items: Option<&[ItemSelection]>) -> Result<()> {
             return Err(invalid(
                 &format!("/items/{position}/recording"),
                 "recording is only valid on a global-conformance item",
+            ));
+        }
+        if item.assessment.is_some() && item.recording.is_none() {
+            return Err(invalid(
+                &format!("/items/{position}/assessment"),
+                "assessment requires a recording",
             ));
         }
         if let Some(population) = &item.population {

@@ -212,14 +212,14 @@ mod time_units;
 pub use time_units::is_clock_unit_node;
 mod timed_model;
 pub use probabilistic::{
-    Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedProbabilisticModel,
-    CheckedTemporalFormula, ClaimActivation, ClaimMemberPath, ClaimNormalForm, ClaimReadFault,
-    ClaimReads, Confidence, ConfidenceFault, Delay, DelayDistribution, DelayFault, Event,
-    FairnessRead, FractionMeasure, ModelSubjectRef, OverBinding, PackageProbabilityClaimForm,
-    PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause, ProbabilisticDeclaration,
-    ProbabilisticFeature, ProbabilisticOperation, QualitativeForm, RandomParameter, ReachTarget,
-    Reward, SchedulerRead, Statement, SupportValue, TimeTypeMismatchReason, WeightOwner, Weighting,
-    Workload,
+    ActivationGuard, Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim,
+    CheckedProbabilisticModel, CheckedTemporalFormula, ClaimActivation, ClaimMemberPath,
+    ClaimNormalForm, ClaimReadFault, ClaimReads, Confidence, ConfidenceFault, Delay,
+    DelayDistribution, DelayFault, Event, FairnessRead, FractionMeasure, ModelSubjectRef,
+    OverBinding, PackageProbabilityClaimForm, PreconditionSite, ProbForm, ProbScheduler,
+    ProbabilisticCause, ProbabilisticDeclaration, ProbabilisticFeature, ProbabilisticOperation,
+    QualitativeForm, RandomParameter, ReachTarget, Reward, SchedulerRead, Statement, SupportValue,
+    TimeTypeMismatchReason, WeightOwner, Weighting, Workload,
 };
 pub use probabilistic::{
     PackageDelay, PackageDelayFamily, PackageLiteral, PackageProbabilistic,
@@ -615,8 +615,9 @@ pub use temporal_clause::check_clauses;
 
 pub use fsl_forms::AggregateComparison;
 pub use lowering::{
-    collection_kind, CollectionShape, PlaceRow, PlaceStep, SelectedModelUnion,
-    SelectedModelUnionCase, SelectedModelUnionPayload,
+    clock_field_member_type, collection_kind, CollectionShape, PlaceRow, PlaceStep,
+    SelectedModelUnion, SelectedModelUnionCase, SelectedModelUnionPayload, SourceClockEntry,
+    SourceClockMembers,
 };
 pub use temporal_clause::{
     Activation, AggregateKind, AggregateWindow, BinaryTemporal, CaptureSite, CheckedAggregate,
@@ -1035,6 +1036,14 @@ pub struct CheckedGraph {
     /// FR-230: the checked timed model of each time source, in time-source
     /// order.
     timed_models: Vec<TimedModel>,
+    /// FR-367 "Member entries": the authored members of each source record,
+    /// tuple and union that holds a clock directly.
+    source_clock_members: BTreeMap<filament_exact::NodeKey, SourceClockMembers>,
+    /// FR-569: each data parameter of each source object operation, by the
+    /// object's node, the operation name and the parameter name: its
+    /// type's node.
+    source_parameter_nodes:
+        BTreeMap<(filament_exact::NodeKey, String, String), filament_exact::NodeKey>,
     clock_declaration_table: crate::model::clock_reference::normalization::ClockDeclarationTable,
     /// FR-135 to FR-137: every checked refinement, in declaration order.
     refinements: Vec<CheckedRefinement>,
@@ -1233,6 +1242,8 @@ impl DebugWith for CheckedGraph {
             type_invariants,
             terminals,
             timed_models,
+            source_clock_members,
+            source_parameter_nodes,
             clock_declaration_table,
             refinements,
             abstractions,
@@ -1363,6 +1374,14 @@ impl DebugWith for CheckedGraph {
             .field("type_invariants", &With(type_invariants, table))
             .field("terminals", &terminals)
             .field("timed_models", &Seq(timed_models, table))
+            .field("source_parameter_nodes", &source_parameter_nodes.len())
+            .field(
+                "source_clock_members",
+                &source_clock_members
+                    .keys()
+                    .map(|key| NodeKeyDebug(key, table))
+                    .collect::<Vec<_>>(),
+            )
             .field("clock_declaration_table", clock_declaration_table)
             .field("refinements", &Seq(refinements, table))
             .field("abstractions", &abstractions)
@@ -7120,12 +7139,12 @@ impl PackageDeclarations {
         }
         // FR-375: each refinement's rows, keyed once its catalog is, each
         // row expression located at its own site. A refinement whose
-        // catalog names a node not written yet, or a row a form with no
-        // node, is not emitted, so its rows are not keyed.
+        // catalog names a node not written yet, or whose history initial has
+        // no literal form, is not emitted, so its rows are not keyed.
         let mut refinement_booleans = std::collections::BTreeMap::new();
         for checked in &mut refinements {
             if (checked.class_catalog.is_some() && checked.class_catalog_keys.is_none())
-                || !checked.rows_have_nodes()
+                || !checked.history_initials_have_literals()
             {
                 continue;
             }
@@ -7183,6 +7202,7 @@ impl PackageDeclarations {
             |location| regions.region(location).map(|region| region.start()),
         );
         let parameter_spans = lowered.parameter_spans;
+        let source_parameter_nodes = lowered.source_parameter_nodes;
         let checked_node_keys = lowered.checked_node_keys;
         // Every clause and attempt lowered above (a failed one refused, and
         // `refusals` is empty here); a slot left empty is an internal fault,
@@ -8531,6 +8551,11 @@ impl PackageDeclarations {
                     .collect()
             })
             .collect();
+        let source_clock_members: BTreeMap<filament_exact::NodeKey, SourceClockMembers> = models
+            .iter()
+            .flat_map(AdmittedModel::source_clock_members)
+            .map(|(key, members)| (key.clone(), members.clone()))
+            .collect();
         let mut graph = CheckedGraph {
             graph_identity: CheckedGraphIdentity::fresh(),
             source,
@@ -8584,6 +8609,8 @@ impl PackageDeclarations {
             type_invariants,
             terminals,
             timed_models,
+            source_clock_members,
+            source_parameter_nodes,
             clock_declaration_table: Default::default(),
             refinements,
             abstractions: self.abstractions,
@@ -10121,6 +10148,29 @@ impl CheckedGraph {
     /// in ascending order.
     pub fn terminals(&self) -> &[CheckedTerminal] {
         &self.terminals
+    }
+    /// FR-569: the node of the type of the data parameter `parameter` of the
+    /// operation `operation` of the source object `object`.
+    pub fn source_parameter_node(
+        &self,
+        object: &filament_exact::NodeKey,
+        operation: &str,
+        parameter: &str,
+    ) -> Option<&filament_exact::NodeKey> {
+        self.source_parameter_nodes.get(&(
+            object.clone(),
+            operation.to_owned(),
+            parameter.to_owned(),
+        ))
+    }
+
+    /// FR-367 "Member entries": the authored members of the source record,
+    /// tuple or union `key` when it holds a clock directly.
+    pub fn source_clock_members(
+        &self,
+        key: &filament_exact::NodeKey,
+    ) -> Option<&SourceClockMembers> {
+        self.source_clock_members.get(key)
     }
 
     /// FR-230: the checked timed model of each time source, in time-source

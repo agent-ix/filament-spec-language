@@ -751,19 +751,12 @@ fn refused_field(replay: &Replay, field: &str, value: Value) -> Refusal {
     )
 }
 
-/// A snapshot field refusal with its document path reduced to the typed steps
-/// below the field: the path is checked to start at
-/// `populations/<i>/objects/<j>/fields/<field>` and, when it names a member,
-/// to end at it.
+/// A snapshot field refusal with its typed path reduced to the steps below
+/// the field, after checking the `populations/<i>/objects/<j>/fields/<field>`
+/// prefix. The catalog's `member` label is asserted separately; it is not
+/// reconstructed into the shared typed path.
 fn at_field(mut refusal: Refusal, field: &str) -> Refusal {
     refusal.path = below_field(&refusal.path, field).to_vec();
-    if let Some(member) = refusal.member.clone() {
-        assert_eq!(
-            refusal.path.pop(),
-            Some(PathStep::Field(member)),
-            "the path ends at the member"
-        );
-    }
     refusal
 }
 
@@ -2529,15 +2522,9 @@ fn defective_collections_refuse_in_a_field_and_in_a_parameter() {
             defect.value
         );
         if place == "field" {
-            // The document path of the field, the typed steps, then the
-            // named member.
-            let mut expected = defect.path.clone();
-            if let Some(member) = record.fields.get("member") {
-                expected.push(PathStep::Field(member.clone()));
-            }
             assert_eq!(
                 below_field(&record.path, defect.name),
-                expected,
+                defect.path,
                 "{place} {}",
                 defect.value
             );
@@ -2594,10 +2581,7 @@ fn defective_collections_refuse_in_a_field_and_in_a_parameter() {
         (
             Code::InvalidRuntimeInput.as_str(),
             "invalid-value",
-            vec![
-                PathStep::Index(0),
-                PathStep::Field("nanoseconds".to_owned())
-            ]
+            vec![PathStep::Index(0)]
         )
     );
 }
@@ -2908,12 +2892,9 @@ fn native_collection_document_members_follow_the_declared_kind() {
                 "{value}"
             );
             if snapshot {
-                // A snapshot field's document path ends at the named member.
-                let named: Vec<PathStep> = member
-                    .map(|member| PathStep::Field(member.to_owned()))
-                    .into_iter()
-                    .collect();
-                assert_eq!(below_field(&record.path, field), named, "{value}");
+                // The envelope refusal is at the collection value itself;
+                // its separate member label does not add a typed value step.
+                assert!(below_field(&record.path, field).is_empty(), "{value}");
             } else {
                 assert!(record.path.is_empty(), "{value}: {:?}", record.path);
             }
@@ -3124,10 +3105,7 @@ fn a_defective_magnitude_refuses_at_the_path_magnitude() {
         );
         assert_eq!(
             below_field(&record.path, "reach"),
-            [
-                PathStep::Field("magnitude".to_owned()),
-                PathStep::Field(member.to_owned())
-            ],
+            [PathStep::Field("magnitude".to_owned())],
             "{magnitude}"
         );
     }

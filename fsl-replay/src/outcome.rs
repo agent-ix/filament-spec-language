@@ -1198,6 +1198,21 @@ pub struct ProtocolConformanceOutput {
     /// Whether the global counterexample replay reproduced its violation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replay: Option<ConformanceReplayOutput>,
+    /// One assessment per observation prefix of an `incremental` recording
+    /// assessment (FR-896).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefixes: Option<Vec<ConformancePrefixOutput>>,
+}
+
+/// The assessment of the first `observations` observations of a recording.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformancePrefixOutput {
+    /// How many observations the prefix holds.
+    pub observations: usize,
+    /// The prefix's global label.
+    pub label: String,
+    /// One result per protocol obligation of the prefix.
+    pub obligations: Vec<ConformanceObligationOutput>,
 }
 
 /// The per-channel `max_messages` method bound a protocol run used.
@@ -2959,6 +2974,41 @@ impl OutcomeDocument {
         document.native_fences = Some(report.clone());
         document
     }
+
+    /// The document of a native-fence check that failed as a whole, before or
+    /// instead of reporting any fence: extraction refusal, a limit, cancellation
+    /// or an internal fault. It carries no items.
+    #[cfg(feature = "quire-extraction")]
+    pub fn from_native_fence_failure(
+        failure: &StageFailure<crate::spine::FenceCheckCause>,
+    ) -> Self {
+        let refused = |cause: &crate::spine::FenceCheckCause| {
+            let crate::spine::FenceCheckCause::Extraction(diagnostic) = cause;
+            Self::new(Operation::Check, None, cause.code().category()).with_diagnostics(vec![
+                OutcomeDiagnostic::new(None, cause.code().as_str(), None, diagnostic.to_string()),
+            ])
+        };
+        match failure {
+            StageFailure::Refused(cause) => refused(cause),
+            StageFailure::RefusedWithPayload(cause, ()) => refused(cause),
+            StageFailure::Limit(limit) | StageFailure::LimitWithPayload(limit, ()) => {
+                let refusal = crate::spine::CompileRefusal::Limit(limit.clone());
+                Self::new(
+                    Operation::Check,
+                    Some(refusal.stage().into()),
+                    Category::Incomplete,
+                )
+                .with_diagnostics(vec![
+                    OutcomeDiagnostic::from_compile_refusal_for_operation(
+                        Operation::Check,
+                        &refusal,
+                    ),
+                ])
+            }
+            StageFailure::Cancelled(cause) => Self::cancelled(Operation::Check, *cause),
+            StageFailure::Fault(fault) => Self::faulted(Operation::Check, fault),
+        }
+    }
     /// A document of `operation` that last reached `last_stage` with the
     /// outcome's `category`, and no items, diagnostics or artifacts.
     pub fn new(operation: Operation, last_stage: Option<OutcomeStage>, category: Category) -> Self {
@@ -4275,6 +4325,7 @@ mod tests {
                 }]),
                 recording: None,
                 replay: Some(ConformanceReplayOutput { reproduced: true }),
+                prefixes: None,
             });
         let wire = serde_json::to_value(item).expect("serializes");
         assert_eq!(wire["result"], "tested");

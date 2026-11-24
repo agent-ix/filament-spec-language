@@ -1386,6 +1386,33 @@ fn zero_delay_cycle_is_decided_with_time_divergence() {
     }
 }
 
+/// FR-204-AC-16 (TC-2175): the guardless, resetless `Retx` with an instant
+/// `spin` at `x >= 2 ms` has a zero-time end component at `x = 2 ms`, while
+/// `send`'s zero-delay self-loop at `x = 0 ms` and `x = 1 ms` lies in no
+/// component. Every scheduler that lets time pass delivers with probability 1:
+/// `send` delivers with 9/10 and repeats with 1/10, and at `x = 2 ms` the
+/// component's only exit is `send`, worth `(9/10) / (1 - 1/10) = 1`. So the
+/// minimum and maximum are both 1.
+#[trace("TC-2175", "FR-204-AC-16")]
+#[test]
+fn zero_delay_loop_beside_an_end_component_is_decided() {
+    let world = retx_with(
+        &[("send", &["late", "x"]), ("spin", &["retried"])],
+        "",
+        false,
+        "pre Spin using v on M::Call::spin { self.x >= 2 ms }\n\
+         post Spun using v on M::Call::spin { self.retried = not pre(self.retried) }\n",
+        &every_claims(),
+    );
+    let built = product(&world, "Deadline");
+    for bound in [
+        Bound::AtLeast(ratio(99, 100)),
+        Bound::AtMost(ratio(999, 1000)),
+    ] {
+        assert_eq!(exact_initial(&built, bound), Some(ratio(1, 1)));
+    }
+}
+
 /// FR-204-AC-17 (TC-2176): a time-locked state is terminal.
 #[trace("TC-2176", "FR-204-AC-17")]
 #[test]
@@ -1627,4 +1654,434 @@ fn a_timed_form_shape_member_path_names_the_nested_formula_nodes() {
     let member = member.expect("a member path");
     assert_eq!(member.body, ["form", "event", "formula"]);
     assert_eq!(member.formulas, [formula_root(&world, "Whole")]);
+}
+
+/// `Trio` of FR-204's worked example over the timed fixture's `Call`: its
+/// `phase` 0 is `Idle` and 1 `Done`, and the flags `a`, `b` and `c` are the
+/// fixture's `inflight`, `late` and `retried`. `A`, `B` and `C` are each
+/// guarded by `Idle` under the invariant `x <= 3 ms` while `Idle`, set `Done`
+/// and their own flag, and race with the given delays
+/// `discrete { 1 ms: 1, 2 ms: 1 }`, `{ 2 ms: 1, 3 ms: 1 }` and
+/// `{ 2 ms: 1, 3 ms: 3 }` under the workload `Skew` (weights 1, 2, 3).
+fn trio(claims: &str) -> World {
+    let operation = |name: &str, flag: &str| {
+        format!(
+            "pre G{name} using v on M::Call::{name} {{ self.phase = 0 }}\n\
+             post P{name} using v on M::Call::{name} {{ self.phase = 1 and self.{flag} = true }}\n"
+        )
+    };
+    let document = timed_world::document(
+        &["x"],
+        &[
+            ("A", &["phase", "inflight"]),
+            ("B", &["phase", "late"]),
+            ("C", &["phase", "retried"]),
+        ],
+    );
+    timed_world::world(
+        &document,
+        PROFILES,
+        &format!(
+            "{}{}{}{}\
+             time invariant Wait when {{ self.phase = 0 }} {{ self.x <= 3 ms }}\n\
+             delay M::Call::A ~ discrete {{ 1 ms: 1, 2 ms: 1 }};\n\
+             delay M::Call::B ~ discrete {{ 2 ms: 1, 3 ms: 1 }};\n\
+             delay M::Call::C ~ discrete {{ 2 ms: 1, 3 ms: 3 }};\n\
+             workload Skew on M {{ weight Call::A = 1; weight Call::B = 2; weight Call::C = 3; }}\n\
+             {claims}",
+            timed_world::DENSE,
+            operation("A", "inflight"),
+            operation("B", "late"),
+            operation("C", "retried"),
+        ),
+    )
+}
+
+/// A probability claim `name` under `Skew` over `eventually[0 ms, within ms]
+/// holds(c.flag)`.
+fn trio_claim(name: &str, bound: &str, within: u32, flag: &str) -> String {
+    format!(
+        "probabilistic {name} using ev on M over (c: M::Call) under Skew on origin \
+         {{ probability {bound} [ eventually[0 ms, {within} ms] holds(c.{flag}) ] }}\n"
+    )
+}
+
+/// The four claims of FR-204-AC-18, over `b`, `c`, `a` by 3 ms and `a` by 1 ms.
+fn trio_claims() -> String {
+    format!(
+        "{}{}{}{}",
+        trio_claim("PB", ">= 0.13", 3, "late"),
+        trio_claim("PC", ">= 0.07", 3, "retried"),
+        trio_claim("PA3", "<= 0.8", 3, "inflight"),
+        trio_claim("PA1", ">= 0.5", 1, "inflight"),
+    )
+}
+
+fn settle_trio(
+    world: &World,
+    claim: &str,
+    tamper: Option<&dyn Fn(&mut fsl_replay::ExactProbabilityCertificate)>,
+) -> fsl_analyze::analyze::AnalyzeRecord {
+    let request = fsl_analyze::exact_probabilistic::ProductRequest {
+        subject: ModelSubject {
+            simulation: world.request(),
+            proof_bounds: Vec::new(),
+        },
+        claim: world
+            .package
+            .graph()
+            .probabilistic_model()
+            .claim(claim)
+            .expect("the claim checks"),
+        limits: ExactProbLimits::default(),
+    };
+    let engines = fsl_analyze::analyze::Engines::fsl().expect("the linked engines are admitted");
+    let index = fsl_foundation::RequestIndex::new(0);
+    let item = match tamper {
+        Some(tamper) => {
+            fsl_analyze::analyze::exact_probabilistic_item_tampered(index, request, tamper)
+        }
+        None => fsl_analyze::analyze::exact_probabilistic_item(index, request),
+    };
+    fsl_analyze::analyze::analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+}
+
+fn exact_value(record: &fsl_analyze::analyze::AnalyzeRecord) -> Rational {
+    match record.terminal().expect("a terminal record").value() {
+        fsl_replay::TerminalValue::Proved {
+            basis: fsl_replay::ProofBasis::ExactValue { value, .. },
+            ..
+        } => value.value().clone(),
+        other => panic!("expected an exact proof, got {other:?}"),
+    }
+}
+
+/// FR-204-AC-18 (TC-3204): three identities with `discrete` delays race under
+/// the unequal weights of `Skew`; a tie is ordered by the weights, not evenly
+/// and not by canonical order. The initial state has four race edges, each
+/// `Identity(A)`, the four claims settle at the exact values the weighted
+/// tie orders give, and a certificate with the evenly-tied or the
+/// canonical-order value for `b` is rejected `InequalityFails` at the initial
+/// state.
+#[trace("TC-3204", "FR-204-AC-18")]
+#[test]
+fn given_delays_race_under_unequal_weights() {
+    let world = trio(&trio_claims());
+    let built = product(&world, "PB");
+    let start = built.initial[0].2;
+    let mut edges: Vec<(u64, Rational)> = Vec::new();
+    for edge in built.edges.iter().filter(|edge| edge.from == start) {
+        let ProductAction::Identity(identity) = &edge.choice else {
+            panic!("a race edge is Identity(A) only: {:?}", edge.choice);
+        };
+        let name = world
+            .system()
+            .operations()
+            .into_iter()
+            .find(|(_, _, text)| *text == identity.operation.as_str())
+            .map(|(_, name, _)| name.to_owned())
+            .expect("a model operation");
+        assert_eq!(name, "A");
+        let (clocks, _) = digital_clocks_of(&built.states[edge.to.index()]);
+        edges.push((clocks[0], edge.probability.clone()));
+    }
+    edges.sort();
+    assert_eq!(
+        edges,
+        vec![
+            (1, ratio(1, 2)),
+            (2, ratio(5, 64)),
+            (2, ratio(7, 48)),
+            (2, ratio(53, 192)),
+        ]
+    );
+
+    for (claim, value) in [
+        ("PB", ratio(7, 48)),
+        ("PC", ratio(5, 64)),
+        ("PA3", ratio(149, 192)),
+        ("PA1", ratio(1, 2)),
+    ] {
+        let record = settle_trio(&world, claim, None);
+        assert_eq!(exact_value(&record), value, "{claim}");
+    }
+
+    assert_forged_initial_values_rejected(
+        &world,
+        "PB",
+        ratio(7, 48),
+        &[ratio(11, 96), ratio(0, 1)],
+    );
+}
+
+/// The `Exact` certificate of `claim`, whose initial state's value is
+/// `exact`, with that value replaced by each of `forged`: the checker rejects
+/// each `InequalityFails` at that initial state.
+fn assert_forged_initial_values_rejected(
+    world: &World,
+    claim: &str,
+    exact: Rational,
+    forged: &[Rational],
+) {
+    let own = settle_trio(world, claim, None);
+    let document: serde_json::Value = serde_json::from_slice(
+        own.terminal()
+            .and_then(|terminal| terminal.exact_certificate_document())
+            .expect("the proof retains its certificate"),
+    )
+    .expect("a JSON document");
+    let text = |value: &Rational| {
+        json!({"numerator": value.numerator().to_string(),
+               "denominator": value.denominator().to_string()})
+    };
+    let initial_row = document["values"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .position(|row| row["value"] == text(&exact))
+        .expect("the initial state's value");
+    let identity = fsl_replay::probabilistic_claim_identity(
+        world
+            .package
+            .graph()
+            .probabilistic_model()
+            .claim(claim)
+            .expect("the claim checks"),
+    )
+    .expect("an identity");
+    for value in forged {
+        let mut altered = document.clone();
+        altered["values"][initial_row]["value"] = text(value);
+        let checked = fsl_replay::check_probability_certificate_document(
+            &world.system(),
+            world.package.graph().probabilistic_model().claims(),
+            &identity,
+            &serde_json::to_vec(&altered).expect("serializes"),
+            fsl_replay::ProbabilityDocumentLimits {
+                states: 4096,
+                edges: 65_536,
+                ..super::long_run_certificate::limits()
+            },
+            &Cancel::new(),
+        );
+        let Ok(fsl_replay::ExactProbabilityCertificateCheck::Rejected(rejection)) = checked else {
+            panic!("{value:?}: expected a rejection, got {checked:?}");
+        };
+        assert_eq!(
+            rejection.rule,
+            fsl_replay::ProbabilityCertificateRule::InequalityFails,
+            "{value:?}"
+        );
+        let key = {
+            use base64::Engine as _;
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(
+                    altered["values"][initial_row]["state"]
+                        .as_str()
+                        .expect("a state key"),
+                )
+                .expect("base64")
+        };
+        assert_eq!(
+            rejection.at,
+            fsl_replay::ProbabilityCertificateLocus::ProductState(
+                fsl_replay::ProbabilityProductKey::from_canonical_bytes(key)
+            ),
+            "{value:?}"
+        );
+    }
+}
+
+/// `Chain` of FR-204's worked example over the timed fixture's `Call`: `n` is
+/// `phase`, `last` a further `Phase` field (0 `None`, 1 `X`, 2 `Y`, 3 `Z`)
+/// and the flags `x`, `y`, `z` are `inflight`, `late` and `retried`. `X`, `Y`
+/// and `Z` each guard on their own flag, set it, increment `n` and set `last`,
+/// all with `delay discrete { 2 ms: 1 }`, under `Order` (weights 1, 2, 3).
+fn chain(claims: &str) -> World {
+    let operation = |name: &str, flag: &str, last: u8| {
+        format!(
+            "pre G{name} using v on M::Call::{name} {{ not self.{flag} and self.phase < 3 }}\n\
+             post P{name} using v on M::Call::{name} {{ self.{flag} = true \
+             and self.phase = pre(self.phase) + 1 and self.last = {last} }}\n"
+        )
+    };
+    let mut document: serde_json::Value = serde_json::from_slice(&timed_world::document(
+        &["x"],
+        &[
+            ("X", &["phase", "inflight", "last"]),
+            ("Y", &["phase", "late", "last"]),
+            ("Z", &["phase", "retried", "last"]),
+        ],
+    ))
+    .expect("the timed fixture is JSON");
+    document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Call fields")
+        .push(timed_world::wire_field(
+            "last",
+            &timed_world::ident("Phase"),
+        ));
+    timed_world::world_holding(
+        &serde_json::to_vec(&document).expect("serializes"),
+        PROFILES,
+        &format!(
+            "{}{}{}{}\
+             time invariant Wait when {{ self.phase < 3 }} {{ self.x <= 3 ms }}\n\
+             delay M::Call::X ~ discrete {{ 2 ms: 1 }};\n\
+             delay M::Call::Y ~ discrete {{ 2 ms: 1 }};\n\
+             delay M::Call::Z ~ discrete {{ 2 ms: 1 }};\n\
+             workload Order on M {{ weight Call::X = 1; weight Call::Y = 2; weight Call::Z = 3; }}\n\
+             {claims}",
+            timed_world::DENSE,
+            operation("X", "inflight", 1),
+            operation("Y", "late", 2),
+            operation("Z", "retried", 3),
+        ),
+        &json!({"last": {"integer": "0"}}),
+    )
+}
+
+/// A claim `name` under `Order` that all three fired and `last` is `last`.
+fn chain_claim(name: &str, bound: &str, last: u8) -> String {
+    format!(
+        "probabilistic {name} using ev on M over (c: M::Call) under Order on origin \
+         {{ probability {bound} [ eventually[0 ms, 3 ms] holds(c.phase = 3 and c.last = {last}) ] }}\n"
+    )
+}
+
+/// FR-204-AC-20 (TC-3206): three operations that tie at 2 ms and each fire
+/// when still enabled at their turn are ordered without replacement by the
+/// weights (`XYZ` 1/15, `XZY` 1/10, `YXZ` 1/12, `YZX` 1/4, `ZXY` 1/6, `ZYX`
+/// 1/3), so the third pick is `X` with 7/12, `Y` with 4/15 and `Z` with
+/// 3/20; the certificates of the first-pick-weighted (1/2), even (1/3) and
+/// canonical-order (1) readings are rejected.
+#[trace("TC-3206", "FR-204-AC-20")]
+#[test]
+fn tied_operations_are_ordered_without_replacement() {
+    let world = chain(&format!(
+        "{}{}{}",
+        chain_claim("LastX", ">= 0.58", 1),
+        chain_claim("LastZ", "<= 0.2", 3),
+        chain_claim("LastY", "<= 0.3", 2),
+    ));
+    for (claim, value) in [
+        ("LastX", ratio(7, 12)),
+        ("LastZ", ratio(3, 20)),
+        ("LastY", ratio(4, 15)),
+    ] {
+        let record = settle_trio(&world, claim, None);
+        assert_eq!(exact_value(&record), value, "{claim}");
+    }
+    assert_forged_initial_values_rejected(
+        &world,
+        "LastZ",
+        ratio(3, 20),
+        &[ratio(1, 2), ratio(1, 3), ratio(1, 1)],
+    );
+}
+
+/// `Pair` of FR-204's worked example over the timed fixture's `Call`. The
+/// operation `fire(which: Boolean)` has the two identities `F1` (`which`
+/// true) and `F2` (`which` false), both guarded by `phase = 0` (`Idle`); `F1`
+/// sets `late` (the hit of the first identity, read as `n1.hit`) and `F2`
+/// `retried`, each setting `phase` 1 (`Done`). `G` sets `inflight` (the flag
+/// `g`) and `phase` 1. `fire` takes `discrete { 2 ms: 1 }` and `G`
+/// `discrete { 2 ms: 1, 3 ms: 1 }` under `Share` (`fire` 4, `G` 1).
+fn pair(claims: &str) -> World {
+    let mut document: serde_json::Value = serde_json::from_slice(&timed_world::document(
+        &["x"],
+        &[
+            ("fire", &["phase", "late", "retried"]),
+            ("G", &["phase", "inflight"]),
+        ],
+    ))
+    .expect("the timed fixture is JSON");
+    document["types"][1]["operations"][0]["params"] = json!([{
+        "identity": timed_world::ident("Call/fire/which"),
+        "name": "which",
+        "typeRef": "ix://filament/native/Boolean",
+        "presence": "required",
+        "nullable": false,
+        "defaultKind": "none",
+        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+        "origin": {"source": {"sourceIdentity": timed_world::ident("spec"),
+            "path": "spec.fspec", "startLine": 1, "startColumn": 1}},
+    }]);
+    timed_world::world(
+        &serde_json::to_vec(&document).expect("serializes"),
+        PROFILES,
+        &format!(
+            "{}\
+             pre Gfire using v on M::Call::fire {{ self.phase = 0 }}\n\
+             post Pfire using v on M::Call::fire \
+             {{ self.phase = 1 and self.late = which and self.retried = not which }}\n\
+             pre GG using v on M::Call::G {{ self.phase = 0 }}\n\
+             post PG using v on M::Call::G {{ self.phase = 1 and self.inflight = true }}\n\
+             time invariant Wait when {{ self.phase = 0 }} {{ self.x <= 3 ms }}\n\
+             delay M::Call::fire ~ discrete {{ 2 ms: 1 }};\n\
+             delay M::Call::G ~ discrete {{ 2 ms: 1, 3 ms: 1 }};\n\
+             workload Share on M {{ weight Call::fire = 4; weight Call::G = 1; }}\n\
+             {claims}",
+            timed_world::DENSE,
+        ),
+    )
+}
+
+/// A claim `name` under `Share` that the first identity's hit (`late`) holds.
+fn pair_claim(name: &str, bound: &str) -> String {
+    format!(
+        "probabilistic {name} using ev on M over (c: M::Call) under Share on origin \
+         {{ probability {bound} [ eventually[0 ms, 3 ms] holds(c.late) ] }}\n"
+    )
+}
+
+/// FR-204-AC-19 (TC-3205): the weight of an operation is divided among its
+/// tied identities. Under `Share` the initial state has exactly three race
+/// edges at 2 ms and no other action, with masses `9/20`, `9/20` and `1/10`
+/// (`fire`'s identities carry 2 each against `G`'s 1 when all three tie, 2
+/// each between themselves when `G` draws 3 ms); both claims settle
+/// `proved` at `9/20`, and the certificates of the undivided weight (`17/36`)
+/// and of even ties (`5/12`) are rejected at the initial state.
+#[trace("TC-3205", "FR-204-AC-19")]
+#[test]
+fn operation_weight_is_shared_among_tied_identities() {
+    let world = pair(&format!(
+        "{}{}",
+        pair_claim("AtLeast", ">= 0.45"),
+        pair_claim("AtMost", "<= 0.45")
+    ));
+    let built = product(&world, "AtLeast");
+    let start = built.initial[0].2;
+    let mut edges: Vec<(u64, Rational)> = Vec::new();
+    for edge in built.edges.iter().filter(|edge| edge.from == start) {
+        let ProductAction::Identity(identity) = &edge.choice else {
+            panic!("a race edge is Identity(G) only: {:?}", edge.choice);
+        };
+        let name = world
+            .system()
+            .operations()
+            .into_iter()
+            .find(|(_, _, text)| *text == identity.operation.as_str())
+            .map(|(_, name, _)| name.to_owned())
+            .expect("a model operation");
+        assert_eq!(name, "G");
+        let (clocks, _) = digital_clocks_of(&built.states[edge.to.index()]);
+        edges.push((clocks[0], edge.probability.clone()));
+    }
+    edges.sort();
+    assert_eq!(
+        edges,
+        vec![(2, ratio(1, 10)), (2, ratio(9, 20)), (2, ratio(9, 20))]
+    );
+
+    for claim in ["AtLeast", "AtMost"] {
+        let record = settle_trio(&world, claim, None);
+        assert_eq!(exact_value(&record), ratio(9, 20), "{claim}");
+    }
+    assert_forged_initial_values_rejected(
+        &world,
+        "AtLeast",
+        ratio(9, 20),
+        &[ratio(17, 36), ratio(5, 12)],
+    );
 }

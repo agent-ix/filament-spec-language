@@ -3087,9 +3087,9 @@ fn quantity_literal_nodes_are_referenced_by_their_operations() {
 
 /// Two copies of the config-version model, each with a state machine, as
 /// the abstract `A` and concrete `C` of a refinement `R` written by `rows`.
-/// `ConfigVersion` keeps only its `versionNumber` field (`parent` is an
-/// `Option<Reference<_>>`, whose row is a nested reference row the default
-/// build does not support), and its operations are `operations`, each
+/// `ConfigVersion` keeps only its `versionNumber` field (`parent`, an
+/// `Option<Reference<_>>`, is dropped to keep the rows small), and its
+/// operations are `operations`, each
 /// shaped as `attemptUpdate` is.
 pub(super) fn rows_refinement(rows: &str, operations: &[&str]) -> (String, Vec<Vec<u8>>) {
     rows_refinement_with(rows, operations, RowsModel::default())
@@ -3946,7 +3946,6 @@ fn an_out_of_order_row_refuses_at_its_first_offending_entry() {
 /// `RefinementNotEmitted`.
 #[trace("TC-2540", "FR-901-AC-1")]
 #[test]
-#[ignore = "QSL-2893: history, whole-population and seq rows refuse RefinementNotEmitted instead of emitting"]
 fn history_population_and_seq_rows_emit() {
     let step = "step C::ConfigVersion::attemptUpdate -> A::ConfigVersion::attemptUpdate(self);";
     let object = |field: &str| {
@@ -3982,4 +3981,216 @@ fn history_population_and_seq_rows_emit() {
             "{rows}: the refinement is written"
         );
     }
+}
+
+/// The refusals of `unit` over `documents`, which must not check.
+fn history_refusals(unit: &str, documents: &[Vec<u8>]) -> Vec<fsl_semantics::check::CheckRefusal> {
+    let packages =
+        fsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice)).unwrap();
+    assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .map(|_| ())
+        .expect_err("the unit refuses")
+}
+
+const HISTORY_STEP: &str =
+    "step C::ConfigVersion::attemptUpdate -> A::ConfigVersion::attemptUpdate(self);";
+
+/// FR-901-AC-1 (TC-2540): a `Boolean` and an optional-absent history initial
+/// are `literal` nodes built by the one literal path a checked expression's
+/// literal uses; each package is admitted by the strict reader, and the
+/// refinement body holds the `histories` row.
+#[trace("TC-2540", "FR-901-AC-1")]
+#[test]
+fn history_initials_of_each_literal_form_are_written() {
+    for (declared, initial) in [
+        ("Int[0, 1]", "0"),
+        ("Boolean", "false"),
+        ("Option<Int[0, 1]>", "none"),
+    ] {
+        let rows = format!(
+            "{MAPS}\n{HISTORY_STEP}\nhistory C::ConfigVersion.last : {declared} = {initial} \
+             {{ on C::ConfigVersion::attemptUpdate : {initial}; }}"
+        );
+        let (emitted, _) = emit_rows(&rows, &["attemptUpdate"]);
+        let node = refinement_node(&emitted.emission);
+        let histories = node["body"]["histories"].as_array().expect("histories");
+        assert_eq!(histories.len(), 1, "{declared}: {histories:?}");
+        assert_eq!(histories[0]["name"], "last", "{declared}");
+        assert_eq!(histories[0]["initial"]["term"], "reference", "{declared}");
+        assert_eq!(
+            histories[0]["updates"].as_array().map(Vec::len),
+            Some(1),
+            "{declared}"
+        );
+        let admitted = read(&emitted);
+        assert!(admitted.is_ok(), "{declared}: {admitted:?}");
+    }
+}
+
+/// FR-901-AC-1: an initial with no `literal` form (a present `Option`
+/// payload) keeps the refinement out of the emission with the typed
+/// refusal, not an internal fault.
+#[trace("TC-2540", "FR-901-AC-1")]
+#[test]
+fn a_present_option_history_initial_has_no_literal_form_and_is_refused_typed() {
+    let rows = format!(
+        "{MAPS}\n{HISTORY_STEP}\nhistory C::ConfigVersion.last : Option<Int[0, 1]> = 0 \
+         {{ on C::ConfigVersion::attemptUpdate : none; }}"
+    );
+    let (unit, documents) = rows_refinement(&rows, &["attemptUpdate"]);
+    let found = history_refusals(&unit, &documents);
+    let [refusal] = &found[..] else {
+        panic!("one refusal: {found:?}");
+    };
+    assert!(
+        matches!(
+            &refusal.cause,
+            fsl_semantics::check::CheckCause::RefinementNotEmitted { name, .. } if name == "R"
+        ),
+        "a typed refusal naming the refinement: {refusal:?}"
+    );
+}
+
+/// FR-901-AC-2 and FSpec FR-322 "History read" (TC-2540): a row that reads a
+/// history field (`self.last` in an update) is the application
+/// `filament.op.refinement.history` over the receiver, typed at the history's
+/// node; the package reads back, and emitting twice gives the same bytes.
+#[trace("TC-2540", "FR-901-AC-2")]
+#[test]
+fn a_history_read_is_a_refinement_history_application_and_reads_back() {
+    let rows = format!(
+        "{MAPS}\n{HISTORY_STEP}\nhistory C::ConfigVersion.last : Int[0, 1] = 0 \
+         {{ on C::ConfigVersion::attemptUpdate : self.last; }}"
+    );
+    let (emitted, _) = emit_rows(&rows, &["attemptUpdate"]);
+    let wire = wire(&emitted.emission);
+    let reads: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| node["body"]["operation"]["identity"] == "filament.op.refinement.history")
+        .collect();
+    assert_eq!(reads.len(), 1, "one history-read node: {reads:?}");
+    let member = &reads[0]["body"]["operation"]["member"];
+    assert_eq!(member["kind"], "history");
+    assert_eq!(member["name"], "last");
+    assert_eq!(
+        reads[0]["body"]["arguments"].as_array().map(Vec::len),
+        Some(1)
+    );
+    let node = refinement_node(&emitted.emission);
+    assert_eq!(
+        reads[0]["body"]["result_type"],
+        node["body"]["histories"][0]["type"]
+    );
+    let admitted = read(&emitted);
+    assert!(
+        admitted.is_ok(),
+        "the history read reads back: {admitted:?}"
+    );
+    let (again, _) = emit_rows(&rows, &["attemptUpdate"]);
+    assert_eq!(
+        emitted.emission.package().bytes(),
+        again.emission.package().bytes(),
+        "emission is deterministic"
+    );
+}
+
+/// FR-901-AC-3 (TC-2541): two refinements of one unit declaring the same
+/// history refer to one history-read node, and the concrete type's
+/// declaration node declares no field `last`.
+#[trace("TC-2541", "FR-901-AC-3")]
+#[test]
+fn two_refinements_declaring_one_history_share_one_history_read_node() {
+    let rows = format!(
+        "{MAPS}\n{HISTORY_STEP}\nhistory C::ConfigVersion.last : Int[0, 1] = 0 \
+         {{ on C::ConfigVersion::attemptUpdate : self.last; }}"
+    );
+    let (mut unit, documents) = rows_refinement(&rows, &["attemptUpdate"]);
+    unit.push_str(&format!(
+        "refinement R2 using inf abstract A concrete C {{\n{rows}\n}}\n"
+    ));
+    let package = modelled_with_documents(&unit, &documents, Vec::new());
+    let emission = emit_checked(&package).expect("both refinements emit");
+    let wire = wire(&emission);
+    let refinements = nodes(&wire)
+        .iter()
+        .filter(|node| node["node_tag"] == "relation" && node["semantic_form"] == "refinement")
+        .count();
+    assert_eq!(refinements, 2);
+    let reads = nodes(&wire)
+        .iter()
+        .filter(|node| node["body"]["operation"]["identity"] == "filament.op.refinement.history")
+        .count();
+    assert_eq!(reads, 1, "one history-read node for both refinements");
+    for node in nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "object_type")
+    {
+        assert!(
+            !node.to_string().contains("\"last\""),
+            "no object type declares the history field: {node}"
+        );
+    }
+}
+
+/// FR-901-AC-4 (TC-2541): a history update that is ill-typed refuses at S3
+/// with its FR-138 cause; nothing is written and no refusal is
+/// `not-yet-implemented`.
+#[trace("TC-2541", "FR-901-AC-4")]
+#[test]
+fn an_ill_typed_history_update_refuses_at_s3_not_as_not_yet_implemented() {
+    let rows = format!(
+        "{MAPS}\n{HISTORY_STEP}\nhistory C::ConfigVersion.last : Int[0, 1] = 0 \
+         {{ on C::ConfigVersion::attemptUpdate : true; }}"
+    );
+    let (unit, documents) = rows_refinement(&rows, &["attemptUpdate"]);
+    let found = history_refusals(&unit, &documents);
+    assert!(!found.is_empty());
+    for refusal in &found {
+        assert_eq!(
+            refusal.cause.code(),
+            fsl_foundation::Code::IllTyped,
+            "{refusal:?}"
+        );
+        assert_ne!(
+            refusal.cause.cause(),
+            Some("not-yet-implemented"),
+            "{refusal:?}"
+        );
+    }
+}
+
+/// FR-901-AC-4 (TC-2541): the strict reader refuses a history row whose
+/// `concrete_type` names a node that is not an object type, at that row.
+#[trace("TC-2541", "FR-901-AC-4")]
+#[test]
+fn the_reader_refuses_a_history_row_whose_concrete_type_is_not_an_object_type() {
+    let rows = format!(
+        "{MAPS}\n{HISTORY_STEP}\nhistory C::ConfigVersion.last : Int[0, 1] = 0 \
+         {{ on C::ConfigVersion::attemptUpdate : 0; }}"
+    );
+    let (emitted, _) = emit_rows(&rows, &["attemptUpdate"]);
+    let wire = wire(&emitted.emission);
+    let position = nodes(&wire)
+        .iter()
+        .position(|node| node["node_tag"] == "relation" && node["semantic_form"] == "refinement")
+        .expect("one refinement relation node");
+    assert_eq!(refinement_verdict(&emitted, &wire, position), "admitted");
+    let mut bad = wire.clone();
+    let literal = bad["semantic_graph"]["nodes"][position]["body"]["histories"][0]["initial"]
+        ["target"]
+        .clone();
+    bad["semantic_graph"]["nodes"][position]["body"]["histories"][0]["concrete_type"] = literal;
+    let verdict = refinement_verdict(&emitted, &bad, position);
+    assert!(
+        verdict.contains(&format!(
+            "/semantic_graph/nodes/{position}/body/histories/0/concrete_type"
+        )),
+        "{verdict}"
+    );
 }

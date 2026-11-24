@@ -1267,7 +1267,12 @@ fn raw_reference_origins_share_deep_prefixes_across_a_wide_sequence() {
         .is_none());
 }
 
-fn clock_reference_domain_world(mut document: Json, unit: &str) -> World {
+fn clock_reference_domain_world(document: Json, unit: &str) -> World {
+    clock_reference_domain_world_with(document, "", unit)
+}
+
+/// [`clock_reference_domain_world`] under the extra unit `profiles`.
+fn clock_reference_domain_world_with(mut document: Json, profiles: &str, unit: &str) -> World {
     let mut reference = wire_type(
         &ident("ClockRef"),
         "unused",
@@ -1293,7 +1298,7 @@ fn clock_reference_domain_world(mut document: Json, unit: &str) -> World {
     let unit = format!("{unit}\npost PointPresent using v on M::Call::point {{ present(self.r) }}");
     let mut world = world_holding(
         serde_json::to_vec(&document).expect("JSON"),
-        "",
+        profiles,
         &unit,
         json!({}),
     );
@@ -1327,18 +1332,26 @@ fn unbounded_clock_reference_document() -> Json {
     document
 }
 
-/// Clock-reference data domains need explicit population-qualified owner
-/// candidates on every enumeration route. Both public constructors refuse
-/// that current boundary, for bounded and unbounded declared clock slots.
-#[trace("TC-3084")]
+/// Clock-reference data members enumerate on the Source route (FR-106): the
+/// domain holds exactly the canonical identities of the declared scalar places
+/// `x` and `y` of the admitted owner `c`; an unbounded collection slot `q`
+/// refuses the domain and returns `RequiresBound` naming its
+/// `ClockReferenceDomain`.#[trace("TC-3084")]
 #[test]
-fn clock_reference_enumeration_refuses_both_model_routes() {
-    fn refusal<'a>(
+fn clock_reference_enumeration_on_the_source_route() {
+    fn bounds<'a>(
         world: &'a World,
         input: fsl_eval::simulation::model::ModelCheckInput<'a>,
-        reason: &str,
-        member: Option<&str>,
-    ) {
+    ) -> Result<
+        (
+            Result<(), NotSimulated>,
+            Result<
+                std::sync::Arc<Vec<filament_exact::ObjectReference>>,
+                fsl_eval::simulation::model::ClockDomainRefusal,
+            >,
+        ),
+        fsl_semantics::model::observation::AdmissionFailure,
+    > {
         let result = ModelSystem::new(ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
             input,
@@ -1359,29 +1372,64 @@ fn clock_reference_enumeration_refuses_both_model_routes() {
             },
             meter: METER,
         });
-        let Err(fsl_semantics::model::observation::AdmissionFailure::Refused(record)) = result
-        else {
-            panic!("Clock-reference enumeration has an explicit typed boundary");
-        };
-        assert_eq!(record.catalog.code(), "unknown_required_feature");
-        assert_eq!(record.catalog.cause(), "unsupported-feature");
-        assert_eq!(
-            record.fields.get("reason").map(String::as_str),
-            Some(reason)
-        );
-        assert_eq!(record.fields.get("member").map(String::as_str), member);
+        result.map(|system| {
+            (
+                fsl_eval::simulation::model::check_model_bounds(&system, BOUND_POSITIONS),
+                system.clock_reference_identities(),
+            )
+        })
     }
-    for document in [
-        serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON"),
-        unbounded_clock_reference_document(),
+    for (document, bounded) in [
+        (
+            serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON"),
+            true,
+        ),
+        (unbounded_clock_reference_document(), false),
     ] {
         let world = clock_reference_domain_world(document, &only(&["point"], ""));
-        refusal(
+        let result = bounds(
             &world,
             fsl_eval::simulation::model::ModelCheckInput::source(&world.package),
-            "clock-reference-enumeration",
-            Some(&ident("Call/r")),
-        );
+        )
+        .expect("source Clock-reference data members construct");
+        let (result, identities) = result;
+        if bounded {
+            assert!(result.is_ok(), "{result:?}");
+            let mut found: Vec<String> = identities
+                .expect("a bounded domain enumerates")
+                .iter()
+                .map(|reference| reference.object().as_str().to_owned())
+                .collect();
+            found.sort();
+            let mut expected = vec![place_oracle("c", "x"), place_oracle("c", "y")];
+            expected.sort();
+            assert_eq!(found, expected, "exactly the declared scalar places");
+        } else {
+            assert!(
+                matches!(
+                    identities,
+                    Err(
+                        fsl_eval::simulation::model::ClockDomainRefusal::UnboundedSlot {
+                            slot: 0,
+                            ..
+                        }
+                    )
+                ),
+                "an unbounded slot refuses the domain: {identities:?}"
+            );
+            let Err(NotSimulated::RequiresBound(required)) = result else {
+                panic!("an unbounded clock slot requires a bound: {result:?}");
+            };
+            assert!(required.domains.is_none() && required.capacities.is_empty());
+            let [site] = required.clock_references.as_slice() else {
+                panic!("one clock-reference site: {:?}", required.clock_references);
+            };
+            assert_eq!(site.slot, vec![1]);
+            let fsl_foundation::bound::DomainKey::Node { path, .. } = &site.member else {
+                panic!("a node member: {:?}", site.member);
+            };
+            assert_eq!(path, &vec![0, 4, 0]);
+        }
         let read = fsl_package::read_evaluation_package(
             &world.package,
             fsl_semantics::library::LibraryName::new(world.package.graph().package_name())
@@ -1421,7 +1469,19 @@ fn clock_reference_enumeration_refuses_both_model_routes() {
             ModelNormalizationLimits::default(),
         )
         .expect("actual bare model input");
-        refusal(&world, input.input(), "missing-type-representation", None);
+        // Source-owned Bare raw object materialization remains the separate
+        // FR-106 boundary (QSL-2178), independent of Clock enumeration.
+        let Err(fsl_semantics::model::observation::AdmissionFailure::Refused(record)) =
+            bounds(&world, input.input())
+        else {
+            panic!("the Bare route keeps its materialization boundary");
+        };
+        assert_eq!(record.catalog.code(), "unknown_required_feature");
+        assert_eq!(record.catalog.cause(), "unsupported-feature");
+        assert_eq!(
+            record.fields.get("reason").map(String::as_str),
+            Some("missing-type-representation")
+        );
     }
 }
 
@@ -3601,7 +3661,9 @@ fn a_granted_field_ranges_over_its_finite_domain_or_stops() {
         use fsl_foundation::bound::{DomainKey, DomainKind};
         let node = fsl_semantics::model::key::object_type_node_key(&clock_fixture_key("Call"))
             .expect("the actual model owner");
-        let domains = bound.domains.expect("the granted data has unbounded domains");
+        let domains = bound
+            .domains
+            .expect("the granted data has unbounded domains");
         assert_eq!(
             domains
                 .iter()
@@ -7295,4 +7357,614 @@ fn a_predicate_naming_the_population_reads_the_state_once() {
         let (_, _, urgent, quiescent) = empty(declaration);
         assert!(!urgent && quiescent, "{declaration} bounds no clock");
     }
+}
+
+/// An independent FR-230 grammar oracle for the scalar clock place `field` of
+/// the owner `owner` of `test/rpc`'s `calls` population: five components of
+/// arrays and strings, so serde's compact JSON is already RFC 8785 canonical.
+fn place_oracle(owner: &str, field: &str) -> String {
+    let scope = json!(["model", PACKAGE, ident("Call")]);
+    let components = [
+        json!(["model", PACKAGE, ident("calls")]),
+        json!(owner),
+        scope.clone(),
+        json!([["field", scope, ident(&format!("Call/{field}")), ["clock"]]]),
+        json!([]),
+    ];
+    let mut text = "place/v2".to_owned();
+    for component in components {
+        text.push('/');
+        for byte in serde_json::to_vec(&component).expect("canonical component") {
+            use std::fmt::Write;
+            write!(&mut text, "{byte:02x}").expect("write to string");
+        }
+    }
+    text
+}
+
+fn bounded_clock_world() -> World {
+    clock_reference_domain_world(
+        serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON"),
+        &only(&["point"], ""),
+    )
+}
+
+fn clock_reference_type(system: &ModelSystem<'_>, world: &World) -> filament_exact::ValueType {
+    let _ = system;
+    filament_exact::ValueType::Reference(
+        world
+            .package
+            .graph()
+            .scope()
+            .types()
+            .object_types()
+            .find(|declaration| {
+                fsl_semantics::model::clock_reference::is_clock_type(&declaration.key())
+            })
+            .expect("the native clock reference target")
+            .key(),
+    )
+}
+
+fn identity_texts(references: &[filament_exact::ObjectReference]) -> Vec<String> {
+    references
+        .iter()
+        .map(|reference| reference.object().as_str().to_owned())
+        .collect()
+}
+
+/// The routes that range a Clock-reference field or parameter over its domain
+/// get the declared identities, never an empty domain: `domain_values` returns
+/// both scalar places in order, and `complete_open_fields` ranges the hidden
+/// optional `r` over absent, `x` and `y` (three states). An unbounded slot
+/// refuses with a typed stop instead.
+#[trace("TC-3084", "FR-106-AC-80")]
+#[test]
+fn clock_reference_routes_range_over_the_declared_identities() {
+    let world = bounded_clock_world();
+    let system = system(&world);
+    let value_type = clock_reference_type(&system, &world);
+    let values = system
+        .domain_values(&value_type, &[])
+        .expect("a bounded Clock-reference domain enumerates");
+    let found: Vec<String> = values
+        .iter()
+        .map(|value| match value {
+            filament_exact::Value::Reference(reference) => reference.object().as_str().to_owned(),
+            other => panic!("a reference value, got {other:?}"),
+        })
+        .collect();
+    let mut sorted = found.clone();
+    sorted.sort();
+    let mut expected = vec![place_oracle("c", "x"), place_oracle("c", "y")];
+    expected.sort();
+    assert_eq!(sorted, expected);
+
+    let initial = &system.initial_states()[0];
+    let visible = initial.state();
+    let (population, objects) = visible.populations.iter().next().expect("calls");
+    let object = &objects["c"];
+    let field = system
+        .fields_of(&object.type_identity)
+        .expect("fields")
+        .iter()
+        .find(|field| field.name == "r")
+        .expect("r")
+        .key
+        .clone();
+    let anchor = initial.anchor().expect("anchored initial state").clone();
+    let mut budget = 1_000_u128;
+    let completed = system
+        .complete_open_fields(
+            visible,
+            &anchor,
+            &[(population.clone(), "c".to_owned(), field.clone())],
+            &mut budget,
+        )
+        .expect("the hidden Clock-reference field completes");
+    let mut rendered: Vec<Option<String>> = completed
+        .iter()
+        .map(
+            |state| match state.populations[population]["c"].fields.get(&field) {
+                None => None,
+                Some(filament_exact::Value::Reference(reference)) => {
+                    Some(reference.object().as_str().to_owned())
+                }
+                Some(other) => panic!("a reference or absence, got {other:?}"),
+            },
+        )
+        .collect();
+    rendered.sort();
+    let mut expected = vec![
+        None,
+        Some(place_oracle("c", "x")),
+        Some(place_oracle("c", "y")),
+    ];
+    expected.sort();
+    assert_eq!(rendered, expected, "absent, x and y");
+
+    let unbounded =
+        clock_reference_domain_world(unbounded_clock_reference_document(), &only(&["point"], ""));
+    let system = self::system(&unbounded);
+    assert!(
+        system.domain_values(&value_type, &[]).is_err(),
+        "an unbounded slot refuses; it is never an empty domain"
+    );
+}
+
+/// FR-106 "Clock-reference domains" under selector maxima: a collection slot
+/// ranges below the exploration-derived maximum, each distinct maxima set gets
+/// its own candidates, and an admitted seed beyond the range is kept after the
+/// declared identities without being counted against the maximum.
+#[trace("TC-3084", "FR-1040-AC-8", "FR-106-AC-80")]
+#[test]
+fn clock_reference_candidates_follow_the_selector_maxima_and_keep_seeds() {
+    use fsl_semantics::model::clock_reference::identity::{Decimal, PlaceIdentity, SlotIndex};
+    let world =
+        clock_reference_domain_world(unbounded_clock_reference_document(), &only(&["point"], ""));
+    let system = system(&world);
+    let Err(fsl_eval::simulation::model::ClockDomainRefusal::UnboundedSlot { clock, slot: 0 }) =
+        system.clock_reference_identities()
+    else {
+        panic!("the unbounded q slot refuses the generic domain");
+    };
+    let with_maximum = |maximum: u64| {
+        let maxima = std::collections::BTreeMap::from([(clock.clone(), vec![maximum])]);
+        system
+            .clock_reference_identities_under(&maxima)
+            .expect("a derived maximum bounds the slot")
+    };
+    let two = with_maximum(2);
+    let three = with_maximum(3);
+    assert_eq!(two.len(), 4, "x, y, q[0], q[1]: {:?}", identity_texts(&two));
+    assert_eq!(three.len(), 5, "x, y, q[0], q[1], q[2]");
+    let decode = |text: &str| {
+        PlaceIdentity::decode(text, quire_canonical::Limits::new(1 << 16))
+            .expect("a canonical identity")
+    };
+    let mut selectors: Vec<String> = three
+        .iter()
+        .map(|reference| decode(reference.object().as_str()))
+        .filter(|identity| !identity.indices.is_empty())
+        .map(|identity| {
+            assert_eq!(identity.owner, "c");
+            let [index] = identity.indices.as_slice() else {
+                panic!("one selector");
+            };
+            index.index.as_str().to_owned()
+        })
+        .collect();
+    selectors.sort();
+    assert_eq!(selectors, ["0", "1", "2"]);
+    assert_eq!(
+        identity_texts(&two)
+            .iter()
+            .filter(|text| text.as_str() == place_oracle("c", "x")
+                || text.as_str() == place_oracle("c", "y"))
+            .count(),
+        2,
+        "the scalar places are the declared identities"
+    );
+
+    // A seed beyond the maximum: the initial snapshot holds `q[7]` in `r`.
+    let q = three
+        .iter()
+        .map(|reference| decode(reference.object().as_str()))
+        .find(|identity| !identity.indices.is_empty())
+        .expect("a q identity");
+    let seed = PlaceIdentity {
+        indices: vec![SlotIndex {
+            path_position: q.indices[0].path_position.clone(),
+            index: Decimal::new("7").expect("decimal"),
+        }],
+        ..q
+    }
+    .encode(quire_canonical::Limits::new(1 << 16))
+    .expect("canonical seed");
+    let mut snapshot: Json =
+        serde_json::from_slice(world.snapshots.get(&world.initial).expect("snapshot"))
+            .expect("JSON");
+    snapshot["populations"][0]["objects"][0]["fields"]["r"] =
+        json!({"present": {"reference": {"population": ident("calls"), "key": seed}}});
+    let mut seeded = world;
+    seeded.snapshots.insert(
+        seeded.initial.clone(),
+        serde_json::to_vec(&snapshot).expect("JSON"),
+    );
+    let system = self::system(&seeded);
+    let maxima = std::collections::BTreeMap::from([(clock, vec![2_u64])]);
+    let found = system
+        .clock_reference_identities_under(&maxima)
+        .expect("a derived maximum bounds the slot");
+    let texts = identity_texts(&found);
+    assert_eq!(texts.len(), 5, "four declared identities, then the seed");
+    assert_eq!(
+        texts.last(),
+        Some(&seed),
+        "the seed follows the declared set"
+    );
+    assert_eq!(
+        texts.iter().filter(|text| **text == seed).count(),
+        1,
+        "the seed is not repeated"
+    );
+}
+
+/// The candidates are bounded before they are built, and a route with no
+/// declaration table refuses typed instead of enumerating seeds alone.
+#[trace("TC-3084", "FR-106-AC-80")]
+#[test]
+fn clock_reference_candidates_are_bounded_and_need_declaration_authority() {
+    let world = bounded_clock_world();
+    let limited = system_limited(&world, &["c"], 1);
+    assert_eq!(
+        limited.clock_reference_identities().err(),
+        Some(fsl_eval::simulation::model::ClockDomainRefusal::TooMany { limit: 1 }),
+        "two declared places exceed a bound of one"
+    );
+    let roomy = system_limited(&world, &["c"], 2);
+    assert_eq!(
+        roomy
+            .clock_reference_identities()
+            .expect("two candidates fit a bound of two")
+            .len(),
+        2
+    );
+
+    let mut input = fsl_eval::simulation::model::ModelCheckInput::source(&world.package);
+    input.clock_declarations = None;
+    let system = ModelSystem::new(ModelSimulationRequest {
+        emit: fsl_package::EmitLimits::fixture(),
+        input,
+        packages: &world.packages,
+        normalization: ModelNormalizationLimits::default(),
+        snapshots: &world.snapshots,
+        initial: vec![world.initial.clone()],
+        universes: vec![PopulationUniverse {
+            population: DeclarationKey {
+                package: PACKAGE.to_owned(),
+                node: ident("calls"),
+            },
+            keys: vec!["c".to_owned()],
+        }],
+        observation: ObservationLimits::default(),
+        expansion: ExpansionLimits {
+            max_candidates: 100,
+        },
+        meter: METER,
+    })
+    .expect("a route without a table still constructs");
+    assert_eq!(
+        system.clock_reference_identities().err(),
+        Some(fsl_eval::simulation::model::ClockDomainRefusal::MissingAuthority)
+    );
+    let Err(NotSimulated::RequiresBound(required)) =
+        fsl_eval::simulation::model::check_model_bounds(&system, BOUND_POSITIONS)
+    else {
+        panic!("a missing declaration table is the typed unbounded-domain refusal");
+    };
+    assert!(
+        !required.clock_references.is_empty()
+            && required
+                .clock_references
+                .iter()
+                .all(|site| site.slot.is_empty()),
+        "{:?}",
+        required.clock_references
+    );
+}
+
+/// The protocol the Clock-reference record tests run: one event whose record
+/// holds a `Reference<Clock>`.
+const CLOCK_RECORD_PROTOCOL: &str = r#"
+record Pick { c: Reference<Clock>; }
+protocol Gate using p over (input: M::Call) on origin {
+  role R on M::Call;
+  run sequence Main { event Read by R as (pick: Pick) { true }; }
+  finish End as (outcome: Boolean) { true };
+}
+"#;
+
+fn clock_record_world(document: Json) -> World {
+    clock_reference_domain_world_with(
+        document,
+        "profile p = \"filament.protocol.finite-global/v1\";\n",
+        &only(&["point"], CLOCK_RECORD_PROTOCOL),
+    )
+}
+
+fn clock_record_protocol<'w>(
+    world: &'w World,
+    authority: bool,
+) -> Result<
+    fsl_eval::simulation::protocol::ProtocolSystem<'w, fsl_eval::simulation::protocol::Sc>,
+    fsl_eval::simulation::protocol::ProtocolRefusal,
+> {
+    use fsl_eval::model_subject::{ModelInstance, ModelSubject, ProtocolSubject, RoleBinding};
+    use fsl_eval::simulation::protocol::{ProtocolSystem, ResolvedMemory, Sc};
+    let population = DeclarationKey {
+        package: PACKAGE.to_owned(),
+        node: ident("calls"),
+    };
+    let mut input = fsl_eval::simulation::model::ModelCheckInput::source(&world.package);
+    if !authority {
+        input.clock_declarations = None;
+    }
+    let request = ModelSimulationRequest {
+        emit: fsl_package::EmitLimits::fixture(),
+        input,
+        packages: &world.packages,
+        normalization: ModelNormalizationLimits::default(),
+        snapshots: &world.snapshots,
+        initial: vec![world.initial.clone()],
+        universes: vec![PopulationUniverse {
+            population: population.clone(),
+            keys: vec!["c".to_owned()],
+        }],
+        observation: ObservationLimits::default(),
+        expansion: ExpansionLimits {
+            max_candidates: 1_000,
+        },
+        meter: METER,
+    };
+    let model = ModelSystem::new(request.clone()).expect("the model admits");
+    let protocol = world.package.graph().protocol("Gate").expect("protocol");
+    let subject = ProtocolSubject {
+        model: ModelSubject {
+            simulation: request,
+            proof_bounds: Vec::new(),
+        },
+        protocol: "Gate".to_owned(),
+        over: ModelInstance {
+            population,
+            key: "c".to_owned(),
+        },
+        roles: vec![RoleBinding {
+            role: "R".to_owned(),
+            model: PACKAGE.to_owned(),
+        }],
+        capacities: Vec::new(),
+        memory: ResolvedMemory::resolve(protocol, &[]).expect("SC memory selected"),
+    };
+    ProtocolSystem::new(model, &subject, Sc)
+}
+
+/// A protocol event whose record holds a `Reference<Clock>` ranges that leaf
+/// over the declared places: the bounded universe's `Read` has one event per
+/// place (x and y), where an empty candidate set would drop the event; an
+/// unbounded `q` slot refuses at the bound check instead of enumerating a
+/// partial record domain.
+#[trace("TC-3084", "FR-106-AC-80")]
+#[test]
+fn a_protocol_event_record_ranges_a_clock_reference_over_the_declared_places() {
+    use fsl_eval::simulation::protocol::{check_protocol_bounds, Capacities, StepKind};
+    let world = clock_record_world(
+        serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON"),
+    );
+    let model = system(&world);
+    let protocol = world.package.graph().protocol("Gate").expect("protocol");
+    let capacities = Capacities::admit(protocol, &[]).expect("no capacity names");
+    check_protocol_bounds(&model, protocol, &capacities, &world.package, BOUND_POSITIONS)
+        .expect("a bounded universe's Clock-reference record has a finite domain");
+
+    let system = clock_record_protocol(&world, true).expect("the protocol subject builds");
+    let reachable = system
+        .reachable(
+            std::num::NonZeroUsize::new(1).expect("one worker"),
+            fsl_eval::simulation::Limits::default().max_states,
+        )
+        .expect("the bounded protocol explores");
+    let reads = reachable.states[0]
+        .steps
+        .iter()
+        .filter(|(transition, _)| matches!(transition.kind(), StepKind::Event))
+        .count();
+    assert_eq!(reads, 2, "one Read per declared place, x and y");
+
+    // Without a declaration table the record's Clock leaf has no candidates,
+    // so the step binder is an unenumerable record, not an empty one.
+    assert!(
+        matches!(
+            clock_record_protocol(&world, false),
+            Err(fsl_eval::simulation::protocol::ProtocolRefusal::Unsupported(
+                fsl_eval::simulation::protocol::Unsupported::UnenumerableRecord
+            ))
+        ),
+        "no declaration authority refuses the record"
+    );
+
+    let unbounded = clock_record_world(unbounded_clock_reference_document());
+    let model = self::system(&unbounded);
+    let protocol = unbounded.package.graph().protocol("Gate").expect("protocol");
+    let capacities = Capacities::admit(protocol, &[]).expect("no capacity names");
+    assert!(
+        check_protocol_bounds(
+            &model,
+            protocol,
+            &capacities,
+            &unbounded.package,
+            BOUND_POSITIONS
+        )
+        .is_err(),
+        "an unbounded Clock slot is refused, never an empty or partial record domain"
+    );
+}
+
+/// A model-based value function whose parameter holds a `Reference<Clock>` has
+/// no population or declaration table to range it over, so the run refuses the
+/// binding; an `Option<Reference<Clock>>` is never ranged over absence alone.
+#[trace("TC-3084", "FR-106-AC-80")]
+#[test]
+fn a_model_based_parameter_holding_a_clock_reference_is_refused() {
+    use fsl_eval::simulation::model::{
+        run_model_based_test, ModelBasedTestRefusal, ModelBasedTestRequest, NativeAdmission,
+    };
+    let world = clock_reference_domain_world(
+        serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON"),
+        &only(
+            &["point"],
+            "function Pick using v(r: Option<Reference<Clock>>): Boolean pure { true }\n",
+        ),
+    );
+    let identity = world
+        .package
+        .graph()
+        .function_identity("Pick")
+        .expect("value clause");
+    let request = ModelBasedTestRequest {
+        clause: Some(identity),
+        profile: fsl_foundation::selection::DefinitionRef::new(
+            "agent-ix",
+            "filament.simulation.sampler/v1",
+        )
+        .expect("a valid DefinitionRef"),
+        seed: 7,
+        max_cases: 10,
+        max_trace_length: None,
+        max_value_bits: None,
+        subject: None,
+        expansion: ExpansionLimits {
+            max_candidates: 1_000_000,
+        },
+        accounting: METER,
+        normalization: ModelNormalizationLimits::default(),
+        observation: ObservationLimits::default(),
+        emit: fsl_package::EmitLimits::fixture(),
+        exploration: fsl_eval::simulation::Limits::default(),
+        position_limit: 10_000,
+    };
+    let refused = run_model_based_test(
+        &world.package,
+        &request,
+        &NativeAdmission,
+        &filament_exact::Cancel::new(),
+    )
+    .expect_err("a Clock-reference parameter has no domain to generate from");
+    assert_eq!(
+        refused,
+        ModelBasedTestRefusal {
+            member: "clause",
+            code: "invalid_model_binding",
+            cause: "malformed-declaration",
+        }
+    );
+}
+
+/// `document` with an enabled operation `pick`, whose parameter `p` is a
+/// Clock reference when `parameter` and which returns one when `result`.
+fn with_pick_operation(mut document: Json, parameter: bool, result: bool) -> Json {
+    let reference = ident("ClockRef");
+    let mut pick = operation("pick", &[]);
+    if parameter {
+        let identity = ident("Call/pick/p");
+        pick["params"] = json!([{
+            "identity": identity, "name": "p", "typeRef": reference, "presence": "required",
+            "nullable": false, "defaultKind": "none",
+            "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+            "origin": origin(&identity),
+        }]);
+    }
+    if result {
+        pick["returns"] = json!({"typeRef": reference, "nullable": false,
+            "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true}});
+    }
+    document["types"][1]["operations"]
+        .as_array_mut()
+        .expect("operations")
+        .push(pick);
+    document
+}
+
+/// The refusal `encode_smt_query` gives the deadlock-freedom unrolling of
+/// the model `world` holds.
+fn clock_smt_refusal(world: &World) -> fsl_eval::smt::SmtEncodingRefusal {
+    use fsl_eval::model_subject::ModelSubject;
+    use fsl_eval::smt::{encode_smt_query, SmtEncodingLimits, SmtItem, SmtQueryKind};
+    let subject = ModelSubject {
+        simulation: ModelSimulationRequest {
+            emit: fsl_package::EmitLimits::fixture(),
+            input: fsl_eval::simulation::model::ModelCheckInput::source(&world.package),
+            packages: &world.packages,
+            normalization: ModelNormalizationLimits::default(),
+            snapshots: &world.snapshots,
+            initial: vec![world.initial.clone()],
+            universes: vec![PopulationUniverse {
+                population: DeclarationKey {
+                    package: PACKAGE.to_owned(),
+                    node: ident("calls"),
+                },
+                keys: vec!["c".to_owned()],
+            }],
+            observation: ObservationLimits::default(),
+            expansion: ExpansionLimits {
+                max_candidates: 1_000_000,
+            },
+            meter: METER,
+        },
+        proof_bounds: Vec::new(),
+    };
+    encode_smt_query(
+        &subject,
+        SmtItem::DeadlockFreedom,
+        SmtQueryKind::Unrolling { depth: 1 },
+        &SmtEncodingLimits::default(),
+    )
+    .expect_err("an unbounded Clock slot leaves the domain without a finite encoding")
+}
+
+/// [`clock_reference_domain_world`] without the Clock-reference field `r`
+/// and its operation, so a symbolic subject's layout accepts every field.
+fn clock_reference_parameter_world(mut document: Json, unit: &str) -> World {
+    let mut reference = wire_type(
+        &ident("ClockRef"),
+        "unused",
+        json!({"target": "ix://filament/native/Clock"}),
+    );
+    reference["kind"] = json!("reference");
+    document["types"]
+        .as_array_mut()
+        .expect("types")
+        .push(reference);
+    world_holding(
+        serde_json::to_vec(&document).expect("JSON"),
+        "",
+        unit,
+        json!({}),
+    )
+}
+
+/// The symbolic subject's operation parameter and declared result hold the
+/// declared Clock identities and refuse, typed and named, when the slot is
+/// unbounded; a Clock-reference parameter or result is never encoded as an
+/// empty domain. (The field route, `symbolic()`'s hidden-field domains, is
+/// reached only through callers that run `StateLayout::of` before reading
+/// them, and the layout refuses every Reference, Option, collection and record
+/// field with `field-sort` first, so no entry observes it.)
+#[trace("TC-3084", "FR-106-AC-80")]
+#[test]
+fn symbolic_subjects_refuse_an_unbounded_clock_reference_domain_by_name() {
+    use fsl_eval::smt::{Refusal, SmtEncodingRefusal};
+    let unit = only(&[], "");
+    let parameter = clock_reference_parameter_world(
+        with_pick_operation(unbounded_clock_reference_document(), true, false),
+        &unit,
+    );
+    assert_eq!(
+        clock_smt_refusal(&parameter),
+        SmtEncodingRefusal::Refused(Refusal::ParameterDomain {
+            operation: "pick".to_owned(),
+            parameter: "p".to_owned(),
+        }),
+    );
+    let result = clock_reference_parameter_world(
+        with_pick_operation(unbounded_clock_reference_document(), false, true),
+        &unit,
+    );
+    assert_eq!(
+        clock_smt_refusal(&result),
+        SmtEncodingRefusal::Refused(Refusal::ParameterDomain {
+            operation: "pick".to_owned(),
+            parameter: "result".to_owned(),
+        }),
+    );
 }

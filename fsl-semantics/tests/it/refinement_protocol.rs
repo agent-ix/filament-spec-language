@@ -739,13 +739,12 @@ fn a_build_without_the_protocol_side_refuses_it_at_the_protocol_name() {
     assert_eq!(side.feature(), "protocol-abstract-side");
     assert_eq!(side.at.as_deref(), Some("Twice"));
     let RefinementCause::Unsupported {
-        profile, subject, ..
+        profile, ..
     } = side.refinement()
     else {
         panic!("unsupported");
     };
     assert_eq!(profile, "filament.temporal.infinite-trace/v1");
-    assert_eq!(*subject, None);
     // A name the unit does not declare is not reported either.
     let found = refused(
         &mutated(
@@ -1262,15 +1261,13 @@ fn the_list_refusal_names_the_feature_the_refinement_and_no_subject() {
     assert_eq!(refusal.refinement, "CasTwice");
     let RefinementCause::Unsupported {
         feature,
-        profile,
-        subject,
+        profile, ..
     } = &refusal.cause
     else {
         panic!("not yet implemented: {:?}", refusal.cause);
     };
     assert_eq!(feature.name(), "refinement-internal-list");
     assert_eq!(profile, "filament.temporal.infinite-trace/v1");
-    assert_eq!(*subject, None);
 
     let found = refused(&cas_twice(), internal(&["Spec::Twice::zz"]), support);
     assert_eq!(only(&found).code_and_cause(), MISSING);

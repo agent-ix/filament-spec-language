@@ -171,13 +171,15 @@ A typed `CheckRefusal` with a span, and no `CheckedRefinement`, on refusal.
 - The checker SHALL lift references: a field of declared type
   `Reference<T_A>` SHALL accept an expression of type `Reference<T_C>`
   exactly when an object row maps `T_A` from `T_C`.
-- The checker SHALL lift a reference only at the top level of a row's type,
-  and SHALL admit a whole-population reference row (`Set<Reference<T_C>>[0,
-  n]`, FR-139) as FR-139 types it. A field row whose type holds a
-  `Reference<T_C>` nested inside an option, record, union or collection type
-  that is not such a population reference SHALL use the feature
-  `nested-reference-row` (below), which FR-630 checks by lifting each nested
-  reference element by element (ADR-020 RM-3 states the top-level rule).
+- The checker SHALL lift a `Reference<T_C>` nested inside an option,
+  collection or map type, at every depth, to the `Reference<T_A>` of the object
+  row that maps `T_A` from `T_C`, element by element, and in a map the key as
+  well as the value (FR-630, ADR-020 RM-3). It SHALL admit a whole-population
+  reference row (`Set<Reference<T_C>>[0, n]`, FR-139) as FR-139 types it. A
+  `Reference<T_C>` nested inside a record, tuple or union is to be lifted
+  likewise, which QSL-2959 specifies once the pairing rule for the abstract
+  composite is settled; until then S3 does not lift it, and such a row refuses
+  `ill_typed`/`type-mismatch` at the row's expression.
 - The checker SHALL refuse a refinement whose abstract model declares a
   relationship with `unsupported_construct`/`declaration-form` at the
   abstract alias of the declaration header, once per refinement, naming the
@@ -236,22 +238,19 @@ subject once the feature is built.
   FR-341-AC-5 classifies `unsupported` (an FSL implementation gap).
 - The refusal's span is the span of the `<protocol>` name for a protocol
   abstract side. It names the feature, the refinement's name and the exact
-  selected profile identity (FSpec FR-272's payload for the code), and a
-  `subject` member when the feature is refused for one kind of type
-  (`history-row`, below). The payload of `protocol-abstract-side`,
-  `refinement-internal-list` and `nested-reference-row` has no `subject`
-  member.
+  selected profile identity (FSpec FR-272's payload for the code). The payload has no
+  `subject` member.
 - The refusal is decided before the feature's own checks, so no other
-  diagnostic about that row is reported, except that the `history-row` refusal
-  follows the checks FR-138 orders before it (the object type, the name
-  conflicts and the type form); the rest of the declaration is
+  diagnostic about that row is reported; the rest of the declaration is
   checked as usual and its own refusals are reported beside it.
-- This build's support set SHALL hold `history-row` for the history types its
-  history key can encode, which FR-138 checks, and `protocol-abstract-side`
+- This build's support set SHALL hold `protocol-abstract-side`
   and `refinement-internal-list`, which FR-147 checks, and `nested-reference-row`,
   whose rows FR-630 lifts element by element: a `Reference<T_C>` nested inside an
-  option, record, union or collection value maps to the `Reference<T_A>` of the
-  object row that maps `T_A` from `T_C`, at every nesting depth.
+  option, collection or map value maps to the `Reference<T_A>` of the object
+  row that maps `T_A` from `T_C`, at every nesting depth. A reference nested
+  inside a record, tuple or union is lifted by the same rule once QSL-2959
+  settles the pairing rule for the abstract composite; until then the build
+  does not lift it and the row refuses `ill_typed`/`type-mismatch`.
 - S3 SHALL check a `history` row whose declared type is an enum type or a
   decimal type, or an option of one, as it checks an integer row: the history key
   encodes each such value by its canonical literal (FR-630). FR-138-AC-9 states
@@ -284,7 +283,7 @@ standing.
 | FR-135-AC-3 | `value = self.busyA` refuses `ill_typed`/`type-mismatch` at the expression's span. In ADR-020 §8's `RingIsQueue`, a field of type `Reference<Q::Queue>` mapped by `self.ring` (of type `Reference<R::Ring>`) checks, and the same field mapped by an expression of type `Reference<R::Slot>` refuses `ill_typed`/`type-mismatch`. | Test (TC-540) |
 | FR-135-AC-4 | With the `value` row removed, `CasRefinesCounter` checks with `value` in `hidden`. Changing the `value` row to `value = self.tmpA` changes the refinement's node identity and the `package_id`. | Test (TC-540) |
 | FR-135-AC-5 | A declaration whose abstract side is a protocol (`CasTwice`, FR-147), in a build whose support set omits `protocol-abstract-side`, refuses `unsupported_construct`/`not-yet-implemented` at the span of `Twice`, naming `protocol-abstract-side`, `CasTwice` and the profile identity, with a payload that has no `subject` member, no other diagnostic about the abstract side and no `CheckedRefinement`. It classifies `unsupported` (FR-341-AC-5). `CasRefinesCounter`, which uses none of the features, checks as FR-135-AC-1 states. The vector refuses a row that uses a feature the build has not built; it does not select a support set. | Test (TC-540) |
-| FR-135-AC-6 | `RingIsQueue` with a `Sequence<Reference<Queue>>[0, 2]` field mapped by a row of type `Sequence<Reference<Ring>>[0, 2]` checks, each nested reference lifted element by element through the object row that maps `Queue` from `Ring` (FR-630); a population-reference row `cells = R::slots` checks, as does the same field as a plain `Reference<Queue>` mapped by `self`. | Test (TC-540) |
+| FR-135-AC-6 | `RingIsQueue` with a `Sequence<Reference<Queue>>[0, 2]` field mapped by a row of type `Sequence<Reference<Ring>>[0, 2]` checks, each nested reference lifted element by element through the object row that maps `Queue` from `Ring` (FR-630), and so do an `Option<Reference<Ring>>` row for an `Option<Reference<Queue>>` field and a `Sequence<Option<Reference<Ring>>>[0, 2]` row for a `Sequence<Option<Reference<Queue>>>[0, 2]` field, an option, collection or map at any depth (the map clause is checked by the unit test of `lift()`, because no validated package declares a map type; a reference nested in a record, tuple or union is pending QSL-2959 and refuses `ill_typed`/`type-mismatch` until then); a population-reference row `cells = R::slots` checks, as does the same field as a plain `Reference<Queue>` mapped by `self`. A nested reference whose concrete type no object row maps (a `Sequence<Reference<Slot>>[0, 2]` row for the `Sequence<Reference<Queue>>[0, 2]` field, `Slot` mapping to `Cell`) refuses `ill_typed`/`type-mismatch` at the row's expression, as a top-level one does (AC-3), and no `CheckedRefinement`. | Test (TC-540) |
 | FR-135-AC-7 | `RingIsQueue` with the abstract `Queue` declaring a relationship refuses `unsupported_construct`/`declaration-form` at the abstract alias `Q` of the declaration header, once, whatever the support set holds, and no `CheckedRefinement`. | Test (TC-540) |
 | FR-135-AC-8 | In a unit whose own declarations select no layer, `RingIsQueue`'s rows `s.ring = self` and `(self.head + i) mod 2` check, because they are admitted under the layers the governing infinite-trace profile requires; a Boolean field row naming a protocol declared in the unit refuses `unsupported_construct`/`expression-form` at the `protocol` token, naming the layer that admits it (`filament.protocol.complete/v1`). | Test (TC-540) |
 | FR-135-AC-9 | A refinement given a non-empty resolved internal list refuses `unsupported_construct`/`not-yet-implemented` naming `refinement-internal-list` at the first token of the name after `abstract`, once for the refinement, with no `subject` member, no `CheckedRefinement` and the classification `unsupported` (FR-341-AC-5); a list with a resolution defect reports the defect and not this pair (FR-147-AC-7, AC-11). | Test (TC-540) |
@@ -307,10 +306,5 @@ standing.
 ## References
 
 - The FSpec half (grammar, semantics, wire node): FSpec FR-375 (Linear STD-133).
-  The `history-row` refusal departs from FSpec in three ways, which FSpec's
-  wording should be aligned to: FR-375 places it at the `history` keyword and
-  here it is at the declared type; FR-375 holds `history-row` for every history
-  row and FR-375-AC-9 admits enum-member literals, while this build holds it
-  for the types its history key encodes; and FSpec FR-272's `not-yet-implemented`
-  payload names the feature, the declaration and the profile only, where this
-  build adds the `subject` member.
+  This build checks every `history` row, so it holds no `history-row` refusal
+  (FR-138-AC-9).

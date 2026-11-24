@@ -76,6 +76,9 @@ fsl-cst = { path = "../fsl-cst" }
 # dev-dependency enables it; the root crate's `no_shipped_dependency_enables_test_support`
 # refuses a normal or build dependency that does.
 filament-checked = { workspace = true, features = ["test-support"] }
+# QSL-2056: the interval-soundness property suite.
+fsl-proptest-policy = { path = "../fsl-proptest-policy" }
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 
 [[test]]
 name = "it"

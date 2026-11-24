@@ -1136,7 +1136,8 @@ fn echo_infinite_trace_search_and_component_certificate_use_cycle_keys() {
 fn echo_cycle_edges_lift_to_never_reused_concrete_delivery_indices() {
     let case = echo("scheduling adversarial;", "eventually[1,1] holds(k.v = 1)");
     let raw = crate::fill::concrete_sc_system(&case.subject("Echo"));
-    let canonical = crate::fill::concrete_sc_system(&case.subject("Echo")).with_cycle_keys(BTreeSet::new());
+    let canonical =
+        crate::fill::concrete_sc_system(&case.subject("Echo")).with_cycle_keys(BTreeSet::new());
     let mut payload = echo_lasso(&case);
     payload.prefix.truncate(1);
     let (_, mut concrete) = raw
@@ -1382,13 +1383,12 @@ fn a_protocol_subject_refuses_a_closure_step_before_executing_the_prefix() {
 /// `Certified`. Under `scheduling adversarial` the loop is fair: the engine
 /// returns `Violated` with prefix `send` and loop `duplicate`, `lose`, which
 /// the production replay refutes, and the same certificate is rejected
-/// `WitnessFails` at the product state of the loop, not at the origin, which a
-/// checker that starts the negated root only at the origin would accept
-/// wrongly. `max_states` one below the closure stops `LimitReached{MaxStates}`.
+/// `WitnessFails` at the byte-least fair product state, the one send,
+/// duplicate and receive reach, not at the origin, which a checker that starts
+/// the negated root only at the origin would accept wrongly. `max_states` one below the closure stops `LimitReached{MaxStates}`.
 #[trace("TC-525", "FR-338-AC-31")]
 #[trace("TC-525", "FR-127-AC-1")]
 #[test]
-#[ignore = "QSL-2886: Echo on-each TP-3 protocol check returns Key(Unresolved), so the fair uncounted-loop judgement is not reached"]
 fn an_on_each_tp3_debt_after_the_origin_is_judged_by_the_fair_uncounted_loop() {
     use fsl_replay::{
         CertificateLocus, CertificateRejection, CertificateRule, Certification, ModelCheckLimit,
@@ -1396,9 +1396,8 @@ fn an_on_each_tp3_debt_after_the_origin_is_judged_by_the_fair_uncounted_loop() {
         TerminalValue,
     };
     let each = "holds(k.v = 0) implies eventually[1,2] holds(k.v = 0)";
-    let build = |scheduling: &str| {
-        Case::new(&(echo_body(scheduling) + &tp3("on each (q: M::Cell)", each)))
-    };
+    let build =
+        |scheduling: &str| Case::new(&(echo_body(scheduling) + &tp3("on each (q: M::Cell)", each)));
     let letters = CellV(is_zero);
 
     let fair = build("");
@@ -1408,7 +1407,10 @@ fn an_on_each_tp3_debt_after_the_origin_is_judged_by_the_fair_uncounted_loop() {
         ..
     } = &outcome
     else {
-        panic!("the default scheduler excludes the loop: {:?}", outcome.stats());
+        panic!(
+            "the default scheduler excludes the loop: {:?}",
+            outcome.stats()
+        );
     };
     assert_eq!(
         closure_check_over(&fair, "Echo", &letters, certificate),
@@ -1425,7 +1427,10 @@ fn an_on_each_tp3_debt_after_the_origin_is_judged_by_the_fair_uncounted_loop() {
     let adversarial = build("scheduling adversarial;");
     let outcome = adversarial.check("Echo", &letters);
     let ModelCheckOutcome::Violated { counterexample, .. } = &outcome else {
-        panic!("the adversarial scheduler admits the loop: {:?}", outcome.stats());
+        panic!(
+            "the adversarial scheduler admits the loop: {:?}",
+            outcome.stats()
+        );
     };
     let lasso = counterexample.lasso.as_ref().expect("a lasso");
     let (stem, cycle) = counterexample.prefix.split_at(lasso.entry);
@@ -1457,19 +1462,43 @@ fn an_on_each_tp3_debt_after_the_origin_is_judged_by_the_fair_uncounted_loop() {
     let subject = adversarial.subject("Echo");
     let system = crate::fill::concrete_sc_system(&subject).with_cycle_keys(BTreeSet::new());
     let origin = system.initial().remove(0);
-    let (_, sent) = system
-        .successors(&origin)
-        .expect("expansion")
-        .successors
-        .into_iter()
-        .find(|(step, _)| step.kind() == StepKind::Send)
-        .expect("the send is enabled");
+    let step = |from, kind| {
+        system
+            .successors(from)
+            .expect("expansion")
+            .successors
+            .into_iter()
+            .find(|(step, _)| step.kind() == kind)
+            .unwrap_or_else(|| panic!("a {kind:?} step is enabled"))
+            .1
+    };
+    let sent = step(&origin, StepKind::Send);
+    let copied = step(&sent, StepKind::Duplicate);
+    // The least passing product state: the receive that follows the copy
+    // leaves the receiver done with the copy still queued, whose key orders
+    // before every state that still has the receive pending.
+    let received = step(&copied, StepKind::Receive);
     let key = |state| {
         let (bytes, _) = system.state_key(state).expect("encodes");
         fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
     };
     assert_ne!(at.model_state, key(&origin), "not at the origin");
-    assert_eq!(at.model_state, key(&sent), "at the loop's product state");
+    assert_eq!(
+        at.model_state,
+        key(&received),
+        "at the byte-least product state of a fair component"
+    );
+    let least_monitor = certificate
+        .states
+        .iter()
+        .filter(|state| state.model_state == at.model_state)
+        .map(|state| &state.automaton_state)
+        .min()
+        .expect("the locus is a certified product state");
+    assert_eq!(
+        &at.automaton_state, least_monitor,
+        "the least automaton state at that model state"
+    );
 
     let mut limits = ModelCheckLimits::default();
     limits.limits.max_states = certificate.states.len() - 1;
@@ -1497,4 +1526,24 @@ fn an_on_each_tp3_debt_after_the_origin_is_judged_by_the_fair_uncounted_loop() {
             required: None,
         })
     );
+}
+
+/// FR-128 (`Echo`): the `on each` clause is false from the activation after
+/// the counted `send`, not from the origin, whose debt the `send` discharges.
+/// Replaying the adversarial lasso reproduces the violation at position 1,
+/// the activating position where the clause is false, not at position 0.
+#[trace("TC-523", "FR-128-AC-16")]
+#[test]
+fn an_on_each_lasso_replays_at_the_activation_where_the_clause_is_false() {
+    let each = "holds(k.v = 0) implies eventually[1,2] holds(k.v = 0)";
+    let case =
+        Case::new(&(echo_body("scheduling adversarial;") + &tp3("on each (q: M::Cell)", each)));
+    let letters = CellV(is_zero);
+    let payload = refutation(&case, &letters);
+    assert_eq!(
+        payload.trace_position(),
+        Some(0),
+        "the record keeps the lasso origin"
+    );
+    assert_reproduced_at(replay(&case, &letters, &payload), 1);
 }

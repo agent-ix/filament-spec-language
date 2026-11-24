@@ -45,4 +45,4 @@ Tag the tests `#[trace("TC-543", "FR-138-AC-n")]`.
   the second step, whose post-state is the concrete successor.
 - Step 5: `last` = 0, 0.
 - Step 6: the order `r.last`, `r.writes`, `s.last`, `s.writes`; a one-value difference changes the key.
-- Step 7: the decimal, enum and option-of-enum rows each refuse `unsupported_construct`/`not-yet-implemented` naming `history-row` with `subject` `decimal`, `enum`, `enum`; the other three rows check.
+- Step 7: the decimal, enum and option-of-enum rows, with their initial literals, check and key in a product state by their canonical literals; a decimal or enum initial outside the declared value set refuses `ill_typed`/`type-mismatch` at the literal; the other three rows check.

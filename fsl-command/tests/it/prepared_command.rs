@@ -98,7 +98,11 @@ fn compilation_retains_the_actual_core_document_and_the_existing_artifact() {
     .unwrap()
     .into_value();
     let packaged = spine::package(&checked, limits.package, &cancel);
-    let expected = OutcomeDocument::from_package(&packaged);
+    let expected = OutcomeDocument::from_package(&packaged).with_packaged(
+        actual.package_bytes().len(),
+        None,
+        None,
+    );
     assert_eq!(
         actual.document().to_bytes().unwrap(),
         expected.to_bytes().unwrap()

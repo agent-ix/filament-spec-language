@@ -3265,6 +3265,9 @@ fn settle(
                 Some(crate::provider::ProviderCounterexample::Assignments(found)) => {
                     settled.value_check = Some(found);
                 }
+                Some(crate::provider::ProviderCounterexample::Contract(found)) => {
+                    settled.contract_check = Some(found);
+                }
                 Some(crate::provider::ProviderCounterexample::Mismatch(found)) => {
                     settled.interface_mismatch = Some(found);
                 }
@@ -3749,6 +3752,7 @@ mod tests {
             }]),
             recording: None,
             replay: None,
+            prefixes: None,
         };
         let document = analyze_document_routed_with_conformance(
             &[terminal],

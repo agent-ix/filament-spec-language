@@ -320,12 +320,10 @@ fn an_unbuilt_refinement_feature_is_unsupported_and_a_list_defect_is_refused() {
     for feature in [
         UnsupportedFeature::ProtocolAbstractSide,
         UnsupportedFeature::RefinementInternalList,
-        UnsupportedFeature::HistoryRow,
     ] {
         let refusal = check(vec![refinement(RefinementCause::Unsupported {
             feature,
             profile: "filament.temporal.infinite-trace/v1".to_owned(),
-            subject: None,
         })]);
         assert_eq!(
             class_of(&refusal),

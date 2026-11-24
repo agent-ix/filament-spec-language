@@ -216,7 +216,7 @@ fn run_document(
         .map(|limits| limits.export)
         .unwrap_or_default();
     let request = request::read(member, &given)?;
-    for name in ["output", "handoff"] {
+    for name in ["output", "handoff", "call_site"] {
         if body.contains_key(name) {
             return Err(RunCause::ClauseRequest {
                 member: name.to_owned(),

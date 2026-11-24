@@ -466,3 +466,447 @@ fn compile_without_the_selected_model_carries_the_model_selection() {
     );
     drop(case);
 }
+
+const LIBRARY_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
+    profile v = \"filament.value.complete/v1\";\n";
+const BIG: &str = "function big using v(x: Int[0, 9]): Boolean pure { x > 5 }\n";
+const SMALL: &str = "function small using v(x: Int[0, 9]): Boolean pure { x < 2 }\n";
+const PICK: &str = "record R { a: Boolean; }\nfunction pick using v(r: R): Boolean pure { true }\n";
+pub(crate) const UNIT_OF_UNITS: &str = "import \"test/units\" as u;\n\
+    function q using v(x: Int[0, 9]): Boolean pure { u::big(x) }\n";
+const UNIT_OF_WRAP: &str = "import \"test/wrap\" as w;\n\
+    function q using v(): Boolean pure { w::t() }\n";
+const WRAP: &str = "import \"test/units\" as u;\n\
+    function t using v(): Boolean pure { u::big(7) }\n";
+const OTHER: &str = "function o using v(): Boolean pure { true }\n";
+
+const HINT_UNIMPORTED: &str =
+    "Call a function of a library that the unit imports directly, or add the import.";
+
+fn file_source(file: &str) -> Value {
+    json!({"file": file, "authority": "compile-contracts", "identity": file.trim_end_matches(".fsl"),
+        "document": "Doc", "formal_revision": 1})
+}
+
+/// FR-121-AC-32's unit over `libraries` (identity, body), with the request
+/// members `extra` merged in and `call_site` as the member when `Some`.
+pub(crate) fn call_site_request(
+    case: &Case,
+    unit: &str,
+    libraries: &[(&str, &str)],
+    call_site: Option<Value>,
+    extra: Value,
+) -> std::path::PathBuf {
+    case.write("parcel.fsl", format!("{LIBRARY_HEADER}{unit}").as_bytes());
+    let supplied: Vec<Value> = libraries
+        .iter()
+        .map(|(identity, body)| {
+            let file = format!("{}.fsl", identity.replace('/', "-"));
+            case.write(&file, format!("{LIBRARY_HEADER}{body}").as_bytes());
+            json!({"identity": identity, "source": file_source(&file)})
+        })
+        .collect();
+    let mut body = request("parcel.fsl");
+    body["request"]["libraries"] = Value::Array(supplied);
+    if let Some(call_site) = call_site {
+        body["request"]["call_site"] = call_site;
+    }
+    for (member, value) in extra.as_object().expect("members") {
+        body["request"][member] = value.clone();
+    }
+    case.json("call-site.json", &body)
+}
+
+pub(crate) fn imported(library: &str, function: &str) -> Value {
+    json!({"kind": "imported-function", "library": library, "function": function})
+}
+
+/// The `output` and `handoff` members of a request that writes both.
+pub(crate) fn writes_both() -> Value {
+    json!({"output": {"package": "out.json"},
+        "handoff": {"directory": "handoff", "package_name": "parcel",
+            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}})
+}
+
+pub(crate) fn libraries_of_ac_15() -> [(&'static str, String); 2] {
+    [
+        ("test/units", format!("{BIG}{SMALL}")),
+        ("test/other", OTHER.to_owned()),
+    ]
+}
+
+fn refused_call_site(libraries: &[(&str, &str)], unit: &str, call_site: Value) -> Outcome {
+    let case = Case::new();
+    let path = call_site_request(&case, unit, libraries, Some(call_site), json!({}));
+    let outcome = plain(&path);
+    drop(case);
+    outcome
+}
+
+fn unimported_diagnostic(library: &str) -> Value {
+    json!({
+        "cause": "missing-selection",
+        "code": "missing_import",
+        "details": null,
+        "hint": HINT_UNIMPORTED,
+        "locus": null,
+        "message": format!(
+            "missing_import/missing-selection: package parcel imports no library {library}"
+        ),
+        "selection": "unimported-library",
+    })
+}
+
+/// FR-027-AC-15: a selection of a library the unit does not import refuses
+/// with the one diagnostic, byte for byte, before anything is written.
+#[test]
+#[trace("TC-3210", "FR-027-AC-15")]
+fn a_call_site_in_an_unimported_library_refuses_with_its_diagnostic_and_writes_nothing() {
+    let case = Case::new();
+    let owned = libraries_of_ac_15();
+    let libraries: Vec<(&str, &str)> = owned.iter().map(|(a, b)| (*a, b.as_str())).collect();
+    let path = call_site_request(
+        &case,
+        UNIT_OF_UNITS,
+        &libraries,
+        Some(imported("test/other", "big")),
+        writes_both(),
+    );
+    let outcome = plain(&path);
+    outcome.refused("package", 20, "missing_import");
+    assert_eq!(outcome.document["last_stage"], "I1", "{}", outcome.document);
+    assert_eq!(
+        outcome.document["diagnostics"],
+        json!([unimported_diagnostic("test/other")]),
+        "{}",
+        outcome.document
+    );
+    assert!(outcome.package.is_none());
+    assert!(!case.path("out.json").exists());
+    assert!(!case.path("handoff").exists());
+}
+
+/// FR-027-AC-16: that refusal is category `refusal`, exit 20, stage `I1`.
+#[test]
+#[trace("TC-3210", "FR-027-AC-16")]
+fn the_call_site_refusal_is_a_refusal_at_stage_i1_with_exit_20() {
+    let owned = libraries_of_ac_15();
+    let libraries: Vec<(&str, &str)> = owned.iter().map(|(a, b)| (*a, b.as_str())).collect();
+    let outcome = refused_call_site(&libraries, UNIT_OF_UNITS, imported("test/other", "big"));
+    assert_eq!(outcome.exit, 20, "{}", outcome.document);
+    outcome.expect("package", "refusal", 20);
+    assert_eq!(outcome.document["category"], "refusal");
+    assert_eq!(outcome.document["last_stage"], "I1", "{}", outcome.document);
+}
+
+/// FR-027-AC-17: a library no one supplied, and a library only a dependency
+/// imports, each refuse as AC-15 does, naming that library.
+#[test]
+#[trace("TC-3210", "FR-027-AC-17")]
+fn an_absent_and_a_transitive_only_library_refuse_naming_the_library() {
+    let absent = refused_call_site(
+        &[("test/units", BIG)],
+        UNIT_OF_UNITS,
+        imported("test/absent", "big"),
+    );
+    absent.expect("package", "refusal", 20);
+    assert_eq!(
+        absent.document["diagnostics"],
+        json!([unimported_diagnostic("test/absent")]),
+        "{}",
+        absent.document
+    );
+    let transitive = refused_call_site(
+        &[("test/units", BIG), ("test/wrap", WRAP)],
+        UNIT_OF_WRAP,
+        imported("test/units", "big"),
+    );
+    transitive.expect("package", "refusal", 20);
+    assert_eq!(
+        transitive.document["diagnostics"],
+        json!([unimported_diagnostic("test/units")]),
+        "{}",
+        transitive.document
+    );
+}
+
+/// FR-027-AC-18: a function the imported library does not declare refuses
+/// `missing_declaration`/`missing-name`, with no `selection` member.
+#[test]
+#[trace("TC-3210", "FR-027-AC-18")]
+fn an_undeclared_imported_function_refuses_missing_declaration() {
+    let outcome = refused_call_site(
+        &[("test/units", &format!("{BIG}{SMALL}"))],
+        UNIT_OF_UNITS,
+        imported("test/units", "nope"),
+    );
+    outcome.expect("package", "refusal", 20);
+    assert_eq!(outcome.document["last_stage"], "I1", "{}", outcome.document);
+    assert_eq!(
+        outcome.document["diagnostics"],
+        json!([{
+            "cause": "missing-name",
+            "code": "missing_declaration",
+            "details": null,
+            "hint": "Declare the name or import the package that declares it.",
+            "locus": null,
+            "message": "missing_declaration/missing-name: package test/units declares no function test/units::nope",
+        }]),
+        "{}",
+        outcome.document
+    );
+}
+
+/// FR-027-AC-19: a function whose signature is package-dependent refuses
+/// `ill_typed`/`operator-ineligible`, with no `selection` member.
+#[test]
+#[trace("TC-3210", "FR-027-AC-19")]
+fn a_package_dependent_imported_function_refuses_ill_typed() {
+    let outcome = refused_call_site(
+        &[("test/units", &format!("{BIG}{PICK}"))],
+        UNIT_OF_UNITS,
+        imported("test/units", "pick"),
+    );
+    outcome.expect("package", "refusal", 20);
+    assert_eq!(outcome.document["last_stage"], "I1", "{}", outcome.document);
+    assert_eq!(
+        outcome.document["diagnostics"],
+        json!([{
+            "cause": "operator-ineligible",
+            "code": "ill_typed",
+            "details": null,
+            "hint": "Use an operator that accepts this type.",
+            "locus": null,
+            "message": "ill_typed/operator-ineligible: package test/units function test/units::pick has a package-dependent signature",
+        }]),
+        "{}",
+        outcome.document
+    );
+}
+
+/// FR-027-AC-20: a located site changes nothing: the package bytes, the
+/// written file and the handoff equal those of the request without
+/// `call_site`.
+#[test]
+#[trace("TC-3210", "FR-027-AC-20")]
+fn a_located_call_site_changes_nothing_in_the_outcome() {
+    let libraries = [("test/units", BIG), ("test/other", OTHER)];
+    let plain_case = Case::new();
+    let without = plain(&call_site_request(
+        &plain_case,
+        UNIT_OF_UNITS,
+        &libraries,
+        None,
+        writes_both(),
+    ));
+    let without_document = without.expect("package", "success", 0).clone();
+
+    let case = Case::new();
+    let path = call_site_request(
+        &case,
+        UNIT_OF_UNITS,
+        &libraries,
+        Some(imported("test/units", "big")),
+        writes_both(),
+    );
+    let with = plain(&path);
+    let with_document = with.expect("package", "success", 0).clone();
+    assert_eq!(with.package, without.package);
+    assert_eq!(
+        std::fs::read(case.path("out.json")).unwrap(),
+        without.package.clone().unwrap()
+    );
+    assert_eq!(with_document["last_stage"], without_document["last_stage"]);
+    assert_eq!(with_document["diagnostics"], json!([]));
+    assert_eq!(
+        directory_files(&case.path("handoff")),
+        directory_files(&plain_case.path("handoff"))
+    );
+}
+
+fn directory_files(directory: &std::path::Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    fn collect(
+        root: &std::path::Path,
+        directory: &std::path::Path,
+        files: &mut std::collections::BTreeMap<String, Vec<u8>>,
+    ) {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                collect(root, &path, files);
+            } else {
+                let relative = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                files.insert(relative, std::fs::read(path).unwrap());
+            }
+        }
+    }
+
+    let mut files = std::collections::BTreeMap::new();
+    collect(directory, directory, &mut files);
+    files
+}
+
+/// FR-027-AC-22: a call_site request with a non-library program identity is
+/// refused as invalid request naming call_site.
+#[test]
+#[trace("TC-3210", "FR-027-AC-22")]
+fn a_call_site_with_a_non_library_program_identity_refuses_invalid_request() {
+    let case = Case::new();
+    let path = call_site_request(
+        &case,
+        UNIT_OF_UNITS,
+        &[("test/units", BIG)],
+        Some(imported("test/units", "big")),
+        writes_both(),
+    );
+    let mut request: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    request["request"]["program"]["source"]["identity"] = json!("");
+    let path = case.json("invalid-program-identity.json", &request);
+
+    let outcome = plain(&path);
+    let diagnostic = outcome.refused("package", 20, "invalid-request");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("call_site"),
+        "{diagnostic}"
+    );
+    assert!(!case.path("out.json").exists());
+    assert!(!case.path("handoff").exists());
+}
+
+/// FR-027-AC-21: a malformed `call_site`, and one over a model unit or an
+/// array of units, refuses `invalid-request` naming `call_site`.
+#[test]
+#[trace("TC-3210", "FR-027-AC-21")]
+fn a_malformed_call_site_refuses_invalid_request_naming_it() {
+    let valid = imported("test/units", "big");
+    let without = |member: &str| {
+        let mut value = valid.clone();
+        value.as_object_mut().unwrap().remove(member);
+        value
+    };
+    let with = |member: &str, replacement: Value| {
+        let mut value = valid.clone();
+        value[member] = replacement;
+        value
+    };
+    let mut extra = valid.clone();
+    extra["extra"] = json!(true);
+    let cases = [
+        Value::Null,
+        json!("imported-function"),
+        json!([]),
+        without("kind"),
+        without("library"),
+        without("function"),
+        with("library", json!("")),
+        with("library", json!(7)),
+        with("function", json!(7)),
+        with("function", json!("not an identifier")),
+        with("function", json!("")),
+        extra,
+        with("kind", json!("function")),
+        with("kind", json!(7)),
+    ];
+    for call_site in cases {
+        let case = Case::new();
+        let path = call_site_request(
+            &case,
+            UNIT_OF_UNITS,
+            &[("test/units", BIG)],
+            Some(call_site.clone()),
+            writes_both(),
+        );
+        let outcome = plain(&path);
+        let diagnostic = outcome.refused("package", 20, "invalid-request");
+        assert!(
+            diagnostic["message"]
+                .as_str()
+                .unwrap()
+                .contains("call_site"),
+            "{call_site}: {diagnostic}"
+        );
+        assert!(!case.path("out.json").exists(), "{call_site}");
+        assert!(!case.path("handoff").exists(), "{call_site}");
+    }
+
+    let model_unit = "language \"ix:native\" edition \"1-draft\";\n\
+        domain \"example/shop\";\n\
+        object Order identity (id) { id: Int[0, 999]; }\n\
+        population orders: Order;\n";
+    let case = Case::new();
+    case.write("parcel.fsl", model_unit.as_bytes());
+    let mut model = request("parcel.fsl");
+    model["request"].as_object_mut().unwrap().remove("models");
+    model["request"]["call_site"] = valid.clone();
+    let outcome = plain(&case.json("model.json", &model));
+    let diagnostic = outcome.refused("package", 20, "invalid-request");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("call_site"),
+        "{diagnostic}"
+    );
+
+    let case = Case::new();
+    case.write("a.fsl", SOURCE.as_bytes());
+    case.write("b.fsl", SOURCE.as_bytes());
+    let mut array = request("a.fsl");
+    array["request"]["program"] = json!([file_source("a.fsl"), file_source("b.fsl")]);
+    array["request"]["call_site"] = valid;
+    let outcome = plain(&case.json("array.json", &array));
+    let diagnostic = outcome.refused("package", 20, "invalid-request");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("call_site"),
+        "{diagnostic}"
+    );
+}
+
+/// FR-027: an array of one unit is the single-object program, so a valid
+/// `call_site` over it is located and changes nothing.
+#[test]
+#[trace("TC-3210", "FR-027-AC-21")]
+fn a_one_unit_array_takes_a_call_site_like_the_single_program() {
+    let libraries = [("test/units", BIG)];
+    let single_case = Case::new();
+    let single = plain(&call_site_request(
+        &single_case,
+        UNIT_OF_UNITS,
+        &libraries,
+        Some(imported("test/units", "big")),
+        json!({}),
+    ));
+    single.expect("package", "success", 0);
+
+    let case = Case::new();
+    let path = call_site_request(
+        &case,
+        UNIT_OF_UNITS,
+        &libraries,
+        Some(imported("test/units", "big")),
+        json!({"program": [file_source("parcel.fsl")]}),
+    );
+    let array = plain(&path);
+    array.expect("package", "success", 0);
+    assert_eq!(array.package, single.package);
+
+    let case = Case::new();
+    let path = call_site_request(
+        &case,
+        UNIT_OF_UNITS,
+        &libraries,
+        Some(imported("test/absent", "big")),
+        json!({"program": [file_source("parcel.fsl")]}),
+    );
+    plain(&path).refused("package", 20, "missing_import");
+}

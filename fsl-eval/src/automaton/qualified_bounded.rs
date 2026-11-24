@@ -41,7 +41,7 @@ impl QualifiedBoundedMonitor {
     pub fn supports(formula: &CheckedFormula, profile: TemporalProfile) -> bool {
         profile == TemporalProfile::EventPositionFalseExtension
             && matches!(
-                super::bounded::bounded_formula_shape(formula),
+                super::bounded::qualified_formula_shape(formula, profile),
                 Some((BoundedKind::Eventually | BoundedKind::Always, _, _))
             )
     }
@@ -51,7 +51,7 @@ impl QualifiedBoundedMonitor {
     pub fn supports_observations(formula: &CheckedFormula, profile: TemporalProfile) -> bool {
         profile == TemporalProfile::EventPositionFalseExtension
             && matches!(
-                super::bounded::bounded_formula_shape(formula),
+                super::bounded::qualified_formula_shape(formula, profile),
                 Some((BoundedKind::Eventually | BoundedKind::Always, _, _))
             )
     }
