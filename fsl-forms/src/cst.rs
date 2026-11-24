@@ -99,12 +99,13 @@ impl CompleteDiagnostic {
     }
 
     fn from_layer_one(diagnostic: fsl_cst::CompleteDiagnostic) -> Self {
+        let span = diagnostic.byte_span();
         Self {
             phase: diagnostic.phase,
             code: diagnostic.code,
             message: diagnostic.message,
             cause: CompleteCause::from_layer_one(diagnostic.cause),
-            span: diagnostic.byte_span(),
+            span,
         }
     }
 }
@@ -241,7 +242,7 @@ pub fn parse_source(
 /// Layer-1 diagnostic constructors needed by model intake.
 pub mod diagnostic {
     use super::{CompleteCause, CompleteCode, CompleteDiagnostic};
-    use fsl_foundation::{Phase, Source, SourceIdentity, Span};
+    use fsl_foundation::{Phase, Source, SourceIdentity, Span, SyntaxLimit};
 
     /// Read exact source bytes under the supplied source-byte bound.
     pub fn read_source(
