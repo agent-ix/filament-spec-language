@@ -339,7 +339,12 @@ fn append_operation_contract(
     let id = node_id(ids, key);
     let claim_key = claim.node();
     let claim_id = node_id(ids, claim_key);
-    if omitted.contains_key(claim_key) {
+    // FSpec FR-825: the record references its state-clause claim or operation
+    // frame node, and every reference SHALL resolve in the package. A claim the
+    // emitter writes no node for (a timed presence clause, FR-062 "Packaging
+    // is all-or-nothing") leaves no node for the record to name, so the record
+    // goes with it, as with an omitted claim.
+    if omitted.contains_key(claim_key) || !nodes.iter().any(|node| node.node_id == claim_id) {
         omissions.push(OmittedNode {
             node: id,
             cause: OmissionCause::NamesOmittedNode(claim_id),
@@ -800,6 +805,13 @@ pub(super) fn rows(
             if names_an_omitted_node(graph, claim, source, omitted)? {
                 return Err(EmitRefusal::SourceMapInvariant);
             }
+        }
+        // An operation-contract record dropped because its claim node is not
+        // written has no row either.
+        if source.requirements().kind() == Capability::OperationContract
+            && !operation_records.contains_key(claim)
+        {
+            continue;
         }
         let kind = match source.requirements().kind() {
             Capability::ValueValidity => CapabilityKind::ValueValidity,
