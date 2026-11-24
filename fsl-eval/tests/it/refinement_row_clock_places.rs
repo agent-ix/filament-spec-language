@@ -321,7 +321,7 @@ fn declared_place_text(owner: &str, field: &str) -> String {
 
 /// A reference-dependent refinement cannot be initialized from RAW Clock
 /// DATA while the route-neutral admission boundary remains unsupported.
-#[trace("FR-106", "TC-464", "TC-3084")]
+#[trace("FR-106-AC-83", "FR-106", "TC-464", "TC-3084")]
 #[test]
 fn raw_clock_data_refuses_before_refinement_evaluation() {
     use fsl_semantics::model::observation::{AdmissionFailure, ObservationLimits};
