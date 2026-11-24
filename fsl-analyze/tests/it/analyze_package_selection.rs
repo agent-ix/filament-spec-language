@@ -595,10 +595,10 @@ fn payload_union_in_invariant_and_state_graph_claim_match_across_routes() {
     let body = format!(
         "{}union Reading {{ Raw(Integer), Wide(Int[0, 9]) }}\n\
          invariant ReadingInvariant using v on M::Counter at current {{\
-           case Reading::Raw(self.value) {{ Raw(n): n <= 3; Wide(n): n <= 3; }}\
+           case Reading::Raw(self.value) {{ Raw(n): n <= 3; Wide(n): n = 0; }}\
          }}\n\
          possible ReadingReach using v over (c: M::Counter) {{\
-           case Reading::Raw(c.value) {{ Raw(n): n = 3; Wide(n): n = 3; }}\
+           case Reading::Wide(c.value) {{ Raw(n): false; Wide(n): n = 3; }}\
          }}\n",
         bounded()
     );
@@ -619,9 +619,9 @@ fn payload_union_in_invariant_and_state_graph_claim_match_across_routes() {
         source.document()
     );
     for index in 0..2 {
-        assert_ne!(
+        assert_eq!(
             label(&package.item(index)),
-            "unsupported",
+            "proved",
             "{}",
             package.item(index)
         );
