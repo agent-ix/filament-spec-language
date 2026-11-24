@@ -181,7 +181,7 @@ fn chain_length(value: &Value) -> u64 {
     }
 }
 
-#[trace("TC-735", "FR-262-AC-2")]
+#[trace("TC-735")]
 #[test]
 fn a_100_000_long_list_evaluates_compares_clones_and_drops() {
     on_small_stack(|| {
@@ -221,7 +221,7 @@ fn a_100_000_long_list_evaluates_compares_clones_and_drops() {
     });
 }
 
-#[trace("TC-735", "FR-262-AC-2")]
+#[trace("TC-735")]
 #[test]
 fn a_100_000_deep_value_type_clones_compares_hashes_formats_and_drops() {
     on_small_stack(|| {

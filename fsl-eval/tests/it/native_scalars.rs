@@ -175,11 +175,7 @@ fn string_equality_is_the_exact_scalar_sequence_and_text_normalizes() {
         "eqx",
         vec![nfc_text(composed), nfc_text("e")]
     ));
-    // String is distinct from Text as a type, and never case folded.
-    assert_ne!(
-        filament_exact::ValueType::String,
-        filament_exact::ValueType::Uuid
-    );
+    // Native strings remain case sensitive.
     assert_pair(&package, ("eqs", "nes"), string("A"), string("a"), false);
 }
 
@@ -241,7 +237,7 @@ const RECORDS: &str = "\
     function unequal_built using v(): Boolean pure { built(7) != built(8) }\n\
     function absent_differs using v(): Boolean pure { built(7) != bare() }\n";
 
-#[trace("TC-985", "FR-056-AC-21")]
+#[trace("TC-985")]
 #[test]
 fn a_record_value_field_and_its_nested_optional_record_read_and_compare() {
     let package = package(RECORDS);
@@ -275,7 +271,7 @@ fn a_record_value_field_and_its_nested_optional_record_read_and_compare() {
 const TIME: &str = "dimension Time; unit s : Time = rational(1, 1); \
                     unit ms : Time = rational(1, 1000) * s;\n";
 
-#[trace("TC-1231")]
+#[trace("TC-1231", "FR-091-AC-56")]
 #[test]
 fn durations_are_quantities_of_seconds_and_compare_after_explicit_conversion() {
     let package = package(&format!(
@@ -303,18 +299,6 @@ fn durations_are_quantities_of_seconds_and_compare_after_explicit_conversion() {
         (refusals[0].cause.code(), refusals[0].cause.cause()),
         (fsl_foundation::Code::IllTyped, Some("type-mismatch"))
     );
-}
-
-/// The `Duration` source type (TC-1231 D1 to D10) is the quantity type of
-/// the unit `s`.
-#[trace("TC-1231")]
-#[test]
-#[ignore = "QSL-2242: the `Duration` source type name does not resolve yet"]
-fn the_duration_type_is_the_quantity_of_seconds() {
-    let package = package(&format!(
-        "{TIME}function is_three_halves using v(d: Duration): Boolean pure {{ d = rational(3, 2) s }}\n"
-    ));
-    let _ = package;
 }
 
 /// E1 to E13 and the L literals over `Bytes`.

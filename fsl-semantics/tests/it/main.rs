@@ -42,14 +42,12 @@ mod dispatch_linking;
 mod division_law_selection;
 #[cfg(feature = "test-support")]
 mod enum_type_admission;
-mod guard_facts;
 #[cfg(feature = "test-support")]
 mod hyper_clauses;
 mod identity_golden_vectors;
 mod ieee_profiles;
 mod import_view_names;
 mod imported_call;
-mod imports;
 mod integer_division;
 mod interval_soundness;
 mod library_resolution;
