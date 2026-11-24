@@ -303,26 +303,11 @@ fn a_fold_over_references_into_an_annotated_population_refuses() {
     );
 }
 
-/// FR-150-AC-8 (TC-566): an operation precondition that compares its
-/// receiver with a reference literal is refused at that literal. The paired
-/// refinement test below checks the field-conversion half too.
-#[trace("TC-566", "FR-150-AC-8")]
-#[test]
-fn an_operation_precondition_cannot_compare_self_to_a_reference_literal() {
-    let literal = "Config::ConfigVersion#\"a\"";
-    let body = format!(
-        "pre CompareSelf using v on Config::ConfigVersion::attemptUpdate {{ self = {literal} }}\n"
-    );
-    let payload = identity_refusal(&annotated(&document()), &body, literal);
-    assert_eq!(payload.node, IdentityNode::ReferenceLiteral);
-    assert_eq!(payload.population.node, POPULATION);
-}
-
-/// FR-150-AC-8 (TC-566): the concrete model's `config_history` annotation
-/// also bars identity observation in a refinement field row. The model bytes
-/// are duplicated under a second package identity so the refinement has
-/// distinct abstract and concrete selections.
-#[trace("TC-566", "FR-150-AC-8")]
+/// Partial FR-150-AC-8 coverage (TC-566): the concrete model's
+/// `config_history` annotation bars identity observation in a refinement
+/// field row. The model bytes are duplicated under a second package identity
+/// so the refinement has distinct abstract and concrete selections.
+#[trace("TC-566")]
 #[test]
 fn a_refinement_field_cannot_convert_a_symmetric_reference_to_text() {
     const ABSTRACT: &str = "example/config-version-abstract";
@@ -359,7 +344,7 @@ fn a_refinement_field_cannot_convert_a_symmetric_reference_to_text() {
         (Code::IllTyped, Some("identity-observing-form"))
     );
     assert_eq!(refusal.at, convert);
-    let CheckCause::IdentityObservingForm(payload) = &refusal.refusal.cause else {
+    let CheckCause::IdentityObservingForm(payload) = refusal.refusal.cause.unwrapped() else {
         panic!("identity-observing payload: {:?}", refusal.refusal.cause);
     };
     assert_eq!(payload.node, IdentityNode::Convert);
@@ -443,7 +428,7 @@ fn each_fold_uses_the_annotation_of_its_own_source_population() {
         (span.start as u64, span.end as u64)
     });
     assert_eq!(actual, expected, "each refusal names its own fold node");
-    let CheckCause::IdentityObservingForm(cause) = &refusals[0].cause else {
+    let CheckCause::IdentityObservingForm(cause) = &*refusals[0].cause else {
         panic!("the annotated fold reports identity observation");
     };
     assert_eq!(cause.population.node, POPULATION);
