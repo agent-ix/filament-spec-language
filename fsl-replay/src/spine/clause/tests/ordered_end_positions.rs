@@ -294,6 +294,18 @@ fn malformed_position_wire_shapes_refuse_at_their_member() {
             "unknown-member",
             "/relationships/0/instances/1/positions/other",
         ),
+        (
+            json!({"odd.name": "1"}),
+            "invalid_runtime_input",
+            "unknown-member",
+            "/relationships/0/instances/1/positions/odd.name",
+        ),
+        (
+            json!({"odd/name~": "1"}),
+            "invalid_runtime_input",
+            "unknown-member",
+            "/relationships/0/instances/1/positions/odd~1name~0",
+        ),
     ] {
         let disposition = run_order([target(7), Some(position), target(5)]);
         let ClauseDisposition::SnapshotAdmission {

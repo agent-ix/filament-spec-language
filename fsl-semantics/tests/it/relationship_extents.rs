@@ -350,6 +350,7 @@ fn ordered_model_extents_read_and_admit_positions_by_opposite_end_group() {
         missing.fields.get("end").map(String::as_str),
         Some("target")
     );
+    assert!(!missing.fields.contains_key("document_pointer"));
 
     let unexpected_source = RelationshipInstance {
         source: s1.clone(),
@@ -368,6 +369,7 @@ fn ordered_model_extents_read_and_admit_positions_by_opposite_end_group() {
         unexpected.fields.get("end").map(String::as_str),
         Some("source")
     );
+    assert!(!unexpected.fields.contains_key("document_pointer"));
 
     let single_value = refused(
         admit_positions(&orders, false, vec![positioned(&s1, &p1, Some(1))])
@@ -378,6 +380,7 @@ fn ordered_model_extents_read_and_admit_positions_by_opposite_end_group() {
         single_value.fields.get("end").map(String::as_str),
         Some("target")
     );
+    assert!(!single_value.fields.contains_key("document_pointer"));
 }
 
 /// TC-1033 step 1: the same extents built in either order give the same

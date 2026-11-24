@@ -553,6 +553,10 @@ fn record(cause: &'static str, relationship: &str, instance: usize) -> Admission
         .with("instance", instance.to_string())
 }
 
+fn escape_pointer_segment(segment: &str) -> String {
+    segment.replace('~', "~0").replace('/', "~1")
+}
+
 /// FR-106 checks 6.6 to 6.9, entry by entry and instance by instance, over a
 /// snapshot's entries. `listed` is the objects checks 6.1 to 6.5 admitted.
 ///
@@ -616,9 +620,10 @@ pub(super) fn check_entries(
                 let member = defect.fields.get("member").map(String::as_str);
                 let suffix = match member {
                     Some("positions") => "/positions".to_owned(),
-                    Some(member) if member.starts_with("positions.") => {
-                        format!("/{}", member.replace('.', "/"))
-                    }
+                    Some(member) => member
+                        .strip_prefix("positions.")
+                        .map(|name| format!("/positions/{}", escape_pointer_segment(name)))
+                        .unwrap_or_default(),
                     _ => String::new(),
                 };
                 refuse(
