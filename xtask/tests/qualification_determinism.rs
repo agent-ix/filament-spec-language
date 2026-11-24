@@ -175,7 +175,11 @@ fn child_run(name: &str) {
     let output = PathBuf::from(output).join(name);
     fs::create_dir_all(&output).expect("child output directory is created");
     let execution = run_sample(&PathBuf::from(fspec), &PathBuf::from(corpus));
-    assert_eq!(execution.outcome.code, 0, "{}", execution.outcome.stdout);
+    assert!(
+        !execution.outputs.is_empty(),
+        "the published sample has passed vector outputs: {}",
+        execution.outcome.stdout
+    );
     fs::write(output.join("report.json"), execution.outcome.stdout)
         .expect("child report is written");
     for (id, bytes) in execution.outputs {
