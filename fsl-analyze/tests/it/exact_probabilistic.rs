@@ -157,20 +157,35 @@ fn exact_probability_manifest_and_statistical_refusal_settlement_are_exact() {
     use fsl_analyze::exact_probabilistic::manifest;
     use fsl_analyze::statistical::manifest as statistical_manifest;
     use fsl_foundation::bound::DomainKind;
-    use fsl_route::{EvidenceKind, Mode, ProviderOrigin};
-use fsl_replay::{
-        StatisticalRequestRefusal, TerminalValue, UnavailabilityCause,
-    };
     use fsl_replay::statistical::{settle_statistical_refusal, StatisticalRefusal};
+    use fsl_replay::{StatisticalRequestRefusal, TerminalValue, UnavailabilityCause};
+    use fsl_route::{EvidenceKind, Mode, ProviderOrigin};
 
     let exact = manifest::descriptor(ProviderOrigin::Linked).unwrap();
-    assert_eq!(exact.advertises().collect::<Vec<_>>(), [(
-        fsl_semantics::check::Capability::ProbabilisticSatisfaction,
-        Mode::Unbounded,
-    )]);
-    assert_eq!(exact.evidence_kinds(), &BTreeSet::from([EvidenceKind::Exact]));
-    assert_eq!(exact.domains(), Some(&BTreeSet::from([DomainKind::Population, DomainKind::Integer])));
-    assert_eq!(statistical_manifest::descriptor(ProviderOrigin::Linked).unwrap().evidence_kinds(), &BTreeSet::from([EvidenceKind::Statistical]));
+    assert_eq!(
+        exact.advertises().collect::<Vec<_>>(),
+        [(
+            fsl_semantics::check::Capability::ProbabilisticSatisfaction,
+            Mode::Unbounded,
+        )]
+    );
+    assert_eq!(
+        exact.evidence_kinds(),
+        &BTreeSet::from([EvidenceKind::Exact])
+    );
+    assert_eq!(
+        exact.domains(),
+        Some(&BTreeSet::from([
+            DomainKind::Population,
+            DomainKind::Integer
+        ]))
+    );
+    assert_eq!(
+        statistical_manifest::descriptor(ProviderOrigin::Linked)
+            .unwrap()
+            .evidence_kinds(),
+        &BTreeSet::from([EvidenceKind::Statistical])
+    );
 
     for (refusal, cause) in [
         (
@@ -219,10 +234,16 @@ fn exact_probabilistic_requirement_records_keep_occurrence_and_evidence() {
     let requirements = record.requirements();
     assert_eq!(requirements.kind(), Capability::ProbabilisticSatisfaction);
     assert_eq!(requirements.evidence(), Some(ClaimEvidence::Exact));
-    assert_eq!(requirements.extent(), &ClaimExtent::from_domains(BTreeMap::from([(
-        DomainKey::Node { node: occurrence.node().clone(), path: Vec::new() },
-        DomainKind::InfiniteTrace,
-    )])));
+    assert_eq!(
+        requirements.extent(),
+        &ClaimExtent::from_domains(BTreeMap::from([(
+            DomainKey::Node {
+                node: occurrence.node().clone(),
+                path: Vec::new()
+            },
+            DomainKind::InfiniteTrace,
+        )]))
+    );
     assert_eq!(record.result_bound().node(), boolean);
     assert!(record.conversion_context().is_none());
     assert!(record.path_condition().is_empty());
@@ -2746,17 +2767,23 @@ fn exact_unbounded_keys_keep_none_and_budget_stops_have_no_product() {
     assert_eq!(initial.accumulator, None);
 
     let limits = ModelCheckLimits {
-        limits: Limits { max_states: 1, ..ModelCheckLimits::default().limits },
+        limits: Limits {
+            max_states: 1,
+            ..ModelCheckLimits::default().limits
+        },
         ..ModelCheckLimits::default()
     };
     let result = build_product(world.request("NoFault", limits), &Cancel::new());
-    assert!(matches!(
-        result,
-        Err(ProductRefusal::Stopped(ProductStop::Limit {
-            limit: ModelCheckLimit::ExactProbMaxStates,
-            value: 1,
-        }))
-    ), "typed budget refusal: {result:?}");
+    assert!(
+        matches!(
+            result,
+            Err(ProductRefusal::Stopped(ProductStop::Limit {
+                limit: ModelCheckLimit::ExactProbMaxStates,
+                value: 1,
+            }))
+        ),
+        "typed budget refusal: {result:?}"
+    );
 }
 
 /// FR-196-AC-16 (TC-3060): the conditioned all-scheduler analysis must reset
@@ -2865,11 +2892,16 @@ fn on_each_reset_process_preserves_conditioned_scheduler_extrema() {
             ..
         } = terminal.value()
         else {
-            panic!("{name} should retain its exact conditioned value: {:?}", terminal.value());
+            panic!(
+                "{name} should retain its exact conditioned value: {:?}",
+                terminal.value()
+            );
         };
         assert_eq!(value.value(), &expected, "{name}");
         let certificate: Json = serde_json::from_slice(
-            terminal.exact_certificate_document().expect("checked reset certificate"),
+            terminal
+                .exact_certificate_document()
+                .expect("checked reset certificate"),
         )
         .expect("canonical certificate JSON");
         assert_eq!(certificate["conditional"]["mode"], "optimum");
@@ -2878,23 +2910,33 @@ fn on_each_reset_process_preserves_conditioned_scheduler_extrema() {
         assert!(reset["ranking"].is_array(), "reset process ranks: {reset}");
         assert!(reset["policy"].is_array(), "reset process policy: {reset}");
         let states = reset["values"].as_array().expect("reset value rows");
-        assert_eq!(states.len(), 2, "s0 and the nonactivating a successor: {reset}");
-        assert!(states.iter().all(|row| row["value"] == serde_json::json!({
-            "numerator": "1",
-            "denominator": "2",
-        })), "both waiting states have conditioned value 1/2: {reset}");
+        assert_eq!(
+            states.len(),
+            2,
+            "s0 and the nonactivating a successor: {reset}"
+        );
+        assert!(
+            states.iter().all(|row| row["value"]
+                == serde_json::json!({
+                    "numerator": "1",
+                    "denominator": "2",
+                })),
+            "both waiting states have conditioned value 1/2: {reset}"
+        );
         let ranks = reset["ranking"].as_array().expect("reset rank rows");
-        let mut ranks = ranks.iter().map(|row| row["rank"].as_u64().expect("rank")).collect::<Vec<_>>();
+        let mut ranks = ranks
+            .iter()
+            .map(|row| row["rank"].as_u64().expect("rank"))
+            .collect::<Vec<_>>();
         ranks.sort_unstable();
         assert_eq!(ranks, [1, 2], "the reset policy is proper: {reset}");
-        assert!(reset["policy"].to_string().contains("\"type\":\"reset\""),
-            "the policy uses the reset action from the nonactivating a successor: {reset}");
+        assert!(
+            reset["policy"].to_string().contains("\"type\":\"reset\""),
+            "the policy uses the reset action from the nonactivating a successor: {reset}"
+        );
     }
 
-    let workload = World::new(&model(
-        false,
-        each("Ratio", "Even", ">=", "rational(3, 5)"),
-    ));
+    let workload = World::new(&model(false, each("Ratio", "Even", ">=", "rational(3, 5)")));
     let record = settle(&workload, "Ratio");
     let terminal = record.terminal().expect("the workload item settles");
     let TerminalValue::Proved {
