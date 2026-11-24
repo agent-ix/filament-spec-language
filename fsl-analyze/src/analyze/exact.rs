@@ -1199,6 +1199,7 @@ fn run(
         return not_yet();
     }
     let document_limits = ProbabilityDocumentLimits::for_exact(&limits, meter);
+    let mut reward_subject_undefined = None;
     let reward_system = if expected_reward {
         let item = match fsl_replay::probabilistic_claim_identity(claim) {
             Ok(item) => item,
@@ -1219,7 +1220,15 @@ fn run(
             document_limits,
             cancel,
         ) {
-            return document_failure(error, subject);
+            match error {
+                error @ ProbabilityDocumentError::UndefinedPredicate(_) => {
+                    // Let the product builder confirm that this is its first
+                    // undefined read. The expected-reward undefined path is
+                    // unbuilt; a later disagreement remains an engine fault.
+                    reward_subject_undefined = Some(error);
+                }
+                error => return document_failure(error, subject),
+            }
         }
         Some(system)
     } else {
@@ -1308,6 +1317,9 @@ fn run(
             )
         }
     };
+    if let Some(error) = reward_subject_undefined {
+        return document_failure(error, subject);
+    }
     if let Some(formula) = bounded_formula {
         let Some(profile) =
             fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
