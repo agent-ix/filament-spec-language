@@ -154,26 +154,10 @@ fn canonical_each_proof(starts: &[[i64; 3]], reductions: Reductions) -> u64 {
     }
 }
 
-fn reachable(system: &fsl_eval::simulation::model::ModelSystem<'_>) -> Vec<ModelSimState> {
-    let key = |state: &ModelSimState| system.state_key(state).expect("state encodes").0;
-    let mut seen = std::collections::BTreeSet::new();
-    let mut states = Vec::new();
-    let mut queue = system.initial();
-    while let Some(state) = queue.pop() {
-        if !seen.insert(key(&state)) {
-            continue;
-        }
-        let expansion = system.successors(&state).expect("the state expands");
-        queue.extend(expansion.successors.into_iter().map(|(_, next)| next));
-        states.push(state);
-    }
-    states
-}
-
 /// FR-152-AC-2 / FR-623-AC-1: running the real analyze quotient for the
 /// each-fairness clause gives the same explored quotient for every key
 /// permutation of the initial state.
-#[trace("TC-570", "FR-152-AC-2", "FR-623-AC-1")]
+#[trace("TC-569", "FR-152-AC-2")]
 #[test]
 fn canonicalise_is_permutation_invariant_on_each_fairness_quotient() {
     let all_starts = [
@@ -195,7 +179,7 @@ fn canonicalise_is_permutation_invariant_on_each_fairness_quotient() {
         [2, 0, 1],
         [2, 1, 0],
     ];
-    for state in reachable(&system) {
+    for state in crate::reduction_proptest::reachable_states(&system, usize::MAX) {
         let canonical = system
             .canonicalise(&state, &group)
             .expect("state canonicalises")
@@ -236,7 +220,7 @@ fn canonicalise_is_permutation_invariant_on_each_fairness_quotient() {
 
 /// FR-152-AC-4 / FR-623-AC-1: canonicalizing an initial state twice gives the
 /// same actual analyze quotient under the each-fairness clause.
-#[trace("TC-570", "FR-152-AC-4", "FR-623-AC-1")]
+#[trace("TC-569", "FR-152-AC-4")]
 #[test]
 fn canonicalise_is_idempotent_on_each_fairness_quotient() {
     let all_starts = [
@@ -250,7 +234,7 @@ fn canonicalise_is_idempotent_on_each_fairness_quotient() {
     let world = canonical_each_world(&all_starts);
     let system = world.system();
     let group = counter_group();
-    for state in reachable(&system) {
+    for state in crate::reduction_proptest::reachable_states(&system, usize::MAX) {
         let once = system
             .canonicalise(&state, &group)
             .expect("canonicalises")
