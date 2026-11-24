@@ -225,6 +225,7 @@ impl SelectedModels {
         self,
     ) -> (
         Vec<SelectedModel>,
+        BTreeMap<String, String>,
         NormalizationMeter,
         Vec<SelectedExactDeclarationRow>,
         Vec<SelectedExactFieldRow>,
@@ -232,6 +233,7 @@ impl SelectedModels {
     ) {
         (
             self.entries,
+            self.versions,
             self.meter.into_meter(),
             self.exact_declarations,
             self.exact_fields,

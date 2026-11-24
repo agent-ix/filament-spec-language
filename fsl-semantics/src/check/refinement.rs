@@ -1540,12 +1540,18 @@ pub struct CheckedRefinement {
     /// The canonical selected package for the abstract side; its identity
     /// is independent of the source alias (FR-135).
     pub(crate) abstract_model_selection: DomainPackageRef,
+    /// The admitted version of the abstract package selection, when its
+    /// selected package document declares one (FR-135).
+    pub(crate) abstract_model_version: Option<String>,
     pub(crate) abstract_side: AbstractSide,
     pub(crate) abstract_internal: Vec<AbstractStepClass>,
     pub(crate) concrete_model: String,
     /// The canonical selected package for the concrete side; its identity
     /// is independent of the source alias (FR-135).
     pub(crate) concrete_model_selection: DomainPackageRef,
+    /// The admitted version of the concrete package selection, when its
+    /// selected package document declares one (FR-135).
+    pub(crate) concrete_model_version: Option<String>,
     pub(crate) populations: Vec<PopulationRow>,
     pub(crate) objects: Vec<ObjectRow>,
     pub(crate) steps: Vec<StepRow>,
@@ -1607,10 +1613,12 @@ impl DebugWith for CheckedRefinement {
             profile,
             abstract_model,
             abstract_model_selection,
+            abstract_model_version,
             abstract_side,
             abstract_internal,
             concrete_model,
             concrete_model_selection,
+            concrete_model_version,
             populations,
             objects,
             steps,
@@ -1638,10 +1646,12 @@ impl DebugWith for CheckedRefinement {
             .field("profile", &profile)
             .field("abstract_model", &abstract_model)
             .field("abstract_model_selection", &abstract_model_selection)
+            .field("abstract_model_version", &abstract_model_version)
             .field("abstract_side", &abstract_side)
             .field("abstract_internal", &abstract_internal)
             .field("concrete_model", &concrete_model)
             .field("concrete_model_selection", &concrete_model_selection)
+            .field("concrete_model_version", &concrete_model_version)
             .field("populations", &With(populations, table))
             .field("objects", &objects)
             .field("steps", &steps)
@@ -1777,6 +1787,11 @@ impl CheckedRefinement {
         &self.abstract_model_selection
     }
 
+    /// The selected abstract model package's source version, when admitted.
+    pub fn abstract_model_version(&self) -> Option<&str> {
+        self.abstract_model_version.as_deref()
+    }
+
     /// The abstract subject: the model, or a protocol clause of it (FR-147).
     pub fn abstract_side(&self) -> &AbstractSide {
         &self.abstract_side
@@ -1798,6 +1813,11 @@ impl CheckedRefinement {
     /// The selected package identity for the concrete model.
     pub fn concrete_model_selection(&self) -> &DomainPackageRef {
         &self.concrete_model_selection
+    }
+
+    /// The selected concrete model package's source version, when admitted.
+    pub fn concrete_model_version(&self) -> Option<&str> {
+        self.concrete_model_version.as_deref()
     }
 
     /// The population rows, in source order.
@@ -2441,6 +2461,7 @@ pub(crate) fn check_refinement<'f: 'c, 'a, 'c>(
         profile: declaration.selection.clone(),
         abstract_model: abstract_alias.name.clone(),
         abstract_model_selection,
+        abstract_model_version: None,
         abstract_side: match &form.abstract_side {
             AbstractSideForm::Model(_) => AbstractSide::Model,
             AbstractSideForm::Protocol { clause, .. } => AbstractSide::Protocol {
@@ -2456,6 +2477,7 @@ pub(crate) fn check_refinement<'f: 'c, 'a, 'c>(
         },
         concrete_model: form.concrete.name.clone(),
         concrete_model_selection,
+        concrete_model_version: None,
         populations,
         objects,
         steps: Vec::new(),

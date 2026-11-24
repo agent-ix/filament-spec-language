@@ -1331,8 +1331,14 @@ pub fn checked_dispatch_selected_operation(
     source: fsl_foundation::source::provenance::RawSourceRef,
     identity: fsl_foundation::IdentityLimits,
 ) -> Result<PackageDeclarations, DispatchBridgeRefusal> {
-    let (entries, mut meter, exact_declarations, exact_fields, tuple_declarations) =
-        selected.into_parts();
+    let (
+        entries,
+        versions,
+        mut meter,
+        exact_declarations,
+        exact_fields,
+        tuple_declarations,
+    ) = selected.into_parts();
     let Some(ordinal) = entries
         .iter()
         .position(|entry| entry.view.model_selection().identity == root.key.package)
@@ -1356,7 +1362,7 @@ pub fn checked_dispatch_selected_operation(
                 .push(AdmittedModel::from_view(&entry.view));
         }
     }
-    declarations.model_inputs = Some((entries, meter));
+    declarations.model_inputs = Some((entries, versions, meter));
     declarations.selected_exact_identity_rows = (exact_declarations, exact_fields);
     declarations.selected_tuple_declaration_rows = tuple_declarations;
     Ok(declarations)

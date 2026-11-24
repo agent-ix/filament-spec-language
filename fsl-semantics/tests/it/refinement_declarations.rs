@@ -790,10 +790,11 @@ fn the_counter_refinement_checks_to_one_population_and_one_object_row() {
 #[test]
 fn refinement_bindings_use_canonical_package_identity_not_source_aliases() {
     let (spec, cas) = counters();
-    let body = cas_refines_counter().replace(
-        "abstract Spec concrete Impl",
-        "abstract AbstractModel concrete ConcreteModel",
-    );
+    let spec = with_package_version(spec, "2.7.1");
+    let cas = with_package_version(cas, "4.3.0");
+    let body = cas_refines_counter()
+        .replace("Spec", "AbstractModel")
+        .replace("Impl", "ConcreteModel");
     let graph = check_with(
         "",
         &[
@@ -813,6 +814,14 @@ fn refinement_bindings_use_canonical_package_identity_not_source_aliases() {
     assert_eq!(refinement.concrete_model(), "ConcreteModel");
     assert_eq!(refinement.abstract_model_selection().identity, SPEC);
     assert_eq!(refinement.concrete_model_selection().identity, CAS);
+    assert_eq!(refinement.abstract_model_version(), Some("2.7.1"));
+    assert_eq!(refinement.concrete_model_version(), Some("4.3.0"));
+}
+
+fn with_package_version(document: Vec<u8>, version: &str) -> Vec<u8> {
+    let mut value: Value = serde_json::from_slice(&document).expect("fixture document is JSON");
+    value["package"]["version"] = json!(version);
+    serde_json::to_vec(&value).expect("fixture document serializes")
 }
 
 /// FR-136 and FSpec FR-375-AC-22: source provenance covers every authored

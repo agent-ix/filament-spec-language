@@ -377,6 +377,7 @@ pub struct PackageDeclarations {
     /// conformance stage continues.
     pub model_inputs: Option<(
         Vec<crate::model::intake::SelectedModel>,
+        std::collections::BTreeMap<String, String>,
         crate::model::accounting::NormalizationMeter,
     )>,
     /// Exact identity rows minted by model intake, kept alongside this
@@ -780,14 +781,14 @@ impl PackageDeclarations {
         identity: fsl_foundation::IdentityLimits,
         selected: crate::model::intake::SelectedModels,
     ) -> Self {
-        let (entries, meter, exact_declarations, exact_fields, tuple_declarations) =
+        let (entries, versions, meter, exact_declarations, exact_fields, tuple_declarations) =
             selected.into_parts();
         let mut declarations = Self::new(source, package_name, identity);
         declarations.models = entries
             .iter()
             .map(|entry| super::AdmittedModel::from_view(&entry.view))
             .collect();
-        declarations.model_inputs = Some((entries, meter));
+        declarations.model_inputs = Some((entries, versions, meter));
         declarations.selected_exact_identity_rows = (exact_declarations, exact_fields);
         declarations.selected_tuple_declaration_rows = tuple_declarations;
         declarations
