@@ -2274,6 +2274,7 @@ fn check_mdp(
             },
             document: None,
             value: initial.clone(),
+            policy: Vec::new(),
             side: match bound {
                 Bound::AtLeast(_) => ProbabilityBoundSide::AtLeast,
                 Bound::AtMost(_) => ProbabilityBoundSide::AtMost,
