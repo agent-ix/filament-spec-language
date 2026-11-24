@@ -1862,6 +1862,7 @@ fn aggregate_check_resolves_profiles_selected_under_later_unit_aliases() {
 
 /// FR-514-AC-5, FR-480-AC-6 and FR-091-AC-47: aggregate quantity failures preserve their
 /// topology cause, dependency edges, declaration span and owning source.
+#[trace("FSpec-TC-187", "FSpec-FR-142-AC-17")]
 #[trace("FR-514-AC-5", "FR-480-AC-6", "FR-091-AC-47", "TC-1309")]
 #[test]
 fn aggregate_quantity_cycles_and_zero_scale_name_the_declaration_source() {
@@ -1933,6 +1934,19 @@ fn aggregate_quantity_cycles_and_zero_scale_name_the_declaration_source() {
     assert_eq!(zero_scale.code(), Code::InvalidPackage);
     assert_eq!(zero_scale.cause(), Some("invalid-value"));
     assert_region_source(&zero_scale, &identities[0], document_one.1, "unit", "z");
+    let zero_region = zero_scale
+        .region()
+        .expect("U11q's first refusal has a source region");
+    assert_eq!(
+        zero_region.source().authority(),
+        "agent-ix",
+        "[doc1, doc2] names doc1's source authority"
+    );
+    assert_eq!(
+        zero_region.source().identity(),
+        document_one.0,
+        "[doc1, doc2] attributes the zero-scale refusal to doc1"
+    );
 
     let (single_cycle, identities) = refusal(&[document_two, document_one]);
     assert_eq!(single_cycle.code(), Code::InvalidPackage);
@@ -1943,6 +1957,19 @@ fn aggregate_quantity_cycles_and_zero_scale_name_the_declaration_source() {
         document_two.1,
         "unit",
         "u_self",
+    );
+    let cycle_region = single_cycle
+        .region()
+        .expect("U11q's second refusal has a source region");
+    assert_eq!(
+        cycle_region.source().authority(),
+        "agent-ix",
+        "[doc2, doc1] names doc2's source authority"
+    );
+    assert_eq!(
+        cycle_region.source().identity(),
+        document_two.0,
+        "[doc2, doc1] attributes the cycle refusal to doc2"
     );
     let CompileRefusal::Assembly {
         refusal: assembly_refusal,

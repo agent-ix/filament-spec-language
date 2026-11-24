@@ -128,6 +128,7 @@ mod type_invariants;
 mod typed_value_differential;
 mod unbounded_set_call;
 mod union_value_profile;
+mod unit_diagnostic_vectors;
 mod value_properties;
 mod variant_fields;
 mod weighted_sampler;
