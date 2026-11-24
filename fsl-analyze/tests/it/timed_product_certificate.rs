@@ -6,7 +6,7 @@
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use filament_exact::{Cancel, Integer, Rational, Value};
+use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::analyze::{
     analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered, AnalyzeRecord,
     DispositionKind, Engines, Settlement,
@@ -545,7 +545,10 @@ fn deadline_at_995_refutes_with_two_losses_at_the_horizon() {
             .is_some_and(|transition| transition.operation().contains("Msg/send"))
         {
             let draw = step.draw.as_ref().expect("send carries its loss draw");
-            assert!(matches!(draw.as_slice(), [Value::Boolean(true)]));
+            assert!(matches!(
+                draw.as_slice(),
+                [filament_exact::Value::Boolean(true)]
+            ));
             loss_times.push(elapsed.clone());
         }
     }
