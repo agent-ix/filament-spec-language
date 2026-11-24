@@ -59,6 +59,9 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
          probabilistic UndefinedElapsed using timed on M over (c: M::Call) under every scheduler on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
              {{ quantile 0.5 of (elapsed from holds(c.phase = 0) until holds(c.phase = 1) within 3 ms) <= 1 ms }}\n\
+         probabilistic UndefinedElapsedRegion using timed on M over (c: M::Call) under every scheduler on origin\n\
+             with alpha 0.4, beta 0.4, indifference 0.005\n\
+             {{ quantile 0.5 of (elapsed from holds(c.phase = 0) until holds(c.phase = 1) within 3 ms) >= 1 ms }}\n\
          probabilistic UndefinedEvery using timed on M over (c: M::Call) under every scheduler on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
              {{ probability >= 0.5 [ always[0 ms, 3 ms] holds(c.phase = 0) ] }}\n\
@@ -88,6 +91,7 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
         "UndefinedSmall",
         "UndefinedUntil",
         "UndefinedElapsed",
+        "UndefinedElapsedRegion",
         "UndefinedEvery",
         "UndefinedWeightedLongRun",
         "UndefinedEveryWeightedLongRun",
@@ -108,7 +112,7 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
             claim,
             limits: fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
         };
-        if name == "UndefinedElapsed" {
+        if matches!(name, "UndefinedElapsed" | "UndefinedElapsedRegion") {
             let product = fsl_analyze::exact_probabilistic::build_product(
                 fsl_analyze::exact_probabilistic::ProductRequest {
                     subject: fsl_eval::model_subject::ModelSubject {
@@ -131,7 +135,7 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
         let item = exact_probabilistic_item(RequestIndex::new(0), request);
         records.extend(analyze_items(&engines, vec![item], &Cancel::new()));
     }
-    assert_eq!(records.len(), 8);
+    assert_eq!(records.len(), 9);
     for (name, record) in names.iter().zip(&records) {
         assert_eq!(
             record
@@ -153,14 +157,22 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
             product_key[0], "filament.probability-product-key/v1",
             "{name} key schema"
         );
-        assert_eq!(product_key[4][1][0], "digital", "{name} timed route");
-        assert_eq!(product_key[4][1][4][0][1], "1", "{name} clock value");
+        let expected_route = if *name == "UndefinedElapsedRegion" {
+            "region"
+        } else {
+            "digital"
+        };
+        assert_eq!(product_key[4][1][0], expected_route, "{name} timed route");
+        if *name != "UndefinedElapsedRegion" {
+            assert_eq!(product_key[4][1][4][0][1], "1", "{name} clock value");
+        }
         let expected_monitor = match *name {
             "UndefinedHalf" | "UndefinedSmall" | "UndefinedEvery" => {
                 serde_json::json!(["deadline", "always", "pending"])
             }
             "UndefinedUntil" => serde_json::json!(["deadline", "until", "pending"]),
             "UndefinedElapsed" => serde_json::json!(["measure", null, "active"]),
+            "UndefinedElapsedRegion" => serde_json::json!(["measure", null, "active"]),
             "UndefinedWeightedLongRun" | "UndefinedEveryWeightedLongRun" | "UndefinedMeanTime" => {
                 Value::Null
             }
@@ -194,7 +206,7 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
             "{name} undefined cause"
         );
     }
-    let every = records[4]
+    let every = records[5]
         .probabilistic_counterexample
         .as_ref()
         .expect("Every's selected drop path is replayed");
@@ -216,7 +228,7 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
             every_undefined.path.paths[0].steps[0].choice.clone()
         )
     );
-    let weighted_every = records[6]
+    let weighted_every = records[7]
         .probabilistic_counterexample
         .as_ref()
         .expect("Every's reward-weighted undefined path is replayed")
