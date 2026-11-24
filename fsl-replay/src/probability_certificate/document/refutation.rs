@@ -477,7 +477,8 @@ pub(in crate::probability_certificate) fn check(
     } else {
         match scheduled_choices(
             system,
-            &subject,
+            &subject.graph,
+            subject.reference.as_ref(),
             scheduler,
             limits,
             cancel,
@@ -813,9 +814,10 @@ pub(in crate::probability_certificate) fn admit_subsystem(
 /// meter and storage. `None` when a row is not an enabled identity choice at
 /// a state the walk reaches, a reached choice state has no row, or a row
 /// names a state the walk never reaches.
-fn scheduled_choices(
+pub(super) fn scheduled_choices(
     system: &ModelSystem<'_>,
-    subject: &Subject,
+    graph: &CheckerGraph,
+    reference: Option<&ObjectReference>,
     rows: &[(ProbabilityProductKey, crate::ProductAction)],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
@@ -837,7 +839,6 @@ fn scheduled_choices(
         }
         wanted.insert(key, schedule);
     }
-    let reference = subject.reference.as_ref();
     let key_of = |state: &ModelSimState,
                   meter: &mut filament_exact::Meter,
                   storage: &mut u64|
@@ -867,8 +868,7 @@ fn scheduled_choices(
     let mut pending = VecDeque::from([(root, initial.clone())]);
     while let Some((key, state)) = pending.pop_front() {
         super::super::reward::visit(cancel, meter)?;
-        let checked = subject
-            .graph
+        let checked = graph
             .states
             .get(&key)
             .ok_or(ProbabilityDocumentError::Malformed)?;

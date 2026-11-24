@@ -61,7 +61,20 @@ pub(super) fn replay(
         return Err(ProbabilityWitnessError::Refused);
     }
     let workload = matches!(claim.scheduler, ProbScheduler::Workload(_));
-    let rows = deterministic_scheduler_rows(&witness.scheduler)?;
+    // FR-412-AC-27: a long-run witness over every scheduler whose rows are not
+    // a deterministic stationary policy is malformed at `policy`, not refused.
+    let policy_malformed = || {
+        ProbabilityWitnessError::CertificateRejected(ProbabilityCertificateRejection {
+            rule: ProbabilityCertificateRule::Malformed,
+            at: ProbabilityCertificateLocus::Member("policy"),
+        })
+    };
+    let rows = match deterministic_scheduler_rows(&witness.scheduler) {
+        Err(ProbabilityWitnessError::Refused) if long_run_claim && !workload => {
+            return Err(policy_malformed())
+        }
+        other => other?,
+    };
     // A workload counterexample has no scheduler. An every-scheduler one
     // carries FR-200's deterministic memoryless scheduler, whose coverage of
     // the induced chain the role checker decides.
@@ -86,18 +99,24 @@ pub(super) fn replay(
             claims,
             &witness.item,
             subsystem.as_bytes(),
+            &rows,
             document_limits,
             cancel,
         )
         .map_err(member)?
         {
-            ExactProbabilityCertificateCheck::Accepted(_) => {}
-            ExactProbabilityCertificateCheck::Rejected(rejection) => {
-                return Err(ProbabilityWitnessError::CertificateRejected(rejection))
+            long_run::LongRunRefutation::Checked(ExactProbabilityCertificateCheck::Accepted(_)) => {
             }
-            ExactProbabilityCertificateCheck::AcceptedVacuous(_) => {
+            long_run::LongRunRefutation::Checked(ExactProbabilityCertificateCheck::Rejected(
+                rejection,
+            )) => return Err(ProbabilityWitnessError::CertificateRejected(rejection)),
+            long_run::LongRunRefutation::Checked(
+                ExactProbabilityCertificateCheck::AcceptedVacuous(_),
+            ) => return Err(ProbabilityWitnessError::Refused),
+            long_run::LongRunRefutation::SchedulerRefused if workload => {
                 return Err(ProbabilityWitnessError::Refused)
             }
+            long_run::LongRunRefutation::SchedulerRefused => return Err(policy_malformed()),
         }
     } else {
         match refutation::check(

@@ -43,11 +43,43 @@ pub struct LongRunProbabilityComponent {
     pub bias: Vec<ExactProbabilityValue>,
 }
 
+/// The scheduler optimisation a long-run document is written for (FR-412
+/// "Long-run certificate wire shape and witnesses").
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LongRunOptimization {
+    /// `under W`: the workload's single chain.
+    Workload,
+    /// `under every scheduler` with a `>=` bound.
+    Minimum,
+    /// `under every scheduler` with a `<=` bound.
+    Maximum,
+}
+
+impl LongRunOptimization {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Workload => "workload",
+            Self::Minimum => "minimum",
+            Self::Maximum => "maximum",
+        }
+    }
+
+    fn of(scheduler: &ProbScheduler, bound: &Bound) -> Self {
+        match (scheduler, bound) {
+            (ProbScheduler::Workload(_), _) => Self::Workload,
+            (ProbScheduler::Every, Bound::AtLeast(_)) => Self::Minimum,
+            (ProbScheduler::Every, Bound::AtMost(_)) => Self::Maximum,
+        }
+    }
+}
+
 /// Canonical long-run document; construction alone grants no acceptance.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LongRunProbabilityDocument {
     /// Structural checked claim identity.
     pub identity: ObligationIdentity,
+    /// The scheduler optimisation the document is written for.
+    pub optimization: LongRunOptimization,
     /// Exact reachable keys where the independently checked predicate holds.
     pub predicate_states: Vec<ProbabilityProductKey>,
     /// Exact long-run values on the whole original reachable graph.
@@ -213,15 +245,12 @@ fn read(bytes: &[u8], cx: &mut Context<'_>) -> Result<Decoded, ProbabilityDocume
     {
         return Err(ProbabilityDocumentError::Unsupported);
     }
-    if wire.objective.optimization != "workload" {
-        return Err(
-            if matches!(wire.objective.optimization.as_str(), "minimum" | "maximum") {
-                ProbabilityDocumentError::ObjectiveMismatch
-            } else {
-                ProbabilityDocumentError::Unsupported
-            },
-        );
-    }
+    let optimization = match wire.objective.optimization.as_str() {
+        "workload" => LongRunOptimization::Workload,
+        "minimum" => LongRunOptimization::Minimum,
+        "maximum" => LongRunOptimization::Maximum,
+        _ => return Err(ProbabilityDocumentError::Unsupported),
+    };
     cx.rows(wire.values.len())?;
     cx.rows(wire.objective.predicate_states.len())?;
     cx.rows(wire.components.len())?;
@@ -276,6 +305,7 @@ fn read(bytes: &[u8], cx: &mut Context<'_>) -> Result<Decoded, ProbabilityDocume
     Ok(Decoded {
         document: LongRunProbabilityDocument {
             identity,
+            optimization,
             predicate_states,
             values,
             components,
@@ -429,7 +459,7 @@ impl Encode for Events<'_> {
         }
         writer.end_array()?;
         writer.name("optimization")?;
-        writer.string("workload")?;
+        writer.string(self.document.optimization.as_str())?;
         writer.name("fairness")?;
         writer.begin_array()?;
         writer.end_array()?;
@@ -501,6 +531,8 @@ pub fn write_weighted_long_run_probability_certificate(
 
 struct Subject {
     graph: CheckerGraph,
+    optimization: LongRunOptimization,
+    reference: Option<ObjectReference>,
     bound: Bound,
     weight: Option<ProbabilityRewardObjective>,
     weights: BTreeMap<ProbabilityProductKey, Rational>,
@@ -514,6 +546,8 @@ struct Context<'a> {
     identity: fsl_foundation::IdentityLimits,
     /// Compare the initial value strictly against the failing side of the bound.
     refutation: bool,
+    /// The chain is the one a scheduler witness induces over every scheduler.
+    scheduled: bool,
     #[cfg(feature = "test-support")]
     observe: Option<&'a mut dyn FnMut(LongRunProbabilityPhase)>,
 }
@@ -526,6 +560,7 @@ impl<'a> Context<'a> {
             storage: 0,
             identity: fsl_foundation::IdentityLimits::default(),
             refutation: false,
+            scheduled: false,
             #[cfg(feature = "test-support")]
             observe: None,
         }
@@ -572,6 +607,29 @@ impl<'a> Context<'a> {
                 None => ProbabilityDocumentError::Accounting(Box::new(error)),
             })
     }
+    /// Every enabled action of `state` as one distribution each, under the
+    /// document's meter and storage.
+    fn distributions(
+        &mut self,
+        system: &ModelSystem<'_>,
+        state: &ModelSimState,
+    ) -> Result<Vec<Vec<(Rational, ModelSimState)>>, ProbabilityDocumentError> {
+        let mut admission = ProbabilityKeyAdmission::new(
+            &mut self.meter,
+            &mut self.storage,
+            self.limits.storage_bytes,
+            self.cancel,
+        );
+        super::super::model_distributions_with_budget(
+            system,
+            state,
+            None,
+            self.identity,
+            &mut admission,
+            self.cancel,
+        )
+    }
+
     fn model<T>(
         &mut self,
         operation: impl FnOnce(
@@ -619,8 +677,7 @@ fn subject(
     else {
         return Err(ProbabilityDocumentError::Unsupported);
     };
-    if !matches!(claim.scheduler, ProbScheduler::Workload(_))
-        || !claim.fairness.is_empty()
+    if !claim.fairness.is_empty()
         || fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
             != Some(fsl_semantics::check::TemporalProfile::InfiniteTrace)
         || !matches!(
@@ -632,7 +689,13 @@ fn subject(
     }
     let binding = claim_binding(system, claim)?;
     let reference = binding.as_ref().map(|b| &b.reference);
-    let workload = claim_workload(system, claim)?.ok_or(ProbabilityDocumentError::Unsupported)?;
+    // `None` is `under every scheduler`: the graph keeps every action as a choice.
+    let workload = claim_workload(system, claim)?;
+    if workload.is_none() && weight.is_some() {
+        // Per-action weights are the MDP weighted profile's, not this one's.
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    let optimization = LongRunOptimization::of(&claim.scheduler, bound);
     let limits = cx.limits;
     let cancel = cx.cancel;
     let identity = cx.identity;
@@ -707,6 +770,9 @@ fn subject(
             let evaluated = (|| {
                 #[cfg(feature = "test-support")]
                 cx.borrow_mut().phase(LongRunProbabilityPhase::Workload)?;
+                let Some(workload) = workload else {
+                    return cx.borrow_mut().distributions(system, state);
+                };
                 let steps = cx.borrow_mut().model(|budget| {
                     system.weighted_steps_with_budget(state, workload, identity, budget, cancel)
                 })?;
@@ -747,6 +813,7 @@ fn subject(
         &mut |key, state| {
             let evaluated = (|| {
                 if let Some(objective) = &objective {
+                    let workload = workload.ok_or(ProbabilityDocumentError::Unsupported)?;
                     let mut context = cx.borrow_mut();
                     let steps = context
                         .model(|budget| {
@@ -875,6 +942,8 @@ fn subject(
     }
     Ok(Subject {
         graph,
+        optimization,
+        reference: reference.cloned(),
         bound: bound.clone(),
         weight: objective,
         weights,
@@ -910,6 +979,7 @@ pub fn long_run_probability_certificate_document(
     cx.reserve(predicate_bytes)?;
     Ok(LongRunProbabilityDocument {
         identity: item.clone(),
+        optimization: subject.optimization,
         predicate_states: target_keys(&graph),
         values,
         components,
@@ -945,6 +1015,7 @@ pub fn weighted_long_run_probability_certificate_document(
     Ok(WeightedLongRunProbabilityDocument {
         certificate: LongRunProbabilityDocument {
             identity: item.clone(),
+            optimization: subject.optimization,
             predicate_states: target_keys(&subject.graph),
             values,
             components,
@@ -975,17 +1046,30 @@ pub(super) fn check(
 /// FR-202's counterexample role: every proof-side condition over the rebuilt
 /// workload chain, then the strict refutation comparison instead of the
 /// inclusive claim-side threshold. Acceptance means the claim is refuted.
+///
+/// Under `every scheduler` the chain is the one `scheduler` induces (FR-412
+/// "Long-run certificate wire shape and witnesses"); under a workload it must
+/// be empty.
 pub(in crate::probability_certificate) fn check_refutation(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
     item: &ObligationIdentity,
     bytes: &[u8],
+    scheduler: &[(ProbabilityProductKey, crate::ProductAction)],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
-) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+) -> Result<LongRunRefutation, ProbabilityDocumentError> {
     let mut cx = Context::new(limits, cancel);
     cx.refutation = true;
-    check_with_context(system, claims, item, bytes, &mut cx)
+    check_scheduled(system, claims, item, bytes, scheduler, &mut cx)
+}
+
+/// The outcome of checking long-run evidence in its counterexample role.
+pub(in crate::probability_certificate) enum LongRunRefutation {
+    /// The rebuilt chain's check, accepted or rejected.
+    Checked(ExactProbabilityCertificateCheck),
+    /// The scheduler is missing, extra or names no choice of the rebuilt graph.
+    SchedulerRefused,
 }
 
 /// Admit canonical long-run or weighted long-run bytes without checking them.
@@ -1037,12 +1121,93 @@ fn check_with_context(
     bytes: &[u8],
     cx: &mut Context<'_>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    match check_scheduled(system, claims, item, bytes, &[], cx)? {
+        LongRunRefutation::Checked(check) => Ok(check),
+        LongRunRefutation::SchedulerRefused => Err(ProbabilityDocumentError::Unsupported),
+    }
+}
+
+/// The chain `rows` induce from the initial state: only the reached states,
+/// each keeping its one scheduled choice. `None` when the rows are not exactly
+/// one enabled action for every reached choice state.
+fn induced_graph(
+    system: &ModelSystem<'_>,
+    graph: CheckerGraph,
+    reference: Option<&ObjectReference>,
+    rows: &[(ProbabilityProductKey, crate::ProductAction)],
+    cx: &mut Context<'_>,
+) -> Result<Option<CheckerGraph>, ProbabilityDocumentError> {
+    let Some(chosen) = super::refutation::scheduled_choices(
+        system,
+        &graph,
+        reference,
+        rows,
+        cx.limits,
+        cx.cancel,
+        &mut cx.meter,
+        &mut cx.storage,
+    )?
+    else {
+        return Ok(None);
+    };
+    let mut states = BTreeMap::new();
+    let mut pending = VecDeque::from([graph.initial.clone()]);
+    while let Some(key) = pending.pop_front() {
+        cx.work(1)?;
+        if states.contains_key(&key) {
+            continue;
+        }
+        let mut state = graph
+            .states
+            .get(&key)
+            .ok_or(ProbabilityDocumentError::Malformed)?
+            .clone();
+        if !state.choices.is_empty() {
+            let Some(&index) = chosen.get(&key) else {
+                return Ok(None);
+            };
+            let choice = state
+                .choices
+                .get(index)
+                .ok_or(ProbabilityDocumentError::Malformed)?
+                .clone();
+            for edge in &choice {
+                cx.work(1)?;
+                if edge.probability > rational(0) {
+                    pending.push_back(edge.target.clone());
+                }
+            }
+            state.choices = vec![choice];
+        }
+        cx.reserve(
+            key.as_bytes()
+                .len()
+                .saturating_add(std::mem::size_of::<(ProbabilityProductKey, CheckerState)>()),
+        )?;
+        states.insert(key, state);
+    }
+    Ok(Some(CheckerGraph {
+        initial: graph.initial,
+        states,
+    }))
+}
+
+fn check_scheduled(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    bytes: &[u8],
+    scheduler: &[(ProbabilityProductKey, crate::ProductAction)],
+    cx: &mut Context<'_>,
+) -> Result<LongRunRefutation, ProbabilityDocumentError> {
     let decoded = match read(bytes, cx) {
         Ok(document) => document,
         Err(ProbabilityDocumentError::MissingMember("components")) => {
-            return Ok(malformed("components"))
+            return Ok(LongRunRefutation::Checked(malformed("components")))
         }
-        Err(ProbabilityDocumentError::MalformedMember(member)) => return Ok(malformed(member)),
+        Err(ProbabilityDocumentError::MalformedMember(member)) => {
+            return Ok(LongRunRefutation::Checked(malformed(member)))
+        }
         Err(error) => return Err(error),
     };
     let document = decoded.document;
@@ -1050,8 +1215,18 @@ fn check_with_context(
         return Err(ProbabilityDocumentError::IdentityMismatch);
     }
     let subject = subject(system, claims, item, cx)?;
-    if decoded.weight != subject.weight {
+    if decoded.weight != subject.weight || document.optimization != subject.optimization {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    let workload = subject.optimization == LongRunOptimization::Workload;
+    if workload && !scheduler.is_empty() {
+        // A workload has no scheduler to rebuild a chain from.
+        return Ok(LongRunRefutation::SchedulerRefused);
+    }
+    if !workload && !cx.refutation {
+        // The holds side over every scheduler is the MDP profile, which this
+        // checker does not read.
+        return Err(ProbabilityDocumentError::Unsupported);
     }
     let graph = subject.graph;
     if !document.predicate_states.iter().eq(graph
@@ -1062,6 +1237,15 @@ fn check_with_context(
     {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
+    cx.scheduled = !workload;
+    let graph = if workload {
+        graph
+    } else {
+        match induced_graph(system, graph, subject.reference.as_ref(), scheduler, cx)? {
+            Some(induced) => induced,
+            None => return Ok(LongRunRefutation::SchedulerRefused),
+        }
+    };
     check_graph(
         &graph,
         &document,
@@ -1073,7 +1257,7 @@ fn check_with_context(
         if let ExactProbabilityCertificateCheck::Accepted(accepted) = &mut check {
             accepted.document = Some(bytes.into());
         }
-        check
+        LongRunRefutation::Checked(check)
     })
 }
 
@@ -1334,10 +1518,14 @@ fn check_graph(
         }
     };
     if !on_side {
-        return Ok(rejected(
-            ProbabilityCertificateRule::ThresholdMissed,
-            graph.initial.clone(),
-        ));
+        // FR-412-AC-27: a scheduler witness whose induced value meets the
+        // bound fails the comparison like any other condition, at the initial state.
+        let rule = if cx.scheduled {
+            ProbabilityCertificateRule::InequalityFails
+        } else {
+            ProbabilityCertificateRule::ThresholdMissed
+        };
+        return Ok(rejected(rule, graph.initial.clone()));
     }
     poll(cx.cancel)?;
     Ok(ExactProbabilityCertificateCheck::Accepted(
