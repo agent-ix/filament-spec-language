@@ -204,6 +204,89 @@ pub fn document(shape: ModelShape) -> Vec<u8> {
     .expect("a read document has an RFC 8785 encoding")
 }
 
+/// The Semantic IR document used for the widening-redefinition benchmark.
+/// It declares `types` object types, each with one package-typed reference
+/// field. The root field names the deepest type; every other type directly
+/// specializes the root and widens that field back to the root reference.
+///
+/// # Panics
+///
+/// Panics when fewer than two types are requested, since a widening field
+/// requires distinct ancestor and descendant types.
+pub fn widening_redefinitions_document(types: usize) -> Vec<u8> {
+    assert!(types >= 2, "a widening redefinition needs two types");
+
+    let root = node("W0");
+    let root_field = format!("{root}/target");
+    let deepest = node(&format!("W{}", types - 1));
+    let object_types: Vec<Value> = (0..types)
+        .map(|index| {
+            let name = format!("W{index}");
+            let identity = node(&name);
+            let field = format!("{identity}/target");
+            let target = if index == 0 { &deepest } else { &root };
+            let supertypes = if index == 0 {
+                Vec::new()
+            } else {
+                vec![root.clone()]
+            };
+            let mut fields = json!([{
+                "identity": field.clone(),
+                "name": "target",
+                "typeRef": target,
+                "presence": "required",
+                "nullable": false,
+                "defaultKind": "none",
+                "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+                "origin": origin(&field),
+            }]);
+            if index > 0 {
+                fields[0]["redefines"] = json!(root_field);
+            }
+            json!({
+                "identity": identity,
+                "displayName": name,
+                "kind": {"module": PACKAGE, "name": "object_type"},
+                "roles": [],
+                "origin": origin(&identity),
+                "constraints": [],
+                "extensions": [],
+                "unknownPolicy": "reject",
+                "supertypes": supertypes,
+                "fields": fields,
+                "operations": [],
+            })
+        })
+        .collect();
+    let document = json!({
+        "contractVersion": "2.0.0",
+        "canonicalization": {"algorithm": "rfc8785-v1"},
+        "source": {
+            "identity": node("spec"),
+            "version": VERSION,
+            "dialect": "spec-bundle",
+        },
+        "package": {
+            "identity": PACKAGE,
+            "version": VERSION,
+            "mappingVersions": [],
+            "profileVersions": [],
+        },
+        "occurrences": [],
+        "extensions": [],
+        "constructs": [construct("object_type", meaning::OBJECT_TYPE)],
+        "types": object_types,
+        "populations": [],
+    });
+    let text = serde_json::to_vec(&document).expect("a json! document serializes");
+    let tree = quire_canonical::read(&text, u64::MAX).expect("a serialized document reads");
+    quire_canonical::to_vec(
+        &tree,
+        filament_semantic_value::semantic_node::IDENTITY_LIMITS,
+    )
+    .expect("a read document has an RFC 8785 encoding")
+}
+
 /// A domain package selection and the byte map FR-154's admission table
 /// reads it from.
 #[derive(Clone, Debug)]
