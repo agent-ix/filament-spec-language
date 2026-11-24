@@ -419,7 +419,7 @@ fn serial_binding_tests_share_the_probability_work_allowance() {
 /// `BehaviourSampler` seam: the stopped trace prefix and its default-limit
 /// rerun have identical sample values; changing only the seed changes a
 /// value while retaining the same checked statistical claim.
-#[trace("TC-626", "FR-191-AC-3")]
+#[trace("TC-626")]
 #[test]
 fn sampled_seven_reproduces_a_stopped_prefix_and_seed_eight_changes_it() {
     let claim = sampled_p95();
@@ -532,7 +532,7 @@ fn sampled_seven_reproduces_a_stopped_prefix_and_seed_eight_changes_it() {
 /// FR-191-AC-4's provenance fields through `check_sampled`: each logical test
 /// retains its initial-state index, concrete binding and interleaved trace
 /// range, and the selected method is recorded in the result basis.
-#[trace("TC-626", "FR-191-AC-4")]
+#[trace("TC-626")]
 #[test]
 fn sampled_two_test_provenance_keeps_bindings_and_method() {
     let claim = sampled_p95();

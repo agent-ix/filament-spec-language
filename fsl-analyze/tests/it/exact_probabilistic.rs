@@ -197,7 +197,7 @@ fn exact_probability_manifest_and_statistical_refusal_settlement_are_exact() {
 
 /// FR-195-AC-6 (TC-1163): exact claims have a claim-occurrence-keyed
 /// probabilistic requirement with its exact evidence and full record shape.
-#[trace("TC-1163", "FR-195-AC-6")]
+#[trace("TC-1163")]
 #[test]
 fn exact_probabilistic_requirement_records_keep_occurrence_and_evidence() {
     use fsl_foundation::bound::{DomainKey, DomainKind};
