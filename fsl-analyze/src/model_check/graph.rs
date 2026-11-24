@@ -7,7 +7,6 @@
 //! canonicalised by: the annotated quotient (AQ-1).
 
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::Arc;
 
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::simulation::StateKey;
@@ -184,17 +183,6 @@ fn encode(
     quire_canonical::to_vec(value, quire_canonical::Limits::new(identity.input_bytes))
 }
 
-fn copy_key(bytes: &[u8]) -> Result<Vec<u8>, quire_canonical::Error> {
-    let mut copied = Vec::new();
-    copied
-        .try_reserve_exact(bytes.len())
-        .map_err(|_| quire_canonical::Error::Allocation {
-            requested: bytes.len(),
-        })?;
-    copied.extend_from_slice(bytes);
-    Ok(copied)
-}
-
 /// Retain the reachable graph in FR-101's canonical breadth-first order.
 ///
 /// This low-level graph primitive accepts an already selected system; domain
@@ -273,7 +261,7 @@ pub fn retain_reduced<S: TransitionSystem>(
         identity,
         max_depth,
         poll,
-        |state, identity| Ok(Arc::from(encode(&system.key(state), identity)?)),
+        |state, identity| encode(&system.key(state), identity),
     )
 }
 
@@ -287,7 +275,7 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
     identity: IdentityLimits,
     max_depth: Option<usize>,
     mut poll: impl FnMut() -> bool,
-    key: impl Fn(&S::State, IdentityLimits) -> Result<Arc<[u8]>, quire_canonical::Error>,
+    key: impl Fn(&S::State, IdentityLimits) -> Result<Vec<u8>, quire_canonical::Error>,
 ) -> RetainResult<S> {
     let mut graph = RetainedGraph {
         states: Vec::new(),
@@ -312,29 +300,24 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
     }
     initial.sort_by(|(a, _), (b, _)| a.cmp(b));
     initial.dedup_by(|(a, _), (b, _)| a == b);
+    let initial_frontier = initial
+        .iter()
+        .map(|(key, _)| StateKey::from_canonical_bytes(key.clone()))
+        .collect();
     let mut known = BTreeMap::new();
     let too_many_initial = initial.len() > limits.max_states;
+    for (key, state) in initial.into_iter().take(limits.max_states) {
+        let id = graph.insert(state, key.clone(), 0);
+        known.insert(key, id);
+        graph.initial.push(id);
+    }
     if too_many_initial {
-        let frontier = initial
-            .iter()
-            .map(|(key, _)| copy_key(key).map(StateKey::from_canonical_bytes))
-            .collect::<Result<Vec<_>, _>>()?;
-        for (key, state) in initial.into_iter().take(limits.max_states) {
-            let id = graph.insert(state, copy_key(&key)?, 0);
-            known.insert(key, id);
-            graph.initial.push(id);
-        }
         let outcome = Outcome::Bounded {
             stats: graph.stats(0),
-            frontier,
+            frontier: initial_frontier,
             limit: Limit::States(limits.max_states),
         };
         return Ok(GraphExploration { graph, outcome });
-    }
-    for (key, state) in initial.into_iter().take(limits.max_states) {
-        let id = graph.insert(state, copy_key(&key)?, 0);
-        known.insert(key, id);
-        graph.initial.push(id);
     }
     let mut queue: VecDeque<_> = graph.initial.iter().copied().collect();
     let mut transitions = 0;
@@ -422,7 +405,7 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
             } else {
                 if graph.states.len() >= limits.max_states {
                     let mut frontier = graph.frontier(source, &queue);
-                    frontier.push(StateKey::from_canonical_bytes(copy_key(&key)?));
+                    frontier.push(StateKey::from_canonical_bytes(key));
                     break 'run Outcome::Bounded {
                         stats: graph.stats(transitions),
                         frontier,
@@ -431,7 +414,7 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
                 }
                 // A new state always requires an edge from an existing depth,
                 // so depth is bounded by the number of allocated state records.
-                let id = graph.insert(state, copy_key(&key)?, depth.saturating_add(1));
+                let id = graph.insert(state, key.clone(), depth.saturating_add(1));
                 known.insert(key, id);
                 queue.push_back(id);
                 id

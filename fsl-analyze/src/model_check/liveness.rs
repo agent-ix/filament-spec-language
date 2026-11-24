@@ -1032,7 +1032,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
         &self,
         state: &LState<S::State>,
         identity: IdentityLimits,
-    ) -> Result<Arc<[u8]>, quire_canonical::Error> {
+    ) -> Result<Vec<u8>, quire_canonical::Error> {
         let property = match &state.property {
             Property::After(state) => PropertyKey::After(state.index()),
             Property::Undefined { .. } => PropertyKey::Undefined,
@@ -1040,12 +1040,12 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
         let key = (state.model_key.clone(), property);
         let cached_key = self.product_keys.borrow().get(&key).cloned();
         if let Some(cached_key) = cached_key {
-            check_product_key_limit(
+            return copy_product_key(
+                &cached_key,
                 state.model_key.as_bytes().len(),
                 property,
                 identity.input_bytes,
-            )?;
-            return Ok(cached_key);
+            );
         }
         let cached_model = self.model_values.borrow().get(&state.model_key).cloned();
         let model = match cached_model {
@@ -1069,11 +1069,9 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
                 property,
                 identity.input_bytes,
             )?;
-        let cached_key: Arc<[u8]> = Arc::from(bytes);
-        self.product_keys
-            .borrow_mut()
-            .insert(key, Arc::clone(&cached_key));
-        Ok(cached_key)
+        let cached_key: Arc<[u8]> = Arc::from(bytes.clone());
+        self.product_keys.borrow_mut().insert(key, cached_key);
+        Ok(bytes)
     }
 
     /// Record why the run stops, keeping the first reason, and return the
@@ -1692,14 +1690,15 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
     }
 }
 
-/// Check that a cached product key fits this caller's output bound. Count the
-/// same writer chunks as the original ProductKey encoder so a cache hit
-/// reports the same first exceeded byte count.
-fn check_product_key_limit(
+/// Copy a cached product key when the same canonical bytes fit this caller's
+/// output bound. Count the same writer chunks as the original ProductKey
+/// encoder so a cache hit reports the same first exceeded byte count.
+fn copy_product_key(
+    bytes: &[u8],
     model_bytes: usize,
     property: PropertyKey,
     max_bytes: u64,
-) -> Result<(), quire_canonical::Error> {
+) -> Result<Vec<u8>, quire_canonical::Error> {
     let integer_bytes = match property {
         PropertyKey::After(index) => {
             Some(i128::try_from(index).unwrap_or(i128::MAX).to_string().len())
@@ -1733,7 +1732,14 @@ fn check_product_key_limit(
             ));
         }
     }
-    Ok(())
+    let mut copied = Vec::new();
+    copied
+        .try_reserve_exact(bytes.len())
+        .map_err(|_| quire_canonical::Error::Allocation {
+            requested: bytes.len(),
+        })?;
+    copied.extend_from_slice(bytes);
+    Ok(copied)
 }
 
 /// FR-156: the ample sets of one binding's product, chosen at the model
