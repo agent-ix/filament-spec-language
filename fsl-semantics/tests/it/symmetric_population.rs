@@ -303,6 +303,22 @@ fn a_fold_over_references_into_an_annotated_population_refuses() {
     );
 }
 
+/// FR-150-AC-8 (TC-566): an operation precondition that compares its
+/// receiver with a reference literal is refused at that literal. The
+/// refinement field-conversion half needs the package-level refinement
+/// fixture, which this module does not yet provide.
+#[trace("TC-566", "FR-150-AC-8")]
+#[test]
+fn an_operation_precondition_cannot_compare_self_to_a_reference_literal() {
+    let literal = "Config::ConfigVersion#\"a\"";
+    let body = format!(
+        "pre CompareSelf using v on Config::ConfigVersion::attemptUpdate {{ self = {literal} }}\n"
+    );
+    let payload = identity_refusal(&annotated(&document()), &body, literal);
+    assert_eq!(payload.node, IdentityNode::ReferenceLiteral);
+    assert_eq!(payload.population.node, POPULATION);
+}
+
 /// A counting `fold` over the reference set uses a commutative and associative
 /// step, so it checks in the annotated and the unannotated unit alike.
 #[trace("TC-565", "FR-150-AC-2")]
