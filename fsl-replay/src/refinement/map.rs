@@ -257,10 +257,24 @@ pub fn map_state(
                         })
                     })
             };
-            let Some(object_row) = refinement
+            // Among the admitted rows the most specific one: the row whose
+            // abstract type conforms to every other admitted row's, whatever
+            // the source order (FR-140-AC-18). Rows with no most specific
+            // one keep source order.
+            let admitted: Vec<&dyn ObjectMapping> = refinement
                 .objects()
                 .filter(|candidate| candidate.concrete_type() == &object.type_identity)
-                .find(admits)
+                .filter(admits)
+                .collect();
+            let Some(object_row) = admitted
+                .iter()
+                .copied()
+                .find(|row| {
+                    admitted.iter().all(|other| {
+                        abstract_system.type_conforms(row.abstract_type(), other.abstract_type())
+                    })
+                })
+                .or_else(|| admitted.first().copied())
             else {
                 outcomes.record(unmapped(&object.type_identity, at));
                 continue;
@@ -1271,5 +1285,29 @@ mod tests {
             Value::Boolean(true),
         );
         assert!(matches!(kept, Ok(Value::Boolean(true))));
+    }
+
+    /// FR-141-AC-15 (TC-546 step 10): among rows `Queue` and `Cell`, a
+    /// declared type that conforms to neither picks no row, which
+    /// `check_protocol_step` reports as a `StepVerdict::Fault`; a declared
+    /// type one row conforms to picks that row whatever the source order.
+    #[trace("TC-546", "FR-141-AC-15")]
+    #[test]
+    fn a_protocol_node_row_faults_when_no_object_row_conforms() {
+        let queue = effective("Queue");
+        let cell = effective("Cell");
+        let other = effective("Other");
+        let conforms = |sub: &EffectiveId, sup: &EffectiveId| sub == sup;
+        for rows in [
+            [("queue", Some(queue.clone())), ("cell", Some(cell.clone()))],
+            [("cell", Some(cell.clone())), ("queue", Some(queue.clone()))],
+        ] {
+            assert_eq!(
+                choose_row(&rows, Some(&other), &conforms),
+                Err(RowChoice::Ambiguous)
+            );
+            assert_eq!(choose_row(&rows, Some(&queue), &conforms), Ok("queue"));
+            assert_eq!(choose_row(&rows, Some(&cell), &conforms), Ok("cell"));
+        }
     }
 }

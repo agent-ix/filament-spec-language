@@ -1310,6 +1310,9 @@ pub enum StepTarget {
     Abstract {
         /// The abstract operation.
         operation: DeclarationKey,
+        /// The abstract object type the row names for the receiver: the declaring
+        /// type, or a subtype of it when the operation is inherited (FR-141-AC-16).
+        target_type: DeclarationKey,
         /// The receiver, over the concrete step.
         receiver: CheckedRow,
         /// One entry per abstract parameter; `None` is `_`.
@@ -4001,6 +4004,7 @@ impl<'c, 'a> Checker<'c, 'a> {
         complete.then_some((
             StepTarget::Abstract {
                 operation: key,
+                target_type: target_type.key.clone(),
                 receiver,
                 arguments: checked,
                 binds_result,

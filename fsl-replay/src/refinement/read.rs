@@ -150,6 +150,9 @@ pub enum MappingTarget<'a> {
     Abstract {
         /// The actual abstract operation declaration.
         operation: &'a DeclarationKey,
+        /// The abstract object type the row names for the receiver; `None` when
+        /// the row carries none, which falls back to the declaring type.
+        target_type: Option<&'a DeclarationKey>,
         /// The receiver expression evaluated before the step.
         receiver: &'a dyn MappingExpression,
         /// Parameter expressions; an absent expression is an authored open slot.
@@ -188,11 +191,13 @@ impl StepMapping for StepRow {
         match &self.target {
             StepTarget::Abstract {
                 operation,
+                target_type,
                 receiver,
                 arguments,
                 binds_result,
             } => MappingTarget::Abstract {
                 operation,
+                target_type: Some(target_type),
                 receiver,
                 arguments: arguments
                     .iter()

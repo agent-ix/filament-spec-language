@@ -137,6 +137,7 @@ impl StepMapping for Step<'_> {
                 binds_result,
             } => MappingTarget::Abstract {
                 operation: key,
+                target_type: None,
                 receiver,
                 arguments: arguments
                     .iter()

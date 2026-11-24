@@ -749,6 +749,7 @@ fn check_protocol_node_step(
         step,
         row,
         &resolved,
+        &protocol.node_binder_types(node),
     ) {
         Ok(result) => result,
         Err(verdict) => {
@@ -1886,6 +1887,7 @@ fn evaluate_arguments(
     };
     let StepTarget::Abstract {
         operation,
+        target_type,
         receiver,
         arguments,
         binds_result,
@@ -1906,8 +1908,11 @@ fn evaluate_arguments(
     bindings.extend(resolved.arguments.iter().cloned());
     let object = object_of(concrete_system, &pre.concrete, &resolved.receiver);
     let parameters = abstract_system.operation_parameter_types(operation);
-    let receiver_type = abstract_system
-        .operation_declaring_type(operation)
+    // The receiver lifts against the row's target type, which is a subtype of
+    // the declaring type for an inherited operation (FR-141-AC-16).
+    let receiver_type = target_type
+        .and_then(|target| abstract_system.type_identity(target))
+        .or_else(|| abstract_system.operation_declaring_type(operation))
         .map(filament_exact::ValueType::Reference);
     let evaluate = |expression: &dyn MappingExpression,
                     argument: StepArgument|
@@ -2011,6 +2016,7 @@ fn evaluate_node_arguments(
     step: &ConcreteStep<'_>,
     row: &dyn StepMapping,
     resolved: &ResolvedStep,
+    declared: &[filament_exact::ValueType],
 ) -> Result<NodeArgumentValues, StepVerdict> {
     let StepClass::Operation(concrete_operation) = row.class() else {
         return Err(fault("a-protocol-node-row-is-a-concrete-operation-row"));
@@ -2045,7 +2051,13 @@ fn evaluate_node_arguments(
         let evaluated = match expression.read(concrete_system, &observed, bindings.clone()) {
             Err(_) => return Err(fault("node-row-argument-evaluates")),
             Ok(RowReading::Value(value)) => {
-                match lift_value(refinement, concrete_system, abstract_system, None, value) {
+                match lift_value(
+                    refinement,
+                    concrete_system,
+                    abstract_system,
+                    declared.get(index),
+                    value,
+                ) {
                     Ok(value) => Ok(value),
                     Err(Lifting::Unmapped(concrete_type)) => Err(StepVerdict::Undetermined(
                         Undetermined::Mapping(Box::new(MappingUndetermined {
