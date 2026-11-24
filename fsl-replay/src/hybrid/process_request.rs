@@ -582,7 +582,13 @@ fn admit_package(
     bytes: &[u8],
     context: &HybridProcessPackageContext,
 ) -> Result<Box<CheckedPackageV2>, HybridProcessRequestRefusal> {
-    match read_checked_package(bytes, context.limits, &context.evidence) {
+    map_dispatch_result(read_checked_package(bytes, context.limits, &context.evidence))
+}
+
+fn map_dispatch_result(
+    result: CheckedPackageDispatchResult,
+) -> Result<Box<CheckedPackageV2>, HybridProcessRequestRefusal> {
+    match result {
         CheckedPackageDispatchResult::AdmittedV2(package) => Ok(package),
         CheckedPackageDispatchResult::HostAllocationFailed(failure) => {
             Err(HybridProcessRequestRefusal::HostAllocationFailed(failure))
@@ -592,6 +598,43 @@ fn admit_package(
         | CheckedPackageDispatchResult::CatalogUnavailable(_) => {
             Err(HybridProcessRequestRefusal::PackageRefused)
         }
+    }
+}
+
+#[cfg(test)]
+mod host_allocation_tests {
+    use super::{map_dispatch_result, HybridProcessRequestRefusal};
+    use filament_contract_model::{
+        CheckedPackageHostAllocationFailed, CheckedPackageDispatchResult, NativeJoinLocus,
+        NativeJoinLocusSource, PackageReadStage,
+    };
+    use ix_trace_rs::trace;
+
+    /// FSpec FR-330-AC-17: hybrid package reads preserve host allocation as a
+    /// host error with the failed stage and requested size.
+    #[trace("FR-330-AC-17")]
+    #[test]
+    fn hybrid_reader_host_allocation_is_not_a_package_refusal() {
+        let failure = CheckedPackageHostAllocationFailed {
+            stage: PackageReadStage::Envelope,
+            locus: NativeJoinLocus {
+                source: NativeJoinLocusSource::PackageRead(PackageReadStage::Envelope, 0),
+                form: "package_bytes",
+            },
+            requested: 32,
+            consumed: 64,
+        };
+        let result = map_dispatch_result(CheckedPackageDispatchResult::HostAllocationFailed(
+            failure,
+        ));
+
+        let Err(HybridProcessRequestRefusal::HostAllocationFailed(found)) = result else {
+            panic!("reader allocation failure must remain a host failure");
+        };
+        assert_eq!(found, failure);
+        let message = HybridProcessRequestRefusal::HostAllocationFailed(found).to_string();
+        assert!(message.contains("Envelope"));
+        assert!(message.contains("32 bytes"));
     }
 }
 
