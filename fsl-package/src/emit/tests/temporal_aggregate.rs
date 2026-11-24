@@ -502,7 +502,7 @@ fn a_duration_bound_of_another_time_dimension_than_the_clock_refuses() {
     assert_eq!(refusal.cause.cause(), Some("unit-mismatch"));
     // At the lower bound's unit `s`.
     let start = text.find("past[0 s").expect("the window") + "past[0 ".len();
-    let fsl_semantics::check::CheckCause::Temporal(cause) = &refusal.cause else {
+    let fsl_semantics::check::CheckCause::Temporal(cause) = &*refusal.cause else {
         panic!("a temporal refusal: {refusal:?}");
     };
     assert_eq!(
@@ -607,7 +607,7 @@ fn a_timestamp_unit_naming_no_time_unit_refuses() {
             // unit its fault carries.
             Err(refusals) => refusals
                 .iter()
-                .map(|refusal| match &refusal.cause {
+                .map(|refusal| match &*refusal.cause {
                     fsl_semantics::check::CheckCause::Temporal(temporal) => match &**temporal {
                         fsl_semantics::check::TemporalCause::ClockSelection {
                             fault,

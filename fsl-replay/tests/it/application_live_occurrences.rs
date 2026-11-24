@@ -12,8 +12,8 @@ use filament_semantic_value::location::{ExpressionLocation, ExpressionOwner};
 use filament_semantic_value::object_closure::ObjectClosure;
 use fsl_foundation::SourceIdentity;
 use fsl_replay::{
-    acquire_checked_closure, call_site, ApplicationEnvironment, CallableSelection,
-    CheckedClosureHandle, CompileUnit, DependencyInput, ReplayLimits, StageLimits,
+    ApplicationEnvironment, CallableSelection, CheckedClosureHandle, CompileUnit, DependencyInput,
+    ReplayLimits, StageLimits, acquire_checked_closure, call_site,
 };
 use ix_trace_rs::trace;
 
@@ -93,14 +93,12 @@ fn source(c_has_three_arguments: bool) -> String {
 
 fn key(source: &str, name: &str) -> fsl_replay::NodeKey {
     let selection = fsl_replay::QualifiedName::new(vec![
-        Identifier::new(name).expect("function name is an identifier")
+        Identifier::new(name).expect("function name is an identifier"),
     ])
     .expect("function name is non-empty");
     call_site(
         identity(),
-        "fixture".to_owned(),
-        PATH,
-        source.as_bytes(),
+        fsl_replay::CallSiteUnit::new("fixture".to_owned(), PATH, source.as_bytes()),
         [],
         &DependencyInput::default(),
         &fsl_replay::RequestClocks::default(),

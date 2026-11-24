@@ -32,6 +32,17 @@ use serde_json::{json, Value as Json};
 
 const PACKAGE: &str = "test/rpc";
 
+type ClockReferenceEnumeration = Result<
+    (
+        Result<(), NotSimulated>,
+        Result<
+            std::sync::Arc<Vec<filament_exact::ObjectReference>>,
+            fsl_eval::simulation::model::ClockDomainRefusal,
+        >,
+    ),
+    fsl_semantics::model::observation::AdmissionFailure,
+>;
+
 fn assert_model_key_fields_are_unique(text: &str) {
     let key: Json = serde_json::from_str(text).expect("the model key is JSON");
     let mut records = 0;
@@ -1336,22 +1347,14 @@ fn unbounded_clock_reference_document() -> Json {
 /// domain holds exactly the canonical identities of the declared scalar places
 /// `x` and `y` of the admitted owner `c`; an unbounded collection slot `q`
 /// refuses the domain and returns `RequiresBound` naming its
-/// `ClockReferenceDomain`.#[trace("TC-3084")]
+/// `ClockReferenceDomain`.
+#[trace("FR-106-AC-78", "FR-106-AC-80", "TC-3084")]
 #[test]
 fn clock_reference_enumeration_on_the_source_route() {
     fn bounds<'a>(
         world: &'a World,
         input: fsl_eval::simulation::model::ModelCheckInput<'a>,
-    ) -> Result<
-        (
-            Result<(), NotSimulated>,
-            Result<
-                std::sync::Arc<Vec<filament_exact::ObjectReference>>,
-                fsl_eval::simulation::model::ClockDomainRefusal,
-            >,
-        ),
-        fsl_semantics::model::observation::AdmissionFailure,
-    > {
+    ) -> ClockReferenceEnumeration {
         let result = ModelSystem::new(ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
             input,
@@ -6119,6 +6122,42 @@ fn option_sequence_world(granted: &[&str], body: &str) -> World {
         &only(&["work"], body),
         json!({"t": timer}),
     )
+}
+
+/// FR-953-AC-2: a presence-only quantifier reads its selector domain: over
+/// an empty sequence `forall` is true and `exists` false; with slot 0 present
+/// and slot 1 absent, `forall` is false and `exists` true.
+#[trace("TC-2663", "FR-953-AC-2")]
+#[test]
+fn a_timed_presence_quantifier_evaluates_over_empty_and_absent_slots() {
+    let enabled = |quantifier: &str, bits: &[bool]| {
+        let body = format!(
+            "pre HasElement using v on M::Call::work {{ \
+             {quantifier}(e in self.q: present(e)) }}\n"
+        );
+        let world = option_sequence_world(&[], &body);
+        let held = system(&world);
+        let timed = TimedSystem::new(&held, "M").expect("a timed subject");
+        let initial = timed
+            .initial()
+            .into_iter()
+            .find(|state| option_bits(state) == bits)
+            .unwrap_or_else(|| panic!("an initial q with presence bits {bits:?}"));
+        timed
+            .steps(&initial)
+            .expect("the state steps")
+            .iter()
+            .any(|(step, _)| step.operation().contains("Call/work\""))
+    };
+
+    for (quantifier, empty, one_absent) in [("forall", true, false), ("exists", false, true)] {
+        assert_eq!(enabled(quantifier, &[]), empty, "{quantifier} over empty q");
+        assert_eq!(
+            enabled(quantifier, &[true, false]),
+            one_absent,
+            "{quantifier} over q with slot 1 absent"
+        );
+    }
 }
 
 /// The presence bits of `c`'s `q` at `state`, one for each element.

@@ -16,8 +16,8 @@ use fsl_foundation::{SourceIdentity, Span};
 use ix_trace_rs::trace;
 
 use super::{
-    admit_types_with, model_field, model_operation, model_value_type, AssemblyCause, AssemblyError,
-    AssemblyRefusal, TopologyFault, Unmapped,
+    AssemblyCause, AssemblyError, AssemblyRefusal, TopologyFault, Unmapped, admit_types_with,
+    model_field, model_operation, model_value_type,
 };
 use crate::check::{CheckCause, Owner, PackageDeclarations, SourceOwner, TypeFormFault};
 use crate::model::accounting::ModelNormalizationLimits;
@@ -30,7 +30,7 @@ use crate::model::domain_package::{
     TuplePositionRecord, TupleValueTypeRecord, ValueTypeRef, VariantRecord,
 };
 use crate::model::intake::SelectedModel;
-use crate::model::normalize::{normalize, NormalizeOutcome};
+use crate::model::normalize::{NormalizeOutcome, normalize};
 use crate::value::layer::{HeaderLayer, LayerForm};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
@@ -541,10 +541,12 @@ fn the_assembler_reports_every_error() {
     );
 
     let (_, found) = errors("type A = B;\ntype B = A;");
-    let [AssemblyError {
-        cause: AssemblyCause::AliasCycle { edges },
-        ..
-    }] = found.as_slice()
+    let [
+        AssemblyError {
+            cause: AssemblyCause::AliasCycle { edges },
+            ..
+        },
+    ] = found.as_slice()
     else {
         panic!("one alias cycle, not {found:?}");
     };
@@ -765,7 +767,7 @@ fn nested_constructs_of_other_families_refuse_with_their_own_causes() {
     let refusals = checked("function f using v(x: Int[0, 9]): Boolean pure { deref(x) }");
     assert!(
         refusals.iter().any(|refusal| matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
         )),
         "{refusals:?}"
@@ -1058,10 +1060,12 @@ fn using_aliases_resolve_to_the_units_profile_selections() {
     );
     match assemble_as("a", "u", &text) {
         Err(refusal) => {
-            let [AssemblyError {
-                cause: AssemblyCause::DuplicateAlias { alias, spans },
-                ..
-            }] = refusal.errors.as_slice()
+            let [
+                AssemblyError {
+                    cause: AssemblyCause::DuplicateAlias { alias, spans },
+                    ..
+                },
+            ] = refusal.errors.as_slice()
             else {
                 panic!("one duplicate-alias error, not {refusal:?}");
             };
@@ -1637,7 +1641,7 @@ fn present_over_a_zero_one_collection_refuses_ill_typed() {
             .expect_err("a bounded collection has no presence");
     assert!(
         refusals.iter().any(|refusal| matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
         )),
         "{refusals:?}"
@@ -2353,7 +2357,7 @@ fn enum_types_and_members_check_and_a_case_the_enum_lacks_refuses() {
             refusal.cause.code() == fsl_foundation::Code::IllTyped
                 && refusal.cause.cause() == Some("type-mismatch")
                 && matches!(
-                    &refusal.cause,
+                    refusal.cause.as_ref(),
                     CheckCause::UndeclaredVariantCase { owner, case }
                         if owner == "Status" && case == "GONE"
                 )
@@ -2501,7 +2505,7 @@ fn a_predicate_assembles_as_a_function_of_kind_predicate() {
         .expect_err("a recursive predicate has no measure");
     assert!(
         refusals.iter().any(|refusal| matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::UnprovedDecrease {
                 obligation: crate::check::MeasureObligation::MissingMeasure,
                 ..
@@ -2860,10 +2864,12 @@ fn name_and_number_errors_are_reported_and_the_topology_does_not_run() {
             ),
         ]
     );
-    assert!(found
-        .iter()
-        .any(|error| error.cause == AssemblyCause::ZeroDenominator
-            && error.span == last(&text, "rational(1, 0)")));
+    assert!(
+        found
+            .iter()
+            .any(|error| error.cause == AssemblyCause::ZeroDenominator
+                && error.span == last(&text, "rational(1, 0)"))
+    );
 
     // Without those three, the topology runs and reports the first defect
     // alone: `Length`'s turn, before `Area`'s `Width` and the `P`/`Q` cycle.
@@ -3021,9 +3027,15 @@ fn first_defect(source: &str) -> (String, String) {
     )
 }
 
-/// FR-091-AC-46 and FSpec FR-142-AC-15 (TC-187 U11h to U11k): the first
+/// FR-091-AC-46/71 and FSpec FR-142-AC-15 (TC-187 U11h to U11k): the first
 /// defect is the earliest row of the earliest unit of the earliest node.
-#[trace("FR-091-AC-46", "TC-483", "FSpec-TC-187", "FSpec-FR-142-AC-15")]
+#[trace(
+    "FR-091-AC-46",
+    "FR-091-AC-71",
+    "TC-483",
+    "FSpec-TC-187",
+    "FSpec-FR-142-AC-15"
+)]
 #[test]
 fn the_first_defect_is_the_earliest_row_unit_and_node() {
     let found = first_defect;
@@ -3053,7 +3065,7 @@ fn the_first_defect_is_the_earliest_row_unit_and_node() {
         ),
         pair("invalid_package/conflicting-definition", "q")
     );
-    // U11k: `L` takes its turn before `T`, so row 5 at `l`, not row 1 at `t`.
+    // A targetless non-identity unit in `L` takes its turn before `T`'s zero scale.
     assert_eq!(
         found(
             "dimension L; dimension T; unit t : T = rational(0, 1) * tr; \
@@ -3061,6 +3073,30 @@ fn the_first_defect_is_the_earliest_row_unit_and_node() {
         ),
         pair("invalid_package/invalid-value", "l")
     );
+    // TC-187 U11k: the self-cycle in the earlier dimension wins over the
+    // later dimension's zero-scale unit.
+    let vector_u11k = "dimension L; dimension T; \
+        unit u_self : L = rational(1, 1) * u_self; \
+        unit z : T = rational(0, 1);";
+    assert_eq!(
+        found(vector_u11k),
+        pair("invalid_package/definition-cycle", "u_self")
+    );
+    let (text, errors_found) = errors(vector_u11k);
+    let [error] = errors_found.as_slice() else {
+        panic!("one U11k diagnostic, not {errors_found:?}")
+    };
+    assert_eq!(
+        error.cause,
+        AssemblyCause::UnitGraphTopology {
+            fault: super::TopologyFault::TargetCycle,
+            retained: vec![super::TopologyRetained::Edge {
+                from: "u_self".to_owned(),
+                to: "u_self".to_owned(),
+            }],
+        }
+    );
+    assert_eq!(&text[error.span.start..error.span.end], "u_self");
     // A dimension cycle comes before any unit row of a later dimension.
     assert_eq!(
         found(
@@ -3091,23 +3127,26 @@ fn the_first_defect_is_the_earliest_row_unit_and_node() {
 #[test]
 fn a_unit_cycle_is_retained_from_its_least_unit_by_source_position() {
     let edge = |a: &str, b: &str| (a.to_owned(), b.to_owned());
-    for (source, expected) in [
+    for (source, expected, span) in [
         (
             "dimension L; unit r : L = rational(1, 1); \
              unit y : L = rational(1, 1) * x; unit x : L = rational(1, 1) * y;",
             vec![edge("y", "x"), edge("x", "y")],
+            "y",
         ),
         (
             "dimension L; unit m : L = rational(1, 1) * cm; \
              unit cm : L = rational(1, 100) * m;",
             vec![edge("m", "cm"), edge("cm", "m")],
+            "m",
         ),
         (
             "dimension L; unit u_self : L = rational(1, 1) * u_self;",
             vec![edge("u_self", "u_self")],
+            "u_self",
         ),
     ] {
-        let (_, found) = errors(source);
+        let (text, found) = errors(source);
         let [error] = found.as_slice() else {
             panic!("{source}: one error, not {found:?}")
         };
@@ -3122,6 +3161,7 @@ fn a_unit_cycle_is_retained_from_its_least_unit_by_source_position() {
             },
             "{source}"
         );
+        assert_eq!(&text[error.span.start..error.span.end], span, "{source}");
     }
 }
 
@@ -3165,6 +3205,50 @@ fn u11j_two_roots_refuse_before_a_self_cycle() {
     assert_eq!(&text[error.span.start..error.span.end], "m_alt");
 }
 
+/// FSpec FR-142-AC-15, TC-187 U11e: a targetless non-identity unit retains
+/// its authored name, reduced scale and zero offset in the refusal payload.
+#[trace("FR-091-AC-71", "FSpec-TC-187", "FSpec-FR-142-AC-15")]
+#[test]
+fn u11e_non_identity_root_retains_its_scale_and_offset() {
+    use filament_exact::Rational;
+
+    for (vector_expression, source_expression) in [
+        ("2", "rational(2, 1)"),
+        // TC-187's second spelling is an arithmetic expression in the
+        // vector language; source FSL admits only a decimal or rational here.
+        ("1 + 1", "rational(2, 1)"),
+    ] {
+        let (text, found) = errors(&format!("dimension L; unit m : L = {source_expression};"));
+        let [error] = found.as_slice() else {
+            panic!("one error for vector expression {vector_expression}, not {found:?}")
+        };
+        assert_eq!(
+            error.cause,
+            AssemblyCause::UnitGraphTopology {
+                fault: super::TopologyFault::NonIdentityRoot,
+                retained: vec![
+                    super::TopologyRetained::Unit {
+                        name: "m".into(),
+                        key: None,
+                    },
+                    super::TopologyRetained::Scale(Rational::from_integer(
+                        filament_exact::Integer::from(2_i64),
+                    )),
+                    super::TopologyRetained::Offset(Rational::from_integer(
+                        filament_exact::Integer::zero(),
+                    )),
+                ],
+            },
+            "vector expression {vector_expression}"
+        );
+        assert_eq!(
+            error.cause.catalog_code().to_string(),
+            "invalid_package/invalid-value"
+        );
+        assert_eq!(&text[error.span.start..error.span.end], "m");
+    }
+}
+
 /// FSpec FR-142-AC-16, TC-187 U11m: with `Area` declared before `L`, `Area`'s
 /// turn reports the unit cycle and `L` is not examined; with `L` first, `L`'s
 /// turn refuses the base dimension no unit anchors.
@@ -3172,7 +3256,7 @@ fn u11j_two_roots_refuse_before_a_self_cycle() {
 #[test]
 fn u11m_the_base_dimension_rule_runs_at_the_base_dimensions_own_turn() {
     let units = "unit a : Area = rational(1, 1) * b; unit b : Area = rational(1, 1) * a;";
-    let (_, found) = errors(&format!("dimension Area = L ^ 2; dimension L; {units}"));
+    let (text, found) = errors(&format!("dimension Area = L ^ 2; dimension L; {units}"));
     let [error] = found.as_slice() else {
         panic!("one error, not {found:?}")
     };
@@ -3196,6 +3280,7 @@ fn u11m_the_base_dimension_rule_runs_at_the_base_dimensions_own_turn() {
         error.cause.catalog_code().to_string(),
         "invalid_package/definition-cycle"
     );
+    assert_eq!(&text[error.span.start..error.span.end], "a");
 
     let (text, found) = errors(&format!("dimension L; dimension Area = L ^ 2; {units}"));
     let [error] = found.as_slice() else {
@@ -3366,7 +3451,13 @@ fn a_dimension_without_a_map_anchors_no_base_dimension_obligation() {
 /// source order is the caller's document list, then the byte offset, so a
 /// document whose declarations sit at larger offsets still takes its turn
 /// first when it appears first in the list.
-#[trace("FR-091-AC-46", "FR-480-AC-6", "FSpec-TC-187", "FSpec-FR-142-AC-17")]
+#[trace(
+    "FR-091-AC-46",
+    "FR-480-AC-6",
+    "FR-514-AC-5",
+    "FSpec-TC-187",
+    "FSpec-FR-142-AC-17"
+)]
 #[test]
 fn u11q_the_first_document_takes_the_first_turn_whatever_its_offsets() {
     let padding = " ".repeat(400);
@@ -3393,25 +3484,29 @@ fn u11q_the_first_document_takes_the_first_turn_whatever_its_offsets() {
         let [error] = refusal.errors.as_slice() else {
             panic!("one first defect, not {:?}", refusal.errors)
         };
-        (error.cause.catalog_code().to_string(), error.cause.clone())
-    };
-    assert_eq!(
-        run(("1", &time), ("2", &length)).0,
-        "invalid_package/invalid-value".to_owned()
-    );
-    assert_eq!(
-        run(("2", &length), ("1", &time)),
         (
-            "invalid_package/definition-cycle".to_owned(),
-            AssemblyCause::UnitGraphTopology {
-                fault: super::TopologyFault::TargetCycle,
-                retained: vec![super::TopologyRetained::Edge {
-                    from: "u_self".to_owned(),
-                    to: "u_self".to_owned(),
-                }],
-            }
+            error.cause.catalog_code().to_string(),
+            error.cause.clone(),
+            error.span,
         )
+    };
+    let (code, cause, span) = run(("1", &time), ("2", &length));
+    assert_eq!(code, "invalid_package/invalid-value".to_owned());
+    assert_eq!(cause.catalog_code().cause(), "invalid-value");
+    assert_eq!(&time[span.start..span.end], "z");
+    let (code, cause, span) = run(("2", &length), ("1", &time));
+    assert_eq!(code, "invalid_package/definition-cycle");
+    assert_eq!(
+        cause,
+        AssemblyCause::UnitGraphTopology {
+            fault: super::TopologyFault::TargetCycle,
+            retained: vec![super::TopologyRetained::Edge {
+                from: "u_self".to_owned(),
+                to: "u_self".to_owned(),
+            }],
+        }
     );
+    assert_eq!(&length[span.start..span.end], "u_self");
 }
 
 /// FR-091-AC-45 (TC-483): the base-dimension rule refuses `L`, unitless
@@ -3828,7 +3923,7 @@ fn quantity_literal_refusals_name_the_name_and_the_limit() {
             CheckingLimits::default(),
         );
         assert!(
-            matches!(&cause, CheckCause::UnresolvedUnitName { name: found, packages } if found == name && packages.is_empty()),
+            matches!(cause.as_ref(), CheckCause::UnresolvedUnitName { name: found, packages } if found == name && packages.is_empty()),
             "{name}: {cause:?}"
         );
     }
@@ -3836,7 +3931,7 @@ fn quantity_literal_refusals_name_the_name_and_the_limit() {
         "function g using v(): Boolean pure { f(rational(1, 100000) ms) }",
         CheckingLimits::default().with_rational_bits(16),
     );
-    let CheckCause::ResourceExhausted(limit) = &cause else {
+    let CheckCause::ResourceExhausted(limit) = cause.as_ref() else {
         panic!("a limit refusal: {cause:?}");
     };
     assert_eq!(
@@ -5327,8 +5422,10 @@ fn a_unit_reaches_no_package_through_another_units_alias() {
 /// FR-480-AC-2, AC-5, AC-8: the aggregate assembler resolves a function
 /// signature against another unit, keeps the declaring unit on the type
 /// node and its source region, and assigns stable identities in canonical
-/// source order independent of request order.
-#[trace("FR-480-AC-2", "FR-480-AC-5", "FR-480-AC-8")]
+/// source order independent of request order. FR-001-AC-7: the literal node
+/// key for `Point` stays `{package: test/package, path: [Point], ordinal: 0}`
+/// when bytes, authority, or identity vary independently.
+#[trace("FR-480-AC-2", "FR-480-AC-5", "FR-480-AC-8", "TC-424", "FR-001-AC-7")]
 #[test]
 fn aggregate_units_resolve_types_and_retain_the_declaring_source() {
     let a_text = text("", "record Point { x: Int[0, 9]; }");
@@ -5387,17 +5484,32 @@ fn aggregate_units_resolve_types_and_retain_the_declaring_source() {
     let second_point = second.checked_type_nodes().next().unwrap().node();
     assert_eq!(first_point, second_point);
 
-    let moved_text = text(
-        PROFILE_V,
-        "record Point { x: Int[0, 9]; }\nfunction px using v(p: Point): Int[0, 9] pure { p.x }",
-    );
-    let (source_b, moved_unit) = parsed_unit_as("repo", "b", &moved_text);
-    let moved = assemble(vec![(source_b.clone(), moved_unit)]);
-    let moved_point = moved.checked_type_nodes().next().unwrap().node();
+    let expected_point = filament_exact::NodeKey::new(
+        "test/package",
+        vec![filament_exact::PathSegment::Text("Point".into())],
+        0,
+    )
+    .expect("the literal Point node key is valid");
     assert_eq!(
-        first_point, moved_point,
-        "the structural node identity remains stable when ownership moves"
+        first_point, expected_point,
+        "the original source has the literal Point node key"
     );
+    let assert_literal_point_key = |authority: &str,
+                                    identity: &str,
+                                    unit_text: &str,
+                                    variation: &str| {
+        let (source, unit) = parsed_unit_as(authority, identity, unit_text);
+        let graph = assemble(vec![(source.clone(), unit)]);
+        let point = graph.checked_type_nodes().next().unwrap().node();
+        assert_eq!(point, expected_point, "{variation}");
+        (graph, source)
+    };
+    let byte_variant = text("", "record Point { x: Int[0, 10]; }");
+    let _ = assert_literal_point_key("repo", "a", &byte_variant, "bytes alone vary");
+    let (authority_variant, source_c) =
+        assert_literal_point_key("c", "a", &a_text, "authority alone varies");
+    let (identity_variant, source_v) =
+        assert_literal_point_key("repo", "v", &a_text, "identity alone varies");
     let point_owner = |graph: &crate::check::CheckedGraph| {
         graph
             .semantic_graph()
@@ -5418,8 +5530,12 @@ fn aggregate_units_resolve_types_and_retain_the_declaring_source() {
         Owner::Source(SourceOwner::from(&source_a))
     );
     assert_eq!(
-        point_owner(&moved),
-        Owner::Source(SourceOwner::from(&source_b))
+        point_owner(&authority_variant),
+        Owner::Source(SourceOwner::from(&source_c))
+    );
+    assert_eq!(
+        point_owner(&identity_variant),
+        Owner::Source(SourceOwner::from(&source_v))
     );
     let px_owner = first
         .semantic_graph()
@@ -5435,12 +5551,12 @@ fn aggregate_units_resolve_types_and_retain_the_declaring_source() {
         .cloned()
         .expect("px's checked node retains its source owner");
     assert_eq!(px_owner, Owner::Source(SourceOwner::from(&source_b)));
-    let moved_region = moved
+    let moved_region = authority_variant
         .region(&Location::root(Origin::TypeDeclaration {
             name: "Point".to_owned(),
         }))
-        .expect("moved Point resolves to its new source region");
-    assert_eq!(moved_region.source(), &source_b);
+        .expect("Point resolves to its new authority's source region");
+    assert_eq!(moved_region.source(), &source_c);
 }
 
 /// FR-480-AC-2: a duplicate declaration is still ambiguous after the

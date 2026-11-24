@@ -28,7 +28,7 @@ use fsl_route::{CandidateOutcome, EvidenceKind, ItemEvidence, Registry};
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::request::ProtocolAnalysisSelection;
 use super::{
@@ -897,8 +897,7 @@ impl TryFrom<ItemSelectionWire> for ItemSelection {
                 }
                 if temporal.profile.is_some() || temporal.max_history.is_some() {
                     return Err(ItemSelectionReadError {
-                        message:
-                            "a non-protocol item carries an unsupported protocol member or count",
+                        message: "a non-protocol item carries an unsupported protocol member or count",
                     });
                 }
             }
@@ -1696,6 +1695,7 @@ pub fn resolve_items(
                 Err(never) => match never {},
             };
             resolved.extend(derived);
+            append_hyper_subject_items(package, subject, registry, &mut resolved);
             resolved
         }
         None => default_items(package, subject, registry, units, binding, limits),
@@ -1711,8 +1711,8 @@ pub use composition_item::{ComponentOwner, CompositionClaim};
 pub use held_identity::HeldIdentityError;
 
 pub use package_run::{
-    settle_package_call, settle_package_run, PackageRun, PackageRunError, PendingFamily,
-    PendingPackageFamily,
+    PackageRun, PackageRunError, PendingFamily, PendingPackageFamily, settle_package_call,
+    settle_package_run,
 };
 
 /// One requirement item of a run call (FR-395 "Item of the call") with the
@@ -2154,7 +2154,7 @@ fn resolve_one(
                 }
             }
             (Some(_), _) if protocol_analysis_kind => {
-                return invalid_member(index, name, "temporal.subject.protocol")
+                return invalid_member(index, name, "temporal.subject.protocol");
             }
             (Some(_), _) => return invalid_value(index, name, "temporal.subject.protocol"),
             (None, _) => None,
@@ -2320,6 +2320,16 @@ fn admit_reductions<'a>(
         return Ok(());
     };
     form.reductions = super::reduction_item::admit(&selection, &system, &binding.universes)?;
+    form.constraint_node_key = form
+        .reductions
+        .constraint
+        .as_deref()
+        .and_then(|name| system.constraint_node(name));
+    if form.reductions.constraint.is_some() && form.constraint_node_key.is_none() {
+        return Err(super::reduction_item::ReductionIssue::Malformed(
+            "the admitted state constraint has no checked node key".to_owned(),
+        ));
+    }
     Ok(())
 }
 
@@ -2943,11 +2953,7 @@ fn read_identities<'p>(
                 .any(|universe| universe.population.package == *identity)
         })
         .collect();
-    if read.is_empty() {
-        all
-    } else {
-        read
-    }
+    if read.is_empty() { all } else { read }
 }
 
 fn candidate_list(candidates: &CandidateOutcome) -> Vec<fsl_route::Candidate> {
@@ -3219,6 +3225,7 @@ fn default_items(
             Err(never) => match never {},
         };
     resolved.extend(written);
+    append_hyper_subject_items(package, subject, registry, &mut resolved);
     resolved
 }
 
@@ -3232,11 +3239,84 @@ fn derived_items(
     authored: &[ResolvedItem],
     first: usize,
 ) -> Vec<ResolvedItem> {
-    let graph = package.graph();
     // FR-124-AC-12: the subject's items are over the models its universes
     // read, not over every model the unit selects.
     let selections = read_identities(package, binding);
-    let timed = timed_over(package, &selections);
+    derived_items_for_selections(package, subject, registry, authored, first, &selections)
+}
+
+/// The model subjects named by hyper aliases, each of which contributes its
+/// own derived items after the caller's authored items (FR-173, ADR-023 HM-6).
+fn append_hyper_subject_items(
+    package: &CheckedPackage,
+    subject: &SubjectSelection,
+    registry: &Registry,
+    resolved: &mut Vec<ResolvedItem>,
+) {
+    let graph = package.graph();
+    let mut aliases = BTreeSet::new();
+    for item in resolved.iter() {
+        let ResolvedItem::Claim(claim) = item else {
+            continue;
+        };
+        if claim.item.kind != Capability::TemporalSatisfaction {
+            continue;
+        }
+        if let Some(clause) = graph
+            .hyper_clauses()
+            .iter()
+            .find(|clause| clause.assembled_occurrence() == Some(&claim.item.claim))
+        {
+            aliases.extend(
+                clause
+                    .aliases()
+                    .iter()
+                    .map(|alias| alias.as_str().to_owned()),
+            );
+        }
+    }
+    for alias in aliases {
+        let Some(identity) = graph.model_package_identity(&alias) else {
+            continue;
+        };
+        let root = graph
+            .model_roots()
+            .find(|(selection, _)| selection.identity == identity)
+            .map(|(_, root)| root);
+        if root.as_ref().is_some_and(|root| {
+            resolved.iter().any(|item| {
+                matches!(
+                    item,
+                    ResolvedItem::Claim(claim)
+                        if claim.item.claim.node() == root
+                            && matches!(
+                                &claim.item.form,
+                                Some(ItemForm::Temporal(form))
+                                    if form.item_kind == ItemKind::DeadlockFreedom
+                            )
+                )
+            })
+        }) {
+            continue;
+        }
+        let selections = BTreeSet::from([identity]);
+        let first = resolved.len();
+        let derived =
+            derived_items_for_selections(package, subject, registry, &[], first, &selections);
+        resolved.extend(derived);
+    }
+}
+
+fn derived_items_for_selections(
+    package: &CheckedPackage,
+    subject: &SubjectSelection,
+    registry: &Registry,
+    authored: &[ResolvedItem],
+    first: usize,
+    selections: &BTreeSet<&str>,
+) -> Vec<ResolvedItem> {
+    let graph = package.graph();
+    let timed = timed_over(package, selections);
     let mut request = fsl_route::model_request::ModelRequest::<()>::new();
     // FSpec FR-368: a model subject has its derived items whether or not the
     // unit authors a clause, so the subject is joined to the derivation
@@ -3246,7 +3326,7 @@ fn derived_items(
             subject: &(),
             package: graph,
         },
-        &selections,
+        selections,
     );
     let occurrences: Vec<OccurrenceKey> = authored
         .iter()
@@ -3278,7 +3358,7 @@ fn derived_items(
                 package: graph,
             },
             &requirements,
-            &selections,
+            selections,
         );
     }
     let written = request.derived(
@@ -3587,7 +3667,10 @@ impl ClaimItem {
             if !temporal.reductions.is_empty() {
                 item.insert(
                     "reductions".to_owned(),
-                    super::reduction_item::wire(&temporal.reductions),
+                    super::reduction_item::wire(
+                        &temporal.reductions,
+                        temporal.constraint_node_key.as_ref(),
+                    )?,
                 );
             }
             if let Some(stutter) = temporal.stutter_closure {
@@ -3659,9 +3742,11 @@ impl ClaimItem {
                     );
                     member.insert(
                         "max_witnesses".to_owned(),
-                        json!(probabilistic
-                            .max_witnesses
-                            .unwrap_or(crate::statistical::DEFAULT_MAX_WITNESSES)),
+                        json!(
+                            probabilistic
+                                .max_witnesses
+                                .unwrap_or(crate::statistical::DEFAULT_MAX_WITNESSES)
+                        ),
                     );
                     member.insert(
                         "workers".to_owned(),
@@ -3866,9 +3951,11 @@ pub fn settle_run(
         &provision,
         &negotiated,
         &components,
-        engines,
-        &limits,
-        cancel,
+        super::request::AnalyzeExecution {
+            engines,
+            limits: &limits,
+            cancel,
+        },
     )
     .map_err(|failure| match failure {
         fsl_foundation::diagnostic::StageFailure::Refused(refusal) => {
@@ -4171,7 +4258,7 @@ fn negotiate_items(
             let record = match refused {
                 super::reduction_item::ReductionIssue::UnknownConstraint(name) => {
                     let mut detail = Map::new();
-                    detail.insert("name".to_owned(), json!(name));
+                    detail.insert("name".to_owned(), name);
                     TerminalRecord::disposition_invalid_request(
                         item.request_index,
                         CatalogCode::new("invalid_runtime_input", "invalid-value"),
@@ -4720,7 +4807,9 @@ fn certificate_kind(document: &Value) -> &'static str {
             "upper" => Some("upper"),
             _ => None,
         });
-    let profile = document.pointer("/objective/profile").and_then(Value::as_str);
+    let profile = document
+        .pointer("/objective/profile")
+        .and_then(Value::as_str);
     if document.get("kind").and_then(Value::as_str) == Some("conditional")
         && profile.is_some_and(|profile| profile.contains("on-each"))
     {

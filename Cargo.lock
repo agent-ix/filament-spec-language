@@ -561,7 +561,7 @@ dependencies = [
  "fsl-replay",
  "fsl-semantics",
  "ix-trace-rs",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde_json",
 ]
 
@@ -595,12 +595,12 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 [[package]]
 name = "filament-checked"
 version = "0.1.6"
-source = "git+https://github.com/agent-ix/filament-eval?rev=fdf5170ac62b65b570caecc5a239d1318c67d8f7#fdf5170ac62b65b570caecc5a239d1318c67d8f7"
+source = "git+https://github.com/agent-ix/filament-eval?rev=b50cfacb80459d5f1fb3b8deeafc63222db69401#b50cfacb80459d5f1fb3b8deeafc63222db69401"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
  "filament-walk",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde",
  "thiserror",
 ]
@@ -608,7 +608,7 @@ dependencies = [
 [[package]]
 name = "filament-contract-model"
 version = "0.1.2"
-source = "git+https://github.com/agent-ix/filament-contract-ir?rev=729a6641222da57f2e6f722af7bbd47b613b2241#729a6641222da57f2e6f722af7bbd47b613b2241"
+source = "git+https://github.com/agent-ix/filament-contract-ir?rev=4f0b908a5c8077458e4748509284704b9025493f#4f0b908a5c8077458e4748509284704b9025493f"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
@@ -619,7 +619,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde",
  "serde_json",
  "serde_path_to_error",
@@ -634,7 +634,7 @@ dependencies = [
 [[package]]
 name = "filament-eval"
 version = "0.1.6"
-source = "git+https://github.com/agent-ix/filament-eval?rev=fdf5170ac62b65b570caecc5a239d1318c67d8f7#fdf5170ac62b65b570caecc5a239d1318c67d8f7"
+source = "git+https://github.com/agent-ix/filament-eval?rev=b50cfacb80459d5f1fb3b8deeafc63222db69401#b50cfacb80459d5f1fb3b8deeafc63222db69401"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
@@ -664,7 +664,7 @@ dependencies = [
 [[package]]
 name = "filament-mltl"
 version = "0.1.0"
-source = "git+https://github.com/agent-ix/filament-mltl?rev=c04de7a6f084717cae2b642b6e58d8a4362b2973#c04de7a6f084717cae2b642b6e58d8a4362b2973"
+source = "git+https://github.com/agent-ix/filament-mltl?rev=2243e1451e364a12762183538baac8f1f292ad2c#2243e1451e364a12762183538baac8f1f292ad2c"
 dependencies = [
  "filament-observation",
  "serde",
@@ -678,11 +678,11 @@ dependencies = [
 [[package]]
 name = "filament-observation"
 version = "0.1.1"
-source = "git+https://github.com/agent-ix/filament-observation?rev=6e0524170e83c6fae0c35a404592cd3cae24252f#6e0524170e83c6fae0c35a404592cd3cae24252f"
+source = "git+https://github.com/agent-ix/filament-observation?rev=a36e5ed2e1bde35a27461fa38084d3e140e09fcd#a36e5ed2e1bde35a27461fa38084d3e140e09fcd"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde",
  "serde_json",
  "sha2",
@@ -692,10 +692,10 @@ dependencies = [
 [[package]]
 name = "filament-semantic-value"
 version = "0.1.5"
-source = "git+https://github.com/agent-ix/filament-semantic-value?rev=4274b4eb4abeae4ccd457a6de681625acb8fc57d#4274b4eb4abeae4ccd457a6de681625acb8fc57d"
+source = "git+https://github.com/agent-ix/filament-semantic-value?rev=689f259eab592b62cb362f5e649dba16adf874f7#689f259eab592b62cb362f5e649dba16adf874f7"
 dependencies = [
  "filament-exact",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "thiserror",
 ]
 
@@ -728,7 +728,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",
@@ -750,7 +750,7 @@ version = "0.2.1"
 source = "git+https://github.com/agent-ix/filament-verification-contracts?rev=e6eebb660c6d9b3dee25d643923d3984cbc745b6#e6eebb660c6d9b3dee25d643923d3984cbc745b6"
 dependencies = [
  "jsonschema 0.55.1",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "regress",
  "schemars",
  "serde",
@@ -854,7 +854,8 @@ dependencies = [
  "num-integer",
  "num-traits",
  "proptest",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?rev=3b542158649da80c3003a8b6799af90d1feb7b52)",
  "serde",
  "serde_json",
  "thiserror",
@@ -882,7 +883,7 @@ dependencies = [
  "ix-trace-rs",
  "nix",
  "proptest",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde_json",
 ]
 
@@ -910,7 +911,7 @@ dependencies = [
  "fsl-source",
  "ix-trace-rs",
  "jsonschema 0.17.1",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde",
  "serde_json",
  "tempfile",
@@ -941,6 +942,7 @@ dependencies = [
  "fsl-semantics",
  "ix-trace-rs",
  "jsonschema 0.17.1",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde",
  "serde_json",
  "tempfile",
@@ -980,7 +982,7 @@ dependencies = [
  "ix-trace-rs",
  "proc-macro2",
  "proptest",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde",
  "serde_json",
  "sha2",
@@ -1013,7 +1015,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "ix-trace-rs",
  "proptest",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde",
  "serde_json",
  "thiserror",
@@ -1043,7 +1045,7 @@ dependencies = [
  "fsl-route",
  "fsl-semantics",
  "ix-trace-rs",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde_json",
 ]
 
@@ -1063,7 +1065,7 @@ dependencies = [
  "fsl-replay",
  "fsl-semantics",
  "ix-trace-rs",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde",
  "serde_json",
 ]
@@ -1084,7 +1086,7 @@ dependencies = [
  "fsl-semantics",
  "ix-trace-rs",
  "jsonschema 0.17.1",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde",
  "serde_json",
  "tempfile",
@@ -1108,6 +1110,7 @@ dependencies = [
  "fsl-route",
  "fsl-semantics",
  "ix-trace-rs",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde",
  "serde_json",
 ]
@@ -1146,10 +1149,11 @@ dependencies = [
  "num-integer",
  "num-traits",
  "proptest",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "sha2",
  "thiserror",
 ]
 
@@ -1189,7 +1193,7 @@ dependencies = [
  "num-traits",
  "proc-macro2",
  "proptest",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde",
  "serde_json",
  "syn 2.0.119",
@@ -2056,7 +2060,7 @@ name = "quire-canonical"
 version = "0.3.2"
 source = "git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2#f00840e4add08100e3491e8bc5bcb7d60a9e9ca2"
 dependencies = [
- "quire-canonical-derive",
+ "quire-canonical-derive 0.3.0 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "ryu-js",
  "serde",
  "serde_json",
@@ -2065,9 +2069,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "quire-canonical"
+version = "0.3.2"
+source = "git+https://github.com/agent-ix/quire-canonical?rev=3b542158649da80c3003a8b6799af90d1feb7b52#3b542158649da80c3003a8b6799af90d1feb7b52"
+dependencies = [
+ "quire-canonical-derive 0.3.0 (git+https://github.com/agent-ix/quire-canonical?rev=3b542158649da80c3003a8b6799af90d1feb7b52)",
+ "ryu-js",
+ "serde",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "quire-canonical-derive"
 version = "0.3.0"
 source = "git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2#f00840e4add08100e3491e8bc5bcb7d60a9e9ca2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.5",
+]
+
+[[package]]
+name = "quire-canonical-derive"
+version = "0.3.0"
+source = "git+https://github.com/agent-ix/quire-canonical?rev=3b542158649da80c3003a8b6799af90d1feb7b52#3b542158649da80c3003a8b6799af90d1feb7b52"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2512,6 +2538,13 @@ name = "smallvec"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9be42f50aa861c555654aa3a37f52f4b1074bacf4e48fe0ef7fa584e80f1f0f"
+
+[[package]]
+name = "smt-proof-consumer"
+version = "0.1.0"
+dependencies = [
+ "fsl-replay",
+]
 
 [[package]]
 name = "spin"
@@ -3134,7 +3167,7 @@ dependencies = [
  "jsonschema 0.17.1",
  "logos",
  "proc-macro2",
- "quire-canonical",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",

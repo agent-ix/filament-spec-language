@@ -47,7 +47,9 @@ use std::sync::OnceLock;
 use filament_checked::key::DeclarationKey;
 use fsl_foundation::selection::ModelSelection;
 use fsl_foundation::{Code, Span};
-use fsl_semantics::model::accounting::{ChargePoint, LimitKind, Meter, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{
+    ModelNormalizationLimits, NormalizationChargePoint, NormalizationLimitKind, NormalizationMeter,
+};
 use fsl_semantics::model::domain_package::{DomainPackage, DomainPackageRef};
 use fsl_semantics::model::index::ModelIndex;
 use fsl_semantics::model::intake::{
@@ -587,8 +589,8 @@ fn multiplicity_one(lower: u64, upper: Option<u64>) -> serde_json::Value {
     })
 }
 
-fn default_meter() -> Meter {
-    Meter::new(ModelNormalizationLimits::default())
+fn default_meter() -> NormalizationMeter {
+    NormalizationMeter::new(ModelNormalizationLimits::default())
 }
 
 fn key(package: &str, identity: &str) -> DeclarationKey {
@@ -765,7 +767,7 @@ fn assemble_model_document(
     );
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("test", source_name),
-        &format!("{source_name}.native"),
+        format!("{source_name}.native"),
         source.as_bytes(),
         fsl_cst::Limits::default(),
     )
@@ -934,7 +936,7 @@ fn rational_bound_operands_refuse_noncanonical_strings_and_shapes() {
         let parsed = parse_document(&serde_json::to_vec(&document).unwrap());
         let refusals = read_records("test/rational-value-type", &parsed).unwrap_err();
         assert!(
-            matches!(&refusals[0].cause,
+            matches!(& refusals[0].cause,
                 fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
                     if node == "ix://test/rational-value-type/Ratio/constraints/minNumerator" && member.to_string() == "TypeDefinition.constraints[1].operands"
             ),
@@ -950,7 +952,7 @@ fn rational_bound_operands_refuse_noncanonical_strings_and_shapes() {
         let parsed = parse_document(&serde_json::to_vec(&document).unwrap());
         let refusals = read_records("test/rational-value-type", &parsed).unwrap_err();
         assert!(
-            matches!(&refusals[0].cause,
+            matches!(& refusals[0].cause,
                 fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
                     if member.to_string() == "TypeDefinition.constraints[1].operands"
             ),
@@ -979,7 +981,7 @@ fn unsafe_numeric_rational_bounds_refuse_before_operand_intake() {
         };
         assert_eq!(refusal.code, Code::NoncanonicalWire);
         assert!(
-            matches!(&refusal.cause,
+            matches!(& refusal.cause,
                 fsl_semantics::model::refusal::ModelRefusalCause::NoncanonicalNumber {
                     inexact: fsl_semantics::model::refusal::Inexact::Integer, document_pointer,
                 } if document_pointer.as_str() == "/types/0/constraints/1/operands/value"
@@ -1003,7 +1005,7 @@ fn rational_string_bounds_preserve_missing_operand_and_domain_refusal_order() {
     let parsed = parse_document(&serde_json::to_vec(&document).unwrap());
     let refusals = read_records("test/rational-value-type", &parsed).unwrap_err();
     assert!(
-        matches!(&refusals[0].cause, ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
+        matches!(& refusals[0].cause, ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
         if member.to_string() == "TypeDefinition.constraints"),
         "{refusals:?}"
     );
@@ -1015,7 +1017,7 @@ fn rational_string_bounds_preserve_missing_operand_and_domain_refusal_order() {
     let parsed = parse_document(&serde_json::to_vec(&document).unwrap());
     let refusals = read_records("test/rational-value-type", &parsed).unwrap_err();
     assert!(
-        matches!(&refusals[0].cause, ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
+        matches!(& refusals[0].cause, ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
         if member.to_string() == "TypeDefinition.constraints[3].operands"),
         "{refusals:?}"
     );
@@ -1030,7 +1032,7 @@ fn rational_string_bounds_preserve_missing_operand_and_domain_refusal_order() {
         let parsed = parse_document(&serde_json::to_vec(&document).unwrap());
         let refusals = read_records("test/rational-value-type", &parsed).unwrap_err();
         assert!(
-            matches!(&refusals[0].cause, ModelRefusalCause::UnsupportedDeclarationForm { member, .. }
+            matches!(& refusals[0].cause, ModelRefusalCause::UnsupportedDeclarationForm { member, .. }
             if member.to_string() == "TypeDefinition.constraints"),
             "{refusals:?}"
         );
@@ -1094,8 +1096,7 @@ fn duplicate_package_documents_refuse_and_one_identity_can_have_two_aliases() {
     let assert_conflict = |refusal: fsl_semantics::model::normalize::ModelRefusal| {
         assert_eq!(refusal.code, Code::InvalidPackage);
         assert_eq!(refusal.cause.as_str(), "conflicting-definition");
-        assert!(matches!(
-            refusal.cause,
+        assert!(matches!(& refusal.cause,
             fsl_semantics::model::refusal::ModelRefusalCause::ConflictingPackage { identity }
                 if identity == "example/config-version"
         ));
@@ -1168,7 +1169,7 @@ fn unit_intake_projection_work_scales_linearly_for_flat_record_fields() {
         .unwrap_or_else(|refusal| panic!("{count} record fields admit: {refusal:?}"));
         assert_eq!(selected.len(), 1);
         assert_eq!(selected.exact_field_rows().len(), count);
-        let consumed = selected.consumed(LimitKind::WorkUnits);
+        let consumed = selected.consumed(NormalizationLimitKind::WorkUnits);
         eprintln!("unit-intake-scale N={count} WorkUnits={consumed}");
         work_units.push(consumed);
     }
@@ -1195,7 +1196,7 @@ fn unit_intake_projection_charge_denial_returns_no_selected_models() {
     .expect("the one-field package reads");
     let (outcome, meter) = normalize_with_meter(&package, ModelNormalizationLimits::default());
     assert!(matches!(outcome, NormalizeOutcome::Completed(_)));
-    let normalization_work = meter.consumed(LimitKind::WorkUnits);
+    let normalization_work = meter.consumed(NormalizationLimitKind::WorkUnits);
     let limits = ModelNormalizationLimits {
         work_units: normalization_work,
         ..ModelNormalizationLimits::default()
@@ -1207,13 +1208,13 @@ fn unit_intake_projection_charge_denial_returns_no_selected_models() {
     let fsl_semantics::model::intake::UnitIntakeCause::Limit(incomplete) = refusal.cause else {
         panic!("expected a work limit denial, got {refusal:?}");
     };
-    assert_eq!(incomplete.limit_kind, LimitKind::WorkUnits);
+    assert_eq!(incomplete.limit_kind, NormalizationLimitKind::WorkUnits);
     assert_eq!(incomplete.limit, normalization_work);
     assert_eq!(incomplete.consumed, normalization_work);
     assert_eq!(incomplete.next_charge, 1);
     assert_eq!(
         incomplete.charge_point,
-        fsl_semantics::model::accounting::ChargePoint::NormalizeDeclaration
+        fsl_semantics::model::accounting::NormalizationChargePoint::NormalizeDeclaration
     );
 }
 
@@ -1775,7 +1776,7 @@ fn y10_a_systems_kind_comes_from_the_construct_meaning_not_the_kind_name() {
         meter
             .admitted_charges()
             .iter()
-            .filter(|point| **point == ChargePoint::SystemsKind)
+            .filter(|point| **point == NormalizationChargePoint::SystemsKind)
             .count(),
         3,
         "Flow, SysPump and PumpOut are charged; Probe has no systems kind"
@@ -1895,9 +1896,15 @@ fn charges_normalize_record_once_per_intake_declaration() {
     };
     match normalize(&domain_package, one_less) {
         NormalizeOutcome::Incomplete(incomplete) => {
-            assert_eq!(incomplete.limit_kind, LimitKind::DeclarationRecords);
+            assert_eq!(
+                incomplete.limit_kind,
+                NormalizationLimitKind::DeclarationRecords
+            );
             assert_eq!(incomplete.limit, 1);
-            assert_eq!(incomplete.charge_point, ChargePoint::NormalizeRecord);
+            assert_eq!(
+                incomplete.charge_point,
+                NormalizationChargePoint::NormalizeRecord
+            );
         }
         other => panic!("expected Incomplete at normalize.record, got {other:?}"),
     }
@@ -2027,7 +2034,7 @@ fn a_deep_member_the_schema_refuses_is_judged_by_the_readers_rule() {
             );
             assert!(
                 matches!(
-                    refusal.cause,
+                    &refusal.cause,
                     fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration { .. }
                 ),
                 "{refusal:?}"
@@ -2037,8 +2044,7 @@ fn a_deep_member_the_schema_refuses_is_judged_by_the_readers_rule() {
         // and span.
         let named = refusals.iter().any(|refusal| {
             refusal.detail.contains("agent-ix-semantic-ir refused")
-                && matches!(
-                    &refusal.cause,
+                && matches!(& refusal.cause,
                     fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration {
                         node,
                         artifact: Some(artifact),
@@ -2097,8 +2103,7 @@ fn a_composite_cycle_of_any_length_is_refused_by_the_readers_rule() {
             let closing = format!("ix://{package_identity}/relationship/C{}-has-C0", count - 1);
             let names_it = refusals.iter().any(|refusal| {
                 refusal.code == fsl_foundation::diagnostic::Code::InvalidModelBinding
-                    && matches!(
-                        &refusal.cause,
+                    && matches!(& refusal.cause,
                         fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration {
                             node,
                             ..
@@ -3405,7 +3410,7 @@ mod float_members {
                 },
                 "the diagnostic path ends at the rejected operator expression: {clause}: {refusal:?}"
             );
-            match &refusal.cause {
+            match &*refusal.cause {
                 CheckCause::OperandTypeMismatch {
                     operator,
                     left_type,
@@ -3530,7 +3535,7 @@ fn bare_native_text_rational_and_decimal_model_members_are_admitted() {
 /// native's type and raises no `UnsupportedModelMember`.
 #[trace("TC-3031", "FR-056-AC-63")]
 #[test]
-#[ignore = "QSL-2961: core-data a92d60e6 (#364) is spec-only (FR-142-AC-17); semantic-ir code still refuses target on a value_type construct (SCHEMA_VIOLATION); needs the implementing core-data change"]
+#[ignore = "QSL-2961: re-run on main with core-data a92d60e6 (#364, FR-142-AC-17): still refused at admission: UnitIntakeRefusal InvalidModelBinding IntakeMalformedDeclaration TypeDefinition.target (/ir/types/0/target) on ix://test/rational-value-type/Ratio, agent-ix-semantic-ir SCHEMA_VIOLATION \"a value_type construct carries no target\"; the pinned semantic-ir validator code still rejects target on a value_type, so a92d60e6 is spec-only for FR-142-AC-17 and needs the implementing core-data change"]
 fn a_value_type_bound_to_a_data_native_by_target_is_that_native() {
     let package = "test/rational-value-type";
     for native in ["Boolean", "Integer", "String", "Float64", "Float32"] {

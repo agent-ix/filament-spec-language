@@ -21,12 +21,19 @@ pub(crate) struct InitialState<S> {
 ///
 /// [`EncodingRefusal`] when any initial state's `TransitionSystem::Key` has
 /// no RFC 8785 encoding.
-pub(crate) fn sorted_initial<S: TransitionSystem>(
+pub(crate) fn sorted_initial<S: TransitionSystem<InitialError = std::convert::Infallible>>(
     system: &S,
     identity: IdentityLimits,
 ) -> Result<Vec<InitialState<S::State>>, EncodingRefusal> {
-    let mut items: Vec<InitialState<S::State>> = system
-        .initial()
+    sort_initial(system, identity, system.initial())
+}
+
+pub(crate) fn sort_initial<S: TransitionSystem>(
+    system: &S,
+    identity: IdentityLimits,
+    states: Vec<S::State>,
+) -> Result<Vec<InitialState<S::State>>, EncodingRefusal> {
+    let mut items: Vec<InitialState<S::State>> = states
         .into_iter()
         .map(|state| -> Result<InitialState<S::State>, EncodingRefusal> {
             let key = canonical_state_key(&system.key(&state), identity)?;

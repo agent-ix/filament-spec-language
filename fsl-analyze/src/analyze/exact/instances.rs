@@ -10,14 +10,14 @@ use filament_exact::Cancel;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_replay::statistical::SubjectLimits;
 use fsl_replay::{
-    check_probability_certificate_document, on_each_outcome, replay_on_each_witness,
-    ExactProbBuildIssue, ExactProbabilityCertificate, OnEachOutcome, ProbabilisticCounterexample,
-    ProbabilityDocumentLimits,
+    check_probability_certificate_document, on_each_has_instance, on_each_outcome,
+    replay_on_each_witness, ExactProbBuildIssue, ExactProbabilityCertificate, OnEachOutcome,
+    ProbabilisticCounterexample, ProbabilityDocumentLimits,
 };
 
 use super::{
-    broken, checked_report, document_failure, finish_replay, graph_failure, settled, EngineReport,
-    ExactReport, ProductRequest, Refusal,
+    broken, build_refusal, checked_report, document_failure, finish_replay, graph_failure, settled,
+    EngineReport, ExactReport, ProductRefusal, ProductRequest, Refusal,
 };
 
 pub(super) fn run(
@@ -43,8 +43,9 @@ pub(super) fn run(
     if let Some(cause) = cancel.tripped() {
         return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
     }
-    let Ok(system) = admitted else {
-        return broken();
+    let system = match admitted {
+        Ok(system) => system,
+        Err(failure) => return build_refusal(ProductRefusal::Admission(failure), subject),
     };
     let claims = probabilistic.claims();
     let outcome = match on_each_outcome(
@@ -108,6 +109,66 @@ pub(super) fn run(
     }
 }
 
+/// An `on each` claim requested with statistical evidence: `no-instance`
+/// over an empty instance set, and otherwise `unsupported` at FR-875's
+/// profile boundary, which admits only exact evidence. No sample is drawn.
+pub(in crate::analyze) fn statistical(
+    subject: fsl_eval::model_subject::ModelSubject<'_>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    cancel: &Cancel,
+) -> EngineReport {
+    let simulation = subject.simulation;
+    let probabilistic = simulation.input.probabilistic;
+    let meter = simulation.meter;
+    let subject_limits = SubjectLimits {
+        expansion: simulation.expansion,
+        meter: &meter,
+    };
+    let item = match fsl_replay::probabilistic_claim_identity(claim) {
+        Ok(item) => item,
+        Err(error) => return instance_failure(error.into(), subject_limits),
+    };
+    let admitted = ModelSystem::new_with_cancel(simulation, cancel);
+    if let Some(cause) = cancel.tripped() {
+        return settled(&ExactProbBuildIssue::Cancelled(cause), subject_limits);
+    }
+    let system = match admitted {
+        Ok(system) => system,
+        Err(failure) => {
+            return build_refusal(ProductRefusal::Admission(failure), subject_limits);
+        }
+    };
+    match on_each_has_instance(&system, probabilistic.claims(), &item, cancel) {
+        Ok(false) => EngineReport::Exact(Box::new(ExactReport::NoInstance)),
+        Ok(true) => super::not_yet(),
+        Err(error) => instance_failure(error, subject_limits),
+    }
+}
+
+/// How reading a statistical item's instance set fails. A statistical
+/// request carries no exact product limits, and the read builds no product
+/// graph, so a state or edge limit cannot be reached: one reported here is a
+/// broken invariant, never a limit the request did not set.
+fn instance_failure(
+    error: fsl_replay::ProbabilityDocumentError,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    use fsl_replay::{ExactProbabilityGraphError as Graph, ProbabilityDocumentError as Document};
+    match error {
+        Document::Graph(Graph::Cancelled(cause)) => {
+            settled(&ExactProbBuildIssue::Cancelled(cause), subject)
+        }
+        Document::Graph(Graph::RequiresBound) => EngineReport::Refused(Refusal::RequiresBound),
+        Document::Graph(Graph::ExtentLimit) => EngineReport::Refused(Refusal::Incomplete(
+            fsl_replay::IncompleteCause::ResourceExhausted,
+        )),
+        Document::Graph(Graph::UnsupportedBinding | Graph::ExpansionRefused)
+        | Document::Unsupported => super::not_yet(),
+        Document::Graph(_) => broken(),
+        error => document_failure(error, subject),
+    }
+}
+
 /// How a failed on-each run settles: the graph and budget causes as every
 /// exact route settles them (FR-741 Budgets), an undefined guard or target
 /// read as an item this route does not yet refute by undefined path, and the
@@ -122,7 +183,40 @@ fn failure(
         // The reset-construction optimum, a cyclic phase graph, a form other than
         // unbounded `eventually`, a timed claim and a fairness set are not built.
         fsl_replay::ProbabilityDocumentError::Unsupported => super::not_yet(),
-        fsl_replay::ProbabilityDocumentError::UndefinedPredicate(_) => super::not_yet(),
+        fsl_replay::ProbabilityDocumentError::UndefinedPredicate(_) => broken(),
         error => document_failure(error, subject),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analyze::items::{BROKEN, NOT_YET};
+    use crate::analyze::Refusal;
+    use ix_trace_rs::trace;
+
+    /// QSL-2850 FR-281 "Engine refusals": the product build reports a first
+    /// undefined read itself, so one the checker finds afterwards is a
+    /// disagreement (a fault); a form the route does not build stays unbuilt.
+    #[trace("TC-763", "FR-281-AC-11")]
+    #[test]
+    fn an_undefined_read_after_a_clean_build_is_a_fault_not_an_unbuilt_form() {
+        let meter = fsl_replay::AccountingLimits::default().0;
+        let subject = SubjectLimits {
+            expansion: fsl_eval::simulation::model::ExpansionLimits { max_candidates: 1 },
+            meter: &meter,
+        };
+        let limits = crate::exact_probabilistic::ExactProbLimits::default();
+        let undefined = fsl_replay::ProbabilityDocumentError::UndefinedPredicate(
+            fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero),
+        );
+        assert!(matches!(
+            failure(undefined, &limits, subject),
+            EngineReport::Refused(Refusal::Failed(code)) if code == BROKEN
+        ));
+        assert!(matches!(
+            failure(fsl_replay::ProbabilityDocumentError::Unsupported, &limits, subject),
+            EngineReport::Refused(Refusal::Unsupported(code)) if code == NOT_YET
+        ));
     }
 }

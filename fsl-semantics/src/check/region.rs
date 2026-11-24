@@ -22,9 +22,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use fsl_forms::{DeclarationSpans, ExpressionSpans};
+use fsl_foundation::Span;
 use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::source_map::SourceMap;
-use fsl_foundation::Span;
 
 use super::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
 use filament_semantic_value::location::{
@@ -308,7 +308,7 @@ impl DeclarationRegions {
     /// order (FSpec FR-272's `related`): both workloads of a repeated
     /// workload name (FR-185); none for every other refusal.
     pub fn related_regions(&self, refusal: &CheckRefusal) -> Vec<SourceRegion> {
-        let related = match &refusal.cause {
+        let related = match refusal.cause.as_ref() {
             CheckCause::Probabilistic(cause) => cause.related().to_vec(),
             CheckCause::StateGraph(cause) => cause.related(),
             _ => return Vec::new(),
@@ -326,7 +326,7 @@ impl DeclarationRegions {
     /// expression tree for a `Location` path to walk; every other refusal
     /// is located by its `location`.
     pub fn refusal_region(&self, refusal: &CheckRefusal) -> Option<SourceRegion> {
-        match &refusal.cause {
+        match refusal.cause.as_ref() {
             CheckCause::LayerEquality {
                 span: Some(span), ..
             } => region(&self.source, self.embedding.as_deref(), *span),
@@ -1091,15 +1091,17 @@ mod tests {
         assert_eq!(super::region(&source, Some(&map), whole), None);
         // The single-segment sub-span still resolves to its own document
         // region: only the multi-region span is refused.
-        assert!(super::region(
-            &source,
-            Some(&map),
-            Span {
-                start: 0,
-                end: line
-            }
-        )
-        .is_some());
+        assert!(
+            super::region(
+                &source,
+                Some(&map),
+                Span {
+                    start: 0,
+                    end: line
+                }
+            )
+            .is_some()
+        );
     }
 
     /// FR-096 (SR-745 FND-003): each of node count, input bytes and work
@@ -1156,7 +1158,7 @@ mod tests {
             let [refusal] = refusals.as_slice() else {
                 panic!("one refusal, got {refusals:?}");
             };
-            let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+            let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
                 panic!("a stage limit, got {refusal:?}");
             };
             assert_eq!(limit.kind, kind);
@@ -1228,7 +1230,7 @@ mod tests {
             let [refusal] = refusals.as_slice() else {
                 panic!("one refusal, got {refusals:?}");
             };
-            let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+            let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
                 panic!("a stage limit, got {refusal:?}");
             };
             assert_eq!(limit.kind, CheckingLimitKind::WorkBudget);
@@ -1321,7 +1323,7 @@ mod tests {
         let [refusal] = refusals.as_slice() else {
             panic!("one refusal, got {refusals:?}");
         };
-        let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+        let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
             panic!("a stage limit, got {refusal:?}");
         };
         assert_eq!(limit.kind, CheckingLimitKind::Nodes);

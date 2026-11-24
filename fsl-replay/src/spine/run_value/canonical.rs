@@ -476,8 +476,14 @@ impl Forms<'_> {
             .composites()
             .find(|candidate| declaration_form(&candidate.key()).is_ok_and(|form| &form == name))
             .filter(|candidate| {
-                self.types
-                    .composite_conforms(candidate.key(), declared.clone())
+                // Union declarations do not participate in composite
+                // generalization, but a value of the exact declared union
+                // type remains a valid argument of that type.
+                (candidate.key() == *declared
+                    && matches!(candidate.shape(), CompositeShape::Union(_)))
+                    || self
+                        .types
+                        .composite_conforms(candidate.key(), declared.clone())
             })
             .ok_or_else(|| wrong_kind_at(path, "name"))?;
         let legacy_name = declaration_name(declaration);
@@ -775,9 +781,7 @@ mod tests {
     #[trace("FR-650-AC-1", "FSpec-FR-181-AC-26")]
     fn canonical_json_storage_failure_is_not_an_input_defect() {
         let path = Path::new();
-        assert!(
-            canonical_json_result("[]", JsonObject::from_json_text("[]"), &path).is_ok()
-        );
+        assert!(canonical_json_result("[]", JsonObject::from_json_text("[]"), &path).is_ok());
         for text in ["{", "{\"a\": 1}"] {
             let Err(ReadStop::Defect(error)) =
                 canonical_json_result(text, JsonObject::from_json_text(text), &path)

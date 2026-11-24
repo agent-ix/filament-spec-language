@@ -314,7 +314,7 @@ fn a_second_bounded_population_of_one_type_still_refuses_ambiguous_name() {
             "ambiguous-name",
             vec![],
         );
-        let CheckCause::StateModel(model) = &refusal.cause else {
+        let CheckCause::StateModel(model) = &*refusal.cause else {
             panic!("a StateModel refusal: {refusal:?}");
         };
         let CheckCause::AmbiguousName { name, .. } = &model.cause else {

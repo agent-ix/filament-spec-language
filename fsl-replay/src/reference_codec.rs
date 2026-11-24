@@ -22,7 +22,7 @@ mod values;
     dead_code,
     reason = "the shared model input is used with a scoped reference test unit"
 )]
-mod reference_fixture;
+pub(crate) mod reference_fixture;
 
 /// Semantic reasons a reference boundary refuses an input.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -470,7 +470,7 @@ impl Scope<'_, '_> {
         if let Some(owner) = self.normalization_owner {
             owner
                 .charge_reference_work(
-                    fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+                    fsl_semantics::model::accounting::NormalizationChargePoint::ReferenceResult,
                     units,
                 )
                 .map_err(|cause| ReferenceCodecError::Normalization {
@@ -650,7 +650,7 @@ impl Scope<'_, '_> {
     fn hex_decode(&mut self, input: &str) -> Result<String, ReferenceCodecError> {
         self.work(input.len())?;
         if input.is_empty()
-            || input.len() % 2 != 0
+            || !input.len().is_multiple_of(2)
             || !input
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
@@ -669,7 +669,7 @@ impl Scope<'_, '_> {
                 b - b'a' + 10
             }
         };
-        for pair in input.as_bytes().chunks_exact(2) {
+        for pair in input.as_bytes().as_chunks::<2>().0 {
             bytes.push((nibble(pair[0]) << 4) | nibble(pair[1]));
         }
         String::from_utf8(bytes).map_err(|_| self.fail(ReferenceFailure::InvalidIdentity))
@@ -978,16 +978,14 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
                 }
                 let text = s.string(input)?;
                 s.work(text.len())?;
-                if matches!(
+                if (matches!(
                     *name,
                     "numerator" | "denominator" | "coefficient" | "scale" | "nanoseconds"
-                ) || (kind == "integer" && *name == "value")
+                ) || (kind == "integer" && *name == "value"))
+                    && (!integer_text(text)
+                        || (*name == "denominator" && (text.starts_with('-') || text == "0")))
                 {
-                    if !integer_text(text)
-                        || (*name == "denominator" && (text.starts_with('-') || text == "0"))
-                    {
-                        return Err(s.fail(ReferenceFailure::MalformedWire));
-                    }
+                    return Err(s.fail(ReferenceFailure::MalformedWire));
                 }
                 if *name == "bits" {
                     s.work(text.len())?;
@@ -1557,7 +1555,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         if !scope.equal_text(object, &selected.key)? {
             return Err(scope.fail(ReferenceFailure::WrongPopulation));
         }
-        for (member, _) in binding.members() {
+        for member in binding.members().keys() {
             scope.work(1)?;
             if !scope.equal_text(&member.object, object)? {
                 continue;
@@ -1673,7 +1671,7 @@ fn sort_values(
                     at -= 1;
                 }
                 std::cmp::Ordering::Equal if unique => {
-                    return Err(scope.fail(ReferenceFailure::MalformedWire))
+                    return Err(scope.fail(ReferenceFailure::MalformedWire));
                 }
                 _ => break,
             }
@@ -1723,7 +1721,7 @@ impl<'a> Admission<'a> {
         if let Some(owner) = self.normalization_owner {
             owner
                 .charge_reference_work(
-                    fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+                    fsl_semantics::model::accounting::NormalizationChargePoint::ReferenceResult,
                     units,
                 )
                 .map_err(|cause| {
@@ -1782,7 +1780,6 @@ impl<'a> Admission<'a> {
                 &error,
                 fsl_foundation::IdentityLimits {
                     input_bytes: limits.max_bytes(),
-                    ..fsl_foundation::IdentityLimits::default()
                 },
             )),
         })?;
@@ -2014,20 +2011,23 @@ mod tests {
     /// Trace: FSpec-FR-181, FSpec-FR-418-AC-11
     #[test]
     fn call_reference_adapter_uses_checked_admission_and_environment() {
-        use super::{reference_fixture, ReferenceCodec};
+        use super::{ReferenceCodec, reference_fixture};
         use filament_semantic_value::model_transition::ModelTransition;
         use fsl_eval::execution::{PrepareLimits, SuppliedBackends};
         use fsl_package::ReferenceCatalog;
-        use fsl_semantics::model::intake::{package_input, SelectedModels};
+        use fsl_semantics::model::intake::{SelectedModels, package_input};
         use fsl_semantics::model::observation::{
-            admit_current_snapshot, DocumentRef, ObservationLimits,
+            DocumentRef, ObservationLimits, admit_current_snapshot,
         };
         use serde_json::json;
         use std::collections::BTreeMap;
 
         let packages = package_input([reference_fixture::DOMAIN_PACKAGE.as_bytes()]).unwrap();
         let source = fsl_foundation::SourceIdentity::new("test", "checked-call-reference");
-        let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel Config = {:?};\nfunction keep using v(x: Config::ConfigVersion): Config::ConfigVersion pure {{ x }}\n", reference_fixture::PACKAGE_IDENTITY);
+        let text = format!(
+            "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel Config = {:?};\nfunction keep using v(x: Config::ConfigVersion): Config::ConfigVersion pure {{ x }}\n",
+            reference_fixture::PACKAGE_IDENTITY
+        );
         let limits = crate::spine::SpineLimits::default();
         let compiled = crate::spine::compose(
             source,
@@ -2163,8 +2163,10 @@ mod tests {
         let original_wire = template
             .to_wire()
             .expect("unchanged unscoped source spelling");
-        assert!(template
-            .same_identity(&crate::TaskTransitionTemplate::from_wire(&original_wire).unwrap()));
+        assert!(
+            template
+                .same_identity(&crate::TaskTransitionTemplate::from_wire(&original_wire).unwrap())
+        );
         task_wire["source_transition"]["arguments"][0]["identity"] = json!("FF");
         assert!(
             matches!(carrier.restore_task_template(&task_wire), Err(ReferenceCodecError::Refused { reason: ReferenceFailure::InvalidIdentity, pointer }) if pointer == "/source_transition/arguments/0/identity")
@@ -2268,7 +2270,7 @@ mod tests {
     /// Trace: FSpec-FR-181
     #[test]
     fn reference_catalog_genuine_config_version_source_and_admitted_roundtrip() {
-        use super::{reference_fixture, ReferenceCodec};
+        use super::{ReferenceCodec, reference_fixture};
         use filament_checked::key::DeclarationKey;
         use filament_contract_model::NativeJoinBudget;
         use fsl_eval::model_subject::ModelInstance;
@@ -2287,13 +2289,13 @@ mod tests {
         use fsl_semantics::model::normalize::EffectiveView;
         use fsl_semantics::model::object_environment::ObjectEnvironment;
         use fsl_semantics::model::observation::{
-            admit_current_snapshot_with_views, admitted_population_document,
-            declared_type_universe_for, DocumentRef, ObservationLimits,
+            DocumentRef, ObservationLimits, admit_current_snapshot_with_views,
+            admitted_population_document, declared_type_universe_for,
         };
         use fsl_semantics::model::population::{
-            admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
+            AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, admit_binding,
         };
-        use serde_json::{json, Value};
+        use serde_json::{Value, json};
         use std::collections::BTreeMap;
 
         let mut document: Value = serde_json::from_str(reference_fixture::DOMAIN_PACKAGE).unwrap();
@@ -2313,7 +2315,10 @@ mod tests {
             package_input([bytes.as_slice()]).expect("real ConfigVersion model admission");
         let source =
             fsl_foundation::SourceIdentity::new("test", "reference-catalog-config-version");
-        let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel Config = {:?};\nfunction keep using v(x: Config::ConfigVersion): Config::ConfigVersion pure {{ x }}\n", reference_fixture::PACKAGE_IDENTITY);
+        let text = format!(
+            "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel Config = {:?};\nfunction keep using v(x: Config::ConfigVersion): Config::ConfigVersion pure {{ x }}\n",
+            reference_fixture::PACKAGE_IDENTITY
+        );
         let limits = crate::spine::SpineLimits::default();
         let cancel = Cancel::new();
         let parsed = crate::spine::parse(
@@ -2551,9 +2556,7 @@ mod tests {
             },
             key: object_key.to_owned(),
         };
-        let bind = |environment: &ObjectEnvironment,
-                    views: &[EffectiveView],
-                    population: &str| {
+        let bind = |environment: &ObjectEnvironment, views: &[EffectiveView], population: &str| {
             let key = DeclarationKey {
                 package: type_key.package.clone(),
                 node: population.to_owned(),

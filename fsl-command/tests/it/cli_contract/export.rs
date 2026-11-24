@@ -79,6 +79,7 @@ fn an_assembled_export_exits_0() {
 /// the build's pending capability without claiming package or proof verification.
 #[test]
 #[trace("FR-1022")]
+#[trace("FR-1022-AC-3")]
 fn an_assembled_package_reaches_pending_evidence_admission() {
     use fsl_command::command::{export_with_limits_and_overrides, ExportSelection, RunLimits};
 

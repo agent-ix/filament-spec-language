@@ -19,17 +19,17 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{EffectiveId, NodeKey, ValueType};
 use fsl_forms::{ExpressionForm, StateClauseKind};
+use fsl_foundation::Span;
 use fsl_foundation::selection::ProfileSelection;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::Span;
 use ix_trace_rs::string_edge;
 
+use super::CheckedGraph;
+use super::SemanticNode;
 use super::ir::{CheckedBody, CheckedNode};
 use super::node_key::{BindingValue, BodyTerm, LeafTerm, LiteralValue, MemberTerm, NodeTag};
 use super::refusal::{CheckCause, CheckRefusal};
 use super::state_clause::{ClauseDeclarations, ClauseView, PopulationDomain};
-use super::CheckedGraph;
-use super::SemanticNode;
 use crate::family::CheckContext;
 
 /// One `terminal` declaration the assembler resolved (FR-124 "Inputs"): its
@@ -60,7 +60,7 @@ pub enum TerminalClauseKind {
     /// `terminal when { P }`: a terminal state satisfying `P` is intended.
     When {
         /// The predicate as S2 built it.
-        predicate: ExpressionForm,
+        predicate: Box<ExpressionForm>,
         /// The model's state object, when the predicate reads `self`.
         context: Option<EffectiveId>,
         /// The population the object type ranges over.
@@ -183,6 +183,7 @@ pub(crate) fn check_terminal<'a>(
             .clone()
             .map(|context| ("self", ValueType::Reference(context))),
         operation: None,
+        authored_operation: None,
         context_population: population.clone(),
         frame_population: None,
         binders: &[],
@@ -199,10 +200,10 @@ pub(crate) fn check_terminal<'a>(
     )
     .map_err(|refusal| CheckRefusal {
         location: refusal.location,
-        cause: CheckCause::Terminal(Box::new(TerminalRefusal {
+        cause: Box::new(CheckCause::Terminal(Box::new(TerminalRefusal {
             declaration: index,
-            cause: refusal.cause,
-        })),
+            cause: *refusal.cause,
+        }))),
     })?;
     Ok((
         TerminalDeclaration::When(CheckedTerminalPredicate {

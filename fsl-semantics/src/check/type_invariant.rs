@@ -20,7 +20,7 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_forms::StateClauseKind;
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
 
 use super::ir::{CheckedBody, CheckedNode};
 use super::refusal::{CheckCause, CheckRefusal};
@@ -84,6 +84,7 @@ impl TypeInvariantDeclaration {
             context: Some(self.context.clone()),
             receiver: Some(("self", self.self_type.clone())),
             operation: None,
+            authored_operation: None,
             context_population: None,
             frame_population: None,
             binders: &[],
@@ -97,11 +98,11 @@ impl TypeInvariantDeclaration {
     pub(crate) fn refusal(&self, refusal: CheckRefusal) -> CheckRefusal {
         CheckRefusal {
             location: refusal.location,
-            cause: CheckCause::TypeInvariant(Box::new(TypeInvariantRefusal {
+            cause: Box::new(CheckCause::TypeInvariant(Box::new(TypeInvariantRefusal {
                 clause: self.invariant.clause.clone(),
                 position: self.invariant.position,
-                cause: refusal.cause,
-            })),
+                cause: *refusal.cause,
+            }))),
         }
     }
 
@@ -139,7 +140,7 @@ impl CheckRefusal {
     /// for a refusal located anywhere else.
     #[must_use]
     pub fn type_invariant_clause(&self) -> Option<&DeclarationKey> {
-        match &self.cause {
+        match self.cause.as_ref() {
             CheckCause::TypeInvariant(refusal) => Some(&refusal.clause),
             _ => None,
         }
@@ -150,7 +151,7 @@ impl CheckRefusal {
     /// else.
     #[must_use]
     pub fn type_invariant_member(&self) -> Option<MemberPath> {
-        match &self.cause {
+        match self.cause.as_ref() {
             CheckCause::TypeInvariant(refusal) => Some(refusal.member()),
             _ => None,
         }
@@ -160,7 +161,7 @@ impl CheckRefusal {
     /// about.
     #[must_use]
     pub fn type_invariant_cause(&self) -> Option<&CheckCause> {
-        match &self.cause {
+        match self.cause.as_ref() {
             CheckCause::TypeInvariant(refusal) => Some(&refusal.cause),
             _ => None,
         }

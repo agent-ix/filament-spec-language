@@ -2,10 +2,10 @@
 //! Conformance consumes the same selection owner and the facts of completed
 //! source checking. Structural target resolution belongs to normalization.
 
-use super::field_refinement::{checked_refinement_failures, RefinementObligation};
+use super::field_refinement::{RefinementObligation, checked_refinement_failures};
 use super::lowering::{AdmittedModel, ParentSlotFailure};
 use super::state_clause::{StateClauseDeclaration, TypedStateClause};
-use crate::model::accounting::{Meter, NormalizationIncomplete};
+use crate::model::accounting::{NormalizationIncomplete, NormalizationMeter};
 use crate::model::conformance::{self, ConformanceCheckOutcome, ConformanceOutcome};
 use crate::model::domain_package::DomainPackageRecord;
 use crate::model::intake::SelectedModel;
@@ -164,7 +164,7 @@ fn identity_bytes(model: &SelectedModel) -> &[u8] {
 /// stage.
 pub(crate) fn check(
     selected: &[SelectedModel],
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
     models: &[AdmittedModel],
     forms: &[StateClauseDeclaration],
     checked: &[TypedStateClause],
@@ -265,12 +265,14 @@ pub(crate) fn check(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::accounting::{ChargePoint, LimitKind, ModelNormalizationLimits};
+    use crate::model::accounting::{
+        ModelNormalizationLimits, NormalizationChargePoint, NormalizationLimitKind,
+    };
     use crate::model::domain_package::{
         DomainPackage, DomainPackageRef, FieldMemberRecord, Multiplicity, NativeValueType,
         ObjectTypeRecord, ValueTypeRef,
     };
-    use crate::model::intake::SelectedModels;
+    use crate::model::intake::{SelectedModels, SelectedModelsParts};
     use filament_exact::Presence;
     use ix_trace_rs::trace;
 
@@ -327,7 +329,7 @@ mod tests {
 
     fn admitted(
         limits: ModelNormalizationLimits,
-    ) -> (Vec<SelectedModel>, Meter, Vec<AdmittedModel>) {
+    ) -> (Vec<SelectedModel>, NormalizationMeter, Vec<AdmittedModel>) {
         let group = SelectedModels::fixture(
             "M",
             fsl_foundation::Span { start: 0, end: 1 },
@@ -335,7 +337,11 @@ mod tests {
             limits,
         )
         .expect("the real structural producer admits both member pairs");
-        let (selected, meter, _, _, _) = group.into_parts();
+        let SelectedModelsParts {
+            entries: selected,
+            meter,
+            ..
+        } = group.into_parts();
         let models = selected
             .iter()
             .map(|selection| AdmittedModel::from_view(&selection.view))
@@ -347,7 +353,7 @@ mod tests {
     #[trace("TC-196")]
     fn completed_stage_retains_each_axis_and_member_pair_after_checked_clauses() {
         let (selected, mut meter, models) = admitted(ModelNormalizationLimits::UNLIMITED);
-        let before = meter.consumed(LimitKind::WorkUnits);
+        let before = meter.consumed(NormalizationLimitKind::WorkUnits);
         let Err(StageDenial::Refused(failures)) =
             check(&selected, &mut meter, &models, &[], &[], None)
         else {
@@ -381,17 +387,22 @@ mod tests {
                 ),
             ]
         );
-        assert!(failures
-            .iter()
-            .all(|failure| failure.writer.is_none() && failure.obligation.is_none()));
-        assert_eq!(meter.consumed(LimitKind::WorkUnits), before + 6);
+        assert!(
+            failures
+                .iter()
+                .all(|failure| failure.writer.is_none() && failure.obligation.is_none())
+        );
+        assert_eq!(
+            meter.consumed(NormalizationLimitKind::WorkUnits),
+            before + 6
+        );
     }
 
     #[test]
     #[trace("TC-196")]
     fn denied_later_pair_exposes_only_exact_incomplete_without_earlier_failures() {
         let (_, unlimited, _) = admitted(ModelNormalizationLimits::UNLIMITED);
-        let normalization_work = unlimited.consumed(LimitKind::WorkUnits);
+        let normalization_work = unlimited.consumed(NormalizationLimitKind::WorkUnits);
         let (selected, mut meter, models) = admitted(ModelNormalizationLimits {
             work_units: normalization_work + 3,
             ..ModelNormalizationLimits::UNLIMITED
@@ -404,13 +415,16 @@ mod tests {
         assert_eq!(
             incomplete,
             NormalizationIncomplete {
-                limit_kind: LimitKind::WorkUnits,
+                limit_kind: NormalizationLimitKind::WorkUnits,
                 limit: normalization_work + 3,
                 consumed: normalization_work + 3,
                 next_charge: 1,
-                charge_point: ChargePoint::ConformanceAxis,
+                charge_point: NormalizationChargePoint::ConformanceAxis,
             }
         );
-        assert_eq!(meter.consumed(LimitKind::WorkUnits), normalization_work + 3);
+        assert_eq!(
+            meter.consumed(NormalizationLimitKind::WorkUnits),
+            normalization_work + 3
+        );
     }
 }

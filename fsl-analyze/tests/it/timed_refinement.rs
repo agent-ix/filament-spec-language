@@ -323,7 +323,7 @@ fn an_abstract_clock_guard_refutes_and_replays_the_exact_delay() {
     let timed_abstract = TimedSystem::new(&systems.abstract_system, refinement.abstract_model())
         .expect("the abstract model is timed");
     let abstract_steps = timed_abstract
-        .guarded_steps(&timed_abstract.initial()[0].discrete())
+        .guarded_steps(timed_abstract.initial()[0].discrete())
         .expect("the abstract initial state expands");
     assert!(
         abstract_steps.iter().any(|step| {
@@ -482,7 +482,7 @@ fn a_violated_safety_half_is_reported_with_no_liveness_half() {
 
 /// The default timed profile supplies the selector bound for concrete
 /// ClockRef data, and a hidden abstract field no longer refuses the check.
-#[trace("TC-3084", "FR-1040-AC-8")]
+#[trace("TC-3084", "FR-1040-AC-8", "FR-106-AC-78")]
 #[test]
 fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
     const ZONE_BYTES: u64 = 4 << 20;
@@ -511,6 +511,20 @@ fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
     r["presence"] = json!("optional");
     r["multiplicity"]["lower"] = json!(0);
     fields.push(r);
+    // The checked model type orders fields by declaration identity, which is
+    // also the index basis used by the nested bound path.
+    let mut effective_field_ids: Vec<_> = fields
+        .iter()
+        .map(|field| field["identity"].as_str().expect("field identity"))
+        .collect();
+    effective_field_ids.sort_unstable();
+    let r_field_index = u32::try_from(
+        effective_field_ids
+            .iter()
+            .position(|identity| *identity == ident("Call/r"))
+            .expect("r is a concrete object field"),
+    )
+    .expect("the field index fits the checked path representation");
     let abstract_model = renamed_package(
         &document(&["y"], &[("send", &["inflight"])]),
         "test/abstract",
@@ -540,16 +554,33 @@ fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
         world.abstract_initials.clone(),
     )
     .expect("subjects open");
-    assert!(
-        matches!(
-            fsl_eval::simulation::model::check_model_bounds(
-                &systems.concrete,
-                fsl_eval::simulation::BOUND_POSITIONS
-            ),
-            Err(fsl_eval::simulation::NotSimulated::RequiresBound(_)),
-        ),
-        "the generic subject has no clock-profile selector bound"
+    let generic = fsl_eval::simulation::model::check_model_bounds(
+        &systems.concrete,
+        fsl_eval::simulation::BOUND_POSITIONS,
     );
+    let Err(fsl_eval::simulation::NotSimulated::RequiresBound(bound)) = generic else {
+        panic!("the generic subject has no clock-profile selector bound: {generic:?}");
+    };
+    // FR-106-AC-78: the refusal names the `ClockReferenceDomain` of `r` and
+    // of its unbounded place slot, one entry per declared place template.
+    assert!(
+        !bound.clock_references.is_empty(),
+        "the refusal names the clock-reference domain: {bound:?}"
+    );
+    for domain in &bound.clock_references {
+        assert!(
+            matches!(
+                &domain.member,
+                fsl_foundation::bound::DomainKey::Node { path, .. }
+                    if path.get(1) == Some(&r_field_index)
+            ),
+            "the domain path begins at concrete object field `r`: {domain:?}"
+        );
+        assert!(
+            !domain.slot.is_empty(),
+            "the domain names the unbounded place slot: {domain:?}"
+        );
+    }
     let mut request = safety_request(&world);
     request.concrete = concrete_request;
     // The hidden abstract field no longer refuses, and the timed

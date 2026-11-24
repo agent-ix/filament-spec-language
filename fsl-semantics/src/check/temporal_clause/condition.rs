@@ -21,10 +21,10 @@ use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_forms::{ActivationForm, ClauseKind, StateClauseKind, TemporalNodeForm};
 
 use super::CheckedTemporalClause;
-use crate::check::check::{bind_parameters, Scope, StateContext, Typer};
+use crate::check::check::{Scope, StateContext, Typer, bind_parameters};
 use crate::check::facts::Definedness;
 use crate::check::ir::CheckedBody;
-use crate::check::lowering::{temporal_location, AggregatePart, TemporalSite};
+use crate::check::lowering::{AggregatePart, TemporalSite, temporal_location};
 use crate::check::observation::Observations;
 use crate::check::refusal::{CheckCause, CheckRefusal};
 use crate::check::state_clause::ClauseDeclarations;
@@ -272,7 +272,9 @@ fn check_conditions_into(
                     .is_some_and(|value| family(value.body.root().value_type()).is_none())
                     .then(|| CheckRefusal {
                         location: at(AggregatePart::Value),
-                        cause: CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch),
+                        cause: Box::new(CheckCause::IllTyped(
+                            filament_exact::IllTypedCause::TypeMismatch,
+                        )),
                     });
                 let aggregate_value_type =
                     value
@@ -363,7 +365,7 @@ fn check_conditions_into(
                 if let Some(cause) = mismatch {
                     return Err(CheckRefusal {
                         location: at(AggregatePart::Threshold),
-                        cause,
+                        cause: Box::new(cause),
                     });
                 }
                 conditions.aggregates.insert(
@@ -570,6 +572,7 @@ fn type_condition(
             parent_projections: BTreeMap::new(),
             kind: StateClauseKind::Invariant,
             operation: None,
+            authored_operation: None,
             self_slot: NO_SLOT,
             result_slot: None,
         });
@@ -580,7 +583,7 @@ fn type_condition(
                 if body.root().value_type() != &ValueType::Boolean {
                     return Err(CheckRefusal {
                         location,
-                        cause: CheckCause::NonBooleanRoot,
+                        cause: Box::new(CheckCause::NonBooleanRoot),
                     });
                 }
                 body

@@ -23,10 +23,10 @@ mod term;
 
 pub(super) use callee::Callees;
 pub use cause::{HybridCause, MalformedReason};
-pub(super) use claim::{check_claims, ClaimInputs};
-pub use claim::{hybrid_horizon, HorizonOutOfRange, HybridClaimDeclaration};
-pub(super) use model::check_models;
+pub(super) use claim::{ClaimInputs, check_claims};
+pub use claim::{HorizonOutOfRange, HybridClaimDeclaration, hybrid_horizon};
 pub use model::HybridDeclaration;
+pub(super) use model::check_models;
 
 /// A mode of a [`CheckedHybridModel`], by its position in
 /// [`CheckedHybridModel::modes`].

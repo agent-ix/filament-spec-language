@@ -13,7 +13,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_contract_model::{
-    CheckedNodeId, CheckedPackageV2, CheckedSemanticNodeV2, CheckedTerm,
+    CheckedCallableIdentity, CheckedNodeId, CheckedNodeKind, CheckedNodeOwner, CheckedPackageV2,
+    CheckedSemanticNodeV2, CheckedTerm,
 };
 use filament_exact::{NodeKey, ValueType};
 use filament_semantic_value::catalog::InternalFault;
@@ -101,6 +102,64 @@ pub enum BareSelectionFailure {
         /// The typed projection refusal at the function's type node.
         view: Box<UnsupportedView>,
     },
+}
+
+/// Why a bytes-only source-operation clause projection refused.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BareSourceOperationFailure {
+    /// Identity, anchor, or clause projection refusal.
+    Selection(BareSelectionFailure),
+    /// Caller-owned native work budget exhaustion.
+    NativeJoin(crate::NativeJoinFailure),
+}
+
+impl From<BareSelectionFailure> for BareSourceOperationFailure {
+    fn from(failure: BareSelectionFailure) -> Self {
+        Self::Selection(failure)
+    }
+}
+
+impl From<SlotSelectionFailure> for BareSourceOperationFailure {
+    fn from(failure: SlotSelectionFailure) -> Self {
+        Self::Selection(failure.into())
+    }
+}
+
+impl From<crate::native_row::NativeRowError> for BareSourceOperationFailure {
+    fn from(failure: crate::native_row::NativeRowError) -> Self {
+        Self::NativeJoin(crate::NativeJoinFailure::Rows(failure))
+    }
+}
+
+/// An authored source operation contract clause selected by its checked
+/// operation anchor, never by a synthesized function name.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SourceOperationClause {
+    /// The operation's precondition clause function.
+    Precondition {
+        /// Authored clause identity in this operation's checked declaration.
+        name: String,
+    },
+    /// The operation's postcondition clause function.
+    Postcondition {
+        /// Authored clause identity in this operation's checked declaration.
+        name: String,
+    },
+}
+
+impl SourceOperationClause {
+    const fn declaration_kind(&self) -> &'static str {
+        match self {
+            Self::Precondition { .. } => "precondition",
+            Self::Postcondition { .. } => "postcondition",
+        }
+    }
+
+    fn authored_name(&self) -> &str {
+        match self {
+            Self::Precondition { name } | Self::Postcondition { name } => name,
+        }
+    }
 }
 
 impl BareSelectionFailure {
@@ -458,6 +517,174 @@ fn tied_order<'n>(
 }
 
 impl<'p> BarePackage<'p> {
+    /// Project one source operation contract clause from the operation anchor
+    /// admitted in this package and joined to its producer identity row.
+    /// This resolves the clause by the validated anchor's source owner and
+    /// operation identity, not by calling a synthesized dispatch function by
+    /// name.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed selection failure when the identity witness is absent,
+    /// the anchor is not an admitted source operation, or its clause function
+    /// cannot be selected and projected.
+    pub fn project_source_operation_clause(
+        &self,
+        anchor: &CheckedNodeId,
+        clause: SourceOperationClause,
+        budget: &mut filament_contract_model::NativeJoinBudget,
+    ) -> Result<ReaderProtocolProjection, BareSourceOperationFailure> {
+        let package = self.package();
+        let (supply, _) = self.witness()?;
+        let graph = wire_graph(package).map_err(|_| {
+            SlotSelectionFailure::Fault(InternalFault::new(
+                "FR-531",
+                "source-operation-clause-has-structural-keys",
+            ))
+        })?;
+        let anchor_key = graph.key(anchor).map_err(|_| {
+            SlotSelectionFailure::Fault(InternalFault::new(
+                "FR-531",
+                "source-operation-anchor-has-structural-key",
+            ))
+        })?;
+        let locus = filament_contract_model::NativeJoinLocus {
+            source: filament_contract_model::NativeJoinLocusSource::Package,
+            form: "source-operation-clause",
+        };
+        // IR exposes failed selected-row work but not the successful count.
+        // Charge the finite worst-case number of row/effect comparisons before
+        // giving it the same cap. This can refuse earlier than exact counting,
+        // but cannot bypass the caller's native work budget.
+        let selected_work_bound = supply
+            .identities
+            .source_operation_validation_work_bound(package);
+        crate::native_row::work(budget, locus, selected_work_bound).map_err(|failure| {
+            BareSourceOperationFailure::NativeJoin(
+                crate::NativeJoinFailure::Rows(failure).with_budget(budget),
+            )
+        })?;
+        let selected_work_limit = u64::try_from(selected_work_bound)
+            .expect("a budget-admitted source-operation bound fits u64");
+        let selected = supply
+            .identities
+            .selected_source_operations(package, selected_work_limit)
+            .map_err(|_| {
+                BareSourceOperationFailure::Selection(
+                    SlotSelectionFailure::MalformedNode(anchor_key.clone()).into(),
+                )
+            })?;
+        let remaining = budget.work_limit().saturating_sub(budget.consumed().work);
+        let read = package
+            .source_operation_callable(&selected, anchor, remaining)
+            .map_err(|error| {
+                if error.code == filament_contract_model::CheckedCallableReadErrorCode::WorkLimit {
+                    crate::native_row::work(budget, locus, u128::from(error.work))
+                        .expect_err("IR's work-limit refusal exceeds the shared remaining budget")
+                        .into()
+                } else {
+                    BareSourceOperationFailure::Selection(
+                        SlotSelectionFailure::MalformedNode(anchor_key.clone()).into(),
+                    )
+                }
+            })?;
+        crate::native_row::work(budget, locus, u128::from(read.work())).map_err(|failure| {
+            BareSourceOperationFailure::NativeJoin(
+                crate::NativeJoinFailure::Rows(failure).with_budget(budget),
+            )
+        })?;
+        let Some(callable) = read.callable() else {
+            return Err(SlotSelectionFailure::MalformedNode(anchor_key.clone()).into());
+        };
+        let CheckedCallableIdentity::SourceOperation {
+            source_authority,
+            source_identity,
+            ..
+        } = &callable.identity
+        else {
+            return Err(SlotSelectionFailure::MalformedNode(anchor_key.clone()).into());
+        };
+        let Some((type_name, operation_name)) = source_identity.split_once("::") else {
+            return Err(SlotSelectionFailure::MalformedNode(anchor_key.clone()).into());
+        };
+        let context = callable
+            .context
+            .as_ref()
+            .ok_or_else(|| SlotSelectionFailure::MalformedNode(anchor_key.clone()))?;
+        let context_node = package
+            .resolved_graph()
+            .nodes
+            .iter()
+            .find(|node| node.node_id == *context)
+            .ok_or_else(|| SlotSelectionFailure::MalformedNode(anchor_key.clone()))?;
+        let Some(CheckedNodeOwner::Source {
+            authority,
+            identity,
+        }) = context_node.owner.as_ref()
+        else {
+            return Err(SlotSelectionFailure::MalformedNode(anchor_key.clone()).into());
+        };
+        let Some(context_name) = context_node
+            .declaration
+            .as_ref()
+            .and_then(|declaration| declaration.qualified_name.last())
+        else {
+            return Err(SlotSelectionFailure::MalformedNode(anchor_key.clone()).into());
+        };
+        if authority != source_authority || context_name.as_ref() != type_name {
+            return Err(SlotSelectionFailure::MalformedNode(anchor_key.clone()).into());
+        }
+        let owner = CheckedNodeOwner::Source {
+            authority: authority.clone(),
+            identity: identity.clone(),
+        };
+        let mut matches = package.resolved_graph().nodes.iter().filter(|node| {
+            node.owner.as_ref() == Some(&owner)
+                && matches!(
+                    package.node_kind(&node.node_id),
+                    Some(CheckedNodeKind::Function(_))
+                )
+                && node.declaration.as_ref().is_some_and(|declaration| {
+                    matches!(
+                        declaration.qualified_name.as_slice(),
+                        [declaring, operation, kind, authored_name]
+                            if declaring.as_ref() == type_name
+                                && operation.as_ref() == operation_name
+                                && kind.as_ref() == clause.declaration_kind()
+                                && authored_name.as_ref() == clause.authored_name()
+                    )
+                })
+        });
+        let Some(function) = matches.next() else {
+            return Err(SlotSelectionFailure::MissingNode(anchor_key).into());
+        };
+        if matches.next().is_some() {
+            return Err(SlotSelectionFailure::MalformedNode(anchor_key).into());
+        }
+        let function_key = graph.key(&function.node_id).map_err(|_| {
+            SlotSelectionFailure::Fault(InternalFault::new(
+                "FR-531",
+                "source-operation-clause-has-structural-key",
+            ))
+        })?;
+        Ok(self.project_source_clause_function(&function_key)?)
+    }
+
+    fn project_source_clause_function(
+        &self,
+        node: &NodeKey,
+    ) -> Result<ReaderProtocolProjection, BareSelectionFailure> {
+        let identities = self
+            .source_object_effective_ids()
+            .map_err(|_| fault("source-object-rows-have-declaring-unit-identities"))?;
+        self.project_selected_function_with_source_objects(
+            FunctionSelector::Node(node),
+            Some(&identities),
+            true,
+        )?
+        .ok_or_else(|| SlotSelectionFailure::MissingNode(node.clone()).into())
+    }
+
     /// The value type of one admitted protocol binder node (FR-531).
     pub fn protocol_parameter_type(
         &self,
@@ -478,6 +705,7 @@ impl<'p> BarePackage<'p> {
             nodes: &nodes,
             graph: &graph,
             projections: self.exact_type_projections(),
+            source_object_ids: None,
         };
         match node_value_type(&reader, binder) {
             Ok(value_type) => Ok(value_type),
@@ -549,6 +777,7 @@ impl<'p> BarePackage<'p> {
             nodes: &nodes,
             graph: &graph,
             projections: self.exact_type_projections(),
+            source_object_ids: None,
         };
         let resolve =
             |descriptor: &ProtocolSlotDescriptor| -> Result<Resolved<'_>, BareSelectionFailure> {
@@ -824,6 +1053,17 @@ impl<'p> BarePackage<'p> {
         &self,
         function: FunctionSelector<'_>,
     ) -> Result<Option<ReaderProtocolProjection>, BareSelectionFailure> {
+        self.project_selected_function_with_source_objects(function, None, false)
+    }
+
+    fn project_selected_function_with_source_objects(
+        &self,
+        function: FunctionSelector<'_>,
+        source_object_ids: Option<
+            &std::collections::BTreeMap<CheckedNodeId, filament_exact::EffectiveId>,
+        >,
+        include_source_objects_in_world: bool,
+    ) -> Result<Option<ReaderProtocolProjection>, BareSelectionFailure> {
         let (_, identities) = self.witness()?;
         let walker = BareWalker::new(
             self.package(),
@@ -832,7 +1072,15 @@ impl<'p> BarePackage<'p> {
             self.exact_type_projections(),
             self.dependency_views(),
         )
-        .map_err(SlotSelectionFailure::Fault)?;
+        .map_err(SlotSelectionFailure::Fault)?
+        .with_source_objects(source_object_ids);
+        let world = || {
+            if include_source_objects_in_world {
+                self.world_with_source_objects()
+            } else {
+                self.world()
+            }
+        };
         if let Some(result) =
             walker
                 .function_result_type(function)
@@ -850,7 +1098,7 @@ impl<'p> BarePackage<'p> {
                     WalkFailure::Fault(failure) => SlotSelectionFailure::Fault(failure).into(),
                 })?
         {
-            let world = self.world()?;
+            let world = world()?;
             if contains_nested_population(&result.value_type, world.types())
                 || world.types().runtime_type(&result.value_type).is_none()
             {
@@ -879,7 +1127,7 @@ impl<'p> BarePackage<'p> {
         let Some(projection) = projection else {
             return Ok(None);
         };
-        let world = self.world()?;
+        let world = world()?;
         let selected = projection
             .selected_function_node()
             .ok_or_else(|| fault("bare-function-projection-has-entry"))?;

@@ -3,6 +3,7 @@
 //! §15.5's `Retx`, decided by the finite-horizon solver.
 
 use filament_exact::{Cancel, Integer, Rational};
+use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
 use fsl_analyze::exact_probabilistic::{
     build_product, decide_bounded_event, witness_scheduler, ActionChoice, EntryChoice,
     ExactProbLimits, FhResult, MonitorVerdict, ProbBuild, ProbProduct, ProductAction, ProductKind,
@@ -13,6 +14,7 @@ use fsl_analyze::exact_probabilistic::{
 };
 use fsl_analyze::exact_probabilistic::{DeadlinePhase, MonitorState};
 use fsl_eval::model_subject::ModelSubject;
+use fsl_replay::{OutcomeItem, TerminalValue, UnavailabilityCause};
 use fsl_semantics::check::{
     Bound, BoundedMeasure, CheckCause, Event, ProbForm, ProbabilisticCause, TimeTypeMismatchReason,
     Weighting,
@@ -351,7 +353,7 @@ fn refusal(world: &World, claim: &str) -> ProductRefusal {
 }
 
 fn initial_value(product: &ProbProduct, bound: Bound) -> Rational {
-    let result = decide_bounded_event(product, &bound, &ExactProbLimits::default())
+    let result = decide_bounded_event(product, &bound, &ExactProbLimits::default(), &Cancel::new())
         .expect("the digital product is acyclic");
     let FhResult::Exact { values, .. } = result else {
         panic!("exact values: {result:?}");
@@ -950,9 +952,9 @@ fn reach_and_expected_reward_label_the_digital_product() {
         for objective in [UnboundedObjective::Min, UnboundedObjective::Max] {
             let limits = ExactProbLimits::default();
             let result = if name == "Reach" {
-                decide_reachability(&built, &target, objective, &limits)
+                decide_reachability(&built, &target, objective, &limits, &Cancel::new())
             } else {
-                decide_expected_reward(&built, &target, "sends", objective, &limits)
+                decide_expected_reward(&built, &target, "sends", objective, &limits, &Cancel::new())
             }
             .expect("the labelled product is solved");
             let expected = if name == "Reach" {
@@ -1321,7 +1323,7 @@ fn a_weight_zero_operation_takes_its_turn_last_in_a_tie() {
 /// The exact value the finite-horizon solver gives `product`'s initial state
 /// for `bound`, or `None` when the solver gives no exact value.
 fn exact_initial(product: &ProbProduct, bound: Bound) -> Option<Rational> {
-    match decide_bounded_event(product, &bound, &ExactProbLimits::default()) {
+    match decide_bounded_event(product, &bound, &ExactProbLimits::default(), &Cancel::new()) {
         Ok(FhResult::Exact { values, .. }) => Some(values[product.initial[0].2.index()].clone()),
         _ => None,
     }
@@ -1418,7 +1420,60 @@ fn zero_delay_loop_beside_an_end_component_is_decided() {
 #[test]
 fn time_locked_state_is_terminal() {
     let world = one_workload("delay M::Call::send ~ discrete { 5 ms: 1 };\n");
-    assert!(matches!(build(&world, "Under"), Ok(ProbBuild::Built(_))));
+    let built = product(&world, "Under");
+    let [_] = built.initial.as_slice() else {
+        panic!("one initial state: {:?}", built.initial);
+    };
+    let time_locked = built.ids().find(|state| {
+        matches!(
+            built.states[state.index()].monitor,
+            Some(MonitorState::Deadline {
+                phase: DeadlinePhase::Pending,
+                ..
+            })
+        ) && built.outgoing(*state).is_empty()
+    });
+    assert!(time_locked.is_some(), "a pending deadline state has no move");
+}
+
+/// FR-203-AC-3 / FR-204-AC-3 (TC-639): an exponential delay requested as
+/// exact evidence settles unsupported with its typed delay cause and no value.
+#[trace("TC-639", "FR-203-AC-3", "FR-204-AC-3")]
+#[test]
+fn exponential_delay_exact_item_is_unsupported_without_a_measured_value() {
+    let world = one_workload("delay M::Call::send ~ exponential(1);\n");
+    let claim = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Under")
+        .expect("the exact workload claim checks");
+    let item = exact_probabilistic_item(
+        fsl_foundation::RequestIndex::new(0),
+        ProductRequest {
+            subject: ModelSubject {
+                simulation: world.request(),
+                proof_bounds: Vec::new(),
+            },
+            claim,
+            limits: ExactProbLimits::default(),
+        },
+    );
+    let engines = Engines::fsl().expect("the linked EN-5 engine is admitted");
+    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let terminal = record.terminal().expect("unsupported is terminal");
+    assert!(matches!(
+        terminal.value(),
+        TerminalValue::Unsupported(UnavailabilityCause::DelayDistribution { operation })
+            if operation.contains("send")
+    ));
+    assert!(record.exact_probabilistic.is_none());
+    assert!(record.probabilistic_counterexample.is_none());
+    let outcome = serde_json::to_value(OutcomeItem::from_terminal(terminal))
+        .expect("the unsupported outcome serializes");
+    assert_eq!(outcome["result"], "unsupported");
+    assert!(outcome.get("measured").is_none(), "{outcome}");
+    assert!(outcome.get("value").is_none(), "{outcome}");
 }
 
 /// FR-186-AC-12 (TC-2169): over the timed `Retx` subject `expected elapsed`,
@@ -1521,7 +1576,7 @@ fn untimed_delay_names_missing_binding_and_duration_stays_a_reward() {
     };
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert!(matches!(
-        &refusals[0].cause,
+        refusals[0].cause.as_ref(),
         CheckCause::Probabilistic(cause)
             if matches!(
                 cause.as_ref(),

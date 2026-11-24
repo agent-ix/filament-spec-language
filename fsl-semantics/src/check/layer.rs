@@ -112,12 +112,11 @@ pub(super) fn typed_equalities(
         if let Some(required) = required {
             return Some(super::CheckRefusal {
                 location: node.location().clone(),
-                cause: super::CheckCause::LayerEquality {
+                cause: Box::new(super::CheckCause::LayerEquality {
                     selected,
                     required,
-                    span: spans
-                        .and_then(|spans| spans.operator_span_at(node.location())),
-                },
+                    span: spans.and_then(|spans| spans.operator_span_at(node.location())),
+                }),
             });
         }
     }
@@ -372,7 +371,7 @@ pub(super) fn expression_form(node: &ExprNode, predicates: &BTreeSet<&str>) -> O
         ExprNode::Query { query, .. } => match query {
             BinderQuery::Map | BinderQuery::Filter => Some(LayerForm::SequenceQuery),
             BinderQuery::FlatMap => Some(LayerForm::ValueConstruct),
-            BinderQuery::Forall | BinderQuery::Exists => None,
+            BinderQuery::Forall | BinderQuery::Exists | BinderQuery::Only => None,
         },
         ExprNode::Count { .. } | ExprNode::Sum { .. } => Some(LayerForm::SequenceQuery),
         ExprNode::Deref(_) | ExprNode::Reaches { .. } => Some(LayerForm::ObjectNavigation),

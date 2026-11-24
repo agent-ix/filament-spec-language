@@ -34,6 +34,9 @@ fsl-route = { path = "../fsl-route" }
 filament-checked = { workspace = true }
 filament-semantic-value = { workspace = true }
 quire-canonical = { workspace = true }
+# QSL-2815: product-key encoding embeds the already canonical model key with
+# the merged CanonicalValue writer API, isolated from transitive v0.3.2 users.
+quire-canonical-api = { package = "quire-canonical", git = "https://github.com/agent-ix/quire-canonical", rev = "3b542158649da80c3003a8b6799af90d1feb7b52", default-features = false }
 # Strict admission authenticates the plan root final clause binding.
 filament-contract-model = { workspace = true }
 # The observation owner admits progress associations independently of FSL.

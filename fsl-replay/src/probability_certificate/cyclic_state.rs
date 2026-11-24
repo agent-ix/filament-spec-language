@@ -268,7 +268,12 @@ pub(super) fn certificate_graph(
         )?;
         states.insert(key, state);
     }
-    let mut graph = CheckerGraph { initial, states };
+    let mut graph = CheckerGraph {
+        initial,
+        states,
+        scheduler_actions: Default::default(),
+        actions_by_state: None,
+    };
     let ranks = match profile {
         Profile::Dtmc => Some(analyze(&mut graph, limits, cancel, meter)?),
         Profile::Mdp => None,

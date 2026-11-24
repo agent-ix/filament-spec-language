@@ -10,7 +10,7 @@ use filament_semantic_value::declaration::ObjectTypeDeclaration;
 use fsl_semantics::check::{
     checked_dispatch_operation, AdmittedModel, DispatchRoot, OperationClauses,
 };
-use fsl_semantics::model::accounting::{Meter, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
 use fsl_semantics::model::dispatch::GeneralizationClosure;
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, Multiplicity, NativeValueType,
@@ -178,6 +178,89 @@ fn source_declared_nodes_carry_their_source_owner() {
     }
 }
 
+/// The AC-22 source, keyed identically while its owning source changes.
+fn point_and_list_under(owner: &str) -> Emission {
+    let point = CompositeDeclaration::new(
+        NodeKey::new("pkg", vec![PathSegment::Text("Point".to_owned())], 0).unwrap(),
+        "Point",
+        CompositeShape::Record(vec![FieldDeclaration::new(
+            "x",
+            ValueType::Integer,
+            Presence::Required,
+        )]),
+    );
+    let list_key = NodeKey::new("pkg", vec![PathSegment::Text("List".to_owned())], 0).unwrap();
+    let list = CompositeDeclaration::new(
+        list_key.clone(),
+        "List",
+        CompositeShape::Record(vec![FieldDeclaration::new(
+            "next",
+            ValueType::Composite(list_key),
+            Presence::Optional,
+        )]),
+    );
+    let types = TypeEnvironment::new([point, list], []).expect("Point and recursive List");
+    let mut declarations = PackageDeclarations::new(
+        RawSourceRef::new("agent-ix", owner).expect("a source owner"),
+        "pkg",
+        fsl_foundation::IdentityLimits::default(),
+    );
+    declarations.types = types;
+    let checked = declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("the source checks: {refusals:?}"));
+    emit(&CheckedPackage::link(checked))
+}
+
+/// FR-093-AC-22 (TC-416 step 13): owners change the declared nodes' owner
+/// member while the structural ids and recursive group remain identical.
+#[trace("FR-093-AC-22", "TC-416")]
+#[test]
+fn changing_source_owner_preserves_declared_structural_ids() {
+    let a = point_and_list_under("example-a");
+    let b = point_and_list_under("example-b");
+    verified(&a);
+    verified(&b);
+    assert_ne!(a.package.bytes(), b.package.bytes());
+    let a_wire = wire(&a);
+    let b_wire = wire(&b);
+    let a_point = declared(&a_wire, "Point");
+    let b_point = declared(&b_wire, "Point");
+    let expected_point = json!({"package": "pkg", "path": ["Point"], "ordinal": 0});
+    assert_eq!(a_point["node_id"], expected_point);
+    assert_eq!(b_point["node_id"], expected_point);
+    assert_eq!(a_point["owner"], owner_json("agent-ix", "example-a"));
+    assert_eq!(b_point["owner"], owner_json("agent-ix", "example-b"));
+
+    let a_list = declared(&a_wire, "List");
+    let b_list = declared(&b_wire, "List");
+    assert_eq!(a_list["node_id"], b_list["node_id"]);
+    assert_eq!(a_list["recursion_group"], b_list["recursion_group"]);
+    let members = |wire: &Value, group: &Value| {
+        nodes(wire)
+            .iter()
+            .filter(|node| node["recursion_group"] == *group)
+            .map(|node| node["node_id"].clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        members(&a_wire, &a_list["recursion_group"]),
+        members(&b_wire, &b_list["recursion_group"])
+    );
+    let integer = |wire: &Value| {
+        nodes(wire)
+            .iter()
+            .find(|node| node["node_tag"] == "scalar_type" && node["semantic_form"] == "integer")
+            .expect("the Integer scalar type")
+            .clone()
+    };
+    assert_eq!(integer(&a_wire)["node_id"], integer(&b_wire)["node_id"]);
+}
+
 fn one() -> Multiplicity {
     Multiplicity {
         lower: 1,
@@ -328,7 +411,7 @@ fn acme_dispatch_package(root: &str) -> CheckedPackage {
         None,
         Expression::boolean(true),
     );
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     let mut declarations = checked_dispatch_operation(
         &view,
         fsl_semantics::check::model_type_environment("fixture", &view).unwrap(),

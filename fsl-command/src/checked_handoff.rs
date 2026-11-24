@@ -134,6 +134,8 @@ pub enum ErrorCode {
     Compile,
     /// Contract IR's reader refused or could not finish reading the package.
     Reader,
+    /// The host refused an allocation the reader had already admitted.
+    HostAllocationFailed,
     /// The admitted package differs from the in-process checked unit.
     ReadBackDiffers,
     /// A corpus case does not get the refusal its table row declares.
@@ -178,8 +180,13 @@ pub enum Error {
     #[error("the reader had no operation catalog: {0}")]
     ReaderCatalogUnavailable(String),
     /// The host refused an allocation Contract IR's reader had admitted; nothing was judged.
-    #[error("the host refused an allocation while reading the emitted package: {0}")]
-    ReaderHostAllocationFailed(String),
+    #[error(
+        "host allocation failed during {:?}: requested {} bytes after {} bytes were admitted",
+        .0.stage,
+        .0.requested,
+        .0.consumed
+    )]
+    ReaderHostAllocationFailed(filament_contract_model::CheckedPackageHostAllocationFailed),
     /// The admitted package differs from the in-process checked unit.
     #[error("the admitted package differs from the checked unit: {detail}")]
     ReadBackDiffers {
@@ -258,8 +265,8 @@ impl Error {
             Self::Compile(_) => ErrorCode::Compile,
             Self::ReaderRefused(_)
             | Self::ReaderIncomplete(_)
-            | Self::ReaderCatalogUnavailable(_)
-            | Self::ReaderHostAllocationFailed(_) => ErrorCode::Reader,
+            | Self::ReaderCatalogUnavailable(_) => ErrorCode::Reader,
+            Self::ReaderHostAllocationFailed(_) => ErrorCode::HostAllocationFailed,
             Self::ReadBackDiffers { .. } | Self::SelectionMismatch(_) => ErrorCode::ReadBackDiffers,
             Self::CaseMismatch { .. } => ErrorCode::CaseMismatch,
             Self::Dependency { .. } => ErrorCode::Dependency,
@@ -279,6 +286,7 @@ impl Error {
             ErrorCode::Exists => "handoff-exists",
             ErrorCode::Compile => "handoff-compile",
             ErrorCode::Reader => "handoff-reader",
+            ErrorCode::HostAllocationFailed => "runtime_invariant",
             ErrorCode::ReadBackDiffers => "handoff-read-back-differs",
             ErrorCode::CaseMismatch => "handoff-case-mismatch",
             ErrorCode::Dependency => "handoff-dependency",
@@ -486,7 +494,7 @@ fn write_compiled(
 }
 
 /// The admitted package of a read, or the reader's refusal.
-fn admit(read: CheckedPackageDispatchResult) -> Result<Box<CheckedPackageV2>, Error> {
+pub(super) fn admit(read: CheckedPackageDispatchResult) -> Result<Box<CheckedPackageV2>, Error> {
     match read {
         CheckedPackageDispatchResult::AdmittedV2(package) => Ok(package),
         CheckedPackageDispatchResult::Refused(refusal) => {
@@ -499,7 +507,7 @@ fn admit(read: CheckedPackageDispatchResult) -> Result<Box<CheckedPackageV2>, Er
             Err(Error::ReaderCatalogUnavailable(format!("{unavailable:?}")))
         }
         CheckedPackageDispatchResult::HostAllocationFailed(failure) => {
-            Err(Error::ReaderHostAllocationFailed(format!("{failure:?}")))
+            Err(Error::ReaderHostAllocationFailed(failure))
         }
     }
 }

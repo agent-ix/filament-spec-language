@@ -4,6 +4,7 @@
 //! selections and a compile request that writes the compiled document.
 
 use fsl_command::command::{self, CheckInputs};
+use fsl_forms::cst::{self, CompleteCause, CompleteCode};
 use fsl_foundation::SourceIdentity;
 use fsl_replay::Operation;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -359,7 +360,6 @@ fn systems_source_compiles_to_the_same_checked_package_as_its_document() {
 #[test]
 #[trace("TC-3013", "FR-710-AC-12")]
 fn systems_source_rejects_each_invalid_endpoint_before_writing_a_document() {
-    use fsl_cst::diagnostic::{CompleteCause, CompleteCode};
     for (original, changed, offending, code, cause, retained) in [
         (
             "SysPump.PumpOut",
@@ -451,11 +451,11 @@ fn systems_source_rejects_each_invalid_endpoint_before_writing_a_document() {
         ),
     ] {
         let model = SYSTEMS_MODEL.replace(original, changed);
-        let parsed = fsl_cst::parse(
+        let parsed = cst::parse(
             SourceIdentity::new("agent-ix", "test:plant.fsl"),
             "plant.fsl",
             model.as_bytes(),
-            fsl_cst::Limits::default(),
+            cst::Limits::default(),
         )
         .unwrap();
         let errors = fsl_semantics::model::intake::compile_model_unit_with_causes(
@@ -467,7 +467,7 @@ fn systems_source_rejects_each_invalid_endpoint_before_writing_a_document() {
             panic!("{errors:?}")
         };
         assert_eq!(error.code, code, "{changed}: {error:?}");
-        assert_eq!(error.cause, cause, "{changed}: {error:?}");
+        assert_eq!(error.cause(), cause, "{changed}: {error:?}");
         let start = model.find("connection Pipe ").unwrap()
             + "connection Pipe ".len()
             + model[model.find("connection Pipe ").unwrap() + "connection Pipe ".len()..]
@@ -482,10 +482,10 @@ fn systems_source_rejects_each_invalid_endpoint_before_writing_a_document() {
             })
         );
         assert_eq!(
-            error.source,
-            SourceIdentity::new("agent-ix", "test:plant.fsl")
+            error.source_identity(),
+            &SourceIdentity::new("agent-ix", "test:plant.fsl")
         );
-        assert_eq!(error.path, "plant.fsl");
+        assert_eq!(error.source_path(), "plant.fsl");
         for detail in retained {
             assert!(error.message.contains(detail), "{detail}: {error:?}");
         }
@@ -510,11 +510,11 @@ fn systems_source_rejects_each_invalid_endpoint_before_writing_a_document() {
                     &format!("{declaration}\nconnection Pipe"),
                 )
                 .replace(original, changed);
-            let parsed = fsl_cst::parse(
+            let parsed = cst::parse(
                 SourceIdentity::new("agent-ix", "test:plant.fsl"),
                 "plant.fsl",
                 model.as_bytes(),
-                fsl_cst::Limits::default(),
+                cst::Limits::default(),
             )
             .unwrap();
             let errors = fsl_semantics::model::intake::compile_model_unit_with_causes(
@@ -526,7 +526,7 @@ fn systems_source_rejects_each_invalid_endpoint_before_writing_a_document() {
                 panic!("{errors:?}")
             };
             assert_eq!(error.code, CompleteCode::InvalidModelBinding, "{error:?}");
-            assert_eq!(error.cause, CompleteCause::WrongExport, "{error:?}");
+            assert_eq!(error.cause(), CompleteCause::WrongExport, "{error:?}");
             assert!(
                 error
                     .message
@@ -1138,11 +1138,11 @@ fn a_compile_request_over_a_model_unit_writes_its_document() {
         &[("output", output)],
     );
     let outcome = command::compile_outcome(&path).expect("the model unit compiles");
-    let parsed = fsl_cst::parse(
+    let parsed = cst::parse(
         SourceIdentity::new("agent-ix", "test:shop.fsl"),
         "shop.fsl",
         SHOP.as_bytes(),
-        fsl_cst::Limits::default(),
+        cst::Limits::default(),
     )
     .expect("the model unit parses");
     let expected = compile_model_unit(&parsed, ModelNormalizationLimits::default())

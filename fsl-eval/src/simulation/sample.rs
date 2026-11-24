@@ -218,6 +218,8 @@ struct SamplePlan {
     identity: IdentityLimits,
 }
 
+type SampleResult<T, F> = Result<Option<ObservedSample<T, F>>, EncodingRefusal>;
+
 /// Draw one sampled run from `system`, starting at trace `trace_index mod m`
 /// among `system`'s `m` distinct initial states (no draw selects the
 /// start). The run ends at the first state where `end` holds, unexpanded
@@ -232,7 +234,10 @@ struct SamplePlan {
 ///
 /// [`EncodingRefusal`] when a state or transition identity reached during
 /// the run has no RFC 8785 encoding.
-fn sample<S: TransitionSystem, E: SampleExpansionSource<S::TransitionId, S::State, S::Finding>>(
+fn sample<
+    S: TransitionSystem<InitialError = std::convert::Infallible>,
+    E: SampleExpansionSource<S::TransitionId, S::State, S::Finding>,
+>(
     system: &S,
     plan: SamplePlan,
     mut end: impl FnMut(&S::State, &StateKey) -> bool,
@@ -240,7 +245,7 @@ fn sample<S: TransitionSystem, E: SampleExpansionSource<S::TransitionId, S::Stat
     mut observer: impl FnMut(
         &SampleObservation<'_, S::State, S::TransitionId, S::Finding>,
     ) -> ObserverDecision,
-) -> Result<Option<ObservedSample<S::TransitionId, S::Finding>>, EncodingRefusal> {
+) -> SampleResult<S::TransitionId, S::Finding> {
     let SamplePlan {
         sampler,
         seed,
@@ -408,7 +413,7 @@ pub(crate) fn is_pinned_sampler(sampler: &DefinitionRef) -> bool {
     clippy::too_many_arguments,
     reason = "FR-101 pins this exact signature; the parameters are the request's own fields, not an accretion of unrelated flags"
 )]
-pub fn sample_request<S: TransitionSystem, R: Root>(
+pub fn sample_request<S: TransitionSystem<InitialError = std::convert::Infallible>, R: Root>(
     system: &S,
     domains: &[R],
     types: &TypeEnvironment,
@@ -465,7 +470,10 @@ pub struct SampleRequest<'r, R: Root = (NodeKey, &'r ValueType)> {
 /// # Errors
 ///
 /// As [`sample_request`].
-pub fn sample_request_until<S: TransitionSystem, R: Root>(
+pub fn sample_request_until<
+    S: TransitionSystem<InitialError = std::convert::Infallible>,
+    R: Root,
+>(
     system: &S,
     request: SampleRequest<'_, R>,
     mut end: impl FnMut(&S::State) -> bool,
@@ -490,7 +498,10 @@ pub fn sample_request_until<S: TransitionSystem, R: Root>(
 /// # Errors
 ///
 /// The same admission and encoding refusals as [`sample_request`].
-pub fn sample_request_observed<S: TransitionSystem, R: Root>(
+pub fn sample_request_observed<
+    S: TransitionSystem<InitialError = std::convert::Infallible>,
+    R: Root,
+>(
     system: &S,
     request: SampleRequest<'_, R>,
     observer: impl FnMut(
@@ -509,7 +520,7 @@ pub fn sample_request_observed<S: TransitionSystem, R: Root>(
 /// The same admitted sampler with caller-supplied canonical expansions.
 /// The model walk uses its request-local memo without changing draw order.
 pub(crate) fn sample_request_using<
-    S: TransitionSystem,
+    S: TransitionSystem<InitialError = std::convert::Infallible>,
     R: Root,
     E: SampleExpansionSource<S::TransitionId, S::State, S::Finding>,
 >(
@@ -550,7 +561,7 @@ pub(crate) fn sample_request_using<
 /// supplied canonical expansion source. The model walk uses its memoized
 /// expansion without changing draw order.
 pub(crate) fn sample_request_observed_using<
-    S: TransitionSystem,
+    S: TransitionSystem<InitialError = std::convert::Infallible>,
     R: Root,
     E: SampleExpansionSource<S::TransitionId, S::State, S::Finding>,
 >(

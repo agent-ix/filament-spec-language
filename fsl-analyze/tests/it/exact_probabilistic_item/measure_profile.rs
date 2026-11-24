@@ -85,6 +85,7 @@ fn refuted(world: &World, name: &str) {
 }
 
 #[trace("TC-3152", "FR-1043-AC-1")]
+#[trace("FSpec-TC-364", "FSpec-FR-413-AC-9")]
 #[test]
 fn workload_quantile_has_independently_checked_numerator_denominator_and_ranks() {
     let world = World::new(&retry(
@@ -116,7 +117,7 @@ fn workload_quantile_has_independently_checked_numerator_denominator_and_ranks()
             .iter()
             .find(|row| {
                 let key = key(row);
-                key[5][1] == remaining.to_string() && key[5][2] == "active" && key[6][2] == amount
+                key[5][1] == remaining && key[5][2] == "active" && key[6][2] == amount
             })
             .expect("an active amount row");
         assert_eq!(
@@ -179,7 +180,11 @@ fn workload_quantile_has_independently_checked_numerator_denominator_and_ranks()
         ),
         "{checked:?}"
     );
-    refuted(&world, "No");
+    let counterexample = settle(&world, "No", ModelCheckLimits::default())
+        .probabilistic_counterexample
+        .expect("the quantile refutation carries replayed path evidence");
+    assert_eq!(counterexample.mass(), &ratio(1, 4));
+    assert!(!counterexample.evidence().paths.is_empty());
 }
 
 #[trace("TC-3152", "FR-1043-AC-2", "FR-1043-AC-3")]
@@ -217,9 +222,7 @@ fn every_scheduler_checks_shifted_extrema_and_the_strict_zero_edge() {
             .iter()
             .find(|row| {
                 let state = key(row);
-                state[5][1] == remaining.to_string()
-                    && state[5][2] == "active"
-                    && state[6][2] == amount
+                state[5][1] == remaining && state[5][2] == "active" && state[6][2] == amount
             })
             .unwrap();
         assert_eq!(
@@ -673,6 +676,7 @@ fn p95_quantity_ratio_is_accepted_from_its_emitted_package_and_two_ms_refutes() 
                 initial: simulation.initial.clone(),
                 universes: simulation.universes.clone(),
                 certificate: &bytes,
+                role: fsl_replay::CertificateRole::Claim,
             },
             limits,
             &Cancel::new(),
@@ -1141,6 +1145,14 @@ fn workload_mean_refutation_uses_a_checked_subsystem_and_equality_never_refutes(
     assert_eq!(
         token.wire.as_ref().unwrap()["evidence"]["type"],
         "subsystem"
+    );
+    assert_eq!(
+        token.wire.as_ref().unwrap()["bound"]["type"],
+        "mean-of-fraction"
+    );
+    assert_eq!(
+        token.wire.as_ref().unwrap()["bound"]["comparison"],
+        "greater-or-equal"
     );
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let replay = fsl_replay::replay_probabilistic_witness(
@@ -2406,7 +2418,76 @@ fn a_live_mean_bound_checker_limit_or_cancellation_cannot_produce_a_token() {
     );
 }
 
-#[trace("FR-1043-AC-11", "FR-202-AC-26")]
+#[trace("TC-3152", "FR-1043-AC-11", "FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7")]
+#[test]
+fn a_zero_reward_fraction_replays_the_undefined_fraction_value() {
+    let source = "probabilistic Q using ev on M over (c:M::Coin) under Even on origin { mean of (fraction holds(c.v = 0) over [0,0] weighted by R) >= rational(1,2) }";
+    let mut model = prob_world::coin(source);
+    model.body += "\nreward R on Coin::drop = 0;\n";
+    let world = World::new(&model);
+    let record = settle(&world, "Q", ModelCheckLimits::default());
+    assert_eq!(record.terminal().unwrap().value(), &TerminalValue::Refuted);
+
+    let token = record.probabilistic_counterexample.as_ref().unwrap();
+    let undefined = token.undefined().expect("replayed FractionValue");
+    assert_eq!(undefined.evaluation.site.position, 1);
+    assert_eq!(
+        undefined.evaluation.site.locus,
+        fsl_replay::UndefinedLocus::FractionValue
+    );
+    assert_eq!(token.mass(), &ratio(1, 2));
+    assert_eq!(undefined.path.paths[0].steps.len(), 1);
+    let context: Value = serde_json::from_slice(undefined.product_state.as_bytes()).unwrap();
+    assert_eq!(context[5], json!(["fraction", "1", "collecting"]));
+    assert_eq!(context[6][0], "weighted-fraction");
+    assert_eq!(context[6][3], json!(["0", "1"]));
+    assert_eq!(context[6][4], json!(["0", "1"]));
+    assert_eq!(
+        token.wire.as_ref().unwrap()["evidence"]["undefined"]["cause"],
+        "division-by-zero"
+    );
+
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let post = &undefined.path.paths[0].steps[0].post;
+    let readings = system
+        .state_predicates_with_cancel(
+            post,
+            &[(
+                match &world.claim("Q").form {
+                    fsl_semantics::check::ProbForm::MeanOfFraction { fraction, .. } => {
+                        &fraction.predicate
+                    }
+                    _ => unreachable!(),
+                },
+                undefined.path.binding.as_ref(),
+            )],
+            &Cancel::new(),
+        )
+        .unwrap();
+    assert!(matches!(
+        readings.as_slice(),
+        [fsl_eval::simulation::model::PredicateReading::Undefined { .. }]
+    ));
+    let replay = fsl_replay::replay_probabilistic_undefined(
+        &world.package,
+        &system,
+        &undefined.path.item,
+        undefined,
+        &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+        &Cancel::new(),
+    );
+    assert!(matches!(
+        replay,
+        Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+    ));
+}
+
+#[trace(
+    "FR-1043-AC-11",
+    "FR-202-AC-26",
+    "FSpec-FR-411-AC-12",
+    "FSpec-FR-413-AC-7"
+)]
 #[test]
 fn zero_weight_fraction_replays_its_tentative_value_before_an_outside_window_predicate() {
     for scheduler in ["Even", "every scheduler"] {
@@ -2568,9 +2649,12 @@ fn object_parameter_reward_candidates_are_checked_before_runtime() {
         };
         assert!(
             refusals.iter().any(|refusal| match expected {
-                0 => matches!(refusal.cause, CheckCause::Unproved(Obligation::Nonzero)),
+                0 => matches!(
+                    refusal.cause.as_ref(),
+                    CheckCause::Unproved(Obligation::Nonzero)
+                ),
                 1 => matches!(
-                    refusal.cause,
+                    refusal.cause.as_ref(),
                     CheckCause::IllTyped(IllTypedCause::TypeMismatch)
                 ),
                 _ => refusal.cause.cause() == Some("state-read-in-reward"),
@@ -2989,7 +3073,7 @@ fn partial_lower_restores_detached_terminal_undecided_and_pending_rows() {
                 .find(|row| {
                     let state = key(row);
                     state[4] == initial[4]
-                        && state[5][1] == remaining.to_string()
+                        && state[5][1] == remaining
                         && state[6]
                             == json!([
                                 "count-fraction",

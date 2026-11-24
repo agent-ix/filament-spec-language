@@ -230,7 +230,7 @@ impl TypeFormError {
                 span: self.span,
             },
             TypeFormFault::UnitArithmetic(_) => {
-                return CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible)
+                return CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible);
             }
             TypeFormFault::UnitIdentity(cause) => CheckCause::Identity(cause),
             TypeFormFault::Malformed
@@ -239,12 +239,12 @@ impl TypeFormError {
             | TypeFormFault::MalformedDecimal
             | TypeFormFault::EmptyTextBounds
             | TypeFormFault::EmptyCardinality => {
-                return CheckRefusal::ill_typed(location, IllTypedCause::TypeMismatch)
+                return CheckRefusal::ill_typed(location, IllTypedCause::TypeMismatch);
             }
         };
         CheckRefusal {
             location: location.clone(),
-            cause,
+            cause: Box::new(cause),
         }
     }
 }
@@ -472,7 +472,7 @@ fn resolve_builtin<'f>(
             return Ok(Step::Option {
                 form,
                 argument: only_argument(form)?,
-            })
+            });
         }
         BuiltinType::Map => {
             let [key, values] = form.arguments.as_slice() else {
@@ -543,7 +543,7 @@ pub(super) fn quantity_unit(
     target: &TypeForm,
 ) -> Result<UnitId, TypeFormError> {
     use filament_semantic_value::quantity::{
-        evaluate_quantity_unit, result_unit, QuantityOperation, QuantityRefusal, UnitOperation,
+        QuantityOperation, QuantityRefusal, UnitOperation, evaluate_quantity_unit, result_unit,
     };
     let resolve = |name: &NameForm| {
         names.unit_named(&name.name).ok_or_else(|| {
@@ -651,7 +651,7 @@ fn carried_quantity_type(
                     _ => return Err(malformed(form)),
                 },
                 Step::Option { .. } | Step::Collection { .. } | Step::Map { .. } => {
-                    return Err(malformed(form))
+                    return Err(malformed(form));
                 }
             };
             QuantityCarrier::Decimal(decimal)
@@ -664,7 +664,7 @@ fn carried_quantity_type(
                     _ => return Err(malformed(form)),
                 },
                 Step::Option { .. } | Step::Collection { .. } | Step::Map { .. } => {
-                    return Err(malformed(form))
+                    return Err(malformed(form));
                 }
             };
             QuantityCarrier::Rational(domain)
@@ -1014,7 +1014,7 @@ mod tests {
         let refusal = resolve(&invalid).expect_err("a collection map key is refused");
         assert!(
             matches!(
-                refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::IllTyped(IllTypedCause::OperatorIneligible)
             ),
             "unexpected cause: {:?}",
@@ -1039,7 +1039,7 @@ mod tests {
         let refusal = resolve(form).expect_err("the form is malformed");
         assert!(
             matches!(
-                refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::IllTyped(IllTypedCause::TypeMismatch)
             ),
             "{form:?} refused with {:?}",
@@ -1308,7 +1308,7 @@ mod tests {
                 .into_refusal(&root_location());
             assert!(
                 matches!(
-                    refusal.cause,
+                    refusal.cause.as_ref(),
                     CheckCause::IllTyped(IllTypedCause::TypeMismatch)
                 ),
                 "Quantity<m, Rational{bounds:?}> refused with {:?}",
@@ -1342,8 +1342,10 @@ mod tests {
     fn an_absent_collection_bound_resolves_to_none() {
         let collection = |kind: CollectionKind, bounds: &[&str]| {
             TypeForm::collection(kind, SPAN)
-                .with_arguments(vec![TypeForm::builtin(BuiltinType::Int, SPAN)
-                    .with_bounds(vec!["0".to_owned(), "9".to_owned()])])
+                .with_arguments(vec![
+                    TypeForm::builtin(BuiltinType::Int, SPAN)
+                        .with_bounds(vec!["0".to_owned(), "9".to_owned()]),
+                ])
                 .with_bounds(bounds.iter().map(|bound| (*bound).to_owned()).collect())
         };
         for kind in [
@@ -1380,7 +1382,7 @@ mod tests {
         let refusal = resolve(&collection(CollectionKind::Set, &["3", "2"]))
             .expect_err("an inverted bound refuses");
         assert!(matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
         ));
     }
@@ -1447,7 +1449,7 @@ mod tests {
         );
         let refusal = resolve_in(&scope, &reference("M::B")).unwrap_err();
         assert!(
-            matches!(refusal.cause, CheckCause::MissingQualifiedName(name) if name.name == "M::B")
+            matches!(refusal.cause.as_ref(), CheckCause::MissingQualifiedName(name) if name.name == "M::B")
         );
     }
 
@@ -1457,9 +1459,11 @@ mod tests {
     fn names_resolve_uniquely_or_are_refused() {
         let scope = scope_with(object_type("X"), vec![("X".to_owned(), ValueType::Boolean)]);
         let refusal = resolve_in(&scope, &TypeForm::name("X", SPAN)).unwrap_err();
-        assert!(matches!(refusal.cause, CheckCause::AmbiguousName { name, .. } if name == "X"));
+        assert!(
+            matches!(refusal.cause.as_ref(), CheckCause::AmbiguousName { name, .. } if name == "X")
+        );
         let refusal = resolve(&TypeForm::name("Y", SPAN)).unwrap_err();
-        assert!(matches!(refusal.cause, CheckCause::MissingName(name) if name == "Y"));
+        assert!(matches!(refusal.cause.as_ref(), CheckCause::MissingName(name) if name == "Y"));
     }
 
     /// `Population<T>[N]` has its own head, so a user type named

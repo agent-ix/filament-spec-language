@@ -2,14 +2,13 @@
 //! A CG-shaped external caller enters FSL only through fsl-replay.
 
 use filament_eval::{
-    Admission, Body, BodyFactory, BodyFailure, Evaluation, FamilyOutcome, LiveContext, Resume,
-    Transition,
+    Admission, Body, BodyFactory, BodyFailure, Evaluation, FamilyOutcome, Resume, Transition,
 };
 use filament_exact::{Integer, Meter, Outcome, ScalarLimits, Value};
 use filament_semantic_value::object_closure::ObjectClosure;
 use fsl_replay::{
-    acquire_checked_closure, call_site, ApplicationEnvironment, DependencyInput, Identifier,
-    QualifiedName, ReplayLimits, SourceIdentity, StageLimits,
+    ApplicationEnvironment, DependencyInput, Identifier, QualifiedName, ReplayLimits,
+    SourceIdentity, StageLimits, acquire_checked_closure, call_site,
 };
 
 const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction f using v(x: Int[0, 9]): Integer pure { x }\n";
@@ -53,9 +52,11 @@ pub fn run() {
     let name = QualifiedName::new(vec![Identifier::new("f").expect("identifier")]).expect("name");
     let site = call_site(
         source.clone(),
-        "consumer.native".to_owned(),
-        "consumer.native",
-        SOURCE.as_bytes(),
+        fsl_replay::CallSiteUnit::new(
+            "consumer.native".to_owned(),
+            "consumer.native",
+            SOURCE.as_bytes(),
+        ),
         [],
         &DependencyInput::default(),
         &fsl_replay::RequestClocks::default(),

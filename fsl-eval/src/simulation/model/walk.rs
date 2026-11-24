@@ -9,6 +9,7 @@ use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::model::object_environment::PlacePresences;
 use fsl_semantics::model::observation::Observation;
 use fsl_semantics::model::state::ModelState;
+use std::collections::BTreeSet;
 
 use super::footprints::Enforcement;
 use super::{
@@ -421,18 +422,24 @@ pub(crate) struct Applied {
     pub(crate) result: Option<Value>,
 }
 
-/// The objects of `state`, in ascending (population, key) order.
+/// The objects of `state`, in ascending (population, key) order, with a
+/// shared native reference represented once even when several populations
+/// list that object.
 pub(super) fn rows_of(
     system: &ModelSystem<'_>,
     state: &fsl_semantics::model::state::ModelState,
 ) -> Result<Vec<Row>, ExpansionStop> {
     let mut rows = Vec::new();
+    let mut seen = BTreeSet::new();
     for (population, objects) in &state.populations {
         for (object_key, object) in objects {
             let reference = system
                 .model
                 .object_reference(&object.type_identity, object_key)
                 .map_err(|_| stop(BROKEN))?;
+            if !seen.insert(reference.clone()) {
+                continue;
+            }
             rows.push(Row {
                 population: population.clone(),
                 key: object_key.clone(),

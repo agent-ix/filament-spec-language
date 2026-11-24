@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 
 use filament_exact::{EffectiveId, NodeKey, Origin, ValueType};
 
-use super::{fault, Binder, Binders, Lowering};
+use super::{Binder, Binders, Lowering, fault};
 use crate::check::claims::BinderSite;
 use crate::check::family::OccurrenceRole;
 use crate::check::ir::CheckedNode;
@@ -307,7 +307,7 @@ impl Lowering<'_> {
                 })
                 .map_err(|refusal| CheckRefusal {
                     location: clause.name_location.clone(),
-                    cause: CheckCause::ExecutionPointBinding(refusal),
+                    cause: Box::new(CheckCause::ExecutionPointBinding(refusal)),
                 })?;
         }
         let mut scope = Vec::with_capacity(clause.parameters.len());
@@ -343,7 +343,7 @@ impl Lowering<'_> {
                         "S4",
                         "state-clause-condition-is-a-node",
                     )),
-                ))
+                ));
             }
         };
         let boolean = self.type_node(&ValueType::Boolean, location)?;

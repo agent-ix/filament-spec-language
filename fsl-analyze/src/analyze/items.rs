@@ -6,22 +6,22 @@
 
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{ClauseOutcome, ModelSystem, DEFAULT_MAX_CLOCKS};
+use fsl_eval::simulation::model::{ClauseOutcome, DEFAULT_MAX_CLOCKS, ModelSystem};
 use fsl_eval::simulation::protocol::{CapacityRefusal, ProtocolRefusal, ProtocolTransition};
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
-use fsl_replay::statistical::{settle_statistical, settle_statistical_refusal, SubjectLimits};
+use fsl_replay::statistical::{SubjectLimits, settle_statistical, settle_statistical_refusal};
 use fsl_replay::{
-    check_zone_certificate, settle_hyper_form, CertificateCheckLimits, CertificateRequest,
-    DeclineCode, ModelTraceRefusal, ModelTraceReplayResult, ProofRefusalCause,
-    RefinementTraceSettlement, ReplayRefusal, SubjectRefusal, TemporalCounterexample,
-    TerminalValue, UnavailabilityCause, ZoneCertificateRequest,
+    CertificateCheckLimits, CertificateRequest, DeclineCode, ModelTraceRefusal,
+    ModelTraceReplayResult, ProofRefusalCause, RefinementTraceSettlement, ReplayRefusal,
+    SubjectRefusal, TemporalCounterexample, TerminalValue, UnavailabilityCause,
+    ZoneCertificateRequest, check_zone_certificate, settle_hyper_form,
 };
 use fsl_replay::{ModelCheckItem, ModelCheckLimits, ProtocolCertificateRequest, SubjectIdentity};
+use fsl_route::Mode;
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::request::{DerivedLimit, DerivedLimits, ItemKind, RequestItem, RequirementItem};
-use fsl_route::Mode;
 use fsl_semantics::check::{
     Capability, CheckedTemporalClause, DeclarationFamily, HyperForm, TerminalKeys, TerminalMismatch,
 };
@@ -33,15 +33,15 @@ use filament_exact::{Cancel, ObjectReference, ValueType};
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::claim_family::{claim_family, kind_family};
 use crate::model_check::{
-    check_model_with_stutter_closure, check_protocol_constrained, manifest as en1, HyperRefusal,
-    LivenessRefusal, ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
+    HyperRefusal, LivenessRefusal, ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
+    check_model_with_stutter_closure, check_protocol_constrained, manifest as en1,
 };
-use crate::statistical::{check_statistical, manifest as en4, StatisticalRequest};
+use crate::statistical::{StatisticalRequest, check_statistical, manifest as en4};
 use crate::zone_check::{
-    certificate_item, check_timed_model, check_timed_refinement, manifest as en6,
-    settle_timed_refinement, settle_zone_check, TimedLivenessHalf, TimedRefinementOutcome,
-    TimedRefinementRefusal, TimedRefinementRequest, TimedSafetyOutcome, ZoneCheckItem,
-    ZoneCheckLimits, ZoneCheckRefusal, ZoneCheckRequest, ZoneItem,
+    TimedLivenessHalf, TimedRefinementOutcome, TimedRefinementRefusal, TimedRefinementRequest,
+    TimedSafetyOutcome, ZoneCheckItem, ZoneCheckLimits, ZoneCheckRefusal, ZoneCheckRequest,
+    ZoneItem, certificate_item, check_timed_model, check_timed_refinement, manifest as en6,
+    settle_timed_refinement, settle_zone_check,
 };
 
 /// The FR-396/FR-399 negotiation seam for a routed hyper item. HP-4 calls
@@ -149,8 +149,9 @@ pub fn model_item<'a>(
 pub(super) fn run_model_item(
     index: RequestIndex,
     family: Option<DeclarationFamily>,
-    item: ModelItem<'_>,
+    mut item: ModelItem<'_>,
 ) -> AnalyzeItem<'_> {
+    item.certificate = item.request.certificate_request();
     let kind = match item.request.item {
         ModelCheckItem::Invariant { .. } => Capability::OperationContract,
         ModelCheckItem::Clause { .. }
@@ -218,11 +219,15 @@ pub(super) fn settle_model_item(item: ModelItem<'_>, cancel: &Cancel) -> EngineR
         replay,
     } = item;
     let limits = request.limits;
+    let method = request.reductions.constraint.as_ref().map_or_else(
+        || fsl_replay::EXPLICIT_STATE.to_owned(),
+        |constraint| format!("{} (constraint: {constraint})", fsl_replay::EXPLICIT_STATE),
+    );
     match check_model_with_stutter_closure(request, cancel, stutter_closure) {
         Ok(outcome) => {
             let allocation = super::document::effect_decision::ReplayAllocation::default();
             let replay = |payload: &TemporalCounterexample| allocation.capture(replay(payload));
-            let record = if stutter_closure {
+            let mut record = if stutter_closure {
                 fsl_replay::settle_model_check_over_stutter_closure(
                     &outcome,
                     &limits,
@@ -233,6 +238,7 @@ pub(super) fn settle_model_item(item: ModelItem<'_>, cancel: &Cancel) -> EngineR
             } else {
                 fsl_replay::settle_model_check(&outcome, &limits, &certificate, cancel, replay)
             };
+            record.method = method;
             if let Some(report) = allocation.report() {
                 return report;
             }
@@ -359,12 +365,14 @@ pub(super) fn settle_protocol_item(
                 .and_then(|_| {
                     fsl_eval::simulation::protocol::over_reference(simulation, &protocol, &over)
                 })
-                .map(|over| fsl_replay::ProtocolWire {
-                    protocol,
-                    over,
-                    roles,
-                    capacities,
-                    max_live_instances: on_each.then_some(max_live_instances),
+                .map(|over| {
+                    Box::new(fsl_replay::ProtocolWire {
+                        protocol,
+                        over,
+                        roles,
+                        capacities,
+                        max_live_instances: on_each.then_some(max_live_instances),
+                    })
                 });
             EngineReport::Protocol(Box::new(record), subject)
         }
@@ -386,6 +394,12 @@ pub fn statistical_item<'a>(
         Mode::Unbounded,
         en4::BACKEND_ID,
         move |cancel| {
+            if matches!(
+                request.claim.activation,
+                fsl_semantics::check::ClaimActivation::Each { .. }
+            ) {
+                return super::exact::statistical_on_each(request.subject, request.claim, cancel);
+            }
             let simulation = &request.subject.simulation;
             let expansion = simulation.expansion;
             let meter = simulation.meter;
@@ -545,7 +559,9 @@ pub enum DerivedItemMismatch {
     /// A derived item's run handed to [`model_item`], [`protocol_item`] or
     /// [`zone_item`], which settle it with no join to its request item: a
     /// derived item settles only through its derived adapter (FR-411).
-    #[error("request item {index:?}'s run is a derived item's; it settles only through its derived adapter")]
+    #[error(
+        "request item {index:?}'s run is a derived item's; it settles only through its derived adapter"
+    )]
     DerivedRun {
         /// The request item's index.
         index: RequestIndex,
@@ -554,7 +570,9 @@ pub enum DerivedItemMismatch {
     /// `model_root` anchor equal to the derived request item's claim, the
     /// node of its obligation identity (FSpec FR-368, ADR-013 O-09): the
     /// run answers another subject's item.
-    #[error("stale_dependency/content-mismatch: no model_root of the run's package anchors request item {index:?} at {occurrence}")]
+    #[error(
+        "stale_dependency/content-mismatch: no model_root of the run's package anchors request item {index:?} at {occurrence}"
+    )]
     OtherAnchor {
         /// The request item's index.
         index: RequestIndex,
@@ -819,7 +837,7 @@ pub fn derived_protocol_item<'a, S>(
         ItemKind::LoopInvariant => |run| matches!(run, ModelCheckItem::LoopInvariant { .. }),
         ItemKind::LoopTermination => |run| matches!(run, ModelCheckItem::LoopTermination { .. }),
         ItemKind::Formula | ItemKind::TimeLockFreedom | ItemKind::Refinement => {
-            return Err(DerivedItemMismatch::NotDerived { index })
+            return Err(DerivedItemMismatch::NotDerived { index });
         }
     };
     let models = match (&obligation.kind, kind) {
@@ -1087,7 +1105,12 @@ fn timed_refinement_refusal(refusal: &TimedRefinementRefusal) -> Refusal {
         TimedRefinementRefusal::Subject(SubjectRefusal::NoModels | SubjectRefusal::NoUniverse)
         | TimedRefinementRefusal::Timed(_) => Refusal::Failed(INVALID_VALUE),
         // EN-6 opens its subjects from snapshots, which stop on no budget.
-        TimedRefinementRefusal::Subject(SubjectRefusal::Stopped(_)) => Refusal::Failed(BROKEN),
+        TimedRefinementRefusal::Subject(
+            SubjectRefusal::Stopped(_)
+            | SubjectRefusal::InitialStateLimit(_)
+            | SubjectRefusal::InitialEncoding
+            | SubjectRefusal::InitialConstruction(_),
+        ) => Refusal::Failed(BROKEN),
     }
 }
 
@@ -1105,7 +1128,7 @@ pub(crate) fn admission(failure: &AdmissionFailure) -> Refusal {
                 .iter()
                 .map(|(name, value)| ((*name).to_owned(), serde_json::json!(value)))
                 .collect();
-            Refusal::DeclinedWithDetail(cause, decline, record.catalog, detail)
+            Refusal::declined_with_detail(cause, decline, record.catalog, detail)
         }
     };
     match failure {
@@ -1149,14 +1172,14 @@ pub(super) fn package_projection_refusal(
                 None => serde_json::json!({"type": "package"}),
             };
             detail.insert("locus".to_owned(), locus);
-            Refusal::UnsupportedWithDetail(CatalogCode::new(code, cause), detail)
+            Refusal::unsupported_with_detail(CatalogCode::new(code, cause), detail)
         }
         Err(failure) => {
             detail.insert(
                 "selection".to_owned(),
                 serde_json::json!(format!("{failure:?}")),
             );
-            Refusal::FailedWithDetail(BROKEN, detail)
+            Refusal::failed_with_detail(BROKEN, detail)
         }
     }
 }
@@ -1207,18 +1230,38 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         // An unobservable state settles by the stop's own cause, which is
         // the broken invariant for an internal failure.
         ModelCheckRefusal::StateUnobservable(stop) => Refusal::Failed(stop.cause),
-        // The forms and subjects EN-1 does not decide yet.
+        // The forms and subjects EN-1 does not decide yet: a liveness or
+        // refinement form, a protocol refinement or abstract side, a liveness
+        // clause over an `ra` `parallel`, and an undefined read on a closed tuple.
         ModelCheckRefusal::ProtocolRefinement
-        | ModelCheckRefusal::FormNotDecided { .. }
-        | ModelCheckRefusal::CaptureRead { .. }
+        | ModelCheckRefusal::FormNotDecided { form: Some(_) }
         | ModelCheckRefusal::WeakLiveness
         | ModelCheckRefusal::ProtocolAbstractSide
         | ModelCheckRefusal::Hyper(
-            HyperRefusal::FormNotDecided { .. }
-            | HyperRefusal::NotSingleExistential { .. }
-            | HyperRefusal::ClosedUndefined
-            | HyperRefusal::ConstraintUndefined { .. },
+            HyperRefusal::ClosedUndefined
+            | HyperRefusal::FormNotDecided {
+                form: Some(fsl_semantics::check::HyperForm::Other { .. }),
+            },
         ) => Refusal::Unsupported(NOT_YET),
+        // Characterization only: FR-337-AC-12 requires CaptureRead to produce
+        // no engine verdict. These assertions document the current mapping of
+        // that refusal, an undefined hyper constraint and missing form data;
+        // they do not claim those settlements are required by FR-281.
+        ModelCheckRefusal::CaptureRead { .. }
+        | ModelCheckRefusal::FormNotDecided { form: None }
+        | ModelCheckRefusal::Hyper(
+            HyperRefusal::ConstraintUndefined { .. } | HyperRefusal::FormNotDecided { form: None },
+        ) => Refusal::Unsupported(NOT_YET),
+        // A routing fault: hyper_route sends an HP-5 clause to
+        // `check_single_existential` alone (so `check_hyper` never sees it), and
+        // every other form check_hyper decides is refused only by a router fault; a refusal
+        // naming either (or the defensive no-alias branch) is a router that
+        // disagrees with the engine, the engine's own fault. HP-4 `Other` also
+        // reaches `check_hyper`, but it is a form the spec defines that no engine
+        // builds, so it stays the unbuilt arm above.
+        ModelCheckRefusal::Hyper(
+            HyperRefusal::FormNotDecided { .. } | HyperRefusal::NotSingleExistential { .. },
+        ) => Refusal::Failed(BROKEN),
         // Clauses and operations the engine cannot read: unsupported forms.
         ModelCheckRefusal::Translation(_) | ModelCheckRefusal::Footprint(_) => {
             Refusal::Unsupported(EXPRESSION_FORM)
@@ -1226,6 +1269,7 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         // A request defect: an operation or subject count the request names
         // wrongly, or the race-freedom item over a model subject.
         ModelCheckRefusal::RaceOverModel
+        | ModelCheckRefusal::Workers
         | ModelCheckRefusal::LoopProofOverModel
         | ModelCheckRefusal::InvariantOverProtocol
         | ModelCheckRefusal::Liveness(LivenessRefusal::UnknownOperation { .. })
@@ -1302,9 +1346,9 @@ pub(super) fn statistical_refusal(
     EngineReport::Refused(match refusal {
         R::Admission(failure) => admission(failure),
         R::Symmetry(_) => symmetry(),
+        R::Workers => named_decline(INVALID_VALUE, "workers", "0".to_owned()),
         R::RequiresBound(_) => Refusal::RequiresBound,
         R::NotStatistical { .. } => Refusal::NotStatistical,
-        R::DelayWeighting => Refusal::Unsupported(NOT_YET),
         // FR-192's map settles the rest, a refused predicate by FR-192-AC-7's
         // rows (its own code, or `incomplete`/`limit-reached`).
         settled => match settle_statistical_refusal(settled) {
@@ -1320,7 +1364,7 @@ pub(super) fn statistical_refusal(
 fn named_decline(code: CatalogCode, member: &str, name: String) -> Refusal {
     let mut detail = serde_json::Map::new();
     detail.insert(member.to_owned(), serde_json::json!(name));
-    Refusal::DeclinedWithDetail(
+    Refusal::declined_with_detail(
         ProofRefusalCause::InvalidInput,
         DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
         code,
@@ -1505,16 +1549,63 @@ mod tests {
             _ => None,
         };
         let not_yet = Some("unsupported_construct/not-yet-implemented".to_owned());
+        let broken = Some("runtime_invariant/established-invariant-broken".to_owned());
+        // QSL-2850: a routing fault is the engine's own (`failed`), never a form
+        // the spec defines and no engine builds.
+        for fault in [
+            ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided {
+                form: Some(fsl_semantics::check::HyperForm::StepRelation),
+            }),
+            ModelCheckRefusal::Hyper(HyperRefusal::NotSingleExistential { form: None }),
+        ] {
+            let shown = format!("{fault:?}");
+            assert_eq!(failed(fault), broken, "{shown}");
+        }
+        // The forms the spec defines and EN-1 does not build stay unbuilt.
+        for unbuilt in [
+            ModelCheckRefusal::ProtocolRefinement,
+            ModelCheckRefusal::WeakLiveness,
+            ModelCheckRefusal::ProtocolAbstractSide,
+            ModelCheckRefusal::FormNotDecided {
+                form: Some(filament_semantic_value::fairness::PropertyForm::Liveness),
+            },
+            ModelCheckRefusal::Hyper(HyperRefusal::ClosedUndefined),
+            ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided {
+                form: Some(fsl_semantics::check::HyperForm::Other {
+                    reason: fsl_semantics::check::HyperUnsupported::ExistentialBeforeUniversal,
+                }),
+            }),
+        ] {
+            let shown = format!("{unbuilt:?}");
+            assert_eq!(unsupported(unbuilt), not_yet, "{shown}");
+        }
+        // Open question (FR-337 standing decision QSL-1092; FR-174 states no
+        // verdict): the current outcome is pinned, not decided.
         assert_eq!(
-            unsupported(ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided {
-                form: None
-            })),
+            unsupported(ModelCheckRefusal::CaptureRead {
+                clause: "c".to_owned(),
+                capture: "x".to_owned()
+            }),
             not_yet
         );
         assert_eq!(
             unsupported(ModelCheckRefusal::Hyper(
-                HyperRefusal::NotSingleExistential { form: None }
+                HyperRefusal::ConstraintUndefined {
+                    cause: fsl_eval::temporal::UndefinedCause::Kernel(
+                        filament_exact::Undefined::DivisionByZero
+                    )
+                }
             )),
+            not_yet
+        );
+        assert_eq!(
+            unsupported(ModelCheckRefusal::FormNotDecided { form: None }),
+            not_yet
+        );
+        assert_eq!(
+            unsupported(ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided {
+                form: None
+            })),
             not_yet
         );
         assert_eq!(

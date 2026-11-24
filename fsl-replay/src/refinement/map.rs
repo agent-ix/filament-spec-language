@@ -558,11 +558,11 @@ fn lift_field(
 /// record, tuple or union is not lifted (QSL-2959). `reference` is given the
 /// abstract object type the declared type names for the reference, when it
 /// names one.
+type ReferenceLifter<'a> =
+    dyn FnMut(&ObjectReference, Option<&EffectiveId>) -> Result<ObjectReference, Lifting> + 'a;
+
 fn lift_nested(
-    reference: &mut dyn FnMut(
-        &ObjectReference,
-        Option<&EffectiveId>,
-    ) -> Result<ObjectReference, Lifting>,
+    reference: &mut ReferenceLifter<'_>,
     declared: &ValueType,
     value: Value,
 ) -> Result<Value, Lifting> {
@@ -746,10 +746,7 @@ pub(super) fn lift_value(
 /// `value` with each nested reference lifted by `reference`, read as the
 /// type its own type becomes when `types` lifts each reference type.
 fn lift_own(
-    reference: &mut dyn FnMut(
-        &ObjectReference,
-        Option<&EffectiveId>,
-    ) -> Result<ObjectReference, Lifting>,
+    reference: &mut ReferenceLifter<'_>,
     types: &mut dyn FnMut(&EffectiveId) -> Result<EffectiveId, Lifting>,
     value: Value,
 ) -> Result<Value, Lifting> {

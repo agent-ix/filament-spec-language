@@ -30,7 +30,7 @@
 
 mod claim;
 mod exact;
-pub(crate) use exact::{value as exact_value, ExactFault};
+pub(crate) use exact::{ExactFault, value as exact_value};
 mod model;
 mod node_key;
 
@@ -40,7 +40,6 @@ pub use claim::{
     FractionMeasure, ModelSubjectRef, OverBinding, PackageProbabilityClaimForm, ProbForm,
     ProbScheduler, ReachTarget, Weighting,
 };
-pub(crate) use model::{check, precondition_reads, site_spans, ProbabilisticInput, Unresolved};
 pub use model::{
     CheckedProbabilisticModel, Delay, DelayDistribution, PackageDelay, PackageDelayFamily,
     PackageLiteral, PackageProbabilistic, PackageProbabilisticRefusal, PackageRandomParameter,
@@ -48,6 +47,7 @@ pub use model::{
     ProbabilisticFeature, ProbabilisticOperation, RandomParameter, ReadReward, Reward,
     SupportValue, Workload,
 };
+pub(crate) use model::{ProbabilisticInput, Unresolved, check, precondition_reads, site_spans};
 pub use node_key::{ClaimReadFault, ClaimReads, FairnessRead, SchedulerRead, Statement};
 
 use filament_exact::Integer;
@@ -58,8 +58,8 @@ use fsl_forms::{
     ConfidenceItemForm, ConfidenceKey, DelayForm, ExactValueForm, ExactValueKind, ExprNode,
     MeasureForm, ProbabilisticBody, ProbabilisticForm, RandomForm, RewardForm, WorkloadForm,
 };
-use fsl_foundation::diagnostic::Code;
 use fsl_foundation::Span;
+use fsl_foundation::diagnostic::Code;
 
 use super::layer::visit_located;
 use super::refusal::{
@@ -713,13 +713,13 @@ struct Excess {
 fn limit_refusal(excess: Excess, location: Location) -> CheckRefusal {
     CheckRefusal {
         location,
-        cause: CheckCause::ResourceExhausted(Box::new(StageLimitCause {
+        cause: Box::new(CheckCause::ResourceExhausted(Box::new(StageLimitCause {
             stage: CheckingStage::Typing,
             kind: CheckingLimitKind::RationalBits,
             limit: excess.ceiling,
             actual: u128::from(excess.bits),
             region: None,
-        })),
+        }))),
     }
 }
 
@@ -729,13 +729,13 @@ fn limit_refusal(excess: Excess, location: Location) -> CheckRefusal {
 fn horizon_refusal(actual: u128, location: Location) -> CheckRefusal {
     CheckRefusal {
         location,
-        cause: CheckCause::ResourceExhausted(Box::new(StageLimitCause {
+        cause: Box::new(CheckCause::ResourceExhausted(Box::new(StageLimitCause {
             stage: CheckingStage::Typing,
             kind: CheckingLimitKind::WorkBudget,
             limit: u64::MAX,
             actual,
             region: None,
-        })),
+        }))),
     }
 }
 
@@ -766,7 +766,7 @@ pub(crate) fn quantity_magnitude(
     exact::value(magnitude, ceiling).map_err(|fault| match fault {
         exact::ExactFault::ZeroDenominator => CheckRefusal {
             location: location.clone(),
-            cause: CheckCause::Unproved(Obligation::Nonzero),
+            cause: Box::new(CheckCause::Unproved(Obligation::Nonzero)),
         },
         exact::ExactFault::AboveCeiling { bits } => {
             limit_refusal(Excess { bits, ceiling }, location.clone())
@@ -780,7 +780,7 @@ fn refusal(cause: ProbabilisticCause) -> CheckRefusal {
         // walk; `region::DeclarationRegions::refusal_region` reads the
         // cause's own span, so this `Location` is never resolved.
         location: Location::root(Origin::Expression),
-        cause: CheckCause::Probabilistic(Box::new(cause)),
+        cause: Box::new(CheckCause::Probabilistic(Box::new(cause))),
     }
 }
 
@@ -935,15 +935,13 @@ fn claim(form: &ProbabilisticForm) -> Vec<ProbabilisticCause> {
         | ProbabilisticBody::LongRunFraction { threshold, .. } => Some(threshold),
         ProbabilisticBody::ExpectedUntil { .. } => None,
     };
-    if let ProbabilisticBody::Quantile {
-        measure: MeasureForm::Fraction(fraction),
-        ..
-    } = &form.body
-    {
-        causes.push(ProbabilisticCause::QuantileOverFraction {
-            claim: claim.clone(),
-            span: fraction.span,
-        });
+    if let ProbabilisticBody::Quantile { measure, .. } = &form.body {
+        if let MeasureForm::Fraction(fraction) = measure.as_ref() {
+            causes.push(ProbabilisticCause::QuantileOverFraction {
+                claim: claim.clone(),
+                span: fraction.span,
+            });
+        }
     }
     let theta = theta.filter(|theta| qualitative(theta, &mut causes));
     confidence(form, theta, &mut causes);

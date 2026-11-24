@@ -1046,7 +1046,7 @@ fn the_extreme_rationals_are_package_values() {
                 package.node_kind(&domain.semantic_type),
                 Some(CheckedNodeKind::ScalarType(ScalarTypeForm::Rational))
             );
-            let CheckedTerm::Aggregate { members } = &domain.body else {
+            let CheckedTerm::Aggregate { members, .. } = &domain.body else {
                 panic!("{kind}: the bounded Rational has an aggregate of bounds")
             };
             let names = [

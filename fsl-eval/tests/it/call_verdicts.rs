@@ -124,9 +124,9 @@ fn a_call_receives_the_same_verdict_from_a_declaration_body_a_clause_and_a_measu
             Some(cause) => {
                 let refusals = body.expect_err(&format!("{label}: the body must be refused"));
                 assert_eq!(refusals.len(), 1, "{label}: {refusals:?}");
-                assert_eq!(&refusals[0].cause, cause, "{label}: body");
+                assert_eq!(refusals[0].cause.as_ref(), cause, "{label}: body");
                 let refusal = clause.expect_err(&format!("{label}: the clause must be refused"));
-                assert_eq!(&refusal.cause, cause, "{label}: clause");
+                assert_eq!(&*refusal.cause, cause, "{label}: clause");
 
                 // Step 4: as the `decreases` measure of a body-`true` declaration.
                 let measure = package(vec![
@@ -146,7 +146,7 @@ fn a_call_receives_the_same_verdict_from_a_declaration_body_a_clause_and_a_measu
                 )
                 .expect_err(&format!("{label}: the measure must be refused"));
                 assert!(
-                    measure.iter().any(|r| &r.cause == cause),
+                    measure.iter().any(|r| r.cause.as_ref() == cause),
                     "{label}: measure refusals {measure:?} lack {cause:?}"
                 );
             }

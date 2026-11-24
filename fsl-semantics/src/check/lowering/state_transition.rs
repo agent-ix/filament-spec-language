@@ -13,9 +13,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{EffectiveId, Identifier, NodeKey, ValueType};
 
-use super::state::OperationBinding;
 use super::NodeRef;
-use super::{fault, refuse, LoweredClause, Lowering};
+use super::state::OperationBinding;
+use super::{LoweredClause, Lowering, fault, refuse};
 use crate::check::family::OccurrenceRole;
 use crate::check::node_key::{
     BindingValue, BodyTerm, GroupTerm, LawRole, LeafTerm, MemberTerm, NodeTag, Operation, Operator,

@@ -848,7 +848,7 @@ fn each_mistyped_use_of_a_variant_type_refuses_with_its_cause() {
                    cause: CheckCause,
                    label: &str| {
         let refusal = c.check(parameters, &expression, expected).expect_err(label);
-        assert_eq!(refusal.cause, cause, "{label}: {refusal:?}");
+        assert_eq!(*refusal.cause, cause, "{label}: {refusal:?}");
     };
     refuses(
         &[],
@@ -967,11 +967,11 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
 
     let record = refusals
         .iter()
-        .find(|refusal| matches!(&refusal.cause, CheckCause::UnknownField { owner, .. } if owner.ends_with("Settings")))
+        .find(|refusal| matches!(refusal.cause.as_ref(), CheckCause::UnknownField { owner, .. } if owner.ends_with("Settings")))
         .expect("the absent record field is refused");
     assert_eq!(
-        record.cause,
-        CheckCause::UnknownField {
+        record.cause.as_ref(),
+        &CheckCause::UnknownField {
             owner: "Config::Settings".into(),
             field: "paid".into(),
             span: Some(fsl_foundation::Span {
@@ -984,11 +984,11 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
 
     let object = refusals
         .iter()
-        .find(|refusal| matches!(&refusal.cause, CheckCause::StateModel(cause) if matches!(cause.cause, CheckCause::UnknownField { .. })))
+        .find(|refusal| matches!(refusal.cause.as_ref(), CheckCause::StateModel(cause) if matches!(&cause.cause, CheckCause::UnknownField { .. })))
         .unwrap_or_else(|| panic!("the absent model field is refused: {refusals:?}"));
     assert!(
         matches!(
-            &object.cause,
+            object.cause.as_ref(),
             CheckCause::StateModel(cause)
                 if matches!(&cause.cause, CheckCause::UnknownField { owner, field, span }
                     if &**owner == "Account" && &**field == "paid"
@@ -1037,7 +1037,7 @@ fn undeclared_variant_cases_name_the_declared_owner_for_model_variants_and_sourc
         .iter()
         .find(|refusal| {
             matches!(
-                &refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::UndeclaredVariantCase { owner, case }
                     if owner == "Tier" && case == "Lost"
             )
@@ -1051,7 +1051,7 @@ fn undeclared_variant_cases_name_the_declared_owner_for_model_variants_and_sourc
         .iter()
         .find(|refusal| {
             matches!(
-                &refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::UndeclaredVariantCase { owner, case }
                     if owner == "Status" && case == "Unknown"
             )
@@ -1086,7 +1086,7 @@ fn an_unknown_member_of_a_source_enum_refuses_type_mismatch_like_a_model_variant
             .iter()
             .find(|refusal| {
                 matches!(
-                    &refusal.cause,
+                    refusal.cause.as_ref(),
                     CheckCause::UndeclaredVariantCase { owner: found, case: written }
                         if found == owner && written == case
                 )
@@ -1097,7 +1097,7 @@ fn an_unknown_member_of_a_source_enum_refuses_type_mismatch_like_a_model_variant
     }
     assert!(
         !refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::MissingQualifiedName(name)
                 if name.name == "Status::Pending" || name.name == "Level::Top"
         )),
@@ -1108,7 +1108,7 @@ fn an_unknown_member_of_a_source_enum_refuses_type_mismatch_like_a_model_variant
         .iter()
         .find(|refusal| {
             matches!(
-                &refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::MissingQualifiedName(name) if name.name == "Nope::Open"
             )
         })
@@ -1581,7 +1581,11 @@ fn each_malformed_variant_form_refuses_with_its_cause_in_item_9_order() {
         let (code, found, path, member) = refusal_of(&replay, value);
         assert_eq!((code, found), (invalid, cause), "{label}");
         assert_eq!(member.as_deref(), expected_member, "{label}");
-        assert_eq!(path, snapshot_field_steps("tier"), "{label}: the value is the field itself");
+        assert_eq!(
+            path,
+            snapshot_field_steps("tier"),
+            "{label}: the value is the field itself"
+        );
     }
 }
 
@@ -1643,7 +1647,7 @@ fn refused_in_body(
     cause: &CheckCause,
 ) -> bool {
     refusals.iter().any(|refusal| {
-        &refusal.cause == cause
+        refusal.cause.as_ref() == cause
             && matches!(&refusal.location.origin,
                 filament_semantic_value::location::ExpressionOwner::Body { function: found, .. }
                     if found == function)
@@ -1916,11 +1920,13 @@ fn a_string_literal_at_a_variant_slot_is_refused_by_the_checker() {
     let refusal = c
         .check(&[], &Expression::string("Gold"), Some(&c.tier))
         .expect_err("a String literal is not a Tier");
-    assert_eq!(refusal.cause, mismatch());
+    assert_eq!(*refusal.cause, mismatch());
     let refusals =
         check_refusals("function f using v(t: Config::Tier): Boolean pure { t = \"Gold\" }");
     assert!(
-        refusals.iter().any(|refusal| refusal.cause == mismatch()),
+        refusals
+            .iter()
+            .any(|refusal| refusal.cause.as_ref() == &mismatch()),
         "the comparison refuses: {refusals:?}"
     );
 }
@@ -2223,8 +2229,8 @@ fn equality_is_allowed_and_ordering_is_refused_over_non_identifier_cases() {
         ));
         assert_eq!(refused.len(), 1, "{operator}: {refused:?}");
         assert_eq!(
-            refused[0].cause,
-            CheckCause::IllTyped(IllTypedCause::OperatorIneligible),
+            refused[0].cause.as_ref(),
+            &CheckCause::IllTyped(IllTypedCause::OperatorIneligible),
             "{operator}"
         );
     }
@@ -2434,7 +2440,7 @@ fn a_payload_variant_parameter_is_a_union_scrutinee_and_a_nullary_one_is_not() {
     );
     let nullary = describe_refusals("case t { Gold: true; Standard: false; }");
     assert_eq!(nullary.len(), 1, "{nullary:?}");
-    assert_eq!(nullary[0].cause, mismatch());
+    assert_eq!(nullary[0].cause.as_ref(), &mismatch());
     assert_eq!(
         nullary[0].cause.code(),
         fsl_foundation::diagnostic::Code::IllTyped

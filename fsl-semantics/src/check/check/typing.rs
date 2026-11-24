@@ -25,10 +25,11 @@ use std::sync::Arc;
 
 use super::native_literal::NativeConstructor;
 use super::{
-    catalogued_step, contains_pre_eligible_read, contextual, ineligible, is_integer, mismatch,
-    node, refuse, LocalKind, Typer,
+    LocalKind, Typer, catalogued_step, contains_pre_eligible_read, contextual, ineligible,
+    is_integer, mismatch, node, refuse,
 };
-use crate::check::call_target::{resolve_target, ResolvedTarget};
+use crate::check::DispatchOperation;
+use crate::check::call_target::{ResolvedTarget, resolve_target};
 use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
 use crate::check::refusal::{
@@ -37,7 +38,6 @@ use crate::check::refusal::{
 };
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
-use crate::check::DispatchOperation;
 use filament_exact::Cancel;
 use filament_exact::{
     ArithmeticOperator, CollectionKind, CollectionType, DecimalType, FloatType, IeeeValue,
@@ -122,10 +122,10 @@ fn int_type(low: Integer, high: Integer, location: &Location) -> Result<ValueTyp
 /// the enum both declare. Neither declaration is a position of the checked
 /// tree, so the one locus is the name.
 fn qualified_name_refusal(refusal: CheckRefusal, name: &NameForm) -> CheckRefusal {
-    if name.is_qualified() && matches!(refusal.cause, CheckCause::MissingName(_)) {
+    if name.is_qualified() && matches!(refusal.cause.as_ref(), CheckCause::MissingName(_)) {
         CheckRefusal {
             location: refusal.location,
-            cause: CheckCause::MissingQualifiedName(name.clone()),
+            cause: Box::new(CheckCause::MissingQualifiedName(name.clone())),
         }
     } else {
         refusal
@@ -270,6 +270,7 @@ enum Frame<'e, 'r> {
     Connective(Box<ConnectiveFrame<'e>>),
     Peer(Box<PeerFrame<'e, 'r>>),
     Unary(Box<UnaryFrame<'r>>),
+    BytesConcat(Box<BytesConcatFrame<'e>>),
     /// `e.f`: the field name and the form's location.
     Field(&'e str, Option<Span>, Location),
     /// `operand[index]` after its source expression is typed.
@@ -298,6 +299,7 @@ enum Frame<'e, 'r> {
     SlotPresence(&'e str, bool, Location),
     Attribute(Box<AttributeFrame<'e>>),
     Application(Box<ApplicationFrame<'e, 'r>>),
+    MinMax(Box<MinMaxFrame<'e>>),
     Record(Box<RecordFrame<'e, 'r>>),
     Collection(Box<CollectionFrame<'e>>),
     Query(Box<QueryFrame<'e>>),
@@ -317,6 +319,14 @@ struct IfFrame<'e, 'r> {
     branches: Branches<'r>,
     location: Location,
     stage: IfStage<'e>,
+}
+
+/// A scalar `min(left, right)` or `max(left, right)` awaiting its operands.
+struct MinMaxFrame<'e> {
+    minimum: bool,
+    second: ExprRef<'e>,
+    location: Location,
+    first: Option<Node>,
 }
 
 #[allow(
@@ -399,6 +409,11 @@ enum Pair<'e, T> {
 /// `left and right`, `left or right` or `left implies right`.
 struct ConnectiveFrame<'e> {
     connective: Connective,
+    location: Location,
+    pair: Pair<'e, Node>,
+}
+
+struct BytesConcatFrame<'e> {
     location: Location,
     pair: Pair<'e, Node>,
 }
@@ -505,6 +520,7 @@ enum Unary<'r> {
     Flatten,
     DropFirst,
     Size(Option<ValueType>),
+    BytesLength,
     Convert(ValueType),
     AllInstances(ValueType),
 }
@@ -680,6 +696,7 @@ enum AccumulateStage {
         accumulator: Slot,
         binder: Slot,
         source_type: Arc<CollectionType>,
+        previous_min_max_fold_step: bool,
     },
     Identity(Fold),
 }
@@ -931,6 +948,39 @@ fn exact_rational_literal_type(expression: ExprRef<'_>) -> Option<ValueType> {
     let denominator = IntegerInterval::new(denominator.clone(), denominator).ok()?;
     let domain = RationalDomain::new(numerator, denominator).ok()?;
     Some(ValueType::Rational(domain))
+}
+
+/// The exact Rational range for an integer slash whose operands are exact
+/// integer literals.
+fn integer_slash_result_type(expression: ExprRef<'_>) -> Option<ValueType> {
+    fn integer_literal(expression: ExprRef<'_>) -> Option<Integer> {
+        match expression.node() {
+            ExprNode::Integer(value) => Some(value.clone()),
+            ExprNode::Negate(operand) => {
+                integer_literal(expression.at(*operand)).map(|value| value.neg())
+            }
+            _ => None,
+        }
+    }
+
+    let ExprNode::Binary {
+        operator: BinaryOperator::Divide,
+        left,
+        right,
+    } = expression.node()
+    else {
+        return None;
+    };
+    let dividend = integer_literal(expression.at(*left))?;
+    let divisor = integer_literal(expression.at(*right))?;
+    let value = Rational::new(dividend, divisor).ok()?;
+    let numerator =
+        IntegerInterval::new(value.numerator().clone(), value.numerator().clone()).ok()?;
+    let denominator =
+        IntegerInterval::new(value.denominator().clone(), value.denominator().clone()).ok()?;
+    Some(ValueType::Rational(
+        RationalDomain::new(numerator, denominator).ok()?,
+    ))
 }
 
 impl<'a> Typer<'a> {
@@ -1480,12 +1530,20 @@ impl<'a> Typer<'a> {
                 if let Some(outside) = IntegerOutsideI128::of(IntegerSite::Literal, value) {
                     return Err(CheckRefusal {
                         location,
-                        cause: CheckCause::IntegerOutsideI128(outside),
+                        cause: Box::new(CheckCause::IntegerOutsideI128(outside)),
                     });
                 }
+                let value_type = match hint.as_deref() {
+                    Some(ValueType::Int(interval))
+                        if interval.lower() <= value && value <= interval.upper() =>
+                    {
+                        ValueType::Int(interval.clone())
+                    }
+                    _ => ValueType::Integer,
+                };
                 node(
                     NodeKind::Literal(CheckedLiteral(Value::Integer(value.clone()))),
-                    ValueType::Integer,
+                    value_type,
                     &location,
                 )
             }
@@ -1513,10 +1571,10 @@ impl<'a> Typer<'a> {
                 else {
                     return Err(CheckRefusal {
                         location,
-                        cause: CheckCause::ReferenceLiteralTypeMismatch {
+                        cause: Box::new(CheckCause::ReferenceLiteralTypeMismatch {
                             name: type_name.clone(),
                             actual: Box::new(declared),
-                        },
+                        }),
                     });
                 };
                 let identity = key.text().as_bytes().to_vec();
@@ -1531,7 +1589,9 @@ impl<'a> Typer<'a> {
                     Err(filament_checked::construct::ReferenceLiteralError::EmptyIdentity) => {
                         return Err(CheckRefusal {
                             location,
-                            cause: CheckCause::EmptyReferenceLiteralKey { span: *key_span },
+                            cause: Box::new(CheckCause::EmptyReferenceLiteralKey {
+                                span: *key_span,
+                            }),
                         });
                     }
                     Err(
@@ -1542,16 +1602,27 @@ impl<'a> Typer<'a> {
                         // own UTF-8 contract.
                         return Err(CheckRefusal {
                             location,
-                            cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
-                                filament_semantic_value::catalog::InternalFault::new(
-                                    "FR-480",
-                                    "decoded-reference-key-is-valid-utf8",
+                            cause: Box::new(CheckCause::InternalFault(Box::new(
+                                KeyFault::StageFault(
+                                    filament_semantic_value::catalog::InternalFault::new(
+                                        "FR-480",
+                                        "decoded-reference-key-is-valid-utf8",
+                                    ),
                                 ),
                             ))),
                         });
                     }
                 };
-                node(kind, ValueType::Reference(object_type), &location)
+                let reference_type = ValueType::Reference(object_type);
+                if let Some(refusal) = self.identity_observing(
+                    &location,
+                    IdentityNode::ReferenceLiteral,
+                    IdentityForm::KeyedReferenceLiteral,
+                    &reference_type,
+                ) {
+                    return Err(refusal);
+                }
+                node(kind, reference_type, &location)
             }
             ExprNode::Rational(numerator, denominator) => {
                 self.rational_literal(numerator, denominator, hint.as_deref(), &location)?
@@ -1563,7 +1634,7 @@ impl<'a> Typer<'a> {
             ExprNode::Null => {
                 return Err(CheckRefusal {
                     location,
-                    cause: CheckCause::NullExpression,
+                    cause: Box::new(CheckCause::NullExpression),
                 });
             }
             // FR-185: a quantity literal is its magnitude, measured and
@@ -1580,7 +1651,7 @@ impl<'a> Typer<'a> {
                 else {
                     return Err(CheckRefusal {
                         location,
-                        cause: if quantity.unit.is_qualified() {
+                        cause: Box::new(if quantity.unit.is_qualified() {
                             CheckCause::MissingQualifiedName(quantity.unit.clone())
                         } else {
                             CheckCause::UnresolvedUnitName {
@@ -1589,7 +1660,7 @@ impl<'a> Typer<'a> {
                                     .scope
                                     .unit_packages(self.source_owner.as_ref(), &quantity.unit.name),
                             }
-                        },
+                        }),
                     });
                 };
                 node(
@@ -1687,7 +1758,8 @@ impl<'a> Typer<'a> {
                     .is_some_and(|named| named.is_under_alias(&name.name));
                 match resolved {
                     Err(refusal)
-                        if under_alias && matches!(refusal.cause, CheckCause::MissingName(_)) =>
+                        if under_alias
+                            && matches!(refusal.cause.as_ref(), CheckCause::MissingName(_)) =>
                     {
                         return Err(missing_segment(&name.name, &location));
                     }
@@ -1701,9 +1773,9 @@ impl<'a> Typer<'a> {
             ExprNode::Indexed { .. } | ExprNode::StepLabel { .. } | ExprNode::Stutter => {
                 return Err(CheckRefusal {
                     location,
-                    cause: CheckCause::Hyper(Box::new(
+                    cause: Box::new(CheckCause::Hyper(Box::new(
                         crate::check::hyper_clause::HyperCause::OutsideHyperClause,
-                    )),
+                    ))),
                 });
             }
             ExprNode::Case(case) => {
@@ -1779,13 +1851,23 @@ impl<'a> Typer<'a> {
                 );
             }
             ExprNode::Negate(operand) => {
-                // A negated `decimal(c, s)` literal takes its operand's
-                // decimal type from the expected one (FR-104-AC-16).
+                // Negated decimal and IEEE literals take their operand type
+                // from the expected result. IEEE rounding mode is contextual
+                // (FR-397-AC-24), including when negation is the outer node.
                 let operand = expression.at(*operand);
-                let operand_hint = hint.clone().filter(|each| {
-                    matches!(**each, ValueType::Decimal(_))
-                        && matches!(operand.node(), ExprNode::DecimalValue { .. })
-                });
+                let operand_hint =
+                    hint.clone()
+                        .filter(|each| match (each.as_ref(), operand.node()) {
+                            (ValueType::Decimal(_), ExprNode::DecimalValue { .. }) => true,
+                            (ValueType::Float(float), ExprNode::Float32(_)) => {
+                                float.width() == filament_exact::IeeeWidth::Binary32
+                            }
+                            (ValueType::Float(float), ExprNode::Float64(_)) => {
+                                float.width() == filament_exact::IeeeWidth::Binary64
+                            }
+                            (ValueType::Float(_), ExprNode::Negate(_)) => true,
+                            _ => false,
+                        });
                 let goal = Goal::Infer(operand, operand_hint, location.child(0));
                 return Ok(Self::unary(Unary::Negate(hint), goal, location, frames));
             }
@@ -1793,7 +1875,7 @@ impl<'a> Typer<'a> {
                 if let Some(outside) = IntegerOutsideI128::of(IntegerSite::Literal, exponent) {
                     return Err(CheckRefusal {
                         location,
-                        cause: CheckCause::IntegerOutsideI128(outside),
+                        cause: Box::new(CheckCause::IntegerOutsideI128(outside)),
                     });
                 }
                 let goal = Goal::Infer(expression.at(*base), None, location.child(0));
@@ -1837,9 +1919,9 @@ impl<'a> Typer<'a> {
             {
                 return Err(CheckRefusal {
                     location,
-                    cause: CheckCause::Hyper(Box::new(
+                    cause: Box::new(CheckCause::Hyper(Box::new(
                         crate::check::hyper_clause::HyperCause::OutsideHyperClause,
-                    )),
+                    ))),
                 });
             }
             ExprNode::Field {
@@ -2080,6 +2162,49 @@ impl<'a> Typer<'a> {
                 return Ok(Step::Descend(Goal::Infer(source, None, source_location)));
             }
             ExprNode::Call { name, arguments } => {
+                if name.segments.len() == 1 && name.name == "length" {
+                    self.single_candidate(&name.name, &location)?;
+                    let [argument] = arguments.as_slice() else {
+                        return Err(mismatch(&location));
+                    };
+                    return Ok(Self::unary(
+                        Unary::BytesLength,
+                        Goal::Infer(expression.at(*argument), None, location.child(0)),
+                        location,
+                        frames,
+                    ));
+                }
+                if name.segments.len() == 1 && name.name == "concat" {
+                    self.single_candidate(&name.name, &location)?;
+                    let [left, right] = arguments.as_slice() else {
+                        return Err(mismatch(&location));
+                    };
+                    frames.push(Frame::BytesConcat(Box::new(BytesConcatFrame {
+                        location: location.clone(),
+                        pair: Pair::First(expression.at(*right), location.child(1)),
+                    })));
+                    return Ok(Step::Descend(Goal::Infer(
+                        expression.at(*left),
+                        None,
+                        location.child(0),
+                    )));
+                }
+                if self.min_max_fold_step && (name.name == "min" || name.name == "max") {
+                    let [first, second] = arguments.as_slice() else {
+                        return Err(mismatch(&location));
+                    };
+                    frames.push(Frame::MinMax(Box::new(MinMaxFrame {
+                        minimum: name.name == "min",
+                        second: expression.at(*second),
+                        location: location.clone(),
+                        first: None,
+                    })));
+                    return Ok(Step::Descend(Goal::Infer(
+                        expression.at(*first),
+                        None,
+                        location.child(0),
+                    )));
+                }
                 if is_option_some_constructor(&name.name) {
                     let [argument] = arguments.as_slice() else {
                         return Err(mismatch(&location));
@@ -2193,11 +2318,82 @@ impl<'a> Typer<'a> {
                     ExprNode::Negate(inner) => {
                         matches!(operand.at(*inner).node(), ExprNode::DecimalValue { .. })
                     }
-                    _ => false,
+                    ExprNode::Case(_)
+                    | ExprNode::Boolean(_)
+                    | ExprNode::Absent
+                    | ExprNode::Null
+                    | ExprNode::Integer(_)
+                    | ExprNode::Float32(_)
+                    | ExprNode::Float64(_)
+                    | ExprNode::Rational(..)
+                    | ExprNode::Quantity(_)
+                    | ExprNode::String(_)
+                    | ExprNode::ReferenceLiteral { .. }
+                    | ExprNode::Name(_)
+                    | ExprNode::Let { .. }
+                    | ExprNode::If { .. }
+                    | ExprNode::Binary { .. }
+                    | ExprNode::Power { .. }
+                    | ExprNode::Not(_)
+                    | ExprNode::Field { .. }
+                    | ExprNode::Index { .. }
+                    | ExprNode::Present(_)
+                    | ExprNode::Value(_)
+                    | ExprNode::Deref(_)
+                    | ExprNode::Ref(_)
+                    | ExprNode::Call { .. }
+                    | ExprNode::Record { .. }
+                    | ExprNode::Collection { .. }
+                    | ExprNode::Convert { .. }
+                    | ExprNode::Query { .. }
+                    | ExprNode::Flatten(_)
+                    | ExprNode::DropFirst(_)
+                    | ExprNode::RemoveOne { .. }
+                    | ExprNode::Accumulate { .. }
+                    | ExprNode::Count { .. }
+                    | ExprNode::Sum { .. }
+                    | ExprNode::Population { .. }
+                    | ExprNode::Seq { .. }
+                    | ExprNode::Size { .. }
+                    | ExprNode::Contains { .. }
+                    | ExprNode::Select { .. }
+                    | ExprNode::AllInstances { .. }
+                    | ExprNode::Lookup { .. }
+                    | ExprNode::Dispatch { .. }
+                    | ExprNode::Pre(_)
+                    | ExprNode::SelfRef
+                    | ExprNode::Result
+                    | ExprNode::Reaches { .. }
+                    | ExprNode::ProtocolReference { .. }
+                    | ExprNode::Indexed { .. }
+                    | ExprNode::StepLabel { .. }
+                    | ExprNode::Stutter => false,
                 };
                 let operand_hint = match &target {
                     ValueType::Decimal(_) if decimal_literal => Some(Cow::Owned(target.clone())),
-                    _ => None,
+                    ValueType::Boolean
+                    | ValueType::Integer
+                    | ValueType::Int(_)
+                    | ValueType::Rational(_)
+                    | ValueType::Decimal(_)
+                    | ValueType::Float(_)
+                    | ValueType::Quantity(_)
+                    | ValueType::CarriedQuantity(_)
+                    | ValueType::Text(_)
+                    | ValueType::String
+                    | ValueType::Bytes
+                    | ValueType::JsonObject
+                    | ValueType::ClockReference
+                    | ValueType::Uuid
+                    | ValueType::Timestamp
+                    | ValueType::Enum(_)
+                    | ValueType::Option(_)
+                    | ValueType::Composite(_)
+                    | ValueType::Collection(_)
+                    | ValueType::Map(_)
+                    | ValueType::BoundedQuantity(_)
+                    | ValueType::Reference(_)
+                    | ValueType::Population(_) => None,
                 };
                 let goal = Goal::Infer(operand, operand_hint, location.child(0));
                 return Ok(Self::unary(Unary::Convert(target), goal, location, frames));
@@ -2222,7 +2418,10 @@ impl<'a> Typer<'a> {
                     BinderQuery::Forall | BinderQuery::Exists => {
                         self.named_domain(expression.at(*source), binder, &source_location)?
                     }
-                    BinderQuery::Map | BinderQuery::Filter | BinderQuery::FlatMap => None,
+                    BinderQuery::Map
+                    | BinderQuery::Filter
+                    | BinderQuery::FlatMap
+                    | BinderQuery::Only => None,
                 };
                 frames.push(Frame::Query(Box::new(QueryFrame {
                     query: *query,
@@ -2620,7 +2819,24 @@ impl<'a> Typer<'a> {
             ),
             PeerOperator::Equality(operator) => {
                 let mut converted = None;
-                let goal = self.equality_operand(&mut converted, first, None, first_location)?;
+                // A literal rational peer supplies the conservative domain
+                // for an integer slash in complete-v1 (FR-495-AC-6). Keep the
+                // normal left-to-right order so state.core refuses at `/`,
+                // and two slash operands remain uncontextual (AC-9).
+                let slash_peer = (self.complete_value
+                    && matches!(
+                        first.node(),
+                        ExprNode::Binary {
+                            operator: BinaryOperator::Divide,
+                            ..
+                        }
+                    )
+                    && matches!(second.node(), ExprNode::Rational(..)))
+                .then(|| integer_slash_result_type(first))
+                .flatten()
+                .map(Cow::Owned);
+                let goal =
+                    self.equality_operand(&mut converted, first, slash_peer, first_location)?;
                 (
                     PeerForm::Equality {
                         operator,
@@ -2704,13 +2920,15 @@ impl<'a> Typer<'a> {
                     ) {
                         return Err(CheckRefusal {
                             location: location.clone(),
-                            cause: CheckCause::ResourceExhausted(Box::new(StageLimitCause {
-                                stage: CheckingStage::Typing,
-                                kind: CheckingLimitKind::WorkBudget,
-                                limit: incomplete.limit,
-                                actual: u128::from(incomplete.consumed) + 1,
-                                region: None,
-                            })),
+                            cause: Box::new(CheckCause::ResourceExhausted(Box::new(
+                                StageLimitCause {
+                                    stage: CheckingStage::Typing,
+                                    kind: CheckingLimitKind::WorkBudget,
+                                    limit: incomplete.limit,
+                                    actual: u128::from(incomplete.consumed) + 1,
+                                    region: None,
+                                },
+                            ))),
                         });
                     }
                 }
@@ -2723,12 +2941,12 @@ impl<'a> Typer<'a> {
             Err(super::modulo_interval::ModuloRangeError::Refused(refusal)) => Err(refusal),
             Err(super::modulo_interval::ModuloRangeError::Invariant(_)) => Err(CheckRefusal {
                 location: location.clone(),
-                cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                     filament_semantic_value::catalog::InternalFault::new(
                         "check.integer-modulo",
                         "range-invariant",
                     ),
-                ))),
+                )))),
             }),
         }
     }
@@ -3235,11 +3453,34 @@ impl<'a> Typer<'a> {
                 self.upcast(typed, &required, &location).map(Step::Typed)
             }
             Frame::If(frame) => self.accept_if(frame, typed, frames),
+            Frame::MinMax(frame) => self.accept_min_max(frame, typed, frames),
             Frame::Let(frame) => self.accept_let(frame, typed, frames),
             Frame::Case(frame) => self.accept_case(frame, typed, frames),
             Frame::Connective(frame) => Ok(self.accept_connective(frame, typed, frames)),
             Frame::Peer(frame) => self.accept_peer(frame, typed, frames),
             Frame::Unary(frame) => self.accept_unary(*frame, typed).map(Step::Typed),
+            Frame::BytesConcat(frame) => match frame.pair {
+                Pair::First(right, right_location) => {
+                    if typed.value_type != ValueType::Bytes {
+                        return Err(mismatch(&frame.location.child(0)));
+                    }
+                    frames.push(Frame::BytesConcat(Box::new(BytesConcatFrame {
+                        location: frame.location,
+                        pair: Pair::Second(typed),
+                    })));
+                    Ok(Step::Descend(Goal::Infer(right, None, right_location)))
+                }
+                Pair::Second(left) => {
+                    if typed.value_type != ValueType::Bytes {
+                        return Err(mismatch(&frame.location.child(1)));
+                    }
+                    Ok(Step::Typed(node(
+                        NodeKind::BytesConcat(self.push(left), self.push(typed)),
+                        ValueType::Bytes,
+                        &frame.location,
+                    )))
+                }
+            },
             // FR-104: in a state clause, a field read through a reference
             // (`self.f`, `s.f`) is the `Attribute` node `deref(r).f` gives.
             // FR-363: `r.name` over a relationship end of a reference is a
@@ -3505,6 +3746,45 @@ impl<'a> Typer<'a> {
                 )))
             }
         }
+    }
+
+    fn accept_min_max<'e, 'r>(
+        &mut self,
+        mut frame: Box<MinMaxFrame<'e>>,
+        typed: Node,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        let Some(first) = frame.first.take() else {
+            frame.first = Some(typed);
+            let second = frame.second;
+            let location = frame.location.child(1);
+            frames.push(Frame::MinMax(frame));
+            return Ok(Step::Descend(Goal::Infer(second, None, location)));
+        };
+        if first.value_type != typed.value_type {
+            return Err(mismatch(&typed.location));
+        }
+        let (left, right) = (first, typed);
+        let condition = self.ordering(
+            OrderingOperator::Less,
+            left.clone(),
+            right.clone(),
+            &frame.location,
+        )?;
+        let (then, otherwise) = if frame.minimum {
+            (left.clone(), right)
+        } else {
+            (right, left.clone())
+        };
+        Ok(Step::Typed(node(
+            NodeKind::If {
+                condition: self.push(condition),
+                then: self.push(then),
+                otherwise: self.push(otherwise),
+            },
+            left.value_type,
+            &frame.location,
+        )))
     }
 
     fn accept_let<'e, 'r>(
@@ -4127,6 +4407,16 @@ impl<'a> Typer<'a> {
                     Some(_) => Err(mismatch(&location)),
                 }
             }
+            Unary::BytesLength => {
+                if operand.value_type != ValueType::Bytes {
+                    return Err(mismatch(&location));
+                }
+                Ok(node(
+                    NodeKind::BytesLength(self.push(operand)),
+                    ValueType::Integer,
+                    &location,
+                ))
+            }
             Unary::Convert(target) => self.convert(&target, operand, &location),
             Unary::AllInstances(target) => self.all_instances(&target, operand, &location),
         }
@@ -4144,7 +4434,7 @@ impl<'a> Typer<'a> {
                     self.bind_element(&typed, frame.binder, &frame.location)?;
                 let body_location = frame.location.child(1);
                 let goal = match frame.query {
-                    BinderQuery::Map | BinderQuery::FlatMap => {
+                    BinderQuery::Map | BinderQuery::FlatMap | BinderQuery::Only => {
                         Goal::Infer(frame.body, None, body_location)
                     }
                     BinderQuery::Filter | BinderQuery::Forall | BinderQuery::Exists => {
@@ -4182,6 +4472,8 @@ impl<'a> Typer<'a> {
                     &typed,
                     &frame.location,
                 )?;
+                let previous_min_max_fold_step = self.min_max_fold_step;
+                self.min_max_fold_step = !source_type.kind().is_ordered();
                 let goal = Goal::Infer(
                     frame.step,
                     Some(Cow::Owned(frame.value_type.clone())),
@@ -4192,6 +4484,7 @@ impl<'a> Typer<'a> {
                     accumulator,
                     binder,
                     source_type,
+                    previous_min_max_fold_step,
                 };
                 frames.push(Frame::Accumulate(frame));
                 Ok(Step::Descend(goal))
@@ -4201,7 +4494,9 @@ impl<'a> Typer<'a> {
                 accumulator,
                 binder,
                 source_type,
+                previous_min_max_fold_step,
             } => {
+                self.min_max_fold_step = previous_min_max_fold_step;
                 let raw = typed;
                 self.unbind(2);
                 let catalogued = catalogued_step(&self.body, &raw, accumulator, &frame.value_type);

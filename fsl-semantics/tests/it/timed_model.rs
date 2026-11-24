@@ -12,7 +12,7 @@ use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
     AggregateTerm, BodyTerm, CheckCause, CheckRefusal, CheckedGraph, CheckedNode,
     CheckingLimitKind, ClockOp, MeasureObligation, StatePredicate, TemporalCause, TimeSourceKind,
-    TimedConstruct, TimedModel,
+    TimedModel,
 };
 use fsl_semantics::model::intake::meaning;
 use ix_trace_rs::trace;
@@ -189,7 +189,7 @@ pub(super) fn refused(document: &[u8], body: &str) -> (TemporalCause, String) {
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal expected: {refusals:?}");
     };
-    let CheckCause::Temporal(cause) = &refusal.cause else {
+    let CheckCause::Temporal(cause) = refusal.cause.as_ref() else {
         panic!("a timed refusal expected: {refusal:?}");
     };
     let (text, _) = config_unit_with_profiles(document, TEMPORAL, body);
@@ -391,7 +391,7 @@ fn located(
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal expected: {refusals:?}");
     };
-    let CheckCause::Temporal(cause) = &refusal.cause else {
+    let CheckCause::Temporal(cause) = refusal.cause.as_ref() else {
         panic!("a timed refusal expected: {refusal:?}");
     };
     let span = cause.span();
@@ -497,7 +497,7 @@ fn timed_predicates_name_the_models_own_population() {
         let [refusal] = refusals.as_slice() else {
             panic!("one refusal expected for `{predicate}`: {refusals:?}");
         };
-        let CheckCause::Temporal(cause) = &refusal.cause else {
+        let CheckCause::Temporal(cause) = refusal.cause.as_ref() else {
             panic!("a timed refusal expected: {refusal:?}");
         };
         let (code, tag) = (cause.code(), cause.tag());
@@ -602,7 +602,7 @@ fn a_timed_model_without_exactly_one_population_refuses() {
             let [refusal] = refusals.as_slice() else {
                 panic!("one refusal for {case}: {refusals:?}");
             };
-            let CheckCause::Temporal(cause) = &refusal.cause else {
+            let CheckCause::Temporal(cause) = refusal.cause.as_ref() else {
                 panic!("a timed refusal for {case}: {refusal:?}");
             };
             let span = cause.span();
@@ -1358,8 +1358,8 @@ fn a_place_selected_by_a_clock_or_a_recursive_expansion_refuses() {
         panic!("one refusal: {refusals:?}");
     };
     assert_eq!(
-        refusal.cause,
-        CheckCause::UnprovedDecrease {
+        refusal.cause.as_ref(),
+        &CheckCause::UnprovedDecrease {
             cycle: vec!["loop".to_owned(), "loop".to_owned()],
             obligation: MeasureObligation::MissingMeasure,
         }
@@ -1391,7 +1391,7 @@ fn a_place_selected_by_a_clock_or_a_recursive_expansion_refuses() {
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal: {refusals:?}");
     };
-    let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+    let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
         panic!("a stage limit: {refusal:?}");
     };
     assert_eq!(limit.kind, CheckingLimitKind::WorkBudget);
@@ -1645,10 +1645,7 @@ fn two_units_timing_one_package_under_one_alias_is_a_duplicate() {
     assert!(
         matches!(
             refusals.as_slice(),
-            [CheckRefusal {
-                cause: CheckCause::Temporal(cause),
-                ..
-            }] if matches!(**cause, TemporalCause::DuplicateTimeSource { .. })
+            [refusal] if matches!(refusal.cause.as_ref(), CheckCause::Temporal(cause) if matches!(cause.as_ref(), TemporalCause::DuplicateTimeSource { .. }))
         ),
         "{refusals:?}"
     );
@@ -1667,10 +1664,7 @@ fn two_aliases_of_one_package_timed_twice_are_a_duplicate() {
     assert!(
         matches!(
             refusals.as_slice(),
-            [CheckRefusal {
-                cause: CheckCause::Temporal(cause),
-                ..
-            }] if matches!(**cause, TemporalCause::DuplicateTimeSource { .. })
+            [refusal] if matches!(refusal.cause.as_ref(), CheckCause::Temporal(cause) if matches!(cause.as_ref(), TemporalCause::DuplicateTimeSource { .. }))
         ),
         "{refusals:?}"
     );
@@ -1804,7 +1798,7 @@ fn a_measured_recursive_clock_reading_unfolds() {
         let [refusal] = refusals.as_slice() else {
             panic!("one refusal: {refusals:?}");
         };
-        let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+        let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
             panic!("a stage limit: {refusal:?}");
         };
         assert_eq!(limit.kind, CheckingLimitKind::WorkBudget);

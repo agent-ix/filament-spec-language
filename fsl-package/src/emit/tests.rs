@@ -41,6 +41,7 @@ use crate::checked_v2::{read_v2, Read, V2ReadLimits};
 mod abstraction;
 mod admission_corpus;
 mod bare_world;
+mod bytes_operations;
 mod carried_quantity_paths;
 mod check_mode;
 mod checked_views;
@@ -1723,8 +1724,8 @@ fn a_declared_name_segment_that_is_no_identifier_refuses_by_that_segment() {
         )
         .expect_err("the name has no identifier segments");
     assert!(
-        refusals.iter().any(|refusal| refusal.cause
-            == fsl_semantics::check::CheckCause::NodePreimage(
+        refusals.iter().any(|refusal| refusal.cause.as_ref()
+            == &fsl_semantics::check::CheckCause::NodePreimage(
                 fsl_semantics::check::NodeKeyRefusal::InvalidQualifiedNameSegment {
                     segment: "1Point".to_owned(),
                 }
@@ -2000,10 +2001,8 @@ fn an_empty_package_refuses_during_check() {
             .expect_err("an empty package has no graph to emit");
     assert!(matches!(
         refusals.as_slice(),
-        [CheckRefusal {
-            cause: fsl_semantics::check::CheckCause::EmptyPackage { .. },
-            ..
-        }]
+        [CheckRefusal { cause, .. }]
+            if matches!(cause.as_ref(), fsl_semantics::check::CheckCause::EmptyPackage { .. })
     ));
 }
 
@@ -2090,7 +2089,9 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             Err(EmitRefusal::TimedModelWriterInvariant(_)) => Seen::TimedModelWriterInvariant,
             Err(EmitRefusal::MonitorPlanInvariant(_)) => Seen::MonitorPlanInvariant,
             Err(EmitRefusal::RequirementRowCarry(_)) => {
-                panic!("emit_checked writes its own requirement rows; only a re-encoder carries them")
+                panic!(
+                    "emit_checked writes its own requirement rows; only a re-encoder carries them"
+                )
             }
             Err(EmitRefusal::MonitorPlanAmbiguous { .. }) => Seen::MonitorPlanAmbiguous,
             Err(EmitRefusal::MonitorBaseRefused(_)) => Seen::MonitorBaseRefused,
@@ -3054,7 +3055,7 @@ fn every_text_literal_vector_emits_normalized_or_is_refused_at_the_call() {
                     max,
                     retained_length,
                     ..
-                } = &refusals[0].cause
+                } = &*refusals[0].cause
                 else {
                     panic!("{id}: {:?}", refusals[0].cause);
                 };
@@ -3186,13 +3187,22 @@ fn assemble_with_models(
     unit: &[u8],
     packages: &fsl_semantics::model::intake::PackageInput,
 ) -> Result<PackageDeclarations, String> {
+    assemble_with_models_as(unit, packages, "test:spine-model")
+}
+
+/// Assemble the spine-model fixture with a caller-selected source identity.
+fn assemble_with_models_as(
+    unit: &[u8],
+    packages: &fsl_semantics::model::intake::PackageInput,
+    source_identity: &str,
+) -> Result<PackageDeclarations, String> {
     // S1's size and work limits are raised to fit a unit past their defaults.
     let mut limits = fsl_cst::Limits::default();
     limits.source_bytes = limits.source_bytes.max(unit.len());
     limits.tokens = limits.tokens.max(unit.len());
     limits.nodes = limits.nodes.max(unit.len().saturating_mul(16));
     let parsed = fsl_cst::parse(
-        fsl_foundation::SourceIdentity::new("agent-ix", "test:spine-model"),
+        fsl_foundation::SourceIdentity::new("agent-ix", source_identity),
         "program.native",
         unit,
         limits,

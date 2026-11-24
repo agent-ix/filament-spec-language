@@ -14,8 +14,7 @@ use std::collections::BTreeMap;
 
 // The repository's public test constructors provide the carrier structure;
 // the declarations, field data and adverse changes below are original.
-#[path = "../../../fsl-semantics/tests/support/tc235_k2.rs"]
-pub(super) mod carrier;
+pub(super) use crate::support::probabilistic_model::base as carrier;
 #[path = "../../../fsl-semantics/tests/support/variant_fields.rs"]
 pub(super) mod fields;
 
@@ -70,7 +69,7 @@ fn model() -> Value {
 fn checked(body: &str) -> (CheckedUnit, PackageInput) {
     let bytes = serde_json::to_vec(&model()).unwrap();
     let packages = package_input([bytes.as_slice()]).expect("original model carrier admits");
-    let source = format!("{HEADER}model M = {:?};\n{body}", carrier::PACKAGE);
+    let source = format!("{HEADER}model M = {:?};\n{body}", fields::PACKAGE);
     let checked = crate::support::front_end::checked(
         SourceIdentity::new("boundary-tests", "original:parcel-model"),
         "parcel.native",
@@ -85,7 +84,7 @@ fn checked(body: &str) -> (CheckedUnit, PackageInput) {
 fn snapshot() -> Value {
     json!({"format":"filament.state.snapshot/v1",
     "identity":{"authority":"boundary-tests","identity":"original:parcel-state"},
-    "observation":"current","model":{"identity":carrier::PACKAGE},
+    "observation":"current","model":{"identity":fields::PACKAGE},
     "populations":[{"population":carrier::id("parcels"),"complete":true,"objects":[{
         "key":"parcel-17","type":carrier::id("Parcel"),"fields":{
             "envelope":{"record":{"type":carrier::id("Envelope"),"fields":{"label":{"kind":"string","text":"00112233-4455-6677-8899-aabbccddeeff"},
@@ -97,7 +96,7 @@ fn snapshot() -> Value {
 }
 
 #[test]
-#[trace("TC-985", "TC-992", "TC-1231")]
+#[trace("TC-985", "TC-992", "TC-1231", "FR-106-AC-61")]
 fn record_native_fields_distinguish_string_uuid_and_payload_kinds() {
     let (checked, packages) = checked("function marker using v(): Integer pure { 41 }");
     let graph = checked.package().graph();
@@ -204,7 +203,7 @@ fn presence_comes_from_optional_field_and_not_sequence_cardinality() {
     let bytes = serde_json::to_vec(&model()).unwrap();
     let packages = package_input([bytes.as_slice()]).unwrap();
     for expression in ["present(self.flags)", "value(self.approved) = false"] {
-        let source = format!("{HEADER}model M = {:?}; invariant Bad using v on M::Parcel at current {{ {expression} }}",carrier::PACKAGE);
+        let source = format!("{HEADER}model M = {:?}; invariant Bad using v on M::Parcel at current {{ {expression} }}",fields::PACKAGE);
         let error = crate::support::front_end::checked(
             SourceIdentity::new("boundary-tests", "original:presence-boundary"),
             "presence.native",
@@ -229,7 +228,7 @@ fn scalar_expressions_cannot_replace_a_boolean_clause() {
     let bytes = serde_json::to_vec(&model()).unwrap();
     let packages = package_input([bytes.as_slice()]).unwrap();
     for expression in ["self.count", "self.envelope"] {
-        let source = format!("{HEADER}model M = {:?}; invariant Bad using v on M::Parcel at current {{ {expression} }}",carrier::PACKAGE);
+        let source = format!("{HEADER}model M = {:?}; invariant Bad using v on M::Parcel at current {{ {expression} }}",fields::PACKAGE);
         let error = crate::support::front_end::checked(
             SourceIdentity::new("boundary-tests", "original:scalar-roots"),
             "roots.native",
@@ -289,7 +288,7 @@ fn invocation_native_parameters_and_result_are_admitted_in_their_declared_roles(
         })
         .collect();
     let invocation = json!({"format":"filament.state.invocation/v1","identity":label(&call),
-        "model":{"identity":carrier::PACKAGE},"context":carrier::id("Parcel"),"operation":"stamp",
+        "model":{"identity":fields::PACKAGE},"context":carrier::id("Parcel"),"operation":"stamp",
         "self":{"population":carrier::id("parcels"),"key":"parcel-17"},
         "pre":{"identity":label(&pre)},"post":{"identity":label(&post)},
         "parameters":{"receipt":{"kind":"bytes","text":"01ff"}},

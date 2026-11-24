@@ -29,12 +29,12 @@ use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
 use fsl_semantics::model::state::{ModelState, StateObject};
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 #[path = "ring_queue.rs"]
 pub(crate) mod ring_queue;
 
-pub use ring_queue::{key, node, QUEUE, RING};
+pub use ring_queue::{QUEUE, RING, key, node};
 
 const BOOLEAN: &str = "ix://filament/native/Boolean";
 
@@ -97,6 +97,9 @@ pub struct Variant {
     /// holds `SlowQueue`), and the concrete `Slot` a second operation `put2`
     /// beside `put` (FR-141-AC-16, FR-140-AC-18).
     pub subtypes: bool,
+    /// The abstract `enq` stutters and the refinement's `items` row is a
+    /// source-compatible empty sequence literal for package-reader tests.
+    pub package_readback: bool,
     /// The abstract `Queue` has an optional `head: Digit?` field
     /// (FR-140-AC-11).
     pub optional_head: bool,
@@ -159,7 +162,11 @@ fn queue_document(variant: Variant) -> Vec<u8> {
     let mut enq = framed(
         ring_queue::operation(QUEUE, "Queue", "enq", &parameters, None, &[]),
         QUEUE,
-        &["Queue/items"],
+        if variant.package_readback {
+            &[]
+        } else {
+            &["Queue/items"]
+        },
         &[],
     );
     if variant.chain {
@@ -170,7 +177,11 @@ fn queue_document(variant: Variant) -> Vec<u8> {
     let deq = framed(
         ring_queue::operation(QUEUE, "Queue", "deq", &[], Some(&digit), &[]),
         QUEUE,
-        &["Queue/items"],
+        if variant.package_readback {
+            &[]
+        } else {
+            &["Queue/items"]
+        },
         &[],
     );
     let mut types = vec![ring_queue::bounded(QUEUE, "Digit", 1)];
@@ -214,6 +225,9 @@ fn queue_document(variant: Variant) -> Vec<u8> {
 
 /// The fields of the abstract `Queue` of `variant`.
 fn queue_fields(variant: Variant) -> Vec<Json> {
+    if variant.package_readback {
+        return Vec::new();
+    }
     let digit = node(QUEUE, "Digit");
     let mut fields = vec![ring_queue::field(
         QUEUE,
@@ -289,6 +303,12 @@ fn ring_document(variant: Variant) -> Vec<u8> {
         &["Ring/head", "Ring/size"],
         &[],
     );
+    let take2 = framed(
+        ring_queue::operation(RING, "Slot", "take2", &[], Some(&digit), &[]),
+        RING,
+        &["Ring/head", "Ring/size"],
+        &[],
+    );
     ring_queue::document(
         RING,
         vec![
@@ -304,7 +324,7 @@ fn ring_document(variant: Variant) -> Vec<u8> {
                     ring_queue::single(RING, "Slot", "value", &digit),
                 ],
                 if variant.subtypes {
-                    vec![put, put2, take]
+                    vec![put, put2, take, take2]
                 } else {
                     vec![put, take]
                 },
@@ -364,12 +384,34 @@ fn sub_ring() -> Json {
 
 /// The contracts of both models.
 fn contracts(variant: Variant) -> String {
+    if variant.package_readback {
+        return format!(
+            "pre CanEnq using v on Q::Queue::enq {{ true }}\n\
+             post Enq using v on Q::Queue::enq {{ true }}\n\
+             pre CanDeq using v on Q::Queue::deq {{ true }}\n\
+             post Deq using v on Q::Queue::deq {{ true }}\n\
+             pre CanPut using v on R::Slot::put {{ true }}\n\
+             post Put using v on R::Slot::put {{ true }}\n\
+             pre CanTake using v on R::Slot::take {{ true }}\n\
+             post Take using v on R::Slot::take {{ true }}\n\
+             {}",
+            if variant.subtypes {
+                "pre CanPut2 using v on R::Slot::put2 { true }\npost Put2 using v on R::Slot::put2 { true }\npre CanTake2 using v on R::Slot::take2 { true }\npost Take2 using v on R::Slot::take2 { true }\n"
+            } else {
+                ""
+            }
+        );
+    }
     let at = if variant.broken_take {
         "(self.ring.head + 1) mod 2"
     } else {
         "self.ring.head"
     };
-    let enq = "(size(pre(self.items)) = 0 and self.items = sequence[x]) or (pre(self.items) = sequence[0] and self.items = sequence[0, x]) or (pre(self.items) = sequence[1] and self.items = sequence[1, x])";
+    let enq = if variant.package_readback {
+        "self.items = pre(self.items)"
+    } else {
+        "(size(pre(self.items)) = 0 and self.items = sequence[x]) or (pre(self.items) = sequence[0] and self.items = sequence[0, x]) or (pre(self.items) = sequence[1] and self.items = sequence[1, x])"
+    };
     let enq =
         vec![format!("({enq})"); 1 + usize::try_from(variant.heavy).unwrap_or(0)].join(" and ");
     let enq = if variant.chain {
@@ -409,8 +451,7 @@ fn items_row(variant: Variant) -> String {
 /// `RingIsQueue` with the `items` row `items`.
 pub fn ring_is_queue(items: &str) -> String {
     format!(
-        "invariant Anything using v on R::Ring at current {{ true }}\n\
-         refinement RingIsQueue using inf abstract Q concrete R {{\n\
+        "refinement RingIsQueue using inf abstract Q concrete R {{\n\
          population Q::queues from R::rings;\n\
          object Q::Queue from R::Ring {{ {items} }}\n\
          step R::Slot::put -> Q::Queue::enq(self.ring, x);\n\
@@ -434,8 +475,7 @@ pub fn twin_refinement(cell_first: bool) -> String {
         (queue, cell.to_owned())
     };
     format!(
-        "invariant Anything using v on R::Ring at current {{ true }}\n\
-         refinement RingIsQueue using inf abstract Q concrete R {{\n\
+        "refinement RingIsQueue using inf abstract Q concrete R {{\n\
          population Q::queues from R::rings;\n\
          population Q::cells from R::rings;\n\
          {first}\n\
@@ -585,7 +625,10 @@ impl RingWorld {
             panic!("{refinement}: the unit checks: {refusals}");
         });
         let mut snapshots = BTreeMap::new();
-        let mut queue_fields = json!({"items": {"sequence": []}});
+        let mut queue_fields = json!({});
+        if !variant.package_readback {
+            queue_fields["items"] = json!({"sequence": []});
+        }
         if variant.optional_head {
             queue_fields["head"] = json!({"absent": {}});
         }
@@ -677,6 +720,11 @@ impl RingWorld {
     /// The unit's checked package.
     pub fn package(&self) -> &CheckedPackage {
         &self.package
+    }
+
+    /// The domain package documents selected by the unit.
+    pub fn packages(&self) -> &fsl_semantics::model::intake::PackageInput {
+        &self.packages
     }
 
     /// The unit's one refinement.

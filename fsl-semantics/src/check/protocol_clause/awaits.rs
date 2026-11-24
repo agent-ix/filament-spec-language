@@ -6,8 +6,8 @@
 //! role too, so it needs the same selection.
 
 use fsl_forms::{IntervalUpper, ProtocolDeclarationForm, ProtocolNodeKind};
-use fsl_foundation::selection::ProfileSelection;
 use fsl_foundation::Span;
+use fsl_foundation::selection::ProfileSelection;
 
 use super::refusal;
 use super::types::{CheckedAwait, ProtocolNodeId};

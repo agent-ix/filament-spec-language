@@ -4,15 +4,22 @@
 //! `Link` model (random losses on two sends, a `cost` reward and the
 //! workload `Even`), which S4 emits as a checked package (FR-740).
 
+use base64::Engine;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::prob_world::{self, World};
 use filament_exact::Cancel;
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+use fsl_analyze::exact_probabilistic::{
+    build_product, decide_reachability, ExactProbLimits, ExtRational, ProbBuild, UnboundedObjective,
+};
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_foundation::RequestIndex;
-use fsl_replay::{replay_probabilistic_witness, ExactProbLimits, ModelCheckLimits};
+use fsl_replay::{
+    replay_probabilistic_witness, ActivationPhase, ExactOrBounds, ModelCheckLimits, OnEachOutcome,
+    ProbabilityProductKey, ProofBasis, TerminalValue,
+};
 
 use crate::analyze_cli_support::{
     analyze, assert_no_nested_node_ids, label, request_over, Workspace,
@@ -820,6 +827,232 @@ fn probabilistic_on_each_reports_conditional_certificate_and_instance() {
     );
 }
 
+/// FR-196-AC-15 (TC-3060): the checked two-object Link source emits the
+/// conditional masses for m, leaves n vacuous and waiting at every reachable
+/// key, and preserves the distinct activation keys.
+#[trace("TC-3060", "FR-196-AC-15")]
+#[test]
+fn probabilistic_on_each_product_preserves_multi_initial_keys() {
+    let world_with = |threshold: &str| {
+        let mut model = prob_world::link("");
+        model
+            .body
+            .push_str(&format!("\n{}\n{}", on_each(threshold), EVENTUALLY));
+        // LINK_UNIT's `self` contracts and operations are receiver-scoped;
+        // the symmetric fixture emits those same per-object frames.
+        World::symmetric_with_initials(
+            &model,
+            &["m", "n"],
+            &[json!({"objects": {
+                "m": {"delivered": {"boolean": false}, "attempts": {"integer": "0"}},
+                "n": {"delivered": {"boolean": true}, "attempts": {"integer": "0"}}
+            }})],
+        )
+    };
+    let world = world_with("rational(9, 10)");
+    let cancel = Cancel::new();
+    let subject = world.subject();
+    let system = ModelSystem::new(subject.simulation).expect("the checked Link model admits");
+    let claims = world.package.graph().probabilistic_model().claims();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim("E"))
+        .expect("the on-each identity is canonical");
+    let limits = fsl_replay::ProbabilityDocumentLimits::for_exact(
+        &ExactProbLimits::default(),
+        system.meter_limits(),
+    );
+    let OnEachOutcome::Holds { document } = fsl_replay::on_each_outcome(
+        &system,
+        claims,
+        &item,
+        limits,
+        ExactProbLimits::default().max_witness_paths,
+        &cancel,
+    )
+    .expect("the checked on-each claim settles") else {
+        panic!("the nonempty on-each proof holds");
+    };
+    let proof: Value = serde_json::from_slice(&document).expect("canonical conditional JSON");
+    assert_eq!(proof["kind"], "conditional", "{proof}");
+    let conditional = &proof["conditional"];
+    assert_eq!(conditional["mode"], "ratio", "{proof}");
+
+    let initial = fsl_eval::simulation::TransitionSystem::initial(&system)
+        .into_iter()
+        .next()
+        .expect("initial state");
+    let (model_key, _) = system.state_key(&initial).expect("initial model key");
+    let model_product = ProbabilityProductKey::for_model_state(None, &model_key)
+        .expect("the initial model key forms a product key");
+    let fsl_semantics::check::ClaimActivation::Each { value_type, .. } =
+        &world.claim("E").activation
+    else {
+        panic!("E is an on-each claim");
+    };
+    let instances = system.instances(value_type).expect("the Msg instances");
+    let reference = |key: &str| {
+        let instance = instances
+            .iter()
+            .find(|instance| instance.key == key)
+            .expect("the initial instance exists");
+        let filament_exact::ValueType::Reference(over) = value_type.as_ref() else {
+            panic!("the activation is over a reference type");
+        };
+        system
+            .bound_reference(over.clone(), instance)
+            .expect("the instance has its checked reference")
+    };
+    let product_key = |instance: &str, phase| {
+        model_product
+            .with_activation(
+                &reference(instance),
+                phase,
+                fsl_replay::ProbabilityDocumentIoLimits::default(),
+                &cancel,
+            )
+            .expect("the product key is canonical")
+    };
+    let active_m = product_key("m", ActivationPhase::Active);
+    let waiting_n = product_key("n", ActivationPhase::Waiting);
+    let encoded_m = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(active_m.as_bytes());
+    let encoded_n = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(waiting_n.as_bytes());
+    let numerator_rows = conditional["numerator"]["values"]
+        .as_array()
+        .expect("numerator value rows");
+    let denominator_rows = conditional["denominator"]["values"]
+        .as_array()
+        .expect("denominator value rows");
+    let exact_value = |rows: &[Value], key: &str| {
+        rows.iter()
+            .find(|row| row["state"] == key)
+            .map(|row| row["value"].clone())
+            .expect("the initial instance key has an exact value")
+    };
+    assert_eq!(
+        exact_value(numerator_rows, &encoded_m),
+        json!({"numerator": "391", "denominator": "400"}),
+        "m's active initial numerator equals on-origin"
+    );
+    assert_eq!(
+        exact_value(denominator_rows, &encoded_m),
+        json!({"numerator": "1", "denominator": "1"}),
+        "m's active initial denominator is one"
+    );
+    assert!(
+        numerator_rows
+            .iter()
+            .chain(denominator_rows)
+            .any(|row| row["state"] == encoded_n),
+        "the producer emits n's initial waiting key"
+    );
+    for row in numerator_rows.iter().chain(denominator_rows) {
+        let Some(encoded) = row["state"].as_str() else {
+            panic!("an exact row has a state key: {row}");
+        };
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded)
+            .expect("a canonical product key is base64url");
+        let key: Value = serde_json::from_slice(&bytes).expect("a canonical product key is JSON");
+        if key[2][1] == "n" {
+            assert_eq!(key[3], "waiting", "every reachable n key remains waiting");
+        }
+    }
+    assert_ne!(active_m, waiting_n, "m and n initial keys differ");
+    assert!(matches!(
+        fsl_replay::check_probability_certificate_document(
+            &system, claims, &item, &document, limits, &cancel
+        ),
+        Ok(fsl_replay::ExactProbabilityCertificateCheck::Accepted(_))
+    ));
+
+    let analyze_claim = |world: &World, name: &str| {
+        let engines = Engines::fsl().expect("the exact engine registers");
+        analyze_items(
+            &engines,
+            vec![exact_probabilistic_item(
+                RequestIndex::new(0),
+                world.request(name, ModelCheckLimits::default()),
+            )],
+            &Cancel::new(),
+        )
+        .remove(0)
+    };
+    let on_each_record = analyze_claim(&world, "E");
+    let on_each_terminal = on_each_record.terminal().expect("E settles");
+    let TerminalValue::Proved {
+        basis:
+            ProofBasis::ExactValue {
+                entries: on_each_entries,
+                ..
+            },
+        ..
+    } = on_each_terminal.value()
+    else {
+        panic!("E has an exact value basis");
+    };
+    assert_eq!(on_each_entries.len(), 1, "n has no conditional value");
+    let entry = &on_each_entries[0];
+    assert_eq!(
+        entry
+            .instance
+            .as_ref()
+            .map(|instance| instance.key.as_str()),
+        Some("m")
+    );
+    assert!(entry.binding.is_none());
+    let ExactOrBounds::Exact { value } = &entry.value else {
+        panic!("m has an exact value");
+    };
+    let on_each_value = value.value().clone();
+    assert_eq!(
+        on_each_value,
+        filament_exact::Rational::new(
+            filament_exact::Integer::from(391_i64),
+            filament_exact::Integer::from(400_i64),
+        )
+        .expect("nonzero denominator"),
+        "m's on-each value is exactly 391/400"
+    );
+
+    let origin_world = World::new(&prob_world::link(EVENTUALLY));
+    let origin_product = match build_product(
+        origin_world.request("Eventually", ModelCheckLimits::default()),
+        &cancel,
+    ) {
+        Ok(ProbBuild::Built(product)) => product,
+        other => panic!("the on-origin claim builds an exact product: {other:?}"),
+    };
+    let origin_target = origin_product
+        .labels
+        .iter()
+        .map(|labels| labels[0])
+        .collect::<Vec<_>>();
+    let origin_values = decide_reachability(
+        &origin_product,
+        &origin_target,
+        UnboundedObjective::Max,
+        &ExactProbLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("the on-origin exact reachability value computes");
+    let origin_initial = origin_product.initial[0].2.index();
+    assert_eq!(
+        origin_values.values[origin_initial],
+        ExtRational::Finite(on_each_value.clone()),
+        "m's on-each value equals the on-origin product value"
+    );
+    assert_eq!(
+        origin_values.values[origin_initial],
+        ExtRational::Finite(
+            filament_exact::Rational::new(
+                filament_exact::Integer::from(391_i64),
+                filament_exact::Integer::from(400_i64),
+            )
+            .expect("nonzero denominator")
+        ),
+        "the independently computed on-origin value is 391/400"
+    );
+}
+
 /// `Every`: delivery under every scheduler at `9/10` (FR-876's use case).
 const EVERY: &str =
     "probabilistic Every using inf on M over (m: M::Msg) under every scheduler on origin \
@@ -1228,13 +1461,7 @@ fn native_probability_items_preserve_caller_accounting_limits() {
     }
 }
 
-#[trace(
-    "TC-2066",
-    "FR-120-AC-35",
-    "FR-191-AC-8",
-    "FR-192-AC-1",
-    "FR-203-AC-13"
-)]
+#[trace("TC-2066", "FR-120-AC-35", "FR-192-AC-1", "FR-203-AC-13")]
 #[test]
 fn native_probability_items_share_work_across_expansions_and_start_fresh_per_item() {
     use fsl_eval::simulation::TransitionSystem;
@@ -1389,6 +1616,7 @@ fn native_probability_reward_admission_preserves_accounting_stop() {
         subject.simulation.meter.work_units = bound;
         let raw_statistical = check_statistical(
             StatisticalRequest {
+                workers: 1,
                 subject,
                 claim: world.claim("Delivered"),
                 method: StatisticalMethod::Okamoto,
@@ -1498,6 +1726,7 @@ fn native_probability_reward_admission_cancellation_keeps_its_cause() {
             statistical_item(
                 RequestIndex::new(0),
                 StatisticalRequest {
+                    workers: 1,
                     subject: world.subject(),
                     claim: world.claim("Delivered"),
                     method: StatisticalMethod::Okamoto,
@@ -1557,11 +1786,14 @@ fn absent_probabilistic_members_take_their_published_defaults() {
     assert_eq!(request["max_witnesses"], 8, "{bounded}");
 }
 
-/// Long-run delay weighting remains outside the bounded-window sampler.
+/// FR-420 "Delay-weighted cycles": the `Link` unit's behaviours all end in a
+/// terminal state, so the long-run delay-weighted fraction is the mean of
+/// their terminal limits.
 #[test]
-fn delay_weighting_from_source_is_not_yet_implemented_not_a_method_error() {
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-11")]
+fn delay_weighting_from_source_settles_the_limit_of_a_terminating_run() {
     let claim = "probabilistic Weighted using t on M over (m: M::Msg) under Even on origin \
-         with alpha 0.01, beta 0.01, indifference 0.05 \
+         with alpha 0.4, beta 0.4, indifference 0.05 \
          { long_run_fraction holds(m.delivered) weighted by delay >= 0.1 }";
     let document = run_timed(
         "delay-weighting-statistical",
@@ -1571,11 +1803,8 @@ fn delay_weighting_from_source_is_not_yet_implemented_not_a_method_error() {
     );
     let item = &document["items"][0];
     assert!(item.is_object(), "{document}");
-    assert_eq!(label(item), "unsupported", "{document}");
-    assert_ne!(
-        item["record"]["diagnostic"]["cause"], "not-statistical",
-        "{item}"
-    );
+    assert_eq!(label(item), "measured", "{document}");
+    assert_eq!(item["verdict"]["decision"]["type"], "accepted", "{item}");
 }
 
 /// Both sends have delay at least 1 ms, so the entire half-ms window is
@@ -1905,4 +2134,480 @@ fn probabilistic_on_each_out_of_profile_form_is_unsupported_with_no_cause() {
         assert!(item["record"].get("cause").is_none(), "{name}: {item}");
         assert!(item.get("certificate").is_none(), "{name}: {item}");
     }
+}
+
+/// `E`'s activation over `body`, as `name`, written `using profile` under
+/// `scheduler`.
+fn on_each_form(name: &str, profile: &str, scheduler: &str, body: &str) -> String {
+    format!(
+        "probabilistic {name} using {profile} on M under {scheduler} \
+         on each (k: M::Msg) when (not k.delivered) {{ {body} }}"
+    )
+}
+
+/// The `Link` unit whose sends no longer count attempts: a lost send
+/// returns the message to its own undelivered state, so every instance's
+/// phase graph is cyclic.
+fn cyclic_unit(claims: &str) -> String {
+    unit(claims)
+        .replace(
+            "self.attempts - pre(self.attempts) = 1 and self.delivered = (not lost)",
+            "self.attempts = pre(self.attempts) and self.delivered = (not lost)",
+        )
+        .replace(
+            "terminal Stop using v on M when { self.delivered or self.attempts = 2 };",
+            "",
+        )
+}
+
+/// FR-875's profile boundary: the item settles `unsupported` with
+/// `not-yet-implemented`, no `cause`, value, measurement or certificate, and
+/// does not name the activation or `no-instance` as its reason.
+fn settles_at_the_profile_boundary(case: &str, item: &Value) {
+    assert!(item.is_object(), "{case}: {item}");
+    assert_eq!(label(item), "unsupported", "{case}: {item}");
+    let text = item.to_string();
+    assert!(text.contains("not-yet-implemented"), "{case}: {item}");
+    assert!(!text.contains("no-instance"), "{case}: {item}");
+    assert!(item["record"].get("cause").is_none(), "{case}: {item}");
+    assert!(item["record"].get("basis").is_none(), "{case}: {item}");
+    assert!(item.get("certificate").is_none(), "{case}: {item}");
+    assert!(item.get("measurement").is_none(), "{case}: {item}");
+}
+
+/// Analyze `claim` under `source`'s unit text with one undelivered message,
+/// and with an empty `msgs` population, requesting `request`.
+fn on_each_both(case: &str, source: &str, request: Value) -> (Value, Value) {
+    let over = |start: Vec<u8>, suffix: &str| {
+        let ws = Workspace::new(&format!("on-each-{case}-{suffix}"));
+        let path = request_over(
+            &ws,
+            source,
+            LINK_MODEL,
+            &[start],
+            json!({"items": [request.clone()]}),
+        );
+        analyze(&path).document()["items"][0].clone()
+    };
+    (
+        over(link_start(&[("m", false)]), "one"),
+        over(link_start(&[]), "none"),
+    )
+}
+
+/// The item settles `inconclusive` with cause `no-instance`.
+fn settles_no_instance(case: &str, item: &Value) {
+    assert_eq!(label(item), "inconclusive", "{case}: {item}");
+    assert_eq!(
+        item["record"]["cause"]["kind"], "no-instance",
+        "{case}: {item}"
+    );
+}
+
+/// [`on_each_form`] over one undelivered message, requested by `request`.
+fn on_one_message(case: &str, source: &str, request: Value) -> Value {
+    let ws = Workspace::new(&format!("on-each-{case}-one"));
+    let path = request_over(
+        &ws,
+        source,
+        LINK_MODEL,
+        &[link_start(&[("m", false)])],
+        json!({"items": [request]}),
+    );
+    analyze(&path).document()["items"][0].clone()
+}
+
+/// TC-3211: an on-each form outside the `on-each-reachability/v1` profile
+/// settles `unsupported` at the profile boundary over a nonempty instance
+/// set.
+fn assert_profile_boundary(case: &str, source: &str, request: Value) {
+    settles_at_the_profile_boundary(case, &on_one_message(case, source, request));
+}
+
+/// TC-3211 step 1: the admitted exact workload profile is the control. The
+/// one instance `m` activates at position 0, so its value is the `on origin`
+/// value `391/400`, carried by a `ratio` conditional certificate.
+#[trace("TC-3211", "FR-875-AC-4")]
+#[test]
+fn on_each_profile_control_is_proved_with_its_ratio_certificate() {
+    let source = unit(&on_each_form(
+        "E",
+        "inf",
+        "Even",
+        "probability >= rational(9, 10) [ eventually holds(k.delivered) ]",
+    ));
+    let (one, none) = on_each_both("control", &source, json!({"claim": "E"}));
+    assert_eq!(label(&one), "proved", "{one}");
+    assert_eq!(one["certificate"]["kind"], "conditional", "{one}");
+    assert_eq!(
+        one["certificate"]["document"]["conditional"]["mode"], "ratio",
+        "{one}"
+    );
+    assert_eq!(
+        one["record"]["basis"]["entries"][0]["value"],
+        json!({"type": "exact", "value": {"numerator": "391", "denominator": "400"}}),
+        "{one}"
+    );
+    settles_no_instance("control", &none);
+}
+
+/// FR-875 "Instances": an empty instance set settles `no-instance` before
+/// the profile is admitted, so each out-of-profile form of TC-3211 over an
+/// empty `msgs` population is `no-instance`, not `unsupported`. No
+/// acceptance criterion states this precedence yet; the test is traced to
+/// the requirement.
+#[trace("FR-875")]
+#[test]
+fn on_each_empty_population_settles_no_instance_before_the_profile_boundary() {
+    let exact = json!({"claim": "E", "probabilistic": {"evidence": "exact"}});
+    let statistical = json!({"claim": "E", "probabilistic": {
+        "evidence": "statistical", "method": {"type": "okamoto"},
+        "seed": "0", "max_witnesses": 0}});
+    let eventually = "probability >= rational(1, 2) [ eventually holds(k.delivered) ]";
+    for (case, source, request) in [
+        (
+            "every-scheduler",
+            unit(&on_each_form("E", "inf", "every scheduler", eventually)),
+            exact.clone(),
+        ),
+        (
+            "free-delay",
+            timed_unit(&on_each_form("E", "inf", "Even", eventually)),
+            exact.clone(),
+        ),
+        (
+            "statistical",
+            unit(&on_each_form(
+                "E",
+                "ev",
+                "Even",
+                "probability >= 0.9 [ eventually[0,2] holds(k.delivered) ]",
+            ))
+            .replace(
+                "when (not k.delivered)",
+                "when (not k.delivered) with alpha 0.01, beta 0.01, indifference 0.05",
+            ),
+            statistical,
+        ),
+        (
+            "cyclic",
+            cyclic_unit(&on_each_form("E", "inf", "Even", eventually)),
+            exact.clone(),
+        ),
+        (
+            "quantile",
+            unit(&on_each_form(
+                "E",
+                "ev",
+                "Even",
+                "quantile 0.4 of (steps from holds(true) until holds(k.delivered) within 4) <= 3",
+            )),
+            exact.clone(),
+        ),
+        (
+            "timed",
+            timed_unit(&on_each_form(
+                "E",
+                "t",
+                "Even",
+                "probability >= rational(1, 2) [ eventually[0 ms, 3 ms] holds(k.delivered) ]",
+            )),
+            exact.clone(),
+        ),
+        (
+            "fairness",
+            unit(&on_each_form(
+                "E",
+                "inf",
+                "every scheduler fair weak Msg::send_a",
+                eventually,
+            )),
+            exact,
+        ),
+    ] {
+        let (_, none) = on_each_both(case, &source, request);
+        settles_no_instance(case, &none);
+    }
+}
+
+/// FR-875-AC-4: every-scheduler and free-delay optima.
+#[trace("TC-3211", "FR-875-AC-4")]
+#[test]
+fn on_each_optima_settle_at_the_profile_boundary() {
+    let body = "probability >= rational(1, 2) [ eventually holds(k.delivered) ]";
+    assert_profile_boundary(
+        "every-scheduler",
+        &unit(&on_each_form("E", "inf", "every scheduler", body)),
+        json!({"claim": "E"}),
+    );
+    assert_profile_boundary(
+        "free-delay",
+        &timed_unit(&on_each_form("E", "inf", "Even", body)),
+        json!({"claim": "E", "probabilistic": {"evidence": "exact"}}),
+    );
+}
+
+/// FR-875-AC-5: statistical evidence, for a sampled form and for an
+/// exact-only form alike.
+#[trace("TC-3211", "FR-875-AC-5")]
+#[test]
+fn on_each_statistical_evidence_settles_at_the_profile_boundary() {
+    let statistical = json!({"claim": "E", "probabilistic": {
+        "evidence": "statistical", "method": {"type": "okamoto"},
+        "seed": "0", "max_witnesses": 0}});
+    for (case, body) in [
+        (
+            "statistical-bounded",
+            "probability >= 0.9 [ eventually[0,2] holds(k.delivered) ]",
+        ),
+        (
+            "statistical-unbounded",
+            "probability >= 0.9 [ eventually holds(k.delivered) ]",
+        ),
+    ] {
+        let claim = on_each_form("E", "ev", "Even", body).replace(
+            "when (not k.delivered)",
+            "when (not k.delivered) with alpha 0.01, beta 0.01, indifference 0.05",
+        );
+        let claim = if case == "statistical-unbounded" {
+            claim.replace("using ev", "using inf")
+        } else {
+            claim
+        };
+        assert_profile_boundary(case, &unit(&claim), statistical.clone());
+    }
+}
+
+/// FR-875-AC-6: a cyclic continuation graph.
+#[trace("TC-3211", "FR-875-AC-6")]
+#[test]
+fn on_each_cyclic_phase_graph_settles_at_the_profile_boundary() {
+    assert_profile_boundary(
+        "cyclic",
+        &cyclic_unit(&on_each_form(
+            "E",
+            "inf",
+            "Even",
+            "probability >= rational(1, 2) [ eventually holds(k.delivered) ]",
+        )),
+        json!({"claim": "E"}),
+    );
+}
+
+/// FR-875-AC-7: property forms other than unbounded eventuality.
+#[trace("TC-3211", "FR-875-AC-7")]
+#[test]
+fn on_each_other_forms_settle_at_the_profile_boundary() {
+    for (case, profile, body) in [
+        (
+            "always",
+            "ev",
+            "probability >= rational(1, 2) [ always[0,2] holds(k.attempts >= 0) ]",
+        ),
+        (
+            "until",
+            "inf",
+            "probability >= rational(1, 2) [ holds(k.attempts = 0) until holds(k.delivered) ]",
+        ),
+        (
+            "bounded-eventually",
+            "ev",
+            "probability >= rational(1, 2) [ eventually[0,2] holds(k.delivered) ]",
+        ),
+        (
+            "expected-reward",
+            "inf",
+            "expected accumulate cost until holds(k.delivered or k.attempts = 2) <= rational(2, 1)",
+        ),
+        (
+            "long-run-fraction",
+            "inf",
+            "long_run_fraction holds(k.delivered) >= rational(1, 2)",
+        ),
+        (
+            "measure",
+            "ev",
+            "mean of (fraction holds(k.delivered) over [0, 2]) >= rational(1, 5)",
+        ),
+        (
+            "quantile",
+            "ev",
+            "quantile 0.4 of (steps from holds(true) until holds(k.delivered) within 4) <= 3",
+        ),
+    ] {
+        assert_profile_boundary(
+            case,
+            &unit(&on_each_form("E", profile, "Even", body)),
+            json!({"claim": "E", "probabilistic": {"evidence": "exact"}}),
+        );
+    }
+}
+
+/// FR-875-AC-8: a timed subject's eventuality and an authored fairness set.
+#[trace("TC-3211", "FR-875-AC-8")]
+#[test]
+fn on_each_timed_and_fair_claims_settle_at_the_profile_boundary() {
+    assert_profile_boundary(
+        "timed",
+        &timed_unit(&on_each_form(
+            "E",
+            "t",
+            "Even",
+            "probability >= rational(1, 2) [ eventually[0 ms, 3 ms] holds(k.delivered) ]",
+        )),
+        json!({"claim": "E", "probabilistic": {"evidence": "exact"}}),
+    );
+    assert_profile_boundary(
+        "fairness",
+        &unit(&on_each_form(
+            "E",
+            "inf",
+            "every scheduler fair weak Msg::send_a",
+            "probability >= rational(1, 2) [ eventually holds(k.delivered) ]",
+        )),
+        json!({"claim": "E"}),
+    );
+}
+
+/// `E` over the `Link` model with statistical confidence parameters, for an
+/// on-each item requested with statistical evidence.
+const ON_EACH_SAMPLED: &str = "probabilistic Sampled using ev on M under Even \
+     on each (k: M::Msg) when (not k.delivered) \
+     with alpha 0.01, beta 0.01, indifference 0.05 \
+     { probability >= 0.9 [ eventually[0,2] holds(k.delivered) ] }";
+
+/// FR-875 with FR-203: a model-admission stop while an on-each item reads
+/// its instances is classified like any product-admission refusal, naming
+/// the exhausted resource, for statistical and exact evidence alike, and is
+/// never `failed`.
+#[trace("FR-875", "FR-203-AC-13")]
+#[test]
+fn on_each_admission_stop_is_not_an_internal_failure() {
+    let claims = format!("{ON_EACH_SAMPLED}\n{}", on_each("rational(9, 10)"));
+    let source = charged_link_rewards(&unit(&claims));
+    let ws = Workspace::new("on-each-admission-stop");
+    let request = request_over(
+        &ws,
+        &source,
+        LINK_MODEL,
+        &[link_start(&[("m", false)])],
+        json!({
+            "items": [
+                {"claim": "Sampled", "probabilistic": {
+                    "evidence": "statistical", "method": {"type": "okamoto"},
+                    "seed": "0", "max_witnesses": 0}},
+                {"claim": "E", "probabilistic": {"evidence": "exact"}}
+            ],
+            "limits": {"accounting": {"work_units": 0}}
+        }),
+    );
+    let document = analyze(&request).document();
+    let items = document["items"].as_array().expect("both items settle");
+    assert_eq!(items.len(), 2, "{document}");
+    for (item, backend) in items.iter().zip(["en-4", "en-5"]) {
+        assert_eq!(label(item), "declined", "{item}");
+        assert_eq!(item["record"]["backend"], backend, "{item}");
+        assert_eq!(
+            item["record"]["cause"],
+            json!({"code": "resource_exhausted", "kind": "incomplete-input"}),
+            "{item}"
+        );
+        assert_eq!(
+            item["record"]["diagnostic"]["detail"]["limit"], "evaluation_meter",
+            "{item}"
+        );
+    }
+}
+
+/// FR-875 with FR-203: cancellation while a statistical on-each item reads
+/// its instances keeps its cause and draws no sample.
+#[trace("FR-875", "FR-203-AC-13")]
+#[test]
+fn on_each_statistical_cancellation_keeps_its_cause() {
+    use filament_exact::CancelCause;
+    use fsl_analyze::analyze::statistical_item;
+    use fsl_analyze::statistical::StatisticalRequest;
+    use fsl_foundation::selection::DefinitionRef;
+    use fsl_replay::statistical::{StatisticalLimits, StatisticalMethod};
+    use fsl_replay::{IncompleteCause, TerminalValue};
+    let world = World::new(&prob_world::link(ON_EACH_SAMPLED));
+    let engines = Engines::fsl().unwrap();
+    // Cancelled at the first poll, inside the item's own work.
+    let slot = std::sync::Arc::new(std::sync::OnceLock::<Cancel>::new());
+    let weak = std::sync::Arc::downgrade(&slot);
+    let cancel = Cancel::observing(move || {
+        weak.upgrade()
+            .unwrap()
+            .get()
+            .unwrap()
+            .cancel(CancelCause::Requested);
+    });
+    slot.set(cancel.clone()).unwrap();
+    let item = statistical_item(
+        RequestIndex::new(0),
+        StatisticalRequest {
+            workers: 1,
+            subject: world.subject(),
+            claim: world.claim("Sampled"),
+            method: StatisticalMethod::Okamoto,
+            seed: 7,
+            sampler: DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1").unwrap(),
+            limits: StatisticalLimits::default(),
+            max_witnesses: 0,
+            symmetry: Vec::new(),
+            timed_sampling: fsl_replay::statistical::TimedSampling::default(),
+        },
+    );
+    let records = analyze_items(&engines, vec![item], &cancel);
+    let terminal = records[0].terminal().expect("cancellation settles");
+    assert_eq!(
+        terminal.value(),
+        &TerminalValue::Incomplete(IncompleteCause::Cancelled {
+            source: CancelCause::Requested
+        })
+    );
+}
+
+/// FR-875-AC-5: a statistical on-each item over a nonempty instance set
+/// settles at the profile boundary having built no product and started no
+/// path-set search. EN-4 exposes no draw counter; the item carries no
+/// `measurement`, so no sample is reported.
+#[trace("TC-3211", "FR-875-AC-5")]
+#[test]
+fn on_each_statistical_evidence_builds_no_product() {
+    use fsl_analyze::analyze::statistical_item;
+    use fsl_analyze::exact_probabilistic::{
+        product_construction_counts, reset_product_construction_counts,
+    };
+    use fsl_analyze::statistical::StatisticalRequest;
+    use fsl_foundation::selection::DefinitionRef;
+    use fsl_replay::statistical::{StatisticalLimits, StatisticalMethod};
+    let world = World::new(&prob_world::link(ON_EACH_SAMPLED));
+    let engines = Engines::fsl().unwrap();
+    let item = statistical_item(
+        RequestIndex::new(0),
+        StatisticalRequest {
+            workers: 1,
+            subject: world.subject(),
+            claim: world.claim("Sampled"),
+            method: StatisticalMethod::Okamoto,
+            seed: 7,
+            sampler: DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1").unwrap(),
+            limits: StatisticalLimits::default(),
+            max_witnesses: 0,
+            symmetry: Vec::new(),
+            timed_sampling: fsl_replay::statistical::TimedSampling::default(),
+        },
+    );
+    reset_product_construction_counts();
+    let records = analyze_items(&engines, vec![item], &Cancel::new());
+    assert_eq!(product_construction_counts(), Default::default());
+    assert!(
+        matches!(
+            records[0].settlement,
+            fsl_analyze::analyze::Settlement::Disposed(_)
+        ),
+        "unsupported at the profile boundary: {:?}",
+        records[0].settlement
+    );
 }

@@ -10,11 +10,11 @@ use filament_semantic_value::call::WrongSnapshotCause;
 use filament_semantic_value::location::ExpressionLocation as Location;
 use filament_semantic_value::semantic_node::IdentityRefusal;
 use fsl_forms::{AccessOrdering, BinaryOperator};
-use fsl_foundation::diagnostic::Code;
-use fsl_foundation::source::provenance::SourceRegion;
 use fsl_foundation::MemoryModelName;
 use fsl_foundation::Setting;
 use fsl_foundation::Span;
+use fsl_foundation::diagnostic::Code;
+use fsl_foundation::source::provenance::SourceRegion;
 
 /// FR-113: why a protocol's `ProtocolClause` checker refused one scoped
 /// anchor, or a name it declares. Each variant's `span` is the refusal's
@@ -2861,10 +2861,10 @@ impl TryFrom<Setting> for CheckingLimitKind {
             | Setting::MonitorMaxWindowValues
             | Setting::MonitorRetainedPositions
             | Setting::MonitorRetainedIdentities
+            | Setting::MonitorMaxActivations
             | Setting::MonitorPreparationWorkUnits
             | Setting::MonitorPreparationStorage
             | Setting::InspectMaxViewEntries
-
             | Setting::SimulationMaxSteps
             | Setting::ExactProbMaxStates
             | Setting::ExactProbMaxTransitions
@@ -4173,6 +4173,8 @@ pub enum IdentityForm {
     OrderSensitiveTraversal,
     /// A conversion of a reference to a value of another type.
     ReferenceConversion,
+    /// A reference literal that names an object's key.
+    KeyedReferenceLiteral,
 }
 
 /// The kind of node an `identity-observing-form` refusal is at.
@@ -4184,6 +4186,8 @@ pub enum IdentityNode {
     Reduce,
     /// A `convert<T>(e)`.
     Convert,
+    /// A reference literal naming an object key.
+    ReferenceLiteral,
 }
 
 /// What an `identity-observing-form` refusal retains (FR-150): the refused
@@ -4208,7 +4212,7 @@ pub struct CheckRefusal {
     /// Where the refusal originates.
     pub location: Location,
     /// The typed cause.
-    pub cause: CheckCause,
+    pub cause: Box<CheckCause>,
 }
 
 /// A member with no checked type used in a clause (FR-056-AC-43): the object
@@ -4251,14 +4255,14 @@ impl CheckRefusal {
         };
         Self {
             location: location.clone(),
-            cause,
+            cause: Box::new(cause),
         }
     }
 
     pub(crate) fn ill_typed(location: &Location, cause: IllTypedCause) -> Self {
         Self {
             location: location.clone(),
-            cause: CheckCause::IllTyped(cause),
+            cause: Box::new(CheckCause::IllTyped(cause)),
         }
     }
 
@@ -4309,7 +4313,10 @@ mod tests {
             actual: Box::new(actual.clone()),
         };
         let location = ExpressionLocation::at(Origin::Expression, &[2, 4]);
-        let refusal = super::CheckRefusal { location, cause };
+        let refusal = super::CheckRefusal {
+            location,
+            cause: Box::new(cause),
+        };
         assert_eq!(refusal.cause.code(), Code::IllTyped);
         assert_eq!(refusal.cause.cause(), Some("type-mismatch"));
         assert_eq!(
@@ -4321,13 +4328,15 @@ mod tests {
         );
         let equivalent = super::CheckRefusal {
             location: refusal.location.clone(),
-            cause: CheckCause::ReferenceLiteralTypeMismatch {
+            cause: Box::new(CheckCause::ReferenceLiteralTypeMismatch {
                 name,
                 actual: Box::new(ValueType::Boolean),
-            },
+            }),
         };
         assert_eq!(refusal, equivalent);
-        let CheckCause::ReferenceLiteralTypeMismatch { actual: stored, .. } = &refusal.cause else {
+        let CheckCause::ReferenceLiteralTypeMismatch { actual: stored, .. } =
+            refusal.cause.as_ref()
+        else {
             unreachable!("the reference-literal cause")
         };
         assert_eq!(stored.as_ref(), &actual);

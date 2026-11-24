@@ -118,7 +118,7 @@ pub(in crate::probability_certificate) fn admit_subsystem(
         &mut storage,
         0,
     )?;
-    validate_ranges(&document, limits, cancel, &mut meter)
+    validate_ranges(&document, cancel, &mut meter)
 }
 
 fn policy_action(
@@ -227,7 +227,7 @@ pub(super) fn check(
     if document.objective != selected.objective {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
-    validate_ranges(&document, limits, cancel, &mut meter)?;
+    validate_ranges(&document, cancel, &mut meter)?;
     let named = document
         .values
         .iter()

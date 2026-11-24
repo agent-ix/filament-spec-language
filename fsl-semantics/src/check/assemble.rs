@@ -52,20 +52,20 @@ use super::check::{
 };
 use super::check::{UntypedKind, UntypedMember};
 use super::layer::LayerAdmission;
-use super::lowering::{model_declaration_key, strongly_connected, AdmittedModel};
+use super::lowering::{AdmittedModel, model_declaration_key, strongly_connected};
 use super::model_gate::{self, ModelGateRefusal};
-use super::model_spelling::{package_names, ModelName, ModelSpellings, PackageNames, Spelled};
+use super::model_spelling::{ModelName, ModelSpellings, PackageNames, Spelled, package_names};
 use super::node_key::{NodeKeyRefusal, NodeTag, SourceOwner};
 use super::operation_body::OperationBodyDeclaration;
 use super::operation_clause::OperationClauseDeclaration;
 use super::refusal::{AliasKind, TimedConstruct};
 use super::state_clause::{
-    population_of, AttemptDeclaration, ClauseOperation, StateClauseDeclaration,
+    AttemptDeclaration, ClauseOperation, StateClauseDeclaration, population_of,
 };
 use super::state_graph_claim::StateGraphDeclaration;
 use super::terminal::{TerminalClauseDeclaration, TerminalClauseKind};
 use super::type_form::{
-    native_scalar_named, parse_rounding_mode, resolve_form, TypeFormError, TypeFormFault, TypeNames,
+    TypeFormError, TypeFormFault, TypeNames, native_scalar_named, parse_rounding_mode, resolve_form,
 };
 use super::type_invariant::{TypeInvariantDeclaration, TypeSlot};
 use crate::library::{ImportView, LibraryName};
@@ -81,15 +81,15 @@ pub use equivalence::{
     DimensionEquivalence, EquivalenceClasses, EquivalenceFault, EquivalenceRetained,
 };
 
-use super::navigation::{EndDeclaration, RelationshipDeclaration, Relationships};
 use super::CheckedGraph;
+use super::navigation::{EndDeclaration, RelationshipDeclaration, Relationships};
 use crate::model::domain_package::{
-    unaliased, AliasTypeRecord, DomainPackage, DomainPackageRecord, FieldMemberRecord,
-    MapTypeRecord, Multiplicity, NativeValueType, OperationMemberRecord, OptionTypeRecord,
-    RelationshipEnd, ScalarValueDomain, SequenceTypeRecord, ValueTypeRef,
+    AliasTypeRecord, DomainPackage, DomainPackageRecord, FieldMemberRecord, MapTypeRecord,
+    Multiplicity, NativeValueType, OperationMemberRecord, OptionTypeRecord, RelationshipEnd,
+    ScalarValueDomain, SequenceTypeRecord, ValueTypeRef, unaliased,
 };
 use crate::model::intake::{
-    member_identity_name, type_identity_segment, SelectedModel, SelectedModels,
+    SelectedModel, SelectedModels, SelectedModelsParts, member_identity_name, type_identity_segment,
 };
 use crate::model::operation::{OperationDeclaration, OperationLookup, OperationTable};
 use crate::value::enumeration::{
@@ -97,7 +97,7 @@ use crate::value::enumeration::{
 };
 use crate::value::environment_stage::stage_limit;
 use crate::value::layer::{HeaderLayer, LayerForm};
-use crate::value::semantic_node::{identity_limit, NominalRefusal, OwnerSelection};
+use crate::value::semantic_node::{NominalRefusal, OwnerSelection, identity_limit};
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, DeclarationCause, EnvironmentFailure, FieldDeclaration,
@@ -1619,7 +1619,7 @@ fn source_model(
     declared_types: &BTreeSet<String>,
     foreign: &[(&str, &DomainPackage)],
     identity: String,
-    meter: &mut crate::model::accounting::Meter,
+    meter: &mut crate::model::accounting::NormalizationMeter,
     errors: &mut Vec<AssemblyError>,
 ) -> Option<(
     fsl_foundation::selection::ModelSelection,
@@ -4636,8 +4636,14 @@ impl PackageDeclarations {
         let (mut selections, forms) = unit.into_parts();
         // The models and the one meter their admission counted on; checking
         // continues that meter into the conformance stage.
-        let (mut models, mut model_meter, exact_declarations, exact_fields, tuple_declarations) =
-            models.into().into_parts();
+        let SelectedModelsParts {
+            entries: mut models,
+            versions: model_versions,
+            meter: mut model_meter,
+            exact_declarations,
+            exact_fields,
+            tuple_declarations,
+        } = models.into().into_parts();
         // FR-230 "Clock-typed positions": a package record type that holds a
         // clock is clock-bearing where the unit's own source writes it.
         let package_bearing: BTreeSet<String> = selections
@@ -5948,7 +5954,7 @@ impl PackageDeclarations {
         package.type_invariants = type_invariants;
         package.models = admitted;
         package.model_spellings = model_spellings;
-        package.model_inputs = Some((models, model_meter));
+        package.model_inputs = Some((models, model_versions, model_meter));
         package.selected_exact_identity_rows = (exact_declarations, exact_fields);
         package.selected_tuple_declaration_rows = tuple_declarations;
         package.pending_types = pending.map(super::check::StagedTypes);
@@ -6069,7 +6075,7 @@ impl PackageDeclarations {
         // condition's expression tree.
         let mut declared_site_spans = BTreeMap::new();
         for (index, clause) in unit.temporal_clauses.iter().enumerate() {
-            use super::lowering::{temporal_site, TemporalSite};
+            use super::lowering::{TemporalSite, temporal_site};
             let form = &clause.form;
             let temporal_owner = package.source_owners.get(&form.name.name).cloned();
             let mut temporal_sites = vec![TemporalSite::Claim, TemporalSite::Over];
@@ -6173,7 +6179,7 @@ impl PackageDeclarations {
             let super::hyper_clause::HyperDeclaration::Behaviours(form) = declaration else {
                 continue;
             };
-            use super::hyper_clause::lowering::{hyper_site, Site};
+            use super::hyper_clause::lowering::{Site, hyper_site};
             declared_type_spans.insert(hyper_site(behaviours, Site::Claim), form.name.span);
             declared_type_spans.insert(hyper_site(behaviours, Site::Body), form.span);
             for (id, node) in form.body.iter() {
@@ -6211,7 +6217,7 @@ impl PackageDeclarations {
         // each mode's clause and each transition's clause; a hybrid claim's
         // nodes at its declared name and its `over` parameter's name.
         for (model, declaration) in package.hybrids.iter().enumerate() {
-            use super::lowering::{hybrid_site, HybridSite};
+            use super::lowering::{HybridSite, hybrid_site};
             let form = &declaration.form;
             declared_type_spans.insert(hybrid_site(HybridSite::Model(model)), form.name.span);
             for (mode, written) in form.modes.iter().enumerate() {
@@ -6226,7 +6232,7 @@ impl PackageDeclarations {
             }
         }
         for (claim, declaration) in package.hybrid_claims.iter().enumerate() {
-            use super::lowering::{hybrid_site, HybridSite};
+            use super::lowering::{HybridSite, hybrid_site};
             let form = &declaration.form;
             declared_type_spans.insert(hybrid_site(HybridSite::Claim(claim)), form.name.span);
             declared_type_spans.insert(hybrid_site(HybridSite::Over(claim)), form.over.name.span);
@@ -6236,7 +6242,7 @@ impl PackageDeclarations {
         // tree; the constant `true` an omitted `from` stands for is located
         // at the claim.
         for (index, declaration) in package.state_graph_claims.iter().enumerate() {
-            use super::state_graph_claim::{state_graph_site, Site};
+            use super::state_graph_claim::{Site, state_graph_site};
             let form = &declaration.form;
             declared_type_spans.insert(state_graph_site(index, Site::Claim), form.name.span);
             if let Some(over) = &form.over {
@@ -6526,7 +6532,7 @@ fn state_clauses(
             authored_operation: form
                 .operation
                 .as_ref()
-                .map(|operation| operation.name.clone()),
+                .map(|operation| format!("{}::{}", form.context.name, operation.name)),
             name,
             source_owner: Some(source_owner),
             name_span: form.name.span,
@@ -6897,7 +6903,7 @@ fn terminal_declarations(
                     }
                 };
                 TerminalClauseKind::When {
-                    predicate: predicate.clone(),
+                    predicate: Box::new(predicate.clone()),
                     context,
                     population,
                 }

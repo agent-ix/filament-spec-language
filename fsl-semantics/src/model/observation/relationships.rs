@@ -15,7 +15,7 @@ use filament_exact::{EffectiveId, ObjectReference, UniverseId};
 use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::relationship_extent::{
     EndSide, NavigationRelationship, PopulationEntry, PopulationEnumerator, RelationshipEnd,
-    RelationshipExtent,
+    RelationshipExtent, RelationshipInstance, RelationshipPositions,
 };
 use fsl_foundation::diagnostic::Code;
 
@@ -42,6 +42,7 @@ pub(super) type RawEnd = SelectedObject;
 pub(super) struct RawInstance {
     source: RawEnd,
     target: RawEnd,
+    positions: RelationshipPositions,
 }
 
 /// One entry of a snapshot's `relationships` member that has the three
@@ -92,6 +93,7 @@ impl EntryMember {
 enum InstanceMember {
     Source,
     Target,
+    Positions,
 }
 
 impl InstanceMember {
@@ -102,6 +104,7 @@ impl InstanceMember {
         match name {
             "source" => Some(Self::Source),
             "target" => Some(Self::Target),
+            "positions" => Some(Self::Positions),
             _ => None,
         }
     }
@@ -110,6 +113,7 @@ impl InstanceMember {
         match self {
             Self::Source => "source",
             Self::Target => "target",
+            Self::Positions => "positions",
         }
     }
 }
@@ -262,7 +266,48 @@ fn read_instance(value: Json<'_>) -> Result<RawInstance, AdmissionRecord> {
     Ok(RawInstance {
         source: end(InstanceMember::Source)?,
         target: end(InstanceMember::Target)?,
+        positions: read_positions(instance.member(InstanceMember::Positions.name()))?,
     })
+}
+
+fn read_positions(value: Option<Json<'_>>) -> Result<RelationshipPositions, AdmissionRecord> {
+    let Some(value) = value else {
+        return Ok(RelationshipPositions::default());
+    };
+    let Some(object) = value.as_object() else {
+        return Err(defect("wrong-value-kind", "positions").with("member", "positions"));
+    };
+    let mut positions = RelationshipPositions::default();
+    for (name, value) in object.iter() {
+        match name {
+            "source" | "target" => {
+                let text = value.as_str().ok_or_else(|| {
+                    defect("wrong-value-kind", "positions")
+                        .with("member", format!("positions.{name}"))
+                })?;
+                let position = text
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|parsed| parsed.to_string() == text)
+                    .ok_or_else(|| {
+                        defect("invalid-value", "positions")
+                            .with("member", format!("positions.{name}"))
+                    })?;
+                if name == "source" {
+                    positions.source = Some(position);
+                } else {
+                    positions.target = Some(position);
+                }
+            }
+            _ => {
+                return Err(
+                    admission_record(Code::InvalidRuntimeInput, "unknown-member")
+                        .with("member", format!("positions.{name}")),
+                )
+            }
+        }
+    }
+    Ok(positions)
 }
 
 fn read_end(value: Json<'_>) -> Result<RawEnd, AdmissionRecord> {
@@ -346,6 +391,10 @@ pub(super) fn model_facts(
                          object_type: EffectiveId| RelationshipEnd {
                             object_type,
                             unique: end.multiplicity.is_none_or(|bound| bound.unique),
+                            ordered: end.multiplicity.is_some_and(|bound| bound.ordered),
+                            multi_valued: end
+                                .multiplicity
+                                .is_some_and(|bound| bound.upper.is_none_or(|upper| upper > 1)),
                         };
                     navigation.push(NavigationRelationship {
                         key: relationship.key.clone(),
@@ -484,6 +533,7 @@ pub(super) struct CheckedEnd {
 pub(super) struct CheckedInstance {
     source: CheckedEnd,
     target: CheckedEnd,
+    positions: RelationshipPositions,
 }
 
 /// One entry that passed checks 6.6 to 6.9.
@@ -501,6 +551,10 @@ fn record(cause: &'static str, relationship: &str, instance: usize) -> Admission
     admission_record(Code::InvalidRuntimeInput, cause)
         .with("relationship", relationship)
         .with("instance", instance.to_string())
+}
+
+fn escape_pointer_segment(segment: &str) -> String {
+    segment.replace('~', "~0").replace('/', "~1")
 }
 
 /// FR-106 checks 6.6 to 6.9, entry by entry and instance by instance, over a
@@ -521,9 +575,27 @@ pub(super) fn check_entries(
         .iter()
         .map(|population| population.key.node.as_str())
         .collect();
-    for entry in entries {
+    for (entry_index, entry) in entries.iter().enumerate() {
         // 6.6: the entry's shape.
-        let raw = entry.0.as_ref().map_err(|record| refuse(record.clone()))?;
+        let raw = entry.0.as_ref().map_err(|record| {
+            let mut record = record.clone();
+            if let Some(member) = record.fields.get("member").map(String::as_str) {
+                let suffix = if member == "positions" {
+                    "/positions".to_owned()
+                } else if let Some(position_member) = member.strip_prefix("positions.") {
+                    format!("/positions/{position_member}")
+                } else {
+                    String::new()
+                };
+                if !suffix.is_empty() {
+                    record = record.with(
+                        "document_pointer",
+                        format!("/relationships/{entry_index}{suffix}"),
+                    );
+                }
+            }
+            refuse(record)
+        })?;
         // 6.7: a navigation relationship of the package, listed once.
         let Some(declared) = facts.relationship(&raw.relationship) else {
             return Err(refuse(
@@ -545,11 +617,24 @@ pub(super) fn check_entries(
         let mut seen: BTreeSet<[&str; 4]> = BTreeSet::new();
         for (index, instance) in raw.instances.iter().enumerate() {
             let instance = instance.as_ref().map_err(|defect| {
+                let member = defect.fields.get("member").map(String::as_str);
+                let suffix = match member {
+                    Some("positions") => "/positions".to_owned(),
+                    Some(member) => member
+                        .strip_prefix("positions.")
+                        .map(|name| format!("/positions/{}", escape_pointer_segment(name)))
+                        .unwrap_or_default(),
+                    _ => String::new(),
+                };
                 refuse(
                     defect
                         .clone()
                         .with("relationship", raw.relationship.clone())
-                        .with("instance", index.to_string()),
+                        .with("instance", index.to_string())
+                        .with(
+                            "document_pointer",
+                            format!("/relationships/{entry_index}/instances/{index}{suffix}"),
+                        ),
                 )
             })?;
             // 6.8: the ends name populations of the package, and a listed
@@ -599,7 +684,60 @@ pub(super) fn check_entries(
                     index,
                 )));
             }
-            instances.push(CheckedInstance { source, target });
+            // FR-364 condition 5: validate the positions belonging to this
+            // instance before admitting the next one.
+            for (side, end, position) in [
+                (EndSide::Source, &declared.source, instance.positions.source),
+                (EndSide::Target, &declared.target, instance.positions.target),
+            ] {
+                let required = end.ordered && end.multi_valued;
+                let member_pointer = format!(
+                    "/relationships/{entry_index}/instances/{index}/positions/{}",
+                    end_name(side)
+                );
+                let record = |pointer: String| {
+                    admission_record(Code::InvalidRuntimeInput, "invalid-value")
+                        .with("relationship", raw.relationship.clone())
+                        .with("end", end_name(side))
+                        .with("document_pointer", pointer)
+                };
+                match (required, position) {
+                    (true, None) => {
+                        return Err(refuse(record(format!(
+                            "/relationships/{entry_index}/instances/{index}"
+                        ))));
+                    }
+                    (false, Some(_)) => return Err(refuse(record(member_pointer))),
+                    (true, Some(position)) => {
+                        let repeated = instances.iter().any(|prior| {
+                            let same_group = match side {
+                                EndSide::Source => {
+                                    prior.target.population == instance.target.population
+                                        && prior.target.key == instance.target.key
+                                }
+                                EndSide::Target => {
+                                    prior.source.population == instance.source.population
+                                        && prior.source.key == instance.source.key
+                                }
+                            };
+                            let same_position = match side {
+                                EndSide::Source => prior.positions.source == Some(position),
+                                EndSide::Target => prior.positions.target == Some(position),
+                            };
+                            same_group && same_position
+                        });
+                        if repeated {
+                            return Err(refuse(record(member_pointer)));
+                        }
+                    }
+                    (false, None) => {}
+                }
+            }
+            instances.push(CheckedInstance {
+                source,
+                target,
+                positions: instance.positions,
+            });
         }
         admitted.push(CheckedExtent {
             relationship: declared.key.clone(),
@@ -773,7 +911,11 @@ pub(super) fn supplied_extents(
             else {
                 return Err(fault("instance-end-unresolved-after-checks-7-and-8"));
             };
-            instances.push((source.clone(), target.clone()));
+            instances.push(RelationshipInstance {
+                source: source.clone(),
+                target: target.clone(),
+                positions: instance.positions,
+            });
         }
         supplied.push(RelationshipExtent {
             relationship: extent.relationship.clone(),

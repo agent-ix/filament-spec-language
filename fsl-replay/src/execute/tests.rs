@@ -17,7 +17,7 @@ use crate::proof_result::{InconclusiveCause, TerminalValue};
 use crate::request::StateEnvironment;
 use crate::result::{InputSettlement, WitnessSettlement};
 use crate::scalar::{ScalarOutcome, ValueIdentity};
-use crate::spine::{compose, ComposedUnit, SpineLimits, SpineStage};
+use crate::spine::{ComposedUnit, SpineLimits, SpineStage, compose};
 use crate::witness::{CanonicalAssignment, Witness, WitnessValue};
 
 #[path = "../../../tests/support/admitted_charge.rs"]
@@ -329,6 +329,69 @@ fn small(x: i64) -> ReplayRequestWire {
         name(&["small"]),
         input(parameter(&compiled, "small", 0), x),
     )
+}
+
+/// FR-640-AC-11 / FR-862-AC-2: a nullary entry replay with no input
+/// assignments is a claim-free plain call. Its result supplies the verdict,
+/// so `true` settles `reproduced-without-witness` as `success`.
+#[trace("TC-2213", "FR-640-AC-11", "TC-2443", "FR-862-AC-2")]
+#[test]
+fn a_claim_free_nullary_entry_reproduces_its_value() {
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n{PROFILE}\
+         function entry using v(): Boolean pure {{ true }}\n"
+    );
+    let compiled = spine(&source, &BTreeMap::new());
+    let wire = request(
+        source.as_bytes(),
+        &compiled,
+        name(&["entry"]),
+        ReplaySource::ClaimFree,
+    );
+    let ReplayResult::Input(result) =
+        replay(wire, ReplayLimits::default()).expect("the plain entry call replays")
+    else {
+        panic!("a claim-free plain call settles on the Input arm");
+    };
+    assert_eq!(
+        result.settlement(),
+        InputSettlement::ReproducedWithoutWitness
+    );
+    assert_eq!(result.category(), Category::Success);
+    assert_eq!(result.value(), Some(EvaluatedValue::Boolean(true)));
+    assert_eq!(result.disagreement(), None);
+}
+
+/// An empty stored Input is still a counterexample source, not a plain call.
+#[trace("TC-2213", "FR-640-AC-11", "TC-2443", "FR-862-AC-2")]
+#[test]
+fn an_empty_input_counterexample_keeps_its_violation_claim() {
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n{PROFILE}\
+         function entry using v(): Boolean pure {{ true }}\n"
+    );
+    let compiled = spine(&source, &BTreeMap::new());
+    let wire = request(
+        source.as_bytes(),
+        &compiled,
+        name(&["entry"]),
+        ReplaySource::Input(Vec::new()),
+    );
+    let ReplayResult::Input(result) =
+        replay(wire, ReplayLimits::default()).expect("the empty counterexample replays")
+    else {
+        panic!("an Input source settles on the Input arm");
+    };
+    assert_eq!(result.settlement(), InputSettlement::Inconclusive);
+    assert_eq!(result.category(), Category::Success);
+    assert_eq!(result.value(), Some(EvaluatedValue::Boolean(true)));
+    assert_eq!(
+        result.disagreement(),
+        Some(&crate::DisagreementCause::Verdicts {
+            proved: Verdict::from_category(Category::Violation),
+            replayed: Verdict::from_category(Category::Success),
+        })
+    );
 }
 
 /// A request replaying `p(x)` against the proved unit: `p`'s own body calls
@@ -1268,10 +1331,11 @@ fn transitive_only_library_source_reaches_replay() {
             .push((AUTHORITY.to_owned(), identity.to_owned(), bytes.to_vec()));
     }
     assert_eq!(wire.dependencies.len(), 2);
-    assert!(wire
-        .byte_provision
-        .iter()
-        .any(|(_, identity, _)| identity == "test:c"));
+    assert!(
+        wire.byte_provision
+            .iter()
+            .any(|(_, identity, _)| identity == "test:c")
+    );
     let ReplayResult::Input(result) =
         replay(wire, ReplayLimits::default()).expect("transitive C reaches the executor")
     else {
@@ -1296,9 +1360,7 @@ fn call_site_with_a_dependency_input_keys_a_request_replay_accepts() {
     let locate = |dependencies: &crate::DependencyInput| {
         crate::call_site(
             SourceIdentity::new(AUTHORITY, IDENTITY),
-            "fixture".to_owned(),
-            IDENTITY,
-            importing.unit.as_bytes(),
+            crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, importing.unit.as_bytes()),
             [],
             dependencies,
             &crate::RequestClocks::default(),
@@ -1355,9 +1417,7 @@ fn locate_q_with_units(
     .expect("one library under one identity");
     crate::call_site(
         SourceIdentity::new(AUTHORITY, IDENTITY),
-        "fixture".to_owned(),
-        IDENTITY,
-        importing.unit.as_bytes(),
+        crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, importing.unit.as_bytes()),
         [],
         &dependencies,
         &crate::RequestClocks::default(),
@@ -1428,9 +1488,7 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
     let compiled = spine(&proved_source, &BTreeMap::new());
     let refusal = crate::call_site(
         unit_source.clone(),
-        "fixture".to_owned(),
-        IDENTITY,
-        proved_source.as_bytes(),
+        crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, proved_source.as_bytes()),
         [],
         &crate::DependencyInput::default(),
         &crate::RequestClocks::default(),
@@ -1452,9 +1510,7 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
     let broken = format!("language \"ix:native\" edition \"1-draft\";\n{PROFILE}function {{\n");
     let refusal = crate::call_site(
         unit_source.clone(),
-        "fixture".to_owned(),
-        IDENTITY,
-        broken.as_bytes(),
+        crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, broken.as_bytes()),
         [],
         &crate::DependencyInput::default(),
         &crate::RequestClocks::default(),
@@ -1490,9 +1546,7 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
     // AC-4's `Import`: no dependency input, and no `dependencies` entry.
     let refusal = crate::call_site(
         unit_source,
-        "fixture".to_owned(),
-        IDENTITY,
-        importing.unit.as_bytes(),
+        crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, importing.unit.as_bytes()),
         [],
         &crate::DependencyInput::default(),
         &crate::RequestClocks::default(),
@@ -1724,9 +1778,7 @@ fn every_received_kernel_cause_survives_both_replay_fault_adapters() {
 #[trace("TC-136", "FR-049-AC-2")]
 fn an_out_of_type_stored_value_refuses_where_the_equality_fault_once_reached_replay() {
     use filament_checked::key::DeclarationKey;
-    use filament_exact::{
-        ChargePoint, FieldValue, Integer, IntegerInterval, Meter, Value, ValueType,
-    };
+    use filament_exact::{ChargePoint, FieldValue, Integer, IntegerInterval, Meter, Value, ValueType};
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     use filament_semantic_value::declaration::{
         FieldDeclaration, ObjectTypeDeclaration, TypeEnvironment,
@@ -1739,7 +1791,7 @@ fn an_out_of_type_stored_value_refuses_where_the_equality_fault_once_reached_rep
     use fsl_semantics::model::domain_package::{
         DomainPackage, DomainPackageRecord, DomainPackageRef, ObjectTypeRecord,
     };
-    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
+    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
     use fsl_semantics::model::object_environment::ObjectEnvironment;
     let owner_key = DeclarationKey::fixture("model.A");
     let domain = DomainPackage::new(
@@ -1891,11 +1943,11 @@ fn actual_empty_admitted_identity_fault_propagates_from_package_into_replay_fail
         DomainPackage, DomainPackageRecord, DomainPackageRef, Extent, ObjectTypeRecord,
         PopulationRecord,
     };
-    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
+    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
     use fsl_semantics::model::object_environment::ObjectEnvironment;
     use fsl_semantics::model::population::{
-        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
-        PopulationDocument, PopulationMember,
+        AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, PopulationDocument,
+        PopulationMember, admit_binding,
     };
     let object = DeclarationKey::fixture("model.A");
     let population = DeclarationKey::fixture("model.population");
@@ -1944,10 +1996,7 @@ fn actual_empty_admitted_identity_fault_propagates_from_package_into_replay_fail
     let objects = ObjectEnvironment::default()
         .with_population(binding)
         .unwrap()
-        .with_population_completeness(std::collections::BTreeMap::from([(
-            population.node,
-            true,
-        )]));
+        .with_population_completeness(std::collections::BTreeMap::from([(population.node, true)]));
     let span = fsl_foundation::Span { start: 0, end: 0 };
     let source = Expression::size(
         Expression::all_instances(
@@ -2204,9 +2253,7 @@ fn parity_request(function: &str, bind: impl FnOnce(NodeKey) -> ReplaySource) ->
 fn minted_identity(source: &str, function: &str) -> crate::ObligationIdentity {
     let site = crate::call_site(
         SourceIdentity::new(AUTHORITY, IDENTITY),
-        "fixture".to_owned(),
-        IDENTITY,
-        source.as_bytes(),
+        crate::CallSiteUnit::new("fixture".to_owned(), IDENTITY, source.as_bytes()),
         [],
         &crate::DependencyInput::default(),
         &crate::RequestClocks::default(),

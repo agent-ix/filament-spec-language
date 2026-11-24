@@ -67,15 +67,14 @@ fn run_request(temporal: Value) -> Value {
         "clause": {"selection": {"temporal": temporal}, "observations": {}}}})
 }
 
-/// FR-860-AC-4's clauses whose capture divides through the function `k`:
-/// Linked checking refuses `k`'s unproved `mod` (FR-495-AC-3), so they are
-/// kept out of the shared unit until the fixture is checked under
-/// `CheckMode::Kernel`.
+/// FR-860-AC-4's clauses whose capture divides through function `k`. Linked
+/// checking refuses `k`'s unproved `mod` (FR-495-AC-3), so the fixture uses
+/// the library's kernel-check route.
 const DIVISION: &str = "function k using v(x: Integer): Integer pure { 3 mod x }\n\
      temporal Div using e over (r: Reading) clock \"events\" on origin \
      { capture m: Integer = k(2 - r.level); always[0,1] holds(m >= 0) }\n\
      temporal DivEach using e over (r: Reading) clock \"events\" on each (q: Reading) \
-     { capture m: Integer = k(2 - r.level); always[0,1] holds(m >= 0) }\n";
+     { capture m: Integer = k(2 - q.level); always[0,1] holds(m >= 0) }\n";
 
 fn write(directory: &Path, name: &str, request: &Value) -> PathBuf {
     write_with(directory, "", name, request)
@@ -102,6 +101,49 @@ fn run_with(directory: &Path, extra: &str, name: &str, trace: Value) -> Output {
         &file,
         &run_request(json!({"name": name, "trace": trace})),
     ))
+}
+
+/// Compiles the capture-fault unit under Kernel checking and runs it from the
+/// checked package bytes, as FR-860-AC-4 specifies.
+fn run_kernel_package(directory: &Path, name: &str, trace: Value) -> Output {
+    let handoff = directory.join("handoff");
+    if handoff.exists() {
+        std::fs::remove_dir_all(handoff).unwrap();
+    }
+    let package = directory.join("package.json");
+    if package.exists() {
+        std::fs::remove_file(package).unwrap();
+    }
+    let unit_path = directory.join("unit.native");
+    std::fs::write(&unit_path, unit() + DIVISION).unwrap();
+    let compile_path = directory.join("compile.json");
+    std::fs::write(
+        &compile_path,
+        serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
+            "models": [], "program": program(), "check_mode": "kernel",
+            "clocks": clocks(),
+            "output": {"package": "package.json"},
+            "handoff": {"directory": "handoff", "package_name": "test:temporal-capture",
+                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}}))
+        .unwrap(),
+    )
+    .unwrap();
+    let compiled = crate::command_harness::compile_file(&compile_path);
+    assert_eq!(
+        compiled.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    std::fs::remove_file(unit_path).unwrap();
+
+    let request_path = directory.join("package-run.json");
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [], "package": {"directory": "handoff"},
+        "clause": {"selection": {"temporal": {"name": name, "trace": trace}},
+            "observations": {}}}});
+    std::fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
+    run_file(&request_path)
 }
 
 /// The result document of a run that wrote one; a capture reading is never
@@ -220,16 +262,15 @@ fn each_activation_reads_its_own_capture_at_later_positions() {
 /// at its activation, never an internal failure.
 #[test]
 #[trace("TC-2440", "FR-860-AC-4")]
-#[ignore = "QSL-2879: the fixture must be checked under CheckMode::Kernel and selected as a package (FR-860-AC-4); a capture fault through `k` is reported as runtime_invariant (exit 30), not at the capture"]
 fn an_undefined_capture_is_reported_at_the_capture() {
     let directory = tempfile::tempdir().unwrap();
-    let output = run_with(
-        directory.path(),
-        DIVISION,
-        "Div",
-        json!({"finite": moving(&[2, 0])}),
+    let output = run_kernel_package(directory.path(), "Div", json!({"finite": moving(&[2, 0])}));
+    assert_eq!(
+        output.status.code(),
+        Some(10),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(output.status.code(), Some(10));
     let undefined = result(&output);
     assert_eq!(temporal(&undefined)["kind"], "undefined", "{undefined}");
     assert_eq!(temporal(&undefined)["position"], 0, "{undefined}");
@@ -241,16 +282,14 @@ fn an_undefined_capture_is_reported_at_the_capture() {
         undefined.to_string().contains("division-by-zero"),
         "{undefined}"
     );
-    let defined = result(&run_with(
+    let defined = result(&run_kernel_package(
         directory.path(),
-        DIVISION,
         "Div",
         json!({"finite": moving(&[0, 2])}),
     ));
     assert_eq!(temporal(&defined)["kind"], "holds", "{defined}");
-    let each = result(&run_with(
+    let each = result(&run_kernel_package(
         directory.path(),
-        DIVISION,
         "DivEach",
         json!({"finite": moving(&[0, 2])}),
     ));
@@ -596,12 +635,9 @@ fn false_guard_deliveries_create_no_capture_obligation_on_both_routes() {
 /// through the library package entry over the same admitted snapshot.
 #[test]
 #[trace("FSpec-FR-093-AC-5", "FSpec-FR-093-AC-6")]
-#[ignore = "make examples-check: requires the authoritative filament-examples corpus via FSL_EXAMPLES_DIR"]
+#[ignore = "make examples-check: requires the authoritative filament-examples corpus"]
 fn the_canonical_false_guard_capture_example_is_inactive() {
-    let root = PathBuf::from(
-        std::env::var_os("FSL_EXAMPLES_DIR")
-            .expect("set FSL_EXAMPLES_DIR to the authoritative filament-examples checkout"),
-    );
+    let root = crate::examples::examples_root();
     let request = root.join("examples/docs-captures/requests/false-guard-inactive.json");
     let source_run = fsl_command::command::run(&request, &crate::negotiation::Fr290).unwrap();
     assert_eq!(source_run.exit_code, 0);

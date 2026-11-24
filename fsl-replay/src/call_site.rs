@@ -19,26 +19,46 @@
 //! It builds no [`crate::execute::replay`] call and no
 //! [`crate::spine::Call`]; it names a call site, it does not make one.
 
+use filament_contract_model::PackageId;
 use filament_exact::{Cancel, Identifier, NodeKey, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_foundation::bound::DomainKey;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{Code, SourceIdentity};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{
-    CallableFunction, CheckedGraph, CheckedOperationFrame, CheckedStateClause,
-};
+use fsl_semantics::check::{CallableFunction, CheckedGraph, CheckedOperationFrame, CheckedStateClause};
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::package_input;
 
 use crate::execute::{
-    callable_parameter_keys, declaration_occurrence, value_parity_obligation,
-    value_parity_preimage, ValueParityPreimage,
+    ValueParityPreimage, callable_parameter_keys, declaration_occurrence, value_parity_obligation,
+    value_parity_preimage,
 };
 use crate::identity::QualifiedName;
 use crate::spine::{self, CompileRefusal, DependencyInput, DependencyInputRefusal, OperationName};
 use crate::{FrameOperation, SourceRegion};
 use fsl_package::{ModelIdentity, ObligationIdentity};
+
+/// The package identity and source bytes used to locate a call site.
+///
+/// Construct this value with [`CallSiteUnit::new`] to keep the package's
+/// declared identity, source path, and bytes together for compilation.
+pub struct CallSiteUnit<'a> {
+    package_name: String,
+    path: &'a str,
+    bytes: &'a [u8],
+}
+
+impl<'a> CallSiteUnit<'a> {
+    /// Creates source input for call-site selection.
+    pub fn new(package_name: impl Into<String>, path: &'a str, bytes: &'a [u8]) -> Self {
+        Self {
+            package_name: package_name.into(),
+            path,
+            bytes,
+        }
+    }
+}
 
 /// What [`call_site`] can locate in the compiled package, and what it
 /// answers for each:
@@ -172,6 +192,8 @@ mod sealed {
 /// [`FieldSite`], a [`PopulationSite`] or an [`ImportedFunctionSite`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallSite<S> {
+    /// FSpec FR-322 package identity for the compiled package.
+    pub package_id: PackageId,
     /// The compiled package's `filament.checked-package/v2` bytes, exactly as
     /// the S4 emitter wrote them.
     pub package: Vec<u8>,
@@ -275,6 +297,8 @@ pub struct ImportedFunctionSite {
     /// The declaring library: the `package` of the `dependency_reference`
     /// term every call of the function in the unit lowers to.
     pub library: LibraryName,
+    /// Identity of the declaring checked package.
+    pub package_id: PackageId,
     /// The library's `filament.checked-package/v2` bytes exactly as the S4
     /// emitter wrote them in the unit's compile.
     pub package: Vec<u8>,
@@ -387,9 +411,7 @@ pub enum CallSiteRefusal {
     /// `selection` names no function of the compiled `package`. Never a
     /// bare `QualifiedName` (FR-088-AC-6, TC-258): paired with the package
     /// it was looked up in, mirroring `ReplayRefusal::UnknownFunction`.
-    #[error(
-        "missing_declaration/missing-name: package {package} declares no function {selection}"
-    )]
+    #[error("missing_declaration/missing-name: package {package} declares no function {selection}")]
     UnknownFunction {
         /// The name `call_site` was given.
         selection: QualifiedName,
@@ -488,9 +510,7 @@ pub enum CallSiteRefusal {
     },
     /// `selection`'s library declares no function of that name. Paired with
     /// the library's package name.
-    #[error(
-        "missing_declaration/missing-name: package {package} declares no function {selection}"
-    )]
+    #[error("missing_declaration/missing-name: package {package} declares no function {selection}")]
     UnknownImportedFunction {
         /// The imported function `call_site` was given.
         selection: ImportedFunctionName,
@@ -614,9 +634,7 @@ impl CallSiteRefusal {
 /// let f = QualifiedName::new(vec![Identifier::new("f").unwrap()]).unwrap();
 /// let site = call_site(
 ///     SourceIdentity::new("a", "u"),
-///     "fixture".to_owned(),
-///     "u",
-///     unit.as_bytes(),
+///     CallSiteUnit::new("fixture", "u", unit.as_bytes()),
 ///     [],
 ///     &DependencyInput::default(),
 ///     &fsl_replay::RequestClocks::default(),
@@ -637,9 +655,7 @@ impl CallSiteRefusal {
 /// let f = QualifiedName::new(vec![Identifier::new("f").unwrap()]).unwrap();
 /// let site = call_site(
 ///     SourceIdentity::new("a", "u"),
-///     "fixture".to_owned(),
-///     "u",
-///     unit.as_bytes(),
+///     CallSiteUnit::new("fixture", "u", unit.as_bytes()),
 ///     [],
 ///     &DependencyInput::default(),
 ///     &fsl_replay::RequestClocks::default(),
@@ -650,18 +666,27 @@ impl CallSiteRefusal {
 /// ```
 pub fn call_site<'a, S: CallSiteSelection>(
     source: SourceIdentity,
-    package_name: String,
-    path: &str,
-    bytes: &[u8],
+    unit: CallSiteUnit<'_>,
     packages: impl IntoIterator<Item = &'a [u8]>,
     dependencies: &DependencyInput,
     clocks: &spine::RequestClocks,
     selection: &S,
 ) -> Result<CallSite<S::Site>, Box<CallSiteRefusal>> {
+    let CallSiteUnit {
+        package_name,
+        path,
+        bytes,
+    } = unit;
     LibraryName::new(&package_name).map_err(|_| {
         Box::new(CallSiteRefusal::Fault(InternalFault::new(
             "call-site",
             "package-name-is-a-library-name",
+        )))
+    })?;
+    let package_id = PackageId::new(package_name.clone()).map_err(|_| {
+        Box::new(CallSiteRefusal::Fault(InternalFault::new(
+            "call-site",
+            "package-name-is-a-package-id",
         )))
     })?;
     let cancel = Cancel::new();
@@ -722,6 +747,7 @@ pub fn call_site<'a, S: CallSiteSelection>(
     .into_value();
     let site = locate_in_checked(&checked, &package_name, selection)?;
     Ok(CallSite {
+        package_id,
         package: emitted.package().bytes().to_vec(),
         site,
     })
@@ -888,8 +914,15 @@ impl sealed::Locate for ImportedFunctionName {
                 "direct-import-has-emitted-bytes",
             )))
         })?;
+        let package_id = PackageId::new(emitted.name().to_owned()).map_err(|_| {
+            Box::new(CallSiteRefusal::Fault(InternalFault::new(
+                "call-site",
+                "emitted-library-name-is-a-package-id",
+            )))
+        })?;
         Ok(ImportedFunctionSite {
             library: self.library.clone(),
+            package_id,
             package: emitted.bytes().to_vec(),
             function: function_site(library, &callable)?,
         })
@@ -1110,7 +1143,7 @@ mod tests {
     use fsl_foundation::SourceIdentity;
     use ix_trace_rs::trace;
 
-    use super::{call_site, CallSite, CallSiteRefusal, FunctionSite};
+    use super::{CallSite, CallSiteRefusal, FunctionSite, call_site};
     use crate::identity::QualifiedName;
     use crate::request::{ReplayRequestWire, StateEnvironment};
     use crate::spine::DependencyInput;
@@ -1141,9 +1174,7 @@ mod tests {
     ) -> Result<CallSite<FunctionSite>, Box<CallSiteRefusal>> {
         call_site(
             SourceIdentity::new("a", "u"),
-            "fixture".to_owned(),
-            "unit.native",
-            bytes,
+            crate::CallSiteUnit::new("fixture", "unit.native", bytes),
             [],
             &DependencyInput::default(),
             &crate::RequestClocks::default(),
@@ -1262,9 +1293,7 @@ mod tests {
         for selection in [name("nope"), name("F"), qualified] {
             let refusal = call_site(
                 SourceIdentity::new("a", "u"),
-                "fixture".to_owned(),
-                "unit.native",
-                UNIT.as_bytes(),
+                crate::CallSiteUnit::new("fixture", "unit.native", UNIT.as_bytes()),
                 [],
                 &DependencyInput::default(),
                 &crate::RequestClocks::default(),

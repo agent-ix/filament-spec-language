@@ -12,12 +12,12 @@
 
 use filament_exact::{NodeKey, Origin};
 
+use super::CheckedGraph;
 use super::family::OccurrenceRole;
-use super::lowering::{hybrid_location, HybridSite};
+use super::lowering::{HybridSite, hybrid_location};
 use super::node_key::{
     BindingValue, BodyTerm, GroupMember, LeafTerm, MemberTerm, NodeRef, TupleMember,
 };
-use super::CheckedGraph;
 
 /// The expression of a checked hybrid model or claim a term path starts at.
 /// Each position is the one the checked model or claim holds it at, and

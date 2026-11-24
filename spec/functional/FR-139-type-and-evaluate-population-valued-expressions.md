@@ -83,7 +83,11 @@ one mapping row.
 - A `sum(x in P where c: e)` over a universe of `n` objects, with `e` bounded
   by `[lo, hi]`, SHALL have the bound `[min(0, n*lo), max(0, n*hi)]`. The
   population can be empty at a state, and an empty sum is 0, so the bound
-  includes 0 even when `lo` and `hi` are both positive or both negative.
+  includes 0 even when `lo` and `hi` are both positive or both negative. A
+  `where` condition can select no objects, so the lower bound is 0 even when
+  every individual summand is at least 1; S3 retains the symbolic size and
+  subject admission, rather than S3, checks whether the resulting bound fits
+  the mapped field.
   The `count` bound is `[0, n]`.
 - `seq`'s declared maximum length SHALL be computed from the static bounds
   of `lo` and `hi`, as FSpec states it.
@@ -120,9 +124,10 @@ Fixture: ADR-020 §8's `RingIsQueue` with universes `rings = {r}` and `slots
 | FR-139-AC-3 | At the state `head = 1`, `size = 2`, `s0.value = 0`, `s1.value = 1`, `items` evaluates to `[1, 0]`; at `head = 0`, `size = 0` it evaluates to `[]`; `count(s in R::slots where s.ring = self)` evaluates to 2 and `all(s in R::slots where s.value = 1)` to `false`. | Test (TC-544) |
 | FR-139-AC-4 | `only(s in R::slots where s.ring = self: s.value)` is undefined at every state of the fixture (two slots satisfy it), and `only(s in R::slots where s.ring = self and s.index = self.head + 2: s.value)` is undefined (no slot satisfies it). | Test (TC-544) |
 | FR-139-AC-5 | A row `count(s in R::slots where s.ring = self)` mapped to an abstract field of type `Int[0, 2]` checks at S3 with `n` symbolic; a request whose subject admits `slots = {s0, s1}` admits it, and one that admits `slots = {s0, s1, s2}` refuses `ill_typed`/`type-mismatch` before exploration, naming the row, `R::slots` and universe size 3. | Test (TC-544) |
-| FR-139-AC-6 | `sum(s in R::slots where s.ring = self: s.value + 1)`, whose summand lies in `[1, 2]`, is checked at S3 with symbolic universe size `n` and records the size-dependent bound `[0, 2n]`; it does not refuse the row while `n` is symbolic. At subject admission with `slots = {s0, s1}`, `n = 2` gives the bound `[0, 4]`, not `[2, 4]`; a row mapped to an abstract field of type `Int[0, 4]` is admitted, and one mapped to `Int[2, 4]` refuses `ill_typed`/`type-mismatch` before exploration, naming the row, `R::slots` and universe size 2. At a state where no slot satisfies the condition it evaluates to 0. | Test (TC-544) |
-| FR-139-AC-7 | The undefined `only` of FR-139-AC-4, for two objects and for none, carries an `UndefinedRecord` with reason `only-not-one`. | Test (TC-544) |
+| FR-139-AC-6 | `sum(s in R::slots where s.ring = self: s.value + 1)`, whose summand lies in `[1, 2]`, is checked at S3 with symbolic universe size `n` and records the size-dependent bound `[0, 2n]`; it does not refuse the row while `n` is symbolic, because the `where` condition may select no object and the empty sum is 0. At subject admission with `slots = {s0, s1}`, `n = 2` gives the bound `[0, 4]`, not `[2, 4]`; a row mapped to an abstract field of type `Int[0, 4]` is admitted, and one mapped to `Int[2, 4]` refuses `ill_typed`/`type-mismatch` before exploration, naming the row, `R::slots` and universe size 2. At a state where no slot satisfies the condition it evaluates to 0. | Test (TC-544) |
+| FR-139-AC-7 | The undefined `only` of FR-139-AC-4, for two objects and for none, carries an `UndefinedRecord` with reason `only-not-one`, naming the population binding, `only` locus and enclosing row, and carrying no match count. | Test (TC-544) |
 
+| FR-139-AC-8 | Over AC-1's `slots = {s0, s1}` fixture, population references enumerate `s0` then `s1` in ascending canonical key order, regardless of input insertion order. For each of `count`, `sum`, `exists`, `all` and `only`, evaluation charges one work unit for each object visited, including an object rejected by `where`; with the same state and expression, reversing insertion order preserves the result and usage. A meter allowing one visit for an expression requiring two refuses on the second visit without evaluating it. | Test (TC-544) |
 ## Dependencies
 
 - ADR-020 §1 RM-8, §8 data refinement and §11 RU-5; ADR-016 FE-3 and FE-4.

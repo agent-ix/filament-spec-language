@@ -26,25 +26,25 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use filament_contract_model::NativeJoinBudget;
 use filament_exact::NodeKey;
 use filament_semantic_value::catalog::CatalogCode;
+use fsl_foundation::RequestIndex;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::RequestIndex;
 use fsl_package::{BarePackage, CheckedPackage, CompositionMemberValue, CompositionView};
 use fsl_replay::planner::{
-    composition_premises, DerivedSlot, ItemKey, PackageComposition, PackageCompositionRefusal,
-    SlotKey, SlotRole,
+    DerivedSlot, ItemKey, PackageComposition, PackageCompositionRefusal, SlotKey, SlotRole,
+    composition_premises,
 };
 use fsl_replay::{DeclineCode, ProofRefusalCause, TerminalRecord};
-use fsl_route::request::ExtentClassification;
 use fsl_route::Registry;
+use fsl_route::request::ExtentClassification;
 use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::{Capability, CheckedComposition, ComponentPackages, DeclarationFamily};
 use fsl_semantics::library::LibraryName;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::{
-    candidate_list, invalid_kind, resolve_one, unknown_option, ItemSelection, ResolvedClaim,
-    ResolvedItem, SubjectSelection,
+    ItemSelection, ResolvedClaim, ResolvedItem, SubjectSelection, candidate_list, invalid_kind,
+    resolve_one, unknown_option,
 };
 use crate::analyze::{
     AnalyzeLimits, ClaimItem, CompositionItem, Diagnostic, GraphUnavailable, ItemForm, ItemOptions,
@@ -425,6 +425,9 @@ impl CompositionFront for Context<'_> {
                 .map_err(Unavailable::Emission),
             Err(crate::provider::NotAdmitted::Refused(refusal)) => {
                 Err(Unavailable::Refused(refusal))
+            }
+            Err(crate::provider::NotAdmitted::HostAllocationFailed(failure)) => {
+                Err(Unavailable::HostAllocationFailed(failure))
             }
             Err(crate::provider::NotAdmitted::Other(refusal)) => Err(Unavailable::Emission(
                 GraphUnavailable::of_not_admitted(refusal),
@@ -891,6 +894,8 @@ fn premise_item<F: CompositionFront>(
 pub(super) enum Unavailable {
     /// The strict reader refused the package the run emitted for it.
     Refused(fsl_package::PackageAdmissionRefusal),
+    /// The host refused memory the reader had already admitted.
+    HostAllocationFailed(filament_contract_model::CheckedPackageHostAllocationFailed),
     /// The package emitted no complete admitted bytes, or they hold no
     /// readable graph.
     Emission(GraphUnavailable),
@@ -923,6 +928,27 @@ fn unavailable(index: RequestIndex, name: &str, failure: &Unavailable) -> Box<Re
             // its catalog cause.
             CatalogCode::new(refusal.code.as_str(), refusal.catalog_cause()),
         ),
+        Unavailable::HostAllocationFailed(failure) => TerminalRecord::disposition_failed(
+            index,
+            CatalogCode::new(
+                Code::RuntimeInvariant.as_str(),
+                "established-invariant-broken",
+            ),
+        )
+        .with_diagnostic_detail(serde_json::Map::from_iter([
+            (
+                "stage".to_owned(),
+                serde_json::Value::String(format!("{:?}", failure.stage)),
+            ),
+            (
+                "requested".to_owned(),
+                serde_json::Value::String(failure.requested.to_string()),
+            ),
+            (
+                "consumed".to_owned(),
+                serde_json::Value::String(failure.consumed.to_string()),
+            ),
+        ])),
         Unavailable::Emission(GraphUnavailable::EmitRefused(refusal)) => {
             TerminalRecord::disposition_declined(
                 index,
@@ -991,8 +1017,8 @@ fn restate<F: CompositionFront>(
     caller: &Value,
 ) -> Result<Value, Box<ResolvedItem>> {
     use fsl_semantics::check::wire_id::{
-        check_component_key_package, component_key_structural, key_holds_index_segment,
-        ComponentKeyRefusal,
+        ComponentKeyRefusal, check_component_key_package, component_key_structural,
+        key_holds_index_segment,
     };
     let Value::Array(entries) = caller else {
         return Ok(caller.clone());
@@ -1108,6 +1134,7 @@ mod tests {
             cause: cause.map(str::to_owned),
             pointer: None,
             identity: None,
+            host_allocation_failure: None,
         }
     }
 

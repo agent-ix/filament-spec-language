@@ -38,7 +38,7 @@ use filament_semantic_value::fairness::{
 };
 use filament_semantic_value::location::ExpressionLocation as Location;
 use filament_semantic_value::quantity::{
-    convert_quantity, ConvertedValue, QuantityTarget, QuantityUnit, UnitQuantity,
+    ConvertedValue, QuantityTarget, QuantityUnit, UnitQuantity, convert_quantity,
 };
 use fsl_forms::{
     ActivationForm, BoundOp, ClauseKind, EventForm, ExactValueForm, ExactValueKind,
@@ -47,26 +47,26 @@ use fsl_forms::{
     TemporalFormulaForm, TemporalNodeForm, TemporalNodeId, TemporalOperator, TemporalOperatorForm,
     WeightingForm,
 };
+use fsl_foundation::Span;
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::selection::DefinitionRef;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::Span;
 
 use super::super::capability::Capability;
-use super::super::check::{bind_parameters, Scope, StateContext, Typer};
+use super::super::check::{Scope, StateContext, Typer, bind_parameters};
 use super::super::facts::Definedness;
 use super::super::hyper_clause::{encode_event, encode_predicate, node_bytes};
 use super::super::ir::{CheckedBody, CheckedNode};
 use super::super::observation::Observations;
-use super::super::profile::{TemporalProfile, CLAUSE_PROFILE_AUTHORITY};
+use super::super::profile::{CLAUSE_PROFILE_AUTHORITY, TemporalProfile};
 use super::super::refusal::{CheckCause, CheckRefusal, KeyFault, TemporalCause};
 use super::super::state_graph_claim::StatePredicate;
 use super::super::temporal_clause::{
-    build_formula, checked_constraint, checked_operators, horizon, CheckedFormula, CheckedInterval,
-    FormulaNode, HorizonFault, IntervalReading,
+    CheckedFormula, CheckedInterval, FormulaNode, HorizonFault, IntervalReading, build_formula,
+    checked_constraint, checked_operators, horizon,
 };
-use super::model::{literal, site_location, Pass, Site};
-use super::{exact, exact_refusal, refusal, ProbabilisticCause, TimeTypeMismatchReason};
+use super::model::{Pass, Site, literal, site_location};
+use super::{ProbabilisticCause, TimeTypeMismatchReason, exact, exact_refusal, refusal};
 use crate::family::CheckContext;
 use crate::family::{ClaimEvidence, ClaimExtent, Requirements};
 use crate::model::clause_observation::Observation;
@@ -903,16 +903,16 @@ fn keep<T>(refusals: &mut Vec<CheckRefusal>, result: Result<T, CheckRefusal>) ->
 fn broken(invariant: &'static str) -> CheckRefusal {
     CheckRefusal {
         location: Location::root(filament_semantic_value::location::ExpressionOwner::Expression),
-        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
             filament_semantic_value::catalog::InternalFault::new("S3", invariant),
-        ))),
+        )))),
     }
 }
 
 fn temporal_refusal(cause: TemporalCause) -> CheckRefusal {
     CheckRefusal {
         location: Location::root(filament_semantic_value::location::ExpressionOwner::Expression),
-        cause: CheckCause::Temporal(Box::new(cause)),
+        cause: Box::new(CheckCause::Temporal(Box::new(cause))),
     }
 }
 
@@ -1009,13 +1009,13 @@ impl Pass<'_, '_> {
                 {
                     self.refusals.push(CheckRefusal {
                         location: checked.declaration_location(),
-                        cause: CheckCause::AmbiguousName {
+                        cause: Box::new(CheckCause::AmbiguousName {
                             name: checked.name.clone(),
                             loci: vec![
                                 earlier.declaration_location(),
                                 checked.declaration_location(),
                             ],
-                        },
+                        }),
                     });
                     return;
                 }
@@ -1184,6 +1184,7 @@ impl Pass<'_, '_> {
             parent_projections: BTreeMap::new(),
             kind: StateClauseKind::Invariant,
             operation: None,
+            authored_operation: None,
             self_slot: NO_SLOT,
             result_slot: None,
         });
@@ -1805,7 +1806,7 @@ impl Pass<'_, '_> {
         for cause in causes {
             if !bounded
                 && matches!(
-                    &cause,
+                    cause,
                     TemporalCause::MissingInterval { .. } | TemporalCause::OpenInterval { .. }
                 )
             {
@@ -2227,6 +2228,7 @@ impl Pass<'_, '_> {
             parent_projections: BTreeMap::new(),
             kind: StateClauseKind::Invariant,
             operation: None,
+            authored_operation: None,
             self_slot: NO_SLOT,
             result_slot: None,
         });
@@ -2234,7 +2236,7 @@ impl Pass<'_, '_> {
         if body.root().value_type() != &ValueType::Boolean {
             return Err(CheckRefusal {
                 location,
-                cause: CheckCause::NonBooleanRoot,
+                cause: Box::new(CheckCause::NonBooleanRoot),
             });
         }
         let slots = typer.slots();
@@ -2303,7 +2305,7 @@ impl Pass<'_, '_> {
             .infer(&expression.expression, hint.as_ref(), &location)
             // A `rational(n, d)` has no type to take where the measure is
             // not a fraction: that is a threshold of the wrong type.
-            .map_err(|refused| match refused.cause {
+            .map_err(|refused| match refused.cause.as_ref() {
                 CheckCause::IllTyped(IllTypedCause::AmbiguousLiteral) => {
                     CheckRefusal::ill_typed(&location, IllTypedCause::TypeMismatch)
                 }
@@ -2831,13 +2833,13 @@ fn conversion_limit(location: &Location, incomplete: &filament_exact::Incomplete
     };
     CheckRefusal {
         location: location.clone(),
-        cause: CheckCause::ResourceExhausted(Box::new(StageLimitCause {
+        cause: Box::new(CheckCause::ResourceExhausted(Box::new(StageLimitCause {
             stage: CheckingStage::Typing,
             kind,
             limit: incomplete.limit,
             actual,
             region: None,
-        })),
+        }))),
     }
 }
 
@@ -2897,7 +2899,9 @@ mod conversion_budget_tests {
             "function keep using v(x: Int[0,65536]): Integer pure { x }",
             "function keep using v(x: Int[0,65536]): Integer pure { x + 1 }",
         ] {
-            let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{function}\n");
+            let text = format!(
+                "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{function}\n"
+            );
             declarations(&text)
                 .check(
                     CheckMode::Linked,
@@ -2950,7 +2954,7 @@ mod conversion_budget_tests {
                 .expect_err(
                     "actual quantity conversion must enforce its representation and work ceilings",
                 );
-            let CheckCause::ResourceExhausted(cause) = error.cause else {
+            let CheckCause::ResourceExhausted(cause) = *error.cause else {
                 panic!("actual conversion must retain its meter denial");
             };
             assert_eq!(cause.kind, kind);

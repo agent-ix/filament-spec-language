@@ -11,15 +11,6 @@ use serde::{Deserialize, Serialize};
 use super::{IdentityFileRefusal, IdentityMember};
 use crate::equality_file::{OriginalNodeKey, OriginalValueType};
 
-pub(super) fn runtime_members(
-    rows: &[SelectedModelEnumShapeRow],
-    budget: &mut filament_contract_model::NativeJoinBudget,
-) -> Result<filament_semantic_value::enumeration::EnumMemberIndex, crate::NativeJoinFailure> {
-    use crate::native_row as charge;
-    let locus = charge::start(budget, "bare_model_enum_members")?;
-    Ok(build_runtime_members(rows, budget, locus)?)
-}
-
 impl crate::SourceEnumCatalog {
     pub(crate) fn model_runtime_members(
         rows: &[SelectedModelEnumShapeRow],

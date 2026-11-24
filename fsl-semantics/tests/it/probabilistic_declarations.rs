@@ -15,14 +15,18 @@
 //! `unit ms`, so a quantity literal types.
 
 use filament_checked::node::CheckedLiteral;
-use filament_exact::{Integer, IntegerInterval, Meter, Rational, Value as KernelValue, ValueType};
+use filament_exact::{
+    Integer, IntegerInterval, Meter, NodeKey, PathSegment, Rational, Value as KernelValue,
+    ValueType,
+};
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    Bound, BoundedMeasure, CheckCause, CheckRefusal, CheckedGraph, CheckingLimitKind, Confidence,
-    Event, PackageDeclarations, PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause,
+    BindingValue, BodyTerm, Bound, BoundedMeasure, CheckCause, CheckRefusal, CheckedGraph,
+    CheckingLimitKind, Confidence, Event, GroupMember, LeafTerm, MemberTerm, Owner,
+    PackageDeclarations, PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause,
     ReachTarget, Reward, RewardEvaluationFailure, RewardEvaluator, SemanticNode, WeightOwner,
     Weighting,
 };
@@ -553,7 +557,7 @@ fn the_service_model_checks_and_records_its_declarations() {
 fn causes(body: &str) -> Vec<ProbabilisticCause> {
     refusals_of(body)
         .into_iter()
-        .map(|refusal| match refusal.cause {
+        .map(|refusal| match *refusal.cause {
             CheckCause::Probabilistic(cause) => *cause,
             other => panic!("{body}: not a probabilistic refusal: {other:?}"),
         })
@@ -723,7 +727,7 @@ fn a_reference_valued_random_parameter_refuses_value_outside_type() {
         panic!("one refusal: {refusals:?}");
     };
     assert_eq!(refusal.cause.cause(), Some("value-outside-type"));
-    let CheckCause::Probabilistic(cause) = &refusal.cause else {
+    let CheckCause::Probabilistic(cause) = refusal.cause.as_ref() else {
         panic!("a probabilistic refusal: {refusal:?}");
     };
     assert!(names_parameter(cause, "target"), "{cause:?}");
@@ -740,7 +744,7 @@ fn a_reference_valued_random_parameter_refuses_value_outside_type() {
         panic!("one refusal: {refusals:?}");
     };
     assert_eq!(refusal.cause.cause(), Some("value-outside-type"));
-    let CheckCause::Probabilistic(cause) = &refusal.cause else {
+    let CheckCause::Probabilistic(cause) = refusal.cause.as_ref() else {
         panic!("a probabilistic refusal: {refusal:?}");
     };
     assert!(names_parameter(cause, "target"), "{cause:?}");
@@ -840,7 +844,7 @@ fn a_configured_rational_bits_ceiling_is_named_by_the_refusal() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("256 is nine bits");
-    let CheckCause::ResourceExhausted(limit) = &refusals[0].cause else {
+    let CheckCause::ResourceExhausted(limit) = refusals[0].cause.as_ref() else {
         panic!("a limit refusal: {:?}", refusals[0].cause);
     };
     assert_eq!(
@@ -866,7 +870,7 @@ fn exact_values_are_bounded_as_written() {
         let body = service(Some((STEADY, &steady_with_request(&value))), "");
         assert_eq!(located(&body), [limit(&value)], "{value:.40}");
         let refusals = refusals_of(&body);
-        let CheckCause::ResourceExhausted(limit) = &refusals[0].cause else {
+        let CheckCause::ResourceExhausted(limit) = refusals[0].cause.as_ref() else {
             panic!("a limit refusal: {:?}", refusals[0].cause);
         };
         assert_eq!(limit.kind.setting().name(), "s3.rational_bits");
@@ -1110,7 +1114,7 @@ fn a_quantity_random_parameter_checks_its_unit_and_precondition() {
         assert_eq!(refusals.len(), 1, "one refusal for {value}: {refusals:?}");
         let refusal = &refusals[0];
         assert_eq!(refusal.cause.cause(), Some("value-outside-type"));
-        let CheckCause::Probabilistic(cause) = &refusal.cause else {
+        let CheckCause::Probabilistic(cause) = refusal.cause.as_ref() else {
             panic!("a probabilistic refusal: {refusal:?}");
         };
         assert!(names_parameter(cause, "d"), "{cause:?}");
@@ -1131,7 +1135,7 @@ fn a_quantity_random_parameter_checks_its_unit_and_precondition() {
         panic!("one refusal: {refusals:?}");
     };
     assert_eq!(refusal.cause.cause(), Some("random-read-in-precondition"));
-    let CheckCause::Probabilistic(cause) = &refusal.cause else {
+    let CheckCause::Probabilistic(cause) = refusal.cause.as_ref() else {
         panic!("a probabilistic refusal: {refusal:?}");
     };
     assert!(names_parameter(cause, "d"), "{cause:?}");
@@ -1181,7 +1185,7 @@ fn a_quantity_literal_is_bounded_by_the_configured_rational_bits() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("256 is nine bits");
-    let CheckCause::ResourceExhausted(limit) = &past[0].cause else {
+    let CheckCause::ResourceExhausted(limit) = past[0].cause.as_ref() else {
         panic!("a limit refusal: {:?}", past[0].cause);
     };
     assert_eq!(
@@ -1206,7 +1210,7 @@ fn a_distribution_total_is_bounded_by_the_configured_rational_bits() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("the sum is four bits");
-    let CheckCause::ResourceExhausted(limit) = &refusals[0].cause else {
+    let CheckCause::ResourceExhausted(limit) = refusals[0].cause.as_ref() else {
         panic!("a limit refusal: {:?}", refusals[0].cause);
     };
     assert_eq!(
@@ -1432,9 +1436,9 @@ fn the_adr_024_claims_check_and_record_their_forms() {
 }
 
 /// FR-186 "Outputs", FR-498, FSpec FR-640: a claim is emitted as its own
-/// node and a reward lowers to a clause function, wherever the claim is
-/// declared.
-#[trace("TC-621")]
+/// node and the duration reward lowers as a linked clause function owned by
+/// its model operation, with operation parameters in declared order.
+#[trace("TC-621", "FR-094-AC-16")]
 #[test]
 fn a_checked_claim_and_a_reward_are_both_lowered() {
     for source in [
@@ -1457,6 +1461,157 @@ fn a_checked_claim_and_a_reward_are_both_lowered() {
             .rewards()
             .iter()
             .any(|reward| reward.name() == "latency"));
+
+        let reward = model
+            .rewards()
+            .iter()
+            .find(|reward| reward.name() == "duration")
+            .expect("the duration reward");
+        let function_key = reward.function().expect("the lowered reward function");
+        assert_eq!(
+            model.reward_function_check_mode(function_key),
+            Some(CheckMode::Linked)
+        );
+        let graph = graph.semantic_graph();
+        let function = graph
+            .node(function_key.clone())
+            .expect("the reward clause function node");
+        assert_eq!(function.semantic_form(), "pure_function");
+        assert_eq!(function.declaration(), None);
+        let Some(Owner::Model(owner)) = function.owner() else {
+            panic!("reward function has a ModelOwner: {:?}", function.owner());
+        };
+        assert_eq!(owner.identity(), P);
+        assert_eq!(owner.node(), format!("ix://{P}/Server/attempt"));
+        let result = graph
+            .node(function.semantic_type().expect("the reward result type"))
+            .expect("the Millis result type node");
+        assert_eq!(
+            result.semantic_form(),
+            "integer_range",
+            "Millis is Int[1, 12]"
+        );
+        let integer_type = NodeKey::new(
+            "fsl-semantics-integration-tests",
+            vec![
+                PathSegment::Text("scalar_type".to_owned()),
+                PathSegment::Text("integer".to_owned()),
+            ],
+            0,
+        )
+        .expect("the scalar integer type identity");
+        let expected_result = NodeKey::new(
+            "fsl-semantics-integration-tests",
+            vec![
+                PathSegment::Text("bounded_domain".to_owned()),
+                PathSegment::Text("integer_range".to_owned()),
+                PathSegment::Text("min".to_owned()),
+                PathSegment::Node(integer_type),
+                PathSegment::Text("1".to_owned()),
+                PathSegment::Text("max".to_owned()),
+                PathSegment::Text("12".to_owned()),
+            ],
+            0,
+        )
+        .expect("the literal Millis interval identity");
+        assert_eq!(function.semantic_type(), Some(expected_result));
+        let BodyTerm::Aggregate(bounds) = result.body() else {
+            panic!("Millis' bounded integer node has min and max bindings");
+        };
+        let values: Vec<_> = bounds
+            .members
+            .iter()
+            .map(|member| match member {
+                MemberTerm::Binding(binding) => match &binding.value {
+                    BindingValue::Leaf(LeafTerm::Literal {
+                        value: fsl_semantics::check::LiteralValue::Integer(value),
+                        ..
+                    }) => value.clone(),
+                    _ => panic!("a bounded integer endpoint is literal"),
+                },
+                _ => panic!("a bounded integer endpoint is bound"),
+            })
+            .collect();
+        assert_eq!(values, [Integer::from(1_i64), Integer::from(12_i64)]);
+        let BodyTerm::Aggregate(body) = function.body() else {
+            panic!("the reward function body is an aggregate");
+        };
+        let [MemberTerm::Binding(parameters), MemberTerm::Binding(_expression), MemberTerm::Binding(clause)] =
+            body.members.as_slice()
+        else {
+            panic!("the reward function has parameters, expression and clause bindings");
+        };
+        assert_eq!(parameters.name, "parameters");
+        let BindingValue::Group(parameters) = &parameters.value else {
+            panic!("the parameters binding is a group");
+        };
+        let parameter_keys: Vec<_> = parameters
+            .members
+            .iter()
+            .map(|parameter| match parameter {
+                GroupMember::Leaf(LeafTerm::Reference { target }) => target
+                    .admitted()
+                    .expect("an admitted operation parameter")
+                    .clone(),
+                _ => panic!("a reward parameter is an operation-parameter reference"),
+            })
+            .collect();
+        assert_eq!(parameter_keys.len(), 2, "random d and outcome are retained");
+        for (level, (key, name)) in parameter_keys.iter().zip(["d", "outcome"]).enumerate() {
+            let parameter = graph.node(key.clone()).expect("operation parameter node");
+            assert_eq!(parameter.semantic_form(), "parameter");
+            let BodyTerm::Aggregate(parameter_body) = parameter.body() else {
+                panic!("the operation parameter has name and level bindings");
+            };
+            let [MemberTerm::Binding(parameter_name), MemberTerm::Binding(parameter_level)] =
+                parameter_body.members.as_slice()
+            else {
+                panic!("the operation parameter has the exact binder shape");
+            };
+            let BindingValue::Leaf(LeafTerm::Literal {
+                value: fsl_semantics::check::LiteralValue::Text(actual_name),
+                ..
+            }) = &parameter_name.value
+            else {
+                panic!("parameter name is text");
+            };
+            assert_eq!(actual_name, name, "declared operation parameter order");
+            let BindingValue::Leaf(LeafTerm::Literal {
+                value: fsl_semantics::check::LiteralValue::Integer(actual_level),
+                ..
+            }) = &parameter_level.value
+            else {
+                panic!("parameter level is an integer");
+            };
+            assert_eq!(actual_level, &Integer::from(level as i64));
+        }
+        assert_eq!(clause.name, "clause");
+        let BindingValue::Leaf(LeafTerm::Literal {
+            value: fsl_semantics::check::LiteralValue::Text(value),
+            ..
+        }) = &clause.value
+        else {
+            panic!("the trailing clause binding is text");
+        };
+        assert_eq!(value, "reward");
+
+        for other in graph.nodes().filter(|node| {
+            node.node_tag() == fsl_semantics::check::NodeTag::Function
+                && matches!(node.owner(), Some(Owner::Model(owner)) if owner.node().ends_with("/Server/attempt"))
+        }) {
+            let BodyTerm::Aggregate(other_body) = other.body() else {
+                continue;
+            };
+            if let Some(MemberTerm::Binding(clause)) = other_body.members.last() {
+                assert!(!matches!(
+                    &clause.value,
+                    BindingValue::Leaf(LeafTerm::Literal {
+                        value: fsl_semantics::check::LiteralValue::Text(value),
+                        ..
+                    }) if value == "precondition" || value == "body"
+                ), "the reward does not build operation guard/body functions");
+            }
+        }
     }
 }
 
@@ -1787,7 +1942,7 @@ fn delay_weighting_is_a_timed_subject_form() {
         panic!("one refusal: {refusals:?}");
     };
     assert!(matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::Probabilistic(cause)
             if matches!(cause.as_ref(), ProbabilisticCause::TimeTypeMismatch { .. })
     ));
@@ -3246,7 +3401,7 @@ fn a_weight_sum_past_the_ceiling_refuses_promptly() {
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
     };
-    let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+    let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
         panic!("a limit refusal: {:?}", refusal.cause);
     };
     assert_eq!(limit.limit, 65_536);
@@ -3328,7 +3483,7 @@ fn a_huge_written_confidence_value_is_refused_with_the_limit_refusal() {
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
     };
-    let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+    let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
         panic!("a limit refusal: {:?}", refusal.cause);
     };
     assert_eq!(limit.kind.setting().name(), "s3.rational_bits");
@@ -3386,7 +3541,7 @@ fn a_workload_name_is_package_wide() {
         let [refusal] = &refusals[..] else {
             panic!("{second}: one refusal: {refusals:?}");
         };
-        let CheckCause::Probabilistic(cause) = &refusal.cause else {
+        let CheckCause::Probabilistic(cause) = refusal.cause.as_ref() else {
             panic!("a probabilistic cause: {refusal:?}");
         };
         assert!(matches!(
@@ -3436,7 +3591,7 @@ fn a_distribution_total_is_bounded_after_each_addition() {
     let refused = service(Some((D, &random(5, 65_535))), "");
     assert_eq!(located(&refused), [limit("d")]);
     let refusals = refusals_of(&refused);
-    let CheckCause::ResourceExhausted(limit) = &refusals[0].cause else {
+    let CheckCause::ResourceExhausted(limit) = refusals[0].cause.as_ref() else {
         panic!("a limit refusal: {refusals:?}");
     };
     assert_eq!((limit.limit, limit.actual), (65_536, 65_537));
@@ -3491,7 +3646,7 @@ fn a_cancelled_check_ends_cancelled() {
         );
         assert!(!refusals.is_empty(), "{when}");
         for refusal in &refusals {
-            let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+            let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
                 panic!("{when}: a cancelled refusal: {refusal:?}");
             };
             assert_eq!(
@@ -3938,7 +4093,7 @@ fn bare_decimal_threshold_overlong_refused() {
     };
     assert_eq!(refusal.cause.code(), Code::StageLimitExceeded);
     assert_eq!(refusal.cause.cause(), Some("work-budget-exceeded"));
-    let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+    let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
         panic!("a decimal scale limit refusal: {refusal:?}");
     };
     assert_eq!(limit.kind, CheckingLimitKind::DecimalLiteralScale);

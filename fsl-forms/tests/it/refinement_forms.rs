@@ -224,9 +224,8 @@ fn the_counter_refinement_builds_every_row_in_source_order() {
     );
 }
 
-/// Part of FR-310-AC-2 (TC-889 step 2; tagged TC-only while the `seq` and
-/// `only` forms are unbuilt): an open argument builds as `Open` beside the
-/// receiver expression and an expression argument.
+/// TC-889 step 2: an open argument builds as `Open` beside the receiver
+/// expression and an expression argument.
 #[trace("TC-889")]
 #[test]
 fn an_open_argument_builds_open() {

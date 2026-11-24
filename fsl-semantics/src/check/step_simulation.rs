@@ -42,12 +42,12 @@ use filament_semantic_value::step_simulation::{StepObligation, StepRowRef, StepS
 use fsl_forms::StateClauseKind;
 use fsl_foundation::source::provenance::OccurrenceKey;
 
-use super::claims::{wire, RequirementRecord};
+use super::claims::{RequirementRecord, wire};
 use super::family::OccurrenceRole;
 use super::references::ModelReferences;
 use super::refinement::RowRoots;
 use super::refusal::{CheckCause, CheckRefusal, KeyFault};
-use super::state_clause::{classify_refusal, record, PopulationDomain};
+use super::state_clause::{PopulationDomain, classify_refusal, record};
 use super::{CheckedRefinement, CheckedStateClause};
 
 /// One per-step simulation record with its ADR-013 O-07 occurrence key.
@@ -254,6 +254,8 @@ fn extent_record(
 fn fault(location: &Location) -> CheckRefusal {
     CheckRefusal {
         location: location.clone(),
-        cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+        cause: Box::new(CheckCause::InternalFault(Box::new(
+            KeyFault::UnkeyableRequirements,
+        ))),
     }
 }

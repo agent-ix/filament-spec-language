@@ -3448,8 +3448,7 @@ fn package_remainder_caller_source_carrier_refuses_before_file_io() {
         let path = directory.path().join("raw.json");
         std::fs::write(&path, raw).unwrap();
         let refusal = fsl_command::command::run(&path, &crate::negotiation::Fr290)
-            .err()
-            .expect("malformed carrier refuses");
+            .expect_err("malformed carrier refuses");
         let value = refusal.value().unwrap();
         assert_eq!(refusal.category().exit_code(), 20, "{value}");
         assert_eq!(value["code"], "invalid-request", "{value}");
@@ -3573,7 +3572,6 @@ fn package_remainder_caller_sources_share_intake_limits_at_the_boundary() {
     let limits = RunLimits {
         request_bytes: bytes.len(),
         dependent_bytes,
-        ..RunLimits::default()
     };
     prepare_run(&path, limits).expect("64 selected files exactly at both byte bounds admit");
     for (limits, setting) in [

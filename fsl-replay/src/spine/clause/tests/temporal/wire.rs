@@ -631,6 +631,71 @@ fn finite_window_rows_round_trip_and_each_edit_refuses() {
     }
 }
 
+/// FR-267-AC-24: limit values use canonical decimal strings and the strict
+/// reader rejects numeric and noncanonical spellings.
+#[trace("TC-1160", "FR-267-AC-24")]
+#[test]
+fn temporal_limit_values_are_canonical_decimal_strings() {
+    let window = round_trips(&with_disposition(ClauseDisposition::Temporal(
+        TemporalVerdict::WindowLimitReached {
+            limit: "max_window_values",
+            value: 2,
+            setting: "monitor.max_window_values",
+        },
+    )));
+    assert_eq!(
+        temporal(&window),
+        &json!({
+            "kind": "window-limit-reached",
+            "limit": "max_window_values",
+            "value": "2",
+            "setting": "monitor.max_window_values",
+        })
+    );
+    let window_record = read(&window).expect("window result reads");
+    assert!(matches!(
+        window_record.temporal(),
+        Some(TemporalRecord::WindowLimitReached { value: 2, .. })
+    ));
+
+    let progress = round_trips(&with_disposition(ClauseDisposition::Temporal(
+        TemporalVerdict::ProgressLimitReached(crate::spine::ProgressLimitReached {
+            limit: "node count",
+            value: 4,
+            setting: "progress.covered_positions",
+        }),
+    )));
+    assert_eq!(
+        temporal(&progress),
+        &json!({
+            "kind": "progress-limit-reached",
+            "limit": "node count",
+            "value": "4",
+            "setting": "progress.covered_positions",
+        })
+    );
+    let progress_record = read(&progress).expect("progress result reads");
+    assert!(matches!(
+        progress_record.temporal(),
+        Some(TemporalRecord::ProgressLimitReached { value: 4, .. })
+    ));
+
+    for value in [json!(2), json!("02")] {
+        refuses(
+            &edited(&window, |document| {
+                document["disposition"]["temporal"]["value"] = value.clone();
+            }),
+            "disposition.temporal.value",
+        );
+        refuses(
+            &edited(&progress, |document| {
+                document["disposition"]["temporal"]["value"] = value.clone();
+            }),
+            "disposition.temporal.value",
+        );
+    }
+}
+
 /// FR-267-AC-18: FR-502-AC-1's watermark contradiction writes
 /// `progress-contradicted` and reads back to an equal contradiction.
 #[trace("TC-1160", "FR-267-AC-18")]

@@ -9,7 +9,7 @@
 use filament_exact::NodeKey;
 use filament_exact::{
     ChargePoint, Incomplete, InjectedDenial, Integer, IntegerInterval, LimitKind, Meter, Outcome,
-    Refusal, ScalarLimits, Undefined,
+    RationalDomain, Refusal, ScalarLimits, Undefined,
 };
 use filament_exact::{
     ComparisonOperator, Decimal, DecimalType, IllTyped, IllTypedCause, Quantity, Rational,
@@ -133,7 +133,7 @@ fn quantity_times_text_refuses() {
     )
     .expect_err("text is not an exact quantity scale factor");
     assert!(matches!(
-        refusals.first().map(|refusal| &refusal.cause),
+        refusals.first().map(|refusal| refusal.cause.as_ref()),
         Some(fsl_semantics::check::CheckCause::OperandTypeMismatch { .. })
     ));
 }
@@ -1001,6 +1001,40 @@ fn u02_dimension_maps_normalize() {
     assert!(length.power(&int(0)).is_dimensionless());
     assert_eq!(length.divide(length).exponents().count(), 0);
     assert_eq!(length.multiply(time).exponents().count(), 2);
+}
+
+/// FSpec FR-142-AC-2 and AC-4 (TC-187 U02): equal normalized base maps do
+/// not make two distinct declared dimension identities directly convertible.
+#[trace("FSpec-TC-187", "FSpec-FR-142-AC-2", "FSpec-FR-142-AC-4")]
+#[test]
+fn a_normalized_derived_dimension_keeps_its_declared_conversion_boundary() {
+    let checked = check_quantity_scale_source(
+        "dimension Length; dimension Derived = Length * Time / Time;\n\
+         unit m : Length = rational(1, 1);\n\
+         unit derived : Derived = rational(1, 1);\n\
+         function convert_direct using v(q: Quantity<derived>): Quantity<m> pure { convert<Quantity<m>>(q) }",
+    );
+    let Err(refusals) = checked else {
+        panic!("direct conversion across distinct dimension nodes must refuse");
+    };
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert!(
+        matches!(
+            refusals[0].cause.as_ref(),
+            fsl_semantics::check::CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
+        ),
+        "{refusals:?}"
+    );
+
+    let fixture = fixture();
+    let length = fixture.graph.dimension(fixture.length).unwrap();
+    let time = fixture.graph.dimension(fixture.time).unwrap();
+    let derived = length.multiply(time).divide(time);
+    assert_eq!(
+        derived.exponents().collect::<Vec<_>>(),
+        length.exponents().collect::<Vec<_>>(),
+        "the standard vector's (L*T)/T normalized map equals L"
+    );
 }
 
 #[trace("FSpec-TC-187", "FSpec-FR-142-AC-2")]
@@ -2683,8 +2717,88 @@ fn carried_integer(lower: i64, upper: i64, rounding: RoundingMode) -> QuantityTa
     })
 }
 
+/// A carried `Rational[n1, n2; d1, d2]` conversion target.
+fn carried_rational(numerator: (i64, i64), denominator: (i64, i64)) -> QuantityTarget {
+    QuantityTarget::Carried(filament_exact::QuantityCarrier::Rational(
+        RationalDomain::new(
+            IntegerInterval::new(int(numerator.0), int(numerator.1)).unwrap(),
+            IntegerInterval::new(int(denominator.0), int(denominator.1)).unwrap(),
+        )
+        .unwrap(),
+    ))
+}
+
 fn is_inexact_conversion(outcome: &Outcome<ConvertedValue>) -> bool {
     matches!(outcome, Outcome::Refused(Refusal::InexactConversion { .. }))
+}
+
+/// FR-497-AC-8 (TC-1287): exact carried-rational conversion checks the
+/// rational carrier after `unit.target-domain`, preserves its typed refusal,
+/// and converts a value back to the source centimetre unit.
+#[trace("FR-497-AC-8", "TC-1287", "FSpec-FR-142-AC-31")]
+#[test]
+fn carried_rational_conversion_enforces_its_domain_after_target_charge() {
+    let f = fixture();
+    let metre = f.unit(f.m.clone());
+    let carrier = carried_rational((-3, 7), (1, 12));
+
+    for (value, unit, expected) in [
+        (ratio(25, 1), f.cm.clone(), ratio(1, 4)),
+        (ratio(-3, 1), f.m.clone(), ratio(-3, 1)),
+    ] {
+        let source = f.quantity(value, unit);
+        assert_eq!(
+            converted(f.at(&source), &metre, &carrier, &mut unlimited()),
+            Outcome::Completed(ConvertedValue::Exact(expected)),
+        );
+    }
+
+    for (value, unit) in [
+        (ratio(1, 1), f.inch.clone()),
+        (ratio(8, 1), f.m.clone()),
+        (ratio(-4, 1), f.m.clone()),
+    ] {
+        let source = f.quantity(value, unit);
+        let mut meter = unlimited();
+        let outcome = converted(f.at(&source), &metre, &carrier, &mut meter);
+        let Outcome::Refused(Refusal::RationalOutOfDomain { target }) = outcome else {
+            panic!("the rational carrier refuses without inexact-conversion: {outcome:?}");
+        };
+        assert_eq!(
+            target.as_ref(),
+            &RationalDomain::new(
+                IntegerInterval::new(int(-3), int(7)).unwrap(),
+                IntegerInterval::new(int(1), int(12)).unwrap(),
+            )
+            .unwrap(),
+        );
+        let points = admitted_points(&meter);
+        assert_eq!(points.last(), Some(&ChargePoint::UnitTargetDomain));
+        assert!(!points.contains(&ChargePoint::UnitResultRetain));
+        assert_eq!(meter.consumed(LimitKind::ResultUnits), 0);
+    }
+
+    let eight = f.quantity(whole(8), f.m.clone());
+    assert_eq!(
+        converted(
+            f.at(&eight),
+            &metre,
+            &carrier,
+            &mut limits(u64::MAX, u64::MAX, 0, 1, 1, 0),
+        ),
+        Outcome::Incomplete(work_denied(1, ChargePoint::UnitTargetDomain)),
+    );
+
+    let quarter_metre = f.quantity(ratio(1, 4), f.m.clone());
+    assert_eq!(
+        converted(
+            f.at(&quarter_metre),
+            &f.unit(f.cm.clone()),
+            &QuantityTarget::Exact,
+            &mut unlimited(),
+        ),
+        Outcome::Completed(ConvertedValue::Exact(whole(25))),
+    );
 }
 
 /// FR-497-AC-4 (U07, U16, U29; `CQ-E01`, `CQ-E02`, `CQ-E07`, `CQ-E08`,

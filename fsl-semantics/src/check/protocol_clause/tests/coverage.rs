@@ -195,7 +195,7 @@ fn protocol_use_sites_refuse_a_profile_of_the_wrong_kind() {
             selected: actual_selected,
             required: actual_required,
             span,
-        } = (match &matches[0].cause {
+        } = (match matches[0].cause.as_ref() {
             crate::check::CheckCause::ProtocolAnchor(cause) => cause.as_ref(),
             other => panic!("a protocol anchor refusal, got {other:?}"),
         })
@@ -266,7 +266,7 @@ fn wrong_kind_protocol_and_check_aliases_refuse_in_source_order() {
     let (text, refusals) = refusals(&source);
     let wrong: Vec<_> = refusals
         .iter()
-        .filter_map(|refusal| match &refusal.cause {
+        .filter_map(|refusal| match refusal.cause.as_ref() {
             crate::check::CheckCause::ProtocolAnchor(cause) => match cause.as_ref() {
                 ProtocolAnchorCause::WrongProfileKind { span, .. } => Some(span),
                 _ => None,
@@ -290,7 +290,7 @@ fn a_missing_protocol_profile_alias_keeps_missing_profile() {
     );
     let (_, refusals) = refusals(&source);
     assert!(refusals.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         crate::check::CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), ProtocolAnchorCause::MissingProfile { alias, .. } if alias == "unusedFn")
     )), "{refusals:?}");
@@ -440,7 +440,7 @@ fn a_compensation_without_its_temporal_alias_keeps_missing_profile() {
         )
         .expect_err("a template whose using alias is not selected refuses");
     let missing_profile = found.iter().find_map(|refusal| {
-        let crate::check::CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+        let crate::check::CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() else {
             return None;
         };
         match cause.as_ref() {
@@ -457,7 +457,7 @@ fn a_compensation_without_its_temporal_alias_keeps_missing_profile() {
     assert_eq!(refusal.cause.cause(), Some("missing-name"));
     assert!(
         !found.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             crate::check::CheckCause::ProtocolAnchor(cause)
                 if matches!(cause.as_ref(), ProtocolAnchorCause::WrongProfileKind { .. })
         )),

@@ -523,7 +523,7 @@ fn all_instances_in_a_check_guard_is_refused_at_checking() {
         };
         assert_eq!(refusal.cause.code(), fsl_foundation::Code::IllTyped);
         assert_eq!(refusal.cause.cause(), Some("operator-ineligible"));
-        let fsl_semantics::check::CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+        let fsl_semantics::check::CheckCause::ProtocolAnchor(cause) = &*refusal.cause else {
             panic!("expected a protocol-slot refusal, got {refusal:?}");
         };
         let fsl_semantics::check::ProtocolAnchorCause::SlotModelState { node, slot, span } =

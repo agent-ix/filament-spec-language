@@ -71,6 +71,11 @@ fn documents(result: &command::RunResult) -> (Value, Value) {
 }
 
 fn compile_handoff(directory: &Path) -> Vec<u8> {
+    compile_handoff_unit(directory, SQ)
+}
+
+fn compile_handoff_unit(directory: &Path, unit: &str) -> Vec<u8> {
+    std::fs::write(directory.join("unit.native"), unit).unwrap();
     let request = json!({"format":"native-compile/1", "request": {
         "models": [], "program": {"source": source()},
         "handoff": {"directory":"handoff", "package_name":"test:requirements",
@@ -833,6 +838,94 @@ fn package_scalar_records_preserve_provider_parity_and_admission() {
     }
 }
 
+/// FR-940-AC-32: call requirements for both cases of a payload-bearing source
+/// union settle alike over source and checked-package runs.
+#[trace("TC-2958", "FR-940-AC-32")]
+#[test]
+fn package_call_union_parameter_requirement_items_match_the_source() {
+    const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.value.complete/v1\";\n\
+        union Shape { Empty, Circle(Boolean) }\n\
+        function isCircle using v(s: Shape): Boolean pure {\
+          case s { Empty: false; Circle(payload): payload; }\
+        }\
+        function shape using v(): Shape pure { Shape::Circle(true) }\
+        function emptyShape using v(): Shape pure { Shape::Empty }\n";
+    let directory = tempfile::tempdir().unwrap();
+    let bytes = compile_handoff_unit(directory.path(), UNIT);
+    assert!(!bytes.is_empty());
+    let path = directory.path().join("run.json");
+    let mut canonical_arguments = Vec::new();
+    for function in ["shape", "emptyShape"] {
+        let probe_request = json!({"format":"native-run/1", "request": {
+            "models": [], "program":{"source":source()},
+            "call":{"function":function, "arguments":[]}
+        }});
+        std::fs::write(directory.path().join("unit.native"), UNIT).unwrap();
+        std::fs::write(&path, probe_request.to_string()).unwrap();
+        let probe = command::run(&path, &Fr290)
+            .expect("source union value establishes its canonical argument form");
+        let (probe_value, _) = documents(&probe);
+        canonical_arguments.push(probe_value["outcome"]["value"].clone());
+    }
+    for (argument, expected) in canonical_arguments.into_iter().zip([true, false]) {
+        let call = json!({"function":"isCircle", "arguments":[
+            {"parameter":"s", "value":argument}],
+            "requirements":{"backend":PROVIDER}});
+        let source_request = json!({"format":"native-run/1", "request": {
+            "models": [], "program":{"source":source()}, "call":call
+        }});
+        std::fs::write(directory.path().join("unit.native"), UNIT).unwrap();
+        std::fs::write(&path, source_request.to_string()).unwrap();
+        let source_seen = Arc::new(Mutex::new(Seen::default()));
+        let source_run = command::run_with_providers(
+            &path,
+            &Fr290,
+            vec![recording_provider(
+                &source_seen,
+                fsl_analyze::provider::ProviderVerdict::Proved,
+            )],
+            &fsl_analyze::provider::ProviderOptions::default(),
+            &filament_exact::Cancel::new(),
+        )
+        .unwrap_or_else(|error| panic!("source call with argument {argument} settles the union parameter's requirement: {error}"));
+        let source_arguments = source_request["request"]["call"]["arguments"].clone();
+        let mut package_request = source_request;
+        package_request["request"].as_object_mut().unwrap().remove("program");
+        package_request["request"]["package"] = json!({"directory":"handoff"});
+        assert_eq!(package_request["request"]["call"]["arguments"], source_arguments);
+        std::fs::write(&path, package_request.to_string()).unwrap();
+        std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+        let package_seen = Arc::new(Mutex::new(Seen::default()));
+        let package_run = command::run_with_providers(
+            &path,
+            &Fr290,
+            vec![recording_provider(
+                &package_seen,
+                fsl_analyze::provider::ProviderVerdict::Proved,
+            )],
+            &fsl_analyze::provider::ProviderOptions::default(),
+            &filament_exact::Cancel::new(),
+        )
+        .expect("package call settles the union parameter's requirement");
+        let (source_value, source_outcome) = documents(&source_run);
+        let (package_value, package_outcome) = documents(&package_run);
+        assert_eq!(source_run.exit_code, package_run.exit_code);
+        assert_eq!(
+            source_value["outcome"]["value"],
+            json!({"type":"boolean", "value":expected})
+        );
+        assert_eq!(package_value["requirements"], source_value["requirements"]);
+        assert_eq!(package_value["registry"], source_value["registry"]);
+        assert_eq!(package_value["outcome"], source_value["outcome"]);
+        assert_eq!(package_outcome, source_outcome);
+        let source_seen = source_seen.lock().unwrap();
+        let package_seen = package_seen.lock().unwrap();
+        assert_eq!(package_seen.requests, source_seen.requests);
+        assert_eq!(package_seen.facts, source_seen.facts);
+    }
+}
+
 /// The recording provider whose manifest publishes the option `published`.
 fn publishing_provider(
     seen: &Arc<Mutex<Seen>>,
@@ -1069,7 +1162,6 @@ fn provider_run_accepts_run_limits_and_request_overrides() {
     let limits = command::RunLimits {
         request_bytes,
         dependent_bytes,
-        ..command::RunLimits::default()
     };
     let clocks = serde_json::value::RawValue::from_string("{}".to_owned()).unwrap();
     let overrides = command::RequestOverrides {
@@ -1101,7 +1193,6 @@ fn provider_run_accepts_run_limits_and_request_overrides() {
     let below_request_size = command::RunLimits {
         request_bytes: request_bytes - 1,
         dependent_bytes,
-        ..command::RunLimits::default()
     };
     let error = command::run_with_providers_and_limits_and_overrides(
         &request,
@@ -1126,7 +1217,6 @@ fn provider_run_accepts_run_limits_and_request_overrides() {
     let below_dependent_size = command::RunLimits {
         request_bytes,
         dependent_bytes: dependent_bytes - 1,
-        ..command::RunLimits::default()
     };
     let error = command::run_with_providers_and_limits_and_overrides(
         &request,

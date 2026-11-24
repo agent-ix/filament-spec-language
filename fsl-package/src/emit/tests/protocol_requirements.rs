@@ -548,7 +548,7 @@ fn a_missing_required_temporal_refuses_at_its_authored_name() {
         fsl_foundation::Code::MissingDeclaration
     );
     assert_eq!(refusal.cause.cause(), Some("missing-name"));
-    let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+    let CheckCause::ProtocolAnchor(cause) = &*refusal.cause else {
         panic!("a located protocol requirement refusal: {refusal:?}");
     };
     let fsl_semantics::check::ProtocolAnchorCause::MissingRequirement { name, span } =
@@ -919,7 +919,7 @@ fn a_protocol_requiring_a_refused_temporal_adds_no_second_refusal() {
             .iter()
             .any(|refusal| name(refusal) == "temporal 0 holds 1"
                 && matches!(
-                    refusal.cause,
+                    refusal.cause.as_ref(),
                     CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
                 )),
         "the temporal clause's own refusal is reported: {refusals:?}"
@@ -932,7 +932,7 @@ fn a_protocol_requiring_a_refused_temporal_adds_no_second_refusal() {
     );
     assert!(
         refusals.iter().all(|refusal| !matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::InternalFault(_) | CheckCause::MissingName(_)
         )),
         "{refusals:?}"

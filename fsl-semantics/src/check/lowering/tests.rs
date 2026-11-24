@@ -14,7 +14,7 @@ use fsl_forms::{
     BinaryOperator, BinderQuery, BuiltinType, ExprNode, Expression, FunctionDeclaration, TypeForm,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use super::*;
 use crate::check::depth_forms::{binary, boolean, function, int_form, integer_expr, name_expr};
@@ -24,9 +24,9 @@ use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
     CompositeDeclaration, FieldDeclaration, TypeEnvironment,
 };
+use fsl_foundation::SourceIdentity;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::RawSourceRef;
-use fsl_foundation::SourceIdentity;
 
 mod binder_scope;
 mod deep_bodies;
@@ -366,9 +366,11 @@ fn equal_recursive_calls_are_one_node() {
         4,
         "h, the conditional, the conjunction and the call"
     );
-    assert!(members
-        .iter()
-        .all(|node| node.recursion().map(|recursion| recursion.size()) == Some(4)));
+    assert!(
+        members
+            .iter()
+            .all(|node| node.recursion().map(|recursion| recursion.size()) == Some(4))
+    );
     let mut forms: Vec<&str> = members.iter().map(|node| node.semantic_form()).collect();
     forms.sort_unstable();
     assert_eq!(
@@ -449,11 +451,12 @@ fn keying_a_recursion_group_is_charged_to_the_work_budget() {
     let declared = declaration_work(&ring(k));
     let refusals = checked(declared).expect_err("keying the ring exceeds the budget");
     assert!(
-        refusals.iter().any(|refusal| matches!(
-            refusal.cause,
-            CheckCause::ResourceExhausted(ref exceeded)
-                if exceeded.kind == CheckingLimitKind::WorkBudget && exceeded.limit == declared
-        )),
+        refusals
+            .iter()
+            .any(|refusal| matches!(refusal.cause.as_ref(),
+                CheckCause::ResourceExhausted(ref exceeded)
+                    if exceeded.kind == CheckingLimitKind::WorkBudget && exceeded.limit == declared
+            )),
         "{refusals:?}"
     );
     // The smallest budget that checks the ring: the keying's share grows
@@ -481,12 +484,13 @@ fn keying_a_recursion_group_is_charged_to_the_work_budget() {
     );
     let one_short = checked(admitted - 1).expect_err("one unit short refuses");
     assert!(
-        one_short.iter().any(|refusal| matches!(
-            refusal.cause,
-            CheckCause::ResourceExhausted(ref exceeded)
-                if exceeded.kind == CheckingLimitKind::WorkBudget
-                    && exceeded.limit == admitted - 1
-        )),
+        one_short
+            .iter()
+            .any(|refusal| matches!(refusal.cause.as_ref(),
+                CheckCause::ResourceExhausted(ref exceeded)
+                    if exceeded.kind == CheckingLimitKind::WorkBudget
+                        && exceeded.limit == admitted - 1
+            )),
         "{one_short:?}"
     );
 }
@@ -1379,7 +1383,7 @@ fn a_bounded_quantity_has_no_type_node() {
     });
     assert!(
         matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
         ),
         "{:?}",
@@ -1592,9 +1596,10 @@ fn an_alias_introduces_no_type_node() {
         parameter.semantic_type(),
         Some(parameter_type(int_form(0, 9), Vec::new()))
     );
-    assert!(graph.semantic_graph().nodes().all(|node| node
-        .declaration()
-        .is_none_or(|name| name.iter().all(|segment| segment.as_str() != "Digit"))));
+    assert!(graph.semantic_graph().nodes().all(|node| {
+        node.declaration()
+            .is_none_or(|name| name.iter().all(|segment| segment.as_str() != "Digit"))
+    }));
 }
 
 /// TC-413 step 3 (FR-092-AC-2): a declared record's node carries the owner
@@ -1829,12 +1834,14 @@ fn equal_literals_are_one_node_with_one_occurrence_each() {
         .map(|location| location.path())
         .collect();
     assert_eq!(paths, vec![vec![0], vec![1], vec![2]], "source order");
-    assert!(graph
-        .occurrence(
-            literal,
-            &filament_exact::Origin::new(filament_exact::Role::new("expression"), 3)
-        )
-        .is_none());
+    assert!(
+        graph
+            .occurrence(
+                literal,
+                &filament_exact::Origin::new(filament_exact::Role::new("expression"), 3)
+            )
+            .is_none()
+    );
 }
 
 /// TC-415 step 2 (FR-093-AC-2): `a and b`, `both(a, true)` and `let y = a in
@@ -1946,9 +1953,11 @@ fn conversions_are_classified_and_flat_map_builds_one_node() {
         c1_node["body"]["members"][1]["value"]["target"]["digest"],
         json!(x.to_string())
     );
-    assert!(semantic
-        .nodes()
-        .all(|node| node.semantic_form() != "conversion"));
+    assert!(
+        semantic
+            .nodes()
+            .all(|node| node.semantic_form() != "conversion")
+    );
 
     let graph = check(vec![c2]).expect("c2 checks");
     let narrow = application(graph.semantic_graph(), "filament.op.numeric.narrow");
@@ -1968,11 +1977,13 @@ fn conversions_are_classified_and_flat_map_builds_one_node() {
 
     let graph = check(vec![fm]).expect("fm checks");
     application(graph.semantic_graph(), "filament.op.collection.flat_map");
-    assert!(graph
-        .semantic_graph()
-        .nodes()
-        .map(preimage)
-        .all(|json| json["body"]["operation"]["identity"] != "filament.op.collection.map"));
+    assert!(
+        graph
+            .semantic_graph()
+            .nodes()
+            .map(preimage)
+            .all(|json| json["body"]["operation"]["identity"] != "filament.op.collection.map")
+    );
 }
 
 /// FR-093-AC-3: a record projection names its record's node, and a record
@@ -2254,9 +2265,11 @@ fn a_self_recursive_function_is_a_group_of_one() {
         .filter(|node| node.recursion().is_some())
         .collect();
     assert!(!members.is_empty());
-    assert!(members
-        .iter()
-        .any(|node| node.semantic_form() == "recursive_function"));
+    assert!(
+        members
+            .iter()
+            .any(|node| node.semantic_form() == "recursive_function")
+    );
 }
 
 /// TC-413 step 9 (FR-092-AC-11): `ping` and `pong` key alike, whichever is
@@ -2292,7 +2305,7 @@ fn map_literal_refusal_names_the_unbuilt_map_form() {
     assert_eq!(refusal.cause.code(), Code::UnsupportedConstruct);
     assert_eq!(refusal.cause.cause(), Some("not-yet-implemented"));
     assert!(matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         super::CheckCause::PopulationFormNotChecked { what: "map" }
     ));
 }

@@ -4,15 +4,15 @@
 //! A replay reads its clock configurations from the proving package, so a
 //! `clocks` member is refused at stage `request`, naming it.
 
-use crate::command_harness::{compile_file, run_file, Output};
+use crate::command_harness::{Output, compile_file, run_file};
 use fsl_foundation::SourceIdentity;
 use fsl_replay::{
-    call_site, replay, DependencyEntryWire, DependencyInput, QualifiedName, ReplayLimits,
-    ReplayPackage, ReplayRequestWire, ReplaySource, RequestTargetWire, StateEnvironment,
-    SuppliedLibrary,
+    DependencyEntryWire, DependencyInput, QualifiedName, ReplayLimits, ReplayPackage,
+    ReplayRequestWire, ReplaySource, RequestTargetWire, StateEnvironment, SuppliedLibrary,
+    call_site, replay,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -104,7 +104,7 @@ const PROGRAM: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
      import \"test/plant\" as P;\n\
      function entry using v(): Boolean pure { P::flag() }\n";
-/// A program over the same library whose function settles without calling it.
+/// A plain value program over the same library, without a library call.
 const OWN_VALUE: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
      import \"test/plant\" as P;\n\
@@ -165,9 +165,8 @@ impl Fixture {
         }
     }
 
-    /// The function call site of `entry`. `call_site` emits with no clock
-    /// selections, so the site is taken over the library without its clause:
-    /// the function's key does not depend on the library's clauses.
+    /// The function call site of `entry`, derived without clock selections;
+    /// the selected library clause does not affect this declaration key.
     fn site(&self) -> fsl_replay::CallSite<fsl_replay::FunctionSite> {
         let dependencies = DependencyInput::new([SuppliedLibrary {
             identity: LIBRARY.to_owned(),
@@ -178,9 +177,11 @@ impl Fixture {
         .unwrap();
         call_site(
             SourceIdentity::new(AUTHORITY, PROGRAM_ID),
-            self.package["name"].as_str().unwrap().to_owned(),
-            "unit.native",
-            self.program.as_bytes(),
+            fsl_replay::CallSiteUnit::new(
+                self.package["name"].as_str().unwrap().to_owned(),
+                "unit.native",
+                self.program.as_bytes(),
+            ),
             std::iter::empty::<&[u8]>(),
             &dependencies,
             &fsl_replay::RequestClocks::default(),
@@ -209,7 +210,7 @@ impl Fixture {
                     "role": occurrence.origin().role().as_str(),
                     "ordinal": occurrence.origin().ordinal().to_string()},
                 "over": null},
-            "source": {"kind": "input", "assignments": []},
+            "source": {"kind": "claim_free"},
             "obligation_identity": {
                 "node_id": graph.wire_value(obligation.node()).unwrap(),
                 "model": null,
@@ -245,7 +246,7 @@ impl Fixture {
                 refinement_internals: None,
             }],
             replay_target: RequestTargetWire::function(entry(), site.site.declaration.clone()),
-            source: ReplaySource::Input(Vec::new()),
+            source: ReplaySource::ClaimFree,
             obligation_identity: site.site.obligation_identity().clone(),
             backend: "fr-862-ac-2".to_owned(),
             state_environment: StateEnvironment::default(),
@@ -319,8 +320,7 @@ fn a_replay_request_file_replays_as_the_in_process_request_does() {
 /// settles as the in-process replay does, and with the package's `lib-ms`
 /// dependency clock selection removed refuses `missing-clock-selection`.
 #[test]
-#[trace("TC-2443", "FR-862-AC-2")]
-#[ignore = "QSL-2879: replay settles inconclusive with verdict disagreement (proved violation, replayed success), where the assertion expects reproduced-without-witness"]
+#[trace("TC-2443", "FR-862-AC-2", "TC-2213", "FR-640-AC-11")]
 fn a_replay_request_file_replays_a_library_clock_from_the_package() {
     let fixture = Fixture::compile(
         PROGRAM,
@@ -496,7 +496,10 @@ fn replay_with_limits_applies_the_callers_settings() {
         .unwrap();
     let error = fsl_command::command::replay_with_limits(&path, RunLimits::default(), &reader)
         .expect_err("a one-byte reader bound refuses the request");
-    assert_eq!(error.cause.to_string(), "invalid replay request: input bytes limit exceeded: required 4207, bound 1 at \"/package\"");
+    assert_eq!(
+        error.cause.to_string(),
+        "invalid replay request: input bytes limit exceeded: required 4207, bound 1 at \"/package\""
+    );
 
     let mut accounting = CommandLimits::replay();
     accounting

@@ -250,7 +250,9 @@ use fsl_analyze::provider::{ProviderRequest, ProviderTarget, ProviderVerdict};
 use fsl_replay::planner::{InterfaceMismatch, MismatchReason};
 
 /// How a recording provider answers the items of one request.
-struct Answer(Box<dyn Fn(&ProviderRequest<'_>) -> Vec<ProviderVerdict> + Send + Sync>);
+type ProviderAnswer = dyn Fn(&ProviderRequest<'_>) -> Vec<ProviderVerdict> + Send + Sync;
+
+struct Answer(Box<ProviderAnswer>);
 
 impl std::fmt::Debug for Answer {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

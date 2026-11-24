@@ -134,24 +134,26 @@ impl<'a> AbstractProtocolSystem<'a> {
         }
     }
 
-    /// Initial settled states of the abstract protocol.
-    pub fn initial(&self) -> Vec<ProtocolCandidate> {
+    /// Initial states of the abstract protocol, settled one at a time.
+    pub fn initial(
+        &self,
+    ) -> Box<dyn Iterator<Item = Result<ProtocolCandidate, ProtocolRefusal>> + '_> {
         match &self.inner {
-            ProtocolSystemKind::Sc(system) => system
-                .initial()
-                .into_iter()
-                .map(ProtocolCandidate::Sc)
-                .collect(),
-            ProtocolSystemKind::Tso(system) => system
-                .initial()
-                .into_iter()
-                .map(ProtocolCandidate::Tso)
-                .collect(),
-            ProtocolSystemKind::Ra(system) => system
-                .initial()
-                .into_iter()
-                .map(ProtocolCandidate::Ra)
-                .collect(),
+            ProtocolSystemKind::Sc(system) => Box::new(
+                system
+                    .initial_iter()
+                    .map(|state| state.map(ProtocolCandidate::Sc)),
+            ),
+            ProtocolSystemKind::Tso(system) => Box::new(
+                system
+                    .initial_iter()
+                    .map(|state| state.map(ProtocolCandidate::Tso)),
+            ),
+            ProtocolSystemKind::Ra(system) => Box::new(
+                system
+                    .initial_iter()
+                    .map(|state| state.map(ProtocolCandidate::Ra)),
+            ),
         }
     }
 

@@ -4,7 +4,7 @@
 
 use ix_trace_rs::trace;
 
-use super::rules::{located_refusals, protocol, TRIED};
+use super::rules::{TRIED, located_refusals, protocol};
 use crate::check::refusal::ProtocolAnchorCause;
 
 fn only_locus(source: &str, expected_code: &str, expected_cause: Option<&str>) -> String {
@@ -218,7 +218,7 @@ fn minimal_protocol_construct_pairs_check_and_refuse_at_their_subject() {
     );
     let causes: Vec<_> = located_refusals(&over)
         .into_iter()
-        .filter_map(|(refusal, region)| match &refusal.cause {
+        .filter_map(|(refusal, region)| match refusal.cause.as_ref() {
             crate::check::CheckCause::ProtocolAnchor(cause)
                 if matches!(cause.as_ref(), ProtocolAnchorCause::SlotModelState { node, .. } if node == "Pick") =>
             {

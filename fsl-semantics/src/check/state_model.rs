@@ -124,9 +124,8 @@ fn untyped_cause(untyped: &super::check::UntypedMember) -> CheckCause {
 pub(crate) fn fault(location: &Location) -> CheckRefusal {
     CheckRefusal {
         location: location.clone(),
-        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(InternalFault::new(
-            "S3",
-            "state-model-check-result-shape",
+        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+            InternalFault::new("S3", "state-model-check-result-shape"),
         )))),
     }
 }
@@ -233,10 +232,10 @@ impl FamilyContract for StateModelFamily {
         let location = &request.location;
         let refuse = |at: &Location, cause| CheckRefusal {
             location: at.clone(),
-            cause: CheckCause::StateModel(Box::new(StateModelRefusal {
+            cause: Box::new(CheckCause::StateModel(Box::new(StateModelRefusal {
                 cause,
                 receiver: None,
-            })),
+            }))),
         };
         let mismatch =
             |at: &Location| refuse(at, CheckCause::IllTyped(IllTypedCause::TypeMismatch));
@@ -263,7 +262,7 @@ impl FamilyContract for StateModelFamily {
                         form,
                         location,
                     )
-                    .map_err(|error| refuse(&error.location, error.cause))?;
+                    .map_err(|error| refuse(&error.location, *error.cause))?;
                     if !matches!(value_type, ValueType::Reference(_)) {
                         return Err(mismatch(location));
                     }
@@ -547,7 +546,7 @@ impl FamilyContract for StateModelFamily {
                         })
                         .ok_or_else(|| {
                             let mut refusal = missing(member);
-                            if let CheckCause::StateModel(model) = &mut refusal.cause {
+                            if let CheckCause::StateModel(model) = refusal.cause.as_mut() {
                                 model.receiver = Some(receiver_type.clone());
                             }
                             refusal
@@ -615,8 +614,8 @@ impl FamilyContract for StateModelFamily {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::check::family::fixtures::{empty_scope, root_location};
     use crate::check::DispatchOperation;
+    use crate::check::family::fixtures::{empty_scope, root_location};
     use crate::family::{DiagnosticSink, ScopeStack, StageLimits};
     use ix_trace_rs::trace;
 
@@ -678,7 +677,7 @@ mod tests {
             };
             assert!(
                 matches!(
-                    &refusal.cause,
+                    refusal.cause.as_ref(),
                     CheckCause::StateModel(model)
                         if model.cause == CheckCause::IllTyped(IllTypedCause::TypeMismatch)
                 ),
@@ -739,9 +738,11 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].message, "existing diagnostic");
         assert_eq!(entries[1].scope, "enclosing");
-        assert!(entries[1]
-            .message
-            .contains("node limit=37, meter admissions=3"));
+        assert!(
+            entries[1]
+                .message
+                .contains("node limit=37, meter admissions=3")
+        );
         assert_eq!(scopes.path(), "enclosing");
     }
 

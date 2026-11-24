@@ -197,9 +197,10 @@ fn a_63_record_cycle_checks_as_one_group_on_a_small_stack() {
         .filter_map(|node| node.recursion().map(|recursion| recursion.anchor().clone()))
         .collect();
     assert_eq!(groups.len(), 1, "one recursion group");
-    assert!(members.iter().all(|node| node
-        .recursion()
-        .is_some_and(|recursion| recursion.size() == 126)));
+    assert!(members.iter().all(|node| {
+        node.recursion()
+            .is_some_and(|recursion| recursion.size() == 126)
+    }));
 }
 
 /// A walk that delegates every callback to `inner` and counts the visits

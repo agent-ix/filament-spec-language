@@ -9,7 +9,7 @@ use std::process::Command;
 
 use filament_exact::{Cancel, Value as RuntimeValue};
 use fsl_analyze::analyze::document::{
-    resolve_items, ItemSelection, ResolvedItem, SubjectSelection,
+    ItemSelection, ResolvedItem, SubjectSelection, resolve_items,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, Engines, SubjectBinding};
 use fsl_foundation::{BackendId, SourceIdentity};
@@ -18,12 +18,12 @@ use fsl_replay::value_check::{ValueTarget, Verdict};
 use fsl_route::Registry;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::DocumentProvision;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::super::{self as corpus, ConsumerType, InputKind, Vector};
 use super::{CandidateRecord, Entry, Item, Negotiated, Provider, Recheck, Settlement};
-use crate::error::{Error, Result};
 use crate::Outcome;
+use crate::error::{Error, Result};
 
 pub(super) struct Driver {
     executable: PathBuf,
@@ -113,7 +113,9 @@ impl Driver {
             || echo.get("extent") != expected.get("extent")
             || echo.get("backend").and_then(Value::as_str) != Some(backend.as_str())
         {
-            return Err(refusal("driver response does not match the requested claim, capability, extent, backend or single-item index"));
+            return Err(refusal(
+                "driver response does not match the requested claim, capability, extent, backend or single-item index",
+            ));
         }
         let terminal = record
             .get("record")
@@ -137,7 +139,7 @@ impl Driver {
                     _ => {
                         return Err(refusal(
                             "driver returned an unrecognized negotiated disposition",
-                        ))
+                        ));
                     }
                 }
             } else {
@@ -250,7 +252,7 @@ fn recheck_value(item: &Item<'_>, record: &CandidateRecord) -> Recheck {
         Err(fsl_replay::value_check::Selection::Fault(fault)) => {
             return Recheck::Fault {
                 detail: format!("{fault:?}"),
-            }
+            };
         }
         Err(_) => return refused("not-a-value-target"),
     };
@@ -405,29 +407,29 @@ fn compile(
     limits: &fsl_replay::CallerLimits,
     registry: &Registry,
     items: Option<&[ItemSelection]>,
-) -> std::result::Result<CompiledVector, Entry> {
+) -> std::result::Result<CompiledVector, Box<Entry>> {
     let mut inputs = Vec::new();
     for input in &vector.input.files {
         let path = fs::canonicalize(root.join(&input.path)).map_err(|error| {
-            failed_vector(
+            Box::new(failed_vector(
                 vector,
                 Settlement::ToolFailure,
                 json!({"path":input.path,"io":error.to_string()}),
-            )
+            ))
         })?;
         if !path.starts_with(root) {
-            return Err(failed_vector(
+            return Err(Box::new(failed_vector(
                 vector,
                 Settlement::ToolFailure,
                 json!({"path":input.path,"io":"input escapes corpus root"}),
-            ));
+            )));
         }
         let bytes = fs::read(&path).map_err(|error| {
-            failed_vector(
+            Box::new(failed_vector(
                 vector,
                 Settlement::ToolFailure,
                 json!({"path":input.path,"io":error.to_string()}),
-            )
+            ))
         })?;
         inputs.push((input, path, bytes));
     }
@@ -436,11 +438,11 @@ fn compile(
         .filter(|(input, _, _)| input.kind == InputKind::Source)
         .collect::<Vec<_>>();
     let [source] = sources.as_slice() else {
-        return Err(failed_vector(
+        return Err(Box::new(failed_vector(
             vector,
             Settlement::ToolFailure,
             json!({"input":"expected one source file"}),
-        ));
+        )));
     };
     let cancel = Cancel::new();
     let source_identity = SourceIdentity::new("agent-ix", &source.0.path);
@@ -454,7 +456,7 @@ fn compile(
             Ok(execution) => execution.actual,
             Err(error) => serde_json::to_value(error).unwrap_or(Value::Null),
         };
-        failed_vector(vector, settlement, detail)
+        Box::new(failed_vector(vector, settlement, detail))
     };
     let parsed = spine::parse(
         &ParseRequest {
@@ -474,11 +476,11 @@ fn compile(
             .map(|(_, _, bytes)| bytes.as_slice()),
     )
     .map_err(|error| {
-        failed_vector(
+        Box::new(failed_vector(
             vector,
             Settlement::NotCompiled,
             json!({"model":format!("{error:?}")}),
-        )
+        ))
     })?;
     let models = spine::select(&parsed, &packages, limits.spine.model, &cancel)
         .map_err(compile_error)?
@@ -583,7 +585,7 @@ pub(super) fn execute_with_items(
             )
         })) {
             Ok(Ok(vector)) => compiled.push(vector),
-            Ok(Err(entry)) => entries.push(entry),
+            Ok(Err(entry)) => entries.push(*entry),
             Err(payload) => entries.push(failed_vector(
                 vector,
                 Settlement::ToolFailure,
@@ -756,18 +758,22 @@ mod tests {
             let backend = BackendId::new("value-checker");
             let mut refutation = driver.read_response(item, &backend, REFUTED).unwrap();
             assert_eq!(refutation.record.as_ref().unwrap(), &document["items"][0]);
-            assert!(refutation
-                .record
-                .as_ref()
-                .unwrap()
-                .pointer("/record/category")
-                .is_none());
-            assert!(refutation
-                .record
-                .as_ref()
-                .unwrap()
-                .pointer("/record/request_index")
-                .is_none());
+            assert!(
+                refutation
+                    .record
+                    .as_ref()
+                    .unwrap()
+                    .pointer("/record/category")
+                    .is_none()
+            );
+            assert!(
+                refutation
+                    .record
+                    .as_ref()
+                    .unwrap()
+                    .pointer("/record/request_index")
+                    .is_none()
+            );
             refutation.replay = Some(driver.replay(item, &refutation));
             assert_eq!(
                 refutation.replay,

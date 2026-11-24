@@ -176,10 +176,10 @@ fn position_counting_operator_names_previous_and_finite_intervals() {
 fn refused(temporal: &[&str], formula: &str) -> (String, TemporalCause) {
     let text = source(temporal, "Counter", formula);
     match check(&assemble(&text)) {
-        Err(StageFailure::Refused(CheckRefusal {
-            cause: CheckCause::Temporal(cause),
-            ..
-        })) => (text, *cause),
+        Err(StageFailure::Refused(CheckRefusal { cause, .. })) => match *cause {
+            CheckCause::Temporal(cause) => (text, *cause),
+            cause => panic!("{formula}: temporal refusal, got {cause:?}"),
+        },
         other => panic!("{formula}: a temporal refusal, not {other:?}"),
     }
 }
@@ -448,12 +448,11 @@ fn the_over_parameters_unbounded_positions_join_the_record() {
 #[test]
 fn an_unresolved_over_type_refuses_at_the_type() {
     let text = source(&[EVENT], "Missing", "eventually[0,1] holds(true)");
-    let Err(StageFailure::Refused(CheckRefusal {
-        cause: CheckCause::Temporal(cause),
-        ..
-    })) = check(&assemble(&text))
-    else {
+    let Err(StageFailure::Refused(CheckRefusal { cause, .. })) = check(&assemble(&text)) else {
         panic!("a temporal refusal");
+    };
+    let CheckCause::Temporal(cause) = *cause else {
+        panic!("a temporal refusal")
     };
     assert_eq!(cause.code(), Code::MissingDeclaration);
     assert_eq!(cause.span(), first(&text, "Missing"));
@@ -468,11 +467,10 @@ fn package_refusal(text: &str) -> TemporalCause {
             &crate::check::test_support::ZeroRewardEvaluator,
         )
         .expect_err("the clause is refused");
-    let [CheckRefusal {
-        cause: CheckCause::Temporal(cause),
-        ..
-    }] = refusals.as_slice()
-    else {
+    let [CheckRefusal { cause, .. }] = refusals.as_slice() else {
+        panic!("one temporal refusal for `{text}`: {refusals:?}");
+    };
+    let CheckCause::Temporal(cause) = cause.as_ref() else {
         panic!("one temporal refusal for `{text}`: {refusals:?}");
     };
     (**cause).clone()
@@ -536,7 +534,7 @@ fn package_admits(text: &str) {
 #[trace("TC-629", "FR-194-AC-12")]
 #[test]
 fn a_carried_aggregate_value_or_threshold_is_refused_at_the_carried_expression() {
-    use crate::check::lowering::{temporal_location, AggregatePart, TemporalSite};
+    use crate::check::lowering::{AggregatePart, TemporalSite, temporal_location};
     let carried = |formula: &str| {
         source(&[EVENT], "Quantity<m>", formula).replace(
             "temporal C using",
@@ -617,7 +615,7 @@ fn a_carried_aggregate_value_or_threshold_is_refused_at_the_carried_expression()
 #[trace("TC-629", "FR-194-AC-11")]
 #[test]
 fn a_window_aggregate_over_a_package_unit_keeps_that_unit() {
-    use crate::check::lowering::{temporal_location, AggregatePart, TemporalSite};
+    use crate::check::lowering::{AggregatePart, TemporalSite, temporal_location};
     use crate::model::domain_package::{
         DomainPackage, DomainPackageRef, PackageDimensionRecord, PackageUnitRecord,
     };
@@ -859,7 +857,7 @@ fn aggregate_atoms_are_checked_and_admitted() {
         )
         .expect_err("a rational count threshold is refused");
     assert_eq!(
-        refusals[0].cause,
+        *refusals[0].cause,
         CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
     );
 
@@ -876,7 +874,7 @@ fn aggregate_atoms_are_checked_and_admitted() {
         )
         .expect_err("a non-Boolean aggregate filter is refused");
     assert_eq!(refusals[0].cause.code(), Code::IllTyped);
-    assert!(matches!(refusals[0].cause, CheckCause::NonBooleanRoot));
+    assert!(matches!(*refusals[0].cause, CheckCause::NonBooleanRoot));
 
     let mismatched_threshold = source(&[EVENT], "Int[0,9]", "sum of c over past[0,3] <= true");
     let refusals = assemble(&mismatched_threshold)
@@ -887,7 +885,7 @@ fn aggregate_atoms_are_checked_and_admitted() {
         )
         .expect_err("a threshold must match the aggregate value type");
     assert!(matches!(
-        refusals[0].cause,
+        *refusals[0].cause,
         CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
     ));
 
@@ -900,7 +898,7 @@ fn aggregate_atoms_are_checked_and_admitted() {
         )
         .expect_err("a count threshold is dimensionless numeric");
     assert!(matches!(
-        refusals[0].cause,
+        *refusals[0].cause,
         CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
     ));
 
@@ -927,7 +925,7 @@ fn aggregate_atoms_are_checked_and_admitted() {
             .expect_err(formula);
         assert!(
             matches!(
-                refusals[0].cause,
+                *refusals[0].cause,
                 CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
             ),
             "{formula}: {refusals:?}"
@@ -1095,7 +1093,7 @@ fn a_converted_duration_bound_past_the_rational_bits_ceiling_is_a_limit() {
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
     };
-    let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+    let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
         panic!("a stage limit: {refusal:?}");
     };
     assert_eq!(limit.kind, crate::check::CheckingLimitKind::RationalBits);
@@ -1168,7 +1166,7 @@ fn ordinary_temporal_hyper_read_refuses_outside_a_hyper_clause() {
         .expect_err("an ordinary temporal clause cannot read a trace variable");
     assert!(
         refusals.iter().any(|refusal| {
-            matches!(&refusal.cause, CheckCause::Hyper(cause)
+            matches!(refusal.cause.as_ref(), CheckCause::Hyper(cause)
             if cause.code() == Code::UnsupportedConstruct
                 && cause.tag() == "expression-form")
         }),
@@ -1196,7 +1194,7 @@ fn a_holds_condition_is_typed_over_the_over_parameter() {
         panic!("one refusal: {refusals:?}");
     };
     assert!(
-        matches!(&refusal.cause, CheckCause::MissingName(name) if name == "d"),
+        matches!(refusal.cause.as_ref(), CheckCause::MissingName(name) if name == "d"),
         "{refusal:?}"
     );
     let region = regions.refusal_region(refusal).expect("a located refusal");
@@ -1214,7 +1212,7 @@ fn a_holds_condition_is_typed_over_the_over_parameter() {
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal: {refusals:?}");
     };
-    assert_eq!(refusal.cause, CheckCause::NonBooleanRoot, "{refusal:?}");
+    assert_eq!(*refusal.cause, CheckCause::NonBooleanRoot, "{refusal:?}");
 }
 
 /// FR-233 and FR-326: a timed interval (FR-393) where the clause counts
@@ -1352,10 +1350,10 @@ fn a_unit_spelled_or_model_binding_role_over_a_trace_subject_is_refused() {
         for role in ["ms", "s", "min", "model-steps", "model-time"] {
             let text = with_clock(&[profile], role, formula);
             let cause = match check(&assemble(&text)) {
-                Err(StageFailure::Refused(CheckRefusal {
-                    cause: CheckCause::Temporal(cause),
-                    ..
-                })) => *cause,
+                Err(StageFailure::Refused(CheckRefusal { cause, .. })) => match *cause {
+                    CheckCause::Temporal(cause) => *cause,
+                    cause => panic!("{profile} {role}: temporal refusal, got {cause:?}"),
+                },
                 other => panic!("{profile} {role}: a temporal refusal, not {other:?}"),
             };
             assert_eq!(
@@ -1377,10 +1375,8 @@ fn a_unit_spelled_or_model_binding_role_over_a_trace_subject_is_refused() {
     assert!(
         matches!(
             check(&assemble(&declared)),
-            Err(StageFailure::Refused(CheckRefusal {
-                cause: CheckCause::Temporal(_),
-                ..
-            }))
+            Err(StageFailure::Refused(CheckRefusal { cause, .. }))
+                if matches!(cause.as_ref(), CheckCause::Temporal(_))
         ),
         "a role spelled as a declared time unit refuses"
     );
@@ -1394,7 +1390,7 @@ fn a_unit_spelled_or_model_binding_role_over_a_trace_subject_is_refused() {
 #[trace("TC-1541", "FR-610-AC-4", "FSpec-TC-1040")]
 #[test]
 fn a_retired_temporal_profile_spelling_is_an_unknown_profile() {
-    use crate::check::profile::{resolve_profiles, ProfileCause};
+    use crate::check::profile::{ProfileCause, resolve_profiles};
     let selection = |identity: &str| fsl_foundation::selection::ProfileSelection {
         alias: "inf".to_owned(),
         identity: identity.to_owned(),

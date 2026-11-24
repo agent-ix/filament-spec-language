@@ -55,12 +55,12 @@ pub use task_product_item::TaskProductReport;
 pub(crate) mod simulation_item;
 mod state_graph_item;
 mod timed_item;
-pub(crate) use request::analyze_bound;
+pub(crate) use request::{AnalyzeExecution, analyze_bound};
 
 pub use request::{
-    analyze, ClaimItem, ClaimRefusal, CompositionItem, FiniteHyperItem, HybridItem, ItemForm,
-    ItemOptions, NegotiatedItem, ProbabilisticItem, ProbabilisticLimits, ProvisionRefusal,
-    SourceProvision, TemporalItem,
+    ClaimItem, ClaimRefusal, CompositionItem, FiniteHyperItem, HybridItem, ItemForm, ItemOptions,
+    NegotiatedItem, ProbabilisticItem, ProbabilisticLimits, ProvisionRefusal, SourceProvision,
+    TemporalItem, analyze,
 };
 
 use filament_exact::{Cancel, ObjectReference, ScalarLimits};
@@ -90,21 +90,24 @@ use fsl_semantics::model::observation::{
 
 pub use crate::contract_check::contract_item;
 pub use crate::value_check::value_item;
-pub(crate) use clause_item::{replay_protocol_over, ProtocolReplayInputs, ReplayShape};
 pub use clause_item::{
-    ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject, CLAUSE_TRANSCRIPT,
+    CLAUSE_TRANSCRIPT, ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject,
 };
-pub use derived_item::{deadlock_model_item, PackageDeadlockSubject};
-pub(crate) use derived_item::{derived_target, NoLetters};
-pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
+pub(crate) use clause_item::{ProtocolReplayInputs, ReplayShape, replay_protocol_over};
+pub(crate) use derived_item::{NoLetters, derived_target};
+pub use derived_item::{PackageDeadlockSubject, deadlock_model_item};
+pub use exact::{ExactProbabilityEvidence, exact_probabilistic_item};
 #[cfg(feature = "test-support")]
-pub use exact::{exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered};
+pub use exact::{
+    exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered,
+    settle_exact_engine_report,
+};
 pub use invariant_item::{PackageInvariantSubject, PackageItemInputs};
 pub(crate) use items::admission;
 pub use items::{
-    derived_model_item, derived_protocol_item, derived_zone_item, hyper_form_item, model_item,
-    protocol_item, statistical_item, timed_refinement_item, zone_item, DerivedItemMismatch,
-    ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem, TimedRefinementItem,
+    DerivedItemMismatch, ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem,
+    TimedRefinementItem, derived_model_item, derived_protocol_item, derived_zone_item,
+    hyper_form_item, model_item, protocol_item, statistical_item, timed_refinement_item, zone_item,
 };
 pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
 pub use state_graph_item::PackageStateGraphSubject;
@@ -1010,6 +1013,9 @@ impl DocumentGraphs {
             Err(crate::provider::NotAdmitted::Refused(refusal)) => {
                 Err(AnalyzeRefusal::Package(refusal))
             }
+            Err(crate::provider::NotAdmitted::HostAllocationFailed(failure)) => {
+                Err(AnalyzeRefusal::HostAllocationFailed(failure))
+            }
             Err(crate::provider::NotAdmitted::Other(refusal)) => Err(AnalyzeRefusal::Emission(
                 GraphUnavailable::of_not_admitted(refusal),
             )),
@@ -1154,7 +1160,7 @@ impl ItemDetail {
 pub enum AnalyzeRefusal {
     /// FR-1046 canonical receipt admission refused the selected document.
     #[error(transparent)]
-    EffectDecision(document::effect_decision::ReceiptRefusal),
+    EffectDecision(Box<document::effect_decision::ReceiptRefusal>),
     /// A document reader or encoder failed before subject binding.
     #[error("the analyze document could not be admitted: {0}")]
     Document(AdmissionFailure),
@@ -1168,6 +1174,15 @@ pub enum AnalyzeRefusal {
     /// own code, cause and pointer, never an internal failure.
     #[error("the package the run compiled is not admitted: {}", .0.label())]
     Package(fsl_package::PackageAdmissionRefusal),
+    /// The host refused memory the package reader had admitted; this says
+    /// nothing about the package.
+    #[error(
+        "host allocation failed during {:?}: requested {} bytes after {} bytes were admitted",
+        .0.stage,
+        .0.requested,
+        .0.consumed
+    )]
+    HostAllocationFailed(filament_contract_model::CheckedPackageHostAllocationFailed),
     /// The package the run analyzes, or a dependency an item is analyzed
     /// over, has no admitted emission, so the result's node ids cannot be
     /// held (FSL FR-621 "Node ids in an item"): the run ends before any item
@@ -1359,6 +1374,17 @@ impl AnalyzeRefusal {
                 )
                 .with_diagnostics(vec![diagnostic])
             }
+            Self::HostAllocationFailed(_failure) => OutcomeDocument::new(
+                Operation::Analyze,
+                Some(OutcomeStage::S4),
+                Category::InternalFailure,
+            )
+            .with_diagnostics(vec![OutcomeDiagnostic::new(
+                None,
+                fsl_foundation::Code::RuntimeInvariant.as_str(),
+                None,
+                self.to_string(),
+            )]),
             Self::Emission(cause) => {
                 let code = cause.code();
                 OutcomeDocument::new(Operation::Analyze, None, code.category()).with_diagnostics(
@@ -1374,16 +1400,18 @@ impl AnalyzeRefusal {
                 let catalog = refusal.catalog_code();
                 let category = category_of(&catalog).unwrap_or(Category::Refusal);
                 OutcomeDocument::new(Operation::Analyze, Some(OutcomeStage::S4), category)
-                    .with_diagnostics(vec![OutcomeDiagnostic::new(
-                        Some(catalog.cause()),
-                        catalog.code(),
-                        None,
-                        refusal.to_string(),
-                    )
-                    .with_selection(
-                        (catalog == CatalogCode::new("missing_import", "missing-selection"))
-                            .then_some(fsl_replay::outcome::hint::MissingSelection::Source),
-                    )])
+                    .with_diagnostics(vec![
+                        OutcomeDiagnostic::new(
+                            Some(catalog.cause()),
+                            catalog.code(),
+                            None,
+                            refusal.to_string(),
+                        )
+                        .with_selection(
+                            (catalog == CatalogCode::new("missing_import", "missing-selection"))
+                                .then_some(fsl_replay::outcome::hint::MissingSelection::Source),
+                        ),
+                    ])
             }
         }
     }
@@ -1413,13 +1441,10 @@ pub(crate) fn refusal_document(
         }
         AdmissionFailure::Fault(fault) => (fault.catalog_code(), fault.category(), None),
     };
-    OutcomeDocument::new(operation, None, category).with_diagnostics(vec![OutcomeDiagnostic::new(
-        Some(catalog.cause()),
-        catalog.code(),
-        None,
-        message,
-    )
-    .with_details(details)])
+    OutcomeDocument::new(operation, None, category).with_diagnostics(vec![
+        OutcomeDiagnostic::new(Some(catalog.cause()), catalog.code(), None, message)
+            .with_details(details),
+    ])
 }
 
 impl AnalyzeOutcome {
@@ -1827,7 +1852,7 @@ impl Payload {
     /// `family`).
     #[must_use]
     pub fn detail(&self) -> serde_json::Map<String, serde_json::Value> {
-        use serde_json::{json, Value};
+        use serde_json::{Value, json};
         let entries: Vec<(&str, Value)> = match self {
             Self::None => Vec::new(),
             Self::Kind(kind) => vec![("kind", json!(kind.to_wire()))],
@@ -1965,7 +1990,7 @@ pub(crate) enum EngineReport {
     /// `settle_protocol_check`.
     Protocol(
         Box<ModelCheckRecord<ProtocolTransition>>,
-        Option<fsl_replay::ProtocolWire>,
+        Option<Box<fsl_replay::ProtocolWire>>,
     ),
     /// EN-4's record, settled by FR-192's map.
     Statistical(Box<StatisticalRecord>),
@@ -2023,7 +2048,7 @@ pub(crate) enum Refusal {
         ProofRefusalCause,
         DeclineCode,
         CatalogCode,
-        serde_json::Map<String, serde_json::Value>,
+        Box<serde_json::Map<String, serde_json::Value>>,
     ),
     /// An unbounded extent: `unsupported` with `unbounded-extent`.
     RequiresBound,
@@ -2048,20 +2073,51 @@ pub(crate) enum Refusal {
     /// `unsupported` with the refusal's own diagnostic.
     Unsupported(CatalogCode),
     /// `unsupported` with structured details naming the unavailable package fact.
-    UnsupportedWithDetail(CatalogCode, serde_json::Map<String, serde_json::Value>),
+    UnsupportedWithDetail(CatalogCode, Box<serde_json::Map<String, serde_json::Value>>),
     /// `failed` with the refusal's diagnostic.
     Failed(CatalogCode),
     /// `failed` with the refusal's diagnostic and its detail (FR-750
     /// "Replay refusals": the invariant a checked package broke).
-    FailedWithDetail(CatalogCode, serde_json::Map<String, serde_json::Value>),
+    FailedWithDetail(CatalogCode, Box<serde_json::Map<String, serde_json::Value>>),
     /// FR-750: `unsupported`, `unsupported_construct`/`expression-form`, the
     /// detail of a hybrid provider's construct outside its class, which the
     /// record completes with the backend.
-    UnsupportedConstruct(serde_json::Map<String, serde_json::Value>),
+    UnsupportedConstruct(Box<serde_json::Map<String, serde_json::Value>>),
     /// `unsupported` `unsupported-requested-capability`: the package of a
     /// provider item could not be emitted, so no request was sent (FSpec
     /// FR-331-AC-33).
     NotEmitted,
+}
+
+impl Refusal {
+    pub(crate) fn declined_with_detail(
+        cause: ProofRefusalCause,
+        decline: DeclineCode,
+        code: CatalogCode,
+        detail: serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
+        Self::DeclinedWithDetail(cause, decline, code, Box::new(detail))
+    }
+
+    pub(crate) fn unsupported_with_detail(
+        code: CatalogCode,
+        detail: serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
+        Self::UnsupportedWithDetail(code, Box::new(detail))
+    }
+
+    pub(crate) fn failed_with_detail(
+        code: CatalogCode,
+        detail: serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
+        Self::FailedWithDetail(code, Box::new(detail))
+    }
+
+    pub(crate) fn unsupported_construct(
+        detail: serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
+        Self::UnsupportedConstruct(Box::new(detail))
+    }
 }
 
 /// The work an engine runs for one item.
@@ -3056,7 +3112,7 @@ fn run(
         Disposition::RequiresBound => return disposed(DispositionKind::RequiresBound, diagnostic),
         Disposition::Unsupported => return disposed(DispositionKind::Unsupported, diagnostic),
         Disposition::InvalidRequest => {
-            return disposed(DispositionKind::InvalidRequest, diagnostic)
+            return disposed(DispositionKind::InvalidRequest, diagnostic);
         }
     };
     let backend = candidate.id().clone();
@@ -3297,7 +3353,7 @@ fn settle(
             );
             AnalyzeRecord {
                 protocol_check: Some(protocol),
-                protocol_subject: subject,
+                protocol_subject: subject.map(|subject| *subject),
                 ..AnalyzeRecord::of(index, settlement)
             }
         }
@@ -3567,7 +3623,7 @@ fn settle(
             record(
                 terminal(
                     TerminalRecord::declined_with(index, backend, cause, code, diagnostic)
-                        .with_diagnostic_detail(detail),
+                        .with_diagnostic_detail(*detail),
                 ),
                 None,
             )
@@ -3586,7 +3642,7 @@ fn settle(
         ),
         EngineReport::Refused(Refusal::FailedWithDetail(code, detail)) => record(
             terminal(
-                TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(detail),
+                TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(*detail),
             ),
             None,
         ),
@@ -3596,7 +3652,7 @@ fn settle(
             detail.insert("backend".to_owned(), backend.as_str().into());
             record(
                 terminal(TerminalRecord::hybrid_unsupported_construct(
-                    index, backend, detail,
+                    index, backend, *detail,
                 )),
                 None,
             )
@@ -3604,10 +3660,24 @@ fn settle(
         EngineReport::Refused(Refusal::Unsupported(code)) => {
             disposed(DispositionKind::Unsupported, Diagnostic::new(code), backend)
         }
-        EngineReport::Refused(Refusal::UnsupportedWithDetail(code, detail)) => record(
-            terminal(TerminalRecord::disposition_unsupported(index, code, detail)),
-            None,
-        ),
+        EngineReport::Refused(Refusal::UnsupportedWithDetail(code, mut detail)) => {
+            // FSL FR-281 "Engine refusals": the record names the engine that
+            // decided the refusal, as the detail-less `Unsupported` does.
+            // An engine-set `backend` member (FSpec FR-272 names the provider that
+            // excludes the construct) is kept; the record field names the engine.
+            detail
+                .entry("backend".to_owned())
+                .or_insert_with(|| backend.as_str().into());
+            record(
+                terminal(TerminalRecord::disposition_unsupported_by(
+                    index,
+                    Some(backend),
+                    code,
+                    *detail,
+                )),
+                None,
+            )
+        }
         EngineReport::Refused(Refusal::NotEmitted) => {
             let diagnostic = Diagnostic {
                 code: CatalogCode::new(
@@ -3930,8 +4000,10 @@ mod tests {
                 panic!("inapplicable pair has its typed family diagnostic");
             };
             assert_eq!(*request_index, record.request_index);
-            assert!(!capability
-                .applies_to_declaration(family.expect("this matrix row has a known family")));
+            assert!(
+                !capability
+                    .applies_to_declaration(family.expect("this matrix row has a known family"))
+            );
             assert_eq!(code.cause(), "inapplicable-kind");
         }
     }
@@ -4232,24 +4304,33 @@ mod tests {
             en7.advertises().collect::<Vec<_>>(),
             [(Capability::Schedulability, Mode::Unbounded)]
         );
-        assert!(registrations
-            .iter()
-            .all(|descriptor| descriptor.origin() == ProviderOrigin::Linked));
-        assert!(en1
-            .advertises()
-            .any(|(kind, _)| kind == Capability::TemporalSatisfaction));
-        assert!(en4
-            .advertises()
-            .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction));
-        assert!(en5
-            .advertises()
-            .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction));
-        assert!(value
-            .advertises()
-            .any(|(kind, _)| kind == Capability::ValueValidity));
-        assert!(contract
-            .advertises()
-            .any(|(kind, _)| kind == Capability::OperationContract));
+        assert!(
+            registrations
+                .iter()
+                .all(|descriptor| descriptor.origin() == ProviderOrigin::Linked)
+        );
+        assert!(
+            en1.advertises()
+                .any(|(kind, _)| kind == Capability::TemporalSatisfaction)
+        );
+        assert!(
+            en4.advertises()
+                .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction)
+        );
+        assert!(
+            en5.advertises()
+                .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction)
+        );
+        assert!(
+            value
+                .advertises()
+                .any(|(kind, _)| kind == Capability::ValueValidity)
+        );
+        assert!(
+            contract
+                .advertises()
+                .any(|(kind, _)| kind == Capability::OperationContract)
+        );
         let mut kinds: Vec<_> = protocol.advertises().map(|(kind, _)| kind).collect();
         kinds.sort_by_key(|kind| kind.to_wire());
         assert_eq!(
@@ -4614,6 +4695,55 @@ mod tests {
         )
     }
 
+    /// QSL-2850 FR-281 "Engine refusals": an `unsupported` refusal that carries
+    /// detail settles a record naming the engine that decided it, as the
+    /// detail-less refusal does.
+    #[trace("TC-763", "FR-281-AC-11")]
+    #[test]
+    fn an_unsupported_refusal_with_detail_names_its_engine() {
+        let mut engines = Engines::default();
+        engines
+            .with(engine("test-a", Capability::OperationContract))
+            .expect("first");
+        let item = refusing(|| {
+            let mut detail = serde_json::Map::new();
+            detail.insert("fact".to_owned(), "package-fact".into());
+            Refusal::unsupported_with_detail(
+                CatalogCode::new("unsupported_construct", "not-yet-implemented"),
+                detail,
+            )
+        });
+        let records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new()));
+        let record = &records[0];
+        assert_eq!(record.backend(), Some(&BackendId::new("test-a")));
+        let detail = record.disposition_detail().expect("the refusal's detail");
+        assert_eq!(detail["fact"], "package-fact");
+        assert_eq!(detail["backend"], "test-a");
+    }
+
+    /// FSpec FR-272: a `backend` member the engine set (the provider whose class
+    /// excludes the construct) is not overwritten by the deciding engine.
+    #[trace("TC-763", "FR-281-AC-11")]
+    #[test]
+    fn an_engine_set_backend_member_in_the_detail_is_kept() {
+        let mut engines = Engines::default();
+        engines
+            .with(engine("test-a", Capability::OperationContract))
+            .expect("first");
+        let item = refusing(|| {
+            let mut detail = serde_json::Map::new();
+            detail.insert("backend".to_owned(), "provider-x".into());
+            Refusal::unsupported_with_detail(
+                CatalogCode::new("unsupported_construct", "not-yet-implemented"),
+                detail,
+            )
+        });
+        let records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new()));
+        assert_eq!(records[0].backend(), Some(&BackendId::new("test-a")));
+        let detail = records[0].disposition_detail().expect("the detail");
+        assert_eq!(detail["backend"], "provider-x");
+    }
+
     /// FR-281-AC-11: each engine refusal row settles its record naming the
     /// engine; an unbounded extent carries FSpec FR-272's payload (kind,
     /// candidate, advertised modes).
@@ -4851,7 +4981,7 @@ fn proof_value(
 #[cfg(test)]
 mod proof_value_tests {
     use super::task_product_item::{ProofVerdict, TaskProof};
-    use super::{proof_value, TerminalValue};
+    use super::{TerminalValue, proof_value};
     use crate::zone_check::{TaskProductSearchOutcome, TaskProductSearchStop};
     use filament_exact::CancelCause;
     use fsl_replay::{
@@ -4976,5 +5106,40 @@ mod proof_value_tests {
                 None
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod host_allocation_tests {
+    use super::AnalyzeRefusal;
+    use filament_contract_model::{
+        CheckedPackageHostAllocationFailed, NativeJoinLocus, NativeJoinLocusSource,
+        PackageReadStage,
+    };
+    use filament_semantic_value::catalog::Category;
+    use ix_trace_rs::trace;
+
+    /// FR-096-AC-24: package reader host allocation failures stay internal,
+    /// carry stage and requested size, and do not name a package location.
+    #[trace("FR-096-AC-24")]
+    #[test]
+    fn host_allocation_failure_is_an_internal_analyze_outcome() {
+        let refusal = AnalyzeRefusal::HostAllocationFailed(CheckedPackageHostAllocationFailed {
+            stage: PackageReadStage::Envelope,
+            locus: NativeJoinLocus {
+                source: NativeJoinLocusSource::PackageRead(PackageReadStage::Envelope, 0),
+                form: "package_bytes",
+            },
+            requested: 32,
+            consumed: 64,
+        });
+
+        let document = refusal.document();
+        assert_eq!(document.category(), Category::InternalFailure);
+        let diagnostic = &document.diagnostics()[0];
+        assert_eq!(diagnostic.code(), "runtime_invariant");
+        assert!(diagnostic.message().contains("Envelope"));
+        assert!(diagnostic.message().contains("32 bytes"));
+        assert_eq!(diagnostic.locus(), None);
     }
 }

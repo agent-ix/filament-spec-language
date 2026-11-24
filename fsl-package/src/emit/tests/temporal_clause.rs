@@ -445,7 +445,7 @@ fn three_temporal_bindings_observe_s3_input_byte_bounds() {
             Err(refusals) => {
                 let required = refusals
                     .iter()
-                    .filter_map(|refusal| match &refusal.cause {
+                    .filter_map(|refusal| match &*refusal.cause {
                         CheckCause::ResourceExhausted(limit)
                             if limit.kind == CheckingLimitKind::InputBytes =>
                         {
@@ -466,7 +466,7 @@ fn three_temporal_bindings_observe_s3_input_byte_bounds() {
         .expect_err("one byte below the measured S3 limit refuses");
     assert!(refusals.iter().any(|refusal| {
         matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::ResourceExhausted(limit)
                 if limit.kind == CheckingLimitKind::InputBytes
                     && limit.limit == exact - 1
@@ -2000,7 +2000,7 @@ fn a_repeated_binder_name_refuses_naming_both_declarations() {
     use fsl_semantics::check::{CheckCause, TemporalCause};
 
     let (refusal, text) = refusal_of(&each("c", ""), BODY);
-    let CheckCause::Temporal(cause) = &refusal.cause else {
+    let CheckCause::Temporal(cause) = &*refusal.cause else {
         panic!("a temporal refusal: {refusal:?}");
     };
     let TemporalCause::DuplicateTrigger { name, first, span } = cause.as_ref() else {
@@ -2252,7 +2252,7 @@ fn a_repeated_capture_name_refuses_naming_both_declarations() {
         &each("q", ""),
         "capture n: Int[0, 1000] = 1; capture n: Int[0, 1000] = 2; always holds(true)",
     );
-    let CheckCause::Temporal(cause) = &refusal.cause else {
+    let CheckCause::Temporal(cause) = &*refusal.cause else {
         panic!("a temporal refusal: {refusal:?}");
     };
     let TemporalCause::DuplicateCapture { name, first, span } = cause.as_ref() else {

@@ -1530,8 +1530,14 @@ fn tc_740_a_satisfied_exists_or_negated_forall_derives_a_decisive_witness() {
         Some(occurrence(&unit, "EqualsAll", &[], Operator::Binary))
     );
     let operands = equals.operands.as_ref().expect("comparison operands");
-    assert!(crate::result::same_element(&operands[0], &Value::Boolean(false)));
-    assert!(crate::result::same_element(&operands[1], &Value::Boolean(true)));
+    assert!(crate::result::same_element(
+        &operands[0],
+        &Value::Boolean(false)
+    ));
+    assert!(crate::result::same_element(
+        &operands[1],
+        &Value::Boolean(true)
+    ));
     assert!(equals.quantifier.is_none() && equals.index.is_none());
 }
 
@@ -1891,6 +1897,36 @@ fn tc_741_corpus_and_function_reports_carry_their_basis() {
         3,
         2,
     );
+    let absent_parent = || {
+        let (label, bytes) = document_ref_and_bytes("absent-parent", |label| {
+            json!({
+                "format": "filament.state.snapshot/v1",
+                "identity": document_identity_json(label),
+                "observation": "current",
+                "anchor": {"kind": "handler", "name": "validate"},
+                "model": {"identity": CONFIG_VERSION_PACKAGE_IDENTITY},
+                "populations": [{
+                    "population": config_version_population_identity(),
+                    "complete": true,
+                    "objects": [object("root", 1, None)],
+                }],
+            })
+            .to_string()
+            .into_bytes()
+        });
+        let selection = config_version_current_selection("ParentOrder", label.clone(), "root");
+        let mut request = config_version_request(ClauseRunSelection::Clause(selection));
+        request.snapshots.insert(label, bytes);
+        request
+    };
+    let absent_parent_report = run_clause(absent_parent()).expect("absent-parent reports");
+    assert_eq!(
+        absent_parent_report.disposition.truth(),
+        Some(true),
+        "the absent-parent implication must complete true"
+    );
+    assert_eq!(absent_parent_report.basis, SettlementBasis::ClosedScope);
+    assert_eq!(absent_parent_report.witness, None);
     let assert_version_unchanged_record =
         |report: crate::spine::ClauseRunReport, basis, truth, post_version, pre_version| {
             assert_eq!(report.basis, basis);
@@ -1985,6 +2021,85 @@ fn tc_741_corpus_and_function_reports_carry_their_basis() {
     let ghost = run_clause(same_identity("ghost")).unwrap();
     assert_eq!(ghost.disposition.stage(), ClauseRunStage::Admit);
     assert_eq!((ghost.basis, ghost.witness.is_some()), unavailable);
+}
+
+/// TC-741 / FR-266-AC-2: the parent implication reports its exact truth and
+/// witness path when it is the second invariant in a minimal checked unit.
+#[trace("TC-741", "FR-266-AC-2")]
+#[test]
+fn parent_implication_witness_is_independent_of_the_fixture_runner() {
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model Config = {CONFIG_VERSION_PACKAGE_IDENTITY:?};\n\
+         invariant ParentPrecedes using v on Config::ConfigVersion at current {{ \
+         present(self.parent) implies deref(value(self.parent)).versionNumber < self.versionNumber }}\n\
+         invariant Case using v on Config::ConfigVersion at current {{ \
+         present(self.parent) implies deref(value(self.parent)).versionNumber < self.versionNumber }}\n"
+    );
+    let domain = config_version_domain_document();
+    let packages = fsl_semantics::model::intake::package_input([domain.as_slice()])
+        .expect("the ConfigVersion model is admitted");
+    let unit = unit_for(source.clone(), domain);
+    let implication = occurrence(&unit, "Case", &[], Operator::Binary);
+    let comparison = occurrence(&unit, "Case", &[1], Operator::Binary);
+
+    let run = |identity: &str, objects: Vec<serde_json::Value>, self_key: &str| {
+        let (label, bytes) = document_ref_and_bytes(identity, |label| {
+            json!({
+                "format": "filament.state.snapshot/v1",
+                "identity": document_identity_json(label),
+                "observation": "current",
+                "anchor": {"kind": "handler", "name": "validate"},
+                "model": {"identity": CONFIG_VERSION_PACKAGE_IDENTITY},
+                "populations": [{
+                    "population": config_version_population_identity(),
+                    "complete": true,
+                    "objects": objects,
+                }],
+            })
+            .to_string()
+            .into_bytes()
+        });
+        let selection = config_version_current_selection("Case", label.clone(), self_key);
+        let mut request = config_version_request_for(
+            source.clone(),
+            packages.clone(),
+            "parent-implication-witness.native",
+            ClauseRunSelection::Clause(selection),
+        );
+        request.snapshots.insert(label, bytes);
+        run_clause(request).expect("a well-formed parent implication reports")
+    };
+
+    let absent = run(
+        "absent-parent-implication",
+        vec![object("root", 1, None)],
+        "root",
+    );
+    assert_eq!(
+        absent.disposition.truth(),
+        Some(true),
+        "{:?}",
+        absent.disposition
+    );
+    assert_eq!(absent.basis, SettlementBasis::ClosedScope);
+    assert_eq!(absent.witness, None);
+
+    let violation = run(
+        "present-parent-violation",
+        vec![object("self", 2, Some("other")), object("other", 3, None)],
+        "self",
+    );
+    assert_eq!(violation.disposition.truth(), Some(false));
+    assert_eq!(violation.basis, SettlementBasis::DecisiveCounterexample);
+    let witness = violation
+        .witness
+        .expect("the violating comparison has a witness");
+    assert_eq!(witness.decision_path, Some(vec![implication, comparison]));
+    let operands = witness.operands.as_ref().expect("comparison operands");
+    assert!(crate::result::same_element(&operands[0], &integer(3)));
+    assert!(crate::result::same_element(&operands[1], &integer(2)));
 }
 
 /// TC-741 step 3 (FR-266-AC-3): a `Frame` violation carries `closed-scope`

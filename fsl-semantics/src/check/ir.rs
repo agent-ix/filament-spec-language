@@ -1243,6 +1243,7 @@ fn try_for_each_node_child<E>(
         | NodeKind::ConvertDecimal(operand, _)
         | NodeKind::Flatten(operand)
         | NodeKind::Size(operand)
+        | NodeKind::BytesLength(operand)
         | NodeKind::DropFirst(operand)
         | NodeKind::Pre(operand) => [*operand].into_iter().try_for_each(child),
         NodeKind::PlaceReference {
@@ -1285,6 +1286,7 @@ fn try_for_each_node_child<E>(
         | NodeKind::IeeeNumericEquality(left, right)
         | NodeKind::IeeeTotalOrder(_, left, right)
         | NodeKind::IeeeBitIdentical(left, right)
+        | NodeKind::BytesConcat(left, right)
         | NodeKind::Connective(_, _, left, right)
         | NodeKind::Contains(left, right)
         | NodeKind::RemoveOne(left, right)

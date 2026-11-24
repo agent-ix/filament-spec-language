@@ -7,7 +7,7 @@ use filament_semantic_value::checking::CheckMode;
 use fsl_forms::ProtocolNodeKind;
 use ix_trace_rs::trace;
 
-use super::{assemble, assemble_with, checks, protocol_causes, refusals, HEADER};
+use super::{HEADER, assemble, assemble_with, checks, protocol_causes, refusals};
 use crate::check::protocol_clause::{CausalEdge, EdgeKind, Port, PortRef, ProtocolNodeId};
 use crate::check::refusal::{ArmFault, ObservationReason, ProtocolAnchorCause, SlotKind};
 use crate::check::{CheckRefusal, CheckedAwait, CheckedDeadline, CheckedGraph};
@@ -330,7 +330,9 @@ fn a_skippable_nested_repeat_gives_no_progress() {
         catalog(&refusal),
         ("unsupported_construct", Some("declaration-form"))
     );
-    assert!(matches!(&cause, ProtocolAnchorCause::NoProgress { repeat, .. } if repeat == "Outer"));
+    assert!(
+        matches!(cause, ProtocolAnchorCause::NoProgress { ref repeat, .. } if repeat == "Outer")
+    );
     assert_eq!(located(&text, &cause), "Outer");
 
     checks(&flow(
@@ -384,9 +386,11 @@ fn an_await_after_a_later_control_is_a_cycle() {
             attempt("Work")
         ),
     ));
-    assert!(edges(&graph)
-        .iter()
-        .any(|edge| edge.kind == EdgeKind::RepeatBack));
+    assert!(
+        edges(&graph)
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::RepeatBack)
+    );
 }
 
 /// An `await` after `Start` matching `matched`, with `within` and an empty
@@ -525,7 +529,7 @@ fn an_await_matches_an_event_in_a_closed_window_under_a_temporal_profile() {
         .into_iter()
         .filter(|refusal| {
             !matches!(
-                            &refusal.cause,
+                            refusal.cause.as_ref(),
             crate::check::CheckCause::ProtocolReference(cause)
             if matches!(**cause, crate::check::refusal::ProtocolReferenceCause::NotEmitted { .. })
                         )
@@ -709,7 +713,7 @@ fn a_choice_owner_is_a_role_and_its_constant_guards_partition() {
         ),
     );
     let (_, _, cause) = only(&repeat);
-    assert!(matches!(&cause, ProtocolAnchorCause::NodeRole { node, .. } if node == "Loop"));
+    assert!(matches!(cause, ProtocolAnchorCause::NodeRole { node, .. } if node == "Loop"));
 
     for (first, second, failed, cases) in [
         (
@@ -776,7 +780,7 @@ fn a_node_role_and_a_check_profile_resolve() {
             catalog(&refusal),
             ("missing_declaration", Some("missing-name"))
         );
-        assert!(matches!(&cause, ProtocolAnchorCause::NodeRole { node, .. } if node == name));
+        assert!(matches!(cause, ProtocolAnchorCause::NodeRole { ref node, .. } if node == name));
         assert_eq!(located(&text, &cause), "Nobody");
     }
     let source = flow("", "sequence Main { check Fine using nothing { true }; }");
@@ -976,8 +980,7 @@ fn a_decision_reads_only_listed_facts_of_its_owner() {
     let same_name_refusals = located_causes(&same_spelled_other_owner);
     assert!(
         same_name_refusals.iter().any(|(cause, at)| {
-            at == "rx"
-                && matches!(cause, ProtocolAnchorCause::Shadow { name, .. } if name == "rx")
+            at == "rx" && matches!(cause, ProtocolAnchorCause::Shadow { name, .. } if name == "rx")
         }),
         "the duplicate same-spelled binder is refused before guard checking: {same_name_refusals:?}"
     );
@@ -1045,7 +1048,11 @@ fn a_decision_reads_only_listed_facts_of_its_owner() {
     );
 
     let over = located_causes(&received(&pick("S", "", "input.ready", "not input.ready")));
-    let [(ProtocolAnchorCause::SlotModelState { node, slot, .. }, at), _] = over.as_slice() else {
+    let [
+        (ProtocolAnchorCause::SlotModelState { node, slot, .. }, at),
+        _,
+    ] = over.as_slice()
+    else {
         panic!("two model-state refusals, got {over:?}");
     };
     assert_eq!(

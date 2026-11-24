@@ -216,10 +216,11 @@ are equal, whatever their results read.
 
 ## Outputs
 
-- `fsl_replay::ValueParityPreimage { node: NodeKey, arguments:
-  Vec<ValueParityArgument> }`, with `ValueParityArgument { parameter:
-  NodeKey, position: usize, semantic_type: NodeKey }`. The occurrence
-  key and the `subject_kind` are fixed by the form and are not fields.
+- `fsl_replay::ValueParityPreimage`, the structural value defined in the
+  Preimage section, with exactly the four members `arguments`, `node`,
+  `occurrence_key` and `subject_kind`. Each argument is the structural value
+  defined there, with exactly `parameter`, `position` and `type`; `type` is
+  the parameter node's `semantic_type` key.
 - `fsl_replay::value_parity_obligation(&ValueParityPreimage)`: the preimage
   itself as the identity, after the position check, or the position-order
   refusal of the Behavior section.
@@ -233,13 +234,17 @@ are equal, whatever their results read.
 ## Behavior
 
 - When `call_site` resolves a function selection whose declared result is
-  not `Boolean`, it SHALL build the function's `ValueParityPreimage` from
-  the compiled package, with `node` the function node id it returns as
-  `FunctionSite.function` and one argument per declared parameter whose
-  `parameter` is the node id it pairs with that parameter in
-  `FunctionSite.parameters` and whose `semantic_type` is that parameter
-  node's `semantic_type`, and SHALL return it with its
-  `value_parity_obligation` identity as `FunctionSite.value_parity`.
+  not `Boolean`, `call_site` SHALL build the function's
+  `ValueParityPreimage` from the compiled package, with `node` the function
+  node id it returns as `FunctionSite.function`, `arguments` one entry per
+  declared parameter in parameter order (`parameter` the paired node id
+  from `FunctionSite.parameters`, `position` that parameter's zero-based
+  index, and `type` its node's `semantic_type` key), `occurrence_key` the
+  function's declaration occurrence (`node` `FunctionSite.function`, role
+  `declaration`, ordinal 0), and `subject_kind` `function-value-parity`.
+- When `call_site` resolves a function selection whose declared result is
+  not `Boolean`, `call_site` SHALL return a `FunctionSite.value_parity`
+  carrying that preimage and its `value_parity_obligation` identity.
 - When `call_site` resolves a function selection whose declared result is
   `Boolean`, it SHALL return `FunctionSite.value_parity` as `None`: such a function is a
   predicate, whose claim FR-098 replays, and it has no value-parity claim.
@@ -298,10 +303,10 @@ are equal, whatever their results read.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-484-AC-1 | `value_parity_obligation` over the preimage with `node` `F` and the arguments (`P1`, 0, `T1`) and (`P2`, 1, `T2`), where `F` is a `function` node key and `P1`, `T1`, `P2`, `T2` are distinct node keys, returns an identity equal by tuple equality to `{node: F, arguments: [(P1, 0, T1), (P2, 1, T2)], occurrence_key: (declaration, 0), subject_kind: function-value-parity}`; its first argument entry alone, the parameter `x: Int[0, 9]` at level 0 (FSpec FR-322 P4 typed by its T4), is the tuple (P4 node key, 0, T4 node key). | Test (TC-1252) |
-| FR-484-AC-2 | With the same `node`, the empty argument list gives an identity equal to `{node: F, arguments: [], occurrence_key: (declaration, 0), subject_kind: function-value-parity}`, and the first argument of AC-1 alone gives an identity equal to its own tuple; the two parameters of AC-1 declared in the other order (positions swapped) give an unequal identity, so the declared order is part of the identity. | Test (TC-1252) |
-| FR-484-AC-3 | Changing `node`, one argument's `parameter`, `position` or `type`, or adding or removing an argument, gives an unequal identity; an argument whose `position` is not its index refuses with the position-order refusal naming the index and the position; and the identity of AC-1 is unequal to the operator-parity identity of a preimage with the same `node` and an `obligation_kind`, since no preimage of one form equals one of the other. | Test (TC-1252) |
-| FR-484-AC-4 | Over a unit declaring `function inc using v(x: Int[0, 9]): Integer pure { x + 1 }`, `function add using v(x: Int[0, 9], y: Int[0, 9]): Integer pure { x + y }` and `function small using v(x: Int[0, 9]): Boolean pure { x < 3 }`, `call_site` returns for `inc` and `add` a `value_parity` whose `preimage.node` is `FunctionSite.function`, whose arguments are `FunctionSite.parameters`' node ids in declared order each with the `semantic_type` the compiled package's parameter node carries, and whose `obligation_identity` equals, by tuple equality, that preimage written out independently from the package's node keys; for `small` it returns `value_parity` as `None`. | Test (TC-1252) |
+| FR-484-AC-1 | `value_parity_obligation` returns a preimage with exactly four members: `arguments`, `node`, `occurrence_key` and `subject_kind`; structural equality matches `{arguments: [(P1, 0, T1), (P2, 1, T2)], node: F, occurrence_key: {ordinal: 0, role: declaration}, subject_kind: function-value-parity}` for distinct node keys `F`, `P1`, `T1`, `P2` and `T2`. | Test (TC-1252) |
+| FR-484-AC-2 | For that preimage, `arguments` has one entry per parameter in declaration order, each entry has exactly `parameter`, `position` and `type`; a zero-parameter function has an empty list, and reversing two declared parameters changes the identity. | Test (TC-1252) |
+| FR-484-AC-3 | Changing `node` or any argument entry's `parameter`, `position` or `type`, or adding/removing an argument, changes the identity; a position that differs from the argument's list index is refused. No other member, including bindings, generated outcome, package identity, qualified name, accounting, limits or source regions, appears in the preimage, and it has no `obligation_kind`. | Test (TC-1252) |
+| FR-484-AC-4 | Over a unit declaring `function inc using v(x: Int[0, 9]): Integer pure { x + 1 }`, `function add using v(x: Int[0, 9], y: Int[0, 9]): Integer pure { x + y }` and `function small using v(x: Int[0, 9]): Boolean pure { x < 3 }`, `call_site` returns for `inc` and `add` a `value_parity` whose `preimage.node` is `FunctionSite.function`, whose arguments are `FunctionSite.parameters`' node ids in declared order, each entry's `type` equal to the `semantic_type` key on its compiled-package parameter node, and whose `obligation_identity` equals, by tuple equality, that four-member preimage written out independently from the package's node keys; for `small` it returns `value_parity` as `None`. | Test (TC-1252) |
 | FR-484-AC-5 | A value-parity request for `inc` built only from AC-4's retained inputs (the `CallSite` package reference, `inc`'s `QualifiedName`, `FunctionSite.declaration`, `value_parity.obligation_identity`, one `Input` assignment of `x` = 3 keyed by its `FunctionSite` node id, the limits) replays with `ValueClaim { generated: 4 }` to `Agrees` and with `generated: 5` to `Diverged`, each report's `claim()` holding every retained input unchanged. | Test (TC-1252) |
 | FR-484-AC-6 | **RETIRED (staleness check withdrawn).** The replay no longer recomputes the preimage identity and compares it with the request's `obligation_identity`; no FSL check could fail on it. The criterion has no subject. | Test (TC-1252), retired |
 | FR-484-AC-7 | AC-5's request with the occurrence key replaced by `add`'s `declaration` occurrence, by the `expression` occurrence of `inc`'s `x + 1` application, or by (`inc`'s node, `declaration`, 1) refuses `ClaimOccurrence` (`missing_declaration`/`missing-name`) naming that key and `inc`, before any call and with no charge; for `small` it refuses `NotAValueFunction` instead. | Test (TC-1252) |

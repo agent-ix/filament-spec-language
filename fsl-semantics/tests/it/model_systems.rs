@@ -11,7 +11,9 @@
 
 use filament_checked::key::DeclarationKey;
 use fsl_foundation::diagnostic::Code;
-use fsl_semantics::model::accounting::{ChargePoint, Meter, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{
+    ModelNormalizationLimits, NormalizationChargePoint, NormalizationMeter,
+};
 use fsl_semantics::model::domain_package::{
     AllocationRecord, ComponentRecord, DomainPackage, DomainPackageRecord, DomainPackageRef,
     EndpointRecord, Multiplicity, ObjectTypeRecord, OperationEffect, OperationMemberRecord,
@@ -233,8 +235,8 @@ fn fixture_y(mutate: impl FnOnce(&mut Vec<DomainPackageRecord>)) -> DomainPackag
     DomainPackage::new(DomainPackageRef::fixture("bundle.y"), records)
 }
 
-fn unlimited_meter() -> Meter {
-    Meter::new(ModelNormalizationLimits::UNLIMITED)
+fn unlimited_meter() -> NormalizationMeter {
+    NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED)
 }
 
 fn find_relationship<'a>(
@@ -329,7 +331,7 @@ fn a_relationship_end_naming_a_record_value_type_refuses_malformed() {
         .refusals
         .iter()
         .filter(|refusal| {
-            matches!(&refusal.cause, ModelRefusalCause::IntakeMalformedDeclaration { node, .. }
+            matches!(& refusal.cause, ModelRefusalCause::IntakeMalformedDeclaration { node, .. }
                 if node == "model.Sys.owes")
         })
         .collect();
@@ -375,7 +377,7 @@ fn a_relationship_source_end_naming_a_record_value_type_refuses_malformed() {
         .refusals
         .iter()
         .filter(|refusal| {
-            matches!(&refusal.cause, ModelRefusalCause::IntakeMalformedDeclaration { node, .. }
+            matches!(& refusal.cause, ModelRefusalCause::IntakeMalformedDeclaration { node, .. }
                 if node == "model.Sys.owes")
         })
         .collect();
@@ -615,7 +617,10 @@ fn systems_members_inherit_with_ordered_duplicate_end_facts() {
     limits.derivation_facts = 21;
     match normalize(&systems_only_repeated_fixture(), limits) {
         NormalizeOutcome::Incomplete(incomplete) => {
-            assert_eq!(incomplete.charge_point, ChargePoint::NormalizeFact);
+            assert_eq!(
+                incomplete.charge_point,
+                NormalizationChargePoint::NormalizeFact
+            );
             assert_eq!(incomplete.consumed, 21);
         }
         other => panic!("the inherited systems facts must hit the fact boundary: {other:?}"),
@@ -839,7 +844,8 @@ fn y04_flow_source_must_conform_to_flow_target_not_the_reverse() {
     });
     let mut meter = unlimited_meter();
     let classification = classify(&domain_package, &mut meter).expect("classify admitted");
-    let before = meter.consumed(fsl_semantics::model::accounting::LimitKind::WorkUnits);
+    let before =
+        meter.consumed(fsl_semantics::model::accounting::NormalizationLimitKind::WorkUnits);
     match check_connection(
         &ModelIndex::build(domain_package.clone()),
         &classification,
@@ -858,7 +864,7 @@ fn y04_flow_source_must_conform_to_flow_target_not_the_reverse() {
         }
         other => panic!("expected an interface-type refusal, got {other:?}"),
     }
-    let after = meter.consumed(fsl_semantics::model::accounting::LimitKind::WorkUnits);
+    let after = meter.consumed(fsl_semantics::model::accounting::NormalizationLimitKind::WorkUnits);
     // Three systems.connection-condition charges, one flat work unit each
     // (this module's recorded scope choice — see systems.rs's module doc —
     // not FR-152's own f(Flow)/f(Flow2) derivation-fact pricing).
@@ -884,7 +890,7 @@ fn y04_flow_source_must_conform_to_flow_target_not_the_reverse() {
     let charges = meter
         .admitted_charges()
         .iter()
-        .filter(|point| **point == ChargePoint::SystemsConnectionCondition)
+        .filter(|point| **point == NormalizationChargePoint::SystemsConnectionCondition)
         .count();
     assert_eq!(charges, 3);
 }

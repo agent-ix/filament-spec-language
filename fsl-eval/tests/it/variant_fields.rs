@@ -105,7 +105,13 @@ fn package() -> CheckedPackage {
 
 /// Selected model enums evaluate actual values from source and the bytes-only
 /// carrier, preserving aliases, canonical ranks and equality charge sequences.
-#[trace("FR-531-AC-8", "FR-531-AC-42", "FR-360-AC-8")]
+#[trace(
+    "FR-531-AC-8",
+    "FR-531-AC-42",
+    "FR-360-AC-8",
+    "FSpec-TC-940",
+    "FSpec-FR-141-AC-7"
+)]
 #[test]
 fn selected_model_enum_values_match_source_and_bare_evaluation() {
     use fsl_eval::value::QualifiedName;
@@ -368,7 +374,7 @@ fn equality_over_a_variant_type_is_by_case_in_either_order() {
 
 /// FR-360-AC-6: a case of another variant type with the same name never
 /// compares: the comparison refuses at check and never evaluates.
-#[trace("FR-360-AC-6", "TC-1008")]
+#[trace("FR-360-AC-6", "TC-1008", "FSpec-FR-141-AC-7")]
 #[test]
 fn a_cross_type_equality_refuses_at_check_and_never_evaluates() {
     let package = package();
@@ -385,7 +391,86 @@ fn a_cross_type_equality_refuses_at_check_and_never_evaluates() {
         .expect_err("two different variant types do not compare");
     assert_eq!(
         refusal.cause,
-        CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+        Box::new(CheckCause::IllTyped(IllTypedCause::TypeMismatch))
+    );
+}
+
+/// TC-940 step 4: changing one selected model variant's case changes only
+/// that member key; the declaration and its unchanged members keep identity.
+#[trace("FSpec-TC-940", "FSpec-FR-141-AC-7")]
+#[test]
+fn changing_a_model_variant_case_changes_only_its_member_identity() {
+    fn declaration<'a>(
+        package: &'a CheckedPackage,
+        name: &str,
+    ) -> &'a fsl_semantics::check::VariantTypeDeclaration {
+        package
+            .graph()
+            .scope()
+            .variant_types()
+            .iter()
+            .find(|variant| variant.name() == format!("Config::{name}"))
+            .expect("the model variant is selected")
+    }
+
+    let original_document = fixture::document();
+    let original_package = package_over(&original_document, "Config");
+    let original_tier = declaration(&original_package, "Tier");
+    let original_gold = original_tier
+        .cases()
+        .iter()
+        .find(|case| case.name() == "Gold")
+        .expect("Tier declares Gold");
+    let original_standard = original_tier
+        .cases()
+        .iter()
+        .find(|case| case.name() == "Standard")
+        .expect("Tier declares Standard");
+    let original_level = declaration(&original_package, "Level");
+
+    let mut changed_document = original_document;
+    let tier = changed_document["types"]
+        .as_array_mut()
+        .expect("model types are an array")
+        .iter_mut()
+        .find(|declaration| declaration["displayName"] == "Tier")
+        .expect("Tier is a model declaration");
+    *tier = fixture::variant_type("Tier", &["Gold", "Basic"]);
+    let changed_package = package_over(&changed_document, "Config");
+    let changed_tier = declaration(&changed_package, "Tier");
+    let changed_gold = changed_tier
+        .cases()
+        .iter()
+        .find(|case| case.name() == "Gold")
+        .expect("Tier retains Gold");
+    let changed_basic = changed_tier
+        .cases()
+        .iter()
+        .find(|case| case.name() == "Basic")
+        .expect("Tier now declares Basic");
+    let changed_level = declaration(&changed_package, "Level");
+
+    assert_eq!(original_tier.node(), changed_tier.node());
+    assert_eq!(original_gold.variant(), changed_gold.variant());
+    assert_ne!(original_standard.variant(), changed_basic.variant());
+    assert!(changed_tier
+        .cases()
+        .iter()
+        .all(|case| case.name() != "Standard"));
+    assert_eq!(original_level.node(), changed_level.node());
+    assert_eq!(
+        original_level
+            .cases()
+            .iter()
+            .find(|case| case.name() == "Gold")
+            .expect("Level declares Gold")
+            .variant(),
+        changed_level
+            .cases()
+            .iter()
+            .find(|case| case.name() == "Gold")
+            .expect("Level retains Gold")
+            .variant()
     );
 }
 
@@ -671,10 +756,10 @@ fn an_option_of_a_case_compares_by_case() {
 /// FR-360-AC-6 over cases that are not source identifiers: `=` holds exactly
 /// for the same exact name and `!=` is its negation, in either operand order,
 /// whatever the case is spelled (`2x`, `Café`, `Gold Plus`).
-#[trace("FR-360-AC-6", "TC-1008")]
+#[trace("FR-360-AC-6", "TC-1008", "FSpec-TC-942", "FSpec-FR-141-AC-8")]
 #[test]
 fn equality_over_non_identifier_cases_is_by_the_exact_name() {
-    const CASES: [&str; 3] = ["2x", "Café", "Gold Plus"];
+    const CASES: [&str; 4] = ["Gold", "Gold Plus", "2x", "Café"];
     let package = package_over(
         &fixture::with_types(vec![fixture::variant_type("Odd", &CASES)]),
         "Config",
@@ -726,6 +811,64 @@ fn equality_over_non_identifier_cases_is_by_the_exact_name() {
                 "{left} != {right}"
             );
         }
+    }
+}
+
+/// TC-942 steps 1 to 3: non-identifier model case names keep distinct member
+/// identities and the set key order is ascending UTF-8 byte order.
+#[trace("FSpec-TC-942", "FSpec-FR-141-AC-8")]
+#[test]
+fn non_identifier_variant_set_uses_utf8_case_order() {
+    const CASES: [&str; 4] = ["Gold", "Gold Plus", "2x", "Café"];
+    let package = package_over(
+        &fixture::with_types(vec![fixture::variant_type("Odd", &CASES)]),
+        "Config",
+    );
+    let odd = variant_type(&package, "Config", "Odd");
+    let declaration = package
+        .graph()
+        .scope()
+        .variant_types()
+        .iter()
+        .find(|declared| declared.name() == "Config::Odd")
+        .expect("Odd is declared");
+    let value = |name: &str| {
+        let case = declaration
+            .cases()
+            .iter()
+            .find(|case| case.name() == name)
+            .expect("case is declared");
+        Value::Enum(filament_exact::EnumMember::new(
+            case.variant(),
+            u32::try_from(
+                declaration
+                    .cases()
+                    .iter()
+                    .position(|candidate| candidate.name() == name)
+                    .expect("case has a canonical rank"),
+            )
+            .expect("the fixture rank fits"),
+        ))
+    };
+    let values: Vec<_> = CASES.iter().map(|name| value(name)).collect();
+    for left in 0..values.len() {
+        for right in left + 1..values.len() {
+            assert!(!same_value(&values[left], &values[right]));
+        }
+    }
+    let set = formed(
+        CollectionKind::Set,
+        &odd,
+        &values.iter().collect::<Vec<_>>(),
+    );
+    let actual = elements(&set);
+    let expected = ["2x", "Café", "Gold", "Gold Plus"]
+        .into_iter()
+        .map(value)
+        .collect::<Vec<_>>();
+    assert_eq!(actual.len(), expected.len());
+    for (member, expected) in actual.iter().zip(expected.iter()) {
+        assert!(same_value(member, expected));
     }
 }
 

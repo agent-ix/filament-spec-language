@@ -16,7 +16,7 @@ each refusal at the artifact's path, line and column, keeps checking after a
 refusal, ignores fences of other languages, and is deterministic and
 cancellable.
 
-Scope: FR-355-AC-1 to FR-355-AC-6.
+Scope: FR-355-AC-1 to FR-355-AC-9.
 
 ## Test Procedure
 
@@ -45,6 +45,16 @@ alias `Accounts`.
    with a `quire` fence whose frontmatter names the object type `gadget`,
    which no supplied manifest declares.
 6. Check step 2's inventory twice; then check it with a cancelled `Cancel`.
+7. Separately check an inventory refused by FR-056, an inventory whose fence
+   extraction is unavailable, and an inventory whose configured check limit
+   is reached after an earlier fence could otherwise have been checked.
+8. Record the verification and offset-translation calls for every extracted
+   `quire` fence body; assert each body's `SourceMap::verify` runs before the
+   first offset translation, and a failed verification leaves its offsets
+   untranslated.
+9. Inspect `check_fences` and its callees for reads of filesystem paths,
+   process environment, clocks, and search locations outside the operation's
+   explicit inputs.
 
 Tag the tests `#[trace("TC-901", "FR-355-AC-n")]`.
 
@@ -65,3 +75,9 @@ Tag the tests `#[trace("TC-901", "FR-355-AC-n")]`.
 - Step 5: no `FenceResult` for the `text` fence; one `FenceResult` with
   `missing_declaration`/`missing-name` naming the second artifact's id.
 - Step 6: equal reports; then `StageFailure::Cancelled` and no report.
+- Step 7: each input returns its corresponding typed whole-inventory
+  `StageFailure`; none returns a `FenceReport` or partial `FenceResult`s.
+- Step 8: each body's source-map verification precedes translation; a failed
+  verification leaves that body's offsets untranslated.
+- Step 9: the operation and its callees make no such reads beyond explicit
+  inputs.

@@ -15,7 +15,7 @@ FR-315 encodes, both for an inductive proof, and rejects a query mismatch,
 an invalid proof step, a proof that does not refute and a
 certificate of the wrong shape.
 
-Scope: FR-314-AC-1 to FR-314-AC-4, FR-314-AC-9, FR-314-AC-10 to FR-314-AC-21.
+Scope: FR-314-AC-1 to FR-314-AC-4, FR-314-AC-9, FR-314-AC-10 to FR-314-AC-21, and FR-314-AC-23.
 
 ## Test Procedure
 
@@ -29,7 +29,8 @@ Scope: FR-314-AC-1 to FR-314-AC-4, FR-314-AC-9, FR-314-AC-10 to FR-314-AC-21.
 3. Settle the bounded result with no certificate; check and settle the
    bounded certificate with one step's rule replaced by `hole`, then by
    `lia_generic`.
-4. Check the bounded certificate with its proof replaced by each proof of
+4. Inspect the checker signature and inputs to confirm it receives the certificate and rebuilt-query inputs but no solver search state.
+5. Check the bounded certificate with its proof replaced by each proof of
    FR-314-AC-3, the renamed one included, and the inductive certificate
    with an empty base proof and with a malformed step proof. Settle each.
 5. Check FR-314-AC-4's `RefinementSmtCertificate` for `CasRefinesCounter` (a
@@ -71,8 +72,18 @@ Scope: FR-314-AC-1 to FR-314-AC-4, FR-314-AC-9, FR-314-AC-10 to FR-314-AC-21.
    integer-literal `+`, `-` and `*` expressions, a false equality and an
    unsupported non-literal expression. Check `aci_simp` with an accepted
    associative/commutative/idempotent/identity example and a false example.
+10. For FR-314-AC-23, use FR-315-AC-1's exact `Counter` fixture: universe
+    `{c}`, `value: Int[0, 3]`, initial `0`, and operation `inc` with
+    precondition `self.value < 3` and postcondition
+    `self.value = pre(self.value) + 1`. Under event-position
+    false-extension, run the TP-2 `on origin` claim
+    `always[0,3] holds(c.value <= 3)` with a `BoundedComplete{depth: 3}`
+    result and the accepted Alethe certificate from step 1 through the
+    `analyze` outcome writer. Inspect the resulting `filament-outcome/1` item
+    and its certificate metadata.
 
-Tag the tests `#[trace("TC-893", "FR-314-AC-n")]`.
+Tag this output test `#[trace("TC-893", "FR-314-AC-23")]`; retain the
+existing `TC-893` and criterion tags on the checker and settlement tests.
 
 ## Expected Results
 
@@ -122,3 +133,5 @@ Tag the tests `#[trace("TC-893", "FR-314-AC-n")]`.
   integer-literal `evaluate`, and Boolean `aci_simp` are accepted only for the
   local semantics in AC-21; false instances are `ProofStepInvalid` and
   unsupported instances are `Unverifiable`.
+- Step 10: the Counter item is `proved`, `Certified`; its `certificate` member
+  has `checker` exactly `smt-proof` and `accepted` `true`.

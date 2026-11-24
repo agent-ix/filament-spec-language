@@ -1854,7 +1854,7 @@ fn l08_references_to_unrelated_object_types_refuse_equality_at_check_time() {
     );
     let refusal = check_refusal(&package, &parameters, &expression);
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::IllTyped(IllTypedCause::TypeMismatch)
     );
 }
@@ -1919,7 +1919,7 @@ fn lookup_expression_refuses_a_non_conforming_reference_type_at_check_time() {
 }
 
 fn assert_state_model_ill_typed(refusal: &CheckRefusal, expected: IllTypedCause, raw: &str) {
-    let CheckCause::StateModel(owner) = &refusal.cause else {
+    let CheckCause::StateModel(owner) = &*refusal.cause else {
         panic!("StateModel ownership: {refusal:?}");
     };
     assert_eq!(
@@ -1950,7 +1950,7 @@ fn population_refused_as_equality_operand() {
         Expression::binary(BinaryOperator::Equal, population_name(), population_name());
     let refusal = check_refusal(&package, &parameters, &expression);
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::IllTyped(IllTypedCause::OperatorIneligible)
     );
 }
@@ -1966,7 +1966,7 @@ fn population_refused_as_option_payload() {
     );
     let refusal = check_refusal(&package, &parameters, &expression);
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::IllTyped(IllTypedCause::OperatorIneligible)
     );
 }
@@ -1986,7 +1986,7 @@ fn population_refused_as_collection_element() {
     );
     let refusal = check_refusal(&package, &parameters, &expression);
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::IllTyped(IllTypedCause::OperatorIneligible)
     );
 }
@@ -2572,7 +2572,7 @@ fn pre_refuses_a_let_bound_query_result_capture_drift() {
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     );
 }
@@ -2619,7 +2619,7 @@ fn pre_refuses_a_let_bound_population_alias_capture_drift() {
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     );
 }
@@ -2667,7 +2667,7 @@ fn pre_refuses_a_let_bound_alias_of_a_let_bound_population_alias() {
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     );
 }
@@ -2718,7 +2718,7 @@ fn pre_refuses_a_let_expression_used_directly_as_the_all_instances_operand() {
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     );
 }
@@ -2763,7 +2763,7 @@ fn pre_refuses_an_if_expression_used_directly_as_the_all_instances_operand() {
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     );
 }
@@ -2816,7 +2816,7 @@ fn pre_refuses_a_let_bound_if_expression_alias_of_a_population_alias() {
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     );
 }
@@ -2870,7 +2870,7 @@ fn pre_refuses_a_let_bound_nested_let_alias_of_a_population_alias() {
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     );
 }
@@ -2953,7 +2953,7 @@ fn pre_refuses_a_bare_population_parameter() {
     let expression = pre(Expression::name("p".to_owned()));
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     );
 }
@@ -2976,7 +2976,7 @@ fn pre_of_an_integer_literal_is_refused() {
     let expression = pre(Expression::integer(Integer::from(1_u64)));
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     );
 }
@@ -3005,7 +3005,7 @@ fn pre_refuses_outside_a_postcondition_context() {
 
     let refusal = check_refusal(&package, &parameters, &pre(all_instances(target)));
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     );
 }
@@ -3078,7 +3078,7 @@ fn pre_of_a_function_call_over_a_bare_parameter_argument_refuses_forbidden_pre_r
     let expression = pre(Expression::call("F".to_owned(), vec![population_name()]));
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     );
 }

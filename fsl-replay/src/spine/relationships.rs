@@ -3,12 +3,12 @@
 //! to filament-observation without adding correlation semantics here.
 
 use filament_observation::{
-    admit, AdmissionOutcome, AdmissionRequest, AdmittedBundleKey, AdmittedRecord,
-    AdmittedStaticBundle, Anchor, ClockRange, Digest, Identity, Member, ObservationBinding,
+    AdmissionOutcome, AdmissionRequest, AdmittedBundleKey, AdmittedRecord, AdmittedStaticBundle,
+    Anchor, ClockRange, Digest, Identity, Member, NATIVE_LINKED_PACKAGE_FORMAT, ObservationBinding,
     PackageSelection, ProducerDigest, QualifiedSubject, Relationship, RelationshipExtent,
     RelationshipExtentState, RequiredRelationship, ResourceLimits, Revision, ScopeKind,
     ScopeSelection, StaticProducerBundle, SubjectIdentity, SubjectKind, ValueState, Visibility,
-    NATIVE_LINKED_PACKAGE_FORMAT,
+    admit,
 };
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -433,7 +433,7 @@ impl RelationshipSelection {
 
     /// Refuses a mapping whose local relationship is not a navigation
     /// relationship in the selected, admitted model views.
-
+    ///
     /// Builds the exact owner request after snapshot admission and returns the
     /// owner's outcome unchanged.
     pub fn admit(
@@ -547,9 +547,7 @@ pub fn invalid_snapshot_relationship_identity(
     let extents = extents?.as_array()?;
     extents.iter().enumerate().find_map(|(extent_index, extent)| {
         let relationship = extent.get("relationship")?.as_str()?;
-        if selection.declaration_identity_for(relationship).is_none() {
-            return None;
-        }
+        selection.declaration_identity_for(relationship)?;
         let instances = extent.get("instances")?.as_array()?;
         instances
             .iter()
@@ -1171,7 +1169,7 @@ fn parse_digest(value: &str, prefix: bool) -> Option<[u8; 32]> {
 }
 fn decode_hex(value: &str) -> Option<Vec<u8>> {
     if value.is_empty()
-        || value.len() % 2 != 0
+        || !value.len().is_multiple_of(2)
         || !value
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
@@ -1180,7 +1178,9 @@ fn decode_hex(value: &str) -> Option<Vec<u8>> {
     }
     value
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| Some((nibble(pair[0])? << 4) | nibble(pair[1])?))
         .collect()
 }
@@ -1238,25 +1238,36 @@ fn error(path: &str, reason: impl Into<String>) -> ReadError {
     }
 }
 
+/// Build the package identity and digest passed to relationship admission.
+///
+/// `name` is the selected package identity; `digest` is the SHA-256 digest of
+/// its canonical checked-package document.
+pub fn package_selection(name: String, digest: [u8; 32]) -> PackageSelection {
+    PackageSelection {
+        format: NATIVE_LINKED_PACKAGE_FORMAT.to_owned(),
+        identity: Identity::new(name),
+        revision: Identity::new("filament.checked-package/v2"),
+        digest: Digest::new(digest),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::{
-        invalid_snapshot_relationship_identity, read_extents, unknown_snapshot_relationship,
-        RelationshipIdentityMapping, RelationshipSelection,
+        RelationshipIdentityMapping, RelationshipSelection, invalid_snapshot_relationship_identity,
+        read_extents, unknown_snapshot_relationship,
     };
     use filament_exact::{
         EffectiveId, NodeKey, ObjectId, ObjectReference, OriginalDeclarationKey, PathSegment,
         UniverseId,
     };
     use filament_observation::{
-        ProducerConfiguration, ProducerDigest, RelationshipDeclaration,
+        PRODUCER_INTERFACE_VERSION, ProducerConfiguration, ProducerDigest, RelationshipDeclaration,
         RelationshipEndpointDeclaration, Revision, StaticProducerBundle,
-        PRODUCER_INTERFACE_VERSION,
     };
     use fsl_semantics::model::object_environment::ObjectEnvironment;
     use ix_trace_rs::trace;
-    use serde_json::json;
     use serde_json::Value;
+    use serde_json::json;
     use std::collections::{BTreeMap, BTreeSet};
 
     const ORDER: &str = "ix://test/workflow/Order";
@@ -1682,68 +1693,89 @@ mod tests {
     fn relationship_extent_states_and_conflict_precedence_reach_resolver() {
         let no_extents = valid_relationship_request(None, &objects());
         let outcome = filament_observation::admit(no_extents);
-        assert!(matches!(
-            &outcome,
-            filament_observation::AdmissionOutcome::Incomplete { reasons }
-                if matches!(reasons.as_slice(), [filament_observation::IncompleteReason::MissingRelationship { .. }])
-        ), "no extents: {outcome:?}");
+        assert!(
+            matches!(
+                &outcome,
+                filament_observation::AdmissionOutcome::Incomplete { reasons }
+                    if matches!(reasons.as_slice(), [filament_observation::IncompleteReason::MissingRelationship { .. }])
+            ),
+            "no extents: {outcome:?}"
+        );
 
         let complete_empty = extent(true, Vec::new());
         let request = valid_relationship_request(Some(&complete_empty), &objects());
         let outcome = filament_observation::admit(request);
-        assert!(matches!(
-            &outcome,
-            filament_observation::AdmissionOutcome::Incomplete { reasons }
-                if matches!(reasons.as_slice(), [filament_observation::IncompleteReason::MissingRelationship { .. }])
-        ), "complete empty extent: {outcome:?}");
+        assert!(
+            matches!(
+                &outcome,
+                filament_observation::AdmissionOutcome::Incomplete { reasons }
+                    if matches!(reasons.as_slice(), [filament_observation::IncompleteReason::MissingRelationship { .. }])
+            ),
+            "complete empty extent: {outcome:?}"
+        );
 
         let incomplete_with_match = extent(false, vec![candidate("01", "s1")]);
         let request = valid_relationship_request(Some(&incomplete_with_match), &objects());
         let outcome = filament_observation::admit(request);
-        assert!(matches!(
-            &outcome,
-            filament_observation::AdmissionOutcome::Incomplete { reasons }
-                if matches!(reasons.as_slice(), [filament_observation::IncompleteReason::IncompleteRelationshipExtent { .. }])
-        ), "incomplete matching extent: {outcome:?}");
+        assert!(
+            matches!(
+                &outcome,
+                filament_observation::AdmissionOutcome::Incomplete { reasons }
+                    if matches!(reasons.as_slice(), [filament_observation::IncompleteReason::IncompleteRelationshipExtent { .. }])
+            ),
+            "incomplete matching extent: {outcome:?}"
+        );
 
         let exact_replay = extent(true, vec![candidate("01", "s1"), candidate("01", "s1")]);
         let request = valid_relationship_request(Some(&exact_replay), &objects());
         let outcome = filament_observation::admit(request);
-        assert!(matches!(
-            &outcome,
-            filament_observation::AdmissionOutcome::Available { .. }
-        ), "exact replay: {outcome:?}");
+        assert!(
+            matches!(
+                &outcome,
+                filament_observation::AdmissionOutcome::Available { .. }
+            ),
+            "exact replay: {outcome:?}"
+        );
 
         let ambiguous = extent(true, vec![candidate("01", "s1"), candidate("02", "s1")]);
         let request = valid_relationship_request(Some(&ambiguous), &objects());
         let outcome = filament_observation::admit(request);
-        assert!(matches!(
-            &outcome,
-            filament_observation::AdmissionOutcome::Refused {
-                cause: filament_observation::RefusalCause::AmbiguousRelationship { .. }
-            }
-        ), "ambiguous relationship: {outcome:?}");
+        assert!(
+            matches!(
+                &outcome,
+                filament_observation::AdmissionOutcome::Refused {
+                    cause: filament_observation::RefusalCause::AmbiguousRelationship { .. }
+                }
+            ),
+            "ambiguous relationship: {outcome:?}"
+        );
 
         let conflict = extent(true, vec![candidate("01", "s1"), candidate("02", "s2")]);
         let request = valid_relationship_request(Some(&conflict), &objects_with_second_shipment());
         let outcome = filament_observation::admit(request);
-        assert!(matches!(
-            &outcome,
-            filament_observation::AdmissionOutcome::Refused {
-                cause: filament_observation::RefusalCause::RelationshipConflict { .. }
-            }
-        ), "conflicting relationship: {outcome:?}");
+        assert!(
+            matches!(
+                &outcome,
+                filament_observation::AdmissionOutcome::Refused {
+                    cause: filament_observation::RefusalCause::RelationshipConflict { .. }
+                }
+            ),
+            "conflicting relationship: {outcome:?}"
+        );
 
         let contradicted = extent(true, vec![candidate("01", "s1"), candidate("01", "s2")]);
         let request =
             valid_relationship_request(Some(&contradicted), &objects_with_second_shipment());
         let outcome = filament_observation::admit(request);
-        assert!(matches!(
-            &outcome,
-            filament_observation::AdmissionOutcome::Refused {
-                cause: filament_observation::RefusalCause::RelationshipIdentityContradiction { .. }
-            }
-        ), "contradictory identity: {outcome:?}");
+        assert!(
+            matches!(
+                &outcome,
+                filament_observation::AdmissionOutcome::Refused {
+                    cause: filament_observation::RefusalCause::RelationshipIdentityContradiction { .. }
+                }
+            ),
+            "contradictory identity: {outcome:?}"
+        );
     }
 
     #[trace("FR-1045-AC-2")]
@@ -1752,10 +1784,13 @@ mod tests {
         let replayed = extent(true, vec![candidate("00ff", "s1"), candidate("00ff", "s1")]);
         let request = valid_relationship_request(Some(&replayed), &objects());
         let outcome = filament_observation::admit(request);
-        assert!(matches!(
-            &outcome,
-            filament_observation::AdmissionOutcome::Available { .. }
-        ), "exact replay identity: {outcome:?}");
+        assert!(
+            matches!(
+                &outcome,
+                filament_observation::AdmissionOutcome::Available { .. }
+            ),
+            "exact replay identity: {outcome:?}"
+        );
     }
 
     #[trace("FR-1045-AC-4")]
@@ -1767,32 +1802,41 @@ mod tests {
         duplicated.required_relationships.push(repeated.clone());
         duplicated.limits.max_required_relationships = 1;
         let outcome = filament_observation::admit(duplicated);
-        assert!(matches!(
-            &outcome,
-            filament_observation::AdmissionOutcome::Refused {
-                cause: filament_observation::RefusalCause::ResourceLimit {
-                    limit: filament_observation::ResourceKind::RequiredRelationships
+        assert!(
+            matches!(
+                &outcome,
+                filament_observation::AdmissionOutcome::Refused {
+                    cause: filament_observation::RefusalCause::ResourceLimit {
+                        limit: filament_observation::ResourceKind::RequiredRelationships
+                    }
                 }
-            }
-        ), "raw required relationship count: {outcome:?}");
+            ),
+            "raw required relationship count: {outcome:?}"
+        );
 
         let mut deduplicated = valid_relationship_request(Some(&matching), &objects());
         let repeated = deduplicated.required_relationships[0].clone();
         deduplicated.required_relationships.push(repeated);
         deduplicated.limits.max_required_relationships = 2;
         let outcome = filament_observation::admit(deduplicated);
-        assert!(matches!(
-            &outcome,
-            filament_observation::AdmissionOutcome::Available { .. }
-        ), "deduplicated required relationships: {outcome:?}");
+        assert!(
+            matches!(
+                &outcome,
+                filament_observation::AdmissionOutcome::Available { .. }
+            ),
+            "deduplicated required relationships: {outcome:?}"
+        );
 
         let mut no_slots = valid_relationship_request(Some(&matching), &objects());
         no_slots.required_relationships.clear();
         let outcome = filament_observation::admit(no_slots);
-        assert!(matches!(
-            &outcome,
-            filament_observation::AdmissionOutcome::Available { .. }
-        ), "no required slots: {outcome:?}");
+        assert!(
+            matches!(
+                &outcome,
+                filament_observation::AdmissionOutcome::Available { .. }
+            ),
+            "no required slots: {outcome:?}"
+        );
     }
 
     #[trace("FR-1045-AC-4")]
@@ -1816,10 +1860,13 @@ mod tests {
         let mut request = valid_relationship_request(Some(&matching), &objects());
         request.required_relationships.clear();
         let outcome = filament_observation::admit(request);
-        assert!(matches!(
-            &outcome,
-            filament_observation::AdmissionOutcome::Available { .. }
-        ), "candidate without required slots: {outcome:?}");
+        assert!(
+            matches!(
+                &outcome,
+                filament_observation::AdmissionOutcome::Available { .. }
+            ),
+            "candidate without required slots: {outcome:?}"
+        );
     }
 
     #[trace("FR-1045-AC-12")]
@@ -1906,12 +1953,15 @@ mod tests {
         )
         .expect("population identities derive");
         let outcome = filament_observation::admit(request);
-        assert!(matches!(
-            &outcome,
-            filament_observation::AdmissionOutcome::Refused {
-                cause: filament_observation::RefusalCause::RelationshipConflict { .. }
-            }
-        ), "slot conflict: {outcome:?}");
+        assert!(
+            matches!(
+                &outcome,
+                filament_observation::AdmissionOutcome::Refused {
+                    cause: filament_observation::RefusalCause::RelationshipConflict { .. }
+                }
+            ),
+            "slot conflict: {outcome:?}"
+        );
     }
 
     #[trace("FR-1045-AC-3", "FR-1045-AC-4")]
@@ -2240,20 +2290,5 @@ mod tests {
                 endpoint: filament_observation::EndpointSide::Target
             }
         ));
-    }
-}
-
-// Kept in this module for the public package-selection contract and used by
-// the command side when it has the canonical emitted package bytes.
-/// Build the package identity and digest passed to relationship admission.
-///
-/// `name` is the selected package identity; `digest` is the SHA-256 digest of
-/// its canonical checked-package document.
-pub fn package_selection(name: String, digest: [u8; 32]) -> PackageSelection {
-    PackageSelection {
-        format: NATIVE_LINKED_PACKAGE_FORMAT.to_owned(),
-        identity: Identity::new(name),
-        revision: Identity::new("filament.checked-package/v2"),
-        digest: Digest::new(digest),
     }
 }

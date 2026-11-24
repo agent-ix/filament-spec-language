@@ -142,7 +142,7 @@ impl Serialize for ProductStateRef {
 }
 
 /// FR-338's closure certificate: the product states EN-1 explored.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct ClosureCertificate {
     /// The product states, in any order.
     pub states: Vec<ProductStateRef>,
@@ -484,15 +484,10 @@ fn check_protocol(
         request.max_messages,
     ) {
         SubjectMemory::Sc => {
-            let system = new_protocol_system(
-                model,
-                subject,
-                Sc,
-                loop_proof_target(request.item),
-            )
-            .map_err(ClosureRefusal::Protocol)?
-            .with_max_live_instances(live_instances)
-            .with_cycle_keys(BTreeSet::new());
+            let system = new_protocol_system(model, subject, Sc, loop_proof_target(request.item))
+                .map_err(ClosureRefusal::Protocol)?
+                .with_max_live_instances(live_instances)
+                .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),
@@ -511,15 +506,10 @@ fn check_protocol(
                 member: MemoryBoundMember::MaxStoreBuffer,
                 value: tso.max_store_buffer(),
             };
-            let system = new_protocol_system(
-                model,
-                subject,
-                tso,
-                loop_proof_target(request.item),
-            )
-            .map_err(ClosureRefusal::Protocol)?
-            .with_max_live_instances(live_instances)
-            .with_cycle_keys(BTreeSet::new());
+            let system = new_protocol_system(model, subject, tso, loop_proof_target(request.item))
+                .map_err(ClosureRefusal::Protocol)?
+                .with_max_live_instances(live_instances)
+                .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),
@@ -538,15 +528,10 @@ fn check_protocol(
                 member: MemoryBoundMember::MaxMessages,
                 value: ra.max_messages(),
             };
-            let system = new_protocol_system(
-                model,
-                subject,
-                ra,
-                loop_proof_target(request.item),
-            )
-            .map_err(ClosureRefusal::Protocol)?
-            .with_max_live_instances(live_instances)
-            .with_cycle_keys(BTreeSet::new());
+            let system = new_protocol_system(model, subject, ra, loop_proof_target(request.item))
+                .map_err(ClosureRefusal::Protocol)?
+                .with_max_live_instances(live_instances)
+                .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),
@@ -684,7 +669,13 @@ fn check_system<S: SubjectSystem>(
     if proof.components.is_none() && instances.iter().any(liveness) {
         return Err(ClosureRefusal::LivenessNeedsComponents);
     }
-    if system.initial().is_empty() {
+    if system
+        .initial_iter()
+        .next()
+        .transpose()
+        .map_err(|error| ClosureRefusal::Protocol(error.into()))?
+        .is_none()
+    {
         return Err(ClosureRefusal::NoInitialState);
     }
 
@@ -968,7 +959,8 @@ impl<S: SubjectSystem> Check<'_, S> {
     fn run(&mut self, instances: &mut [Instance]) -> Step<()> {
         self.poll()?;
         let mut initial = Vec::new();
-        for (index, state) in self.system.initial().into_iter().enumerate() {
+        for (index, state) in self.system.initial_iter().enumerate() {
+            let state = state.map_err(|error| ClosureRefusal::Protocol(error.into()))?;
             let (key, _) = self.system.state_key(&state)?;
             let state_key = StateKey::from_canonical_bytes(key.clone());
             initial.push((key, index, state_key, state));

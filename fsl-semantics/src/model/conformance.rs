@@ -30,7 +30,9 @@
     reason = "cold refusal path; ModelRefusalCause carries DeclarationKeys inline for typed model-admission failures"
 )]
 
-use crate::model::accounting::{Charge, ChargePoint, Meter, NormalizationIncomplete};
+use crate::model::accounting::{
+    Charge, NormalizationChargePoint, NormalizationIncomplete, NormalizationMeter,
+};
 use crate::model::domain_package::Multiplicity;
 use crate::model::index::ModelIndex;
 use crate::model::normalize::{ModelRefusal, ModelRefusalCause};
@@ -114,21 +116,26 @@ pub(super) fn multiplicity_conforms(from: &Multiplicity, to: &Multiplicity) -> b
     }
 }
 
-fn charge_axis(meter: &mut Meter) -> Result<(), NormalizationIncomplete> {
-    meter.charge(Charge::new(ChargePoint::ConformanceAxis))
+fn charge_axis(meter: &mut NormalizationMeter) -> Result<(), NormalizationIncomplete> {
+    meter.charge(Charge::new(NormalizationChargePoint::ConformanceAxis))
 }
 
 /// Refinement follows a field pair's multiplicity axis exactly once.
-pub(crate) fn charge_refinement_axis(meter: &mut Meter) -> Result<(), NormalizationIncomplete> {
+pub(crate) fn charge_refinement_axis(
+    meter: &mut NormalizationMeter,
+) -> Result<(), NormalizationIncomplete> {
     charge_axis(meter)
 }
 
 fn charge_type_axis(
     index: &ModelIndex,
     value_type: &crate::model::domain_package::ValueTypeRef,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
 ) -> Result<(), NormalizationIncomplete> {
-    meter.charge(Charge::new(ChargePoint::ConformanceAxis).work(index.type_fact_count(value_type)))
+    meter.charge(
+        Charge::new(NormalizationChargePoint::ConformanceAxis)
+            .work(index.type_fact_count(value_type)),
+    )
 }
 
 pub(crate) fn missing_member(cause: ModelRefusalCause, identity: &str, role: &str) -> ModelRefusal {
@@ -145,7 +152,7 @@ pub fn check_field_redefinition(
     index: &ModelIndex,
     redefining_key: &DeclarationKey,
     redefined_key: &DeclarationKey,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
 ) -> ConformanceCheckOutcome {
     let Some(redefining) = index.field(redefining_key) else {
         return ConformanceCheckOutcome::Refused(missing_member(
@@ -230,7 +237,7 @@ pub fn check_subsetting(
     index: &ModelIndex,
     subsetting_key: &DeclarationKey,
     subsetted_key: &DeclarationKey,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
 ) -> ConformanceCheckOutcome {
     let Some(subsetting) = index.field(subsetting_key) else {
         return ConformanceCheckOutcome::Refused(missing_member(
@@ -316,7 +323,7 @@ pub fn check_operation_redefinition(
     index: &ModelIndex,
     redefining_key: &DeclarationKey,
     redefined_key: &DeclarationKey,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
 ) -> ConformanceCheckOutcome {
     let Some(redefining) = index.operation(redefining_key) else {
         return ConformanceCheckOutcome::Refused(missing_member(
@@ -448,7 +455,7 @@ pub fn check_operation_redefinition(
         _ => 1,
     };
     if let Err(incomplete) =
-        meter.charge(Charge::new(ChargePoint::ConformanceAxis).work(result_work))
+        meter.charge(Charge::new(NormalizationChargePoint::ConformanceAxis).work(result_work))
     {
         return ConformanceCheckOutcome::Incomplete(incomplete);
     }
@@ -542,8 +549,8 @@ pub fn check_operation_redefinition(
             );
         }
     }
-    if let Err(incomplete) =
-        meter.charge(Charge::new(ChargePoint::ConformanceAxis).work(effect_work.max(1)))
+    if let Err(incomplete) = meter
+        .charge(Charge::new(NormalizationChargePoint::ConformanceAxis).work(effect_work.max(1)))
     {
         return ConformanceCheckOutcome::Incomplete(incomplete);
     }

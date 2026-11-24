@@ -298,7 +298,7 @@ fn a_pre_state_read_refuses_at_the_read() {
     assert_eq!(cause, Some("expression-form"));
     assert_eq!(named.as_deref(), Some("pre(c.versionNumber)"));
     assert!(matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::StateGraph(cause) if matches!(**cause, StateGraphCause::ReadsBeyondState { .. })
     ));
 }
@@ -330,7 +330,7 @@ fn a_temporal_operator_refuses_at_the_operator() {
     assert_eq!(cause, Some("expression-form"));
     assert_eq!(named.as_deref(), Some("eventually"));
     assert!(matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::StateGraph(cause) if matches!(**cause, StateGraphCause::TemporalOperator { .. })
     ));
 }
@@ -348,7 +348,7 @@ fn a_fairness_constraint_refuses_at_the_constraint() {
     assert_eq!(cause, Some("expression-form"));
     assert_eq!(named.as_deref(), Some("fair weak attemptUpdate;"));
     assert!(matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::StateGraph(cause) if matches!(**cause, StateGraphCause::Fairness { .. })
     ));
 }

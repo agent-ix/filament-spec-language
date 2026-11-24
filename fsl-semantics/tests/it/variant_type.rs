@@ -17,7 +17,7 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::{Code, IntakeLimits};
 use fsl_semantics::check::AssemblyCause;
-use fsl_semantics::model::accounting::{Meter, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
 use fsl_semantics::model::admitted::{AdmittedPackage, DeclarationKind};
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, EnumRecord, ValueTypeRef, VariantRecord,
@@ -237,7 +237,7 @@ fn assert_malformed(refusal: &ModelRefusal, node: &str, member: &str) {
     assert_eq!(refusal.code, Code::InvalidModelBinding);
     assert!(
         matches!(
-            refusal.cause,
+            &refusal.cause,
             ModelRefusalCause::IntakeMalformedDeclaration { .. }
         ),
         "{refusal:?}"
@@ -288,7 +288,7 @@ fn a_variant_type_is_admitted_as_one_enum_and_one_variant_per_case() {
     // The admitted package finds each case under its owner and name.
     let admitted_package = AdmittedPackage::admit(
         package.clone(),
-        &mut Meter::new(ModelNormalizationLimits::default()),
+        &mut NormalizationMeter::new(ModelNormalizationLimits::default()),
     )
     .expect("the variant types admit for linking");
     for name in ["Gold", "Standard"] {
@@ -407,7 +407,7 @@ fn a_unit_payload_refuses_as_unsupported_at_its_member() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].code, Code::UnsupportedConstruct);
     assert!(matches!(
-        found[0].cause,
+        &found[0].cause,
         ModelRefusalCause::UnsupportedDeclarationForm { .. }
     ));
     assert_eq!(node_of(&found[0]), id("variant/Tier-Gold"));
@@ -604,7 +604,7 @@ fn a_case_with_no_name_is_refused_by_the_reader_schema() {
     for refusal in &found {
         assert_eq!(refusal.code, Code::InvalidModelBinding);
         assert!(matches!(
-            refusal.cause,
+            &refusal.cause,
             ModelRefusalCause::IntakeMalformedDeclaration { .. }
         ));
     }

@@ -32,17 +32,17 @@ use fsl_forms::{
 };
 use fsl_foundation::Span;
 
+use super::Scope;
 use super::ir::CheckedBody;
-use super::lowering::{protocol_location, ProtocolSite};
+use super::lowering::{ProtocolSite, protocol_location};
 use super::protocol_obligation::{
-    model_state_reads, span_of, type_body, wraps, CheckedBinder, Goal,
+    CheckedBinder, Goal, model_state_reads, span_of, type_body, wraps,
 };
 use super::refusal::{
     AliasKind, ChannelEnd, CheckCause, CheckRefusal, JoinFault, ProtocolAnchorCause,
 };
 use super::state_clause::ClauseDeclarations;
 use super::type_form::resolve_form;
-use super::Scope;
 use crate::family::CheckContext;
 
 /// A checked channel's ordering premise (FR-218 "Channels").
@@ -94,7 +94,7 @@ fn refusal(cause: ProtocolAnchorCause) -> CheckRefusal {
         // `region::DeclarationRegions::refusal_region` reads a
         // `ProtocolAnchor` cause's own span directly instead.
         location: Location::root(Origin::Expression),
-        cause: CheckCause::ProtocolAnchor(Box::new(cause)),
+        cause: Box::new(CheckCause::ProtocolAnchor(Box::new(cause))),
     }
 }
 
@@ -518,7 +518,7 @@ fn check_fifo(
             let wrapped = if wraps(&cause) && cause.cause().is_some() {
                 refusal(ProtocolAnchorCause::KeyClause {
                     channel: name.to_owned(),
-                    cause: Box::new(cause),
+                    cause: Box::new(*cause),
                     span,
                 })
             } else {
@@ -899,7 +899,7 @@ mod control_region_tests;
 mod tests {
     use filament_semantic_value::checking::CheckMode;
     use filament_semantic_value::checking::CheckingLimits;
-    use fsl_forms::{build_unit, ChannelCapacity, ChannelDelivery, ChannelOverflow, LossSelector};
+    use fsl_forms::{ChannelCapacity, ChannelDelivery, ChannelOverflow, LossSelector, build_unit};
     use fsl_foundation::SourceIdentity;
     use ix_trace_rs::trace;
 
@@ -913,7 +913,7 @@ mod tests {
         use crate as semantics;
         include!("../../tests/fixtures/protocol_attempt.rs");
     }
-    use attempt_fixture::{attempt_flow, m_actor_model, shared_binder_protocols, HEADER};
+    use attempt_fixture::{HEADER, attempt_flow, m_actor_model, shared_binder_protocols};
 
     const RECORD: &str = "record Plain { ready: Boolean; }\n\
         enum Color { Red, Blue, }\n";
@@ -1013,7 +1013,7 @@ mod tests {
     fn causes(refusals: &[CheckRefusal]) -> Vec<&ProtocolAnchorCause> {
         refusals
             .iter()
-            .map(|refusal| match &refusal.cause {
+            .map(|refusal| match refusal.cause.as_ref() {
                 CheckCause::ProtocolAnchor(cause) => cause.as_ref(),
                 other => panic!("a ProtocolAnchor cause, got {other:?}"),
             })
@@ -1685,11 +1685,13 @@ mod tests {
         checks(&shared_binder_protocols());
         let flow = attempt_flow("Flow", "");
         let graph = checks(&flow);
-        assert!(graph
-            .protocol("Flow")
-            .expect("the checked protocol")
-            .channels
-            .is_empty());
+        assert!(
+            graph
+                .protocol("Flow")
+                .expect("the checked protocol")
+                .channels
+                .is_empty()
+        );
 
         let with_channel = flow.replacen(
             "run sequence",

@@ -198,6 +198,15 @@ pub enum ReplayRefusal {
     /// not allocate (`resource_exhausted`).
     #[error("the package bytes cannot be read: {0}")]
     PackageRead(PackageReadRefusal),
+    /// A package reader admitted storage that the host allocator could not
+    /// provide; the package was not judged.
+    #[error(
+        "host allocation failed during {:?}: requested {} bytes after {} bytes were admitted",
+        .0.stage,
+        .0.requested,
+        .0.consumed
+    )]
+    HostAllocationFailed(filament_contract_model::CheckedPackageHostAllocationFailed),
     /// FR-098: one dependency entry's source list is empty, repeats an owner,
     /// or names a definition document.
     #[error("invalid_package/invalid-value at /dependencies/{index}/sources: {reason}")]
@@ -659,6 +668,7 @@ impl ReplayRefusal {
             Self::PackageSources(_) => Code::InvalidPackage,
             Self::PackageRead(PackageReadRefusal::Malformed) => Code::InvalidPackage,
             Self::PackageRead(PackageReadRefusal::Allocation) => Code::ResourceExhausted,
+            Self::HostAllocationFailed(_) => Code::RuntimeInvariant,
             Self::DependencySources { .. } => Code::InvalidPackage,
             Self::InvalidPackageName(_) => Code::InvalidRequest,
             Self::Recompile { refusal, .. } => refusal.code(),
@@ -765,7 +775,7 @@ impl ReplayRefusal {
             Self::DomainPackages(refusal) => Some(refusal.cause.as_str()),
             Self::DependencySelections(_) => Some("invalid-value"),
             Self::PackageSources(_) => Some("invalid-value"),
-            Self::PackageRead(_) => None,
+            Self::PackageRead(_) | Self::HostAllocationFailed(_) => None,
             Self::DependencySources { .. } => Some("invalid-value"),
             Self::DependencyInput(refusal) => refusal.cause(),
             Self::UnknownFunction { .. }
@@ -858,6 +868,12 @@ impl ReplayRefusal {
             Self::Request(refusal) => refusal
                 .pointer()
                 .map(|pointer| Cow::Owned(pointer.to_owned())),
+            Self::HostAllocationFailed(_) => None,
+            Self::Package(crate::ReplayPackageAdmissionRefusal::HostAllocationFailed(_))
+            | Self::PackageWithIdentity {
+                refusal: crate::ReplayPackageAdmissionRefusal::HostAllocationFailed(_),
+                ..
+            } => None,
             Self::Package(refusal) => Some(Cow::Owned(refusal.pointer())),
             Self::PackageWithIdentity { refusal, .. } => Some(Cow::Owned(refusal.pointer())),
             Self::RefinementInternals { pointer, .. } => Some(Cow::Owned(pointer.clone())),
@@ -942,11 +958,11 @@ pub enum DependencySelectionsCause {
     },
 }
 
-/// ADR-013 C-13: replay `wire` and settle its verdict. The counterexample a
-/// request replays refuted its property, so the proved verdict is
-/// `violation`; the replayed verdict is the selected predicate's: `false`
-/// is `violation`, `true` is `success`, and an S6a outcome that completed
-/// no value is its own category, which never agrees.
+/// ADR-013 C-13: settle the selected predicate's replayed verdict. A
+/// counterexample replay has a proved `violation` verdict; a claim-free
+/// nullary plain call uses its completed value as the claim and replayed
+/// verdict. `false` is `violation`, `true` is `success`, and an S6a outcome
+/// that completed no value is its own category, which never agrees.
 ///
 /// FR-063 seam: adding a `FamilyOutcome` variant with no arm here fails
 /// `--cfg seam_probe` with `E0004`; FR-063-AC-7's `#[deny(...)]` closes the
@@ -969,9 +985,7 @@ pub enum DependencySelectionsCause {
 /// # let small = QualifiedName::new(vec![Identifier::new("small").unwrap()]).unwrap();
 /// # let site = call_site(
 /// #     SourceIdentity::new("a", "u"),
-/// #     "fixture".to_owned(),
-/// #     "u",
-/// #     unit.as_bytes(),
+/// #     CallSiteUnit::new("fixture", "u", unit.as_bytes()),
 /// #     [],
 /// #     &DependencyInput::default(),
 /// #     &fsl_replay::RequestClocks::default(),
@@ -1027,9 +1041,7 @@ pub enum DependencySelectionsCause {
 /// # let small = QualifiedName::new(vec![Identifier::new("small").unwrap()]).unwrap();
 /// # let site = call_site(
 /// #     SourceIdentity::new("a", "u"),
-/// #     "fixture".to_owned(),
-/// #     "u",
-/// #     unit.as_bytes(),
+/// #     CallSiteUnit::new("fixture", "u", unit.as_bytes()),
 /// #     [],
 /// #     &DependencyInput::default(),
 /// #     &fsl_replay::RequestClocks::default(),
@@ -1359,7 +1371,7 @@ pub fn replay_with_cancel_and_temporal_selections(
     let function = match request.source() {
         ReplaySource::ObservedTemporal(_) => None,
         ReplaySource::ModelGraph(_) | ReplaySource::ProtocolAnalysis(_) => None,
-        ReplaySource::Witness(_) | ReplaySource::Input(_) => {
+        ReplaySource::Witness(_) | ReplaySource::Input(_) | ReplaySource::ClaimFree => {
             Some(declared_function_target(&request, ReplayEntry::Replay)?)
         }
         ReplaySource::Hybrid(_) => None,
@@ -1392,6 +1404,11 @@ pub fn replay_with_cancel_and_temporal_selections(
         .ok_or(ReplayRefusal::WrongModelGraphEntry)?;
     let claim = function_claim(declaring, function, replay_target)?;
     let call = select(declaring, function, claim.kind())?;
+    // Claim-free settlement requires its explicit source marker. Even an
+    // empty Input remains a stored counterexample and keeps violation claim.
+    let claim_free_plain_call = matches!(request.source(), ReplaySource::ClaimFree)
+        && call.parameters.is_empty()
+        && matches!(&claim, FunctionClaim::Predicate);
     let joined = arguments(
         &call,
         request.source(),
@@ -1518,7 +1535,14 @@ pub fn replay_with_cancel_and_temporal_selections(
         .and_then(|location| package.graph().region(location))
         .into_iter()
         .collect();
-    let settled = settle(&request, replayed, value, regions, consumed(&meter));
+    let settled = settle(
+        &request,
+        replayed,
+        value,
+        regions,
+        consumed(&meter),
+        claim_free_plain_call,
+    );
     Ok(match limit {
         Some(incomplete) => settled.with_limit(incomplete),
         None => settled,
@@ -1780,6 +1804,7 @@ fn settle_supplied(
             None,
             Vec::new(),
             charges(std::iter::empty()),
+            false,
         )
         .with_pre_call(stop)),
         SuppliedFailure::Stop(stop) => Err(ReplayRefusal::Supplied(stop)),
@@ -1795,8 +1820,13 @@ fn settle(
     value: Option<EvaluatedValue>,
     regions: Vec<fsl_foundation::source::provenance::SourceRegion>,
     charges: ScalarLimits,
+    claim_free_plain_call: bool,
 ) -> ReplayResult {
-    let proved = Verdict::from_category(Category::Violation);
+    let proved = Verdict::from_category(if claim_free_plain_call {
+        replayed
+    } else {
+        Category::Violation
+    });
     // ADR-031 SW-7: a function call's result has no decisive occurrence, so
     // it carries no record.
     match request.source() {
@@ -1809,15 +1839,17 @@ fn settle(
             regions,
             charges,
         )),
-        ReplaySource::Input(_) => ReplayResult::Input(InputArmResult::settle(
-            proved,
-            Verdict::from_category(replayed),
-            replayed,
-            value,
-            &WitnessCheck::Agrees(None),
-            regions,
-            charges,
-        )),
+        ReplaySource::Input(_) | ReplaySource::ClaimFree => {
+            ReplayResult::Input(InputArmResult::settle(
+                proved,
+                Verdict::from_category(replayed),
+                replayed,
+                value,
+                &WitnessCheck::Agrees(None),
+                regions,
+                charges,
+            ))
+        }
         ReplaySource::ObservedTemporal(_) => {
             unreachable!("observed temporal requests dispatch before function replay settlement")
         }
@@ -2366,7 +2398,7 @@ fn refinement_internals_pointer(
         | CompileRefusal::CheckDiagnostics { refusals, .. } => refusals,
         _ => return None,
     };
-    let fsl_semantics::check::CheckCause::Refinement(refinement) = &refusals.first()?.cause else {
+    let fsl_semantics::check::CheckCause::Refinement(refinement) = &*refusals.first()?.cause else {
         return None;
     };
     let fsl_semantics::check::RefinementCause::InternalList(defect) = &refinement.cause else {
@@ -3104,6 +3136,12 @@ fn arguments(
                         .ok_or_else(|| ReplayRefusal::UnboundParameter(parameter.clone()))
                 })
                 .collect::<Result<Vec<_>, _>>()?
+        }
+        ReplaySource::ClaimFree => {
+            if let Some(parameter) = call.parameters.first() {
+                return Err(ReplayRefusal::UnboundParameter(parameter.clone()));
+            }
+            Vec::new()
         }
         ReplaySource::Witness(witness) => {
             let bindings = call

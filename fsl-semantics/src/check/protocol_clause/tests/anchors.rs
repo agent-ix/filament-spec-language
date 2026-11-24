@@ -8,8 +8,8 @@ use super::{
     anchors_at, declaration_id, handoff_protocol, protocol_causes, recovery_flow, refusals,
     resolve_protocol,
 };
-use crate::check::refusal::ProtocolAnchorCause;
 use crate::check::CheckRefusal;
+use crate::check::refusal::ProtocolAnchorCause;
 
 /// FR-113-AC-1 (TC-511): every anchor of the `RecoveryFlow` fixture
 /// resolves to the exact node FR-113-AC-1 names, by identity.

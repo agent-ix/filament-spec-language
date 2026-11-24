@@ -175,11 +175,11 @@ fn a_literal_outside_i128_refuses_at_the_literal() {
         };
         assert_eq!(
             only.cause,
-            CheckCause::IntegerOutsideI128(IntegerOutsideI128 {
+            Box::new(CheckCause::IntegerOutsideI128(IntegerOutsideI128 {
                 site: IntegerSite::Literal,
                 value: literal.to_owned(),
                 limit: I128Limit::Max,
-            }),
+            })),
             "{body}"
         );
         assert_eq!(covered(&source, &refusal), literal, "{body}");

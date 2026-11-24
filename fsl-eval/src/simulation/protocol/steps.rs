@@ -928,7 +928,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     && extent
                         .instances
                         .iter()
-                        .any(|pair| pair.0 == source && pair.1 == target)
+                        .any(|instance| instance.source == source && instance.target == target)
             });
             if !holds {
                 return Ok(false);
@@ -1024,7 +1024,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     && extent
                         .instances
                         .iter()
-                        .any(|pair| pair.0 == source && pair.1 == target)
+                        .any(|instance| instance.source == source && instance.target == target)
             });
             if !holds {
                 return Some(clause.alias.to_owned());
@@ -2537,7 +2537,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 } else {
                     access_kind
                 };
-                Ok(Access {
+                Ok::<_, ProtocolRefusal>(Access {
                     class,
                     ordering: if locked && weak.ordering.is_none() {
                         Some(AccessOrdering::AcqRel)

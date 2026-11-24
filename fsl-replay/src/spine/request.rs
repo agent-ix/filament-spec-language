@@ -10,19 +10,19 @@ use filament_exact::{CollectionKind, Identifier, Integer, Rational, ScalarLimits
 use fsl_eval::temporal::{LateCutoff, StampInterval};
 use fsl_foundation::serde_object::{deserialize_objects, from_object};
 use fsl_semantics::model::observation::{
-    collection_kind_of_tag, AnchorKind, ClauseSelection, ClauseSelectionInput, ContextSide,
-    DocumentRef, NativeKind, ObservationLimits, PostStateRange, RawNativeKind, SelectedAnchor,
-    SelectedObject, SnapshotValue,
+    AnchorKind, ClauseSelection, ClauseSelectionInput, ContextSide, DocumentRef, NativeKind,
+    ObservationLimits, PostStateRange, RawNativeKind, SelectedAnchor, SelectedObject,
+    SnapshotValue, collection_kind_of_tag,
 };
 use quire_canonical::{Node, NodeRef};
 use serde_json::value::RawValue;
 
 use super::{
-    sample_position, ClauseArgument, ClauseArgumentValue, ClauseRunRequest, ClauseRunSelection,
-    ClauseRunSource, DependencyInput, LateInputs, OperationName, OverObject, ProgressAssertion,
-    ProgressClosure, ProgressCompleteness, ProgressLedger, ProgressLowerBoundary, RunRelation,
-    SpineLimits, TimedObservation, TimestampedCover, TimestampedMissingValuation,
-    TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
+    ClauseArgument, ClauseArgumentValue, ClauseRunRequest, ClauseRunSelection, ClauseRunSource,
+    DependencyInput, LateInputs, OperationName, OverObject, ProgressAssertion, ProgressClosure,
+    ProgressCompleteness, ProgressLedger, ProgressLowerBoundary, RunRelation, SpineLimits,
+    TimedObservation, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
+    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, sample_position,
 };
 
 /// A selected observation whose bytes and document identity were admitted by
@@ -43,7 +43,8 @@ pub struct SuppliedObservation {
 
 impl std::fmt::Debug for SuppliedObservation {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("SuppliedObservation")
+        formatter
+            .debug_struct("SuppliedObservation")
             .field("reference", &self.reference)
             .field("path", &self.path)
             .field("format", &self.format)
@@ -1019,7 +1020,7 @@ fn model_step(
             return Err(invalid(
                 format!("{member}.transition.type"),
                 "a transition or a terminal-stutter",
-            ))
+            ));
         }
     };
     Ok(Some(crate::ModelStep {
@@ -1246,7 +1247,7 @@ impl TemporalSelectionWire {
         match (&self.over, keys != 0) {
             (None, true) => return Err(invalid("over", "a trace of snapshot keys needs an over")),
             (Some(_), false) if !positions.is_empty() => {
-                return Err(invalid("over", "a trace of record samples takes no over"))
+                return Err(invalid("over", "a trace of record samples takes no over"));
             }
             _ => {}
         }
@@ -1458,13 +1459,13 @@ fn snapshot_value(value: NodeRef<'_>) -> Result<SnapshotValue, ClauseRequestRead
                                 return Err(invalid(
                                     "parameters.reference.population",
                                     "expected string",
-                                ))
+                                ));
                             }
                         };
                         let key = match content.get("key").map(|v| v.node()) {
                             Some(Node::String(value)) => value,
                             _ => {
-                                return Err(invalid("parameters.reference.key", "expected string"))
+                                return Err(invalid("parameters.reference.key", "expected string"));
                             }
                         };
                         values.push(SnapshotValue::reference(SelectedObject {
@@ -1672,7 +1673,7 @@ fn selection(
                                 return Err(invalid(
                                     "arguments.value.population",
                                     "expected string",
-                                ))
+                                ));
                             }
                         };
                         let key = match reference.get("key").map(|v| v.node()) {
@@ -1915,29 +1916,42 @@ pub fn read_canonical_clause_run_request(
     cancel: filament_exact::Cancel,
 ) -> Result<ClauseRunRequest, ClauseRequestReadError> {
     let canonical = match &parts.selection {
-        ClauseSelectionPartsKind::Function { name, arguments, snapshot } => {
+        ClauseSelectionPartsKind::Function {
+            name,
+            arguments,
+            snapshot,
+        } => {
             let observation = named(&parts.observations, snapshot)?;
             if observation.format != "filament.state.snapshot/v1"
                 || observation.role.as_deref() != Some("current")
             {
                 return Err(invalid("snapshot", "function requires a current snapshot"));
             }
-            let wire_arguments = arguments.iter().enumerate().map(|(index, (parameter, value))| {
-                let value: serde_json::Value = serde_json::from_str(value.get())
-                    .map_err(|error| invalid("arguments.value", error.to_string()))?;
-                if !value.is_object() {
-                    return Err(invalid(
-                        format!("clause.selection.function.arguments/{index}/value"),
-                        "expected a typed canonical value object",
-                    ));
-                }
-                Ok(super::WireArgument {
-                    parameter: parameter.clone(), value, selected_object: None,
+            let wire_arguments = arguments
+                .iter()
+                .enumerate()
+                .map(|(index, (parameter, value))| {
+                    let value: serde_json::Value = serde_json::from_str(value.get())
+                        .map_err(|error| invalid("arguments.value", error.to_string()))?;
+                    if !value.is_object() {
+                        return Err(invalid(
+                            format!("clause.selection.function.arguments/{index}/value"),
+                            "expected a typed canonical value object",
+                        ));
+                    }
+                    Ok(super::WireArgument {
+                        parameter: parameter.clone(),
+                        value,
+                        selected_object: None,
+                    })
                 })
-            }).collect::<Result<Vec<_>, ClauseRequestReadError>>()?;
+                .collect::<Result<Vec<_>, ClauseRequestReadError>>()?;
             Some(ClauseRunSelection::CanonicalFunction {
-                name: name.clone(), arguments: wire_arguments,
-                snapshot: observation.clone(), supplied, cancel,
+                name: name.clone(),
+                arguments: wire_arguments,
+                snapshot: observation.clone(),
+                supplied,
+                cancel,
             })
         }
         ClauseSelectionPartsKind::Clause(_)
@@ -2031,8 +2045,8 @@ pub fn read_sample_text(raw: &RawValue, member: &str) -> Result<String, ClauseRe
 mod tests {
     use super::snapshot_value;
     use super::{
-        selection, ClauseRunSelection, ClauseRunSelectionWire, ClauseSelectionParts,
-        ClauseSelectionPartsKind, SuppliedObservation, TemporalTraceParts,
+        ClauseRunSelection, ClauseRunSelectionWire, ClauseSelectionParts, ClauseSelectionPartsKind,
+        SuppliedObservation, TemporalTraceParts, selection,
     };
     use filament_exact::CollectionKind;
     use fsl_semantics::model::observation::{ClauseSelectionInput, DocumentRef, SelectedObject};
@@ -2057,8 +2071,7 @@ mod tests {
             .expect("the closed step shape")
         };
         let refused = super::model_step(&step("closure-stutter"), "trace.steps[0]")
-            .err()
-            .expect("a closure stutter is not an observed model step");
+            .expect_err("a closure stutter is not an observed model step");
         assert_eq!(refused.member, "trace.steps[0].transition.type");
         assert!(matches!(
             super::model_step(&step("terminal-stutter"), "trace.steps[0]"),

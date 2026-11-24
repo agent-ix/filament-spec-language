@@ -266,7 +266,16 @@ impl Orders {
         RelationshipExtent {
             relationship,
             complete,
-            instances,
+            instances: instances
+                .into_iter()
+                .map(|(source, target)| {
+                    filament_semantic_value::relationship_extent::RelationshipInstance {
+                        source,
+                        target,
+                        positions: Default::default(),
+                    }
+                })
+                .collect(),
         }
     }
 
@@ -285,10 +294,14 @@ impl Orders {
                 source: RelationshipEnd {
                     object_type: self.id("Sys"),
                     unique: self.shape.parts_unique,
+                    ordered: false,
+                    multi_valued: false,
                 },
                 target: RelationshipEnd {
                     object_type: self.id("Pump"),
                     unique: self.shape.parts_unique,
+                    ordered: false,
+                    multi_valued: false,
                 },
             },
             NavigationRelationship {
@@ -296,10 +309,14 @@ impl Orders {
                 source: RelationshipEnd {
                     object_type: self.id("Pump"),
                     unique: self.shape.home_unique,
+                    ordered: false,
+                    multi_valued: false,
                 },
                 target: RelationshipEnd {
                     object_type: self.id("Tank"),
                     unique: self.shape.home_unique,
+                    ordered: false,
+                    multi_valued: false,
                 },
             },
             NavigationRelationship {
@@ -307,10 +324,14 @@ impl Orders {
                 source: RelationshipEnd {
                     object_type: self.id("Sys"),
                     unique: true,
+                    ordered: false,
+                    multi_valued: false,
                 },
                 target: RelationshipEnd {
                     object_type: self.id("Part"),
                     unique: true,
+                    ordered: false,
+                    multi_valued: false,
                 },
             },
         ];

@@ -824,6 +824,7 @@ pub fn summarize(workspace_root: &Path, packages: Vec<Package>) -> Result<String
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::OnceLock;
 
     use ix_trace_rs::trace;
     use serde_json::json;
@@ -922,6 +923,78 @@ mod tests {
             canonical,
             other,
         }
+    }
+
+    fn current_workspace_findings() -> &'static [Finding] {
+        static FINDINGS: OnceLock<Vec<Finding>> = OnceLock::new();
+        FINDINGS.get_or_init(|| {
+            let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("xtask is a workspace member");
+            let metadata = cargo_metadata(workspace_root).expect("workspace metadata");
+            scan(
+                workspace_root,
+                packages(&metadata).expect("workspace packages"),
+            )
+            .expect("canonical type scan")
+            .findings
+        })
+    }
+
+    fn renamed_namesake_is_reported_then_cleared(
+        ident: &str,
+        replacement: &str,
+        production_file: &str,
+    ) {
+        let canonical = format!("/// filament:canonical\npub struct {ident} {{ pub value: u8 }}\n");
+        let mut fixture = Fixture::new();
+        fixture
+            .member("filament-exact", &canonical)
+            .member("fsl-namesake", &format!("pub struct {ident};\n"));
+        assert_eq!(
+            fixture.findings(),
+            vec![finding(
+                Rule::Identifier,
+                ident,
+                Some(site("filament-exact/src/lib.rs", 2)),
+                site("fsl-namesake/src/lib.rs", 1),
+            )],
+            "the old identifier {ident} must be reported at its independent source locus",
+        );
+        fixture.file(
+            "fsl-namesake/src/lib.rs",
+            &format!("pub struct {replacement};\n"),
+        );
+        assert_eq!(fixture.findings(), vec![], "renamed {ident}");
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask is a workspace member");
+        let production_source = fs::read_to_string(workspace_root.join(production_file))
+            .expect("production source file exists");
+        assert!(
+            production_source.contains(&format!("pub enum {replacement}"))
+                || production_source.contains(&format!("pub struct {replacement}")),
+            "production definition {replacement} must exist in {production_file}",
+        );
+        assert!(
+            !current_workspace_findings().iter().any(|found| {
+                found.rule == Rule::Identifier
+                    && found.ident == ident
+                    && Path::new(&found.other.file).ends_with(production_file)
+            }),
+            "the production {production_file} must not retain identifier {ident}",
+        );
+    }
+
+    fn assert_no_reexport_finding(ident: &str) {
+        assert!(
+            !current_workspace_findings().iter().any(|found| {
+                found.rule == Rule::Reexport
+                    && found.ident == ident
+                    && Path::new(&found.other.file).ends_with("fsl-replay/src/lib.rs")
+            }),
+            "the gate must report no re-export finding for {ident} in fsl-replay/src/lib.rs",
+        );
     }
 
     const TAGGED_METER: &str =
@@ -1364,5 +1437,89 @@ mod tests {
             assert_eq!(fixture.findings(), vec![]);
             assert!(summarize(fixture.dir.path(), fixture.packages()).is_ok());
         }
+    }
+
+    #[test]
+    #[trace("TC-748", "FR-273-AC-2")]
+    /// TC-748: a namesake's literal old identifier is a typed gate finding at
+    /// its source locus; replacing it with its meaning-specific name clears it.
+    fn model_limit_kind_is_reported_until_normalization_name_is_used() {
+        renamed_namesake_is_reported_then_cleared(
+            "LimitKind",
+            "NormalizationLimitKind",
+            "fsl-semantics/src/model/accounting.rs",
+        );
+    }
+
+    #[test]
+    #[trace("TC-748", "FR-273-AC-5")]
+    fn normalization_charge_point_is_reported_until_renamed() {
+        renamed_namesake_is_reported_then_cleared(
+            "ChargePoint",
+            "NormalizationChargePoint",
+            "fsl-semantics/src/model/accounting.rs",
+        );
+    }
+
+    #[test]
+    #[trace("TC-748", "FR-273-AC-6")]
+    fn normalization_incomplete_is_reported_until_renamed() {
+        renamed_namesake_is_reported_then_cleared(
+            "Incomplete",
+            "NormalizationIncomplete",
+            "fsl-semantics/src/model/accounting.rs",
+        );
+    }
+
+    #[test]
+    #[trace("TC-748", "FR-273-AC-8")]
+    fn normalization_meter_is_reported_until_renamed() {
+        renamed_namesake_is_reported_then_cleared(
+            "Meter",
+            "NormalizationMeter",
+            "fsl-semantics/src/model/accounting.rs",
+        );
+    }
+
+    #[test]
+    #[trace("TC-748", "FR-273-AC-45")]
+    fn replay_occurrence_key_reexport_names_foundation_owner_path() {
+        let source = include_str!("../../fsl-replay/src/lib.rs");
+        assert!(source.contains(
+            "pub use fsl_foundation::source::provenance::{OccurrenceKey, SourceRegion};"
+        ));
+        assert!(!source.contains("OccurrenceKey as"));
+        assert_no_reexport_finding("OccurrenceKey");
+    }
+
+    #[test]
+    #[trace("TC-748", "FR-273-AC-46")]
+    fn replay_origin_reexport_names_exact_owner_path() {
+        let source = include_str!("../../fsl-replay/src/lib.rs");
+        assert!(source.contains(
+            "pub use filament_exact::{Identifier, NodeKey, Origin, Role, ScalarLimits, Value};"
+        ));
+        assert!(!source.contains("Origin as"));
+        assert_no_reexport_finding("Origin");
+    }
+
+    #[test]
+    #[trace("TC-748", "FR-273-AC-47")]
+    fn replay_integer_reexport_names_exact_owner_path() {
+        let source = include_str!("../../fsl-replay/src/lib.rs");
+        assert!(source.contains(
+            "pub use filament_exact::{EmptyInterval, Incomplete, Integer, IntegerInterval};"
+        ));
+        assert!(!source.contains("Integer as"));
+        assert_no_reexport_finding("Integer");
+    }
+
+    #[test]
+    #[trace("TC-748", "FR-273-AC-48")]
+    fn replay_declaration_key_reexport_names_checked_owner_path() {
+        let source = include_str!("../../fsl-replay/src/lib.rs");
+        assert!(source.contains("pub use filament_checked::key::DeclarationKey;"));
+        assert!(!source.contains("DeclarationKey as"));
+        assert_no_reexport_finding("DeclarationKey");
     }
 }

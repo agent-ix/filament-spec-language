@@ -7,7 +7,7 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_foundation::diagnostic::Code;
 use ix_trace_rs::trace;
 
-use super::{assemble, BASE};
+use super::{BASE, assemble};
 use crate::check::{CheckCause, CheckRefusal};
 
 /// One reserved-name refusal: the identifier, its tag and the text of the
@@ -35,7 +35,7 @@ fn reserved(declarations: &str) -> (Vec<Found>, Vec<CheckRefusal>) {
     let found = refusals
         .iter()
         .filter_map(|refusal| {
-            let CheckCause::ReservedSlotName(cause) = &refusal.cause else {
+            let CheckCause::ReservedSlotName(cause) = refusal.cause.as_ref() else {
                 return None;
             };
             assert_eq!(refusal.cause.code(), Code::AmbiguousDeclaration);

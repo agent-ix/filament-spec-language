@@ -16,16 +16,16 @@ use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, Identifier, Meter, ScalarLimits, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
+use fsl_foundation::SourceIdentity;
 use fsl_foundation::source::Source;
 use fsl_foundation::source_map::NativeLanguage;
-use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{CheckedGraph, CheckedStateClause};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::{
-    admit_current_snapshot, admit_frame_invocation, admit_observations, population_universe_for,
     AdmissionFailure, AdmissionRecord, AdmittedInvocation, AdmittedObservations, ClauseFacts,
     ClauseSelection, ClauseSelectionInput, DocumentRef, FrameFacts, FrameWitness,
-    ObservationLimits, OperationFacts, Provisions,
+    ObservationLimits, OperationFacts, Provisions, admit_current_snapshot, admit_frame_invocation,
+    admit_observations, population_universe_for,
 };
 
 mod clause_state;
@@ -39,52 +39,52 @@ mod temporal;
 mod trace_refusal;
 mod trace_subject;
 pub use clause_state::{
-    assertion_json, assertion_of, incomplete_json, incomplete_of, pending_report, AdmittedPosition,
-    AdmittedValue, Advance, ClauseLimits, ClauseMark, ClauseOpen, ClauseProgress, ClauseRefusal,
-    ClauseState, ClauseTraceKind, CLAUSE_STATE_FORMAT,
+    AdmittedPosition, AdmittedValue, Advance, CLAUSE_STATE_FORMAT, ClauseLimits, ClauseMark,
+    ClauseOpen, ClauseProgress, ClauseRefusal, ClauseState, ClauseTraceKind, assertion_json,
+    assertion_of, incomplete_json, incomplete_of, pending_report,
 };
 pub(crate) use correction::run_correction;
 pub use correction::{
-    read_evidence_ledger, settle_correction, settle_run_correction, CorrectionRecord,
-    CorrectionRefusal, EvidenceLedgerFile, EvidenceLedgerReadError, RunRelation,
-    EVIDENCE_LEDGER_FORMAT,
+    CorrectionRecord, CorrectionRefusal, EVIDENCE_LEDGER_FORMAT, EvidenceLedgerFile,
+    EvidenceLedgerReadError, RunRelation, read_evidence_ledger, settle_correction,
+    settle_run_correction,
 };
-pub use ledger_wire::{read_ledger, write_ledger, LedgerReadError};
-pub use model_trace::{run_package_behaviours, PackageBehaviours};
+pub use ledger_wire::{LedgerReadError, read_ledger, write_ledger};
+pub use model_trace::{PackageBehaviours, run_package_behaviours};
 pub use package_authentication::{
-    authenticate_emission, AuthenticationFailure, PackageAuthentication, PackagesStage,
+    AuthenticationFailure, PackageAuthentication, PackagesStage, authenticate_emission,
 };
 pub use progress::{
     ContradictedDimension, LedgerBinding, ObservedPosition, ProgressAssertion, ProgressClosure,
     ProgressCompleteness, ProgressContradiction, ProgressLedger, ProgressLedgerEntry,
     ProgressLimitReached, ProgressLowerBoundary, ProgressValue,
 };
-use temporal::TemporalRun;
 pub use temporal::SAMPLE_AUTHORITY;
+use temporal::TemporalRun;
 pub use temporal::{
-    admit_progress, authenticate_package_trace, clause_trace_binding, disposition_report,
-    name_clause_atom, render_clause_atom, run_package_sampled, run_package_sampled_authenticated,
-    run_package_snapshots, run_package_temporal, run_package_temporal_bounded,
-    run_package_valuation, sample_position, AdmittedLate, FiniteWindowAssessment,
-    FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs,
-    OverObject, PackageAtomAttributionFailure, PackageSampledRequest, PackageSelectionNotRead,
+    AdmittedLate, DEFAULT_MODEL_MAX_CANDIDATES, FiniteWindowAssessment, FiniteWindowPremises,
+    FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs, OverObject,
+    PackageAtomAttributionFailure, PackageSampledRequest, PackageSelectionNotRead,
     PackageSnapshotRequest, PackageTemporalRequest, ProgressRefusal, RenderedClauseAtom,
     TemporalAuthentication, TimedObservation, TimestampedCover, TimestampedMissingValuation,
     TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
-    DEFAULT_MODEL_MAX_CANDIDATES,
+    admit_progress, authenticate_package_trace, clause_trace_binding, disposition_report,
+    name_clause_atom, render_clause_atom, run_package_sampled, run_package_sampled_authenticated,
+    run_package_snapshots, run_package_temporal, run_package_temporal_bounded,
+    run_package_valuation, sample_position,
 };
 pub(crate) use temporal::{trace_refusal, verdict};
 pub use trace_refusal::profile_reads;
-pub use trace_refusal::{TraceRefusal, REASONS as TRACE_REFUSAL_REASONS};
+pub use trace_refusal::{REASONS as TRACE_REFUSAL_REASONS, TraceRefusal};
 pub use trace_subject::{
-    run_package_trace_subject, run_trace_subject_clause, PackageTraceSubjectRequest,
-    TraceSubjectClauseRequest,
+    PackageTraceSubjectRequest, TraceSubjectClauseRequest, run_package_trace_subject,
+    run_trace_subject_clause,
 };
 
-use super::call::{
-    convert_call_failure, convert_outcome, run_compiled as run_call_compiled, select, CallSources,
-};
 pub use super::call::{CallOutcome, CallValue, RunRefusal};
+use super::call::{
+    CallSources, convert_call_failure, convert_outcome, run_compiled as run_call_compiled, select,
+};
 use super::lifecycle as front_end;
 use super::{CompileRefusal, DependencyInput, RequestClocks, SpineLimits};
 use crate::proof_result::SettlementBasis;
@@ -1742,12 +1742,12 @@ pub fn run_clause_with_source_map(
     ClauseRunRefusal,
 > {
     let mut source_map = None;
-    let mut retain_map = |emission: &fsl_package::Emission| {
-        source_map = Some(emission.source_map_shared());
+    let report = {
+        let mut retain_map = |emission: &fsl_package::Emission| {
+            source_map = Some(emission.source_map_shared());
+        };
+        run_clause_reading_with_source_map(request, &[], false, None, None, Some(&mut retain_map))?
     };
-    let report =
-        run_clause_reading_with_source_map(request, &[], false, None, None, Some(&mut retain_map))?;
-    drop(retain_map);
     Ok((report, source_map))
 }
 
@@ -1943,7 +1943,9 @@ fn run_clause_reading_with_source_map(
             return Ok(report(ClauseDisposition::ExtractionClauseCount { actual }));
         }
         Err(fsl_foundation::diagnostic::StageFailure::Cancelled(cause)) => {
-            return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(RunRefusal::Cancelled(cause)))));
+            return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(
+                RunRefusal::Cancelled(cause),
+            ))));
         }
         Err(failure) => {
             let disposition = match front_end::refusal_or_fault(failure) {
@@ -2070,9 +2072,15 @@ fn run_clause_reading_with_source_map(
             snapshot,
             snapshot_path.as_deref(),
         ),
-        ClauseRunSelection::CanonicalFunction { ref name, ref arguments, ref snapshot, supplied, ref cancel } => {
-            Ok(run_canonical_function(&run, &models, name, arguments, snapshot, supplied, cancel))
-        }
+        ClauseRunSelection::CanonicalFunction {
+            ref name,
+            ref arguments,
+            ref snapshot,
+            supplied,
+            ref cancel,
+        } => Ok(run_canonical_function(
+            &run, &models, name, arguments, snapshot, supplied, cancel,
+        )),
         ClauseRunSelection::Frame {
             ref operation,
             ref invocation,
@@ -2716,9 +2724,21 @@ fn run_compiled_clause_selection(
                 ),
             ))
         }),
-        ClauseRunSelection::CanonicalFunction { name, arguments, snapshot, supplied, cancel } => {
-            run_canonical_function(&run, &compiled.models, name, arguments, snapshot, *supplied, cancel)
-        }
+        ClauseRunSelection::CanonicalFunction {
+            name,
+            arguments,
+            snapshot,
+            supplied,
+            cancel,
+        } => run_canonical_function(
+            &run,
+            &compiled.models,
+            name,
+            arguments,
+            snapshot,
+            *supplied,
+            cancel,
+        ),
         ClauseRunSelection::Frame {
             operation,
             invocation,
@@ -3479,34 +3499,59 @@ fn run_canonical_function(
         Err(disposition) => return run.report(*disposition),
     };
     let (environment, admission_usage) = match admit_current_snapshot(
-        run.package.graph().model_inputs(), run.package.graph().scope().types(),
-        run.packages, run.model_limits, run.provisions.snapshots,
-        &snapshot.reference, run.observation_limits,
+        run.package.graph().model_inputs(),
+        run.package.graph().scope().types(),
+        run.packages,
+        run.model_limits,
+        run.provisions.snapshots,
+        &snapshot.reference,
+        run.observation_limits,
     ) {
         Ok(admitted) => admitted,
-        Err(failure) => return run.report(ClauseDisposition::SnapshotAdmission {
-            failure, document: snapshot.reference.clone(), path: snapshot.path.clone(),
-        }),
+        Err(failure) => {
+            return run.report(ClauseDisposition::SnapshotAdmission {
+                failure,
+                document: snapshot.reference.clone(),
+                path: snapshot.path.clone(),
+            });
+        }
     };
     let mut call = super::Call::new(name.to_owned(), Vec::new(), run.accounting, supplied);
     call.canonical_values = true;
     call.wire_arguments = arguments.to_vec();
     call.snapshot = Some(super::CallSnapshot {
-        observation: snapshot.clone(), limits: run.observation_limits,
-        relationship_selection: None, relationship_extents: None, relationship_navigation: None,
+        observation: snapshot.clone(),
+        limits: run.observation_limits,
+        relationship_selection: None,
+        relationship_extents: None,
+        relationship_navigation: None,
     });
     let mut meter = Meter::new(run.accounting).with_cancel(cancel.clone());
     let outcome = super::call::with_admitted_call(
-        run.package, models,
+        run.package,
+        models,
         super::call::CallSources {
-            package_name: run.package_name, packages: run.packages, model_limits: run.model_limits,
+            package_name: run.package_name,
+            packages: run.packages,
+            model_limits: run.model_limits,
         },
-        &call, &selected, &environment, cancel,
+        &call,
+        &selected,
+        &environment,
+        cancel,
         |_, bound, objects, supplied_run| {
-            let evaluation = run.package.call_supplied(
-                &selected.name, bound, objects, &mut meter,
-                &mut supplied_run.lock().expect("conversion and execution do not unwind"),
-            ).map_err(convert_call_failure)?;
+            let evaluation = run
+                .package
+                .call_supplied(
+                    &selected.name,
+                    bound,
+                    objects,
+                    &mut meter,
+                    &mut supplied_run
+                        .lock()
+                        .expect("conversion and execution do not unwind"),
+                )
+                .map_err(convert_call_failure)?;
             convert_outcome(evaluation, run.package.graph(), run.sources)
         },
     );

@@ -160,7 +160,7 @@ fn strict_ir_reader_admits_the_genuine_float_source_packages() {
     }
 }
 
-#[trace("TC-1091", "FR-397-AC-7", "FR-397-AC-12", "FR-397-AC-15")]
+#[trace("TC-1091", "FR-397-AC-7", "FR-397-AC-12", "FR-397-AC-15", "FR-093-AC-51")]
 #[test]
 fn strict_ir_reader_admits_fma_relations_and_float_orderings() {
     for (width, ty) in [
@@ -431,7 +431,7 @@ fn float_orderings_refuse_unlike_operands_at_the_operator() {
     }
 }
 
-#[trace("TC-1091", "FR-397-AC-16")]
+#[trace("TC-1091", "FR-397-AC-16", "FR-093-AC-51")]
 #[test]
 fn ieee_intrinsic_calls_refuse_bad_arity_types_and_unknown_names() {
     let f64_ty = "Float64[nearest-even]";
@@ -443,6 +443,7 @@ fn ieee_intrinsic_calls_refuse_bad_arity_types_and_unknown_names() {
     for call in [
         "filament::value::ieee::sqrt(a, b)",
         "filament::value::ieee::fma(a, b)",
+        "filament::value::ieee::fma(a, b, a, b)",
         "filament::value::ieee::numericEqual(a)",
         "filament::value::ieee::totalOrder(a, b, a)",
     ] {
@@ -474,6 +475,10 @@ fn ieee_intrinsic_calls_refuse_bad_arity_types_and_unknown_names() {
             format!("a: {f64_ty}, b: {f64_ty}, i: Int[0, 10]"),
             "filament::value::ieee::fma(a, b, i)".to_owned(),
         ),
+        (
+            format!("a: {f64_ty}, b: {f64_ty}, c: {f64_ty}, w: Float32[nearest-even]"),
+            "filament::value::ieee::fma(a, b, w)".to_owned(),
+        ),
     ] {
         refusal(
             &compile_call(&parameters, &call),
@@ -491,7 +496,7 @@ fn ieee_intrinsic_calls_refuse_bad_arity_types_and_unknown_names() {
         panic!("an unknown intrinsic refuses at checking");
     };
     assert!(matches!(
-        &refusals[0].cause,
+        refusals[0].cause.as_ref(),
         CheckCause::MissingQualifiedName(name) if name.name == "filament::value::ieee::cbrt"
     ));
 }
@@ -541,7 +546,10 @@ fn profile_admission_precedes_intrinsic_arity_and_argument_typing() {
             panic!("{call}: the call refuses at checking");
         };
         assert!(
-            matches!(refusals[0].cause, CheckCause::IeeeProfileNotAdmitted),
+            matches!(
+                refusals[0].cause.as_ref(),
+                CheckCause::IeeeProfileNotAdmitted
+            ),
             "{call}: {:?}",
             refusals[0].cause
         );
@@ -695,7 +703,7 @@ fn f20_cross_width_and_exact_operands_refuse_before_any_charge() {
     }
 }
 
-#[trace("TC-1091", "FR-397-AC-15")]
+#[trace("TC-1091", "FR-397-AC-15", "FR-093-AC-51")]
 #[test]
 fn fused_multiply_add_lowers_with_its_float_width_rounding_mode_and_profile_law() {
     for (width, ty) in [
@@ -707,12 +715,25 @@ fn fused_multiply_add_lowers_with_its_float_width_rounding_mode_and_profile_law(
         );
         let wire = wire(&source);
         let operation = operation(&wire, &format!("filament.op.ieee.{width}.fma"));
-        assert_ieee_law(&wire, operation);
+        assert_eq!(
+            operation["body"]["operation"]["laws"],
+            json!([{"role": "ieee_profile", "definition": {
+                "authority": "agent-ix",
+                "identity": "filament.value.ieee754-2019-default/v1"
+            }}])
+        );
         assert_eq!(
             operation["body"]["operation"]["mode"],
             json!({"kind": "rounding", "value": "nearest-even"}),
         );
-        assert_eq!(operation["body"]["arguments"].as_array().unwrap().len(), 3);
+        let arguments = operation["body"]["arguments"].as_array().unwrap();
+        assert_eq!(arguments.len(), 3);
+        let parameter_names: Vec<_> = arguments
+            .iter()
+            .map(|argument| argument["target"]["path"][4].as_str().unwrap())
+            .collect();
+        assert_eq!(parameter_names, ["a", "b", "c"]);
+        assert_eq!(operation["body"]["result_type"], operation["semantic_type"]);
     }
 }
 
@@ -1137,13 +1158,12 @@ fn the_published_fma_vectors_get_their_published_decision_from_the_strict_reader
         let id = case["id"].as_str().unwrap();
         let identity = case["identity"].as_str().unwrap();
         let mut wire = base.clone();
-        let original = if identity == "filament.op.ieee.float32.fma"
-            && case["expected"] == "admitted"
-        {
-            "filament.op.ieee.float32.fma"
-        } else {
-            "filament.op.ieee.float64.fma"
-        };
+        let original =
+            if identity == "filament.op.ieee.float32.fma" && case["expected"] == "admitted" {
+                "filament.op.ieee.float32.fma"
+            } else {
+                "filament.op.ieee.float64.fma"
+            };
         let node = application_mut(&mut wire, original);
         node["body"]["operation"]["identity"] = json!(identity);
         if case["mode"].is_null() {

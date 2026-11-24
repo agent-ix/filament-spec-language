@@ -129,9 +129,9 @@ impl CheckedPlan {
 fn unsupported(location: &Location) -> CheckRefusal {
     CheckRefusal {
         location: location.clone(),
-        cause: CheckCause::UnsupportedFeature {
+        cause: Box::new(CheckCause::UnsupportedFeature {
             loci: vec![location.clone()],
-        },
+        }),
     }
 }
 
@@ -338,12 +338,12 @@ pub(crate) fn declare(
                 if first_type != value_type || *first_optional != optional {
                     return Err(CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::PlanUnsupported {
+                        cause: Box::new(CheckCause::PlanUnsupported {
                             form: format!(
                                 "parameter {parameter} has conflicting types or declared presence in operations {first_operation} and {name}"
                             ),
                             span: form.grammar.span,
-                        },
+                        }),
                     });
                 }
             } else {
@@ -390,12 +390,12 @@ pub(crate) fn declare(
                     });
                 return Err(CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::PlanUnboundedParameter {
+                    cause: Box::new(CheckCause::PlanUnboundedParameter {
                         operation: name.clone(),
                         parameter: parameter.clone(),
                         component,
                         origin,
-                    },
+                    }),
                 });
             }
             let reason = if operation.parameter_is_optional(position) {
@@ -412,22 +412,22 @@ pub(crate) fn declare(
             if let Some(reason) = reason {
                 return Err(CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::PlanUnsupported {
+                    cause: Box::new(CheckCause::PlanUnsupported {
                         form: reason,
                         span: form.grammar.span,
-                    },
+                    }),
                 });
             }
         }
         if !operation.effect().creates.is_empty() {
             return Err(CheckRefusal {
                 location: location.clone(),
-                cause: CheckCause::PlanUnsupported {
+                cause: Box::new(CheckCause::PlanUnsupported {
                     form: format!(
                         "object creation by operation {name} needs a finite planning key universe"
                     ),
                     span: form.grammar.span,
-                },
+                }),
             });
         }
         if !cases.contains(name) {

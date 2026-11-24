@@ -125,7 +125,7 @@ fn a_requires_that_reads_pre_refuses_at_its_position() {
         panic!("one refusal, got {refusals:?}");
     };
     assert!(matches!(
-        refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     ));
     assert_eq!(refusal.operation_node(), Some(bump_node().as_str()));
@@ -171,7 +171,7 @@ fn a_kept_clause_is_checked_under_the_profile_independent_defaults() {
         panic!("one refusal, got {refusals:?}");
     };
     assert!(matches!(
-        refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProfileProhibitedOperator(_)
     ));
     assert_eq!(

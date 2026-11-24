@@ -17,6 +17,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-1043
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-204
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-202
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-412
     type: depends_on
 ---
@@ -24,7 +28,7 @@ relationships:
 
 ## Description
 
-When EN-5 proves a probability or expected-reward claim from a dyadic
+When EN-5 proves a probability, expected-reward, or timed expected-elapsed claim from a dyadic
 interval
 (`ValueBounds`, FR-203), it SHALL certify the interval with two documents in
 the closed profile `"filament.probability-objective/value-bounds/v1"`: a
@@ -49,7 +53,8 @@ accepts both, so the reported interval is certified at both ends.
 
 - An EN-5 `Bounds` result (FR-197 dyadic backward induction, or FR-198
   interval iteration) with its lower and upper vectors and, over every
-  scheduler, its policy.
+  scheduler, its policy. FR-204 may provide timed expected-elapsed bounds
+  with a `timed-product/v1` base.
 
 ## Outputs
 
@@ -68,15 +73,26 @@ accepts both, so the reported interval is certified at both ends.
   with any of its payoffs; and FR-201's expected-reward profiles
   `expected-reward/v1`, `dtmc-expected-reward/v1` and
   `cyclic-mdp-expected-reward/v1`, whose bounds FR-198's interval iteration
-  produces. The checker SHALL compare every member of `base`
+  produces, and FR-920's `timed-product/v1` when the objective is expected
+  elapsed time and FR-204 admits the timed claim. The checker SHALL compare every member of `base`
   with its own derivation, as that profile does, before reading a value.
-- A timed proof keeps FR-920's profile, which admits `lower` and `upper`
-  itself. Long-run values are solved exactly (FR-199) and have no dyadic
+- An exact-only timed proof that does not produce timed expected-elapsed
+  bounds keeps FR-920's profile, which admits `lower` and `upper` itself.
+  Long-run values are solved exactly (FR-199) and have no dyadic
   method; when such a value exceeds `max_rational_bits`, EN-5 SHALL settle
   the item
   `Incomplete(LimitReached{MaxRationalBits, value, exact_prob.max_rational_bits})`,
   which raising that setting resolves, with no certificate and no truth
   value.
+
+- A `finite-horizon-measure/v1` base with payoff `shifted` uses the exact
+  objective shape FR-1043 defines: `profile`, `payoff`, `measure`,
+  `optimization` and `fairness`; `measure` retains `kind`, `window`,
+  `reward`, `unit`, `comparison`, `threshold` and `level`. In particular,
+  `lower` and `upper` ValueBounds documents for a quantile do not rewrite
+  `shifted` as `event`, `ratio` or another payoff. Their complete product keys,
+  values, ranking and optional policy use this profile's rules; the checker
+  rederives the complete base objective from the checked claim.
 
 - A dyadic interval document SHALL use `scalar_bits = max(max_rational_bits,
   16 * max_precision_bits)`, where `max_rational_bits` and
@@ -219,7 +235,8 @@ successor of strictly smaller rank whose value is positive (FSpec FR-412
   `exploration: Partial`, which FSpec FR-331 writes as
   `"exploration": "partial"`, and with `upper` the base's least upper
   bound: 1 for a probability base, `1 − level` for a `shifted` measure base,
-  1 for a `fraction` payoff, and `+∞` for a reward base, written `"infinity"`
+  1 for a `fraction` payoff, and `+∞` for a reward or timed expected-elapsed
+  base, written `"infinity"`
   as FSpec FR-418 writes an absent bound. The marker, not the value of
   `upper`, is what exempts the proof from its counterpart, so a fully
   explored `lower` whose upper end is 1 still carries one. The claim-side document missing its
@@ -239,7 +256,7 @@ successor of strictly smaller rank whose value is positive (FSpec FR-412
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-1042-AC-1 | Over the cyclic `link` chain (from the undelivered state `s`, `1/3` each to `s`, delivered `g` and the stopped terminal `f`; value `1/2`) under `Even`, `probability >= rational(2,5) [eventually holds(m.delivered)]` with `max_rational_bits` 1 settles `proved`, `ValueBounds{lower, upper, …}` with `lower <= 1/2 <= upper`, and its `lower` and `upper` documents, `base.profile` `cyclic-dtmc-eventual/v1`, are each accepted by `fsl-probability-check` in a separate process and rejected with one value altered. | Test (TC-2065) |
+| FR-1042-AC-1 | Over the cyclic `link` chain (from the undelivered state `s`, `1/3` each to `s`, delivered `g` and the stopped terminal `f`; value `1/2`) under `Even`, `probability >= rational(2,5) [eventually holds(m.delivered)]` with `max_rational_bits` 1 settles `proved`, `ValueBounds{lower, upper, …}` with `lower <= 1/2 <= upper`, and its `lower` and `upper` documents, `base.profile` `cyclic-dtmc-eventual/v1`, are each accepted by an independent `fsl-probability-check` invocation; changing one value in either document makes that checker reject it. | Test (TC-2065) |
 | FR-1042-AC-2 | Over AC-1's chain, offered documents: `lower` `s` `7/16`, rank 1, with counterpart `upper` `s` `9/16` is accepted for `>= rational(2,5)`; `lower` `5/8` and `upper` `7/16` are rejected `InequalityFails` at `s`; `lower` `7/16` for `>= rational(1,2)` is rejected `ThresholdMissed` at `s`; `lower` without `ranking` is rejected `Malformed` at `ranking`; an `upper` document offered as the claim side of that `AtLeast` proof is rejected `Malformed` at `kind`; `f` at `1/16` in the `upper` document is rejected `InequalityFails` at `f`. | Test (TC-3151) |
 | FR-1042-AC-3 | Over `W` (FR-1041-AC-1) with no fairness set, maximum `1/2`: for `probability <= rational(3,5)`, `upper` `s` `3/5` (both actions satisfy `Q_a(y) <= y`) with counterpart `lower` `s` `7/16`, policy `go`, rank 1, settles `proved`; `lower` `s` 1 with policy `wait` is rejected `RankBroken` at `s`; the `lower` `s` `7/16`, rank 1, without `policy` is accepted with independently selected `go`, because `wait` fails progress while `go` satisfies inequality and rank. For the minimum (0), `upper` `s` `1/4` with policy `wait` is accepted and with policy `go` rejected `InequalityFails` at `s`. | Test (TC-3151) |
 | FR-1042-AC-4 | Over `W` under `fair strong go` (fair minimum `1/2`), `lower` `s` `2/5` with no ranking and counterpart `upper` `s` `3/5` with policy `go` and rank 1 prove `probability >= rational(2,5)`; `upper` `s` `1/4` with policy `wait` is rejected `RankBroken` at `s`. | Test (TC-3151) |
@@ -248,21 +265,21 @@ successor of strictly smaller rank whose value is positive (FSpec FR-412
 | FR-1042-AC-7 | FR-201-AC-27's `Steady` long-run claim (exact `1800/1801`) with `max_rational_bits` 4 settles `Incomplete(LimitReached{MaxRationalBits, 4, exact_prob.max_rational_bits})` with no certificate, and not `proved`, `unsupported` or `failed`. A settlement handed a `lower` proof with no counterpart over a fully explored product settles `failed`, `runtime_invariant`/`established-invariant-broken`. | Test (TC-3151) |
 | FR-1042-AC-9 | Over FR-201-AC-35's retry chain (`s` to itself and to `B` with `1/2` each, cost 1 on both; value 2), base `dtmc-expected-reward/v1`: `lower` `s` `15/8` with no ranking and counterpart `upper` `s` `9/4` with ranks `s` 1, `B` 0 prove `expected accumulate R until holds(B) >= 3/2` (`15/8 <= 1 + (1/2)(15/8)`, `1 + (1/2)(9/4) = 17/8 <= 9/4`); `upper` `s` `7/4` is rejected `InequalityFails` at `s`; `upper` without `ranking` is rejected `Malformed` at `ranking`. Over a closed non-`B` zero-cost self-loop reachable beside `B`, an `upper` row 0 there is rejected `RankBroken` at that state. | Test (TC-3151) |
 | FR-1042-AC-10 | Over FR-1043-AC-2's `fast`/`slow` model at level 0.5 (shifted minimum `−1/16`), a `lower` document naming only the initial key at value 0 is rejected `InequalityFails` there: each unnamed successor counts as `−1/2`, so both actions give `−1/2`. | Test (TC-3151) |
-| FR-1042-AC-11 | A `lower` proof found before `max_states` stopped exploration settles `ValueBounds` with `exploration: Partial` and no counterpart: over AC-1's chain with `upper` 1, over FR-1043-AC-2's level-0.4 `shifted` base with `upper` `3/5`, and over AC-9's reward chain with `upper` `+∞`, written `"infinity"`; each result passes the backend-provider schema. A fully explored `lower` proof over a base whose interval's upper end is 1 settles `proved` only with its counterpart. | Test (TC-3151) |
+| FR-1042-AC-11 | A `lower` proof found before `max_states` stopped exploration settles `ValueBounds` with `exploration: Partial` and no counterpart: over AC-1's chain with `upper` 1, over FR-1043-AC-2's level-0.4 `shifted` base with `upper` `3/5`, over AC-9's reward chain with `upper` `+∞` written `"infinity"`, and over FR-204-AC-2's `MeanTime` timed profile with a finite lower document whose initial value is 5 ms and `upper` `"infinity"`; each result passes the backend-provider schema. FR-202 replay of that finite timed lower document at `expected elapsed until holds(B) <= 3 ms` settles `refuted` only when replay accepts it, carries the replayed witness, and emits no infinite `ExactValue`. A fully explored `lower` proof over a base whose interval's upper end is 1 settles `proved` only with its counterpart. | Test (TC-3151, TC-639) |
 | FR-1042-AC-8 | Pre-cancellation, cancellation during either document's check, and exhaustion of each caller limit settle `incomplete` with the actual limit and no truth value; either document with another identity refuses before enumeration, and either with a changed `base` member refuses objective mismatch. | Test (TC-3151) |
 | FR-1042-AC-12 | For a bounded fraction mean over an initial terminal state with a false fraction predicate and window 2, the base's only continuation is terminal stutter and its value is 0. An `upper` minimum document with every value 0 and no policy rows, and a `lower` maximum document with every value 0, the rederived remaining-horizon ranks and no policy rows, are accepted. The checker retains the existing stutter action at each undecided key; no fabricated operation identity or new wire form is required. | Test |
 | FR-1042-AC-13 | At an intermediate state with two enabled post-state choices `a` and `b`, their successors reach event success with probability `1/4` and `3/4`, respectively. With correct successor values and ranks, a minimum `upper` initial bound `1/2` with no hint is accepted selecting `a`, and a maximum `lower` bound `1/2` with no hint is accepted selecting `b`. Initial bounds `1/8` for the upper and `7/8` for the lower reject `InequalityFails` there because no action satisfies. Post-state selection needs no fabricated TransitionIdentity row. | Test |
 | FR-1042-AC-15 | For `max_rational_bits = 128` and `max_precision_bits = 16`, both producer and replay accept interval-document scalars whose reduced numerator and denominator are at most 256 bits and refuse a scalar requiring 257 bits, naming `exact_prob.max_precision_bits`; with `max_rational_bits = 512` and `max_precision_bits = 16`, they accept a 512-bit scalar and refuse a 513-bit scalar, naming `exact_prob.max_rational_bits`; with `max_rational_bits = 256` and `max_precision_bits = 16`, they accept 256 bits and refuse 257 bits, naming `exact_prob.max_rational_bits` on equality. | Test (TC-2066) |
 | FR-1042-AC-14 | In AC-3, minimum `upper` `s` `1/4` with hint `go` rejects `InequalityFails` although `wait` satisfies, and the same document without that hint accepts selecting `wait`. A nonexistent hint rejects `InequalityFails` even when an enabled action satisfies. Maximum `lower` `s` 1 with hint `wait` rejects `RankBroken`; removing the hint does not accept it, since no action satisfies both inequality and progress. When several actions satisfy every condition, an omitted hint selects the first in canonical full-product-action order. | Test |
 | FR-1042-AC-16 | Over AC-1's chain, `lower` `s` `7/16` for the claim `probability >= rational(2,5)` is accepted when checked as the claim side; its `upper` counterpart `s` `9/16` is accepted when checked with the claim-side flag unset. The `lower` checked as claim side for `>= rational(1,2)` rejects `ThresholdMissed`, and the `upper` offered as claim side of the `AtLeast` claim rejects `Malformed` at `kind`. | Test (TC-3212) |
-| FR-1042-AC-17 | Over AC-3's `W`, the minimum-probability `upper` bound `s` `1/4` with policy `wait` is accepted for `probability <= rational(1,4)`, while policy `go` rejects `InequalityFails`; the maximum-probability `lower` bound `7/16`, rank 1 and policy `wait` rejects `RankBroken`, while policy `go` is accepted. When no policy is supplied the checker retains its first satisfying action in canonical full-product-action order. | Test (TC-3212) |
+| FR-1042-AC-17 | Over AC-3's `W`, with no fairness set, for `probability <= rational(3,5) [eventually holds(delivered)]` under every scheduler, the maximum-probability `upper` document with `s = 3/5` and no policy is accepted as the claim-side document (both actions satisfy `Q_a(y) <= y`) with objective Maximum. Offering the minimum-probability `upper` document with `s = 1/4` and policy `wait` for this claim rejects objective mismatch, as the source Every AtMost claim maps to Maximum; the same minimum objective is not an admitted Every AtMost source mode (FR-201, closed cyclic-MDP eventual profile). The maximum-probability `lower` counterpart `7/16`, rank 1 and policy `wait` rejects `RankBroken`, while policy `go` is accepted with the claim-side flag unset. When no policy is supplied the checker retains its first satisfying action in canonical full-product-action order. | Test (TC-3212) |
 | FR-1042-AC-18 | Over AC-1's chain, when exploration stops at `max_states`, a partial-product `lower` document for the initial key with value `7/16`, rank 1 and the correct identity is accepted as the claim side for `>= rational(2,5)` without a counterpart; settlement is `proved`, `ValueBounds` with `exploration: Partial` and `upper` 1. A fresh independent `fsl-probability-check` invocation accepts the emitted document; lowering its initial value below the threshold or changing its identity prevents proof. | Test (TC-3212) |
 | FR-1042-AC-19 | In an expected-reward model where initial `s` pays 1 and moves to `r`, `r` pays 1 and moves to itself or terminal `B` with probability 1/2 each, the exact value is 3. A `lower` document naming `s` at 1 and boundary `B` at 0, but omitting undecided successor `r`, is accepted as the claim side for `expected total >= 1/2` because the omitted successor uses the base's least value 0. A full-product counterpart `upper` with values `s = 3`, `r = 2`, `B = 0` and properness ranks is accepted; changing the lower value at `s` to 2 rejects `InequalityFails`. | Test (TC-3212) |
 | FR-1042-AC-20 | On FR-201-AC-35's retry chain, `expected accumulate R until holds(B) >= rational(3,2)` has exact value 2. With `max_rational_bits` 1 and `max_precision_bits` 16, EN-5 settles `proved`, `ValueBounds` whose interval encloses 2 and whose lower end meets 3/2; both emitted expected-reward documents are accepted by fresh independent `fsl-probability-check` invocations, and a one-value mutation is rejected. | Test (TC-3212) |
 | FR-1042-AC-21 | Over FR-198-AC-3's one-action `Loop`, unbounded `probability >= rational(2,5) [eventually holds(goal)]` under every scheduler has exact value 1/2. With `max_rational_bits` 1 and `max_precision_bits` 16, EN-5 settles `proved`, `ValueBounds` enclosing 1/2 with the lower end meeting 2/5; both documents are accepted by fresh independent `fsl-probability-check` invocations, and a one-value mutation is rejected. | Test (TC-3212) |
 | FR-1042-AC-22 | Over FR-1041-AC-1's `W` under `every scheduler fair strong go`, `probability >= rational(2,5) [eventually holds(delivered)]` has exact value 1/2. With `max_rational_bits` 1 and `max_precision_bits` 16, EN-5 settles `proved`, `ValueBounds` enclosing 1/2 with the lower end meeting 2/5; the `cyclic-mdp-fair-eventual/v1` documents are accepted by fresh independent `fsl-probability-check` invocations, and a one-value mutation is rejected. | Test (TC-3212) |
 | FR-1042-AC-23 | Over FR-1043-AC-5's `Retry` under its workload, `mean of fraction holds(delivered) over [0, 2] >= rational(2,5)` has exact value 5/12. With `max_rational_bits` 1 and `max_precision_bits` 16, EN-5 settles `proved`, `ValueBounds` enclosing 5/12 with the lower end meeting 2/5; both `finite-horizon-measure/v1` fraction documents are accepted by fresh independent `fsl-probability-check` invocations, and a one-value mutation is rejected. | Test (TC-3212) |
-| FR-1042-AC-24 | Over FR-1043-AC-2's `fast`/`slow` model under every scheduler, `quantile 0.4 of (steps from holds(true) until holds(delivered) within 4) <= 2` has shifted value 3/80. With `max_rational_bits` 1 and `max_precision_bits` 16, EN-5 settles `proved`, `ValueBounds` enclosing 3/80 with the lower end at least 0; both `finite-horizon-measure/v1` shifted documents are accepted by fresh independent `fsl-probability-check` invocations, and a one-value mutation is rejected. | Test (TC-3212) |
+| FR-1042-AC-24 | Over FR-1043-AC-2's `fast`/`slow` model under every scheduler, `quantile 0.4 of (steps from holds(true) until holds(delivered) within 4) <= 2` has shifted value `3/80`. With `max_rational_bits` 1 and `max_precision_bits` 16, EN-5 settles `proved`, `ValueBounds` with interval `[lower, upper]` satisfying `0 <= lower <= 3/80 <= upper`, where `lower` meets the claim-side threshold. The emitted `lower` and `upper` documents each retain `base.profile = "finite-horizon-measure/v1"`, `base.payoff = "shifted"`, `measure = {kind: "steps", window: 4, reward: null, unit: null, comparison: "le", threshold: 2, level: 2/5}`, the source-derived `minimum` optimization and empty fairness set; their initial values equal the reported interval endpoints. Canonical read/encode/read preserves both complete documents, and fresh independent `fsl-probability-check` invocations accept each. In the `lower` document, replacing only the `value` in the row keyed by the initial complete product key `K0` with the valid dyadic `1/16` is rejected `InequalityFails` at `K0`. | Test |
 
 ## Dependencies
 

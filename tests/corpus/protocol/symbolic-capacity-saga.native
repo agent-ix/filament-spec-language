@@ -1,0 +1,16 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+model Parts = "example/parts";
+
+protocol PartFlow using p over (job: Parts::Job) on origin {
+  role Planning on Parts::PlanningService;
+  role Machining on Parts::MachiningStation;
+  channel Queue from Planning to Machining carries Parts::WorkOrder
+    ordering unordered delivery exactly-once-premise capacity symbolic(QueueSlots) overflow block;
+  run sequence Main {
+    send Sent via Queue as (sent: Parts::WorkOrder) { sent.part = job.part };
+    receive Seen via Queue of Sent as (got: Parts::WorkOrder) { got.ok };
+  }
+  finish Over as (closing: Parts::ClosureView) { closing.complete };
+}

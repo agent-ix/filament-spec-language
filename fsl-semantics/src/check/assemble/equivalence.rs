@@ -7,7 +7,7 @@
 //! derives the classes and each member's root ratio to its class root, which
 //! the checker converts time quantities through (FR-230).
 
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Integer, NodeKey, PathSegment, Rational};
@@ -760,7 +760,11 @@ pub(super) fn assemble(
             package_name,
             NodeTag::ScalarType,
             "dimension_equivalence",
-            vec![PathSegment::Node(first), PathSegment::Node(second)],
+            vec![
+                PathSegment::Node(first),
+                PathSegment::Node(second),
+                PathSegment::Text(format!("root-scale:{}", preimage.root_scale())),
+            ],
             0,
         )
         .map_err(|refusal| fault(AssemblyCause::nominal(super::nominal_key_refusal(refusal))))?;

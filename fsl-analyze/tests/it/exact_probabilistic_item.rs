@@ -30,7 +30,9 @@ mod certificate_boundary_cases;
 mod cyclic_state_refutation;
 mod fraction_window;
 mod measure_profile;
+mod outcomes;
 mod subsystem_refutation;
+mod temporal_profile;
 
 /// `Link` delivers within two attempts: the least delivery probability over
 /// every scheduler is 24/25 (send_b twice), the greatest 99/100.
@@ -286,6 +288,11 @@ fn a_rejected_certificate_never_settles_proved() {
     let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
     assert!(record.exact_probabilistic.is_none());
     let terminal = record.terminal().expect("a terminal record");
+    assert!(record.probabilistic_counterexample.is_none());
+    let outcome = serde_json::to_value(fsl_replay::OutcomeItem::from_terminal(terminal))
+        .expect("the inconclusive outcome serializes");
+    assert_eq!(outcome["result"], "inconclusive");
+    assert!(outcome.get("measured").is_none(), "{outcome}");
     let system = ModelSystem::new(world.subject().simulation).expect("the model admits");
     let binding = claim_binding(&system, world.claim("Likely"))
         .unwrap()
@@ -633,7 +640,16 @@ fn p95_settles_proved_with_its_exact_value() {
 /// FR-203-AC-5 (TC-641): FR-196-AC-5's `Coin` refutation, a claim read
 /// undefined (`absent-key`) at a state of positive probability, settles
 /// `refuted` with its replayed undefined path, whatever the threshold.
-#[trace("TC-641", "FR-203-AC-5", "TC-3153", "FR-202-AC-5", "FR-202-AC-24")]
+#[trace(
+    "TC-641",
+    "FR-203-AC-5",
+    "TC-3153",
+    "FR-202-AC-5",
+    "FR-202-AC-24",
+    "FSpec-FR-411-AC-12",
+    "FSpec-FR-413-AC-7",
+    "FSpec-FR-413-AC-11"
+)]
 #[test]
 fn an_undefined_evaluation_settles_refuted_whatever_the_threshold() {
     for threshold in ["0.5", "0.01"] {
@@ -652,10 +668,13 @@ fn an_undefined_evaluation_settles_refuted_whatever_the_threshold() {
             .probabilistic_counterexample
             .as_ref()
             .expect("the replayed undefined path");
-        let text = format!("{counterexample:?}");
-        assert!(
-            text.contains("AbsentKey") || text.contains("absent-key"),
-            "{text}"
+        let undefined = counterexample.undefined().expect("undefined evidence");
+        assert_eq!(undefined.evaluation.site.position, 1);
+        assert_eq!(undefined.path.paths[0].steps.len(), 1);
+        assert_eq!(counterexample.mass(), &ratio(1, 2));
+        assert_eq!(
+            counterexample.wire.as_ref().unwrap()["evidence"]["undefined"]["cause"],
+            "absent-key"
         );
     }
 }
@@ -682,7 +701,14 @@ fn undefined_evidence(world: &World, claim: &str) -> fsl_replay::ProbabilityUnde
     witness.clone()
 }
 
-#[trace("TC-3153", "FR-202-AC-5", "FR-202-AC-24")]
+#[trace(
+    "TC-3153",
+    "FR-202-AC-5",
+    "FR-202-AC-24",
+    "FSpec-FR-411-AC-12",
+    "FSpec-FR-413-AC-7",
+    "FSpec-FR-413-AC-11"
+)]
 #[test]
 fn undefined_replay_checks_first_read_location_control_and_package_ownership() {
     use fsl_replay::{
@@ -763,7 +789,13 @@ fn undefined_replay_checks_first_read_location_control_and_package_ownership() {
     ));
 }
 
-#[trace("TC-3153", "FR-202-AC-25", "FR-202-AC-26")]
+#[trace(
+    "TC-3153",
+    "FR-202-AC-25",
+    "FR-202-AC-26",
+    "FSpec-FR-411-AC-12",
+    "FSpec-FR-413-AC-7"
+)]
 #[test]
 fn undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices() {
     use fsl_eval::simulation::model::TransitionId;
@@ -896,7 +928,7 @@ fn undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices()
     .is_none());
 }
 
-#[trace("TC-3153", "FR-202-AC-26")]
+#[trace("TC-3153", "FR-202-AC-26", "FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7")]
 #[test]
 fn undefined_replay_preserves_limits_and_cancellation_at_the_final_poll() {
     use fsl_replay::{
@@ -1340,6 +1372,7 @@ fn external_always_probability_certificate_remains_unsupported() {
             value: ratio(1, 1),
         }],
         ranking: vec![(key, 0)],
+        policy: None,
     };
     let limits = fsl_replay::ProbabilityDocumentLimits {
         bytes: 1 << 20,
@@ -1456,6 +1489,10 @@ fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
         method,
         &fsl_replay::BoundsMethod::BackwardInduction { precision_bits: 64 }
     );
+    let fsl_replay::ExactBound::Finite(upper) = upper
+    else {
+        panic!("complete product interval has a finite upper endpoint");
+    };
     let exact = ratio(9_999_999, 10_000_000)
         .pow(&Integer::from(1000_i64))
         .expect("positive integer exponent");
@@ -1468,7 +1505,8 @@ fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
     assert_eq!(entries.len(), 1);
     assert!(matches!(
         &entries[0].value,
-        ExactOrBounds::Bounds { lower: l, upper: u } if l == lower && u == upper
+        ExactOrBounds::Bounds { lower: l, upper: u }
+            if l == lower && u == &fsl_replay::ExactBound::Finite(upper.clone())
     ));
     let kind = |bytes: Option<&[u8]>| {
         let document: serde_json::Value =
@@ -1500,7 +1538,7 @@ fn a_value_bounds_document_is_accepted_only_for_the_side_it_certifies() {
     let world = World::new(&prob_world::no_fault(claim));
     let mut request = world.request("NoFault", ModelCheckLimits::default());
     request.limits.max_rational_bits = 1024;
-    let request_limits = request.limits.clone();
+    let request_limits = request.limits;
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
     let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
@@ -1518,21 +1556,26 @@ fn a_value_bounds_document_is_accepted_only_for_the_side_it_certifies() {
     // Replay under the request's own limits, with no scalar bound widened by hand.
     let limits =
         fsl_replay::ProbabilityDocumentLimits::for_interval(&request_limits, prob_world::UNLIMITED);
-    let check = |bytes: &[u8]| {
-        fsl_replay::check_probability_certificate_document(
+    let check = |bytes: &[u8], role| {
+        fsl_replay::check_probability_certificate_document_as(
             &system,
             world.package.graph().probabilistic_model().claims(),
             &identity,
             bytes,
+            role,
             limits,
             &Cancel::new(),
         )
     };
-    for (bytes, bound) in [
-        (&lower, fsl_replay::SubsystemBoundKind::Lower),
-        (&upper, fsl_replay::SubsystemBoundKind::Upper),
+    let (claim, counterpart) = (
+        fsl_replay::CertificateRole::Claim,
+        fsl_replay::CertificateRole::Counterpart,
+    );
+    for (bytes, bound, role) in [
+        (&lower, fsl_replay::SubsystemBoundKind::Lower, claim),
+        (&upper, fsl_replay::SubsystemBoundKind::Upper, counterpart),
     ] {
-        let Ok(ExactProbabilityCertificateCheck::Accepted(accepted)) = check(bytes) else {
+        let Ok(ExactProbabilityCertificateCheck::Accepted(accepted)) = check(bytes, role) else {
             panic!("the {bound:?} document is accepted");
         };
         assert_eq!(accepted.bound(), Some(bound));
@@ -1540,10 +1583,10 @@ fn a_value_bounds_document_is_accepted_only_for_the_side_it_certifies() {
     let text = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).unwrap();
     let relabelled_lower = text(&lower).replace("\"kind\":\"lower\"", "\"kind\":\"upper\"");
     let relabelled_upper = text(&upper).replace("\"kind\":\"upper\"", "\"kind\":\"lower\"");
-    for bytes in [relabelled_lower, relabelled_upper] {
+    for (bytes, role) in [(relabelled_lower, counterpart), (relabelled_upper, claim)] {
         assert!(
             !matches!(
-                check(bytes.as_bytes()),
+                check(bytes.as_bytes(), role),
                 Ok(ExactProbabilityCertificateCheck::Accepted(_))
             ),
             "a side's document does not certify the other side"
@@ -1659,7 +1702,7 @@ fn the_lower_document_ranks_by_remaining_horizon_and_a_changed_rank_is_broken() 
     let world = World::new(&prob_world::no_fault(INTERVAL_CLAIM));
     let mut request = world.request("NoFault", ModelCheckLimits::default());
     request.limits.max_rational_bits = 1024;
-    let request_limits = request.limits.clone();
+    let request_limits = request.limits;
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
     let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
@@ -1717,11 +1760,10 @@ fn the_lower_document_ranks_by_remaining_horizon_and_a_changed_rank_is_broken() 
 #[test]
 fn only_an_interval_documents_scalar_bound_widens_and_names_its_own_setting() {
     use fsl_replay::{ModelCheckLimit, ProbabilityDocumentLimits};
-    let limits = |rational: u64, precision: u32| {
-        let mut limits = fsl_replay::ExactProbLimits::default();
-        limits.max_rational_bits = rational;
-        limits.max_precision_bits = precision;
-        limits
+    let limits = |rational: u64, precision: u32| fsl_replay::ExactProbLimits {
+        max_rational_bits: rational,
+        max_precision_bits: precision,
+        ..Default::default()
     };
     for (rational, precision, widened, setting) in [
         (
@@ -1827,6 +1869,9 @@ fn a_refutation_settles_refuted_or_incomplete_at_every_storage_budget_and_cancel
             }
         });
         slot.set(cancel.clone()).expect("initialized once");
-        settled_or_stopped(&run(None, &cancel), &format!("cancel at poll {at} of {total}"));
+        settled_or_stopped(
+            &run(None, &cancel),
+            &format!("cancel at poll {at} of {total}"),
+        );
     }
 }

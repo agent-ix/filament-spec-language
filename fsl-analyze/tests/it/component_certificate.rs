@@ -129,7 +129,7 @@ fn weak(constraint: u32) -> ComponentWitness {
 /// the constraint at 0, which edges inside the components never take, and
 /// for binding `b` the constraint at 1. The 9 waiting states of each binding
 /// carry `MissingAcceptance`. The checker accepts it.
-#[trace("TC-526", "FR-339-AC-1")]
+#[trace("TC-526", "FR-339-AC-1", "FR-126-AC-1")]
 #[test]
 fn the_weak_each_proof_is_a_certificate_the_checker_accepts() {
     let (world, certificate, stats) = weak_each_proof();
@@ -579,7 +579,7 @@ fn state_key_of(fixture: &Fixture, phase: u8) -> fsl_eval::simulation::StateKey 
 /// vertex index, and `(2,q1)`, which no edge leaves, is last. Only
 /// `(1,q0)`, the terminal stutter, carries `MissingAcceptance`; the others
 /// are `Trivial`; the checker accepts it.
-#[trace("TC-521")]
+#[trace("TC-521", "FR-126-AC-18")]
 #[test]
 fn components_are_listed_by_the_least_vertex_whose_predecessors_are_listed() {
     let fixture = fork();
@@ -636,13 +636,24 @@ fn components_are_listed_by_the_least_vertex_whose_predecessors_are_listed() {
         ),
         ACCEPTED
     );
+    let bytes = certificate.canonical_bytes().expect("ordered bytes");
+    let document: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON bytes");
+    assert_eq!(document["components"].as_array().unwrap().len(), 5);
+    assert_eq!(
+        document["components"][0]["states"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(document["components"][0]["witness"]["kind"], "trivial");
 }
 
 /// FR-126-AC-18, the example unit: the closure's `states` ascend with no
 /// duplicate, every component of binding `a` is listed before every
 /// component of binding `b`, each component's states ascend, and a second
 /// run gives an equal certificate.
-#[trace("TC-521")]
+#[trace("TC-521", "FR-126-AC-18")]
 #[test]
 fn a_certificate_lists_its_states_and_bindings_in_canonical_order() {
     let (world, certificate, _) = weak_each_proof();
@@ -663,7 +674,10 @@ fn a_certificate_lists_its_states_and_bindings_in_canonical_order() {
     assert_eq!(named, [0, 0, 1, 1]);
     let again = decide(&world);
     let (again, _) = held(again);
-    assert_eq!(format!("{again:?}"), format!("{certificate:?}"));
+    assert_eq!(
+        again.canonical_bytes().expect("second run bytes"),
+        certificate.canonical_bytes().expect("first run bytes")
+    );
     let _: &ClosureCertificate = &certificate.closure;
 }
 
@@ -740,11 +754,14 @@ fn guarded_proof(world: &World) -> (ComponentCertificate, RunStats) {
         let request = production.request(production.letters);
         held(check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: request.subject,
                 item: request.item,
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),

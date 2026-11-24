@@ -161,12 +161,24 @@ fn the_incomplete_cells_are_one_below_the_counter_their_input_reaches() {
             let emitted = package(&checked, PackageLimits::default(), &cancel)
                 .expect("the package emits without a byte limit")
                 .into_value();
-            let actual = u64::try_from(emitted.package().bytes().len())
-                .expect("the fixture byte count fits u64");
+            // Independence comes from the fixed literal boundary below and
+            // the paired real `run_case` calls: `emit.output_bytes` limited
+            // to `below` exits 22 with `stage_limit_exceeded`, while `below +
+            // 1` exits 0. This read/re-encode observes the canonical size,
+            // but uses the emitter's own bytes and is not an independent
+            // check by itself.
+            let document = quire_canonical::read(emitted.package().bytes(), u64::MAX)
+                .expect("the emitted package reads back");
+            let metered =
+                quire_canonical::to_vec(&document, quire_canonical::Limits::new(u64::MAX))
+                    .expect("the package re-encodes");
+            let metered = u64::try_from(metered.len()).expect("the metered count fits u64");
             assert_eq!(
                 below + 1,
-                actual,
-                "emit.output_bytes must be one below the full canonical package size"
+                metered,
+                "COMPILE_OUTPUT_BYTES_BELOW (fsl-conformance/src/cases.rs) is stale: the canonical \
+                 encoder meters the COMPILE package at {metered} bytes; re-measure that single \
+                 constant as {metered} - 1"
             );
         }
         let limited = run_case(&case).expect("the limited case runs");

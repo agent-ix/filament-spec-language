@@ -9,6 +9,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-338
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-282
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-621
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-315
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-127
@@ -47,6 +51,11 @@ For a refinement's per-step simulation obligations (FSpec FR-468),
 when it holds one base part and one step part per step row, each the query
 FR-315 encodes for it, and every part refutes its query using only checked
 Alethe rules.
+
+For an accepted temporal certificate, the qualified-core checker identity is
+`smt-proof` (FR-282). The `certificate.checker` member of the item's
+FR-621 outcome document SHALL carry that exact string, and
+`certificate.accepted` SHALL be `true`.
 
 ## Use case
 
@@ -492,6 +501,8 @@ a blanket rule.
 | FR-314-AC-20 | With otherwise well-formed proof commands, `hole`, `lia_generic` and `rare_rewrite` with an unknown or unsupported rewrite name return `Unverifiable` at their command; none returns `Verified`. | Test (TC-893) |
 | FR-314-AC-21 | The checker locally checks only the named `rare_rewrite` instances `bool-double-not-elim`, `arith-elim-lt`, `arith-elim-leq`, `arith-leq-norm` and `eq-refl`, by exact equality with their respective Boolean or integer relation rewrites; `bool-double-not-elim` requires a Bool-sorted operand, the arithmetic rewrites require Int-sorted operands, and `arith-leq-norm` additionally requires an integer-literal bound. It locally checks `evaluate` only for exact Int-literal expressions built from `+`, `-` and `*`, and `aci_simp` only for Boolean `and`/`or` flattening, commutation, association, idempotence and true/false identities. Each supported instance is accepted only when its conclusion equals the locally computed result; a false instance is `ProofStepInvalid`, while an unsupported expression or unknown rewrite name is `Unverifiable`. None of these checks admits `hole`, `lia_generic` or an unlisted `rare_rewrite`. | Test (TC-893) |
 
+| FR-314-AC-22 | The checker input contains the certificate and data needed to rebuild the expected query, and contains no solver search state or result other than the certificate. | Inspection (TC-893) |
+| FR-314-AC-23 | Over FR-315-AC-1's `Counter` fixture (universe `{c}`, `value: Int[0, 3]`, initial value `0`, and `inc` with precondition `self.value < 3` and postcondition `self.value = pre(self.value) + 1`) under event-position false-extension, the TP-2 `on origin` claim `always[0,3] holds(c.value <= 3)` with an accepted `BoundedComplete{depth: 3}` certificate settles `proved`, `Certified`; its FR-621 outcome document has `certificate.checker` exactly `smt-proof` and `certificate.accepted` `true`. | Test |
 ## Dependencies
 
 - ADR-018 V-2, V-3, PC-1, PC-6, LA-2, LA-3, DS-2.

@@ -191,7 +191,7 @@ fn a_timed_clause_over_a_model_without_a_time_source_refuses() {
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
     };
-    let fsl_semantics::check::CheckCause::Temporal(cause) = &refusal.cause else {
+    let fsl_semantics::check::CheckCause::Temporal(cause) = &*refusal.cause else {
         panic!("a temporal refusal: {refusal:?}");
     };
     let fsl_semantics::check::TemporalCause::ModelTimeOnUntimedModel { model, span } = &**cause
@@ -287,4 +287,69 @@ fn the_reader_refuses_a_supplied_row_for_a_timed_clause_at_the_row() {
         &evidence_for(&wire),
     )
     .is_ok());
+}
+
+/// FR-531-AC-52 (TC-1331): a temporal declaration that requires a clock
+/// binding cannot be admitted when the whole `temporal_bindings` channel is
+/// absent; the refusal names the declaration body.
+#[trace("TC-1331", "FR-531-AC-52")]
+#[test]
+fn a_required_temporal_binding_channel_cannot_be_omitted() {
+    use filament_contract_model::ClockConfiguration;
+
+    // Use an event-position clause with a supported interval body and an
+    // actual selected clock, so this is a valid checked package whose
+    // binding channel is required by the reader.
+    let source = unit("filament.temporal.event-position.false-extension/v1", "")
+        .replace(BODY, "eventually[0,1] holds(true)");
+    let graph = checked(&source).expect("the clocked clause checks");
+    let [temporal] = graph.temporal_clauses() else {
+        panic!("one temporal clause");
+    };
+    let selection = TemporalClockSelection::new(
+        graph.source().clone(),
+        temporal.clause().span(),
+        ClockConfiguration::EventPosition {
+            sequence_authority: "ac52-order".into(),
+        },
+    );
+    let package = CheckedPackage::link(graph);
+    let emission = crate::emit::emit_checked_with_temporal_selections(
+        &package,
+        &[selection],
+        crate::EmitLimits::fixture(),
+    )
+    .expect("the selected event-position clock emits");
+    let mut package = wire(&emission);
+    assert_eq!(
+        package["temporal_bindings"][0]["clock"]["sequence_authority"],
+        "ac52-order"
+    );
+    let clause = nodes(&package)
+        .iter()
+        .position(|node| {
+            node["node_tag"] == "temporal" && node["semantic_form"] == "temporal_clause"
+        })
+        .expect("the package has a temporal clause");
+    package
+        .as_object_mut()
+        .expect("the package is an object")
+        .remove("temporal_bindings");
+    let bytes = wire_bytes(&package).expect("the malformed package encodes");
+    let refusal = match read_v2(
+        &bytes,
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence_for(&package),
+    ) {
+        Read::Refused(V2ReadRefusal::Envelope { refusal, .. }) => *refusal,
+        other => panic!("the missing required channel is refused: {other:?}"),
+    };
+    assert_eq!(refusal.code, RefusalCode::InvalidPackage);
+    assert_eq!(refusal.cause, Some(Cause::TimedNodeReference));
+    assert_eq!(
+        refusal.loci[0].path.as_ref().map(|path| path.as_str()),
+        Some(format!("/semantic_graph/nodes/{clause}/body").as_str()),
+        "the missing channel is located at the clause body"
+    );
 }

@@ -107,6 +107,8 @@ pub(crate) fn read_object(node: CheckedNode<'_>) -> Option<EffectiveId> {
         | NodeKind::Flatten(_)
         | NodeKind::Fold { .. }
         | NodeKind::Size(_)
+        | NodeKind::BytesLength(_)
+        | NodeKind::BytesConcat(..)
         | NodeKind::Contains(..)
         | NodeKind::DropFirst(_)
         | NodeKind::RemoveOne(..)

@@ -10,14 +10,90 @@
 //! two spellings, and the base's checker compares every member with its own
 //! derivation.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::*;
 
-/// The base profile a wrapper may carry: bounded reachability, which FR-197's
-/// backward induction rounds into an interval.
+/// The base profiles a wrapper may carry: bounded reachability, which FR-197's
+/// backward induction rounds into an interval, and unbounded eventual
+/// reachability over a cyclic chain or MDP.
 fn is_wrappable_base(profile: &str) -> bool {
-    profile == PROFILE
+    matches!(
+        profile,
+        PROFILE
+            | CYCLIC_PROFILE
+            | CYCLIC_MDP_PROFILE
+            | CYCLIC_REWARD_PROFILE
+            | CYCLIC_MDP_REWARD_PROFILE
+            | measure::PROFILE
+            | "filament.probability-objective/fair-mdp-eventual/v1"
+    )
+}
+
+/// One unchecked `policy` row of a bound document: a complete product key and
+/// the FR-181 transition identity hinted there, as offered.
+#[derive(Clone, Debug)]
+pub(super) struct PolicyHint {
+    pub(super) state: String,
+    pub(super) choice: String,
+}
+
+/// A proof-role bound document read as its base's exact document, the side it
+/// certifies and its `policy` hints, when it carries that member.
+pub(super) struct BoundDocument {
+    pub(super) side: SubsystemBoundKind,
+    pub(super) exact: Vec<u8>,
+    pub(super) policy: Option<Vec<PolicyHint>>,
+}
+
+/// The `policy` member of canonical bound-document `bytes`, row shapes only.
+fn policy_hints(bytes: &[u8]) -> Result<Vec<PolicyHint>, ProbabilityDocumentError> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Row<'a> {
+        #[serde(borrow)]
+        state: &'a str,
+        #[serde(borrow)]
+        choice: &'a serde_json::value::RawValue,
+    }
+    #[derive(Deserialize)]
+    struct Hints<'a> {
+        #[serde(borrow)]
+        policy: Vec<Row<'a>>,
+    }
+    let hints: Hints<'_> = serde_json::from_slice(bytes)
+        .map_err(|_| ProbabilityDocumentError::MalformedMember("policy"))?;
+    Ok(hints
+        .policy
+        .into_iter()
+        .map(|row| PolicyHint {
+            state: row.state.to_owned(),
+            choice: row.choice.get().to_owned(),
+        })
+        .collect())
+}
+fn is_fair_base(profile: &str) -> bool {
+    profile == "filament.probability-objective/fair-mdp-eventual/v1"
+}
+
+/// Fair-MDP intervals carry a progressing policy on the existential side:
+/// upper for a minimum and lower for a maximum. The opposite endpoint is
+/// certified universally and therefore has no ranking or policy member.
+fn fair_existential_side(
+    base: &Value,
+    side: SubsystemBoundKind,
+) -> Result<bool, ProbabilityDocumentError> {
+    let optimization = base
+        .get("optimization")
+        .and_then(Value::as_str)
+        .ok_or(ProbabilityDocumentError::MalformedMember("objective"))?;
+    match (optimization, side) {
+        ("minimum", SubsystemBoundKind::Upper) | ("maximum", SubsystemBoundKind::Lower) => Ok(true),
+        ("minimum", SubsystemBoundKind::Lower) | ("maximum", SubsystemBoundKind::Upper) => {
+            Ok(false)
+        }
+        _ => Err(ProbabilityDocumentError::Unsupported),
+    }
 }
 
 fn object(value: &Value) -> Result<&serde_json::Map<String, Value>, ProbabilityDocumentError> {
@@ -32,17 +108,19 @@ fn side_of(kind: &str) -> Option<SubsystemBoundKind> {
     }
 }
 
-/// Read value-bounds `bytes` as the exact document of their base and the side
-/// they certify; `None` when `bytes` is not a proof-role bound document.
+/// Read value-bounds `bytes` as the exact document of their base, the side
+/// they certify and their policy hints; `None` when `bytes` is not a
+/// proof-role bound document.
 ///
 /// An `upper` document carries no `ranking` (the exact reader's required
 /// member is written empty); a `lower` document's missing `ranking` is left
-/// for the exact reader to name.
+/// for the exact reader to name. The `policy` member is removed from the exact
+/// document and returned unchecked for the base's checker to resolve.
 pub(super) fn unwrap(
     bytes: &[u8],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
-) -> Result<Option<(SubsystemBoundKind, Vec<u8>)>, ProbabilityDocumentError> {
+) -> Result<Option<BoundDocument>, ProbabilityDocumentError> {
     poll(cancel)?;
     let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
     if size > limits.bytes {
@@ -85,10 +163,19 @@ pub(super) fn unwrap(
     }
     let mut document: Value =
         serde_json::from_slice(bytes).map_err(|_| ProbabilityDocumentError::Malformed)?;
+    let mut policy = None;
     let profile = document
         .pointer("/objective/profile")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let cyclic_mdp_reward = document
+        .pointer("/objective/base/profile")
+        .and_then(Value::as_str)
+        == Some(CYCLIC_MDP_REWARD_PROFILE);
+    let cyclic_reward = document
+        .pointer("/objective/base/profile")
+        .and_then(Value::as_str)
+        == Some(CYCLIC_REWARD_PROFILE);
     let root = document
         .as_object_mut()
         .ok_or(ProbabilityDocumentError::Malformed)?;
@@ -111,13 +198,47 @@ pub(super) fn unwrap(
                 return Ok(None);
             }
             let base = objective["base"].clone();
+            let fair = base
+                .get("profile")
+                .and_then(Value::as_str)
+                .is_some_and(is_fair_base);
+            let existential = fair
+                .then(|| fair_existential_side(&base, side))
+                .transpose()?;
             root.insert("objective".into(), base);
-            match side {
-                SubsystemBoundKind::Upper => {
-                    if root.contains_key("ranking") {
+            if root.remove("policy").is_some() {
+                policy = Some(policy_hints(bytes)?);
+            }
+            if fair {
+                if !existential.expect("fair objective has a role") {
+                    if root.contains_key("ranking") || policy.is_some() {
                         return Err(ProbabilityDocumentError::MalformedMember("ranking"));
                     }
                     root.insert("ranking".into(), json!([]));
+                }
+            } else if side == SubsystemBoundKind::Upper {
+                if root.contains_key("ranking") {
+                    return Err(ProbabilityDocumentError::MalformedMember("ranking"));
+                }
+                root.insert("ranking".into(), json!([]));
+            }
+            match side {
+                SubsystemBoundKind::Upper => {
+                    if fair {
+                        // The fair-MDP checker validates the rank against its
+                        // independently reconstructed zero component for
+                        // either interval endpoint.
+                    } else if root.contains_key("ranking")
+                        && !cyclic_mdp_reward
+                        && !cyclic_reward
+                    {
+                        return Err(ProbabilityDocumentError::MalformedMember("ranking"));
+                    } else if !root.contains_key("ranking") {
+                        root.insert("ranking".into(), json!([]));
+                    }
+                }
+                SubsystemBoundKind::Lower if cyclic_mdp_reward || cyclic_reward => {
+                    root.entry("ranking").or_insert_with(|| json!([]));
                 }
                 SubsystemBoundKind::Lower => {}
             }
@@ -136,7 +257,11 @@ pub(super) fn unwrap(
     }
     root.insert("kind".into(), json!("exact"));
     let exact = canonical(&document, limits.bytes)?;
-    Ok(Some((side, exact)))
+    Ok(Some(BoundDocument {
+        side,
+        exact,
+        policy,
+    }))
 }
 
 /// The proof-role spelling of the base's exact `document` bytes for `side`.
@@ -162,15 +287,40 @@ pub(super) fn wrap(
         .and_then(|objective| objective.get("profile"))
         .and_then(Value::as_str)
         == Some(TIMED_PROFILE);
+    let cyclic_mdp_reward = root
+        .get("objective")
+        .and_then(|objective| objective.get("profile"))
+        .and_then(Value::as_str)
+        == Some(CYCLIC_MDP_REWARD_PROFILE);
+    let cyclic_reward = root
+        .get("objective")
+        .and_then(|objective| objective.get("profile"))
+        .and_then(Value::as_str)
+        == Some(CYCLIC_REWARD_PROFILE);
     if !timed {
         let base = root
             .remove("objective")
             .ok_or(ProbabilityDocumentError::Malformed)?;
+        let fair = base
+            .get("profile")
+            .and_then(Value::as_str)
+            .is_some_and(is_fair_base);
+        let existential = fair
+            .then(|| fair_existential_side(&base, side))
+            .transpose()?;
         root.insert(
             "objective".into(),
             json!({"profile": measure::bounds::PROFILE, "base": base}),
         );
-        if side == SubsystemBoundKind::Upper {
+        if fair {
+            if !existential.expect("fair objective has a role") {
+                root.remove("ranking");
+                root.remove("policy");
+            }
+        } else if side == SubsystemBoundKind::Upper
+            && !cyclic_mdp_reward
+            && !cyclic_reward
+        {
             root.remove("ranking");
         }
     }

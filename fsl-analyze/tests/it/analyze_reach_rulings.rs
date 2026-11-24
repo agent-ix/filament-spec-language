@@ -32,22 +32,6 @@ fn decimal(value: &Value) -> String {
         .map_or_else(|| value.to_string(), str::to_owned)
 }
 
-/// The Counter request from `objects`' snapshot with `body` and `items`.
-fn counters_request(
-    ws: &Workspace,
-    objects: &[(&str, i64)],
-    body: &str,
-    items: Value,
-) -> std::path::PathBuf {
-    request_over(
-        ws,
-        &unit_text(&format!("{CONTRACT}{body}")),
-        &document(false),
-        &[counter_snapshot(objects)],
-        json!({"items": items}),
-    )
-}
-
 /// FR-632-AC-4, FR-243-AC-4: the digital-clock route proves the closed
 /// `Rpc` on EN-1 and refuses a strict guard or a half-open interval.
 #[trace("TC-2290", "FR-632-AC-4")]
@@ -335,7 +319,8 @@ fn counters_request_over(
     )
 }
 
-const AT_LEAST_ONE: &str = "temporal AtLeastOne using t0 over (c: M::Counter) clock \"model-steps\" \
+const AT_LEAST_ONE: &str =
+    "temporal AtLeastOne using t0 over (c: M::Counter) clock \"model-steps\" \
                             on origin { always holds(c.value >= 1) }\n";
 
 /// FR-621-AC-9 (FR-125): over the receiver-framed Counter, `a` at 1 is proved,
@@ -401,7 +386,11 @@ fn an_instance_refuted_only_after_a_step_is_reported_first_in_key_order() {
     assert_eq!(label(&refuted), "refuted", "{refuted}");
     let found = &refuted["counterexample"];
     assert_eq!(found["over_binding"]["identity"], "a", "{refuted}");
-    assert_eq!(found["prefix"].as_array().map(Vec::len), Some(1), "{refuted}");
+    assert_eq!(
+        found["prefix"].as_array().map(Vec::len),
+        Some(1),
+        "{refuted}"
+    );
     assert_eq!(
         found["prefix"][0]["transition"]["receiver"]["identity"], "b",
         "{refuted}"

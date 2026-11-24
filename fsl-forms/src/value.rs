@@ -1442,6 +1442,7 @@ impl<'c> Mapping<'c> {
             | Production::FunctionDeclaration
             | Production::Predicate
             | Production::Parameter
+            | Production::OperationParameter
             | Production::StateClause
             | Production::OperationBody
             | Production::PopulationBound
@@ -2150,6 +2151,11 @@ impl<'c> Mapping<'c> {
                 let edge_span = edge_node.span();
                 self.with_children(Shape::Reaches(edge, edge_span), &task, operands)
             }
+            b"max" => self.with_children(
+                Shape::Call(NameForm::new("max", token.span())),
+                &task,
+                operands,
+            ),
             b"convert" | b"allInstances" => {
                 let target = type_form(self.cst, only(items, Production::TypeReference, node)?)?;
                 let shape = if token.spelling() == b"convert" {
@@ -2340,6 +2346,7 @@ impl<'c> Mapping<'c> {
             | Production::FunctionDeclaration
             | Production::Predicate
             | Production::Parameter
+            | Production::OperationParameter
             | Production::StateClause
             | Production::OperationBody
             | Production::PopulationBound
@@ -2572,7 +2579,7 @@ impl<'c> Mapping<'c> {
         self.leaf(Shape::StepLabel(text(trace, node)?, label), &task)
     }
 
-    /// `map`/`collect`/`filter`/`flatMap`/`forall`/`exists`, `flatten`,
+    /// `map`/`collect`/`filter`/`flatMap`/`forall`/`exists`/`only`, `flatten`,
     /// `fold`/`reduce` and `count`/`sum`.
     fn collection_call(
         &mut self,
@@ -2603,10 +2610,12 @@ impl<'c> Mapping<'c> {
             b"flatMap" => Some(BinderQuery::FlatMap),
             b"forall" => Some(BinderQuery::Forall),
             b"exists" => Some(BinderQuery::Exists),
+            b"only" => Some(BinderQuery::Only),
             _ => None,
         };
         let shape = if let Some(query) = query {
-            Shape::Query(query, binder(0)?)
+            let binder_position = usize::from(query == BinderQuery::Only);
+            Shape::Query(query, binder(binder_position)?)
         } else {
             match head.spelling() {
                 b"flatten" => Shape::Flatten,

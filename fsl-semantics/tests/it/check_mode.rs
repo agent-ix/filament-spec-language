@@ -65,7 +65,7 @@ fn refusal(declarations: &str, mode: CheckMode) -> CheckRefusal {
 /// `declarations` is refused with `obligation` under `Linked`, and checks
 /// under `Kernel`, which leaves the obligation to the evaluator.
 fn kernel_drops(declarations: &str, obligation: impl Fn(&Obligation) -> bool) {
-    match refusal(declarations, CheckMode::Linked).cause {
+    match *refusal(declarations, CheckMode::Linked).cause {
         CheckCause::Unproved(found) => assert!(obligation(&found), "{declarations}: {found:?}"),
         other => panic!("{declarations}: not an obligation: {other:?}"),
     }
@@ -155,10 +155,7 @@ fn a_state_clause_still_refuses_its_obligation_under_kernel() {
         assert!(
             matches!(
                 refusals.as_slice(),
-                [CheckRefusal {
-                    cause: CheckCause::Unproved(Obligation::Presence),
-                    ..
-                }]
+                [refusal] if matches!(refusal.cause.as_ref(), CheckCause::Unproved(Obligation::Presence))
             ),
             "{mode:?}: {refusals:?}"
         );
@@ -174,8 +171,8 @@ fn a_state_clause_still_refuses_its_obligation_under_kernel() {
 fn kernel_mode_still_refuses_a_nonterminating_recursion() {
     let missing = |refusal: &CheckRefusal, path: &[usize]| {
         assert_eq!(
-            refusal.cause,
-            CheckCause::UnprovedDecrease {
+            refusal.cause.as_ref(),
+            &CheckCause::UnprovedDecrease {
                 cycle: vec!["f".to_owned(), "f".to_owned()],
                 obligation: MeasureObligation::MissingMeasure,
             }
@@ -193,7 +190,7 @@ fn kernel_mode_still_refuses_a_nonterminating_recursion() {
     }
     let source = "function f using v(x: Int[0, 9]): Int[0, 9] pure { f(x) + 1 }";
     assert!(matches!(
-        refusal(source, CheckMode::Linked).cause,
+        refusal(source, CheckMode::Linked).cause.as_ref(),
         CheckCause::Unproved(Obligation::Range { .. })
     ));
     missing(&refusal(source, CheckMode::Kernel), &[0]);
@@ -210,7 +207,7 @@ fn kernel_mode_still_proves_a_termination_measure() {
     for mode in [CheckMode::Linked, CheckMode::Kernel] {
         assert!(
             matches!(
-                refusal(source, mode).cause,
+                refusal(source, mode).cause.as_ref(),
                 CheckCause::Unproved(Obligation::Presence)
             ),
             "{mode:?}"
@@ -285,10 +282,7 @@ fn a_count_range_in_a_state_clause_refuses_under_both_modes() {
         assert!(
             matches!(
                 refusals.as_slice(),
-                [CheckRefusal {
-                    cause: CheckCause::Unproved(Obligation::Range { .. }),
-                    ..
-                }]
+                [refusal] if matches!(refusal.cause.as_ref(), CheckCause::Unproved(Obligation::Range { .. }))
             ),
             "{mode:?}: {refusals:?}"
         );
@@ -325,10 +319,7 @@ fn an_unannotated_literal_count_source_is_an_ambiguous_literal() {
         assert!(
             matches!(
                 refusals.as_slice(),
-                [CheckRefusal {
-                    cause: CheckCause::IllTyped(IllTypedCause::AmbiguousLiteral),
-                    ..
-                }]
+                [refusal] if matches!(refusal.cause.as_ref(), CheckCause::IllTyped(IllTypedCause::AmbiguousLiteral))
             ),
             "{mode:?}: {refusals:?}"
         );
@@ -343,7 +334,13 @@ fn an_unannotated_literal_count_source_is_an_ambiguous_literal() {
 fn a_non_literal_rational_operand_keeps_its_own_domain() {
     let wide = "Rational[-10000, 10000; 1, 1000]";
     let operands = "a: Rational[-20, 20; 1, 9], c: Rational[-20, 20; 1, 9]";
-    for body in ["a + (a + c)", "a * (a + c)", "a + (a * c)", "(a + a) + c", "(a + c) * a"] {
+    for body in [
+        "a + (a + c)",
+        "a * (a + c)",
+        "a + (a * c)",
+        "(a + a) + c",
+        "(a + c) * a",
+    ] {
         let source = format!("function f using v({operands}): {wide} pure {{ {body} }}");
         for mode in [CheckMode::Linked, CheckMode::Kernel] {
             check(&source, mode).unwrap_or_else(|refusals| panic!("{body} {mode:?}: {refusals:?}"));

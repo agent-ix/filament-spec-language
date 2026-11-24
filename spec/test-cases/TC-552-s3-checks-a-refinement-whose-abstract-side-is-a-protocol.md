@@ -31,7 +31,9 @@ declared nowhere in the unit (FR-147-AC-15); a dependency package importing
 `Spec` and `Other` with a protocol `OnOther` over `Other` only, and a local
 protocol `OnImpl` over `Impl` only (FR-147-AC-16).
 
-1. Check `CasTwice`, and with `commitA -> node Spec::Twice::a1(self)`.
+1. Check `CasTwice`, and with `commitA -> node Spec::Twice::a1(self)`; inspect
+   the checked node target and confirm its receiver argument retains the
+   binder field's declared `Reference<Spec::Counter>` type.
 2. Check each refusal variant of FR-147-AC-2.
 3. Check and settle `CasTwice` with `ensure fair weak Spec::Counter::inc`.
 4. Check `CasTwice` with `finish` removed from the refinement's internal list,
@@ -79,7 +81,8 @@ Tag the tests `#[trace("TC-552", "FR-147-AC-n")]`.
 
 - Step 1: `AbstractSide::Protocol` naming `Twice`, `abstract_internal =
   [Twice::Done]`, one `temporal-satisfaction` record and no `refinement` record;
-  the node row checks naming `a1`.
+  the node row checks naming `a1` and the checked receiver argument retains
+  the binder field's declared `Reference<Spec::Counter>` type.
 - Step 2: each variant refuses with FR-147-AC-2's code and subcode.
 - Step 3: liveness half `Checked(HoldsReduced{reductions: []})` beside a
   holding safety half; never `unsupported`.

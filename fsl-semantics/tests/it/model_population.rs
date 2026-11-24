@@ -18,7 +18,9 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::{ChargePoint, Integer, LimitKind, Meter, ScalarLimits, UniverseId};
 use filament_semantic_value::absence::AbsenceMode;
 use fsl_foundation::diagnostic::Code;
-use fsl_semantics::model::accounting::{LimitKind as ModelLimitKind, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{
+    ModelNormalizationLimits, NormalizationLimitKind as ModelNormalizationLimitKind,
+};
 use fsl_semantics::model::dispatch::GeneralizationClosure;
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, Extent, FieldMemberRecord, Multiplicity,
@@ -3771,7 +3773,10 @@ fn qsl204_an_over_limit_domain_package_refuses_admission_naming_the_limit() {
     };
     match admit_p1_under(&domain_package, over).map_err(|outcome| *outcome) {
         Err(NormalizeOutcome::Incomplete(incomplete)) => {
-            assert_eq!(incomplete.limit_kind, ModelLimitKind::DeclarationRecords);
+            assert_eq!(
+                incomplete.limit_kind,
+                ModelNormalizationLimitKind::DeclarationRecords
+            );
             assert_eq!(incomplete.limit, 3);
             assert_eq!(incomplete.next_charge, 4);
         }
@@ -3841,11 +3846,11 @@ fn qsl204_a_diamond_over_ancestor_steps_refuses_admission_naming_the_limit() {
             assert_eq!(
                 incomplete,
                 fsl_semantics::model::accounting::NormalizationIncomplete {
-                    limit_kind: fsl_semantics::model::accounting::LimitKind::AncestorSteps,
+                    limit_kind: fsl_semantics::model::accounting::NormalizationLimitKind::AncestorSteps,
                     limit: 5,
                     consumed: 5,
                     next_charge: 1,
-                    charge_point: fsl_semantics::model::accounting::ChargePoint::ModelAncestorEdge,
+                    charge_point: fsl_semantics::model::accounting::NormalizationChargePoint::ModelAncestorEdge,
                 }
             );
         }

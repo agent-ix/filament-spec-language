@@ -20,33 +20,33 @@ use filament_exact::Identifier;
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::model_subject::{ModelLetters, ModelSubject, ProtocolSubject};
+use fsl_eval::simulation::Limits;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PackageModelInput,
 };
 use fsl_eval::simulation::protocol::{PackageProtocolProgram, ProtocolTransition};
-use fsl_eval::simulation::Limits;
-use fsl_foundation::{source::provenance::OccurrenceKey, RequestIndex};
+use fsl_foundation::{RequestIndex, source::provenance::OccurrenceKey};
 use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
-    replay_model_trace_with_temporal_selections, replay_protocol_trace_from_package,
     CertificateRequest, EnvelopeSource, ModelCheckItem, ModelCheckLimits, ModelTraceReplayResult,
     ModelTraceSubject, PackageReadRefusal, ProtocolCertificateRequest, ProtocolTraceSubject,
     QualifiedName, ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplaySource,
     ReplayTargetMembers, RequestTargetWire, StateEnvironment, TemporalCounterexample, Witness,
-    WitnessEnvelope, WitnessPacket,
+    WitnessEnvelope, WitnessPacket, replay_model_trace_with_temporal_selections,
+    replay_protocol_trace_from_package,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, TemporalClauseNode};
 
 use super::items::{
-    admission, settle_model_item, settle_protocol_item, ModelItem, ProtocolItem, BROKEN,
-    CLAUSE_FAMILY,
+    BROKEN, CLAUSE_FAMILY, ModelItem, ProtocolItem, admission, settle_model_item,
+    settle_protocol_item,
 };
 use super::request::ProtocolBinding;
 use super::{AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SubjectBinding, TemporalItem};
-use crate::analyze::derived_item::{derived_target, NoLetters};
+use crate::analyze::derived_item::{NoLetters, derived_target};
 use crate::analyze::protocol_item::over_instance;
-use crate::model_check::{manifest as en1, ModelCheckRequest, ProtocolCheckRequest};
+use crate::model_check::{ModelCheckRequest, ProtocolCheckRequest, manifest as en1};
 
 /// The replay source an EN-1 authored-clause counterexample carries: a
 /// witness transcript with no values, since the clause's lasso is the
@@ -242,6 +242,7 @@ impl<'a> ClauseSubject<'a> {
                 let report = settle_model_item(
                     ModelItem {
                         request: ModelCheckRequest {
+                            workers: 1,
                             temporal_clock_selections: &subject.selections,
                             subject: subject.model_subject(),
                             item: item(),
@@ -259,6 +260,12 @@ impl<'a> ClauseSubject<'a> {
                                 .as_ref()
                                 .map(|temporal| temporal.reductions.clone())
                                 .unwrap_or_default(),
+                            smt_encoding: subject
+                                .temporal
+                                .as_ref()
+                                .and_then(|temporal| temporal.smt_encoding)
+                                .unwrap_or_default(),
+                            smt_run: Default::default(),
                         },
                         stutter_closure,
                         certificate: CertificateRequest {
@@ -917,6 +924,7 @@ impl<'a> PackageClauseSubject<'a> {
                 let report = settle_model_item(
                     ModelItem {
                         request: ModelCheckRequest {
+                            workers: 1,
                             temporal_clock_selections: &[],
                             subject: subject.model_subject(),
                             item: item(),
@@ -934,6 +942,12 @@ impl<'a> PackageClauseSubject<'a> {
                                 .as_ref()
                                 .map(|temporal| temporal.reductions.clone())
                                 .unwrap_or_default(),
+                            smt_encoding: subject
+                                .temporal
+                                .as_ref()
+                                .and_then(|temporal| temporal.smt_encoding)
+                                .unwrap_or_default(),
+                            smt_run: Default::default(),
                         },
                         stutter_closure,
                         certificate: CertificateRequest {
@@ -1165,7 +1179,7 @@ impl<'a> PackageProtocolWork<'a> {
                 else {
                     let mut detail = serde_json::Map::new();
                     detail.insert("member".to_owned(), serde_json::json!("over"));
-                    return EngineReport::Refused(Refusal::DeclinedWithDetail(
+                    return EngineReport::Refused(Refusal::declined_with_detail(
                         fsl_replay::ProofRefusalCause::InvalidInput,
                         fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
                         filament_semantic_value::catalog::CatalogCode::new(
@@ -1189,7 +1203,7 @@ impl<'a> PackageProtocolWork<'a> {
                             "fact".to_owned(),
                             serde_json::json!(format!("{operation:?}")),
                         );
-                        return EngineReport::Refused(Refusal::UnsupportedWithDetail(
+                        return EngineReport::Refused(Refusal::unsupported_with_detail(
                             filament_semantic_value::catalog::CatalogCode::new(
                                 "unsupported_construct",
                                 "not-yet-implemented",
@@ -1203,7 +1217,7 @@ impl<'a> PackageProtocolWork<'a> {
                         let mut detail = serde_json::Map::new();
                         detail.insert("fact".to_owned(), serde_json::json!("correlation"));
                         detail.insert("node".to_owned(), serde_json::json!(node));
-                        return EngineReport::Refused(Refusal::UnsupportedWithDetail(
+                        return EngineReport::Refused(Refusal::unsupported_with_detail(
                             filament_semantic_value::catalog::CatalogCode::new(
                                 "unsupported_construct",
                                 "not-yet-implemented",
@@ -1214,7 +1228,7 @@ impl<'a> PackageProtocolWork<'a> {
                     Err(fsl_eval::simulation::protocol::PackageProgramRefusal::CorrelationProvenance(cause)) => {
                         let mut detail = serde_json::Map::new();
                         detail.insert("fact".to_owned(), serde_json::json!(cause.as_str()));
-                        return EngineReport::Refused(Refusal::UnsupportedWithDetail(
+                        return EngineReport::Refused(Refusal::unsupported_with_detail(
                             filament_semantic_value::catalog::CatalogCode::new(
                                 "unsupported_construct", "not-yet-implemented",
                             ),
@@ -1227,7 +1241,7 @@ impl<'a> PackageProtocolWork<'a> {
                         let mut detail = serde_json::Map::new();
                         detail.insert("fact".to_owned(), serde_json::json!("repeat-proof"));
                         detail.insert("node".to_owned(), serde_json::json!(node));
-                        return EngineReport::Refused(Refusal::UnsupportedWithDetail(
+                        return EngineReport::Refused(Refusal::unsupported_with_detail(
                             filament_semantic_value::catalog::CatalogCode::new(
                                 "unsupported_construct",
                                 "not-yet-implemented",
@@ -1246,7 +1260,7 @@ impl<'a> PackageProtocolWork<'a> {
                         );
                         detail.insert("node".to_owned(), serde_json::json!(node));
                         detail.insert("lifetime".to_owned(), serde_json::json!(lifetime));
-                        return EngineReport::Refused(Refusal::UnsupportedWithDetail(
+                        return EngineReport::Refused(Refusal::unsupported_with_detail(
                             filament_semantic_value::catalog::CatalogCode::new(
                                 "unsupported_construct",
                                 "not-yet-implemented",
@@ -1331,6 +1345,7 @@ impl<'a> PackageProtocolWork<'a> {
                 let run_subject = make_subject();
                 let certificate_subject = make_subject();
                 let request = ProtocolCheckRequest {
+                    workers: 1,
                     temporal_clock_selections: &[],
                     subject: run_subject,
                     item: make_item(),
@@ -1483,7 +1498,7 @@ mod tests {
     #[trace("TC-2958", "FR-517-AC-33")]
     #[test]
     fn replay_wire_preserves_the_supplied_await_clock_authority() {
-        use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest, SpineLimits};
+        use fsl_replay::spine::{DependencyInput, ParseRequest, SpineLimits, check, parse, select};
         let model = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../tests/fixtures/spine-model.semantic-ir.json"

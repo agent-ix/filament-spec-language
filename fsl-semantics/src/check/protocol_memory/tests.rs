@@ -2,7 +2,7 @@
 
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
-use fsl_forms::{build_unit, AccessOrdering};
+use fsl_forms::{AccessOrdering, build_unit};
 use fsl_foundation::MemoryModelName;
 use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
@@ -18,7 +18,7 @@ use crate::model::domain_package::{
     OperationParameterRecord, PopulationRecord, ValueTypeRef,
 };
 use crate::model::intake::SelectedModel;
-use crate::model::normalize::{normalize, NormalizeOutcome};
+use crate::model::normalize::{NormalizeOutcome, normalize};
 use filament_checked::key::DeclarationKey;
 
 #[allow(dead_code)]
@@ -26,7 +26,7 @@ mod attempt_fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_attempt.rs");
 }
-use attempt_fixture::{m_actor_model, HEADER};
+use attempt_fixture::{HEADER, m_actor_model};
 
 fn attempt(name: &str) -> String {
     format!(
@@ -103,7 +103,7 @@ fn only_refusal(declarations: &str) -> (String, ProtocolAnchorCause, &'static st
     let [refusal] = &found[..] else {
         panic!("{declarations}: one refusal, got {found:?}");
     };
-    let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+    let CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() else {
         panic!("a ProtocolAnchor cause, got {:?}", refusal.cause);
     };
     (
@@ -576,7 +576,7 @@ fn refused(source: &str) -> (String, Vec<ProtocolAnchorCause>) {
         .map(|refusal| {
             assert_eq!(
                 (refusal.cause.code().as_str(), refusal.cause.cause()),
-                match &refusal.cause {
+                match refusal.cause.as_ref() {
                     CheckCause::ProtocolAnchor(cause) => match cause.as_ref() {
                         ProtocolAnchorCause::AccessOrdering { .. } =>
                             ("ill_typed", Some("operator-ineligible")),
@@ -587,7 +587,7 @@ fn refused(source: &str) -> (String, Vec<ProtocolAnchorCause>) {
                     other => panic!("a ProtocolAnchor cause, got {other:?}"),
                 }
             );
-            match &refusal.cause {
+            match refusal.cause.as_ref() {
                 CheckCause::ProtocolAnchor(cause) => cause.as_ref().clone(),
                 _ => unreachable!(),
             }
@@ -683,10 +683,10 @@ fn two_relaxed_stores_of_one_cell_check() {
         );
         let found = classes(&source);
         assert_eq!(found.len(), 2, "{memory}");
-        assert!(found
-            .iter()
-            .all(|(_, class, ordering)| class.is_none()
-                && *ordering == Some(AccessOrdering::Relaxed)));
+        assert!(
+            found.iter().all(|(_, class, ordering)| class.is_none()
+                && *ordering == Some(AccessOrdering::Relaxed))
+        );
     }
 }
 
@@ -864,9 +864,11 @@ fn atomicity_follows_the_written_ordering() {
     let ordered = atomic(&sb("", "ordering release", "ordering acquire"));
     let names: Vec<_> = ordered.iter().map(|(name, ..)| name.as_str()).collect();
     assert_eq!(names, ["Sx", "Ly", "Sy", "Lx"]);
-    assert!(ordered
-        .iter()
-        .all(|(_, atomic, class)| *atomic && class.is_none()));
+    assert!(
+        ordered
+            .iter()
+            .all(|(_, atomic, class)| *atomic && class.is_none())
+    );
 
     let unordered = atomic(&sb("", "ordering release", ""));
     for (name, atomic, class) in &unordered {

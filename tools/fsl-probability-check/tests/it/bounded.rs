@@ -4,10 +4,10 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use filament_checked::key::DeclarationKey;
-use filament_exact::Cancel;
-use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines, Settlement};
+use filament_exact::{Cancel, Integer, Rational};
+use fsl_analyze::analyze::{Engines, Settlement, analyze_items, exact_probabilistic_item};
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, PopulationUniverse};
@@ -16,7 +16,7 @@ use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const DOMAIN: &[u8] = include_bytes!("../fixtures/link.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
@@ -33,7 +33,9 @@ fn model_source() -> String {
 }
 
 fn claim(scheduler: &str, operator: &str, threshold: &str, horizon: u64) -> String {
-    format!("probabilistic Likely using inf on M over (m: M::Msg) under {scheduler} on origin {{ probability {operator} {threshold} [ eventually[0,{horizon}] holds(m.delivered) ] }}\n")
+    format!(
+        "probabilistic Likely using inf on M over (m: M::Msg) under {scheduler} on origin {{ probability {operator} {threshold} [ eventually[0,{horizon}] holds(m.delivered) ] }}\n"
+    )
 }
 
 pub(super) fn compile_source(
@@ -84,7 +86,10 @@ pub(super) fn try_compile_source_with(
     source: &str,
     domain: &[u8],
 ) -> Result<
-    (spine::CheckedUnit, fsl_semantics::model::intake::PackageInput),
+    (
+        spine::CheckedUnit,
+        fsl_semantics::model::intake::PackageInput,
+    ),
     spine::FrontEndFailure,
 > {
     try_compile_with_mode(source, domain, None)
@@ -95,7 +100,10 @@ fn try_compile_with_mode(
     domain: &[u8],
     check_mode: Option<filament_semantic_value::checking::CheckMode>,
 ) -> Result<
-    (spine::CheckedUnit, fsl_semantics::model::intake::PackageInput),
+    (
+        spine::CheckedUnit,
+        fsl_semantics::model::intake::PackageInput,
+    ),
     spine::FrontEndFailure,
 > {
     let identity = SourceIdentity::new("test", "bounded-certificate-source");
@@ -164,7 +172,7 @@ fn request_with_mode(
 
 /// One checker request for the settled record's certificate document and, for a
 /// value-bounds proof, a second for its counterpart document.
-fn requests_with_mode(
+pub(super) fn requests_with_mode(
     source: &str,
     snapshot: &[u8],
     exact: ExactProbLimits,
@@ -227,25 +235,22 @@ fn requests_with_mode(
     };
     let system = fsl_eval::simulation::model::ModelSystem::new(simulation.clone()).unwrap();
     let binding = fsl_replay::claim_binding(&system, claim).unwrap();
-    if claim.over.is_some()
-        && matches!(
+    if let Some(over) = claim.over.as_ref() {
+        if matches!(
             claim.form,
             fsl_semantics::check::ProbForm::Probability { .. }
-        )
-    {
-        let binding = binding
-            .as_ref()
-            .expect("a probability claim names its over instance");
-        let context =
-            fsl_replay::probabilistic_formula_monitor_context(claim, Some(&binding.reference))
-                .unwrap();
-        assert_eq!(
-            context.binding[0].parameter,
-            *claim.over.as_ref().unwrap().node().unwrap()
-        );
-        assert!(
-            matches!(&context.binding[0].value, fsl_eval::automaton::ContextBindingValue::Instance(key) if key == &binding.instance.key)
-        );
+        ) {
+            let binding = binding
+                .as_ref()
+                .expect("a probability claim names its over instance");
+            let context =
+                fsl_replay::probabilistic_formula_monitor_context(claim, Some(&binding.reference))
+                    .unwrap();
+            assert_eq!(context.binding[0].parameter, *over.node().unwrap());
+            assert!(
+                matches!(&context.binding[0].value, fsl_eval::automaton::ContextBindingValue::Instance(key) if key == &binding.instance.key)
+            );
+        }
     }
     let engines = Engines::fsl().unwrap();
     let mut records = analyze_items(
@@ -303,19 +308,113 @@ fn requests_with_mode(
         return (Vec::new(), record.settlement);
     }
     let item = fsl_replay::probabilistic_claim_identity(claim).unwrap();
-    let wire = |bytes: &[u8]| json!({
-        "source": {"authority":identity.authority, "identity":identity.identity, "content":source},
-        "package_name":"bounded-fixture",
-        "item":{"node_id":fsl_foundation::node_wire::node_key_to_json(item.node()).unwrap(), "model":item.model().map(|model|model.as_str()), "ordinal":item.ordinal()},
-        "byte_provision":[["test","bounded-certificate-source",source.as_bytes()]],
-        "documents":[domain,snapshot],
-        "initial":[{"authority":"test","identity":"s0"}],
-        "universes":[{"population":{"package":universe_package,"node":universe_node},"keys":universe_keys}],
-        "certificate":String::from_utf8(bytes.to_vec()).unwrap(),
-        "limits":{"bytes":1_000_000,"storage_bytes":8_000_000,"states":100,"edges":1000,"scalar_bits":128,"expansion":100_000,"stages":{}},
-    });
-    let requests = documents.into_iter().map(wire).collect();
+    let wire = |(position, bytes): (usize, &[u8])| {
+        json!({
+            "source": {"authority":identity.authority, "identity":identity.identity, "content":source},
+            "package_name":"bounded-fixture",
+            "item":{"node_id":fsl_foundation::node_wire::node_key_to_json(item.node()).unwrap(), "model":item.model().map(|model|model.as_str()), "ordinal":item.ordinal()},
+            "byte_provision":[["test","bounded-certificate-source",source.as_bytes()]],
+            "documents":[domain,snapshot],
+            "initial":[{"authority":"test","identity":"s0"}],
+            "universes":[{"population":{"package":universe_package,"node":universe_node},"keys":universe_keys}],
+            "certificate":String::from_utf8(bytes.to_vec()).unwrap(),
+            "claim_side":position == 0,
+            "limits":{"bytes":1_000_000,"storage_bytes":8_000_000,"states":100,"edges":1000,"scalar_bits":128,"expansion":100_000,"stages":{}},
+        })
+    };
+    // The claim-side document comes first; a value-bounds proof's counterpart follows.
+    let requests = documents.into_iter().enumerate().map(wire).collect();
     (requests, record.settlement)
+}
+
+/// FR-1042-AC-23: the separate checker replays a finite-horizon fraction mean.
+#[trace("TC-3212", "FR-1042-AC-23")]
+#[test]
+fn fraction_mean_documents_are_accepted_by_the_separate_checker() {
+    let mut source = model_source()
+        .replace("{ true: 1, false: 9 }", "{ true: 1, false: 1 }")
+        .replace("{ true: 1, false: 4 }", "{ true: 1, false: 3 }")
+        .replace(
+            "workload Even on M { weight Msg::send_a = 1; weight Msg::send_b = 1; }",
+            "workload Steady on M { weight Msg::send_a = 1; weight Msg::send_b = 0; }",
+        );
+    source.push_str("\nprobabilistic Likely using inf on M over (m: M::Msg) under Steady on origin { mean of (fraction holds(m.delivered) over [0,2]) >= rational(2,5) }\n");
+    let limits = ExactProbLimits {
+        max_rational_bits: 1,
+        precision_bits: 4,
+        max_precision_bits: 16,
+        ..ExactProbLimits::default()
+    };
+    let (requests, settlement) = requests_with_mode(&source, SNAPSHOT, limits, DOMAIN, false);
+    let [lower, upper] = requests.as_slice() else {
+        panic!("mean interval carries two documents: {settlement:?}");
+    };
+    let Settlement::Terminal(record) = settlement else {
+        panic!("mean interval settles terminal: {settlement:?}");
+    };
+    let fsl_replay::TerminalValue::Proved {
+        basis:
+            fsl_replay::ProofBasis::ValueBounds {
+                lower: lower_end,
+                upper: fsl_replay::ExactBound::Finite(upper_end),
+                exploration: fsl_replay::BoundsExploration::Complete,
+                ..
+            },
+        certification: fsl_replay::Certification::Certified,
+    } = record.value()
+    else {
+        panic!(
+            "mean settles with a complete certified interval: {:?}",
+            record.value()
+        );
+    };
+    let expected = Rational::new(Integer::from(5_i64), Integer::from(12_i64)).unwrap();
+    assert!(lower_end.value() <= &expected && &expected <= upper_end.value());
+    assert!(
+        lower_end.value() >= &Rational::new(Integer::from(2_i64), Integer::from(5_i64)).unwrap()
+    );
+    assert_eq!(document(lower)["kind"], "lower");
+    assert_eq!(document(upper)["kind"], "upper");
+    for request in [lower, upper] {
+        let (code, output) = run(request);
+        assert_eq!(code, 0, "{output}");
+        let altered = mutate(request, |doc| {
+            doc["values"][0]["value"] = json!({"numerator":"1","denominator":"7"});
+        });
+        assert_ne!(run(&altered).0, 0, "mutated mean bound must fail");
+    }
+}
+
+/// FR-1042-AC-24: the fast/slow retry model's shifted quantile interval is
+/// checked independently at both ends, including a changed-value refusal.
+#[trace("TC-3212", "FR-1042-AC-24")]
+#[test]
+fn shifted_quantile_documents_are_accepted_by_the_separate_checker() {
+    let mut source = model_source()
+        .replace("{ true: 1, false: 9 }", "{ true: 1, false: 1 }")
+        .replace("{ true: 1, false: 4 }", "{ true: 1, false: 3 }");
+    source.push_str("\nprobabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin { quantile 0.4 of (steps from holds(true) until holds(m.delivered) within 4) <= 2 }\n");
+    let limits = ExactProbLimits::default();
+    let (requests, settlement) = requests_with_mode(&source, SNAPSHOT, limits, DOMAIN, false);
+    assert!(
+        !requests.is_empty(),
+        "quantile proof carries a document: {settlement:?}"
+    );
+    let Settlement::Terminal(record) = settlement else {
+        panic!("quantile interval settles terminal: {settlement:?}");
+    };
+    assert!(matches!(
+        record.value(),
+        fsl_replay::TerminalValue::Proved { .. }
+    ));
+    for request in &requests {
+        let (code, output) = run(request);
+        assert_eq!(code, 0, "{output}");
+        let altered = mutate(request, |doc| {
+            doc["values"][0]["value"] = json!({"numerator":"1","denominator":"7"});
+        });
+        assert_ne!(run(&altered).0, 0, "mutated quantile bound must fail");
+    }
 }
 
 pub(super) fn proof(source: &str, snapshot: &[u8]) -> Value {

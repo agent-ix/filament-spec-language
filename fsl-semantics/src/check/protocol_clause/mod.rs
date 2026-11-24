@@ -70,7 +70,7 @@ use super::protocol_requirement::UnitDeclarations;
 use super::refusal::{AliasKind, CheckCause, CheckRefusal, ProtocolAnchorCause};
 use super::state_clause::{AttemptDeclaration, StateClauseDeclaration};
 use super::{Scope, Signatures};
-use anchors::{check_kind, resolve, scope_key, ScopeKey};
+use anchors::{ScopeKey, check_kind, resolve, scope_key};
 use attempts::bind_attempts;
 use binders::shadow_refusals;
 use filament_semantic_value::location::ExpressionOwner as Origin;
@@ -82,7 +82,7 @@ fn refusal(cause: ProtocolAnchorCause) -> CheckRefusal {
         // `ProtocolAnchor` cause's own span directly instead, so this
         // `Location` is never resolved.
         location: filament_semantic_value::location::ExpressionLocation::root(Origin::Expression),
-        cause: CheckCause::ProtocolAnchor(Box::new(cause)),
+        cause: Box::new(CheckCause::ProtocolAnchor(Box::new(cause))),
     }
 }
 

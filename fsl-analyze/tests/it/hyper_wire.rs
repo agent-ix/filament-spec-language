@@ -254,6 +254,43 @@ fn analyze_hyper_outside_the_admitted_forms_is_a_typed_refusal() {
     );
 }
 
+/// FR-173-AC-5 (TC-598): negotiation removes the EN-1 target from an HP-4
+/// item while preserving the supported Universal sibling's candidate.
+#[trace("TC-598", "FR-173-AC-5")]
+#[test]
+fn hp4_negotiation_has_no_route_target_and_keeps_its_universal_sibling() {
+    let declaration = "hyper Other using inf over behaviours (v: V::Vault) \
+        exists trace b of V forall trace a of V { always holds(v.h @ a = v.h @ b) }\n\
+        hyper Universal using inf over behaviours (v: V::Vault) \
+        forall trace a of V { always holds(v.h @ a = v.h @ a) }";
+    let (unit, model, snapshots) =
+        request_files_over_starts(Vault::Secure, false, &STARTS, declaration);
+    let ws = Workspace::new("hyper-wire-hp4-sibling");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &model,
+        &snapshots,
+        json!({"items": [{"claim": "Other"}, {"claim": "Universal"}]}),
+    ));
+    let unsupported = run.item(0);
+    assert_eq!(label(&unsupported), "unsupported", "{}", run.document());
+    assert_eq!(
+        unsupported["record"]["diagnostic"]["cause"],
+        "unsupported-requested-capability"
+    );
+    assert_eq!(unsupported["request"]["candidates"]["backends"], json!([]));
+    assert!(unsupported["counterexample"].is_null());
+
+    let supported = run.item(1);
+    assert_eq!(label(&supported), "proved", "{}", run.document());
+    assert_eq!(
+        supported["request"]["candidates"]["backends"],
+        json!([fsl_route::tie::EN1])
+    );
+    assert_eq!(supported["certificate"]["accepted"], true);
+}
+
 /// FR-179 through `native-analyze/1`: a step relation over reachable
 /// transitions is checked by enumerating the tuples of its executions. Over
 /// the vault's `reset`, `h` is unchanged, so two resets from equal `h` agree
@@ -332,6 +369,95 @@ fn analyze_hyper_two_model_infinite_trace_proof_is_checked() {
         "certified",
         "{}",
         run.document()
+    );
+}
+
+/// FR-173-AC-4 (TC-598): `SavesPower` names the distinct model subjects `S`
+/// and `N`; each subject contributes its own deadlock-freedom request item.
+#[trace("TC-598", "FR-173-AC-4")]
+#[test]
+fn analyze_hyper_saves_power_writes_each_alias_subject_and_its_deadlock_item() {
+    let declaration = "hyper SavesPower using inf over behaviours (d: S::Vault, e: N::Vault) \
+        forall trace s of S forall trace n of N \
+        { always holds(d.l @ s = e.l @ n) }";
+    let (unit, model, other, snapshot) =
+        crate::hyper_world::two_model_request_files((1, 0), declaration);
+    let unit = unit.replace("model V =", "model S =").replace("V::", "S::");
+    let mut snapshot: serde_json::Value =
+        serde_json::from_slice(&snapshot).expect("the two-model snapshot is JSON");
+    let other_population = snapshot["populations"]
+        .as_array_mut()
+        .expect("the snapshot populations")
+        .iter_mut()
+        .find(|population| population["population"] == "ix://test/vault-other/vaults")
+        .expect("the N model population");
+    assert_eq!(other_population["objects"][0]["key"], "v");
+    other_population["objects"][0]["key"] = json!("n");
+    let snapshot = serde_json::to_vec(&snapshot).expect("the distinct two-model snapshot");
+    let ws = Workspace::new("hyper-wire-saves-power-derived-subjects");
+    ws.write("other.json", &other);
+    let mut models = crate::analyze_cli_support::request_members(None)["models"].clone();
+    models.as_array_mut().expect("models").push(json!({
+        "format": "semantic-ir/2.0.0",
+        "source": {"file": "other.json", "authority": "test", "identity": "vault-other-model", "document": "VaultOther", "formal_revision": 1}
+    }));
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &model,
+        &[snapshot],
+        json!({"models": models, "items": [{"claim": "SavesPower"}]}),
+    ));
+    let document = run.document();
+    let items = document["items"].as_array().expect("written request items");
+    assert_eq!(items.len(), 3, "{}", run.document());
+    assert_eq!(items[0]["claim_name"], "SavesPower");
+    assert_eq!(
+        items[1]["request"]["temporal"]["item_kind"],
+        "deadlock-freedom"
+    );
+    assert_eq!(
+        items[2]["request"]["temporal"]["item_kind"],
+        "deadlock-freedom"
+    );
+    assert_eq!(
+        items[1]["request"]["claim"]["node"]["package"], "test/vault-other",
+        "{document}"
+    );
+    assert_eq!(
+        items[2]["request"]["claim"]["node"]["package"], "test/vault",
+        "{document}"
+    );
+}
+
+/// FR-173-AC-4 (TC-598): `NonInterference` and `Opaque` both name only `V`,
+/// so their shared model subject contributes one deadlock-freedom item.
+#[trace("TC-598", "FR-173-AC-4")]
+#[test]
+fn analyze_hyper_noninterference_and_opaque_share_one_deadlock_item() {
+    let declarations = format!("{}\n{}", non_interference(EQUAL_INPUTS), opaque(""));
+    let (unit, model, snapshots) =
+        request_files_over_starts(Vault::Secure, false, &STARTS, &declarations);
+    let ws = Workspace::new("hyper-wire-shared-alias-derived-subject");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &model,
+        &snapshots,
+        json!({"items": [{"claim": "NonInterference"}, {"claim": "Opaque"}]}),
+    ));
+    let document = run.document();
+    let items = document["items"].as_array().expect("written request items");
+    assert_eq!(items.len(), 3, "{}", run.document());
+    assert_eq!(items[0]["claim_name"], "NonInterference");
+    assert_eq!(items[1]["claim_name"], "Opaque");
+    assert_eq!(
+        items[2]["request"]["temporal"]["item_kind"],
+        "deadlock-freedom"
+    );
+    assert_eq!(
+        items[2]["request"]["claim"]["node"]["package"],
+        "test/vault"
     );
 }
 

@@ -29,7 +29,7 @@ use fsl_forms::{ExprId, ExprNode, Expression, ExpressionSpans, StepLabelForm};
 use fsl_foundation::Span;
 
 use crate::check::abstraction::OperationKey;
-use crate::check::check::{bind_parameters, HyperTyping, NamedScope, Scope, StateContext, Typer};
+use crate::check::check::{HyperTyping, NamedScope, Scope, StateContext, Typer, bind_parameters};
 use crate::check::facts::Definedness;
 use crate::check::ir::{CheckedBody, CheckedNode};
 use crate::check::observation::Observations;
@@ -374,6 +374,7 @@ fn typer<'a>(
         parent_projections: BTreeMap::new(),
         kind: fsl_forms::StateClauseKind::Invariant,
         operation: None,
+        authored_operation: None,
         self_slot: NO_SLOT,
         result_slot: None,
     });
@@ -452,7 +453,7 @@ pub(crate) fn lower_atom<'a>(
     if body.root().value_type() != &ValueType::Boolean {
         return Err(refused(CheckRefusal {
             location: location.clone(),
-            cause: CheckCause::NonBooleanRoot,
+            cause: Box::new(CheckCause::NonBooleanRoot),
         }));
     }
     let slot_count = typer.slots();
@@ -477,9 +478,9 @@ pub(crate) fn lower_atom<'a>(
                 return Err(Refused {
                     refusal: Box::new(CheckRefusal {
                         location: read.clone(),
-                        cause: CheckCause::Hyper(Box::new(super::HyperCause::UnindexedRead {
-                            span: locate(read),
-                        })),
+                        cause: Box::new(CheckCause::Hyper(Box::new(
+                            super::HyperCause::UnindexedRead { span: locate(read) },
+                        ))),
                     }),
                     span: locate(read),
                 });
@@ -567,7 +568,7 @@ pub(crate) fn lower_conjunct<'a>(
     if body.root().value_type() != &ValueType::Boolean {
         return Err(refused(CheckRefusal {
             location: location.clone(),
-            cause: CheckCause::NonBooleanRoot,
+            cause: Box::new(CheckCause::NonBooleanRoot),
         }));
     }
     let slot_count = typer.slots();

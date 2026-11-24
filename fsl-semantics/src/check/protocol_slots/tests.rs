@@ -18,7 +18,7 @@ mod fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_obligations.rs");
 }
-use fixture::{obligation_model_with, HEADER};
+use fixture::{HEADER, obligation_model_with};
 
 /// ADR-027 §7's `Fill` over `k: M::Node`, activated `activation`, with
 /// `members` written before `run`.
@@ -118,7 +118,7 @@ fn checks(text: &str) -> CheckedGraph {
         .flat_map(|result| result.refusals.iter())
         .filter(|refusal| {
             !matches!(
-                            &refusal.cause,
+                            refusal.cause.as_ref(),
             CheckCause::ProtocolReference(cause)
             if matches!(**cause, ProtocolReferenceCause::NotEmitted { .. })
                         )
@@ -140,7 +140,7 @@ fn only(
     let [refusal] = refusals.as_slice() else {
         panic!("{text}: one refusal, got {refusals:?}");
     };
-    let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+    let CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() else {
         panic!("a protocol cause, got {refusal:?}");
     };
     let span = cause.span();
@@ -703,7 +703,7 @@ fn a_composite_of_two_receive_fields_lists_neither_operand() {
     let refusals = check(&text).expect_err("neither operand is individually visible");
     let mut reads = Vec::new();
     for refusal in refusals {
-        let CheckCause::ProtocolAnchor(cause) = refusal.cause else {
+        let CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() else {
             panic!("protocol anchor refusal, got {refusal:?}");
         };
         let ProtocolAnchorCause::WrongObservation {
@@ -711,11 +711,11 @@ fn a_composite_of_two_receive_fields_lists_neither_operand() {
             field,
             reason,
             ..
-        } = *cause
+        } = cause.as_ref()
         else {
             panic!("wrong-observation refusal, got {cause:?}");
         };
-        reads.push((binder, field, reason));
+        reads.push((binder.clone(), field.clone(), *reason));
     }
     assert_eq!(
         reads,
@@ -851,15 +851,17 @@ fn the_reference_protocols_check_with_their_edges() {
 
     let chatter = format!("{HEADER}{CHATTER}");
     let graph = checks(&chatter);
-    assert!(graph
-        .protocol("Chatter")
-        .expect("checked")
-        .edges
-        .contains(&CausalEdge {
-            kind: EdgeKind::Message,
-            from: port(node_id(&chatter, "Tx"), Port::Exit),
-            to: port(node_id(&chatter, "Rx"), Port::Enter),
-        }));
+    assert!(
+        graph
+            .protocol("Chatter")
+            .expect("checked")
+            .edges
+            .contains(&CausalEdge {
+                kind: EdgeKind::Message,
+                from: port(node_id(&chatter, "Tx"), Port::Exit),
+                to: port(node_id(&chatter, "Rx"), Port::Enter),
+            })
+    );
 
     let graph = checks(&workers("until(r.total > 0)"));
     assert_eq!(

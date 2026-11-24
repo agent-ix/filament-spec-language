@@ -61,7 +61,7 @@ fn classify(
 pub enum ReceiptError {
     /// A typed input-data refusal.
     #[error(transparent)]
-    Refusal(#[from] ReceiptRefusal),
+    Refusal(Box<ReceiptRefusal>),
     /// The shared reader or encoder could not allocate these bytes.
     #[error("effect-decision allocation failed requesting {requested} bytes")]
     Allocation {
@@ -71,6 +71,12 @@ pub enum ReceiptError {
     /// An established derived bound or shared-reader/encoder invariant failed.
     #[error("effect-decision canonical invariant failed")]
     Fault,
+}
+
+impl From<ReceiptRefusal> for ReceiptError {
+    fn from(refusal: ReceiptRefusal) -> Self {
+        Self::Refusal(Box::new(refusal))
+    }
 }
 
 fn allocation_failure(requested: usize) -> AdmissionFailure {
@@ -363,13 +369,13 @@ struct Receipt {
 
 fn read(bytes: &[u8], at: &ReceiptLocation) -> Result<Receipt, ReceiptError> {
     let malformed = |cause, pointer: &str| {
-        ReceiptError::Refusal(ReceiptRefusal::Malformed {
+        ReceiptError::Refusal(Box::new(ReceiptRefusal::Malformed {
             cause,
             location: ReceiptLocation {
                 pointer: pointer.to_owned(),
                 ..at.clone()
             },
-        })
+        }))
     };
     // The existing intake has already paid for every byte of this slice.
     // The shared arena reader, encoder and destructor all use explicit stacks.
@@ -530,7 +536,7 @@ fn invalid_integer(root: NodeRef<'_>) -> Option<String> {
                             .parse::<i64>()
                             .is_ok_and(|value| value.unsigned_abs() > 9_007_199_254_740_991) =>
                 {
-                    return Some(pointer)
+                    return Some(pointer);
                 }
                 Node::Object(members) => {
                     tasks.extend(

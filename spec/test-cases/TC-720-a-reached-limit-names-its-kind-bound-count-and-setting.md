@@ -15,7 +15,7 @@ the limit, its configured value, the count reached and the setting that
 raises it, that the rendered diagnostic says how to raise it, and that each
 limits type maps its fields to the table.
 
-Scope: FR-255-AC-1, FR-255-AC-2, FR-255-AC-3, FR-255-AC-21.
+Scope: FR-255-AC-1, FR-255-AC-2, FR-255-AC-3, FR-255-AC-21 and FR-255-AC-26.
 
 ## Test Procedure
 
@@ -29,7 +29,10 @@ Scope: FR-255-AC-1, FR-255-AC-2, FR-255-AC-3, FR-255-AC-21.
 3. For each stage's limits type, read the setting name of each field. Set
    each field through its builder method to a value distinct from its
    default.
-4. Give the settings operation `explore.workers=4`, `model_check.workers=2`, `statistical.workers=8`, `explore.workers=0` and `explore.threads=4`, and `explore.workers=2` alone (FR-255-AC-21).
+4. For every setting-table row, set the limit through each listed entry point to the maximum value of its bound type and verify that it is accepted and preserved. Do not apply a smaller implementation ceiling.
+5. Give the settings operation `explore.workers=4`, `model_check.workers=2`, `statistical.workers=8`, `explore.workers=0` and `explore.threads=4`, and `explore.workers=2` alone (FR-255-AC-21).
+
+Tag the tests `#[trace("TC-720", "FR-255-AC-26")]`.
 
 Tag the tests `#[trace("TC-720", "FR-255-AC-1")]`, `#[trace("TC-720", "FR-255-AC-2")]`, `#[trace("TC-720", "FR-255-AC-3")]` and `#[trace("TC-720", "FR-255-AC-21")]`.
 

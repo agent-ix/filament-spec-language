@@ -15,10 +15,10 @@ use ix_trace_rs::trace;
 fn undeclared_variant_case_message_names_its_owner_and_case() {
     let refusal = CheckRefusal {
         location: Location::root(Origin::Expression),
-        cause: CheckCause::UndeclaredVariantCase {
+        cause: Box::new(CheckCause::UndeclaredVariantCase {
             owner: "OrderStatus".to_owned(),
             case: "Lost".to_owned(),
-        },
+        }),
     };
 
     assert_eq!(refusal.cause.code(), Code::IllTyped);

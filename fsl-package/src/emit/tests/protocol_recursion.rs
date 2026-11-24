@@ -549,14 +549,14 @@ fn mixed_protocol_cycle_work_is_linear_and_uses_the_exact_budget() {
             .expect_err("the insufficient S3 work budget refuses");
         let refusal = refusals
             .iter()
-            .find(|refusal| matches!(refusal.cause, CheckCause::ResourceExhausted(_)))
+            .find(|refusal| matches!(refusal.cause.as_ref(), CheckCause::ResourceExhausted(_)))
             .unwrap_or_else(|| panic!("typed S3 work refusal for {label}: {refusals:?}"));
         assert_eq!(
             refusal.cause.code(),
             fsl_foundation::Code::StageLimitExceeded,
             "{label} uses the typed stage-limit cause"
         );
-        let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+        let CheckCause::ResourceExhausted(limit) = &*refusal.cause else {
             panic!("a typed resource-exhaustion cause for {label}: {refusal:?}");
         };
         assert_eq!(limit.kind, CheckingLimitKind::WorkBudget, "{label}");

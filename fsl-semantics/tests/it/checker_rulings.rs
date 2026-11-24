@@ -720,6 +720,47 @@ fn set_steps_outside_the_catalog_refuse() {
     }
 }
 
+/// FR-701-AC-3: min/max over ordered bounded values is catalogued for sets and bags.
+#[trace("TC-1907", "FR-701-AC-3")]
+#[test]
+fn bounded_min_max_folds_and_reductions_check() {
+    let declarations = format!("{FOLD_TYPES}\ntype BI = Int[0, 9];");
+    for function in [
+        "function imin using v(i: Set<Int[0, 9]>[0, 3]): BI pure { fold<BI>(acc, x in i: min(acc, x), identity: 9) }",
+        "function imax using v(i: Set<Int[0, 9]>[0, 3]): BI pure { fold<BI>(acc, x in i: max(acc, x), identity: 0) }",
+        "function rmin using v(r: Bag<Rational[0, 4; 1, 2]>[0, 3]): R pure { fold<R>(acc, x in r: min(acc, x), identity: rational(4, 1)) }",
+        "function rmax using v(r: Bag<Rational[0, 4; 1, 2]>[0, 3]): R pure { fold<R>(acc, x in r: max(acc, x), identity: rational(0, 1)) }",
+        "function rrmin using v(r: Bag<Rational[0, 4; 1, 2]>[1, 3]): R pure { reduce<R>(acc, x in r: min(acc, x)) }",
+        "function rrmax using v(r: Bag<Rational[0, 4; 1, 2]>[1, 3]): R pure { reduce<R>(acc, x in r: max(acc, x)) }",
+        "function irmin using v(i: Set<Int[0, 9]>[1, 3]): BI pure { reduce<BI>(acc, x in i: min(acc, x)) }",
+        "function irmax using v(i: Set<Int[0, 9]>[1, 3]): BI pure { reduce<BI>(acc, x in i: max(acc, x)) }",
+    ] {
+        let body = format!("{declarations}\n{function}");
+        checks(check_source(false, &body), function);
+    }
+}
+
+/// FR-701-AC-3: min/max reject unordered accumulators and mismatched values.
+#[trace("TC-1907", "FR-701-AC-3")]
+#[test]
+fn min_max_refuse_unordered_or_mismatched_types() {
+    let function = "function p using v(s: Set<Boolean>[0, 2]): B pure { fold<B>(acc, x in s: min(acc, x), identity: true) }";
+    let body = format!("{FOLD_TYPES}\n{function}");
+    assert_one_refusal(check_source(false, &body), function, Code::IllTyped, "operator-ineligible");
+
+    let function = "function pmax using v(s: Set<Boolean>[0, 2]): B pure { fold<B>(acc, x in s: max(acc, x), identity: true) }";
+    let body = format!("{FOLD_TYPES}\n{function}");
+    assert_one_refusal(check_source(false, &body), function, Code::IllTyped, "operator-ineligible");
+
+    let function = "function q using v(s: Bag<Int[0, 9]>[0, 3]): R pure { fold<R>(acc, x in s: min(acc, x), identity: rational(0, 1)) }";
+    let body = format!("{FOLD_TYPES}\n{function}");
+    assert_one_refusal(check_source(false, &body), function, Code::IllTyped, "type-mismatch");
+
+    let function = "function r using v(s: Bag<Rational[0, 4; 1, 2]>[0, 3]): R pure { fold<R>(acc, x in s: min(acc, x), identity: 0) }";
+    let body = format!("{FOLD_TYPES}\n{function}");
+    assert_one_refusal(check_source(false, &body), function, Code::IllTyped, "type-mismatch");
+}
+
 /// FR-488-AC-29 (TC-3082): `seq` and the population forms of a state clause
 /// refuse a binder in the reserved slot form at the binder identifier.
 #[trace("TC-3082", "FR-488-AC-29")]

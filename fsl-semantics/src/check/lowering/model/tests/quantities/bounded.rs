@@ -49,10 +49,12 @@ fn bounded_quantity_identity_retains_both_exact_endpoints_and_unit() {
     let units = UnitTable::declared(&graph);
     let centimetre = UnitId::declared(centimetre_key.clone());
     let metre = UnitId::declared(node_key(METRE));
-    assert!(units
-        .get(metre.clone())
-        .expect("metre")
-        .has_dimension_of(units.get(centimetre.clone()).expect("centimetre")));
+    assert!(
+        units
+            .get(metre.clone())
+            .expect("metre")
+            .has_dimension_of(units.get(centimetre.clone()).expect("centimetre"))
+    );
     let value_type = |unit, lo, hi| bounded(unit, Some(lo), Some(hi));
     let types = [
         value_type(metre.clone(), rational(-3, 2), rational(7, 4)),
@@ -153,14 +155,16 @@ fn bounded_quantity_missing_reversed_or_compound_endpoints_are_refused() {
                 .type_node(ty, &generated_location())
                 .expect_err("unsupported bounded form");
             assert_eq!(
-                refusal.cause,
+                *refusal.cause,
                 CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
             );
         }
     });
-    assert!(!graph
-        .nodes()
-        .any(|node| node.semantic_form() == "bounded_quantity"));
+    assert!(
+        !graph
+            .nodes()
+            .any(|node| node.semantic_form() == "bounded_quantity")
+    );
 }
 
 #[trace("TC-413", "FR-093-AC-61")]
@@ -248,8 +252,10 @@ fn bounded_quantity_ordering_keeps_dimension_and_unit_refusals() {
         )
         .expect_err("distinct dimensions refuse");
     assert!(
-        refusals.iter().any(|refusal| refusal.cause
-            == CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)),
+        refusals.iter().any(|refusal| {
+            refusal.cause.as_ref()
+                == &CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
+        }),
         "existing dimensional refusal: {refusals:?}"
     );
 }
@@ -291,7 +297,7 @@ fn bounded_quantity_negation_is_operator_ineligible() {
         .expect_err("a bounded operand refuses");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert_eq!(
-        refusals[0].cause,
+        *refusals[0].cause,
         CheckCause::IllTyped(filament_exact::IllTypedCause::OperatorIneligible)
     );
 }

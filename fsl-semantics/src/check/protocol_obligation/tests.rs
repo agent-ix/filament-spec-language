@@ -33,7 +33,7 @@ mod fixture {
     include!("../../../tests/fixtures/protocol_obligations.rs");
 }
 use crate::model::intake::SelectedModel;
-use fixture::{obligation_model, obligation_model_with, HEADER};
+use fixture::{HEADER, obligation_model, obligation_model_with};
 
 /// Fixture R with the object type `Pool` and its operation `drain`, `Pool`
 /// a member type of the two populations `Pools` and `Reserves`, so a frame
@@ -163,7 +163,7 @@ fn checked(declarations: &str) -> CheckedGraph {
 fn obligation_causes(refusals: &[CheckRefusal]) -> Vec<ObligationCause> {
     refusals
         .iter()
-        .filter_map(|refusal| match &refusal.cause {
+        .filter_map(|refusal| match refusal.cause.as_ref() {
             CheckCause::ProtocolObligation(cause) => Some((**cause).clone()),
             CheckCause::ProtocolAnchor(cause)
                 if matches!(
@@ -271,8 +271,7 @@ fn changed(old: &str, new: &str) -> String {
     edit(BASE, old, new)
 }
 
-const TRIGGER: &str =
-    "activate first (trigger: M::Flag) when { not trigger.ready and target >= 0 } {\n\
+const TRIGGER: &str = "activate first (trigger: M::Flag) when { not trigger.ready and target >= 0 } {\n\
         capture activated: Boolean = trigger.ready;\n\
       }";
 
@@ -342,7 +341,7 @@ fn the_activation_is_checked_and_recorded() {
         "",
     ));
     assert!(matches!(
-        &cause,
+        cause,
         ObligationCause::ModelStateRead {
             stage: ObligationStage::ProtocolActivation,
             owner: ObligationOwner::Protocol,
@@ -380,12 +379,11 @@ fn the_activation_is_checked_and_recorded() {
     assert_eq!(at(&text, &cause), "opened.count");
 
     let (text, found) = refusals(&plain("on each (opened: M::Absent)", ""));
-    let [CheckRefusal {
-        cause: CheckCause::ProtocolAnchor(cause),
-        ..
-    }] = &found[..]
-    else {
+    let [CheckRefusal { cause, .. }] = &found[..] else {
         panic!("one binder-type refusal, got {found:?}");
+    };
+    let CheckCause::ProtocolAnchor(cause) = cause.as_ref() else {
+        panic!("a protocol anchor refusal, got {:?}", cause);
     };
     assert_eq!(cause.code(), Code::MissingDeclaration);
     assert_eq!(cause.tag(), "missing-name");
@@ -597,7 +595,7 @@ fn a_capture_is_checked_against_its_declared_type() {
     let (text, found) = refusals(&plain(TICK, "capture order: M::Absent = view.total;"));
     let anchors: Vec<_> = found
         .iter()
-        .filter_map(|refusal| match &refusal.cause {
+        .filter_map(|refusal| match refusal.cause.as_ref() {
             CheckCause::ProtocolAnchor(cause) => Some(cause),
             _ => None,
         })
@@ -643,7 +641,7 @@ fn a_capture_is_checked_against_its_declared_type() {
     let shadows: Vec<_> = found
         .iter()
         .filter(|refusal| {
-            matches!(&refusal.cause, CheckCause::ProtocolAnchor(cause)
+            matches!(refusal.cause.as_ref(), CheckCause::ProtocolAnchor(cause)
                 if cause.code() == Code::AmbiguousDeclaration && cause.tag() == "ambiguous-name")
         })
         .collect();
@@ -694,8 +692,11 @@ fn a_barred_stage_cannot_read_a_field_of_an_object_binder() {
         RETRY,
         "retry (earlier: M::Node, later: M::Node) { earlier.n = later.n };",
     ));
-    let [ObligationCause::AttemptType { .. }, first @ ObligationCause::ModelStateRead { .. }, second @ ObligationCause::ModelStateRead { .. }] =
-        &found[..]
+    let [
+        ObligationCause::AttemptType { .. },
+        first @ ObligationCause::ModelStateRead { .. },
+        second @ ObligationCause::ModelStateRead { .. },
+    ] = &found[..]
     else {
         panic!("an attempt type refusal and two barred reads, got {found:?}");
     };
@@ -1043,7 +1044,7 @@ fn the_recovery_predicate_is_a_total_boolean() {
     let [refusal] = found.as_slice() else {
         panic!("one refusal: {found:?}");
     };
-    let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+    let CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() else {
         panic!("a protocol cause: {refusal:?}");
     };
     let ProtocolAnchorCause::BinderType { binder, span, .. } = cause.as_ref() else {
@@ -1318,7 +1319,7 @@ fn a_protocol_capture_read_needs_no_listing() {
     assert_eq!(found.len(), 2, "{found:?}");
     for (refusal, at) in &found {
         assert_eq!(at, "view.total");
-        let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+        let CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() else {
             panic!("a protocol anchor refusal, got {refusal:?}");
         };
         assert_eq!(
@@ -1338,7 +1339,7 @@ fn a_protocol_capture_read_needs_no_listing() {
     assert_eq!(found.len(), 2, "{found:?}");
     for (refusal, at) in &found {
         assert_eq!(at, "opened.ready");
-        let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+        let CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() else {
             panic!("a protocol anchor refusal, got {refusal:?}");
         };
         assert_eq!(
@@ -1365,7 +1366,7 @@ fn a_protocol_capture_read_needs_no_listing() {
         panic!("one refusal, got {found:?}");
     };
     assert_eq!(at, "later");
-    let CheckCause::ProtocolObligation(cause) = &refusal.cause else {
+    let CheckCause::ProtocolObligation(cause) = refusal.cause.as_ref() else {
         panic!("an obligation refusal, got {refusal:?}");
     };
     let (name, stage, owner, read) = stage_read(cause);

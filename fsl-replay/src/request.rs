@@ -52,13 +52,142 @@ impl StateEnvironment {
     }
 }
 
+/// Whether a replay request's stage-limits wire can carry this setting
+/// (FR-255 lifecycle caller-limit coverage).
+pub(crate) const fn is_replay_wire_stage_setting(setting: Setting) -> bool {
+    !matches!(
+        setting,
+        Setting::ReplayInputBytes
+            | Setting::FormatOutputBytes
+            | Setting::RenderOutputBytes
+            | Setting::EmitOutputBytes
+            | Setting::ExportOutputBytes
+            | Setting::ExportNodes
+            | Setting::ExportWorkUnits
+            | Setting::ExploreStates
+            | Setting::ExploreTransitions
+            | Setting::InspectMaxViewEntries
+            | Setting::PrepareCompileWorkUnits
+            | Setting::PrepareCodeBytes
+            | Setting::ProgressCoveredPositions
+            | Setting::SimulationMaxSteps
+            | Setting::ExpansionMaxCandidates
+            | Setting::ModelCheckWitnessSamples
+            | Setting::ModelCheckMaxWalkSteps
+            | Setting::ModelCheckMaxWitnessSet
+            | Setting::ModelCheckMaxRelationTuples
+            | Setting::ModelCheckMaxLiveInstances
+            | Setting::ModelCheckMaxStoreBuffer
+            | Setting::ModelCheckMaxMessages
+            | Setting::TemporalEvidenceFormulaNodes
+            | Setting::TemporalEvidenceInstances
+            | Setting::TemporalEvidencePositions
+            | Setting::TemporalEvidenceValuations
+            | Setting::TemporalEvidenceCaptures
+            | Setting::TemporalEvidenceSupport
+            | Setting::TemporalEvidenceHistorySpan
+            | Setting::TemporalEvidenceEvaluationSteps
+            | Setting::TemporalEvidenceLineage
+            | Setting::TemporalEvidenceVisited
+            | Setting::TemporalEvidenceRequestBytes
+            | Setting::TemporalEvidenceResultBytes
+            | Setting::TemporalEvidenceMemberBytes
+            | Setting::MonitorMaxWindowValues
+            | Setting::MonitorRetainedPositions
+            | Setting::MonitorRetainedIdentities
+            | Setting::MonitorPreparationWorkUnits
+            | Setting::MonitorPreparationStorage
+    ) && !setting.is_item_engine_setting()
+}
+
+/// Test oracle for the settings the replay wire omits, independent of the
+/// production eligibility predicate.
+#[cfg(test)]
+pub(crate) const REPLAY_WIRE_OMITTED_STAGE_LIMIT_NAMES: &[&str] = &[
+    "replay.input_bytes",
+    "format.output_bytes",
+    "render.output_bytes",
+    "emit.output_bytes",
+    "export.output_bytes",
+    "export.nodes",
+    "export.work_units",
+    "explore.states",
+    "explore.transitions",
+    "inspect.max_view_entries",
+    "prepare.compile_work_units",
+    "prepare.code_bytes",
+    "progress.covered_positions",
+    "simulation.max_steps",
+    "expansion.max_candidates",
+    "model_check.witness_samples",
+    "model_check.max_walk_steps",
+    "model_check.max_witness_set",
+    "model_check.max_relation_tuples",
+    "model_check.max_live_instances",
+    "model_check.max_store_buffer",
+    "model_check.max_messages",
+    "temporal_evidence.formula_nodes",
+    "temporal_evidence.instances",
+    "temporal_evidence.positions",
+    "temporal_evidence.valuations",
+    "temporal_evidence.captures",
+    "temporal_evidence.support",
+    "temporal_evidence.history_span",
+    "temporal_evidence.evaluation_steps",
+    "temporal_evidence.lineage",
+    "temporal_evidence.visited",
+    "temporal_evidence.request_bytes",
+    "temporal_evidence.result_bytes",
+    "temporal_evidence.member_bytes",
+    "monitor.max_window_values",
+    "monitor.retained_positions",
+    "monitor.retained_identities",
+    "monitor.preparation_work_units",
+    "monitor.preparation_storage",
+    "exact_prob.max_states",
+    "exact_prob.max_transitions",
+    "exact_prob.max_automaton_states",
+    "exact_prob.max_iterations",
+    "exact_prob.precision_bits",
+    "exact_prob.max_precision_bits",
+    "exact_prob.max_rational_bits",
+    "exact_prob.max_policy_iterations",
+    "statistical.max_samples",
+    "statistical.max_draws",
+    "statistical.max_cycle_steps",
+    "statistical.max_sample_steps",
+    "zone_check.max_symbolic_states",
+    "zone_check.max_symbolic_transitions",
+    "zone_check.max_automaton_states",
+    "zone_check.max_zone_bytes",
+    "certificate_check.max_certificate_edges",
+    "certificate_check.max_certificate_bytes",
+    "certificate_check.max_working_bytes",
+    "certificate_check.max_rank",
+    "schedule.max_demand_points",
+    "hybrid.max_solver_steps",
+    "hybrid.max_solver_time",
+    "smt_encoding.max_constants",
+    "smt_encoding.max_applications",
+    "smt_encoding.max_monitor_atoms",
+    "smt_encoding.max_monitor_states",
+    "smt_encoding.max_candidates",
+    "smt_encoding.max_script_bytes",
+    "smt.max_solver_steps",
+    "smt.max_solver_time",
+    "plan_search.max_states",
+    "plan_search.max_work",
+    "plan_search.max_certificate_entries",
+    "plan_search.max_check_work",
+    "plan_search.max_state_key_bytes",
+];
+
 /// The proving run's stage limits (ADR-013 O-26, FR-263): a map from setting
 /// name (FR-255) to the bound the proving run configured, so a request never
 /// silently substitutes FSL's own compiled-in defaults for the proving run's
 /// actual limits (TC-185). A setting with no entry runs at its published
-/// default. Decode admits every setting of FR-255's tables other than the analysis item engine rows (`Setting::is_item_engine_setting`),
-/// `replay.input_bytes` and `format.output_bytes`. An entry named for an
-/// accounting counter replaces the request's accounting limit for that
+/// default. Decode admits only settings replay can consume. An entry named for
+/// an accounting counter replaces the request's accounting limit for that
 /// counter (FR-255 Behavior 10).
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct StageLimits {
@@ -103,18 +232,7 @@ impl StageLimits {
     /// two by name as well.
     pub fn with_named(mut self, name: &str, bound: u64) -> Result<Self, StageLimitNameRefusal> {
         match SettingName::from_name(name) {
-            Some(SettingName::Stage(setting))
-                if !matches!(
-                    setting,
-                    Setting::ReplayInputBytes
-                        | Setting::FormatOutputBytes
-                        | Setting::MonitorMaxWindowValues
-                        | Setting::MonitorRetainedPositions
-                        | Setting::MonitorRetainedIdentities
-                        | Setting::MonitorPreparationWorkUnits
-                        | Setting::MonitorPreparationStorage
-                ) && !setting.is_item_engine_setting() =>
-            {
+            Some(SettingName::Stage(setting)) if is_replay_wire_stage_setting(setting) => {
                 self.stages.insert(setting, bound);
             }
             Some(SettingName::Accounting(setting)) => {
@@ -462,6 +580,11 @@ impl ReplayRequest {
 }
 
 impl ReplayRequestWire {
+    /// The content identity of the checked package carried by this request.
+    pub fn package_id(&self) -> crate::PackageId {
+        crate::PackageId::of(self.package.bytes())
+    }
+
     /// The accounting limits the replay runs under and any identity binds
     /// (FR-255 Behavior 10): `accounting_limits` with each counter a
     /// `stage_limits` entry names replaced by the entry's bound. Computed
@@ -1261,20 +1384,40 @@ mod tests {
     }
 
     /// Trace: TC-721, FR-255-AC-4
-    #[trace("TC-721", "FR-255-AC-4")]
+    #[trace("TC-721", "FR-255-AC-4", "FR-255-AC-24")]
     #[test]
-    fn replay_wire_refuses_limits_of_operations_it_does_not_run() {
-        for name in ["replay.input_bytes", "format.output_bytes"] {
+    fn replay_wire_refuses_every_setting_for_an_operation_it_does_not_run() {
+        for name in REPLAY_WIRE_OMITTED_STAGE_LIMIT_NAMES {
             let mut request = wire(999);
-            request.stage_limits.insert(name.to_owned(), 7);
+            request.stage_limits.insert((*name).to_owned(), 7);
             let refusal = ReplayRequest::decode(request, ReplayLimits::default())
                 .expect_err("a replay request cannot carry a setting for another operation");
             assert_eq!(
                 refusal,
                 ReplayRequestRefusal::StageLimitEntry {
-                    name: name.to_owned()
+                    name: (*name).to_owned()
                 },
                 "{name}"
+            );
+        }
+    }
+
+    #[trace("TC-721", "FR-255-AC-4", "FR-255-AC-24")]
+    #[test]
+    fn stage_limits_admit_only_settings_the_replay_wire_carries() {
+        for setting in Setting::ALL {
+            let expected = !REPLAY_WIRE_OMITTED_STAGE_LIMIT_NAMES.contains(&setting.name());
+            assert_eq!(
+                StageLimits::default().with_named(setting.name(), 1).is_ok(),
+                expected,
+                "{}",
+                setting.name()
+            );
+            assert_eq!(
+                is_replay_wire_stage_setting(*setting),
+                expected,
+                "{}",
+                setting.name()
             );
         }
     }
@@ -1459,9 +1602,7 @@ mod tests {
         let source = b"language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction f using v(): Boolean pure { true }\n";
         let located = crate::call_site(
             fsl_foundation::SourceIdentity::new("registry", "pkg-a"),
-            "fixture".to_owned(),
-            "unit.native",
-            source,
+            crate::CallSiteUnit::new("fixture", "unit.native", source),
             [],
             &crate::DependencyInput::default(),
             &crate::RequestClocks::default(),
@@ -2028,6 +2169,7 @@ mod tests {
                     crate::witness::WitnessValue::Integer(distinctive_value)
                 );
             }
+            ReplaySource::ClaimFree => panic!("expected the Input arm"),
             ReplaySource::Witness(_) => panic!("expected the Input arm"),
             ReplaySource::ObservedTemporal(_) => panic!("expected the Input arm"),
             ReplaySource::ModelGraph(_) => panic!("expected the Input arm"),

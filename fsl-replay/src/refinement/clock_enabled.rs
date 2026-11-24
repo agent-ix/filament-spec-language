@@ -13,20 +13,18 @@
 //! checker's own reading: the product in `fsl-analyze` splits its cells by
 //! the same guards with its own code.
 
-use std::collections::BTreeSet;
-
 use filament_exact::{Integer, Rational};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{GuardedStep, ModelSystem, PlaceConstraint, TimedSystem};
 use fsl_semantics::check::ClockOp;
 use fsl_semantics::model::state::ModelState;
 
-use crate::refinement::clock_rows::{row_clock_step, RowClockStep};
+use crate::refinement::clock_rows::{RowClockStep, row_clock_step};
 use crate::refinement::failure::Taken;
 
 /// The transitions enabled at one segment of a delay: each with the key of
 /// the candidate state that enables it.
-pub type SegmentEnabled = Vec<(Vec<u8>, ModelTransition)>;
+pub type SegmentEnabled = Vec<(usize, Vec<u8>, ModelTransition)>;
 
 /// One segment of a loop step's delay: what the alive candidates enable and
 /// which candidates are alive. A candidate is alive at an instant while its
@@ -37,7 +35,7 @@ pub struct Segment {
     /// The transitions the alive candidates enable.
     pub enabled: SegmentEnabled,
     /// The state keys of the candidates whose invariant holds.
-    pub alive: Vec<Vec<u8>>,
+    pub alive: Vec<(usize, Vec<u8>)>,
 }
 
 /// A clock's value at the start of a loop step; `None` is past every
@@ -107,19 +105,22 @@ fn enabling_parts(
 
 /// One candidate step of a loop position with its enabling parts.
 struct Enabling {
+    ordinal: usize,
     key: Vec<u8>,
     transition: ModelTransition,
     parts: Vec<Vec<PlaceConstraint>>,
 }
+
+type CandidateInvariants = Vec<(usize, Vec<u8>, Vec<PlaceConstraint>)>;
 
 /// Each candidate's state key with its own time invariants.
 fn candidate_invariants(
     abstract_system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
     candidates: &[ModelState],
-) -> Result<Vec<(Vec<u8>, Vec<PlaceConstraint>)>, &'static str> {
+) -> Result<CandidateInvariants, &'static str> {
     let mut held = Vec::with_capacity(candidates.len());
-    for candidate in candidates {
+    for (ordinal, candidate) in candidates.iter().enumerate() {
         let key = abstract_system
             .state_key_of(candidate)
             .map_err(|_| "timed-abstract-state-key")?
@@ -128,7 +129,7 @@ fn candidate_invariants(
         let own = timed
             .invariants(&state)
             .map_err(|_| "timed-abstract-invariant")?;
-        held.push((key, own));
+        held.push((ordinal, key, own));
     }
     Ok(held)
 }
@@ -149,7 +150,7 @@ fn enablings(
     candidates: &[ModelState],
 ) -> Result<Vec<Enabling>, &'static str> {
     let mut held = Vec::new();
-    for candidate in candidates {
+    for (ordinal, candidate) in candidates.iter().enumerate() {
         let key = abstract_system
             .state_key_of(candidate)
             .map_err(|_| "timed-abstract-state-key")?
@@ -160,6 +161,7 @@ fn enablings(
             .map_err(|_| "timed-abstract-guard")?
         {
             held.push(Enabling {
+                ordinal,
                 key: key.clone(),
                 transition: step.transition().clone(),
                 parts: enabling_parts(timed, &step)?,
@@ -284,20 +286,21 @@ fn instants_of(
     span: Option<&Rational>,
 ) -> Result<Vec<Rational>, &'static str> {
     let two = Rational::from_integer(Integer::one().add(&Integer::one()));
-    let mut crossings = BTreeSet::new();
-    crossings.insert(zero());
+    let mut crossings = vec![zero()];
     if let Some(span) = span {
         for constraint in parts.iter().flatten() {
             if let Some(Some(value)) = values.get(constraint.place()) {
                 let at = constraint.bound().sub(value);
                 if at > zero() && at < *span {
-                    crossings.insert(at);
+                    crossings.push(at);
                 }
             }
         }
-        crossings.insert(span.clone());
+        crossings.push(span.clone());
     }
-    let points: Vec<Rational> = crossings.into_iter().collect();
+    crossings.sort();
+    crossings.dedup();
+    let points = crossings;
     let mut instants = Vec::new();
     for (position, point) in points.iter().enumerate() {
         instants.push(point.clone());
@@ -359,7 +362,7 @@ pub fn loop_segments(
             .iter()
             .flat_map(|entry| entry.parts.iter().cloned())
             .collect();
-        all_parts.extend(invariants.iter().map(|(_, own)| own.clone()));
+        all_parts.extend(invariants.iter().map(|(_, _, own)| own.clone()));
         // A terminal stutter waits past every constant.
         let ageing: Vec<Value> = if delays[index].is_none() {
             vec![None; places]
@@ -369,14 +372,17 @@ pub fn loop_segments(
         let instants = instants_of(&all_parts, values, delays[index].as_ref())?;
         let mut segments = Vec::with_capacity(instants.len());
         for instant in &instants {
-            let alive: Vec<Vec<u8>> = invariants
+            let alive: Vec<(usize, Vec<u8>)> = invariants
                 .iter()
-                .filter(|(_, own)| own_holds(own, &ageing, instant))
-                .map(|(key, _)| key.clone())
+                .filter(|(_, _, own)| own_holds(own, &ageing, instant))
+                .map(|(ordinal, key, _)| (*ordinal, key.clone()))
                 .collect();
             let mut enabled: SegmentEnabled = Vec::new();
-            for entry in held.iter().filter(|entry| alive.contains(&entry.key)) {
-                let pair = (entry.key.clone(), entry.transition.clone());
+            for entry in held
+                .iter()
+                .filter(|entry| alive.contains(&(entry.ordinal, entry.key.clone())))
+            {
+                let pair = (entry.ordinal, entry.key.clone(), entry.transition.clone());
                 if part_holds(&entry.parts, values, instant) && !enabled.contains(&pair) {
                     enabled.push(pair);
                 }
@@ -527,10 +533,10 @@ mod tests {
             resets: vec![(0, whole(0))],
         };
         let delays = [Some(whole(1))];
-        let starts = settled_starts(&[reset.clone()], &delays, 1, 3).expect("settles");
+        let starts = settled_starts(std::slice::from_ref(&reset), &delays, 1, 3).expect("settles");
         assert_eq!(starts, [[Some(whole(0))]]);
         // The carry chain needs a pass to fill the second clock.
-        assert!(settled_starts(&[chain.clone()], &delays, 2, 1).is_none());
+        assert!(settled_starts(std::slice::from_ref(&chain), &delays, 2, 1).is_none());
         assert!(settled_starts(&[chain], &delays, 2, 4).is_some());
     }
 }

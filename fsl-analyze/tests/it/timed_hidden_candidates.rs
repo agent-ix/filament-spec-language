@@ -9,14 +9,14 @@
 use filament_exact::{Cancel, Integer};
 use fsl_analyze::zone_check::{
     certificate_item, check_timed_refinement, settle_timed_refinement, TimedLivenessHalf,
-    TimedLivenessOutcome, TimedRefinementRefusal, TimedSafetyOutcome, ZoneCheckLimits,
-    ZoneCheckRefusal,
+    TimedLivenessOutcome, TimedRefinementUndecided, TimedSafetyOutcome, ZoneCheckLimits,
+    ZoneUndecided,
 };
 use fsl_replay::{
     check_zone_certificate, CertEdge, CertificateCheckLimits, CertificateRule, Certification,
-    CertifiedItem, DivergentTarget, ProofBasis, RefinementFailure, RefinementTraceSettlement,
-    SilentMove, TemporalCounterexample, TerminalValue, ZoneCertificate, ZoneCertificateRequest,
-    ZoneCertificateVerdict,
+    CertifiedItem, DivergentTarget, InconclusiveCause, ProofBasis, RefinementFailure,
+    RefinementTraceSettlement, SilentMove, Taken, TemporalCounterexample, TerminalValue,
+    ZoneCertificate, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 use fsl_route::deadlock::ItemObligation;
 use ix_trace_rs::trace;
@@ -272,7 +272,7 @@ fn timed_hidden_a_dead_candidate_cannot_cover_a_guard_failure() {
 /// `send`; the step row's guard `y >= 5` splits the zone: for `x` in
 /// `[1, 5)` only the stutters survive, from `x >= 5` both. The refinement
 /// holds, and FR-245's checker recomputes the split.
-#[trace("TC-2538", "FR-899")]
+#[trace("TC-2538", "FR-899", "FSpec-FR-740-AC-4", "FR-245-AC-12")]
 #[test]
 fn timed_hidden_a_stutter_and_a_guarded_step_split_the_zone() {
     let abstract_document = abstract_document(&[("send", &["inflight"])]);
@@ -298,47 +298,116 @@ fn timed_hidden_a_stutter_and_a_guarded_step_split_the_zone() {
         checked(&world, &certificate),
         ZoneCertificateVerdict::Accepted
     );
+
+    // The certificate carries the union of rows across guard-split zones.
+    // Every required row must be present, and each listed row must be
+    // independently admitted for the candidate and transition.
+    let part = certificate.refinement.as_ref().expect("refinement part");
+    let (edge, rows) = part
+        .taken
+        .iter()
+        .enumerate()
+        .find_map(|(edge, taken)| match taken {
+            Some(Taken::CandidateSteps(rows)) if rows.len() >= 4 => Some((edge, rows)),
+            _ => None,
+        })
+        .expect("a partitioned edge carries both stutter and guarded rows");
+    let mut missing_row_rejected = false;
+    for remove in 0..rows.len() {
+        let mut altered = certificate.clone();
+        let Some(Taken::CandidateSteps(altered_rows)) =
+            altered.refinement.as_mut().expect("refinement part").taken[edge].as_mut()
+        else {
+            panic!("the partitioned edge retains candidate rows");
+        };
+        altered_rows.remove(remove);
+        if matches!(
+            checked(&world, &altered),
+            ZoneCertificateVerdict::Rejected(_)
+        ) {
+            missing_row_rejected = true;
+            break;
+        }
+    }
+    assert!(missing_row_rejected, "a missing required row is rejected");
+
+    let mut forged = certificate.clone();
+    let Some(Taken::CandidateSteps(forged_rows)) =
+        forged.refinement.as_mut().expect("refinement part").taken[edge].as_mut()
+    else {
+        panic!("the partitioned edge retains candidate rows");
+    };
+    let mut extra = rows[0].clone();
+    extra.pre_candidate = usize::MAX;
+    forged_rows.push(extra);
+    assert!(matches!(
+        checked(&world, &forged),
+        ZoneCertificateVerdict::Rejected(_)
+    ));
 }
 
-/// Alive candidates whose rows apply different clock resets at one step
-/// need one clock block per candidate, which the product does not keep: the
-/// typed refusal of exactly that sub-case.
-#[trace("TC-2538", "FR-899")]
+/// Each hidden candidate takes its own mapped row and updates its own clock
+/// block; the independently recomputed certificate retains both blocks.
+#[trace(
+    "TC-2538",
+    "FSpec-FR-740-AC-4",
+    "FSpec-FR-418-AC-22",
+    "FR-244-AC-8",
+    "FR-245-AC-12"
+)]
 #[test]
-fn timed_hidden_candidates_with_different_resets_are_refused_distinctly() {
-    let abstract_document =
-        abstract_document(&[("send", &["inflight", "y"]), ("send2", &["inflight"])]);
-    let concrete = document(&["x"], &[("send", &["inflight"])]);
+fn timed_hidden_candidates_with_different_resets_keep_independent_clock_blocks() {
+    let abstract_document = abstract_document(&[
+        ("send", &["inflight", "y", "h"]),
+        ("send2", &["inflight", "h"]),
+        ("poll", &[]),
+    ]);
+    let concrete = document(&["x"], &[("send", &["inflight"]), ("poll", &[])]);
     let world = refining(
         &abstract_document,
         &concrete,
         &format!(
             "{DENSE}time A dense unit ms;\n\
              pre ASendable using v on A::Call::send {{ self.h }}\n\
-             post ASend using v on A::Call::send {{ self.inflight and self.y = 0 ms }}\n\
+             post ASend using v on A::Call::send {{ self.inflight and self.y = 0 ms and not self.h }}\n\
              pre ASendable2 using v on A::Call::send2 {{ not self.h }}\n\
-             post ASend2 using v on A::Call::send2 {{ self.inflight }}\n\
-             pre MSend using v on M::Call::send {{ self.x >= 1 ms }}\n\
-             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+             post ASend2 using v on A::Call::send2 {{ self.inflight and not self.h }}\n\
+             pre APoll using v on A::Call::poll {{ not self.h and self.y >= 1 ms }}\n\
+             pre MSend using v on M::Call::send {{ not self.inflight and self.x >= 2 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n\
+             pre MPoll using v on M::Call::poll {{ self.inflight }}\n{}",
             refinement("self.inflight")
                 .replace(" late = self.late;", "")
-                .replace("-> A::Call::send(self)", "-> any")
+                .replace(
+                    "-> A::Call::send(self)",
+                    "-> any;\nstep M::Call::poll -> A::Call::poll(self)",
+                )
         ),
     )
     .unwrap_or_else(|refusals| panic!("{refusals:?}"))
     .with_abstract_hidden_initials(&abstract_document, &[false, true]);
-    let mut request = safety_request(&world);
-    request.limits = LIMITS;
-    let refused = check_timed_refinement(request, &Cancel::new())
-        .err()
-        .expect("rows with different resets are refused");
-    assert!(
-        matches!(
-            refused,
-            TimedRefinementRefusal::Zone(ZoneCheckRefusal::HiddenCandidateClockBlocks)
-        ),
-        "{refused:?}"
+    let certificate = certified(&world);
+    assert_eq!(
+        checked(&world, &certificate),
+        ZoneCertificateVerdict::Accepted
     );
+    let part = certificate.refinement.as_ref().expect("refinement part");
+    assert!(part.positions.iter().any(|position| {
+        position.abstract_states.len() == 2
+            && position.abstract_states[0] == position.abstract_states[1]
+            && position
+                .candidate_blocks
+                .as_ref()
+                .is_some_and(|blocks| blocks.len() == 2)
+    }));
+    assert!(part.positions.iter().any(|position| {
+        position.abstract_states.len() == 1
+            && !position
+                .candidate_blocks
+                .as_ref()
+                .expect("timed abstract blocks")
+                .is_empty()
+    }));
 }
 
 /// A hidden-candidate world with a settable concrete guard, abstract guard,
@@ -561,10 +630,9 @@ fn timed_hidden_a_single_candidate_running_out_of_invariant_is_refuted() {
     ));
 }
 
-/// The world of the previous test where the concrete side is time-locked
-/// beyond the abstract invariant (`x <= 3` once sent): no time-divergent
-/// behaviour reaches the dead region, so it is a `locked` entry node, which
-/// the checker requires.
+/// A concrete send reaches the candidate's dead region, after which the
+/// concrete invariant (`x <= 3`) prevents time divergence. The locked entry
+/// is therefore reachable and required by the checker.
 fn locked_dead_region() -> Refining {
     custom(
         &[([false; 3], Some(false))],
@@ -682,6 +750,66 @@ fn timed_hidden_a_stutter_and_a_guarded_step_decide_the_liveness_half() {
     ));
 }
 
+/// Distinct abstract transitions from one hidden candidate can reach the same
+/// abstract state. Their relation rows share one authoritative post ordinal;
+/// liveness must retain that ordinal instead of ranking transitions as
+/// separate target candidates.
+#[trace("TC-2538", "FR-899", "FSpec-FR-740-AC-4")]
+#[test]
+fn timed_hidden_liveness_keeps_shared_post_ordinal_for_same_source_transitions() {
+    let abstract_document = abstract_document(&[("send", &["inflight"]), ("send2", &["inflight"])]);
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    let world = refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             pre ASendable using v on A::Call::send {{ self.y >= 0 ms }}\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASendable2 using v on A::Call::send2 {{ self.y >= 0 ms }}\n\
+             post ASend2 using v on A::Call::send2 {{ self.inflight }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 1 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight")
+                .replace(" late = self.late;", "")
+                .replace(
+                    "-> A::Call::send(self)",
+                    "-> any;\nensure fair weak A::Call::send",
+                )
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_hidden_initials(&abstract_document, &[false, true]);
+
+    let certificate = certified(&world);
+    let part = certificate.refinement.as_ref().expect("refinement part");
+    assert!(
+        part.taken.iter().any(|taken| {
+            let Some(Taken::CandidateSteps(rows)) = taken else {
+                return false;
+            };
+            rows.iter().enumerate().any(|(index, row)| {
+                rows[index + 1..].iter().any(|other| {
+                    row.pre_candidate == other.pre_candidate
+                        && row.post_candidate == other.post_candidate
+                        && row.post_state == other.post_state
+                        && row.transition.is_some()
+                        && other.transition.is_some()
+                        && row.transition != other.transition
+                })
+            })
+        }),
+        "two transitions from one candidate share the same post candidate ordinal"
+    );
+
+    let outcome = both_halves(&world);
+    assert!(
+        matches!(&outcome.liveness, Some(TimedLivenessHalf::Checked(_))),
+        "candidate liveness checks the shared-ordinal relation rows: {:?}",
+        outcome.liveness
+    );
+}
+
 /// A looping world: the concrete `send` needs `x = 1`, resets `x` and is held
 /// by `x <= 1`; the abstract `send` has no guard and does not reset `y`, so
 /// `y` grows by one per loop. `invariants` are the abstract time invariants,
@@ -760,6 +888,74 @@ fn landing(abstract_guard: &str) -> Refining {
     )
     .unwrap_or_else(|refusals| panic!("{refusals:?}"))
     .with_abstract_hidden_initials(&abstract_document, &[false])
+}
+
+/// A concrete `send` is enabled at zero, fails its mapped abstract guard over
+/// the whole source zone, and lands in an invariant-locked successor. The
+/// producer records the failure as completeness loss because no
+/// time-divergent behaviour is admitted.
+fn undelayed_failure_into_locked_successor() -> Refining {
+    let abstract_document = abstract_document(&[("send", &["inflight"])]);
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASendable using v on A::Call::send {{ self.y < 0 ms }}\n\
+             time invariant MCap when {{ true }} {{ self.x <= 0 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 0 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight").replace(" late = self.late;", "")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_hidden_initials(&abstract_document, &[false])
+}
+
+/// An undelayed failing mapped edge into a time-locked successor does not
+/// produce a refutation or a proof: the producer settles only the explicit
+/// `NoAdmittedBehaviour` completeness outcome.
+#[trace(
+    "TC-699",
+    "TC-700",
+    "FSpec-FR-740-AC-6",
+    "FSpec-FR-418-AC-22",
+    "FR-244-AC-8",
+    "FR-245-AC-12"
+)]
+#[test]
+fn an_undelayed_failure_into_a_locked_successor_is_completeness_only() {
+    let world = undelayed_failure_into_locked_successor();
+    let mut request = safety_request(&world);
+    request.limits = LIMITS;
+    let outcome =
+        check_timed_refinement(request, &Cancel::new()).expect("EN-6 checks the timed refinement");
+    assert!(
+        matches!(
+            outcome.safety,
+            TimedSafetyOutcome::Undecided {
+                cause: TimedRefinementUndecided::Zone(ZoneUndecided::NoAdmittedBehaviour),
+                ..
+            }
+        ),
+        "the producer must preserve this as completeness loss: {outcome:?}"
+    );
+    let record = settle_timed_refinement(
+        &outcome,
+        &Cancel::new(),
+        |_| panic!("an undecided producer outcome has no proof certificate"),
+        |_| panic!("an undecided producer outcome has no counterexample"),
+    );
+    assert_eq!(
+        record.value,
+        TerminalValue::Inconclusive(InconclusiveCause::NoAdmittedBehaviour)
+    );
+    assert!(
+        record.counterexample.is_none(),
+        "the edge is not a refutation"
+    );
 }
 
 /// The guard failure is judged on the delayed landing zone, so it refutes;
@@ -1045,6 +1241,59 @@ fn timed_hidden_a_survivor_that_violates_the_claim_is_a_lasso_through_the_death(
         "the lasso passes the death at y = 2: {first:?}"
     );
     assert_reproduced(&world, &counterexample);
+}
+
+/// A free poll may occur any time after 1 and is bounded by 3. The candidate
+/// dies just after its invariant boundary at 2, so replay must retain the
+/// death instant on a loop whose first delay is greater than 2.
+#[trace(
+    "TC-2538",
+    "FSpec-FR-740-AC-4",
+    "FSpec-FR-418-AC-22",
+    "FR-244-AC-8",
+    "FR-245-AC-12"
+)]
+#[test]
+fn free_poll_replays_a_lasso_past_the_candidate_death_instant() {
+    let world = free_polling(DIES_FALSE, FAIR_IDLE);
+    let counterexample = liveness_violation(&world);
+    let delay = counterexample
+        .prefix
+        .first()
+        .and_then(|step| step.delay.clone())
+        .expect("first poll has a delay");
+    assert!(delay > filament_exact::Rational::from_integer(Integer::from(2_i64)));
+    assert_reproduced(&world, &counterexample);
+}
+
+fn free_polling(invariants: &str, ensures: &str) -> Refining {
+    let abstract_document = abstract_document(&[("send", &["inflight"]), ("idle", &["inflight"])]);
+    let concrete = document(&["x"], &[("send", &["inflight"]), ("poll", &["x"])]);
+    refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             pre ASendable using v on A::Call::send {{ not self.inflight }}\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre AIdleable using v on A::Call::idle {{ self.h }}\n\
+             post AIdled using v on A::Call::idle {{ self.inflight = pre(self.inflight) }}\n\
+             {invariants}\n\
+             pre MSend using v on M::Call::send {{ not self.inflight }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n\
+             time invariant MBound when {{ true }} {{ self.x <= 3 ms }}\n\
+             pre MPoll using v on M::Call::poll {{ not self.inflight and self.x >= 1 ms }}\n\
+             post MPolled using v on M::Call::poll {{ self.x = 0 ms }}\n{}",
+            refinement("self.inflight")
+                .replace(" late = self.late;", "")
+                .replace(
+                    "step M::Call::send -> A::Call::send(self);",
+                    &format!("step M::Call::send -> A::Call::send(self);\nstep M::Call::poll -> stutter;\n{ensures}"),
+                )
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_hidden_initials(&abstract_document, &[false, true])
 }
 
 /// The soundness case: the `not h` candidate would run fair for ever (it never

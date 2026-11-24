@@ -28,7 +28,7 @@ use fsl_foundation::selection::ProfileSelection;
 use fsl_foundation::IntakeLimits;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckCause, PackageDeclarations};
-use fsl_semantics::model::accounting::{ChargePoint, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{ModelNormalizationLimits, NormalizationChargePoint};
 use fsl_semantics::model::domain_package::{DomainPackage, DomainPackageRef};
 use fsl_semantics::model::intake::{admit_unit, package_input, read_domain_package};
 use fsl_semantics::model::normalize::{normalize_with_meter, EffectiveView, NormalizeOutcome};
@@ -201,7 +201,7 @@ fn model_package_with(
             meter
                 .admitted_charges()
                 .iter()
-                .filter(|charge| **charge == ChargePoint::NormalizeRecord)
+                .filter(|charge| **charge == NormalizationChargePoint::NormalizeRecord)
                 .count(),
             charges,
             "TC-235 normalize.record charge count"
@@ -1150,7 +1150,7 @@ fn tc235_m15_run6_operation_requires_reading_pre_refuses() {
         fsl_foundation::diagnostic::Code::WrongSnapshot
     );
     assert!(matches!(
-        refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     ));
     assert_eq!(
@@ -1217,7 +1217,7 @@ fn operation_clause_refusals_are_located_by_kind_and_position() {
         .expect_err("the second requires reads pre");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert!(matches!(
-        refusals[0].cause,
+        refusals[0].cause.as_ref(),
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     ));
     assert_eq!(

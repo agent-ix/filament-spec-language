@@ -91,23 +91,23 @@ pub use abstraction::{
 };
 pub use abstraction::{AbstractionNodeRefusal, AbstractionNodes};
 pub use composition::{
-    composition_components, CheckedComponent, CheckedComposition, ClauseRef, ComponentGuaranteeKey,
-    ComponentPackages, ComponentSubject, CompositionClauseFacts, CompositionCycle,
-    CompositionGraphErrorCode, CompositionGraphRefusal, CompositionGuarantee, CompositionItem,
-    CompositionName, CompositionPremise, CompositionRefusal, CompositionSlot, CompositionSlotKey,
-    CompositionSpans, CompositionSupply, ItemPlacement, MalformedMember, ReadClause, ReadComponent,
-    ReadComposition, ReadGuaranteeMember, ReadPremise, ReadSupply,
+    CheckedComponent, CheckedComposition, ClauseRef, ComponentGuaranteeKey, ComponentPackages,
+    ComponentSubject, CompositionClauseFacts, CompositionCycle, CompositionGraphErrorCode,
+    CompositionGraphRefusal, CompositionGuarantee, CompositionItem, CompositionName,
+    CompositionPremise, CompositionRefusal, CompositionSlot, CompositionSlotKey, CompositionSpans,
+    CompositionSupply, ItemPlacement, MalformedMember, ReadClause, ReadComponent, ReadComposition,
+    ReadGuaranteeMember, ReadPremise, ReadSupply, composition_components,
 };
 pub use dispatch_link::PendingLinks;
 pub use extension::{ExtensionCause, NamedDeclaration};
 pub use guarantee::{
-    check_member_values, granularity_spelling, kind_spelling, CheckedImplementationGuarantee,
-    ClauseConstraint, Correspondence, EnvironmentMember, ExtentClass, GuaranteeClause,
-    GuaranteeItemRefusal, GuaranteeName, GuaranteeRefusal, GuaranteeSlot, GuaranteeSpans, ItemKind,
-    MeasureValue, MemberValues, ProgressMeasure, ProgressMember, ReadEnvironment, ReadGuarantee,
-    ReadProgress, RustMember, SlotBacking, SlotKey, SlotRole, SubjectOperation, Supplies,
+    CheckedImplementationGuarantee, ClauseConstraint, Correspondence, EnvironmentMember,
+    ExtentClass, GuaranteeClause, GuaranteeItemRefusal, GuaranteeName, GuaranteeRefusal,
+    GuaranteeSlot, GuaranteeSpans, ItemKind, MeasureValue, MemberValues, ProgressMeasure,
+    ProgressMember, ReadEnvironment, ReadGuarantee, ReadProgress, RustMember, SlotBacking, SlotKey,
+    SlotRole, SubjectOperation, Supplies, check_member_values, granularity_spelling, kind_spelling,
 };
-pub use rust_syntax::{path_defect, PathDefect};
+pub use rust_syntax::{PathDefect, path_defect};
 mod facts;
 mod family;
 // The scalar limits of a caller that bounds nothing itself, for the model
@@ -141,7 +141,7 @@ mod layer;
 pub(crate) mod lowering;
 pub(crate) use assemble::variant_type_declarations;
 pub(crate) use lowering::record_node_key;
-pub use lowering::{protocol_site, ProtocolSite, RelatedSide};
+pub use lowering::{ProtocolSite, RelatedSide, protocol_site};
 mod extension;
 mod hybrid;
 mod hybrid_locus;
@@ -192,8 +192,8 @@ pub mod test_support {
 mod settings;
 mod source_model;
 pub use source_model::{
-    object_types_of_source_rows, package_of_source_rows, source_identity, source_type_node_key,
-    SourceRowObject, SourceRowOperation, SourceRowParameter,
+    SourceRowObject, SourceRowOperation, SourceRowParameter, object_types_of_source_rows,
+    package_of_source_rows, source_identity, source_type_node_key,
 };
 mod finite_domain;
 mod plan_value;
@@ -228,7 +228,7 @@ pub use probabilistic::{
     PackageWeight, PackageWorkload, ReadReward,
 };
 pub use state_model::StateModelRefusal;
-pub use sum_case::{mint_union_member_key, ExhaustivenessObligation, SumCaseCause};
+pub use sum_case::{ExhaustivenessObligation, SumCaseCause, mint_union_member_key};
 pub use task_set::{
     Arrival, CheckedScheduleClaim, CheckedTaskSets, Criticality, ModeSwitch, Release,
     ScheduleClaim, SchedulingPolicy, Task, TaskSet, TaskSetDeclaration, TaskSetUnit, Wcet,
@@ -238,20 +238,20 @@ pub mod stratum;
 mod termination;
 pub mod wire_id;
 pub use refinement::{
-    observation, AbstractSide, AbstractStepClass, AbstractStepKind, ChannelStepKind,
-    CheckedRefinement, CheckedRow, FieldRow, HistoryRow, HistoryUpdate, KeyedCatalogClass,
-    KeyedClassCatalog, KeyedMemoryClass, LabelStep, ListDefect, ListDefectKind, MemoryStepKind,
-    ObjectRow, PopulationRow, PopulationUse, PopulationValue, ProtocolStepKind,
-    RefinementCatalogClass, RefinementCatalogNode, RefinementCause, RefinementClassCatalog,
-    RefinementDeclaration, RefinementFairness, RefinementFairnessOrigin, RefinementRefusal,
-    RefinementStepSource, RefinementSupport, RefinementThreadTarget, RefinementV2Emission,
-    RefinementV2EncodingError, RoleStepKind, RowClass, RowObservation, StepClass, StepLabel,
-    StepRow, StepTarget, UnsupportedFeature,
+    AbstractSide, AbstractStepClass, AbstractStepKind, ChannelStepKind, CheckedRefinement,
+    CheckedRow, FieldRow, HistoryRow, HistoryUpdate, KeyedCatalogClass, KeyedClassCatalog,
+    KeyedMemoryClass, LabelStep, ListDefect, ListDefectKind, MemoryStepKind, ObjectRow,
+    PopulationRow, PopulationUse, PopulationValue, ProtocolStepKind, RefinementCatalogClass,
+    RefinementCatalogNode, RefinementCause, RefinementClassCatalog, RefinementDeclaration,
+    RefinementFairness, RefinementFairnessOrigin, RefinementRefusal, RefinementStepSource,
+    RefinementSupport, RefinementThreadTarget, RefinementV2Emission, RefinementV2EncodingError,
+    RoleStepKind, RowClass, RowObservation, StepClass, StepLabel, StepRow, StepTarget,
+    UnsupportedFeature, observation,
 };
 pub use terminal::{
-    terminal_predicate_site, CheckedTerminal, CheckedTerminalPredicate, TerminalClauseDeclaration,
-    TerminalClauseKind, TerminalDeclaration, TerminalKeys, TerminalMismatch, TerminalMode,
-    TerminalNode, TerminalRefusal,
+    CheckedTerminal, CheckedTerminalPredicate, TerminalClauseDeclaration, TerminalClauseKind,
+    TerminalDeclaration, TerminalKeys, TerminalMismatch, TerminalMode, TerminalNode,
+    TerminalRefusal, terminal_predicate_site,
 };
 mod type_form;
 mod type_invariant;
@@ -263,7 +263,7 @@ use crate::model::domain_package::DomainPackageRef;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub use check::FormedUnits;
-use check::{bind_parameters, reserved_slot_refusal, NamedScope, Typer};
+use check::{NamedScope, Typer, bind_parameters, reserved_slot_refusal};
 // `Signature` is public only under `test-support`: the layer-5 evaluator's
 // tests build the resolved `Signature` `declarations_for` takes as
 // `own_signature`; no shipped caller outside `check` names it.
@@ -279,8 +279,8 @@ use filament_exact::{Cancel, ValueType};
 use fsl_forms::{ClauseKind, Expression, FunctionDeclaration};
 use fsl_foundation::diagnostic::{Locus, StageFailure};
 use fsl_foundation::source::node_table::{
-    scoped, standalone, DebugTable, DebugWith, Maybe, NodeKeyDebug, NodeList, NodeMap,
-    NodeValueMap, Seq, ValueMap, With,
+    DebugTable, DebugWith, Maybe, NodeKeyDebug, NodeList, NodeMap, NodeValueMap, Seq, ValueMap,
+    With, scoped, standalone,
 };
 use fsl_foundation::source::provenance::{OccurrenceKey, SourceRegion};
 use std::fmt;
@@ -292,14 +292,14 @@ pub use claims::{
 pub use family::{CheckedDeclaration, ValueDeclarations, ValueFunctionFamily};
 pub use model_gate::{ModelFamily, ModelGateRefusal, OwnerKind};
 pub use profile::{
-    integer_division_role, resolve_integer_division, resolve_profiles, ProfileCause, ProfileRefusal,
+    ProfileCause, ProfileRefusal, integer_division_role, resolve_integer_division, resolve_profiles,
 };
 // Named only by `fixtures::measure_resolved`'s return type.
 #[cfg(any(test, feature = "test-support"))]
 pub use family::DeclarationMetrics;
 pub use lowering::{
-    model_root_key, AdmittedModel, ForeignView, ModelClause, SemanticGraph, SemanticNode,
-    SourceCollection, SourceEnumDeclaration, SourceEnumMember,
+    AdmittedModel, ForeignView, ModelClause, SemanticGraph, SemanticNode, SourceCollection,
+    SourceEnumDeclaration, SourceEnumMember, model_root_key,
 };
 pub use node_key::{
     AbstractionTerm, ExtensionClauseTerm, ExtensionTerm, FrameEntry, ObjectEntry, PopulationEntry,
@@ -373,7 +373,12 @@ pub(crate) fn clock_reference_type() -> filament_exact::ValueType {
     filament_exact::ValueType::ClockReference
 }
 
-pub(crate) fn clock_reference_target() -> filament_exact::EffectiveId {
+/// Effective object type identity carried by a canonical clock-place reference.
+///
+/// Model evaluators use this identity when translating a retained
+/// `ClockPlaceReference` into the common reference-key form used by candidate
+/// enumeration.
+pub fn clock_reference_target() -> filament_exact::EffectiveId {
     filament_exact::EffectiveId::new(
         None,
         filament_exact::OriginalDeclarationKey::new("filament/native", "Clock"),
@@ -485,9 +490,9 @@ pub fn builtin_text_type_key(
 // the layer-5 evaluator's tests reach them without widening the items.
 #[cfg(any(test, feature = "test-support"))]
 pub use family::fixtures::{
-    admitted_source, check_context, declaration, declaration_signature, declarations_for,
-    empty_scope, fixture_source, json_depth, limits, measure_resolved, received_kernel_causes,
-    root_location, scope_with, SCALAR_LIMITS_UNLIMITED,
+    SCALAR_LIMITS_UNLIMITED, admitted_source, check_context, declaration, declaration_signature,
+    declarations_for, empty_scope, fixture_source, json_depth, limits, measure_resolved,
+    received_kernel_causes, root_location, scope_with,
 };
 pub use ir::{
     CheckedBody, CheckedNode, EqualityConversionEdgeIdentity, EqualityDimensionIdentity,
@@ -503,8 +508,8 @@ pub use assemble::model_type_environment;
 pub use assemble::{
     AdmittedImport, AssemblyCause, AssemblyError, AssemblyLimits, AssemblyRefusal, AssemblyRun,
     ClockReadingDeclaration, ClockSite, ClockSlot, ClockTypePosition, ClockUse,
-    DimensionEquivalence, EquivalenceClasses, EquivalenceFault, EquivalenceRetained,
-    SourceObjectFault, TimedDeclaration, TopologyFault, TopologyRetained, DEFAULT_DECIMAL_SCALE,
+    DEFAULT_DECIMAL_SCALE, DimensionEquivalence, EquivalenceClasses, EquivalenceFault,
+    EquivalenceRetained, SourceObjectFault, TimedDeclaration, TopologyFault, TopologyRetained,
 };
 pub use capability::{
     Capability, DeclarationFamily, NegotiationCause, NegotiationOutcome, UnknownCapabilityLabel,
@@ -516,8 +521,8 @@ pub use check::{
 #[cfg(any(test, feature = "test-support"))]
 pub use checked_dispatch::checked_dispatch_selected_operation;
 pub use checked_dispatch::{
-    checked_dispatch_operation, object_type_supertypes, DispatchBridgeRefusal, DispatchRoot,
-    MissingClauseField, OperationClauses,
+    DispatchBridgeRefusal, DispatchRoot, MissingClauseField, OperationClauses,
+    checked_dispatch_operation, object_type_supertypes,
 };
 /// A clock role's configuration, as a request's `clocks` member writes it and
 /// [`PackageDeclarations::with_clock_configurations`] takes it (FR-640).
@@ -553,28 +558,27 @@ pub use fsl_forms::{
     ProtocolNodeKind, QuantifierKind, StateClauseKind,
 };
 pub use hybrid::{
-    hybrid_horizon, ArithmeticOp, CaptureIndex, CheckedFunctionRef, CheckedHybridClaim,
-    CheckedHybridModel, CheckedMode, CheckedTransition, CompareOp, ContinuousVariable,
-    HorizonOutOfRange, HybridActivation, HybridCapture, HybridCause, HybridClaimDeclaration,
-    HybridClock, HybridDeclaration, HybridFairness, HybridFormula, HybridHorizon, HybridInterval,
+    ArithmeticOp, CaptureIndex, CheckedFunctionRef, CheckedHybridClaim, CheckedHybridModel,
+    CheckedMode, CheckedTransition, CompareOp, ContinuousVariable, HorizonOutOfRange,
+    HybridActivation, HybridCapture, HybridCause, HybridClaimDeclaration, HybridClock,
+    HybridDeclaration, HybridFairness, HybridFormula, HybridHorizon, HybridInterval,
     HybridModelIndex, HybridTerm, InitialEntry, LogicOp, MalformedReason, ModeIndex,
-    ResetConstraint, TransitionIndex, VariableClass, VariableIndex,
+    ResetConstraint, TransitionIndex, VariableClass, VariableIndex, hybrid_horizon,
 };
 pub use hybrid_locus::{HybridTermHome, HybridTermNode};
 #[cfg(any(test, feature = "test-support"))]
 pub use hyper_clause::check_hyper_clauses;
 pub use hyper_clause::{
-    decodable_argument, operation_text, ArgumentRead, AtomSlot, CheckedFiniteHyperClause,
-    CheckedFiniteTraceQuantifier, CheckedHyper, CheckedHyperClause, CheckedModelRelation,
-    CheckedQuantifier, CheckedStepPredicate, CopyGenerator, CopyGroup, HyperCause,
-    HyperDeclaration, HyperDeclarations, HyperForm, HyperIdentity, HyperTraceFamily,
-    HyperUnsupported, MatchPart, ModelAlias, ObjectParameter, OperationContractClaim,
-    PackageHyperForm, PackageHyperParameter, PackageHyperQuantifier, StepRead, STUTTER_TEXT,
+    ArgumentRead, AtomSlot, CheckedFiniteHyperClause, CheckedFiniteTraceQuantifier, CheckedHyper,
+    CheckedHyperClause, CheckedModelRelation, CheckedQuantifier, CheckedStepPredicate,
+    CopyGenerator, CopyGroup, HyperCause, HyperDeclaration, HyperDeclarations, HyperForm,
+    HyperIdentity, HyperTraceFamily, HyperUnsupported, MatchPart, ModelAlias, ObjectParameter,
+    OperationContractClaim, PackageHyperForm, PackageHyperParameter, PackageHyperQuantifier,
+    STUTTER_TEXT, StepRead, decodable_argument, operation_text,
 };
 pub use identity::{
-    to_kernel_value_type, CheckedClauseKind, CheckedTypeNode, CompositeForm,
-    CorrespondenceConflict, InvalidSumVariants, ModelCorrespondence, ScalarShape, SumVariant,
-    SumVariants,
+    CheckedClauseKind, CheckedTypeNode, CompositeForm, CorrespondenceConflict, InvalidSumVariants,
+    ModelCorrespondence, ScalarShape, SumVariant, SumVariants, to_kernel_value_type,
 };
 pub use ir::{
     CollectionLoss, CollectionProperty, DispatchCandidate, DispatchProducerDecision, DispatchTable,
@@ -617,27 +621,28 @@ pub use refusal::{
     TimeUnitCause, TimedConstruct, TimedOmission, UnwrittenTimedMember,
 };
 pub use state_graph_claim::{
-    state_graph_predicate_site, CheckedPredicateBody, CheckedStateGraphClaim,
-    CheckedStatePredicate, OverParameter, PackagePredicate, PackageStateGraphForm,
-    PackageStateGraphKind, PackageStatePredicate, StateGraphClaim, StateGraphDeclaration,
-    StateGraphFamily, StateGraphForm, StatePredicate,
+    CheckedPredicateBody, CheckedStateGraphClaim, CheckedStatePredicate, OverParameter,
+    PackagePredicate, PackageStateGraphForm, PackageStateGraphKind, PackageStatePredicate,
+    StateGraphClaim, StateGraphDeclaration, StateGraphFamily, StateGraphForm, StatePredicate,
+    state_graph_predicate_site,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use temporal_clause::check_clauses;
 
 pub use fsl_forms::AggregateComparison;
 pub use lowering::{
-    clock_field_member_type, collection_kind, CollectionShape, PlaceRow, PlaceStep,
-    SelectedModelUnion, SelectedModelUnionCase, SelectedModelUnionPayload, SourceClockEntry,
-    SourceClockMembers,
+    CollectionShape, PlaceRow, PlaceStep, SelectedModelUnion, SelectedModelUnionCase,
+    SelectedModelUnionPayload, SourceClockEntry, SourceClockMembers, clock_field_member_type,
+    collection_kind,
 };
 pub use temporal_clause::{
     Activation, AggregateKind, AggregateWindow, BinaryTemporal, CaptureSite, CheckedAggregate,
     CheckedFormula, CheckedInterval, CheckedOperator, CheckedProtocolFairness,
-    CheckedProtocolTarget, CheckedTemporalClause, ClockUnitSelection, DurationWindow, FormulaNode,
-    FormulaNodeId, ModelTimeBinding, ModelTimeSource, TemporalClaim, TemporalDeclaration,
-    TemporalDeclarations, TemporalSelection, TemporalTraceFamily, TimeNominalForm, TimeNominalNode,
-    TimeNominalOrigin, TimeSourceKind, TimedPropertyForm, UnaryTemporal, DEFAULT_CLOCK_ROLE,
+    CheckedProtocolTarget, CheckedTemporalClause, ClockUnitSelection, DEFAULT_CLOCK_ROLE,
+    DurationWindow, FormulaNode, FormulaNodeId, ModelTimeBinding, ModelTimeSource, TemporalClaim,
+    TemporalDeclaration, TemporalDeclarations, TemporalSelection, TemporalTraceFamily,
+    TimeNominalForm, TimeNominalNode, TimeNominalOrigin, TimeSourceKind, TimedPropertyForm,
+    UnaryTemporal,
 };
 pub use temporal_clause::{
     PackageClauseForm, PackageClauseRefusal, PackageFormulaNode, PackagePropertyRefusal,
@@ -2143,7 +2148,7 @@ fn operation_frames<'a>(
 fn invalid_dispatch(location: Location, detail: InvalidDispatchDeclaration) -> CheckRefusal {
     CheckRefusal {
         location,
-        cause: CheckCause::InvalidDispatchDeclaration(Box::new(detail)),
+        cause: Box::new(CheckCause::InvalidDispatchDeclaration(Box::new(detail))),
     }
 }
 
@@ -2448,13 +2453,13 @@ impl PackageDeclarations {
             if let Some(cause) = verification_plan_refusal(&self, plan) {
                 return Err(vec![CheckRefusal {
                     location: root(Origin::Expression),
-                    cause,
+                    cause: Box::new(cause),
                 }]);
             }
             if let Some(edges) = verification_plan_cycle(plan) {
                 return Err(vec![CheckRefusal {
                     location: root(Origin::Expression),
-                    cause: CheckCause::DefinitionCycle { edges },
+                    cause: Box::new(CheckCause::DefinitionCycle { edges }),
                 }]);
             }
         }
@@ -2466,10 +2471,10 @@ impl PackageDeclarations {
             {
                 return Err(vec![CheckRefusal {
                     location: root(Origin::Expression),
-                    cause: CheckCause::SynthesisUnboundedDomain {
+                    cause: Box::new(CheckCause::SynthesisUnboundedDomain {
                         component,
                         span: synthesis.domain.span,
-                    },
+                    }),
                 }]);
             }
         }
@@ -2540,13 +2545,13 @@ impl PackageDeclarations {
                             if let Some(&first) = seen_time_sources.get(&key) {
                                 return Some(CheckRefusal {
                                     location: root(Origin::Expression),
-                                    cause: CheckCause::Temporal(Box::new(
+                                    cause: Box::new(CheckCause::Temporal(Box::new(
                                         TemporalCause::DuplicateTimeSource {
                                             model: source.model.name.clone(),
                                             first,
                                             span: source.span,
                                         },
-                                    )),
+                                    ))),
                                 });
                             }
                             seen_time_sources.insert(key, source.span);
@@ -2569,7 +2574,7 @@ impl PackageDeclarations {
                                     };
                                     return Some(CheckRefusal {
                                         location: root(Origin::Expression),
-                                        cause: CheckCause::Temporal(Box::new(cause)),
+                                        cause: Box::new(CheckCause::Temporal(Box::new(cause))),
                                     });
                                 };
                                 let target = match units.target(&source.unit.name) {
@@ -2577,23 +2582,23 @@ impl PackageDeclarations {
                                     Ok(None) => {
                                         return Some(CheckRefusal {
                                             location: root(Origin::Expression),
-                                            cause: CheckCause::Temporal(Box::new(
+                                            cause: Box::new(CheckCause::Temporal(Box::new(
                                                 TemporalCause::MalformedTimeUnit {
                                                     name: source.unit.name.clone(),
                                                     span: source.unit.span,
                                                 },
-                                            )),
+                                            ))),
                                         });
                                     }
                                     Err(cause) => {
                                         return Some(CheckRefusal {
                                             location: root(Origin::Expression),
-                                            cause: CheckCause::Temporal(Box::new(
+                                            cause: Box::new(CheckCause::Temporal(Box::new(
                                                 TemporalCause::TimeQuantity {
                                                     cause: Box::new(cause),
                                                     span: source.unit.span,
                                                 },
-                                            )),
+                                            ))),
                                         });
                                     }
                                 };
@@ -2617,7 +2622,9 @@ impl PackageDeclarations {
                                             };
                                             return Some(CheckRefusal {
                                                 location: root(Origin::Expression),
-                                                cause: CheckCause::Temporal(Box::new(cause)),
+                                                cause: Box::new(CheckCause::Temporal(Box::new(
+                                                    cause,
+                                                ))),
                                             });
                                         };
                                         tick_operation_key = Some((*resolved).clone());
@@ -2630,10 +2637,10 @@ impl PackageDeclarations {
                                             Err(probabilistic::ExactFault::ZeroDenominator) => {
                                                 return Some(CheckRefusal {
                                                     location: root(Origin::Expression),
-                                                    cause: CheckCause::Temporal(Box::new(
-                                                        TemporalCause::ZeroDenominator {
+                                                    cause: Box::new(CheckCause::Temporal(
+                                                        Box::new(TemporalCause::ZeroDenominator {
                                                             span: period.magnitude.span,
-                                                        },
+                                                        }),
                                                     )),
                                                 });
                                             }
@@ -2642,8 +2649,8 @@ impl PackageDeclarations {
                                             }) => {
                                                 return Some(CheckRefusal {
                                                     location: root(Origin::Expression),
-                                                    cause: CheckCause::ResourceExhausted(Box::new(
-                                                        StageLimitCause {
+                                                    cause: Box::new(CheckCause::ResourceExhausted(
+                                                        Box::new(StageLimitCause {
                                                             stage: CheckingStage::Typing,
                                                             kind: CheckingLimitKind::RationalBits,
                                                             limit: limits.rational_bits(),
@@ -2653,7 +2660,7 @@ impl PackageDeclarations {
                                                                 self.embedding.as_deref(),
                                                                 period.magnitude.span,
                                                             ),
-                                                        },
+                                                        }),
                                                     )),
                                                 });
                                             }
@@ -2679,11 +2686,11 @@ impl PackageDeclarations {
                                                 };
                                                 return Some(CheckRefusal {
                                                     location: root(Origin::Expression),
-                                                    cause: CheckCause::Temporal(Box::new(
-                                                        TemporalCause::TimeQuantity {
+                                                    cause: Box::new(CheckCause::Temporal(
+                                                        Box::new(TemporalCause::TimeQuantity {
                                                             cause: Box::new(cause),
                                                             span,
-                                                        },
+                                                        }),
                                                     )),
                                                 });
                                             }
@@ -2693,11 +2700,11 @@ impl PackageDeclarations {
                                         {
                                             return Some(CheckRefusal {
                                                 location: root(Origin::Expression),
-                                                cause: CheckCause::Temporal(Box::new(
+                                                cause: Box::new(CheckCause::Temporal(Box::new(
                                                     TemporalCause::InvalidTickPeriod {
                                                         span: period.span,
                                                     },
-                                                )),
+                                                ))),
                                             });
                                         }
                                         TimeSourceKind::Tick {
@@ -2724,12 +2731,12 @@ impl PackageDeclarations {
                             }
                             return Some(CheckRefusal {
                                 location: root(Origin::Expression),
-                                cause: CheckCause::Temporal(Box::new(
+                                cause: Box::new(CheckCause::Temporal(Box::new(
                                     TemporalCause::MissingTimedModel {
                                         name: source.model.name.clone(),
                                         span: source.model.span,
                                     },
-                                )),
+                                ))),
                             });
                         }
                         // FR-230 "Clock-typed positions": a `Clock` in a
@@ -2745,7 +2752,7 @@ impl PackageDeclarations {
                                 // reset.
                                 ClockSite::Expression(used) => Some(CheckRefusal {
                                     location: root(Origin::Expression),
-                                    cause: CheckCause::Temporal(Box::new(match used {
+                                    cause: Box::new(CheckCause::Temporal(Box::new(match used {
                                         ClockUse::Literal => TemporalCause::ClockWrite {
                                             span: position.span,
                                         },
@@ -2756,7 +2763,7 @@ impl PackageDeclarations {
                                                 span: position.span,
                                             }
                                         }
-                                    })),
+                                    }))),
                                 }),
                             };
                         }
@@ -2773,7 +2780,7 @@ impl PackageDeclarations {
                     }));
                     Some(CheckRefusal {
                         location: root(Origin::Expression),
-                        cause,
+                        cause: Box::new(cause),
                     })
                 })
                 .collect::<Vec<_>>();
@@ -2866,7 +2873,7 @@ impl PackageDeclarations {
                 for finding in checked.findings {
                     refusals.push(CheckRefusal {
                         location: root(Origin::Expression),
-                        cause: match finding {
+                        cause: Box::new(match finding {
                             task_set::Finding::Cause(cause) => {
                                 CheckCause::Temporal(Box::new(cause))
                             }
@@ -2883,20 +2890,22 @@ impl PackageDeclarations {
                                     ),
                                 }))
                             }
-                        },
+                        }),
                     });
                 }
                 checked_task_sets = checked.model;
             } else {
                 refusals.extend(self.task_set_forms.iter().map(|form| CheckRefusal {
                     location: root(Origin::Expression),
-                    cause: CheckCause::Temporal(Box::new(TemporalCause::TimedFacetRequired {
-                        construct: form.construct(),
-                        owner: form.owner(),
-                        selected: selected.clone(),
-                        required,
-                        span: form.span(),
-                    })),
+                    cause: Box::new(CheckCause::Temporal(Box::new(
+                        TemporalCause::TimedFacetRequired {
+                            construct: form.construct(),
+                            owner: form.owner(),
+                            selected: selected.clone(),
+                            required,
+                            span: form.span(),
+                        },
+                    ))),
                 }));
             }
         }
@@ -2937,10 +2946,10 @@ impl PackageDeclarations {
             if loci.len() > 1 {
                 refusals.push(CheckRefusal {
                     location,
-                    cause: CheckCause::AmbiguousName {
+                    cause: Box::new(CheckCause::AmbiguousName {
                         name: name.to_owned(),
                         loci: loci.to_vec(),
-                    },
+                    }),
                 });
             }
         }
@@ -2975,7 +2984,7 @@ impl PackageDeclarations {
         }) {
             return Err(vec![CheckRefusal {
                 location: root(Origin::Expression),
-                cause: CheckCause::MissingName(name.clone()),
+                cause: Box::new(CheckCause::MissingName(name.clone())),
             }]);
         }
         // Every declared signature is resolved against the package `Scope`
@@ -3263,15 +3272,17 @@ impl PackageDeclarations {
         let plan_populations = NamedScope::of(&self.models, &scope, None);
         let checked_syntheses = synthesis::check_forms(
             &self.synthesis_forms,
-            &scope,
-            &signatures,
-            &plan_populations,
-            &self.source,
-            &self.source_owners,
-            &self.package_name,
-            &self.models,
-            &dispatch_tables,
-            &mut contract_meter,
+            synthesis::SynthesisCheckContext {
+                scope: &scope,
+                signatures: &signatures,
+                named: &plan_populations,
+                source: &self.source,
+                source_owners: &self.source_owners,
+                package_name: &self.package_name,
+                models: &self.models,
+                dispatch_tables: &dispatch_tables,
+                sealing_meter: &mut contract_meter,
+            },
         )?;
         let mut seen_operations = std::collections::BTreeSet::new();
         for operation in &scope.dispatch_operations {
@@ -3398,6 +3409,10 @@ impl PackageDeclarations {
         let models = self.models;
         let operation_effects = checked_model_operation_effects(&models, &source);
         let model_inputs = self.model_inputs;
+        let model_versions = model_inputs
+            .as_ref()
+            .map(|(_, versions, _)| versions.clone())
+            .unwrap_or_default();
         let mut pending_types = self
             .pending_types
             .map(|staged| std::cell::RefCell::new(staged.0));
@@ -3464,9 +3479,9 @@ impl PackageDeclarations {
                 if !existing.same_package(model) {
                     return Err(vec![CheckRefusal {
                         location: root(Origin::Expression),
-                        cause: CheckCause::InternalFault(Box::new(
+                        cause: Box::new(CheckCause::InternalFault(Box::new(
                             KeyFault::DuplicateModelSelection(selection.identity.clone()),
-                        )),
+                        ))),
                     }]);
                 }
             } else {
@@ -3486,8 +3501,8 @@ impl PackageDeclarations {
                 Err(fault) => {
                     return Err(vec![CheckRefusal {
                         location: root(Origin::Expression),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::ModelRootKey(
-                            fault.to_string(),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(
+                            KeyFault::ModelRootKey(fault.to_string()),
                         ))),
                     }]);
                 }
@@ -3809,14 +3824,14 @@ impl PackageDeclarations {
                 Err(StageFailure::Limit(limit)) => {
                     refusals.push(CheckRefusal {
                         location: location.clone(),
-                        cause: limit_cause(&limit),
+                        cause: Box::new(limit_cause(&limit)),
                     });
                     return Err(refusals);
                 }
                 Err(StageFailure::LimitWithPayload(limit, _)) => {
                     refusals.push(CheckRefusal {
                         location: location.clone(),
-                        cause: limit_cause(&limit),
+                        cause: Box::new(limit_cause(&limit)),
                     });
                     return Err(refusals);
                 }
@@ -3824,19 +3839,23 @@ impl PackageDeclarations {
                 Err(StageFailure::Fault(fault)) => {
                     refusals.push(CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(fault))),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                            fault,
+                        )))),
                     });
                     return Err(refusals);
                 }
                 Err(StageFailure::Refused(refusal)) => {
-                    let exhausted = matches!(refusal.cause, CheckCause::ResourceExhausted(_));
+                    let exhausted =
+                        matches!(refusal.cause.as_ref(), CheckCause::ResourceExhausted(_));
                     refusals.push(refusal);
                     if exhausted {
                         return Err(refusals);
                     }
                 }
                 Err(StageFailure::RefusedWithPayload(refusal, _)) => {
-                    let exhausted = matches!(refusal.cause, CheckCause::ResourceExhausted(_));
+                    let exhausted =
+                        matches!(refusal.cause.as_ref(), CheckCause::ResourceExhausted(_));
                     refusals.push(*refusal);
                     if exhausted {
                         return Err(refusals);
@@ -3875,7 +3894,7 @@ impl PackageDeclarations {
         let mut stopped_at: Option<usize> = None;
         let redefinition_family = model_inputs
             .as_ref()
-            .map_or_else(BTreeSet::new, |(selected, _)| {
+            .map_or_else(BTreeSet::new, |(selected, _, _)| {
                 redefinition_family_keys(selected)
             });
         let mut operation_precondition_facts: BTreeMap<
@@ -3959,7 +3978,7 @@ impl PackageDeclarations {
                     Err(StageFailure::Limit(limit)) => {
                         refusals.push(CheckRefusal {
                             location,
-                            cause: limit_cause(&limit),
+                            cause: Box::new(limit_cause(&limit)),
                         });
                         if cancel.tripped().is_some() {
                             stopped_at = stopped_at_or(stopped_at, index);
@@ -3968,7 +3987,7 @@ impl PackageDeclarations {
                     Err(StageFailure::LimitWithPayload(limit, _)) => {
                         refusals.push(CheckRefusal {
                             location,
-                            cause: limit_cause(&limit),
+                            cause: Box::new(limit_cause(&limit)),
                         });
                         if cancel.tripped().is_some() {
                             stopped_at = stopped_at_or(stopped_at, index);
@@ -3980,19 +3999,23 @@ impl PackageDeclarations {
                     Err(StageFailure::Fault(fault)) => {
                         refusals.push(CheckRefusal {
                             location: location.clone(),
-                            cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(fault))),
+                            cause: Box::new(CheckCause::InternalFault(Box::new(
+                                KeyFault::StageFault(fault),
+                            ))),
                         });
                         stopped_at = stopped_at_or(stopped_at, index);
                     }
                     Err(StageFailure::Refused(refusal)) => {
-                        let exhausted = matches!(refusal.cause, CheckCause::ResourceExhausted(_));
+                        let exhausted =
+                            matches!(refusal.cause.as_ref(), CheckCause::ResourceExhausted(_));
                         refusals.push(refusal);
                         if exhausted {
                             stopped_at = stopped_at_or(stopped_at, index);
                         }
                     }
                     Err(StageFailure::RefusedWithPayload(refusal, _)) => {
-                        let exhausted = matches!(refusal.cause, CheckCause::ResourceExhausted(_));
+                        let exhausted =
+                            matches!(refusal.cause.as_ref(), CheckCause::ResourceExhausted(_));
                         refusals.push(*refusal);
                         if exhausted {
                             stopped_at = stopped_at_or(stopped_at, index);
@@ -4062,7 +4085,8 @@ impl PackageDeclarations {
                     ));
                 }
                 Err(refusal) => {
-                    let exhausted = matches!(refusal.cause, CheckCause::ResourceExhausted(_));
+                    let exhausted =
+                        matches!(refusal.cause.as_ref(), CheckCause::ResourceExhausted(_));
                     refusals.push(refusal);
                     if exhausted || cancel.tripped().is_some() {
                         return Err(refusals);
@@ -4151,10 +4175,10 @@ impl PackageDeclarations {
             {
                 refusals.push(CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::TerminalWithoutObjectType {
+                    cause: Box::new(CheckCause::TerminalWithoutObjectType {
                         name: terminal.name.clone(),
                         span: terminal.span,
-                    },
+                    }),
                 });
                 continue;
             }
@@ -4211,8 +4235,8 @@ impl PackageDeclarations {
                 else {
                     refusals.push(CheckRefusal {
                         location: Location::root(Origin::Expression),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::MissingAdmittedModel(
-                            alias.clone(),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(
+                            KeyFault::MissingAdmittedModel(alias.clone()),
                         ))),
                     });
                     return Err(refusals);
@@ -4310,11 +4334,11 @@ impl PackageDeclarations {
         for (owner, defect) in &internal_lists.defects {
             refusals.push(CheckRefusal {
                 location: Location::root(Origin::Expression),
-                cause: CheckCause::Refinement(Box::new(RefinementRefusal {
+                cause: Box::new(CheckCause::Refinement(Box::new(RefinementRefusal {
                     refinement: owner.clone().unwrap_or_default(),
                     span: fsl_foundation::Span { start: 0, end: 0 },
                     cause: RefinementCause::InternalList(defect.clone()),
-                })),
+                }))),
             });
         }
         let mut refinement_slots: Vec<Option<CheckedRefinement>> = std::iter::repeat_with(|| None)
@@ -4459,8 +4483,8 @@ impl PackageDeclarations {
                             .any(|attempt| attempt.ordering.is_some())
                 })
             })
-            .map(|(selected, _)| selected.iter().map(|model| model.view.clone()).collect());
-        if let Some((selected, mut model_meter)) = model_inputs {
+            .map(|(selected, _, _)| selected.iter().map(|model| model.view.clone()).collect());
+        if let Some((selected, _, mut model_meter)) = model_inputs {
             match model_conformance::check(
                 &selected,
                 &mut model_meter,
@@ -4474,7 +4498,7 @@ impl PackageDeclarations {
                     return Err(with_deferred(
                         vec![CheckRefusal {
                             location: root(Origin::Expression),
-                            cause: pending_refusal(failure),
+                            cause: Box::new(pending_refusal(failure)),
                         }],
                         &deferred,
                     ));
@@ -4483,9 +4507,9 @@ impl PackageDeclarations {
                     return Err(with_deferred(
                         vec![CheckRefusal {
                             location: root(Origin::Expression),
-                            cause: CheckCause::InternalFault(Box::new(
+                            cause: Box::new(CheckCause::InternalFault(Box::new(
                                 KeyFault::MissingAdmittedModel(identity),
-                            )),
+                            ))),
                         }],
                         &deferred,
                     ));
@@ -4494,7 +4518,7 @@ impl PackageDeclarations {
                     return Err(with_deferred(
                         vec![CheckRefusal {
                             location: root(Origin::Expression),
-                            cause: CheckCause::ModelIncomplete(incomplete),
+                            cause: Box::new(CheckCause::ModelIncomplete(incomplete)),
                         }],
                         &deferred,
                     ));
@@ -4505,7 +4529,7 @@ impl PackageDeclarations {
                             .into_iter()
                             .map(|failure| CheckRefusal {
                                 location: root(Origin::Expression),
-                                cause: CheckCause::ModelConformance(Box::new(failure)),
+                                cause: Box::new(CheckCause::ModelConformance(Box::new(failure))),
                             })
                             .collect(),
                         &deferred,
@@ -4521,7 +4545,7 @@ impl PackageDeclarations {
                 return Err(with_deferred(
                     vec![CheckRefusal {
                         location: root(Origin::Expression),
-                        cause: type_admission(failure),
+                        cause: Box::new(type_admission(failure)),
                     }],
                     &deferred,
                 ));
@@ -4639,13 +4663,13 @@ impl PackageDeclarations {
                     if reported_protocol_names.insert((name, span.start, span.end)) {
                         refusals.push(CheckRefusal {
                             location: root(Origin::Expression),
-                            cause: CheckCause::ProtocolAnchor(Box::new(
+                            cause: Box::new(CheckCause::ProtocolAnchor(Box::new(
                                 ProtocolAnchorCause::Ambiguous {
                                     name: protocol.name.name.clone(),
                                     loci: loci.clone(),
                                     span,
                                 },
-                            )),
+                            ))),
                         });
                     }
                 }
@@ -4896,7 +4920,7 @@ impl PackageDeclarations {
             .collect();
         for result in protocol_check_refusals.iter_mut() {
             for refusal in &mut result.refusals {
-                let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+                let CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() else {
                     continue;
                 };
                 let ProtocolAnchorCause::JoinFunctionKind { function, span, .. } = cause.as_ref()
@@ -4908,7 +4932,7 @@ impl PackageDeclarations {
                 else {
                     continue;
                 };
-                refusal.cause =
+                *refusal.cause =
                     CheckCause::ProtocolAnchor(Box::new(ProtocolAnchorCause::RefusedDependency {
                         function: function.clone(),
                         refused_dependency: Box::new(RefusedProtocolDependency {
@@ -5068,7 +5092,9 @@ impl PackageDeclarations {
                 {
                     refusals.push(CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(fault))),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                            fault,
+                        )))),
                     });
                 }
             }
@@ -5086,6 +5112,12 @@ impl PackageDeclarations {
         };
         for checked in &mut refinements {
             checked.package_name = Some(package_name.clone());
+            checked.abstract_model_version = model_versions
+                .get(&checked.abstract_model_selection().identity)
+                .cloned();
+            checked.concrete_model_version = model_versions
+                .get(&checked.concrete_model_selection().identity)
+                .cloned();
             // FSpec FR-375: the refinement's subjects are the selected model
             // packages' `model_root` nodes, of the packages its own unit
             // selects (FR-480 "Selections and imports").
@@ -5227,7 +5259,7 @@ impl PackageDeclarations {
                 Err(StageFailure::Limit(limit)) => {
                     refusals.push(CheckRefusal {
                         location: root(Origin::Expression),
-                        cause: limit_cause(&limit),
+                        cause: Box::new(limit_cause(&limit)),
                     });
                     if cancel.tripped().is_some() {
                         return Err(refusals);
@@ -5236,7 +5268,7 @@ impl PackageDeclarations {
                 Err(StageFailure::LimitWithPayload(limit, _)) => {
                     refusals.push(CheckRefusal {
                         location: root(Origin::Expression),
-                        cause: limit_cause(&limit),
+                        cause: Box::new(limit_cause(&limit)),
                     });
                     if cancel.tripped().is_some() {
                         return Err(refusals);
@@ -5246,7 +5278,9 @@ impl PackageDeclarations {
                 Err(StageFailure::Fault(fault)) => {
                     refusals.push(CheckRefusal {
                         location: root(Origin::Expression),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(fault))),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                            fault,
+                        )))),
                     });
                     return Err(refusals);
                 }
@@ -5335,7 +5369,7 @@ impl PackageDeclarations {
             ));
             refusals.extend(causes.into_iter().map(|cause| CheckRefusal {
                 location: root(Origin::Expression),
-                cause: CheckCause::Temporal(Box::new(cause)),
+                cause: Box::new(CheckCause::Temporal(Box::new(cause))),
             }));
         }
         // FR-165: each state-graph claim, checked through the `StateGraph`
@@ -5390,11 +5424,13 @@ impl PackageDeclarations {
             if let Some((_, earlier_span, _)) = earlier {
                 refusals.push(CheckRefusal {
                     location: root(Origin::Expression),
-                    cause: CheckCause::StateGraph(Box::new(StateGraphCause::AmbiguousName {
-                        name: (*name).to_owned(),
-                        earlier: *earlier_span,
-                        span: *span,
-                    })),
+                    cause: Box::new(CheckCause::StateGraph(Box::new(
+                        StateGraphCause::AmbiguousName {
+                            name: (*name).to_owned(),
+                            earlier: *earlier_span,
+                            span: *span,
+                        },
+                    ))),
                 });
                 if let Some(position) = graph {
                     collided.insert(*position);
@@ -5436,7 +5472,7 @@ impl PackageDeclarations {
                 Err(StageFailure::Limit(limit)) => {
                     refusals.push(CheckRefusal {
                         location,
-                        cause: limit_cause(&limit),
+                        cause: Box::new(limit_cause(&limit)),
                     });
                     if cancel.tripped().is_some() {
                         return Err(refusals);
@@ -5445,7 +5481,7 @@ impl PackageDeclarations {
                 Err(StageFailure::LimitWithPayload(limit, _)) => {
                     refusals.push(CheckRefusal {
                         location: location.clone(),
-                        cause: limit_cause(&limit),
+                        cause: Box::new(limit_cause(&limit)),
                     });
                     if cancel.tripped().is_some() {
                         return Err(refusals);
@@ -5455,19 +5491,23 @@ impl PackageDeclarations {
                 Err(StageFailure::Fault(fault)) => {
                     refusals.push(CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(fault))),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                            fault,
+                        )))),
                     });
                     return Err(refusals);
                 }
                 Err(StageFailure::Refused(refusal)) => {
-                    let exhausted = matches!(refusal.cause, CheckCause::ResourceExhausted(_));
+                    let exhausted =
+                        matches!(refusal.cause.as_ref(), CheckCause::ResourceExhausted(_));
                     refusals.push(refusal);
                     if exhausted {
                         return Err(refusals);
                     }
                 }
                 Err(StageFailure::RefusedWithPayload(refusal, _)) => {
-                    let exhausted = matches!(refusal.cause, CheckCause::ResourceExhausted(_));
+                    let exhausted =
+                        matches!(refusal.cause.as_ref(), CheckCause::ResourceExhausted(_));
                     refusals.push(*refusal);
                     if exhausted {
                         return Err(refusals);
@@ -5504,7 +5544,7 @@ impl PackageDeclarations {
             .refusals
             .iter()
             .chain(&checked_hybrid_claims.refusals)
-            .any(|refusal| matches!(refusal.cause, CheckCause::ResourceExhausted(_)));
+            .any(|refusal| matches!(refusal.cause.as_ref(), CheckCause::ResourceExhausted(_)));
         refusals.extend(checked_hybrid.refusals);
         refusals.extend(checked_hybrid_claims.refusals);
         if hybrid_exhausted {
@@ -5574,7 +5614,7 @@ impl PackageDeclarations {
                 Err(StageFailure::Limit(limit)) => {
                     refusals.push(CheckRefusal {
                         location: root(Origin::Expression),
-                        cause: limit_cause(&limit),
+                        cause: Box::new(limit_cause(&limit)),
                     });
                     if cancel.tripped().is_some() {
                         return Err(refusals);
@@ -5583,7 +5623,7 @@ impl PackageDeclarations {
                 Err(StageFailure::LimitWithPayload(limit, _)) => {
                     refusals.push(CheckRefusal {
                         location: root(Origin::Expression),
-                        cause: limit_cause(&limit),
+                        cause: Box::new(limit_cause(&limit)),
                     });
                     if cancel.tripped().is_some() {
                         return Err(refusals);
@@ -5593,7 +5633,9 @@ impl PackageDeclarations {
                 Err(StageFailure::Fault(fault)) => {
                     refusals.push(CheckRefusal {
                         location: root(Origin::Expression),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(fault))),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                            fault,
+                        )))),
                     });
                     return Err(refusals);
                 }
@@ -5694,7 +5736,7 @@ impl PackageDeclarations {
             Err(identity) => {
                 refusals.push(CheckRefusal {
                     location: root(Origin::Expression),
-                    cause: CheckCause::Identity(identity),
+                    cause: Box::new(CheckCause::Identity(identity)),
                 });
                 FormedUnits::default()
             }
@@ -5708,7 +5750,7 @@ impl PackageDeclarations {
                     Err(identity) => {
                         refusals.push(CheckRefusal {
                             location: location.clone(),
-                            cause: CheckCause::Identity(identity),
+                            cause: Box::new(CheckCause::Identity(identity)),
                         });
                         FormedUnits::default()
                     }
@@ -6352,12 +6394,12 @@ impl PackageDeclarations {
             if align.len() != clause.align_skip().len() && refusals.is_empty() {
                 refusals.push(CheckRefusal {
                     location: root(Origin::Expression),
-                    cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                    cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                         filament_semantic_value::catalog::InternalFault::new(
                             "S3",
                             "align-skip-operation-resolves",
                         ),
-                    ))),
+                    )))),
                 });
             }
         }
@@ -6559,12 +6601,12 @@ impl PackageDeclarations {
                             index,
                             hyper_clause::lowering::Site::Relation(index),
                         ),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                             filament_semantic_value::catalog::InternalFault::new(
                                 "S4",
                                 "step-relation-subject-selected",
                             ),
-                        ))),
+                        )))),
                     });
                     continue;
                 };
@@ -6575,12 +6617,12 @@ impl PackageDeclarations {
                             index,
                             hyper_clause::lowering::Site::Relation(index),
                         ),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                             filament_semantic_value::catalog::InternalFault::new(
                                 "S4",
                                 "step-relation-model-root-keyed",
                             ),
-                        ))),
+                        )))),
                     }),
                 }
             }
@@ -6756,14 +6798,14 @@ impl PackageDeclarations {
                 Err(refusal)
                     if self.emit_unwritten_protocols
                         && matches!(
-                            &refusal.cause,
+                            refusal.cause.as_ref(),
                             CheckCause::ProtocolReference(cause)
                                 if cause.construct().is_some()
                         ) => {}
                 Err(refusal)
                     if !attempt_nodes_written
                         && matches!(
-                            &refusal.cause,
+                            refusal.cause.as_ref(),
                             CheckCause::ProtocolReference(cause)
                                 if cause.construct()
                                     == Some(ProtocolConstruct::ReferenceToAttemptProtocol)
@@ -6796,12 +6838,12 @@ impl PackageDeclarations {
                             index,
                             hyper_clause::lowering::Site::Claim,
                         ),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                             filament_semantic_value::catalog::InternalFault::new(
                                 "S4",
                                 "hyper-subject-model-root-keyed",
                             ),
-                        ))),
+                        )))),
                     }),
                 }
             }
@@ -7222,7 +7264,9 @@ impl PackageDeclarations {
         let unlowered = || {
             vec![CheckRefusal {
                 location: root(Origin::Expression),
-                cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                cause: Box::new(CheckCause::InternalFault(Box::new(
+                    KeyFault::UnkeyableRequirements,
+                ))),
             }]
         };
         let lowered_clauses: Vec<lowering::LoweredClause> = lowered_clauses
@@ -7259,17 +7303,18 @@ impl PackageDeclarations {
         // FR-381: a compensation template names its operation too, bound to the
         // same one anchor and frame node, so a requirement record may reference
         // an operation only a template names.
-        let template_frames = checked_protocols
-            .iter()
-            .zip(&lowered_templates)
-            .flat_map(|(checked, lowered)| {
-                checked
-                    .obligations
-                    .compensations
-                    .iter()
-                    .zip(lowered)
-                    .map(|(template, lowered)| (&template.operation, &lowered.binding))
-            });
+        let template_frames =
+            checked_protocols
+                .iter()
+                .zip(&lowered_templates)
+                .flat_map(|(checked, lowered)| {
+                    checked
+                        .obligations
+                        .compensations
+                        .iter()
+                        .zip(lowered)
+                        .map(|(template, lowered)| (&template.operation, &lowered.binding))
+                });
         let operation_frames =
             operation_frames(clause_frames.chain(attempt_frames).chain(template_frames));
         // FR-094: `check` is the model correspondence's only writer; it
@@ -7311,7 +7356,9 @@ impl PackageDeclarations {
                 else {
                     return Err(vec![CheckRefusal {
                         location: root(Origin::Expression),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::UncheckedProtocolFact)),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(
+                            KeyFault::UncheckedProtocolFact,
+                        ))),
                     }]);
                 };
                 related.canonical_index = Some(*position);
@@ -7324,7 +7371,9 @@ impl PackageDeclarations {
                 {
                     return Err(vec![CheckRefusal {
                         location: root(Origin::Expression),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::UncheckedProtocolFact)),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(
+                            KeyFault::UncheckedProtocolFact,
+                        ))),
                     }]);
                 }
             }
@@ -7332,7 +7381,9 @@ impl PackageDeclarations {
         if !related_canonical_positions.is_empty() {
             return Err(vec![CheckRefusal {
                 location: root(Origin::Expression),
-                cause: CheckCause::InternalFault(Box::new(KeyFault::UncheckedProtocolFact)),
+                cause: Box::new(CheckCause::InternalFault(Box::new(
+                    KeyFault::UncheckedProtocolFact,
+                ))),
             }]);
         }
         // FSpec FR-322-AC-388: a `related` end is named by its record's
@@ -7360,6 +7411,14 @@ impl PackageDeclarations {
                 _ => None,
             };
             occurrences.relocate(moved);
+            // Duplicate authored `related by` rows that canonicalize to the
+            // same emitted record share one source occurrence, just as the
+            // lowering's canonical record array does.
+            let canonical_related_sites: BTreeSet<_> = related_renames.values().cloned().collect();
+            occurrences.deduplicate_locations(|location| match &location.origin {
+                Origin::TypeDeclaration { name } => canonical_related_sites.contains(name),
+                _ => false,
+            });
             for checked in &mut checked_protocols {
                 for related in &mut checked.slots.related {
                     for end in &mut related.ends {
@@ -7386,7 +7445,9 @@ impl PackageDeclarations {
             let Some(checked) = checked_protocols.get_mut(checked_index) else {
                 return Err(vec![CheckRefusal {
                     location: root(Origin::Expression),
-                    cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                    cause: Box::new(CheckCause::InternalFault(Box::new(
+                        KeyFault::UnkeyableRequirements,
+                    ))),
                 }]);
             };
             for pending in std::mem::take(&mut checked.pending_predicate_joins) {
@@ -7394,7 +7455,9 @@ impl PackageDeclarations {
                 let Some(identity) = identity else {
                     return Err(vec![CheckRefusal {
                         location: root(Origin::Expression),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(
+                            KeyFault::UnkeyableRequirements,
+                        ))),
                     }]);
                 };
                 checked.parallels.push(CheckedParallel {
@@ -7414,7 +7477,7 @@ impl PackageDeclarations {
             .map_err(|fault| {
                 vec![CheckRefusal {
                     location: root(Origin::Expression),
-                    cause: CheckCause::InternalFault(Box::new(fault)),
+                    cause: Box::new(CheckCause::InternalFault(Box::new(fault))),
                 }]
             })?;
         // FR-146 "Claim extent": the populations each operation's contract
@@ -7444,7 +7507,9 @@ impl PackageDeclarations {
                 let unkeyable = || {
                     vec![CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(
+                            KeyFault::UnkeyableRequirements,
+                        ))),
                     }]
                 };
                 let claim = occurrences
@@ -7607,7 +7672,7 @@ impl PackageDeclarations {
         // The sites no declared form spans (slots, conjunct slots, skipped
         // operations) are located at their conjunct or clause.
         for (index, clause) in checked_hyper.iter().enumerate() {
-            use hyper_clause::lowering::{hyper_site, Site};
+            use hyper_clause::lowering::{Site, hyper_site};
             for slot in 0..clause.atom_slots().len() {
                 type_spans.insert(hyper_site(index, Site::Slot(slot)), clause.span());
             }
@@ -7638,7 +7703,7 @@ impl PackageDeclarations {
             }
         }
         for (finite_index, clause) in checked_finite_hyper.iter().enumerate() {
-            use hyper_clause::lowering::{hyper_site, Site};
+            use hyper_clause::lowering::{Site, hyper_site};
             let index = checked_hyper.len() + finite_index;
             type_spans.insert(hyper_site(index, Site::Claim), clause.span());
             type_spans.insert(hyper_site(index, Site::FiniteDomain), clause.span());
@@ -7688,7 +7753,9 @@ impl PackageDeclarations {
                 .ok_or_else(|| {
                     vec![CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(
+                            KeyFault::UnkeyableRequirements,
+                        ))),
                     }]
                 })?;
             if let Some(checked) = terminals.iter_mut().find(|checked| checked.model == *model) {
@@ -7712,9 +7779,9 @@ impl PackageDeclarations {
                     .ok_or_else(|| {
                         vec![CheckRefusal {
                             location: location.clone(),
-                            cause: CheckCause::InternalFault(Box::new(
+                            cause: Box::new(CheckCause::InternalFault(Box::new(
                                 KeyFault::UnkeyableRequirements,
-                            )),
+                            ))),
                         }]
                     })?;
                 Ok(checked
@@ -7737,9 +7804,9 @@ impl PackageDeclarations {
                     .ok_or_else(|| {
                         vec![CheckRefusal {
                             location: location.clone(),
-                            cause: CheckCause::InternalFault(Box::new(
+                            cause: Box::new(CheckCause::InternalFault(Box::new(
                                 KeyFault::UnkeyableRequirements,
-                            )),
+                            ))),
                         }]
                     })?;
                 Ok(checked.assembled_at(
@@ -7762,7 +7829,9 @@ impl PackageDeclarations {
             let unkeyable = || {
                 vec![CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                    cause: Box::new(CheckCause::InternalFault(Box::new(
+                        KeyFault::UnkeyableRequirements,
+                    ))),
                 }]
             };
             let claim = occurrences
@@ -7819,7 +7888,9 @@ impl PackageDeclarations {
                 .ok_or_else(|| {
                     vec![CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(
+                            KeyFault::UnkeyableRequirements,
+                        ))),
                     }]
                 })?;
             claim.occurrence = Some(OccurrenceKey::new(claims::wire(key), origin));
@@ -7840,7 +7911,9 @@ impl PackageDeclarations {
                 let unkeyable = || {
                     vec![CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(
+                            KeyFault::UnkeyableRequirements,
+                        ))),
                     }]
                 };
                 let claim = occurrences
@@ -7895,8 +7968,8 @@ impl PackageDeclarations {
                         .map_err(|fault| {
                             vec![CheckRefusal {
                                 location: location.clone(),
-                                cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
-                                    fault,
+                                cause: Box::new(CheckCause::InternalFault(Box::new(
+                                    KeyFault::StageFault(fault),
                                 ))),
                             }]
                         })?;
@@ -7978,7 +8051,9 @@ impl PackageDeclarations {
             let unkeyable = || {
                 vec![CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                    cause: Box::new(CheckCause::InternalFault(Box::new(
+                        KeyFault::UnkeyableRequirements,
+                    ))),
                 }]
             };
             let claim = occurrences
@@ -8049,7 +8124,9 @@ impl PackageDeclarations {
             let unkeyable = || {
                 vec![CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                    cause: Box::new(CheckCause::InternalFault(Box::new(
+                        KeyFault::UnkeyableRequirements,
+                    ))),
                 }]
             };
             let emission = checked.v2_emission().map_err(|_| unkeyable())?;
@@ -8144,7 +8221,9 @@ impl PackageDeclarations {
                 let unkeyable = || {
                     vec![CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(
+                            KeyFault::UnkeyableRequirements,
+                        ))),
                     }]
                 };
                 let lowering::OperationBinding {
@@ -8269,9 +8348,9 @@ impl PackageDeclarations {
                     std::collections::hash_map::Entry::Occupied(_) => {
                         return Err(vec![CheckRefusal {
                             location: location.clone(),
-                            cause: CheckCause::InternalFault(Box::new(
+                            cause: Box::new(CheckCause::InternalFault(Box::new(
                                 KeyFault::UnkeyableRequirements,
-                            )),
+                            ))),
                         }]);
                     }
                 }
@@ -8311,12 +8390,12 @@ impl PackageDeclarations {
                 else {
                     return Some(CheckRefusal {
                         location: Location::root(Origin::Expression),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                             filament_semantic_value::catalog::InternalFault::new(
                                 "S3",
                                 "refinement-declaration-checked",
                             ),
-                        ))),
+                        )))),
                     });
                 };
                 (!checked.v2_emittable()).then(|| {
@@ -8539,7 +8618,9 @@ impl PackageDeclarations {
             let unkeyable = || {
                 vec![CheckRefusal {
                     location: root(Origin::Expression),
-                    cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                    cause: Box::new(CheckCause::InternalFault(Box::new(
+                        KeyFault::UnkeyableRequirements,
+                    ))),
                 }]
             };
             let boolean = builtin_boolean_type_key(&package_name).map_err(|_| unkeyable())?;
@@ -8724,7 +8805,7 @@ impl PackageDeclarations {
                     .into_iter()
                     .map(|(index, refusal)| CheckRefusal {
                         location: graph.abstraction_location(index),
-                        cause: CheckCause::Abstraction(Box::new(refusal)),
+                        cause: Box::new(CheckCause::Abstraction(Box::new(refusal))),
                     })
                     .collect());
             }
@@ -8738,8 +8819,8 @@ impl PackageDeclarations {
                     .into_iter()
                     .map(|(index, refusal)| CheckRefusal {
                         location: graph.guarantee_location(index),
-                        cause: CheckCause::Abstraction(Box::new(AbstractionRefusal::Guarantee(
-                            Box::new(refusal),
+                        cause: Box::new(CheckCause::Abstraction(Box::new(
+                            AbstractionRefusal::Guarantee(Box::new(refusal)),
                         ))),
                     })
                     .collect());
@@ -8754,8 +8835,8 @@ impl PackageDeclarations {
                     .into_iter()
                     .map(|(index, refusal)| CheckRefusal {
                         location: graph.composition_location(index),
-                        cause: CheckCause::Abstraction(Box::new(AbstractionRefusal::Composition(
-                            Box::new(refusal),
+                        cause: Box::new(CheckCause::Abstraction(Box::new(
+                            AbstractionRefusal::Composition(Box::new(refusal)),
                         ))),
                     })
                     .collect());
@@ -8774,10 +8855,10 @@ impl PackageDeclarations {
         {
             return Err(vec![CheckRefusal {
                 location: root(Origin::Expression),
-                cause: CheckCause::EmptyPackage {
+                cause: Box::new(CheckCause::EmptyPackage {
                     package_name: graph.package_name.clone(),
                     sources: graph.sources.clone(),
-                },
+                }),
             }]);
         }
         // Every occurrence is recorded by now.
@@ -8803,7 +8884,9 @@ fn finish_step_relations(
     if checked.len() != lowered.len() {
         return Err(vec![CheckRefusal {
             location: root(Origin::Expression),
-            cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+            cause: Box::new(CheckCause::InternalFault(Box::new(
+                KeyFault::UnkeyableRequirements,
+            ))),
         }]);
     }
     let mut relations = Vec::with_capacity(checked.len());
@@ -8827,12 +8910,12 @@ fn finish_step_relations(
             let relation = abstraction.ok_or_else(|| {
                 vec![CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                    cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                         filament_semantic_value::catalog::InternalFault::new(
                             "S4",
                             "bound-step-relation-has-abstraction",
                         ),
-                    ))),
+                    )))),
                 }]
             })?;
             Some(
@@ -8841,10 +8924,12 @@ fn finish_step_relations(
                     .map_err(|_| {
                         vec![CheckRefusal {
                             location: location.clone(),
-                            cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
-                                filament_semantic_value::catalog::InternalFault::new(
-                                    "S4",
-                                    "step-relation-abstraction-node-keyed",
+                            cause: Box::new(CheckCause::InternalFault(Box::new(
+                                KeyFault::StageFault(
+                                    filament_semantic_value::catalog::InternalFault::new(
+                                        "S4",
+                                        "step-relation-abstraction-node-keyed",
+                                    ),
                                 ),
                             ))),
                         }]
@@ -8868,7 +8953,9 @@ fn finish_step_relations(
         graph.semantic_graph.insert_finalized(node).map_err(|_| {
             vec![CheckRefusal {
                 location: location.clone(),
-                cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                cause: Box::new(CheckCause::InternalFault(Box::new(
+                    KeyFault::UnkeyableRequirements,
+                ))),
             }]
         })?;
         graph.occurrences.record(
@@ -8887,7 +8974,9 @@ fn finish_step_relations(
             .map_err(|_| {
                 vec![CheckRefusal {
                     location: root(Origin::Expression),
-                    cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                    cause: Box::new(CheckCause::InternalFault(Box::new(
+                        KeyFault::UnkeyableRequirements,
+                    ))),
                 }]
             })?;
         let record =
@@ -8900,7 +8989,9 @@ fn finish_step_relations(
             let code_requirements = code_claim.requirements(&roots).map_err(|_| {
                 vec![CheckRefusal {
                     location: root(Origin::Expression),
-                    cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                    cause: Box::new(CheckCause::InternalFault(Box::new(
+                        KeyFault::UnkeyableRequirements,
+                    ))),
                 }]
             })?;
             let code_record = claims::RequirementRecord::unguarded(
@@ -8919,7 +9010,9 @@ fn finish_step_relations(
         .map_err(|_| {
             vec![CheckRefusal {
                 location: root(Origin::Expression),
-                cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                cause: Box::new(CheckCause::InternalFault(Box::new(
+                    KeyFault::UnkeyableRequirements,
+                ))),
             }]
         })?;
     Ok(())
@@ -9611,7 +9704,9 @@ impl CheckedGraph {
         let internal = |fault| {
             vec![CheckRefusal {
                 location: root(Origin::Expression),
-                cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(fault))),
+                cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                    fault,
+                )))),
             }]
         };
         let declarations = SourceDeclarations::from_graph(self).map_err(internal)?;
@@ -9637,14 +9732,14 @@ impl CheckedGraph {
             let resolution = |error| {
                 vec![CheckRefusal {
                     location: location.clone(),
-                    cause: match error {
+                    cause: Box::new(match error {
                         ClockDeclarationResolutionError::Ambiguous(ambiguity) => {
-                            CheckCause::AmbiguousClockDeclaration(Box::new(ambiguity))
+                            CheckCause::AmbiguousClockDeclaration(ambiguity)
                         }
                         ClockDeclarationResolutionError::Fault(fault) => {
                             CheckCause::InternalFault(Box::new(KeyFault::StageFault(fault)))
                         }
-                    },
+                    }),
                 }]
             };
             for (clock, node) in model.clocks().iter().zip(model.place_nodes()) {
@@ -9664,7 +9759,7 @@ impl CheckedGraph {
                     location: locations
                         .remove(&collision.second)
                         .unwrap_or_else(|| root(Origin::Expression)),
-                    cause: CheckCause::DuplicateClockDeclaration(Box::new(collision)),
+                    cause: Box::new(CheckCause::DuplicateClockDeclaration(Box::new(collision))),
                 }]
             })?
             .with_source_declarations(declarations)
@@ -10085,7 +10180,7 @@ impl CheckedGraph {
         let formed_units =
             FormedUnits::identify(&typer.into_formed_units()).map_err(|identity| CheckRefusal {
                 location: location.clone(),
-                cause: CheckCause::Identity(identity),
+                cause: Box::new(CheckCause::Identity(identity)),
             })?;
         Ok(CheckedExpression {
             graph_identity: self.graph_identity.clone(),
@@ -10850,7 +10945,7 @@ fn register_protocol_sites(
     type_spans: &mut BTreeMap<String, fsl_foundation::Span>,
     site_spans: &mut BTreeMap<String, fsl_forms::ExpressionSpans>,
 ) {
-    use lowering::{protocol_site, ProtocolSite};
+    use lowering::{ProtocolSite, protocol_site};
     let name = protocol.name.name.as_str();
     if let fsl_forms::ActivationForm::Each {
         when: Some(guard), ..
@@ -11634,12 +11729,12 @@ mod tests {
         .expect_err("index 0 names no function");
         assert!(matches!(
             refusals.as_slice(),
-            [CheckRefusal {
-                cause: CheckCause::InvalidDispatchDeclaration(box_detail),
-                ..
-            }] if matches!(
-                **box_detail,
+            [CheckRefusal { cause, .. }] if matches!(
+                cause.as_ref(),
+                CheckCause::InvalidDispatchDeclaration(box_detail) if matches!(
+                    **box_detail,
                 InvalidDispatchDeclaration::ResolvedSignatureOutOfRange { index: 0 }
+                )
             )
         ));
     }

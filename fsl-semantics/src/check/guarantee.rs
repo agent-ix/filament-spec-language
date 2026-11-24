@@ -33,8 +33,10 @@ use fsl_forms::{
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{Code, Span};
 
+use super::CheckedGraph;
+use super::TemporalClauseNode;
 use super::abstraction::{
-    name_parts, AbstractionKey, CheckedAbstractionRelation, CheckedBinding, OperationKey, RustPath,
+    AbstractionKey, CheckedAbstractionRelation, CheckedBinding, OperationKey, RustPath, name_parts,
 };
 use super::capability::{Capability, DeclarationFamily};
 use super::lowering::SemanticNode;
@@ -44,8 +46,6 @@ use super::node_key::{
 use super::profile::TemporalProfile;
 use super::rust_syntax::path_defect;
 use super::temporal_clause::{CheckedFormula, FormulaNode};
-use super::CheckedGraph;
-use super::TemporalClauseNode;
 
 /// What a refused name was written for.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

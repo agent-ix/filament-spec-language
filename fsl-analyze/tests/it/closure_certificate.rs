@@ -217,6 +217,7 @@ impl World {
     fn run_in(&self, package: &CheckedPackage, item: ModelCheckItem<'_>) -> ModelCheckOutcome {
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: subject(
                     package,
@@ -228,6 +229,8 @@ impl World {
                 item,
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
@@ -252,6 +255,7 @@ impl Invariant {
     ) -> fsl_analyze::analyze::ModelItem<'w> {
         fsl_analyze::analyze::ModelItem {
             request: ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: subject(
                     &self.package,
@@ -263,6 +267,8 @@ impl Invariant {
                 item: self.item(),
                 max_depth: None,
                 limits,
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             stutter_closure: false,
@@ -318,9 +324,8 @@ impl Invariant {
         truths: &[bool],
     ) -> ClosureCertificate {
         let keys = self.monitor_keys(object);
-        let mut monitor =
-            Monitor::bad_prefix(translate(&self.clause, 64).expect("translates"), 64)
-                .expect("a safety automaton");
+        let mut monitor = Monitor::bad_prefix(translate(&self.clause, 64).expect("translates"), 64)
+            .expect("a safety automaton");
         let all = (1u64 << monitor.automaton().atoms().len()) - 1;
         let mut state = monitor.initial().expect("initial state");
         let mut states = Vec::new();
@@ -719,11 +724,14 @@ fn a_request_whose_clause_root_does_not_resolve_settles_failed() {
     }
     let refused = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: request.subject,
             item: foreign,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),
@@ -798,7 +806,10 @@ fn a_past_clause_proof_carries_monitor_keys_the_core_accepts() {
 
     let entry = |value: i64| {
         let model = world.state_key(&[value]);
-        let mut states = full.states.iter().filter(|state| state.model_state == model);
+        let mut states = full
+            .states
+            .iter()
+            .filter(|state| state.model_state == model);
         let state = states.next().expect("the value is certified").clone();
         assert!(states.next().is_none(), "one monitor state per value");
         state
@@ -861,7 +872,11 @@ fn an_interval_clause_proof_carries_monitor_keys_the_core_accepts() {
             .map(|state| state.automaton_state.clone())
             .collect()
     };
-    assert_ne!(keys(&[1]), keys(&[2]), "a pending deadline is part of the key");
+    assert_ne!(
+        keys(&[1]),
+        keys(&[2]),
+        "a pending deadline is part of the key"
+    );
     assert_eq!(keys(&[2]), keys(&[3]));
     let request = claim.request(&world, UNLIMITED);
     assert_eq!(check(&request, &full), TemporalCertificateCheck::Accepted);
@@ -1013,7 +1028,9 @@ fn a_tp3_clause_is_monitored_only_under_a_stated_subject_kind() {
     assert!(
         matches!(
             refused,
-            Err(ItemRefusal::Translation(TranslationRefusal::NotTranslated(_)))
+            Err(ItemRefusal::Translation(TranslationRefusal::NotTranslated(
+                _
+            )))
         ),
         "{refused:?}"
     );
@@ -1036,6 +1053,7 @@ fn a_loop_proof_item_is_refused_over_a_model_subject() {
     ] {
         let refused = check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: subject(
                     &world.package,
@@ -1047,6 +1065,8 @@ fn a_loop_proof_item_is_refused_over_a_model_subject() {
                 item,
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
@@ -1865,7 +1885,7 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
         check_product_closure(&request, proof, limits, &cancel).expect("core check")
     };
     let proof = certificates.first().expect("one instance certificate");
-    assert_eq!(product_members(&proof).len(), 6);
+    assert_eq!(product_members(proof).len(), 6);
     let repeated = world
         .run(ModelCheckLimits::default(), &cancel)
         .expect("repeat search");
@@ -1909,7 +1929,7 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
         })
     );
     let components = proof.components.as_ref().expect("universal partition");
-    assert!(product_members(&proof)
+    assert!(product_members(proof)
         .windows(2)
         .all(|pair| pair[0] < pair[1]));
     assert!(components
@@ -1935,7 +1955,7 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
     // Each secure SCC contains the two public outputs. Splitting its cycle
     // into singleton components makes a backward edge unavoidable.
     backward.components = Some(
-        product_members(&proof)
+        product_members(proof)
             .iter()
             .map(|state| fsl_replay::Component {
                 states: vec![state.clone()],
@@ -1960,7 +1980,7 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
     // Removing a reached non-initial state must fail closure before the
     // component partition is examined.
     let mut successor_missing = false;
-    for index in 0..product_members(&proof).len() {
+    for index in 0..product_members(proof).len() {
         let mut missing = proof.clone();
         product_members_mut(&mut missing).remove(index);
         if matches!(checked(&missing, &limits), fsl_replay::ProductClosureCheck::Rejected(rejection)

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-091 "Native scalar literals": the calls `UUID("...")`, `Timestamp(n)`
-//! and `Text("...")` check to their typed literal values.
+//! FR-091 "Native scalar literals": the calls `UUID("...")`, `Timestamp(n)`,
+//! `Text("...")`, `Bytes("...")` and `JsonObject("...")` check to their
+//! typed literal values.
 //!
 //! These spellings are ordinary calls to S2; here the native literal
 //! constructor of that name is one candidate beside the unit's declared
@@ -10,13 +11,13 @@
 
 use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{
-    admit_text, Integer, Meter, Outcome, TextPayload, Timestamp, Uuid, Value, ValueType,
+    Integer, JsonObject, Meter, Outcome, TextPayload, Timestamp, Uuid, Value, ValueType, admit_text,
 };
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 
-use super::{mismatch, node, Typer};
+use super::{Typer, mismatch, node};
 use crate::check::ir::Node;
 use crate::check::refusal::{CheckCause, CheckRefusal};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
@@ -31,6 +32,10 @@ pub(super) enum NativeConstructor {
     Timestamp,
     /// `Text("...")`.
     Text,
+    /// `Bytes("hex...")`.
+    Bytes,
+    /// `JsonObject("...")`.
+    JsonObject,
 }
 
 impl NativeConstructor {
@@ -41,6 +46,8 @@ impl NativeConstructor {
             "UUID" => Some(Self::Uuid),
             "Timestamp" => Some(Self::Timestamp),
             "Text" => Some(Self::Text),
+            "Bytes" => Some(Self::Bytes),
+            "JsonObject" => Some(Self::JsonObject),
             _ => None,
         }
     }
@@ -72,9 +79,9 @@ impl Typer<'_> {
                 let text = literal.text();
                 let uuid = Uuid::from_canonical_text(text).map_err(|_| CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::MalformedUuidLiteral {
+                    cause: Box::new(CheckCause::MalformedUuidLiteral {
                         argument: text.to_owned(),
-                    },
+                    }),
                 })?;
                 Ok(node(
                     NodeKind::Literal(CheckedLiteral(Value::Uuid(uuid))),
@@ -97,7 +104,7 @@ impl Typer<'_> {
                 if let Some(outside) = IntegerOutsideI128::of(IntegerSite::Literal, magnitude) {
                     return Err(CheckRefusal {
                         location: magnitude_location,
-                        cause: CheckCause::IntegerOutsideI128(outside),
+                        cause: Box::new(CheckCause::IntegerOutsideI128(outside)),
                     });
                 }
                 let count = if negated && *magnitude != Integer::from(0_i64) {
@@ -129,13 +136,13 @@ impl Typer<'_> {
                 if !(text_type.min()..=text_type.max()).contains(&retained_length) {
                     return Err(CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::TextLiteralOutsideBounds {
+                        cause: Box::new(CheckCause::TextLiteralOutsideBounds {
                             argument: text.to_owned(),
                             min: text_type.min(),
                             max: text_type.max(),
                             profile,
                             retained_length,
-                        },
+                        }),
                     });
                 }
                 let text_type = *text_type;
@@ -153,17 +160,59 @@ impl Typer<'_> {
                     location,
                 ))
             }
+            NativeConstructor::Bytes => {
+                let ExprNode::String(literal) = argument.node() else {
+                    return Err(mismatch(&argument_location));
+                };
+                let text = literal.text();
+                if text.len() % 2 != 0 {
+                    return Err(mismatch(location));
+                }
+                let mut octets = Vec::with_capacity(text.len() / 2);
+                for pair in text.as_bytes().chunks_exact(2) {
+                    let pair = std::str::from_utf8(pair).map_err(|_| mismatch(location))?;
+                    if !pair
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    {
+                        return Err(mismatch(location));
+                    }
+                    let octet = u8::from_str_radix(pair, 16).map_err(|_| mismatch(location))?;
+                    octets.push(octet);
+                }
+                Ok(node(
+                    NodeKind::Literal(CheckedLiteral(Value::Bytes(octets))),
+                    ValueType::Bytes,
+                    location,
+                ))
+            }
+            NativeConstructor::JsonObject => {
+                let ExprNode::String(literal) = argument.node() else {
+                    return Err(mismatch(&argument_location));
+                };
+                let value =
+                    JsonObject::from_json_text(literal.text()).map_err(|_| mismatch(location))?;
+                Ok(node(
+                    NodeKind::Literal(CheckedLiteral(Value::JsonObject(value))),
+                    ValueType::JsonObject,
+                    location,
+                ))
+            }
         }
     }
 
     /// Refuse `ambiguous_declaration`/`ambiguous-name` when the unit also
     /// declares a function or a type form named `name`: the native
     /// constructor is a second candidate with no span.
-    fn single_candidate(&self, name: &str, location: &Location) -> Result<(), CheckRefusal> {
+    pub(super) fn single_candidate(
+        &self,
+        name: &str,
+        location: &Location,
+    ) -> Result<(), CheckRefusal> {
         if let Some(index) = self.signatures().position(name) {
             return Err(CheckRefusal {
                 location: location.clone(),
-                cause: CheckCause::AmbiguousName {
+                cause: Box::new(CheckCause::AmbiguousName {
                     name: name.to_owned(),
                     loci: vec![
                         location.clone(),
@@ -172,16 +221,13 @@ impl Typer<'_> {
                             index,
                         }),
                     ],
-                },
+                }),
             });
         }
         match self.type_named(name, location) {
-            Err(
-                refusal @ CheckRefusal {
-                    cause: CheckCause::AmbiguousName { .. },
-                    ..
-                },
-            ) => Err(refusal),
+            Err(refusal) if matches!(refusal.cause.as_ref(), CheckCause::AmbiguousName { .. }) => {
+                Err(refusal)
+            }
             _ => Ok(()),
         }
     }

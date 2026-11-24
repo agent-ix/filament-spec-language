@@ -13,6 +13,46 @@
 
 use super::*;
 
+fn unbounded_eventually_predicate(
+    formula: &fsl_semantics::check::CheckedTemporalFormula,
+) -> Option<&fsl_semantics::check::CheckedPredicate> {
+    let f = formula.formula();
+    let Some(fsl_semantics::check::FormulaNode::Unary {
+        operator: fsl_semantics::check::UnaryTemporal::Eventually,
+        interval: None,
+        operand,
+    }) = f.nodes().get(f.root().index())
+    else {
+        return None;
+    };
+    matches!(
+        f.nodes().get(operand.index()),
+        Some(fsl_semantics::check::FormulaNode::Holds { .. })
+    )
+    .then(|| formula.condition(operand.index()))
+    .flatten()
+}
+
+fn fair_eventually(claim: &CheckedProbabilisticClaim) -> bool {
+    matches!(
+        &claim.form,
+        ProbForm::Reach {
+            target: ReachTarget::Eventually(_),
+            ..
+        }
+    ) || matches!(
+        &claim.form,
+        ProbForm::Probability {
+            event: fsl_semantics::check::Event::Formula {
+                formula,
+                timed_horizon: None,
+                ..
+            },
+            ..
+        } if unbounded_eventually_predicate(formula).is_some()
+    )
+}
+
 /// The side of the violating quantity a subsystem certificate bounds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SubsystemBoundKind {
@@ -70,6 +110,7 @@ struct Subject {
     reference: Option<ObjectReference>,
     identity: Value,
     base: Value,
+    fairness: Vec<filament_semantic_value::fairness::FairnessConstraint>,
 }
 
 /// Whether value-bounds bytes wrap a base this role owns rather than FR-1043's
@@ -228,7 +269,7 @@ fn subject(
         return Err(ProbabilityDocumentError::IdentityMismatch);
     }
     let claim = bind_claim(claims, item, cancel)?;
-    if !claim.fairness.is_empty()
+    if (!claim.fairness.is_empty() && !fair_eventually(claim))
         || fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
             != Some(fsl_semantics::check::TemporalProfile::InfiniteTrace)
         || !matches!(
@@ -295,6 +336,31 @@ fn subject(
             )?,
             None,
         ),
+        ProbForm::Probability {
+            bound,
+            event:
+                fsl_semantics::check::Event::Formula {
+                    formula,
+                    timed_horizon: None,
+                    ..
+                },
+        } if unbounded_eventually_predicate(formula).is_some() => (
+            bound,
+            super::super::cyclic::enumerate_graph(
+                system,
+                unbounded_eventually_predicate(formula),
+                reference,
+                workload,
+                limits,
+                cancel,
+                identity,
+                meter,
+                storage,
+                true,
+                true,
+            )?,
+            None,
+        ),
         // A failing `>=` state event is refuted by the probability of its
         // violation: reaching a failure state, or for `until` also an
         // undecided bottom component that never reaches its target.
@@ -316,7 +382,7 @@ fn subject(
             let (state_event, graph, derived) = match (enumerated, issue) {
                 (Ok(enumerated), _) => enumerated,
                 (Err(_), Some(issue)) => {
-                    return Err(ProbabilityDocumentError::Build(Box::new(issue)))
+                    return Err(ProbabilityDocumentError::Build(Box::new(issue)));
                 }
                 (Err(error), None) => return Err(error),
             };
@@ -339,12 +405,14 @@ fn subject(
         timed: None,
         values: Vec::new(),
         ranking: Vec::new(),
+        policy: None,
     };
     let written = writer::encode_fair_profile(
         &base,
         limits,
         cancel,
         workload.is_none() && !state_profile,
+        false,
         &[],
     )?;
     let mut written: Value =
@@ -366,6 +434,7 @@ fn subject(
         reference: reference.cloned(),
         identity,
         base,
+        fairness: claim.fairness.clone(),
     })
 }
 
@@ -480,10 +549,8 @@ pub(in crate::probability_certificate) fn check(
             &subject.graph,
             subject.reference.as_ref(),
             scheduler,
-            limits,
-            cancel,
-            &mut meter,
-            &mut storage,
+            (limits, cancel),
+            (&mut meter, &mut storage),
             None,
         )? {
             Some(choices) => choices,
@@ -493,6 +560,21 @@ pub(in crate::probability_certificate) fn check(
     let Some(induced) = induce(&subject, &choices, &mut meter, cancel)? else {
         return Ok(SubsystemRefutationCheck::SchedulerRefused);
     };
+    if !subject.fairness.is_empty() {
+        match super::long_run::scheduler_is_fair(
+            system,
+            subject.graph.clone(),
+            subject.reference.as_ref(),
+            scheduler,
+            &subject.fairness,
+            limits,
+            cancel,
+        )? {
+            Some(true) => {}
+            Some(false) => return Ok(SubsystemRefutationCheck::SchedulerRefused),
+            None => return Ok(SubsystemRefutationCheck::SchedulerRefused),
+        }
+    }
     let reject = |rule, at: &ProbabilityProductKey| {
         Ok(SubsystemRefutationCheck::Rejected(
             ProbabilityCertificateRejection {
@@ -820,10 +902,8 @@ pub(super) fn scheduled_choices(
     graph: &CheckerGraph,
     reference: Option<&ObjectReference>,
     rows: &[(ProbabilityProductKey, crate::ProductAction)],
-    limits: ProbabilityDocumentLimits,
-    cancel: &Cancel,
-    meter: &mut filament_exact::Meter,
-    storage: &mut u64,
+    (limits, cancel): (ProbabilityDocumentLimits, &Cancel),
+    (meter, storage): (&mut filament_exact::Meter, &mut u64),
     mut enabled: Option<
         &mut BTreeMap<ProbabilityProductKey, Vec<fsl_eval::simulation::model::ScheduledIdentity>>,
     >,
@@ -932,6 +1012,148 @@ pub(super) fn scheduled_choices(
         chosen.insert(key, index);
     }
     if wanted.keys().any(|key| !chosen.contains_key(*key)) {
+        return Ok(None);
+    }
+    Ok(Some(chosen))
+}
+
+/// Resolve all positive alternatives of a randomized scheduler and walk their
+/// union of successors. The returned action indices are independently tied to
+/// the admitted transition relation, not to the producer's action order.
+pub(super) fn randomized_scheduled_choices(
+    system: &ModelSystem<'_>,
+    graph: &CheckerGraph,
+    reference: Option<&ObjectReference>,
+    rows: &[(ProbabilityProductKey, Vec<(crate::ProductAction, Rational)>)],
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+    mut enabled: Option<
+        &mut BTreeMap<ProbabilityProductKey, Vec<fsl_eval::simulation::model::ScheduledIdentity>>,
+    >,
+) -> Result<Option<BTreeMap<ProbabilityProductKey, Vec<(usize, Rational)>>>, ProbabilityDocumentError>
+{
+    let identity = fsl_foundation::IdentityLimits::default();
+    let mut wanted = BTreeMap::new();
+    for (key, distribution) in rows {
+        super::super::reward::visit(cancel, meter)?;
+        if distribution.is_empty()
+            || distribution
+                .iter()
+                .any(|(_, probability)| *probability <= rational(0))
+            || distribution
+                .iter()
+                .map(|(_, probability)| probability.clone())
+                .fold(rational(0), |sum, probability| sum.add(&probability))
+                != rational(1)
+            || distribution.iter().enumerate().any(|(index, (action, _))| {
+                distribution[..index].iter().any(|(seen, _)| seen == action)
+            })
+            || wanted
+                .last_key_value()
+                .is_some_and(|(last, _)| *last >= *key)
+        {
+            return Ok(None);
+        }
+        let mut schedules = Vec::with_capacity(distribution.len());
+        for (action, probability) in distribution {
+            let crate::ProductAction::Identity(schedule) = action else {
+                return Ok(None);
+            };
+            schedules.push((schedule, probability.clone()));
+        }
+        wanted.insert(key.clone(), schedules);
+    }
+    let key_of = |state: &ModelSimState,
+                  meter: &mut filament_exact::Meter,
+                  storage: &mut u64|
+     -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
+        let mut admission =
+            ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
+        let encoded = (|| {
+            let bytes =
+                system.state_key_bytes_with_budget(state, identity, &mut admission, cancel)?;
+            ProbabilityProductKey::for_model_state_with_budget(
+                reference,
+                &bytes,
+                identity,
+                &mut admission,
+                cancel,
+            )
+        })();
+        encoded.map_err(|error| admission.refusal(error))
+    };
+    let initials = system.initial();
+    let [initial] = initials.as_slice() else {
+        return Err(ExactProbabilityGraphError::UnsupportedInitial.into());
+    };
+    let root = key_of(initial, meter, storage)?;
+    let mut chosen = BTreeMap::new();
+    let mut seen = BTreeSet::from([root.clone()]);
+    let mut pending = VecDeque::from([(root, initial.clone())]);
+    while let Some((key, state)) = pending.pop_front() {
+        super::super::reward::visit(cancel, meter)?;
+        let checked = graph
+            .states
+            .get(&key)
+            .ok_or(ProbabilityDocumentError::Malformed)?;
+        if checked.choices.is_empty() {
+            continue;
+        }
+        let Some(distribution) = wanted.get(&key) else {
+            return Ok(None);
+        };
+        let actions = {
+            let mut admission =
+                ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
+            system
+                .actions_with_budget(&state, identity, &mut admission, cancel)
+                .map_err(|error| admission.expansion_refusal(error))?
+                .map_err(|_| {
+                    ProbabilityDocumentError::Build(Box::new(
+                        crate::ExactProbBuildIssue::UndecidedSuccessor,
+                    ))
+                })?
+        };
+        if let Some(enabled) = enabled.as_mut() {
+            enabled.insert(
+                key.clone(),
+                actions
+                    .iter()
+                    .map(|action| action.identity.clone())
+                    .collect(),
+            );
+        }
+        let mut selected = Vec::with_capacity(distribution.len());
+        for (schedule, probability) in distribution {
+            let mut index = None;
+            for (position, action) in actions.iter().enumerate() {
+                super::super::reward::visit(cancel, meter)?;
+                if crate::Schedule::of(system, &action.identity).as_ref() == Ok(*schedule) {
+                    index = Some(position);
+                    break;
+                }
+            }
+            let Some(index) = index else { return Ok(None) };
+            for draw in &actions[index].draws {
+                super::super::reward::visit(cancel, meter)?;
+                if draw.probability <= rational(0) {
+                    continue;
+                }
+                let [(_, post)] = draw.successors.as_slice() else {
+                    return Err(ProbabilityDocumentError::Unsupported);
+                };
+                let next = key_of(post, meter, storage)?;
+                if seen.insert(next.clone()) {
+                    pending.push_back((next, post.clone()));
+                }
+            }
+            selected.push((index, probability.clone()));
+        }
+        chosen.insert(key, selected);
+    }
+    if wanted.keys().any(|key| !chosen.contains_key(key)) {
         return Ok(None);
     }
     Ok(Some(chosen))

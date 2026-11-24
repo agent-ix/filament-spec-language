@@ -268,12 +268,12 @@ fn bare_admission_retains_equality_and_reports_its_denial_after_projection() {
         let diagnostic = error.limit().expect("original limit diagnostic");
         assert_eq!(diagnostic.setting(), setting);
         assert_eq!(diagnostic.configured_bound(), bound);
-        assert_eq!(
-            diagnostic.actual(),
-            u128::from(consumed) + unpaid.amount
-        );
+        assert_eq!(diagnostic.actual(), u128::from(consumed) + unpaid.amount);
         let admitted_prefix = budget.consumed();
-        assert_eq!(budget.accounted_charge(kind, unpaid.amount, locus), Err(unpaid));
+        assert_eq!(
+            budget.accounted_charge(kind, unpaid.amount, locus),
+            Err(unpaid)
+        );
         assert_eq!(budget.first_unpaid(), Some(unpaid));
         assert_eq!(budget.first_unpaid_locus(), Some(locus));
         assert_eq!(budget.consumed(), admitted_prefix);

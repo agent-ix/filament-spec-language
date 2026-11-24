@@ -2,9 +2,9 @@
 //! FR-282 source-backed probability certificate checking without an analyzer.
 
 use super::document::{
-    check_probability_certificate_document, ProbabilityDocumentError, ProbabilityDocumentLimits,
+    check_probability_certificate_document_as, ProbabilityDocumentError, ProbabilityDocumentLimits,
 };
-use super::{ExactProbabilityCertificateCheck, ObligationIdentity};
+use super::{CertificateRole, ExactProbabilityCertificateCheck, ObligationIdentity};
 use crate::spine::{
     self, DependencyInput, FrontEndFailure, ParseRequest, SourceComponent, SpineLimits,
 };
@@ -37,6 +37,9 @@ pub struct ProbabilitySourceRequest<'a> {
     pub universes: Vec<PopulationUniverse>,
     /// Exact canonical certificate bytes.
     pub certificate: &'a [u8],
+    /// Whether the certificate is the claim side or a value-bounds
+    /// counterpart (FR-1042).
+    pub role: CertificateRole,
 }
 
 /// Caller-owned stage, admission and certificate ceilings.
@@ -135,6 +138,9 @@ pub struct ProbabilityPackageRequest<'a> {
     pub universes: Vec<PopulationUniverse>,
     /// Exact canonical certificate bytes.
     pub certificate: &'a [u8],
+    /// Whether the certificate is the claim side or a value-bounds
+    /// counterpart (FR-1042).
+    pub role: CertificateRole,
 }
 
 /// Recompile exact admitted source through S1–S3, construct the production
@@ -209,6 +215,7 @@ pub fn check_probability_certificate_package(
             initial: request.initial,
             universes: request.universes,
             certificate: request.certificate,
+            role: request.role,
         },
         Some(request.package),
         limits,
@@ -364,11 +371,12 @@ fn check_recompiled(
     let admitted = ModelSystem::new_with_cancel(simulation, cancel);
     super::poll_cancel(cancel).map_err(ProbabilityDocumentError::from)?;
     let system = admitted.map_err(ProbabilitySourceError::Subject)?;
-    check_probability_certificate_document(
+    check_probability_certificate_document_as(
         &system,
         claims,
         &claimed(request.item, held.is_some()),
         certificate,
+        request.role,
         limits.document,
         cancel,
     )

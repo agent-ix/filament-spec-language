@@ -451,9 +451,10 @@ fn a_declared_claim_target_refuses_an_unproved_divisor_under_a_kernel_world() {
         panic!("a declared clause never admits an unproved divisor");
     };
     assert!(
-        refusals
-            .iter()
-            .any(|refusal| matches!(refusal.cause, CheckCause::Unproved(Obligation::Nonzero))),
+        refusals.iter().any(|refusal| matches!(
+            refusal.cause.as_ref(),
+            CheckCause::Unproved(Obligation::Nonzero)
+        )),
         "{refusals:?}"
     );
 }

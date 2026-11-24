@@ -77,7 +77,7 @@ const SCALAR_UNLIMITED: ScalarLimits = ScalarLimits {
 };
 
 fn assert_state_model_ill_typed(refusal: &CheckRefusal, expected: IllTypedCause, raw: &str) {
-    let CheckCause::StateModel(owner) = &refusal.cause else {
+    let CheckCause::StateModel(owner) = &*refusal.cause else {
         panic!("StateModel ownership: {refusal:?}");
     };
     assert_eq!(owner.family(), FamilyKind::StateModel);
@@ -400,7 +400,7 @@ fn d07_own_shape_a_dispatch_call_inside_an_ordinary_function_body_is_refused() {
         .expect_err("a dispatch call inside an ordinary function body must be refused");
     let refusal = refusals
         .iter()
-        .find(|refusal| matches!(&refusal.cause, CheckCause::StateModel(owner) if owner.cause == CheckCause::IllTyped(IllTypedCause::OperatorIneligible)))
+        .find(|refusal| matches!(refusal.cause.as_ref(), CheckCause::StateModel(owner) if owner.cause == CheckCause::IllTyped(IllTypedCause::OperatorIneligible)))
         .unwrap_or_else(|| panic!("expected a StateModel OperatorIneligible refusal, got {refusals:?}"));
     assert_state_model_ill_typed(
         refusal,
@@ -874,8 +874,10 @@ fn synthesized_dispatch_candidate_is_not_callable_by_name() {
         )
         .expect_err("a synthesized candidate body must not be callable by name");
     assert!(
-        refusals.iter().any(|refusal: &CheckRefusal| refusal.cause
-            == CheckCause::MissingName("candidate.body".to_owned())),
+        refusals
+            .iter()
+            .any(|refusal: &CheckRefusal| refusal.cause.as_ref()
+                == &CheckCause::MissingName("candidate.body".to_owned())),
         "expected a MissingName(\"candidate.body\") refusal, got {refusals:?}"
     );
 }
@@ -1016,7 +1018,7 @@ fn dispatch_candidate_with_an_out_of_range_body_index_is_refused_invalid_dispatc
         .expect_err("an out-of-range candidate body index must be refused");
     assert!(
         refusals.iter().any(|refusal: &CheckRefusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::InvalidDispatchDeclaration(detail)
                 if matches!(
                     **detail,
@@ -1052,7 +1054,7 @@ fn dispatch_candidate_with_a_mismatched_arity_is_refused_invalid_dispatch() {
         .expect_err("a candidate/operation arity mismatch must be refused");
     assert!(
         refusals.iter().any(|refusal: &CheckRefusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::InvalidDispatchDeclaration(detail)
                 if matches!(
                     **detail,
@@ -1070,7 +1072,7 @@ fn dispatch_candidate_with_a_mismatched_arity_is_refused_invalid_dispatch() {
         .iter()
         .find(|refusal| {
             matches!(
-                &refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::InvalidDispatchDeclaration(detail)
                     if matches!(**detail, InvalidDispatchDeclaration::Arity { .. })
             )
@@ -1120,7 +1122,7 @@ fn dispatch_candidate_with_a_mismatched_parameter_type_is_refused_invalid_dispat
         .expect_err("a candidate/operation parameter type mismatch must be refused");
     let location = refusals
         .iter()
-        .find_map(|refusal| match &refusal.cause {
+        .find_map(|refusal| match &*refusal.cause {
             CheckCause::InvalidDispatchDeclaration(detail)
                 if matches!(
                     **detail,
@@ -1166,7 +1168,7 @@ fn dispatch_candidate_with_a_mismatched_result_type_is_refused_invalid_dispatch(
         .expect_err("a candidate/operation result type mismatch must be refused");
     let location = refusals
         .iter()
-        .find_map(|refusal| match &refusal.cause {
+        .find_map(|refusal| match &*refusal.cause {
             CheckCause::InvalidDispatchDeclaration(detail)
                 if matches!(
                     **detail,
@@ -1250,8 +1252,9 @@ fn ab_bridge_declarations(
     let a_type = view_type(&view, "ix://test/orders/A");
     let b_type = view_type(&view, "ix://test/orders/B");
     let clauses = ab_bridge_clauses(a_type.clone(), pa, pb);
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
     let root_key = if receiver_type == b_type {
         DeclarationKey::fixture("ix://test/orders/B/size")
     } else {
@@ -1624,10 +1627,12 @@ fn d08_a_cycle_through_a_dispatch_edge_is_refused_definition_cycle() {
         .expect_err("a dispatch-edge cycle must be refused");
     let refusal = refusals
         .iter()
-        .find(|refusal: &&CheckRefusal| matches!(refusal.cause, CheckCause::DefinitionCycle { .. }))
+        .find(|refusal: &&CheckRefusal| {
+            matches!(refusal.cause.as_ref(), CheckCause::DefinitionCycle { .. })
+        })
         .unwrap_or_else(|| panic!("expected a DefinitionCycle refusal, got {refusals:?}"));
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::DefinitionCycle {
             edges: vec![(
                 "candidate.precondition".to_owned(),
@@ -1775,10 +1780,12 @@ fn d08_bridge_self_recursive_precondition_is_refused_definition_cycle() {
         .expect_err("a dispatch-edge cycle through the bridge must be refused");
     let refusal = refusals
         .iter()
-        .find(|refusal: &&CheckRefusal| matches!(refusal.cause, CheckCause::DefinitionCycle { .. }))
+        .find(|refusal: &&CheckRefusal| {
+            matches!(refusal.cause.as_ref(), CheckCause::DefinitionCycle { .. })
+        })
         .unwrap_or_else(|| panic!("expected a DefinitionCycle refusal, got {refusals:?}"));
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::DefinitionCycle {
             edges: vec![(
                 "ix://test/orders/A/size.precondition".to_owned(),
@@ -1818,10 +1825,12 @@ fn d08_bridge_ancestor_cycle_survives_a_sibling_combinator() {
         .expect_err("a dispatch-edge cycle through the bridge must be refused");
     let refusal = refusals
         .iter()
-        .find(|refusal: &&CheckRefusal| matches!(refusal.cause, CheckCause::DefinitionCycle { .. }))
+        .find(|refusal: &&CheckRefusal| {
+            matches!(refusal.cause.as_ref(), CheckCause::DefinitionCycle { .. })
+        })
         .unwrap_or_else(|| panic!("expected a DefinitionCycle refusal, got {refusals:?}"));
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::DefinitionCycle {
             edges: vec![(
                 "ix://test/orders/A/size.precondition".to_owned(),
@@ -1884,8 +1893,9 @@ fn d06_bridge_ancestor_let_binder_colliding_with_descendant_parameter_does_not_c
 
     let domain_package = bridge_bundle();
     let view = bridge_view(&domain_package);
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
     let root = DispatchRoot {
         // #204 round 1, M5: rooted at `b`, not the family's original `a` --
         // `B`'s own effective member for "size" is `B.size`, and this test
@@ -2152,8 +2162,9 @@ fn bridge_links_a_real_family_and_evaluates_through_the_built_table() {
     let a_type = view_type(&view, "ix://test/orders/A");
     let b_type = view_type(&view, "ix://test/orders/B");
     let clauses = bridge_clauses(a_type.clone());
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
 
     let root = DispatchRoot {
         key: DeclarationKey::fixture("ix://test/orders/A/size"),
@@ -2246,8 +2257,9 @@ fn bridge_environment_admits_a_subtype_argument_at_a_supertype_parameter() {
             .expect("bridge_clauses declares every operation")
             .push(("other".to_owned(), ValueType::Reference(a_type.clone())));
     }
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
     let declarations = checked_dispatch_operation(
         &view,
         fsl_semantics::check::model_type_environment("fixture", &view).unwrap(),
@@ -2343,8 +2355,9 @@ fn bridge_links_an_object_type_specializing_a_process() {
     clauses
         .own_body
         .insert(operation.clone(), Expression::integer(Integer::from(1_i64)));
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
     let declarations = checked_dispatch_operation(
         &view,
         fsl_semantics::check::model_type_environment("fixture", &view).unwrap(),
@@ -2441,8 +2454,9 @@ fn d01_runtime_dispatches_d_and_c_receivers_and_observes_the_work_limit() {
         view_type(&view, "ix://test/orders/D"),
     );
     let clauses = bridge_clauses(a_type.clone());
-    let mut normalization_meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut normalization_meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
     let mut declarations_a = checked_dispatch_operation(
         &view,
         fsl_semantics::check::model_type_environment("fixture", &view).unwrap(),
@@ -2749,8 +2763,9 @@ fn bridge_exposes_dispatch_through_an_inherited_static_type_that_never_redefines
     let a_type = view_type(&view, "ix://test/orders/A");
     let c_type = view_type(&view, "ix://test/orders/C");
     let clauses = inherited_only_clauses(a_type.clone());
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
 
     let root = DispatchRoot {
         key: DeclarationKey::fixture("ix://test/orders/A/size"),
@@ -2846,8 +2861,9 @@ fn not_a_query_refusal(domain_package: &DomainPackage) -> DispatchBridgeRefusal 
     let view = bridge_view(domain_package);
     let a_type = view_type(&view, "ix://test/orders/A");
     let clauses = inherited_only_clauses(a_type);
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
     let root = DispatchRoot {
         key: DeclarationKey::fixture("ix://test/orders/A/size"),
         closure: GeneralizationClosure::Closed,
@@ -3049,8 +3065,9 @@ fn checked_dispatch_operation_checks_root_key_first_not_record_order() {
             .own_body
             .insert(operation.clone(), Expression::integer(1_i64));
     }
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
     let root = DispatchRoot {
         key: a.clone(),
         closure: GeneralizationClosure::Closed,
@@ -3170,8 +3187,9 @@ fn money_bridge(root_at_b: bool) -> MoneyBridge {
         key: if root_at_b { b } else { a },
         closure: GeneralizationClosure::Closed,
     };
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
     let types = TypeEnvironment::new(
         composites,
         [
@@ -3416,12 +3434,12 @@ fn dispatch_declaration_refusals_are_the_same_under_both_check_modes() {
     assert!(
         matches!(
             linked.as_slice(),
-            [CheckRefusal {
-                cause: CheckCause::InvalidDispatchDeclaration(detail),
-                ..
-            }] if matches!(
-                **detail,
+            [CheckRefusal { cause, .. }] if matches!(
+                cause.as_ref(),
+                CheckCause::InvalidDispatchDeclaration(detail) if matches!(
+                    **detail,
                 InvalidDispatchDeclaration::TableOutOfRange { table: 0, .. }
+                )
             )
         ),
         "{linked:?}"
@@ -3433,15 +3451,15 @@ fn dispatch_declaration_refusals_are_the_same_under_both_check_modes() {
     assert!(
         matches!(
             linked.as_slice(),
-            [CheckRefusal {
-                cause: CheckCause::InvalidDispatchDeclaration(detail),
-                ..
-            }] if matches!(
-                **detail,
+            [CheckRefusal { cause, .. }] if matches!(
+                cause.as_ref(),
+                CheckCause::InvalidDispatchDeclaration(detail) if matches!(
+                    **detail,
                 InvalidDispatchDeclaration::FunctionOutOfRange {
                     role: DispatchFunctionRole::Body,
                     index,
                 } if index == functions
+                )
             )
         ),
         "{linked:?}"

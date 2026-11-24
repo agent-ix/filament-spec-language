@@ -5550,7 +5550,7 @@ pub fn emit_checked_with_protocol_results_and_temporal_selections_and_cancel(
                 .first()
                 .cloned()
                 .ok_or(EmitRefusal::ProtocolResultInvariant)?;
-            if let fsl_semantics::check::CheckCause::ResourceExhausted(limit) = &refusal.cause {
+            if let fsl_semantics::check::CheckCause::ResourceExhausted(limit) = &*refusal.cause {
                 if limit.kind == fsl_semantics::check::CheckingLimitKind::WorkBudget {
                     first_incomplete.get_or_insert_with(|| (**limit).clone());
                     results.push(ProtocolEmissionResult::Incomplete {

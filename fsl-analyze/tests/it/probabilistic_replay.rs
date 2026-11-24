@@ -82,6 +82,7 @@ fn real_link_refutations_replay_target_hits_and_terminal_nonreach() {
     }
 }
 #[trace("TC-770", "FR-286-AC-14")]
+#[trace("FSpec-TC-431", "FSpec-FR-413-AC-17")]
 #[test]
 fn a_refuted_exact_probabilistic_item_is_spelled_and_its_path_set_replays() {
     let world = World::new(&prob_world::link(CLAIMS));
@@ -102,7 +103,9 @@ fn a_refuted_exact_probabilistic_item_is_spelled_and_its_path_set_replays() {
     assert_eq!(wire["type"], "probabilistic");
     assert_eq!(wire["initial_state"], 0);
     assert!(wire["binding"].is_object(), "the over binding");
-    assert_eq!(wire["bound"]["comparison"], "<=");
+    assert_eq!(wire["bound"]["comparison"], "less-or-equal");
+    assert_eq!(wire["bound"]["type"], "probability");
+    assert_eq!(wire["bound"].as_object().unwrap().len(), 3);
     assert_eq!(wire["bound"]["threshold"]["numerator"], "1");
     assert_eq!(wire["bound"]["threshold"]["denominator"], "2");
     assert_eq!(wire["evidence"]["type"], "path-set");
@@ -210,7 +213,7 @@ fn semantic_mutations_cannot_obtain_a_reproduced_token() {
         Err(ProbabilityWitnessError::Refused)
     ));
 }
-#[trace("TC-637", "FR-202-AC-21")]
+#[trace("TC-637", "FR-202-AC-11", "FR-202-AC-21")]
 #[test]
 fn randomized_scheduler_entry_without_a_fairness_set_has_no_token() {
     let world = World::new(&prob_world::link(CLAIMS));
@@ -237,6 +240,44 @@ fn randomized_scheduler_entry_without_a_fairness_set_has_no_token() {
         ));
     }
 }
+
+/// FR-202-AC-11 (TC-637): this path-set replay profile refuses more than one
+/// initial state or more than one claim binding without producing a token.
+#[trace("TC-637", "FR-202-AC-11")]
+#[test]
+fn multiple_initials_and_instances_are_unsupported_without_a_token() {
+    let model = prob_world::link(CLAIMS);
+    let world = World::new(&model);
+    let witness = evidence(&world, "TooMuch");
+
+    let mut delivered = model.initial.clone();
+    delivered["delivered"] = serde_json::json!({"boolean": true});
+    let multiple_initials = World::with_initials(&model, &[model.initial.clone(), delivered]);
+    assert!(matches!(
+        replay(
+            &multiple_initials,
+            &witness,
+            &ExactProbLimits::default(),
+            &Cancel::new()
+        ),
+        Err(ProbabilityWitnessError::Graph(
+            ExactProbabilityGraphError::UnsupportedInitial
+        ))
+    ));
+    let multiple_instances = World::with_objects(&model, &["m", "n"]);
+    assert!(matches!(
+        replay(
+            &multiple_instances,
+            &witness,
+            &ExactProbLimits::default(),
+            &Cancel::new()
+        ),
+        Err(ProbabilityWitnessError::Graph(
+            ExactProbabilityGraphError::UnsupportedBinding
+        ))
+    ));
+}
+
 #[trace("TC-637", "FR-202-AC-10")]
 #[test]
 fn duplicate_paths_live_prefixes_and_threshold_equality_have_no_token() {
@@ -382,8 +423,14 @@ fn workload_replay_preserves_weight_shares_and_emits_no_scheduler() {
         panic!("defined product");
     };
     let target = product.labels.iter().map(|row| row[0]).collect::<Vec<_>>();
-    let solved = decide_reachability(&product, &target, UnboundedObjective::Min, &limits)
-        .expect("workload solver");
+    let solved = decide_reachability(
+        &product,
+        &target,
+        UnboundedObjective::Min,
+        &limits,
+        &Cancel::new(),
+    )
+    .expect("workload solver");
     assert_eq!(
         solved.values[product.initial[0].2.index()],
         fsl_analyze::exact_probabilistic::ExtRational::Finite(ratio(391, 400))
@@ -547,6 +594,11 @@ fn replay_parity_and_refusal_settle_inconclusive_without_evidence() {
         }
         assert!(record.probabilistic_counterexample.is_none());
         assert!(record.exact_probabilistic.is_none());
+        let outcome = serde_json::to_value(fsl_replay::OutcomeItem::from_terminal(
+            record.terminal().unwrap(),
+        ))
+        .unwrap();
+        assert!(outcome.get("measured").is_none(), "{outcome}");
     }
 }
 
@@ -817,8 +869,14 @@ fn fix_round_producer_frontier_and_rational_stops_follow_a_successful_real_solve
         panic!("defined product");
     };
     let target = product.labels.iter().map(|row| row[0]).collect::<Vec<_>>();
-    let solved = decide_reachability(&product, &target, UnboundedObjective::Max, &ample)
-        .expect("the real product solves before producer-only limits apply");
+    let solved = decide_reachability(
+        &product,
+        &target,
+        UnboundedObjective::Max,
+        &ample,
+        &Cancel::new(),
+    )
+    .expect("the real product solves before producer-only limits apply");
     let start = product.initial[0].2;
     let produce = |limits: &ExactProbLimits| {
         produce_witness(
@@ -871,6 +929,7 @@ probabilistic TooLittleFair using inf on M over (m: M::Msg) under every schedule
 /// FR-200 / FR-413-AC-5: the fair refutation of both bound directions carries
 /// evidence whose fairness replay accepts.
 #[trace("TC-364", "FR-200", "FR-200-AC-4", "FR-413-AC-5")]
+#[trace("FSpec-TC-364", "FSpec-FR-413-AC-5")]
 #[test]
 fn a_fair_every_scheduler_refutation_replays_through_the_fairness_check() {
     let world = World::new(&prob_world::link(FAIR_CLAIMS));
@@ -891,6 +950,7 @@ fn a_fair_every_scheduler_refutation_replays_through_the_fairness_check() {
 /// reached state) is not a fair witness and settles `inconclusive`,
 /// `replay-parity`, not a refusal.
 #[trace("TC-364", "FR-413-AC-5", "FR-202-AC-3")]
+#[trace("FSpec-TC-364", "FSpec-FR-413-AC-5")]
 #[test]
 fn an_unfair_witness_settles_inconclusive_replay_parity() {
     use fsl_analyze::analyze::exact_probabilistic_item_witness_tampered;

@@ -27,7 +27,7 @@ mod conversions;
 mod persistent;
 
 use self::persistent::PersistentMap;
-use super::check::{holds_float, DispatchOperation};
+use super::check::{DispatchOperation, holds_float};
 use super::ir::{CheckedNode, DispatchTable, NodeId, Slot};
 use super::observation::Observations;
 use super::refusal::{
@@ -969,11 +969,7 @@ impl<'a> Definedness<'a> {
         while let NodeKind::ConvertScalar(_, operand) = inner.kind() {
             inner = inner.at(*operand);
         }
-        if is_integer(inner) {
-            inner
-        } else {
-            node
-        }
+        if is_integer(inner) { inner } else { node }
     }
 
     fn comparison(
@@ -1472,7 +1468,7 @@ impl<'a> Definedness<'a> {
     fn refuse(node: CheckedNode<'_>, obligation: Obligation) -> CheckRefusal {
         CheckRefusal {
             location: node.location().clone(),
-            cause: CheckCause::Unproved(obligation),
+            cause: Box::new(CheckCause::Unproved(obligation)),
         }
     }
 
@@ -1588,10 +1584,11 @@ impl<'a> Definedness<'a> {
                 match self.discharge_node(node, facts) {
                     // FR-495: an unproved obligation is not recorded; the
                     // evaluator meets it at run time.
-                    Err(CheckRefusal {
-                        cause: CheckCause::Unproved(_),
-                        ..
-                    }) => Ok(()),
+                    Err(CheckRefusal { cause, .. })
+                        if matches!(cause.as_ref(), CheckCause::Unproved(_)) =>
+                    {
+                        Ok(())
+                    }
                     other => other,
                 }
             }
@@ -1657,6 +1654,19 @@ impl<'a> Definedness<'a> {
                 self.discharge_conversion(node, node.at(*operand), facts)
             }
             NodeKind::Coerce(operand, target) => {
+                if matches!(
+                    &node.location().origin,
+                    filament_semantic_value::location::ExpressionOwner::TypeDeclaration { name }
+                        if name.starts_with("temporal ")
+                            && (name.ends_with(" guard") || name.contains(" holds "))
+                ) {
+                    // Temporal conditions run against observations, so their
+                    // implicit range coercions remain partial until runtime.
+                    // This lets guard and holds evaluation report the typed
+                    // definedness refusal at its source locus. Explicit scalar
+                    // conversions still take the `ConvertScalar` path above.
+                    return Ok(());
+                }
                 let proved = self.interval(node.at(*operand), facts);
                 let required = Interval::of_domain(target);
                 if proved.within(&required) {
@@ -1676,11 +1686,11 @@ impl<'a> Definedness<'a> {
                     );
                     Err(CheckRefusal {
                         location: node.location().clone(),
-                        cause: CheckCause::Unproved(Obligation::Range {
+                        cause: Box::new(CheckCause::Unproved(Obligation::Range {
                             required: Box::new(required.proved()),
                             proved: Box::new(proved.proved()),
                             operand,
-                        }),
+                        })),
                     })
                 }
             }
@@ -1732,6 +1742,14 @@ impl<'a> Definedness<'a> {
                         .is_some_and(|path| facts.nonzero.contains(&path));
                 if !nonzero {
                     return Err(Self::refuse(node, Obligation::Nonzero));
+                }
+                if let (Some(Value::Integer(dividend)), Some(Value::Integer(divisor))) = (
+                    self.numeric_literal(node.at(*left)),
+                    self.numeric_literal(node.at(*right)),
+                ) {
+                    if Rational::new(dividend, divisor).is_ok_and(|value| domain.contains(&value)) {
+                        return Ok(());
+                    }
                 }
                 let dividend = self.interval(node.at(*left), facts);
                 let zero = End::Finite(Integer::zero());
@@ -2084,11 +2102,11 @@ impl<'a> Definedness<'a> {
                 let Some(declared_operation) = self.dispatch_operations.get(operation_index) else {
                     return Err(CheckRefusal {
                         location: node.location().clone(),
-                        cause: CheckCause::InvalidDispatchDeclaration(Box::new(
+                        cause: Box::new(CheckCause::InvalidDispatchDeclaration(Box::new(
                             InvalidDispatchDeclaration::OperationOutOfRange {
                                 operation: operation_index,
                             },
-                        )),
+                        ))),
                     });
                 };
                 let callees = self
@@ -2097,12 +2115,12 @@ impl<'a> Definedness<'a> {
                     .map(DispatchTable::callees)
                     .ok_or_else(|| CheckRefusal {
                         location: node.location().clone(),
-                        cause: CheckCause::InvalidDispatchDeclaration(Box::new(
+                        cause: Box::new(CheckCause::InvalidDispatchDeclaration(Box::new(
                             InvalidDispatchDeclaration::TableOutOfRange {
                                 member: declared_operation.member.clone(),
                                 table: table_index,
                             },
-                        )),
+                        ))),
                     })?;
                 for callee in callees {
                     self.calls.push(CallSite {

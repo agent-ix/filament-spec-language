@@ -130,7 +130,7 @@ fn untyped(
     refusals
         .iter()
         .map(|refusal| {
-            let inner = match &refusal.cause {
+            let inner = match refusal.cause.as_ref() {
                 CheckCause::StateModel(state) => &state.cause,
                 other => other,
             };
@@ -168,7 +168,7 @@ fn invariant(clause: &str) -> String {
 
 /// FR-056-AC-43 (TC-897 step 8): the package with the bare native members is
 /// admitted, assembled and checked with no clause naming them.
-#[trace("TC-897")]
+#[trace("TC-897", "FR-505-AC-6")]
 #[test]
 fn a_package_of_bare_native_members_is_admitted_by_a_unit_naming_none() {
     assert!(assembled(&note_document(), "").is_ok());
@@ -177,7 +177,7 @@ fn a_package_of_bare_native_members_is_admitted_by_a_unit_naming_none() {
 /// FR-056-AC-43 (TC-897 step 8): each use of a bare native field refuses
 /// `ill_typed`/`operator-ineligible` at the projection, naming the owner and
 /// `Field.typeRef`; policy-bearing Decimal and Integer members are checked.
-#[trace("TC-897")]
+#[trace("TC-897", "FR-505-AC-6")]
 #[test]
 fn a_clause_using_a_bare_native_field_refuses_at_the_projection() {
     let document = note_document();
@@ -248,7 +248,7 @@ fn rational_value_type(name: &str, constraints: Vec<Value>) -> Value {
 /// FR-505-AC-6 (TC-1300): a field typed a Rational value type with no
 /// constraints is admitted and its use in a clause refuses
 /// `ill_typed`/`operator-ineligible` at the projection, as FR-056-AC-43 states.
-#[trace("TC-1300")]
+#[trace("TC-1300", "FR-505-AC-6")]
 #[test]
 fn an_unconstrained_rational_value_type_field_admits_and_refuses_where_used() {
     let raw = identity("Raw");
@@ -266,7 +266,7 @@ fn an_unconstrained_rational_value_type_field_admits_and_refuses_where_used() {
 /// FR-505-AC-6 (TC-1300): adding a bounded `Ratio` to the package, typing a
 /// field by it, leaves every other declaration's node identity unchanged:
 /// the object types' keys and every other scalar's resolved type.
-#[trace("TC-1300")]
+#[trace("TC-1300", "FR-505-AC-6")]
 #[test]
 fn adding_a_ratio_leaves_every_other_declaration_identity_unchanged() {
     let raw = identity("Raw");

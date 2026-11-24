@@ -16,14 +16,17 @@ use fsl_eval::model_subject::ModelSubject;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
     check_probability_certificate_document, CertificateRule, ExactProbabilityCertificate,
-    ExactProbabilityCertificateCheck, InconclusiveCause, ProbabilityCertificateLocus,
-    ProbabilityCertificateRule, ProbabilityDocumentError, ProofBasis, TerminalValue,
+    ExactProbabilityCertificateCheck, IncompleteCause, InconclusiveCause, ModelCheckLimit,
+    ProbabilityCertificateLocus, ProbabilityCertificateRule, ProbabilityDocumentError, ProofBasis,
+    TerminalValue,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use super::long_run_certificate::limits;
 use crate::timed_world::{self, World};
+
+mod bounded_monitor_profile;
 
 const PROFILES: &str = "profile ev = \"filament.temporal.timed/v1\";\n\
      profile inf = \"filament.temporal.infinite-trace/v1\";\n";
@@ -480,6 +483,52 @@ fn strict_mean_time_is_certified_over_boundary_regions() {
     assert!(accepted(&world, "MeanTime", &doc));
 }
 
+/// FR-204-AC-24: an unreachable target has infinite elapsed time, so every
+/// threshold is proved without manufacturing a finite exact value.
+#[trace("TC-639", "FR-204-AC-24")]
+#[test]
+fn workload_mean_time_proves_infinite_lower_bound_without_exact_value() {
+    let claims = "probabilistic MeanTime using inf on M over (c: M::Call) under One on origin { expected elapsed until holds(false) >= 3 ms }\n";
+    let world = retx(
+        GUARD,
+        true,
+        "workload One on M { weight Call::send = 1; }\n",
+        claims,
+    );
+    let record = settle(&world, "MeanTime");
+    assert!(
+        matches!(
+            record.terminal().map(|terminal| terminal.value()),
+            Some(TerminalValue::Proved {
+                basis: ProofBasis::Exhaustive,
+                ..
+            })
+        ),
+        "{record:#?}"
+    );
+    assert!(record.exact_probabilistic.is_none());
+}
+
+/// FR-204-AC-25: every admitted scheduler has the same unreachable target.
+#[trace("TC-639", "FR-204-AC-25")]
+#[test]
+fn every_scheduler_mean_time_proves_infinite_lower_bound_without_exact_value() {
+    let claims = "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin { expected elapsed until holds(false) >= 3 ms }\n";
+    let world = retx(GUARD, true, "", claims);
+    let record = settle(&world, "MeanTime");
+    assert!(
+        matches!(
+            record.terminal().map(|terminal| terminal.value()),
+            Some(TerminalValue::Proved {
+                basis: ProofBasis::Exhaustive,
+                ..
+            })
+        ),
+        "{record:#?}"
+    );
+    assert!(record.exact_probabilistic.is_none());
+}
+
 // --- FR-923 (TC-2492) -------------------------------------------------------
 
 /// A `discrete` delay over every scheduler leaves no choice: minimum and
@@ -511,6 +560,68 @@ fn every_scheduler_discrete_delay_refutes() {
         .mass()
         .clone();
     assert_eq!(mass, ratio(871, 160_000));
+}
+
+/// FSpec FR-421-AC-2 / TC-374: two losses at 2 ms and 4 ms form the one
+/// replayed counterexample path. After the second send resets `x` at the
+/// 4 ms horizon, the next send's `x >= 1 ms` guard cannot be met in-window.
+#[trace("FSpec-TC-374", "FSpec-FR-421-AC-2")]
+#[test]
+fn deadline_at_995_refutes_with_two_losses_at_the_horizon() {
+    let world = retx(
+        GUARD,
+        true,
+        "",
+        &deadline("Deadline", "under every scheduler", ">= 0.995"),
+    );
+    let record = settle(&world, "Deadline");
+    assert!(is_refuted(&record), "{record:#?}");
+    let counterexample = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the refutation has reproduced path evidence");
+    assert_eq!(counterexample.mass(), &ratio(1, 100));
+    let evidence = counterexample.evidence();
+    assert_eq!(evidence.paths.len(), 1);
+    let path = &evidence.paths[0];
+    let mut elapsed = ratio(0, 1);
+    let mut loss_times = Vec::new();
+    for step in &path.steps {
+        elapsed = elapsed.add(&step.elapsed);
+        if step
+            .transition
+            .as_ref()
+            .is_some_and(|transition| transition.operation().contains("Call/send"))
+        {
+            let draw = step.draw.as_ref().expect("send carries its loss draw");
+            assert!(matches!(
+                draw.as_slice(),
+                [filament_exact::Value::Boolean(true)]
+            ));
+            loss_times.push(elapsed.clone());
+        }
+    }
+    assert_eq!(loss_times, [ratio(2, 1), ratio(4, 1)]);
+    assert!(
+        path.steps
+            .last()
+            .is_some_and(|step| { matches!(&step.choice, fsl_replay::ProductAction::UnitDelay) }),
+        "after the second loss at 4 ms, the witness advances past the horizon"
+    );
+    assert_eq!(elapsed, ratio(5, 1));
+    let (_, counterexamples) = fsl_analyze::analyze::split_records(vec![record], &world.package);
+    let wire = counterexamples[0]
+        .wire
+        .as_ref()
+        .expect("the timed witness has an FR-413 spelling");
+    assert_eq!(
+        wire["bound"],
+        json!({
+            "type": "probability",
+            "comparison": "greater-or-equal",
+            "threshold": {"numerator": "199", "denominator": "200"}
+        })
+    );
 }
 
 /// FR-923-AC-1: a refutation is evidence only when the checker's own replay of
@@ -1234,6 +1345,78 @@ fn zero_time_cycle_without_end_component_is_certified() {
     assert!(accepted(&world, "Deadline", &document(&record)));
 }
 
+/// A leaking zero-time cycle needs policy evaluation even with a finite
+/// deadline. The timed expectation also needs a dense reward solve.
+#[trace("TC-638", "FR-203-AC-28")]
+#[test]
+fn timed_dense_working_bytes_limit_settles_incomplete() {
+    let deadline_world = retx(
+        "",
+        false,
+        "",
+        &deadline("Deadline", "under every scheduler", ">= 0.99"),
+    );
+    let mean_world = retx(
+        STRICT,
+        true,
+        "",
+        "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin \
+         { expected elapsed until holds(c.late) <= 3 ms }\n",
+    );
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    for (world, claim) in [(&deadline_world, "Deadline"), (&mean_world, "MeanTime")] {
+        let mut request = request(world, claim);
+        request.limits.document.storage_bytes = 1;
+        let item = exact_probabilistic_item(RequestIndex::new(0), request);
+        let records = analyze_items(&engines, vec![item], &Cancel::new());
+        let terminal = records[0].terminal().unwrap_or_else(|| {
+            panic!(
+                "{claim} must settle incomplete: {:?}",
+                records[0].settlement
+            )
+        });
+        assert_eq!(
+            terminal.value(),
+            &TerminalValue::Incomplete(IncompleteCause::LimitReached {
+                limit: ModelCheckLimit::CertificateMaxWorkingBytes,
+                value: 1,
+                required: None,
+            }),
+            "{claim}",
+        );
+    }
+}
+
+/// Policy evaluation of the leaking zero-time cycle propagates its stop
+/// through the finite-horizon adapter.
+#[trace("TC-638", "FR-203-AC-28")]
+#[test]
+fn timed_deadline_dense_elimination_cancellation_settles_incomplete() {
+    let world = retx(
+        "",
+        false,
+        "",
+        &deadline("Deadline", "under every scheduler", ">= 0.99"),
+    );
+    crate::prob_world::assert_dense_elimination_cancelled(request(&world, "Deadline"));
+}
+
+/// Expected elapsed time uses the unbounded solver fallback too, and must
+/// preserve its dense-elimination cancellation instead of turning it into an
+/// engine failure.
+#[trace("TC-638", "FR-203-AC-28")]
+#[test]
+fn timed_mean_dense_elimination_cancellation_settles_incomplete() {
+    let world = retx(
+        STRICT,
+        true,
+        "",
+        "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin \
+         { expected elapsed until holds(c.late) <= 3 ms }\n",
+    );
+    crate::prob_world::assert_dense_elimination_cancelled(request(&world, "MeanTime"));
+}
+
 /// FR-924-AC-5: a time-locked initial state is terminal.
 #[trace("TC-2493", "FR-924-AC-5")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-6")]
@@ -1620,6 +1803,9 @@ fn a_timed_deadline_past_the_rational_budget_proves_with_value_bounds() {
         method,
         &fsl_replay::BoundsMethod::BackwardInduction { precision_bits: 64 }
     );
+    let fsl_replay::ExactBound::Finite(upper) = upper else {
+        panic!("complete product interval has a finite upper endpoint");
+    };
     assert!(lower.value() <= &ratio(99, 100) && &ratio(99, 100) <= upper.value());
     assert!(lower.value() > &ratio(98, 100));
     assert_eq!(entries.len(), 1);
@@ -1651,16 +1837,26 @@ fn a_timed_deadline_past_the_rational_budget_proves_with_value_bounds() {
     )
     .expect("an identity");
     let system = world.system();
-    for bytes in [
-        terminal.exact_certificate_document(),
-        terminal.exact_counterpart_document(),
+    for (bytes, role) in [
+        (
+            terminal.exact_certificate_document(),
+            fsl_replay::CertificateRole::Claim,
+        ),
+        (
+            terminal.exact_counterpart_document(),
+            fsl_replay::CertificateRole::Counterpart,
+        ),
     ] {
-        let checked = check_probability_certificate_document(
+        let checked = fsl_replay::check_probability_certificate_document_as(
             &system,
             world.package.graph().probabilistic_model().claims(),
             &identity,
             bytes.expect("the record carries the document"),
-            fsl_replay::ProbabilityDocumentLimits::for_interval(&request_limits, limits().accounting),
+            role,
+            fsl_replay::ProbabilityDocumentLimits::for_interval(
+                &request_limits,
+                limits().accounting,
+            ),
             &Cancel::new(),
         );
         assert!(

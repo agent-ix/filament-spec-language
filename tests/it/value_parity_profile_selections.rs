@@ -9,10 +9,10 @@ use std::collections::BTreeMap;
 use filament_exact::{Integer, ScalarLimits, Value};
 use fsl_foundation::SourceIdentity;
 use fsl_replay::{
-    call_site, replay_value_parity, CanonicalAssignment, DependencyInput, EnvelopeSource,
-    Identifier, NoPayload, ProfileSelection, QualifiedName, ReplayLimits, ReplayRequest,
-    ReplayRequestWire, RequestTargetWire, ScalarOutcome, StateEnvironment, TracePosition,
-    ValueClaim, ValueParityResult, WitnessEnvelope, WitnessValue,
+    CanonicalAssignment, DependencyInput, EnvelopeSource, Identifier, NoPayload, ProfileSelection,
+    QualifiedName, ReplayLimits, ReplayRequest, ReplayRequestWire, RequestTargetWire,
+    ScalarOutcome, StateEnvironment, TracePosition, ValueClaim, ValueParityResult, WitnessEnvelope,
+    WitnessValue, call_site, replay_value_parity,
 };
 use fsl_replay::{ReplayTargetMembers, WitnessPacket};
 use ix_trace_rs::trace;
@@ -37,7 +37,8 @@ fn source_identity() -> SourceIdentity {
 
 /// TC-1252's unit `UC`.
 fn uc() -> String {
-    String::from("language \"ix:native\" edition \"1-draft\";\n\
+    String::from(
+        "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
          profile t = \"filament.temporal.infinite-trace/v1\";\n\
          profile p = \"filament.protocol.finite-global/v1\";\n\
@@ -48,7 +49,8 @@ fn uc() -> String {
          run sequence Main { }\n\
          finish End as (outcome: Boolean) { true };\n\
          }\n\
-         function inc using v(x: Int[0, 9]): Integer pure { x + 1 }\n")
+         function inc using v(x: Int[0, 9]): Integer pure { x + 1 }\n",
+    )
 }
 
 fn inc() -> QualifiedName {
@@ -69,9 +71,7 @@ fn a_unit_whose_lock_selects_profiles_replays_with_an_empty_selection_list() {
     let source = uc();
     let located = call_site(
         source_identity(),
-        "fixture".to_owned(),
-        "uc.native",
-        source.as_bytes(),
+        fsl_replay::CallSiteUnit::new("fixture".to_owned(), "uc.native", source.as_bytes()),
         [document],
         &DependencyInput::default(),
         &fsl_replay::RequestClocks::default(),

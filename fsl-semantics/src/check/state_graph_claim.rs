@@ -31,16 +31,16 @@ use fsl_forms::{
     ExprNode, Expression, ExpressionBuilder, ExpressionForm, StateClauseKind, StateGraphClaimForm,
     StateGraphClaimKind, StateGraphPredicateForm,
 };
+use fsl_foundation::Span;
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::{StageFailure, Staged};
 use fsl_foundation::selection::ProfileSelection;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::Span;
 
+use super::Capability;
 use super::ir::{CheckedBody, CheckedNode};
 use super::refusal::{CheckCause, CheckRefusal, PredicateRole, StateGraphCause};
-use super::state_clause::{check_clause, ClauseDeclarations, ClauseView, PopulationDomain};
-use super::Capability;
+use super::state_clause::{ClauseDeclarations, ClauseView, PopulationDomain, check_clause};
 use crate::family::{CheckContext, CheckOutcome, ClaimExtent, FamilyContract, Requirements};
 use crate::value::layer::HeaderLayer;
 
@@ -441,7 +441,7 @@ fn refusal(cause: StateGraphCause) -> CheckRefusal {
         // refusal_region` reads it directly, so this `Location` is never
         // resolved.
         location: Location::root(Origin::Expression),
-        cause: CheckCause::StateGraph(Box::new(cause)),
+        cause: Box::new(CheckCause::StateGraph(Box::new(cause))),
     }
 }
 
@@ -543,6 +543,7 @@ fn view_of<'v>(declaration: &'v StateGraphDeclaration, body: &'v Expression) -> 
             .zip(declaration.context.clone())
             .map(|(over, context)| (over.name.name.as_str(), ValueType::Reference(context))),
         operation: None,
+        authored_operation: None,
         context_population: declaration.context_population.clone(),
         frame_population: None,
         binders: &[],
@@ -619,7 +620,7 @@ fn unresolved_name<'a>(
                 continue;
             };
             if !matches!(
-                inner.cause,
+                inner.cause.as_ref(),
                 CheckCause::MissingName(_) | CheckCause::MissingQualifiedName(_)
             ) {
                 continue;
@@ -636,7 +637,7 @@ fn unresolved_name<'a>(
                     StateGraphCause::Predicate {
                         role,
                         span,
-                        cause: Box::new(inner.cause),
+                        cause: Box::new(*inner.cause),
                     },
                 ));
             }
@@ -693,7 +694,7 @@ fn check_predicate<'a>(
             }
         })
         .map_err(|inner| {
-            let operator = match &inner.cause {
+            let operator = match inner.cause.as_ref() {
                 CheckCause::LayerEquality { span, .. } => *span,
                 _ => None,
             };
@@ -704,7 +705,7 @@ fn check_predicate<'a>(
             refuse(StateGraphCause::Predicate {
                 role,
                 span,
-                cause: Box::new(inner.cause),
+                cause: Box::new(*inner.cause),
             })
         })?;
     Ok((

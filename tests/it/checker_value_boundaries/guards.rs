@@ -207,7 +207,7 @@ fn a_let_binding_does_not_borrow_decimal_context_from_its_later_use() {
     };
     assert!(
         refusals.iter().any(|refusal| matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(IllTypedCause::AmbiguousLiteral)
         )),
         "{error:?}"

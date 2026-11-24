@@ -12,7 +12,7 @@ use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{BodyTerm, CheckCause, CheckedGraph, LawRole, PackageDeclarations};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::value::{admit_integer_division, DefinitionRole};
+use fsl_semantics::value::{DefinitionRole, admit_integer_division};
 use ix_trace_rs::trace;
 
 const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -376,12 +376,12 @@ fn complete_value_requires_one_admitted_division_law_but_mod_needs_none() {
         ));
         assert_eq!(refusal.cause.code().as_str(), "missing_declaration");
         assert!(matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::MissingSelection {
                 role: LawRole::IntegerDivision
             }
         ));
-        assert!(refusal.location.path().is_empty());
+        assert_eq!(refusal.location.path(), vec![0], "{refusal:?}");
     }
     integer_operator_with_mode("mod", None, "a: Integer, b: Int[1, 9]", CheckMode::Linked);
 }
@@ -398,7 +398,7 @@ fn integer_operators_refuse_noninteger_operands_and_state_only_dead_branches() {
         noninteger.integer_division = Some(admitted_integer_division(DivisionProfile::Floor));
         let refusal = one_check_refusal(noninteger);
         assert_eq!(refusal.cause.code().as_str(), "ill_typed");
-        assert!(matches!(refusal.cause, CheckCause::IllTyped(_)));
+        assert!(matches!(refusal.cause.as_ref(), CheckCause::IllTyped(_)));
         assert!(refusal.location.path().is_empty());
 
         let mut state_only = operator_declarations(
@@ -411,7 +411,7 @@ fn integer_operators_refuse_noninteger_operands_and_state_only_dead_branches() {
         let refusal = one_check_refusal(state_only);
         assert_eq!(refusal.cause.code().as_str(), "unsupported_construct");
         assert!(matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::ProfileProhibitedOperator(_)
         ));
         assert_eq!(refusal.location.path(), vec![2]);
@@ -426,7 +426,7 @@ fn integer_slash_needs_complete_value_and_a_rational_result_type() {
     let refusal = one_check_refusal(state_only);
     assert_eq!(refusal.cause.code().as_str(), "unsupported_construct");
     assert!(matches!(
-        refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProfileProhibitedOperator(fsl_forms::BinaryOperator::Divide)
     ));
     assert!(refusal.location.path().is_empty());
@@ -437,6 +437,166 @@ fn integer_slash_needs_complete_value_and_a_rational_result_type() {
             &fsl_eval::value::S6aRewardEvaluator,
         )
         .expect("complete value with an expected rational admits integer slash");
+}
+
+/// FR-495-AC-9 (TC-1284, FSpec TC-192 DIV-18): complete-V1 promotes the
+/// integer operands to an exact rational for slash, while an equality gives
+/// no expected rational type and refuses at its first slash.
+#[trace("FR-495-AC-9", "TC-1284", "FSpec-TC-192")]
+#[test]
+fn complete_value_slash_promotes_integers_only_with_a_rational_context() {
+    let declarations = operator_declarations("7 / 3", "", "Rational[0, 7; 1, 3]");
+    let checked = declarations
+        .check(
+            CheckMode::Kernel,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .expect("the expected bounded rational type admits integer slash");
+    let package = CheckedPackage::link(checked);
+    let evaluation = package
+        .call(
+            &QualifiedName::unqualified("op").expect("op is an identifier"),
+            Vec::new(),
+            &ObjectEnvironment::default(),
+            &mut Meter::new(UNLIMITED),
+        )
+        .expect("the slash function evaluates");
+    assert!(matches!(
+        &evaluation.outcome,
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Rational(value)))
+            if value == &filament_exact::Rational::new(
+                Integer::from(7_i64),
+                Integer::from(3_i64)
+            ).unwrap()
+    ));
+
+    let refusals = operator_declarations("7 / 3 = 7 / 3", "", "Boolean")
+        .check(
+            CheckMode::Kernel,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .expect_err("without an expected rational type, slash is ill-typed");
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(refusals[0].cause.code().as_str(), "ill_typed");
+    assert_eq!(refusals[0].cause.cause(), Some("type-mismatch"));
+    assert_eq!(refusals[0].location.path(), vec![0]);
+}
+
+/// FR-495-AC-6 (TC-192 DIV-18): state and complete profiles keep the Rational
+/// context of integer slash clauses explicit.
+#[trace("FR-495-AC-6", "FSpec-TC-192")]
+#[test]
+fn state_only_and_complete_clause_slash_keep_the_rational_context_explicit() {
+    let clauses = [
+        ("invariant", "invariant I using v on O at current"),
+        ("pre", "pre P using v on O::f"),
+        ("post", "post Q using v on O::f"),
+    ];
+    let rational_peer = "7 / 3 = rational(7, 3)";
+    let no_rational_peer = "7 / 3 = 7 / 3";
+    for (profile, body, should_check) in [
+        ("filament.state.core/v1", rational_peer, false),
+        ("filament.state.core/v1", no_rational_peer, false),
+        ("filament.value.complete/v1", rational_peer, true),
+        ("filament.value.complete/v1", no_rational_peer, false),
+    ] {
+        for (kind, clause) in clauses {
+            let text = format!(
+                "language \"ix:native\" edition \"1-draft\";\n\
+                 profile v = {profile:?};\n\
+                 object O {{ operation f(): Boolean; }}\n\
+                 {clause} {{ {body} }}\n"
+            );
+            let parsed = fsl_cst::parse(
+                fsl_foundation::SourceIdentity::new("a", "state-division"),
+                "state-division.native",
+                text.as_bytes(),
+                fsl_cst::Limits::default(),
+            )
+            .expect("S1 reads state clauses");
+            assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+            let unit = fsl_forms::build_unit(&parsed).expect("S2 maps state clauses");
+            let declarations = PackageDeclarations::assemble(
+                parsed.source().reference().clone(),
+                "fixture".to_owned(),
+                unit,
+                Vec::new(),
+                Vec::new(),
+            )
+            .expect("the assembler retains state clauses");
+            let result = declarations.check(
+                CheckMode::Kernel,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            );
+            if should_check {
+                let graph = result
+                    .unwrap_or_else(|refusals| panic!("{profile}, {kind}, {body}: {refusals:?}"));
+                assert_eq!(graph.state_clauses().len(), 1, "{kind}");
+                let children = graph.state_clauses()[0].body().children();
+                assert_eq!(children.len(), 2, "{kind}: equality operands");
+                let expected_domain = filament_exact::RationalDomain::new(
+                    filament_exact::IntegerInterval::new(7_i64.into(), 7_i64.into())
+                        .expect("exact numerator"),
+                    filament_exact::IntegerInterval::new(3_i64.into(), 3_i64.into())
+                        .expect("exact denominator"),
+                )
+                .expect("exact 7/3 domain");
+                assert_eq!(
+                    children[0].value_type(),
+                    &ValueType::Rational(expected_domain),
+                    "{kind}: slash carries exact 7/3"
+                );
+            } else {
+                let refusals = match result {
+                    Err(refusals) => refusals,
+                    Ok(_) => panic!("{profile}, {kind}, {body} checks"),
+                };
+                let [refusal] = refusals.as_slice() else {
+                    panic!("{profile}, {kind}, {body}: one slash refusal, {refusals:?}");
+                };
+                assert_eq!(refusal.cause.code().as_str(), "ill_typed", "{kind}");
+                assert_eq!(refusal.cause.cause(), Some("type-mismatch"), "{kind}");
+                assert_eq!(refusal.location.path(), vec![0], "{kind}: {refusal:?}");
+            }
+        }
+    }
+}
+
+/// FR-495-AC-26 (TC-2873): modulo expressions with distinct proved ranges
+/// preserve their mathematical values when evaluated.
+#[trace("FR-495-AC-26", "TC-2873")]
+#[test]
+fn integer_modulo_equalities_with_different_ranges_evaluate_literally() {
+    for (body, expected) in [("n mod 3 = n mod 2", false), ("n mod 3 != n mod 2", true)] {
+        let checked = operator_declarations(body, "n: Int[0, 100]", "Boolean")
+            .check(
+                CheckMode::Kernel,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
+            .unwrap_or_else(|refusals| panic!("{body}: {refusals:?}"));
+        let package = CheckedPackage::link(checked);
+        let evaluation = package
+            .call(
+                &QualifiedName::unqualified("op").expect("op is an identifier"),
+                vec![Value::Integer(Integer::from(4_i64))],
+                &ObjectEnvironment::default(),
+                &mut Meter::new(UNLIMITED),
+            )
+            .expect("the modulo comparison evaluates");
+        assert!(
+            matches!(
+                evaluation.outcome,
+                FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(value)))
+                    if value == expected
+            ),
+            "{body}: {:?}",
+            evaluation.outcome
+        );
+    }
 }
 
 fn application<'a>(

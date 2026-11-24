@@ -21,7 +21,8 @@ use fsl_foundation::{Code, Span};
 
 use super::{admit_located, read_domain_package, PackageInput};
 use crate::model::accounting::{
-    Charge, ChargePoint, Meter, ModelNormalizationLimits, NormalizationIncomplete,
+    Charge, ModelNormalizationLimits, NormalizationChargePoint, NormalizationIncomplete,
+    NormalizationMeter,
 };
 use crate::model::domain_package::{
     DomainPackage, DomainPackageRecord, ParsedOperationClause, ParsedTypeInvariant,
@@ -67,12 +68,23 @@ pub struct SelectedModels {
     tuple_declarations: Vec<filament_contract_model::SelectedTupleDeclarationRow>,
 }
 
+pub(crate) struct SelectedModelsParts {
+    pub(crate) entries: Vec<SelectedModel>,
+    pub(crate) versions: BTreeMap<String, String>,
+    pub(crate) meter: NormalizationMeter,
+    pub(crate) exact_declarations: Vec<SelectedExactDeclarationRow>,
+    pub(crate) exact_fields: Vec<SelectedExactFieldRow>,
+    pub(crate) tuple_declarations: Vec<filament_contract_model::SelectedTupleDeclarationRow>,
+}
+
 impl Default for SelectedModels {
     fn default() -> Self {
         Self {
             entries: Vec::new(),
             versions: BTreeMap::new(),
-            meter: NormalizationOwner::new(Meter::new(ModelNormalizationLimits::default())),
+            meter: NormalizationOwner::new(NormalizationMeter::new(
+                ModelNormalizationLimits::default(),
+            )),
             exact_declarations: Vec::new(),
             exact_fields: Vec::new(),
             tuple_declarations: Vec::new(),
@@ -84,21 +96,21 @@ impl Default for SelectedModels {
 /// retained meter. A mutable owner borrow cannot coexist with that catalog.
 /// The lock guards only fixed owner operations, never a caller callback.
 #[derive(Debug)]
-struct NormalizationOwner(std::sync::Mutex<Meter>);
+struct NormalizationOwner(std::sync::Mutex<NormalizationMeter>);
 
 impl NormalizationOwner {
-    fn new(meter: Meter) -> Self {
+    fn new(meter: NormalizationMeter) -> Self {
         Self(std::sync::Mutex::new(meter))
     }
 
-    fn consumed(&self, kind: crate::model::accounting::LimitKind) -> u64 {
+    fn consumed(&self, kind: crate::model::accounting::NormalizationLimitKind) -> u64 {
         self.0
             .lock()
             .expect("normalization owner operations do not unwind")
             .consumed(kind)
     }
 
-    fn into_meter(self) -> Meter {
+    fn into_meter(self) -> NormalizationMeter {
         self.0
             .into_inner()
             .expect("normalization owner operations do not unwind")
@@ -181,7 +193,7 @@ impl NormalizedModel {
     }
 
     /// Work consumed by the original normalization and identity producer.
-    pub fn consumed(&self, kind: crate::model::accounting::LimitKind) -> u64 {
+    pub fn consumed(&self, kind: crate::model::accounting::NormalizationLimitKind) -> u64 {
         self.provenance.meter.consumed(kind)
     }
 
@@ -189,7 +201,7 @@ impl NormalizedModel {
     /// model's original ceiling, counter and cancellation handle.
     pub fn charge_reference_work(
         &self,
-        point: ChargePoint,
+        point: NormalizationChargePoint,
         units: u64,
     ) -> Result<(), NormalizationIncomplete> {
         self.provenance
@@ -218,22 +230,15 @@ impl From<Vec<SelectedModel>> for SelectedModels {
 }
 
 impl SelectedModels {
-    pub(crate) fn into_parts(
-        self,
-    ) -> (
-        Vec<SelectedModel>,
-        Meter,
-        Vec<SelectedExactDeclarationRow>,
-        Vec<SelectedExactFieldRow>,
-        Vec<filament_contract_model::SelectedTupleDeclarationRow>,
-    ) {
-        (
-            self.entries,
-            self.meter.into_meter(),
-            self.exact_declarations,
-            self.exact_fields,
-            self.tuple_declarations,
-        )
+    pub(crate) fn into_parts(self) -> SelectedModelsParts {
+        SelectedModelsParts {
+            entries: self.entries,
+            versions: self.versions,
+            meter: self.meter.into_meter(),
+            exact_declarations: self.exact_declarations,
+            exact_fields: self.exact_fields,
+            tuple_declarations: self.tuple_declarations,
+        }
     }
 
     /// The selected model stage's rows, validated against the package IR
@@ -328,7 +333,7 @@ impl SelectedModels {
     }
 
     /// The work the operation has consumed so far, for one limit kind.
-    pub fn consumed(&self, kind: crate::model::accounting::LimitKind) -> u64 {
+    pub fn consumed(&self, kind: crate::model::accounting::NormalizationLimitKind) -> u64 {
         self.meter.consumed(kind)
     }
 
@@ -336,7 +341,7 @@ impl SelectedModels {
     /// normalization meter, retaining its ceiling, counter and cancellation.
     pub fn charge_reference_work(
         &self,
-        point: ChargePoint,
+        point: NormalizationChargePoint,
         units: u64,
     ) -> Result<(), NormalizationIncomplete> {
         self.meter
@@ -360,7 +365,9 @@ impl SelectedModels {
         Self {
             entries,
             versions: BTreeMap::new(),
-            meter: NormalizationOwner::new(Meter::new(ModelNormalizationLimits::UNLIMITED)),
+            meter: NormalizationOwner::new(NormalizationMeter::new(
+                ModelNormalizationLimits::UNLIMITED,
+            )),
             exact_declarations: Vec::new(),
             exact_fields: Vec::new(),
             tuple_declarations: Vec::new(),
@@ -376,7 +383,7 @@ impl SelectedModels {
         package: DomainPackage,
         limits: ModelNormalizationLimits,
     ) -> Result<Self, UnitIntakeRefusal> {
-        let mut meter = Meter::new(limits);
+        let mut meter = NormalizationMeter::new(limits);
         let view = match normalize_on(&package, &mut meter) {
             NormalizeOutcome::Completed(view) => view,
             NormalizeOutcome::Refused(refusals) => {
@@ -626,7 +633,7 @@ enum SelectedExactRowsError {
 /// The alias-free producer shared by source-unit intake and snapshot intake.
 fn normalize_with_exact_rows(
     package: &DomainPackage,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
 ) -> Result<(EffectiveView, SelectedExactRows), UnitIntakeCause> {
     let view = match normalize_on(package, meter) {
         NormalizeOutcome::Completed(view) => view,
@@ -644,7 +651,7 @@ pub(crate) fn normalize_model_with_provenance(
     package: &DomainPackage,
     limits: ModelNormalizationLimits,
 ) -> Result<(EffectiveView, NormalizedModelProvenance), UnitIntakeCause> {
-    let mut meter = Meter::new(limits).with_cancel(Cancel::new());
+    let mut meter = NormalizationMeter::new(limits).with_cancel(Cancel::new());
     let (view, rows) = normalize_with_exact_rows(package, &mut meter)?;
     Ok((
         view,
@@ -655,16 +662,18 @@ pub(crate) fn normalize_model_with_provenance(
     ))
 }
 
-fn charge_selected_row_inspection(meter: &mut Meter) -> Result<(), SelectedExactRowsError> {
+fn charge_selected_row_inspection(
+    meter: &mut NormalizationMeter,
+) -> Result<(), SelectedExactRowsError> {
     meter
-        .charge(Charge::new(ChargePoint::NormalizeDeclaration))
+        .charge(Charge::new(NormalizationChargePoint::NormalizeDeclaration))
         .map_err(SelectedExactRowsError::Limit)
 }
 
 fn selected_exact_rows(
     package: &DomainPackage,
     view: &EffectiveView,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
 ) -> Result<SelectedExactRows, SelectedExactRowsError> {
     let selected_document = package.model_selection.identity.as_str();
     let mut declarations = Vec::new();
@@ -882,7 +891,7 @@ pub fn admit_unit_with_cancel(
             UnitIntakeCause::Refused(Refusals::new(refusal, Vec::new())),
         )
     })?;
-    let mut meter = Meter::new(limits).with_cancel(cancel.clone());
+    let mut meter = NormalizationMeter::new(limits).with_cancel(cancel.clone());
     let mut normalized = BTreeMap::new();
     let mut versions = BTreeMap::new();
     let mut exact_declarations = Vec::new();
@@ -1073,7 +1082,7 @@ mod selected_exact_identity_tests {
         let mut work_units = Vec::new();
         for count in [1_000, 4_000, 16_000] {
             let package = flat_record_package(count);
-            let mut meter = Meter::new(ModelNormalizationLimits::default());
+            let mut meter = NormalizationMeter::new(ModelNormalizationLimits::default());
             let view = match normalize_on(&package, &mut meter) {
                 NormalizeOutcome::Completed(view) => view,
                 other => panic!("{count} flat declarations and fields normalize: {other:?}"),
@@ -1082,7 +1091,8 @@ mod selected_exact_identity_tests {
                 .unwrap_or_else(|error| panic!("{count} flat declarations project: {error:?}"));
             assert_eq!(rows.declarations.len(), count);
             assert_eq!(rows.fields.len(), count);
-            let consumed = meter.consumed(crate::model::accounting::LimitKind::WorkUnits);
+            let consumed =
+                meter.consumed(crate::model::accounting::NormalizationLimitKind::WorkUnits);
             eprintln!("flat-projection-scale N={count} WorkUnits={consumed}");
             work_units.push(consumed);
         }
@@ -1181,7 +1191,7 @@ mod selected_exact_identity_tests {
                 member_name: Some("number".into()),
             },
         );
-        let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+        let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
         let view = match normalize_on(&package, &mut meter) {
             NormalizeOutcome::Completed(view) => view,
             other => panic!("the fixture model normalizes: {other:?}"),
@@ -1267,7 +1277,7 @@ mod selected_exact_identity_tests {
                 }),
             ],
         );
-        let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+        let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
         let NormalizeOutcome::Completed(view) = normalize_on(&package, &mut meter) else {
             panic!("the tuple model normalizes")
         };

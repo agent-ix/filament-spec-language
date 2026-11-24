@@ -136,7 +136,10 @@ fn pairs(refusals: &[CheckRefusal]) -> Vec<(String, Option<&'static str>)> {
 fn only_nonzero(refusals: &[CheckRefusal]) {
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert!(
-        matches!(refusals[0].cause, CheckCause::Unproved(Obligation::Nonzero)),
+        matches!(
+            refusals[0].cause.as_ref(),
+            CheckCause::Unproved(Obligation::Nonzero)
+        ),
         "{refusals:?}"
     );
 }
@@ -166,7 +169,7 @@ fn a_large_remainder_keeps_its_exact_range_or_reports_the_work_limit() {
         )
         .unwrap_err();
     assert_eq!(denied.len(), 1, "{denied:?}");
-    let CheckCause::ResourceExhausted(limit) = &denied[0].cause else {
+    let CheckCause::ResourceExhausted(limit) = denied[0].cause.as_ref() else {
         panic!("{denied:?}")
     };
     assert_eq!(
@@ -371,7 +374,7 @@ fn a_mod_node_is_typed_by_its_divisor_interval() {
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert!(
         matches!(
-            refusals[0].cause,
+            refusals[0].cause.as_ref(),
             CheckCause::Unproved(Obligation::Range { .. })
         ),
         "{refusals:?}"
@@ -412,7 +415,7 @@ fn div_and_rem_carry_their_interval_and_nonzero_obligation_under_each_law() {
 fn only_range(refusals: &[CheckRefusal]) -> bool {
     refusals.len() == 1
         && matches!(
-            refusals[0].cause,
+            refusals[0].cause.as_ref(),
             CheckCause::Unproved(Obligation::Range { .. })
         )
 }
@@ -564,7 +567,7 @@ fn the_remainder_walk_is_bounded_by_the_checking_work_ceiling() {
         )
         .expect_err("the walk needs more than 10000 runs");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
-    let CheckCause::ResourceExhausted(limit) = &refusals[0].cause else {
+    let CheckCause::ResourceExhausted(limit) = refusals[0].cause.as_ref() else {
         panic!("the work stage limit, never a wider type: {refusals:?}");
     };
     assert_eq!(limit.kind, CheckingLimitKind::WorkBudget, "{limit:?}");

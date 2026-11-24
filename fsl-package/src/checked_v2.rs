@@ -60,9 +60,9 @@ pub use terminal::{
 pub use timed_model::{
     CheckedClockConstraint, CheckedClockGuard, CheckedClockPlace, CheckedClockReset,
     CheckedConstraintTarget, CheckedGuardPart, CheckedGuardQuantifier, CheckedResetTarget,
-    CheckedTimeInvariant,
-    CheckedTimeSource, CheckedTimeSourceKind, CheckedTimedModel, CheckedUrgency, ClockComparison,
-    ClockPathStep, ResolvedClockPathStep, TimedLiteralTypes, TimedNodeMetadata,
+    CheckedTimeInvariant, CheckedTimeSource, CheckedTimeSourceKind, CheckedTimedModel,
+    CheckedUrgency, ClockComparison, ClockPathStep, ResolvedClockPathStep, TimedLiteralTypes,
+    TimedNodeMetadata,
 };
 
 /// A test's view of one [`read_checked_package_v2`] outcome, T-4's
@@ -420,6 +420,15 @@ pub enum V2ReadRefusal {
     /// IR reported a pointer that is not RFC 6901 text.
     #[error("internal fault: {} broke {}", .0.stage(), .0.invariant())]
     Fault(InternalFault),
+    /// The host refused storage the strict reader had already admitted; this
+    /// is a tool failure, not a defect or limit of the package.
+    #[error(
+        "host allocation failed during {:?}: requested {} bytes after {} bytes were admitted",
+        .0.stage,
+        .0.requested,
+        .0.consumed
+    )]
+    HostAllocationFailed(filament_contract_model::CheckedPackageHostAllocationFailed),
 }
 
 /// Why an admitted wire's `source_map` did not convert into a
@@ -579,7 +588,7 @@ impl V2ReadRefusal {
             Self::Structural(refusal) => refusal.code(),
             Self::IdentityMismatch { .. } => Code::InvalidPackage,
             Self::SourceMap(_) => Code::InvalidSourceMap,
-            Self::Fault(_) => Code::RuntimeInvariant,
+            Self::Fault(_) | Self::HostAllocationFailed(_) => Code::RuntimeInvariant,
         }
     }
 
@@ -591,7 +600,10 @@ impl V2ReadRefusal {
             Self::UnsupportedVersion { locus, .. } => Some(locus),
             Self::Envelope { locus, .. } => locus.as_deref(),
             Self::IdentityMismatch { locus, .. } => Some(locus),
-            Self::Structural(_) | Self::SourceMap(_) | Self::Fault(_) => None,
+            Self::Structural(_)
+            | Self::SourceMap(_)
+            | Self::Fault(_)
+            | Self::HostAllocationFailed(_) => None,
         }
     }
 
@@ -921,9 +933,9 @@ pub(crate) fn read_checked_package_v2_at(
         )),
         // The host refused an allocation the read had admitted: a tool fault,
         // not a judgement of the package.
-        CheckedPackageDispatchResult::HostAllocationFailed(_) => refused(V2ReadRefusal::Fault(
-            InternalFault::new("I2", "host-allocation-failed"),
-        )),
+        CheckedPackageDispatchResult::HostAllocationFailed(failure) => {
+            refused(V2ReadRefusal::HostAllocationFailed(failure))
+        }
         CheckedPackageDispatchResult::Incomplete(CheckedPackageIncomplete {
             limit_kind: kind,
             limit,
@@ -1366,13 +1378,13 @@ impl AdmittedPackageRead<'_> {
         let supplied = match self.witnesses.supply(&self.read.admitted, &mut budget) {
             Ok(supplied) => supplied,
             Err(WitnessSupplyFailure::Exhausted(native)) => {
-                return Err(exhausted(*native, &budget))
+                return Err(exhausted(*native, &budget));
             }
             Err(WitnessSupplyFailure::Rows(rows)) => {
                 return Err(match limits.native_join_limits().refusal(rows, &budget) {
                     Some(denial) => ViewFailure::Exhausted(Box::new(denial)),
                     None => fault(),
-                })
+                });
             }
             Err(WitnessSupplyFailure::Fault) => return Err(fault()),
         };

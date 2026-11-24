@@ -68,7 +68,7 @@ use crate::proof_result::IncompleteCause;
 
 /// One component of a component certificate: its product states and the
 /// reason no fair accepting cycle stays inside it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct Component<K = ProductStateRef> {
     /// The component's product states.
     pub states: Vec<K>,
@@ -78,7 +78,7 @@ pub struct Component<K = ProductStateRef> {
 
 /// FR-339's component certificate: the closure of a liveness (TP-4) proof
 /// and a partition of its states into components.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct ComponentCertificate {
     /// The closure FR-338's check reads.
     pub closure: ClosureCertificate,
@@ -86,7 +86,17 @@ pub struct ComponentCertificate {
     pub components: Vec<Component>,
 }
 
-/// A proof certificate carried by an EN-1 holding outcome (FR-126).
+impl ComponentCertificate {
+    /// Deterministic ordered JSON bytes for comparing complete certificates.
+    /// This representation is internal to certificate verification and is
+    /// not a replay request schema.
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        serde_json::to_vec(self)
+    }
+}
+
+/// A closure, component or SMT proof certificate carried by an EN-1 holding
+/// outcome (FR-126).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofCertificate {
     /// A closure certificate for an item checked by FR-338.
@@ -96,7 +106,8 @@ pub enum ProofCertificate {
 }
 
 /// FR-339's component witness.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ComponentWitness<K = ProductStateRef> {
     /// One state with no edge to itself: the component holds no cycle.
     Trivial,

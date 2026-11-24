@@ -196,8 +196,7 @@ const NATIVE_SCALARS: &str = "function eqs using v(a: String, b: String): Boolea
 
 /// TC-827: a union, a construction of one of its members and a `case` over
 /// it, the families FR-320 emits.
-const UNION_NODES: &str =
-    "union Shape { Empty, Circle(Integer), Rect(Integer, Integer) }\n\
+const UNION_NODES: &str = "union Shape { Empty, Circle(Integer), Rect(Integer, Integer) }\n\
      function area using v(s: Shape): Integer pure { case s { Empty: 0; Circle(r): r; Rect(w, h): w * h; } }\n\
      function rect using v(): Shape pure { Shape::Rect(2, 3) }\n";
 
@@ -838,8 +837,7 @@ fn rows() -> Vec<Row> {
 /// Every IR node kind neither FSL's emitter nor typed timed-model writer writes.
 const NOT_EMITTED_BY_QSL: &[(CheckedNodeKind, &str)] = {
     use CheckedNodeKind as K;
-    const NO_RECORD_FORM: &str =
-        "lowering's record_form maps only object types, systems interfaces, record value types and variant types to model nodes";
+    const NO_RECORD_FORM: &str = "lowering's record_form maps only object types, systems interfaces, record value types and variant types to model nodes";
     const NO_TAG: &str = "lowering builds no node of this tag";
     &[
         (
@@ -1070,10 +1068,12 @@ fn a_terminal_object_type_target_has_the_same_native_refusal_on_both_routes() {
         Some(filament_contract_model::CheckedPackageRefusalCause::MalformedDeclaration)
     );
     let pointer = format!("/semantic_graph/nodes/{position}/body/members/0/value/target");
-    assert!(bare.loci.iter().any(|locus| locus
-        .path
-        .as_ref()
-        .is_some_and(|path| path.as_str() == pointer)));
+    assert!(bare.loci.iter().any(|locus| {
+        locus
+            .path
+            .as_ref()
+            .is_some_and(|path| path.as_str() == pointer)
+    }));
     let name = emitted.emission.package.name().to_owned();
     emitted.emission.package = EmittedPackage::new(&name, |_| Ok::<_, ()>(bytes)).expect("package");
     let documents = emitted
@@ -2281,7 +2281,7 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
         .expect_err("a dependency protocol over another model is refused");
     assert!(
         refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             fsl_semantics::check::CheckCause::Refinement(refinement)
                 if matches!(
                     &refinement.cause,
@@ -2327,7 +2327,7 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
             )
             .expect_err("an unknown dependency clause or type refuses");
         assert!(refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             fsl_semantics::check::CheckCause::Refinement(refinement)
                 if matches!(
                     &refinement.cause,
@@ -2469,7 +2469,7 @@ fn a_dependency_protocol_node_row_checks_its_receiver_argument() {
         .iter()
         .find(|refusal| {
             matches!(
-                &refusal.cause,
+                refusal.cause.as_ref(),
                 fsl_semantics::check::CheckCause::Refinement(refinement)
                     if matches!(
                         &refinement.cause,
@@ -2487,7 +2487,7 @@ fn a_dependency_protocol_node_row_checks_its_receiver_argument() {
         .expect("typed receiver argument mismatch");
     assert_eq!(refusal.cause.code(), fsl_foundation::Code::IllTyped);
     assert_eq!(refusal.cause.cause(), Some("type-mismatch"));
-    let fsl_semantics::check::CheckCause::Refinement(refinement) = &refusal.cause else {
+    let fsl_semantics::check::CheckCause::Refinement(refinement) = &*refusal.cause else {
         unreachable!("the selected refusal is a refinement mismatch")
     };
     assert_eq!(
@@ -2962,7 +2962,10 @@ fn quantity_literals(wire: &Value) -> (Vec<(String, Value)>, BTreeMap<String, Va
 fn quantity_literals_lower_to_shared_quantity_literal_nodes_the_strict_reader_admits() {
     // (functions beside f, expected (value, unit) literals in order)
     let cases: [(&str, &[(&str, &str)]); 7] = [
-        ("function h using v(): Boolean pure { f(3 ms) }", &[("3", "ms")]),
+        (
+            "function h using v(): Boolean pure { f(3 ms) }",
+            &[("3", "ms")],
+        ),
         // `h`, `h2`, `h3` and `h4` together: `h4` shares `h`'s node, and
         // `0.5` and `rational(2, 4)` share one `1/2` node.
         (
@@ -2989,7 +2992,10 @@ fn quantity_literals_lower_to_shared_quantity_literal_nodes_the_strict_reader_ad
             "function a using v(d: Quantity<s>, e: Quantity<ms>): Boolean pure { d = 3 s and e = 3 ms }",
             &[("3", "ms"), ("3", "s")],
         ),
-        ("function z using v(): Boolean pure { f(0 ms) }", &[("0", "ms")]),
+        (
+            "function z using v(): Boolean pure { f(0 ms) }",
+            &[("0", "ms")],
+        ),
     ];
     for (functions, expected) in cases {
         let (_, package) = package_from_text(&format!("{QUANTITY_TIME}{functions}\n"));
@@ -3281,20 +3287,29 @@ fn population_and_object_rows_read_back() {
 /// owner and its ordinal, and a proof-eligible owner a `generated`
 /// occurrence per row (ordinal `i + 1` at row `i`'s region) beside the one
 /// at its declaration, whichever order the rows are written in.
-#[trace("FR-375-AC-22", "FR-322-AC-88", "FR-322-AC-128", "TC-310", "TC-233")]
+#[trace(
+    "FR-375-AC-22",
+    "FR-322-AC-88",
+    "FR-322-AC-128",
+    "FR-136-AC-13",
+    "TC-310",
+    "TC-233"
+)]
 #[test]
 fn step_rows_carry_their_source_regions_by_ordinal() {
     let operations = ["attemptUpdate", "rollback"];
     let update = "step C::ConfigVersion::attemptUpdate -> A::ConfigVersion::attemptUpdate(self);";
     let rollback = "step C::ConfigVersion::rollback -> stutter;";
-    for (rows, classes) in [
+    for (rows, classes, targets) in [
         (
             [update, rollback],
             ["ConfigVersion::attemptUpdate", "ConfigVersion::rollback"],
+            ["operation", "stutter"],
         ),
         (
             [rollback, update],
             ["ConfigVersion::rollback", "ConfigVersion::attemptUpdate"],
+            ["stutter", "operation"],
         ),
     ] {
         let (emitted, unit) = emit_rows(&format!("{MAPS}\n{}\n{}", rows[0], rows[1]), &operations);
@@ -3306,7 +3321,59 @@ fn step_rows_carry_their_source_regions_by_ordinal() {
             .map(|step| step["source_class"].as_str().expect("a class"))
             .collect();
         assert_eq!(written_classes, classes);
+        let written_targets: Vec<&str> = node["body"]["steps"]
+            .as_array()
+            .expect("steps")
+            .iter()
+            .map(|step| step["target"]["kind"].as_str().expect("a target kind"))
+            .collect();
+        assert_eq!(written_targets, targets);
         let written = wire(&emitted.emission);
+        for step in node["body"]["steps"].as_array().expect("steps") {
+            if step["target"]["kind"] == "operation" {
+                let operation_key = &step["target"]["operation"];
+                let target_type = nodes(&written)
+                    .iter()
+                    .find(|candidate| candidate["node_id"] == step["target"]["target_type"])
+                    .expect("the step target names its serialized target object type");
+                assert_eq!(target_type["semantic_form"], "object_type");
+                assert_eq!(target_type["owner"]["identity"], "example/rows-abstract");
+                let operation_anchor = nodes(&written)
+                    .iter()
+                    .find(|candidate| candidate["node_id"] == *operation_key)
+                    .expect("the step target names its serialized operation anchor");
+                assert_eq!(operation_anchor["semantic_form"], "operation_anchor");
+                let members = operation_anchor["body"]["members"]
+                    .as_array()
+                    .expect("an operation anchor has serialized members");
+                let context_ref = members
+                    .iter()
+                    .find(|member| member["name"] == "context")
+                    .expect("the operation anchor context")["value"]
+                    .clone();
+                assert_eq!(context_ref["term"], "reference");
+                let declaring_type = nodes(&written)
+                    .iter()
+                    .find(|candidate| candidate["node_id"] == context_ref["target"])
+                    .expect("the operation anchor's declaring type");
+                assert_eq!(declaring_type["semantic_form"], "object_type");
+                assert_eq!(
+                    declaring_type["owner"],
+                    json!({
+                        "identity": "example/rows-abstract",
+                        "kind": "model",
+                        "node": "ix://example/rows-abstract/ConfigVersion",
+                    })
+                );
+                let operation = members
+                    .iter()
+                    .find(|member| member["name"] == "operation")
+                    .expect("the anchored operation")["value"]["value"]
+                    .clone();
+                assert_eq!(operation, json!("attemptUpdate"));
+                assert_eq!(operation_anchor["node_id"], *operation_key);
+            }
+        }
         let sidecar = written["refinement_step_rows"]
             .as_array()
             .expect("a step-row sidecar");
@@ -3380,7 +3447,9 @@ fn whole_population_rows_are_emitted_and_read_back() {
 /// The sequence expression must emit a canonical, strictly admitted mapping.
 #[test]
 fn seq_rows_are_emitted_and_read_back() {
-    assert_field_row_reads_back("versionNumber = if size(seq(i in 0 .. 1: i)) = 2 then self.versionNumber else self.versionNumber;");
+    assert_field_row_reads_back(
+        "versionNumber = if size(seq(i in 0 .. 1: i)) = 2 then self.versionNumber else self.versionNumber;",
+    );
 }
 
 /// FSpec FR-322 `seq` (QSL-2729): `seq(i in lo .. hi: e)` lowers to
@@ -4077,7 +4146,7 @@ fn a_present_option_history_initial_has_no_literal_form_and_is_refused_typed() {
     };
     assert!(
         matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             fsl_semantics::check::CheckCause::RefinementNotEmitted { name, .. } if name == "R"
         ),
         "a typed refusal naming the refinement: {refusal:?}"

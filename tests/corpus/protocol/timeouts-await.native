@@ -1,0 +1,21 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+profile t = "filament.temporal.timestamped-event.finite-window/v1";
+model Parts = "example/parts";
+
+protocol PartFlow using p over (job: Parts::Job) on origin {
+  role Planning on Parts::PlanningService;
+  role Inspection on Parts::InspectionStation;
+  role Machining on Parts::MachiningStation;
+  channel ToInspect from Machining to Inspection carries Parts::Handoff
+    ordering unordered delivery at-least-once capacity 4 overflow block;
+  run sequence Main {
+    send Handed via ToInspect as (handed: Parts::Handoff) { handed.part = job.part };
+    await Wait after Handed using t clock "line-clock" within [0, 120]
+      match receive Inspected via ToInspect of Handed as (seen: Parts::Handoff) { seen.ok };
+      then sequence InTime {}
+      timeout sequence TooSlow {}
+  }
+  finish Over as (closing: Parts::ClosureView) { closing.complete };
+}

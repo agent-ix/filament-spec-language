@@ -326,6 +326,7 @@ fn a_provider_over_the_deadline_settles_incomplete_timed_out() {
 /// the emitted package's v2 bytes and the run's deadline.
 #[test]
 #[trace("TC-3035", "FR-750-AC-6")]
+#[trace("TC-1187", "FR-447-AC-4")]
 fn item_options_and_the_deadline_reach_the_process_provider() {
     let unit = braking(&claim("SlowEnough", "always [0, 10] holds(h.v < 30)"));
     let ws = Workspace::new("ac6");
@@ -353,8 +354,29 @@ fn item_options_and_the_deadline_reach_the_process_provider() {
         request["request"]["items"][0]["requirements"],
         json!(["hybrid-dynamics"])
     );
+    assert_eq!(
+        request["request"]["items"][0]["kind"],
+        "temporal-satisfaction"
+    );
+    assert_eq!(
+        request["request"]["items"][0]["extent"]["classification"],
+        "bounded"
+    );
+    assert_eq!(
+        request["request"]["items"][0]["claim"]["occurrence"],
+        json!({"role": "claim", "ordinal": 0})
+    );
+    assert!(
+        request["request"]["items"][0]["claim"]["node"].is_object(),
+        "{request}"
+    );
     assert_eq!(request["request"]["deadline_ms"], limits().deadline_ms);
-    assert!(request["request"]["package"].is_string());
+    assert!(
+        request["request"]["package"]
+            .as_str()
+            .is_some_and(|bytes| !bytes.is_empty()),
+        "{request}"
+    );
 }
 
 /// FR-750 "Dispatch": a process provider's `proved` word is `trusted`; its
@@ -413,8 +435,15 @@ fn solver_proof(horizon: &str, certification: &str) -> Value {
 /// settled as the entry says.
 #[test]
 fn only_a_solver_basis_proof_settles_proved_and_it_is_trusted() {
+    type SettlementRow = (
+        &'static str,
+        Value,
+        &'static str,
+        Option<(&'static str, String)>,
+    );
+
     let refused = |pointer: &str| ("failed", Some(("invalid_result", pointer.to_owned())));
-    let rows: Vec<(&str, Value, &str, Option<(&str, String)>)> = vec![
+    let rows: Vec<SettlementRow> = vec![
         (
             "solver proof",
             solver_proof("10", "trusted"),
@@ -500,12 +529,9 @@ fn only_a_solver_basis_proof_settles_proved_and_it_is_trusted() {
         let item = run(&ws, &unit, named("SlowEnough"), vec![engine], limits());
         assert_eq!(item["record"]["result"], result, "{name}: {item}");
         let text = item.to_string();
-        match marker {
-            Some((marker, pointer)) => {
-                assert!(text.contains(marker), "{name}: {marker}: {item}");
-                assert!(text.contains(&pointer), "{name}: {pointer}: {item}");
-            }
-            None => {}
+        if let Some((marker, pointer)) = marker {
+            assert!(text.contains(marker), "{name}: {marker}: {item}");
+            assert!(text.contains(&pointer), "{name}: {pointer}: {item}");
         }
         if result == "proved" {
             assert_eq!(item["record"]["certification"], "trusted", "{name}: {item}");

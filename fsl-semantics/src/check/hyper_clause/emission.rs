@@ -16,11 +16,11 @@ use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_foundation::Span;
 
 use super::{CheckedHyperClause, TemporalCause};
+use crate::check::AdmittedModel;
 use crate::check::check::Scope;
 use crate::check::ir::{CheckedNode, Slot};
 use crate::check::profile::TemporalProfile;
 use crate::check::refusal::{CheckCause, CheckRefusal};
-use crate::check::AdmittedModel;
 use filament_semantic_value::location::ExpressionOwner as Origin;
 
 /// The refusal of `clause` at `span`, or the first reason no package
@@ -28,10 +28,10 @@ use filament_semantic_value::location::ExpressionOwner as Origin;
 fn refusal(clause: &CheckedHyperClause, span: Span) -> CheckRefusal {
     CheckRefusal {
         location: Location::root(Origin::Expression),
-        cause: CheckCause::Temporal(Box::new(TemporalCause::NotEmitted {
+        cause: Box::new(CheckCause::Temporal(Box::new(TemporalCause::NotEmitted {
             name: clause.name().to_owned(),
             span,
-        })),
+        }))),
     }
 }
 

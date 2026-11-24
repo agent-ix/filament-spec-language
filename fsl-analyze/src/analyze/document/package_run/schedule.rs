@@ -19,10 +19,8 @@ use fsl_replay::{
 use fsl_route::request::ExtentClassification;
 use fsl_semantics::check::Capability;
 
-use super::super::super::{schedule_item, AnalyzeItem, ClaimItem, ItemOptions};
-use super::super::{
-    candidate_list, invalid_kind, unknown_option, ItemSelection, ResolvedClaim,
-};
+use super::super::super::{AnalyzeItem, ClaimItem, ItemOptions, schedule_item};
+use super::super::{ItemSelection, ResolvedClaim, candidate_list, invalid_kind, unknown_option};
 use super::{ClaimReads, PackageRunError, Resolution};
 
 /// What a package's rows hold for one schedulability claim.
@@ -35,7 +33,9 @@ impl ScheduleRoute {
     /// The EN-7 item the source route builds over the same subject.
     pub(super) fn item<'a>(self, index: RequestIndex, max_demand_points: u64) -> AnalyzeItem<'a> {
         match self.read {
-            Ok((subject, unit)) => schedule_item::subject_item(index, subject, self.name, unit, max_demand_points),
+            Ok((subject, unit)) => {
+                schedule_item::subject_item(index, subject, self.name, unit, max_demand_points)
+            }
             Err(refusal) => schedule_item::refused_item(index, refusal),
         }
     }
@@ -66,16 +66,21 @@ fn identifier(name: &str) -> Result<Identifier, Unread> {
 
 /// The closed-form subject of the claim at `declaration` and `ordinal`, with
 /// the claim's occurrence and the task set's time unit.
+type ScheduleSubjectRead = Result<(ScheduleSubject, String), TaskSetRefusal>;
+type ScheduleSubjectResult = Result<(OccurrenceKey, ScheduleSubjectRead), Unread>;
+
 fn read(
     package: &BarePackage<'_>,
     declaration: &CheckedNodeId,
     ordinal: u64,
-) -> Result<(OccurrenceKey, Result<(ScheduleSubject, String), TaskSetRefusal>), Unread> {
-    let roots = fsl_package::schedulability_roots(package.package()).map_err(|_| Unread::Malformed)?;
+) -> ScheduleSubjectResult {
+    let roots =
+        fsl_package::schedulability_roots(package.package()).map_err(|_| Unread::Malformed)?;
     let root = roots
         .iter()
         .find(|root| {
-            root.claim().declaration() == declaration && root.claim().occurrence().ordinal == ordinal
+            root.claim().declaration() == declaration
+                && root.claim().occurrence().ordinal == ordinal
         })
         .ok_or(Unread::Absent)?;
     let claim = root.claim();
@@ -122,11 +127,13 @@ fn read(
         });
     }
     let schedule = match claim.kind() {
-        CheckedSchedulabilityKind::Schedulable => ScheduleClaim::Schedulable(match claim.policy() {
-            CheckedSchedulingPolicy::FixedPriority => SchedulingPolicy::FixedPriority,
-            CheckedSchedulingPolicy::Edf => SchedulingPolicy::Edf,
-            CheckedSchedulingPolicy::Amc => SchedulingPolicy::Amc,
-        }),
+        CheckedSchedulabilityKind::Schedulable => {
+            ScheduleClaim::Schedulable(match claim.policy() {
+                CheckedSchedulingPolicy::FixedPriority => SchedulingPolicy::FixedPriority,
+                CheckedSchedulingPolicy::Edf => SchedulingPolicy::Edf,
+                CheckedSchedulingPolicy::Amc => SchedulingPolicy::Amc,
+            })
+        }
         CheckedSchedulabilityKind::Response => ScheduleClaim::Response {
             task: identifier(claim.response_task().ok_or(Unread::Malformed)?)?,
             bound: rational(&claim.response_bound().ok_or(Unread::Malformed)?)?,
@@ -253,5 +260,3 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 }
-
-

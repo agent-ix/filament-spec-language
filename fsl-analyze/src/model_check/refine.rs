@@ -43,32 +43,37 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{
-    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Vertex,
+    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Vertex, analyze,
 };
 use fsl_eval::model_subject::{CapacityBinding, ModelInstance, ModelSubject};
-use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
+use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, check_model_bounds};
 use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTarget};
-use fsl_eval::simulation::{ExpansionLimit, ExpansionStop, TransitionSystem};
+use fsl_eval::simulation::{
+    ExpansionLimit, ExpansionStop, InitialStateRefusal, SubjectSystem, TransitionSystem,
+};
 use fsl_replay::{
     abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
-    check_protocol_state_relations, check_protocol_step, check_step, open_protocol_systems,
-    open_systems, AbstractClass, AbstractProtocolSystem, CandidateFairState, CandidateFairStep,
-    CandidateLivenessError, CertifiedEdge, CertifiedPosition, ConcreteStep, CounterexampleKind,
-    IncompleteCause, Lasso, LivenessHalf, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
-    ModelStep, ProtocolRelationError, ProtocolStateRelation, ProtocolSystemsRefusal, ReachedLimit,
+    check_protocol_state_relations, check_protocol_step, check_step,
+    open_protocol_systems_with_initial_limit, open_systems_with_initial_limit, AbstractClass,
+    AbstractProtocolSystem, CandidateFairState,
+    CandidateFairStep, CandidateLivenessError, CertifiedEdge, CertifiedPosition, ConcreteStep,
+    CounterexampleKind, IncompleteCause, Lasso, LivenessHalf, ModelCheckLimit, ModelCheckLimits,
+    ModelCheckOutcome, ModelStep, ProtocolRelationError, ProtocolStateRelation,
+    ProtocolSystemsRefusal, ReachedLimit,
     RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems, RunStats,
     SafetyOutcome, SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal,
     Taken, TemporalCounterexample, UndecidedCause, UndefinedEvaluation, Undetermined,
 };
 
-use super::check::{fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS};
+use super::check::{BOUND_POSITIONS, ModelCheckRefusal, fault, not_simulated, widen};
 use super::fair_summary::{
+    CandidateEnables, CandidateRelation, FairLabel, FairMark, FairScope, WalkSummary,
     candidate_steps_relation, candidate_stutter_relation, compose_candidate_relations,
     compose_fair_labels, concrete_label_is_fair, idempotent_has_fair_candidate,
     idempotent_has_fair_candidate_in, insert_relation_label, insert_walk_summary, neutral_label,
-    CandidateEnables, CandidateRelation, FairLabel, FairMark, FairScope, WalkSummary,
 };
-use super::fair_walk::{fairness_constraints, FairModel};
+use super::fair_walk::{FairModel, fairness_constraints};
+use super::initial::{Refused, admit_initial};
 
 /// One refinement safety run (FR-142 Inputs).
 pub struct RefinementCheckRequest<'a> {
@@ -151,16 +156,35 @@ struct CandidateNode {
 
 /// Abstract operations enabled at one hidden-field candidate state.
 struct CandidateEnabled {
+    /// Ordinal in this product position's canonical hidden-candidate order.
+    ordinal: usize,
     /// Candidate identity: a model state key, or a protocol configuration key.
     key: Vec<u8>,
     protocol: Option<fsl_replay::ProtocolCandidate>,
     transitions: Vec<ModelTransition>,
 }
 
+type AbstractEnabledRows = (Vec<Vec<ModelTransition>>, Vec<Vec<CandidateEnabled>>);
+
+struct CandidateFairnessContext<'a> {
+    path: &'a [RetainedPathEdge],
+    enabled: &'a [Vec<CandidateEnabled>],
+    classes: &'a [AbstractClass],
+    abstract_fairness: &'a [FairnessConstraint],
+    numbered: &'a BTreeMap<&'a ModelTransition, Identity>,
+    constraints: &'a [Constraint],
+}
+
 fn candidate_enables(candidates: &[CandidateEnabled]) -> Vec<CandidateEnables<'_>> {
     candidates
         .iter()
-        .map(|candidate| (candidate.key.as_slice(), candidate.transitions.as_slice()))
+        .map(|candidate| {
+            (
+                candidate.ordinal,
+                candidate.key.as_slice(),
+                candidate.transitions.as_slice(),
+            )
+        })
         .collect()
 }
 
@@ -225,25 +249,28 @@ fn check_with(
     classes_of: ClassesOf,
 ) -> Result<RefinementOutcome, ModelCheckRefusal> {
     let refinement = request.refinement;
+    let max_states = request.limits.limits.max_states;
     let opened = match (
         refinement.abstract_side(),
         request.abstract_protocol_binding,
     ) {
-        (fsl_semantics::check::AbstractSide::Model, _) => open_systems(
+        (fsl_semantics::check::AbstractSide::Model, _) => open_systems_with_initial_limit(
             refinement,
             &request.concrete.simulation,
             request.abstract_package,
             request.abstract_initial.clone(),
+            max_states,
         )
         .map_err(ProtocolSystemsRefusal::Subject),
         (fsl_semantics::check::AbstractSide::Protocol { .. }, Some(binding)) => {
-            open_protocol_systems(
+            open_protocol_systems_with_initial_limit(
                 refinement,
                 &request.concrete.simulation,
                 request.abstract_package,
                 request.abstract_initial.clone(),
                 binding.over,
                 &binding.capacities,
+                Some(max_states),
             )
         }
         (fsl_semantics::check::AbstractSide::Protocol { .. }, None) => {
@@ -252,6 +279,28 @@ fn check_with(
     };
     let systems = match opened {
         Ok(systems) => systems,
+        Err(ProtocolSystemsRefusal::Subject(SubjectRefusal::InitialStateLimit(limit))) => {
+            return Ok(RefinementOutcome {
+                safety: SafetyOutcome::Stopped {
+                    cause: IncompleteCause::ResourceExhausted,
+                    limit: Some(ReachedLimit {
+                        limit: ModelCheckLimit::MaxStates,
+                        value: widen(limit),
+                    }),
+                    stats: RunStats::default(),
+                },
+                liveness: None,
+            });
+        }
+        Err(ProtocolSystemsRefusal::Subject(SubjectRefusal::InitialEncoding)) => {
+            return Ok(RefinementOutcome {
+                safety: SafetyOutcome::Fault {
+                    fault: InternalFault::new("refinement-check", "state-encodes"),
+                    stats: RunStats::default(),
+                },
+                liveness: None,
+            });
+        }
         // FSL FR-630: building the abstract initial states from the mapping
         // stopped on a budget, which settles the run V-7 naming it.
         Err(ProtocolSystemsRefusal::Subject(SubjectRefusal::Stopped(stop))) => {
@@ -313,13 +362,16 @@ fn check_with(
         horizon_cut: false,
         classes_of,
     };
-    let safety = if concrete.initial_states().is_empty() {
+    let mut initial = concrete
+        .initial_for_check(request.limits.limits.max_states)
+        .peekable();
+    let safety = if initial.peek().is_none() {
         SafetyOutcome::Undecided {
             cause: SafetyUndecided::NoInitialState,
             stats: run.stats(),
         }
     } else {
-        match run.explore() {
+        match run.explore(initial) {
             Ok(()) if run.horizon_cut => SafetyOutcome::BoundReached {
                 depth: widen(run.max_depth.unwrap_or(0)),
                 stats: run.stats(),
@@ -455,6 +507,15 @@ fn open_refusal(refusal: ProtocolSystemsRefusal) -> ModelCheckRefusal {
         ProtocolSystemsRefusal::UnboundCapacity(names) => ModelCheckRefusal::UnboundCapacity(names),
         ProtocolSystemsRefusal::Subject(SubjectRefusal::Stopped(_)) => {
             fault("the-abstract-initial-states-stop-before-they-refuse")
+        }
+        ProtocolSystemsRefusal::Subject(SubjectRefusal::InitialStateLimit(_)) => {
+            fault("mapped-initial-state-limit-stops-before-it-refuses")
+        }
+        ProtocolSystemsRefusal::Subject(SubjectRefusal::InitialEncoding) => {
+            ModelCheckRefusal::Fault(InternalFault::new("refinement-check", "state-encodes"))
+        }
+        ProtocolSystemsRefusal::Subject(SubjectRefusal::InitialConstruction(refusal)) => {
+            ModelCheckRefusal::Protocol(refusal)
         }
     }
 }
@@ -1878,24 +1939,38 @@ impl Run<'_, '_> {
     }
 
     /// The breadth-first safety phase.
-    fn explore(&mut self) -> Result<(), End> {
+    fn explore(
+        &mut self,
+        states: impl Iterator<Item = Result<ModelSimState, InitialStateRefusal>>,
+    ) -> Result<(), End> {
         self.poll()?;
-        let mut initial = Vec::new();
-        for (index, state) in self.concrete.initial_states().iter().enumerate() {
-            let (key, _) = Self::encoding(self.concrete.state_key(state))?;
-            initial.push((key, index, state));
-        }
-        let keys: Vec<Vec<u8>> = initial.iter().map(|(key, _, _)| key.clone()).collect();
+        let mut keys: Vec<Vec<u8>> = Vec::new();
         let mut at_key = BTreeMap::new();
-        // Equal keys coalesce into the first initial state that has the key.
-        initial.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
-        initial.dedup_by(|later, earlier| later.0 == earlier.0);
-        if initial.len() > self.limits.limits.max_states {
-            return Err(Self::stopped(
-                ModelCheckLimit::MaxStates,
-                widen(self.limits.limits.max_states),
-            ));
-        }
+        // Equal keys coalesce into the first initial state that has the key;
+        // the budget refuses before the remaining states are keyed.
+        let initial = admit_initial(states, self.limits.limits.max_states, |_, state| {
+            let (key, _) = Self::encoding(self.concrete.state_key(&state))?;
+            keys.push(key.clone());
+            Ok::<_, End>((key, state))
+        })
+        .map_err(|refused| match refused {
+            Refused::OverBudget | Refused::Construction(InitialStateRefusal::OverBudget(_)) => {
+                Self::stopped(
+                    ModelCheckLimit::MaxStates,
+                    widen(self.limits.limits.max_states),
+                )
+            }
+            Refused::Construction(InitialStateRefusal::Encoding(refusal)) => {
+                End::Refusal(ModelCheckRefusal::Encoding(refusal))
+            }
+            Refused::Construction(InitialStateRefusal::Expansion(stop)) => {
+                expansion_end(stop, &self.meter, self.max_candidates)
+            }
+            Refused::Construction(InitialStateRefusal::Construction(refusal)) => {
+                End::Refusal(ModelCheckRefusal::Protocol(refusal))
+            }
+            Refused::Keying(end) => end,
+        })?;
         for (key, index, state) in initial {
             let verdict = match self.abstract_protocol {
                 Some(protocol) => {
@@ -1907,6 +1982,7 @@ impl Run<'_, '_> {
                         index,
                         state.state(),
                     )
+                    .map_err(|refusal| ModelCheckRefusal::Protocol(refusal))?
                     .verdict
                 }
                 None => check_initial(
@@ -2370,6 +2446,8 @@ impl Run<'_, '_> {
                 concrete,
                 history,
                 abstract_states,
+                candidate_blocks: None,
+                candidate_clock_blocks: None,
             });
         }
         Ok(SimulationCertificate {
@@ -2477,9 +2555,7 @@ impl Run<'_, '_> {
 
     /// The transition identities the abstract subject enables from each
     /// product state's mapped state (CO-2), in the order of `nodes`.
-    fn abstract_enabled(
-        &mut self,
-    ) -> Result<(Vec<Vec<ModelTransition>>, Vec<Vec<CandidateEnabled>>), End> {
+    fn abstract_enabled(&mut self) -> Result<AbstractEnabledRows, End> {
         let mut enabled = Vec::with_capacity(self.nodes.len());
         let mut candidates_enabled = Vec::with_capacity(self.nodes.len());
         let mut transitions = self.transitions;
@@ -2510,7 +2586,9 @@ impl Run<'_, '_> {
                     })
                     .collect::<Result<Vec<_>, End>>()?
             };
-            for (key, candidate, protocol_candidate) in candidates {
+            for (ordinal, (key, candidate, protocol_candidate)) in
+                candidates.into_iter().enumerate()
+            {
                 if let (Some(protocol), Some(configuration)) =
                     (self.abstract_protocol, &protocol_candidate)
                 {
@@ -2518,6 +2596,7 @@ impl Run<'_, '_> {
                         self.protocol_enabled(protocol, configuration, &mut transitions)?;
                     here.extend(candidate_transitions.iter().cloned());
                     candidate_enabled.push(CandidateEnabled {
+                        ordinal,
                         key,
                         protocol: protocol_candidate,
                         transitions: candidate_transitions,
@@ -2551,6 +2630,7 @@ impl Run<'_, '_> {
                     .collect::<Vec<_>>();
                 here.extend(candidate_transitions.iter().cloned());
                 candidate_enabled.push(CandidateEnabled {
+                    ordinal,
                     key,
                     protocol: protocol_candidate,
                     transitions: candidate_transitions,
@@ -2756,12 +2836,14 @@ impl Run<'_, '_> {
                                 false
                             } else {
                                 self.candidate_lasso_has_fair_run(
-                                    &next_path,
-                                    enabled,
-                                    classes,
-                                    abstract_fairness,
-                                    &abstract_numbers,
-                                    &abstract_constraints,
+                                    &CandidateFairnessContext {
+                                        path: &next_path,
+                                        enabled,
+                                        classes,
+                                        abstract_fairness,
+                                        numbered: &abstract_numbers,
+                                        constraints: &abstract_constraints,
+                                    },
                                     FairScope::Through(abstract_fairness.len().saturating_sub(1)),
                                 )?
                             };
@@ -2770,27 +2852,30 @@ impl Run<'_, '_> {
                                     fault("candidate-summary-agrees-with-lasso-check").into()
                                 );
                             }
-                            let failing = self.first_unsatisfied_fairness_prefix(
-                                &next_path,
-                                &idempotent,
+                            let context = CandidateFairnessContext {
+                                path: &next_path,
                                 enabled,
                                 classes,
                                 abstract_fairness,
-                                &abstract_numbers,
-                                &abstract_constraints,
-                            )?;
+                                numbered: &abstract_numbers,
+                                constraints: &abstract_constraints,
+                            };
+                            let failing =
+                                self.first_unsatisfied_fairness_prefix(&context, &idempotent)?;
                             return self.hidden_counterexample(start, &next_path, failing);
                         }
                         let fair_candidate = if self.abstract_protocol.is_some() {
                             true
                         } else {
                             self.candidate_lasso_has_fair_run(
-                                &next_path,
-                                enabled,
-                                classes,
-                                abstract_fairness,
-                                &abstract_numbers,
-                                &abstract_constraints,
+                                &CandidateFairnessContext {
+                                    path: &next_path,
+                                    enabled,
+                                    classes,
+                                    abstract_fairness,
+                                    numbered: &abstract_numbers,
+                                    constraints: &abstract_constraints,
+                                },
                                 FairScope::Through(abstract_fairness.len().saturating_sub(1)),
                             )?
                         };
@@ -2885,8 +2970,10 @@ impl Run<'_, '_> {
                 relation = candidate_steps_relation(
                     rows.iter().map(|row| {
                         (
+                            row.pre_candidate,
                             row.pre_state.as_slice(),
                             row.transition.as_ref(),
+                            row.post_candidate,
                             row.post_state.as_slice(),
                         )
                     }),
@@ -2934,7 +3021,10 @@ impl Run<'_, '_> {
                         )?;
                         insert_relation_label(
                             &mut relation,
-                            (candidate.key.clone(), target.key.clone()),
+                            (
+                                (candidate.ordinal, candidate.key.clone()),
+                                (target.ordinal, target.key.clone()),
+                            ),
                             label,
                         );
                     }
@@ -2969,7 +3059,10 @@ impl Run<'_, '_> {
                         )?;
                         insert_relation_label(
                             &mut relation,
-                            (candidate.key.clone(), target.key.clone()),
+                            (
+                                (candidate.ordinal, candidate.key.clone()),
+                                (target.ordinal, target.key.clone()),
+                            ),
                             label,
                         );
                     }
@@ -3034,18 +3127,13 @@ impl Run<'_, '_> {
 
     fn candidate_lasso_has_fair_run(
         &self,
-        path: &[RetainedPathEdge],
-        enabled: &[Vec<CandidateEnabled>],
-        classes: &[AbstractClass],
-        _abstract_fairness: &[FairnessConstraint],
-        numbered: &BTreeMap<&ModelTransition, Identity>,
-        constraints: &[Constraint],
+        context: &CandidateFairnessContext<'_>,
         scope: FairScope,
     ) -> Result<bool, End> {
-        let mut positions = Vec::with_capacity(path.len());
-        let mut steps = Vec::with_capacity(path.len());
-        for (product, edge_index) in path {
-            let candidates = enabled
+        let mut positions = Vec::with_capacity(context.path.len());
+        for (product, _) in context.path {
+            let candidates = context
+                .enabled
                 .get(*product)
                 .ok_or_else(|| fault("candidate-lasso-position-is-retained"))?;
             positions.push(
@@ -3053,12 +3141,13 @@ impl Run<'_, '_> {
                     .iter()
                     .map(|candidate| {
                         Ok(CandidateFairState {
+                            ordinal: candidate.ordinal,
                             key: candidate.key.clone(),
                             enabled: candidate
                                 .transitions
                                 .iter()
                                 .map(|transition| {
-                                    numbered.get(transition).copied().ok_or_else(|| {
+                                    context.numbered.get(transition).copied().ok_or_else(|| {
                                         fault("every-candidate-transition-is-numbered")
                                     })
                                 })
@@ -3067,6 +3156,9 @@ impl Run<'_, '_> {
                     })
                     .collect::<Result<Vec<_>, End>>()?,
             );
+        }
+        let mut steps = Vec::with_capacity(context.path.len());
+        for (product, edge_index) in context.path {
             let edge = self
                 .nodes
                 .get(*product)
@@ -3079,16 +3171,18 @@ impl Run<'_, '_> {
                 rows.iter()
                     .map(|row| {
                         Ok(CandidateFairStep {
+                            pre_candidate: row.pre_candidate,
                             pre_state: row.pre_state.clone(),
                             transition: row
                                 .transition
                                 .as_ref()
                                 .map(|transition| {
-                                    numbered.get(transition).copied().ok_or_else(|| {
+                                    context.numbered.get(transition).copied().ok_or_else(|| {
                                         fault("every-candidate-transition-is-numbered")
                                     })
                                 })
                                 .transpose()?,
+                            post_candidate: row.post_candidate,
                             post_state: row.post_state.clone(),
                             interior: Vec::new(),
                         })
@@ -3096,11 +3190,12 @@ impl Run<'_, '_> {
                     .collect::<Result<Vec<_>, End>>()?,
             );
         }
-        let selected = classes
+        let selected = context
+            .classes
             .iter()
             .enumerate()
             .filter(|(_, class)| scope.covers(class.constraint()))
-            .filter_map(|(index, _)| constraints.get(index).cloned())
+            .filter_map(|(index, _)| context.constraints.get(index).cloned())
             .collect::<Vec<_>>();
         match candidate_lasso_has_fair_run(&positions, &steps, &selected, self.cancel) {
             Ok(fair) => Ok(fair),
@@ -3117,13 +3212,8 @@ impl Run<'_, '_> {
 
     fn first_unsatisfied_fairness_prefix(
         &self,
-        path: &[RetainedPathEdge],
+        context: &CandidateFairnessContext<'_>,
         summary: &CandidateRelation,
-        enabled: &[Vec<CandidateEnabled>],
-        classes: &[AbstractClass],
-        abstract_fairness: &[FairnessConstraint],
-        numbered: &BTreeMap<&ModelTransition, Identity>,
-        constraints: &[Constraint],
     ) -> Result<FairnessConstraint, End> {
         // FR-899's naming rule: the first constraint every candidate cycle
         // violates on its own; when each is satisfiable alone, the least
@@ -3132,28 +3222,20 @@ impl Run<'_, '_> {
             if self.abstract_protocol.is_some() {
                 Ok(idempotent_has_fair_candidate_in(
                     summary,
-                    classes,
-                    abstract_fairness,
+                    context.classes,
+                    context.abstract_fairness,
                     scope,
                 ))
             } else {
-                self.candidate_lasso_has_fair_run(
-                    path,
-                    enabled,
-                    classes,
-                    abstract_fairness,
-                    numbered,
-                    constraints,
-                    scope,
-                )
+                self.candidate_lasso_has_fair_run(context, scope)
             }
         };
-        for (index, constraint) in abstract_fairness.iter().enumerate() {
+        for (index, constraint) in context.abstract_fairness.iter().enumerate() {
             if !fair_in(FairScope::Only(index))? {
                 return Ok(constraint.clone());
             }
         }
-        for (index, constraint) in abstract_fairness.iter().enumerate() {
+        for (index, constraint) in context.abstract_fairness.iter().enumerate() {
             if !fair_in(FairScope::Through(index))? {
                 return Ok(constraint.clone());
             }
@@ -3370,9 +3452,7 @@ impl Run<'_, '_> {
             .any(|object| !object.hidden().is_empty());
         let failure = if has_hidden {
             RefinementFailure::HiddenUnfair { constraint }
-        } else if self.abstract_protocol.is_some() {
-            RefinementFailure::AbstractUnfair { constraint }
-        } else if taking {
+        } else if self.abstract_protocol.is_some() || taking {
             RefinementFailure::AbstractUnfair { constraint }
         } else {
             RefinementFailure::Divergence {
@@ -3414,7 +3494,10 @@ fn candidate_identity_relation<'a>(
     for candidate in candidates {
         insert_relation_label(
             &mut relation,
-            (candidate.key.clone(), candidate.key.clone()),
+            (
+                (candidate.ordinal, candidate.key.clone()),
+                (candidate.ordinal, candidate.key.clone()),
+            ),
             neutral_label(classes),
         );
     }
@@ -3430,7 +3513,7 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::super::fair_summary::at_least_as_fair;
-    use super::cas_fixture::{cas_refines_counter, World, UNLIMITED};
+    use super::cas_fixture::{UNLIMITED, World, cas_refines_counter};
     use super::*;
 
     fn request(world: &World) -> RefinementCheckRequest<'_> {
@@ -3480,7 +3563,7 @@ mod tests {
         ));
 
         let mut relation = CandidateRelation::new();
-        let pair = (vec![0], vec![0]);
+        let pair = ((0, vec![0]), (0, vec![0]));
         insert_relation_label(&mut relation, pair.clone(), enabled_everywhere);
         insert_relation_label(&mut relation, pair.clone(), not_enabled_everywhere.clone());
 

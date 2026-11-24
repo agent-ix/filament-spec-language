@@ -452,7 +452,7 @@ fn a_second_same_named_probabilistic_claim_is_ambiguous() {
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal: {refusals:?}");
     };
-    let fsl_semantics::check::CheckCause::AmbiguousName { name, loci } = &refusal.cause else {
+    let fsl_semantics::check::CheckCause::AmbiguousName { name, loci } = &*refusal.cause else {
         panic!("ambiguous-name: {refusal:?}");
     };
     assert_eq!(name, "Stable");
@@ -1920,7 +1920,7 @@ fn a_delay_beside_a_second_object_type_is_refused_at_the_time_source() {
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
     };
-    let fsl_semantics::check::CheckCause::Temporal(cause) = &refusal.cause else {
+    let fsl_semantics::check::CheckCause::Temporal(cause) = &*refusal.cause else {
         panic!("a temporal cause: {refusal:?}");
     };
     let fsl_semantics::check::TemporalCause::AmbiguousTimedModel { span, .. } = &**cause else {

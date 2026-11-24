@@ -24,7 +24,7 @@ use fsl_foundation::Span;
 
 use super::assemble::{AssemblyCause, AssemblyError, SourceObjectFault};
 use super::lowering::strongly_connected;
-use super::type_form::{resolve_form, TypeNames};
+use super::type_form::{TypeNames, resolve_form};
 use crate::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, Extent, FieldMemberRecord, Multiplicity,
     NativeValueType, ObjectTypeRecord, OperationEffect, OperationMemberRecord,

@@ -475,8 +475,10 @@ mod tests {
             Spelled::Other
         );
         assert_eq!(spellings.spelled(Some(&source("a")), "T"), Spelled::Other);
-        assert!(spellings
-            .types(Some(&source("c")), "M::T", &table)
-            .is_empty());
+        assert!(
+            spellings
+                .types(Some(&source("c")), "M::T", &table)
+                .is_empty()
+        );
     }
 }

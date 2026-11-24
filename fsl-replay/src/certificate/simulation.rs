@@ -71,6 +71,23 @@ pub struct CertifiedPosition {
     /// The abstract states it stands for, as canonical keys, in the order
     /// [`check_step`] gives them.
     pub abstract_states: Vec<StateKey>,
+    /// The timed abstract clock-block keys, one per candidate and in the
+    /// same order; absent for an untimed abstract model.
+    pub candidate_blocks: Option<Vec<StateKey>>,
+    /// Physical clock block ordinal for each abstract candidate ordinal.
+    /// Multiple candidates may alias only when the checked zone proves the
+    /// corresponding clock valuations equal.
+    pub candidate_clock_blocks: Option<Vec<usize>>,
+}
+
+impl CertifiedPosition {
+    /// Number of distinct physical clock blocks in this position.
+    pub fn candidate_clock_block_count(&self) -> usize {
+        self.candidate_clock_blocks
+            .as_ref()
+            .and_then(|blocks| blocks.iter().copied().max())
+            .map_or(0, |last| last + 1)
+    }
 }
 
 /// Whether the listed position `listed` is `position`: its concrete
@@ -88,6 +105,13 @@ pub(crate) fn position_matches(
         return Ok(false);
     }
     if listed.history != position.history.key(concrete)? {
+        return Ok(false);
+    }
+    if listed
+        .candidate_clock_blocks
+        .as_ref()
+        .is_some_and(|blocks| blocks != &position.candidate_clock_blocks)
+    {
         return Ok(false);
     }
     let mut keys = Vec::with_capacity(position.abstract_states.len());
@@ -446,8 +470,12 @@ pub fn check_simulation_certificate(
             Checker::Simulation.fault("the-subjects-of-a-refinement-open")
         }
         SubjectRefusal::ProtocolAbstractSide => ClosureRefusal::ProtocolAbstractSide,
-        SubjectRefusal::Stopped(_) => {
+        SubjectRefusal::Stopped(_) | SubjectRefusal::InitialStateLimit(_) => {
             Checker::Simulation.fault("the-abstract-initial-states-build-within-the-check-budget")
+        }
+        SubjectRefusal::InitialEncoding => ClosureRefusal::Encoding,
+        SubjectRefusal::InitialConstruction(_) => {
+            Checker::Simulation.fault("the-concrete-initial-state-construction-is-typed")
         }
     })?;
     for system in [&concrete, &abstract_system] {

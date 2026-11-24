@@ -15,7 +15,10 @@
 //! `c = a` and loops on `b`. AC-10 to AC-15 verify canonical-first binding
 //! evaluation, including cases where later bindings have shallower findings.
 
-use filament_exact::{Cancel, CancelCause, Incomplete, Meter, ScalarLimits};
+use filament_checked::key::DeclarationKey;
+use filament_exact::{
+    Cancel, CancelCause, Incomplete, Meter, ObjectId, ObjectReference, ScalarLimits,
+};
 use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
@@ -27,6 +30,8 @@ use fsl_replay::{
     ModelCheckOutcome, ReachedLimit, TemporalCounterexample, UndefinedLocus,
 };
 use fsl_semantics::check::FormulaNodeId;
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::observation::declared_type_universe_for;
 use ix_trace_rs::trace;
 
 use crate::counter::{document, UNLIMITED, ZERO};
@@ -112,6 +117,7 @@ fn run(
 ) -> Outcome {
     check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: world.subject(UNLIMITED),
             item: ModelCheckItem::Clause {
@@ -120,6 +126,8 @@ fn run(
             },
             max_depth,
             limits,
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         cancel,
@@ -208,7 +216,7 @@ fn the_example_unit_has_a_fifteen_state_product_per_instance() {
 /// an empty stem and a loop of three steps of one receiver, which keeps the
 /// bound object's version at 0 while the other cycles `0, 1, 2`. Both
 /// bindings give length 3, so it is bound to `a`, the first.
-#[trace("TC-521")]
+#[trace("TC-521", "FR-126-AC-1")]
 #[test]
 fn without_granularity_the_loop_is_three_steps_of_the_other_object() {
     let world = config(false, WHOLE);
@@ -248,7 +256,7 @@ fn without_granularity_the_loop_is_three_steps_of_the_other_object() {
 /// step 1): every transition is a self-loop, so under `fair weak each` the
 /// loop must take both `upd(a)` and `upd(b)`: `(0,0) -upd(a)-> (0,0)
 /// -upd(b)-> (0,0)`, with an empty stem.
-#[trace("TC-521")]
+#[trace("TC-521", "FR-126-AC-1")]
 #[test]
 fn over_the_shipped_unit_each_needs_both_updates_in_the_loop() {
     let world = config(true, EACH);
@@ -344,20 +352,76 @@ fn the_horizon_and_every_limit_stop_the_example_run_naming_what_stopped_it() {
     );
 }
 
-/// FR-126-AC-7's determinism, over AC-1's two requests (the `Holds` request
-/// still ends in the certificate refusal, so equal means the same refusal
-/// with the same counts): two runs of each give equal outcomes and
-/// byte-equal counterexamples.
-#[trace("TC-521")]
+/// FR-126-AC-7's determinism, over AC-1's two requests: run each request
+/// twice, compare the actual outcomes, and compare the canonical wire bytes
+/// of the no-granularity request's counterexample.
+#[trace("TC-521", "FR-126-AC-7")]
 #[test]
 fn the_example_requests_give_the_same_answer_twice() {
     let each = config(false, EACH);
     let whole = config(false, WHOLE);
-    let refusal = |world: &World| format!("{:?}", decide(world));
-    assert_eq!(refusal(&each), refusal(&each));
-    let first = decide(&whole);
-    let second = decide(&whole);
-    assert_eq!(violated(&first), violated(&second));
+    let each_first = decide(&each);
+    let each_second = decide(&each);
+    assert_eq!(
+        format!("{each_first:?}").as_bytes(),
+        format!("{each_second:?}").as_bytes()
+    );
+    assert_eq!(explored(&each_first).product_states, 30);
+
+    let whole_first = decide(&whole);
+    let whole_second = decide(&whole);
+    assert_eq!(
+        format!("{whole_first:?}").as_bytes(),
+        format!("{whole_second:?}").as_bytes()
+    );
+    let first_counterexample = violated(&whole_first);
+    let second_counterexample = violated(&whole_second);
+    assert_eq!(first_counterexample.len(), 3);
+    assert_eq!(
+        first_counterexample
+            .over_binding
+            .as_ref()
+            .expect("AC-1 binds the first canonical instance")
+            .key,
+        "a"
+    );
+    assert_eq!(receiver(&first_counterexample.prefix[0]), 'b');
+    assert_eq!(
+        first_counterexample
+            .prefix
+            .iter()
+            .map(receiver)
+            .collect::<Vec<_>>(),
+        ['b', 'b', 'b']
+    );
+    let config_version = DeclarationKey {
+        package: whole.domain.package.to_owned(),
+        node: format!("ix://{}/ConfigVersion", whole.domain.package),
+    };
+    let (effective_type, universe) = declared_type_universe_for(
+        whole.package.graph().model_selections(),
+        &whole.packages,
+        ModelNormalizationLimits::default(),
+        &config_version,
+    )
+    .expect("the model reference resolves")
+    .expect("ConfigVersion is selected");
+    let bound_reference = ObjectReference::new(
+        universe,
+        effective_type,
+        ObjectId::new("a").expect("the expected bound key is valid"),
+    );
+    let first_bytes = fsl_foundation::canonical_json::encode(
+        &fsl_replay::temporal_wire(first_counterexample, Some(&bound_reference), None)
+            .expect("the canonical counterexample wire form"),
+    )
+    .expect("canonical counterexample bytes");
+    let second_bytes = fsl_foundation::canonical_json::encode(
+        &fsl_replay::temporal_wire(second_counterexample, Some(&bound_reference), None)
+            .expect("the second canonical counterexample wire form"),
+    )
+    .expect("second canonical counterexample bytes");
+    assert_eq!(first_bytes, second_bytes);
 }
 
 /// FR-126-AC-4's `Restless` row: over `Health` (object `s`; `healthy: Bool`,
@@ -368,10 +432,10 @@ fn the_example_requests_give_the_same_answer_twice() {
 /// spec's base variant, and in the `Restless` variant, where `fail` has no
 /// precondition and can repeat, it is violated by a lasso on which `healthy`
 /// never holds at three consecutive positions. Only the `Restless` row is
-/// verified here; the base variant's `Holds` is `component_certificate`'s.
-#[trace("TC-521")]
+/// verified here.
+#[trace("TC-521", "FR-126-AC-4")]
 #[test]
-fn a_restless_system_has_a_lasso_that_never_recovers_for_three_positions() {
+fn health_recovers_stably_but_restless_health_has_a_nonrecovering_lasso() {
     const FORMULA: &str =
         "always (holds(not s.healthy) implies eventually always[0,2] holds(s.healthy))";
     let contract = |fail_pre: &str| {
@@ -383,16 +447,54 @@ fn a_restless_system_has_a_lasso_that_never_recovers_for_three_positions() {
              terminal Halt using v on H any;\n"
         )
     };
-    let restless = contract("");
+    let base = contract("pre CanFail using v on H::Health::fail { self.failures = 0 }\n");
     let domain = health();
-    let text = unit(
+    let base_text = unit(
         &domain,
+        "H",
+        &format!("{base}{}", clause("s: H::Health", "", FORMULA)),
+    );
+    let base_world = World::new(
+        domain,
+        &base_text,
+        &[(
+            "s",
+            serde_json::json!({"healthy": {"boolean": true},
+                "failures": {"integer": "0"}}),
+        )],
+    );
+    let base_outcome = run(
+        &base_world,
+        &Atoms::new(
+            &base_world,
+            vec![
+                Box::new(|state, object| !base_world.boolean(state, object, "healthy")),
+                Box::new(|state, object| base_world.boolean(state, object, "healthy")),
+            ],
+        ),
+        None,
+        ModelCheckLimits::default(),
+        &Cancel::new(),
+    );
+    let ModelCheckOutcome::Holds {
+        certificate: fsl_replay::ProofCertificate::Component(_),
+        ..
+    } = base_outcome
+        .as_ref()
+        .expect("the recovery-stability claim is checked")
+    else {
+        panic!("expected exhaustive recovery stability, got {base_outcome:?}");
+    };
+
+    let restless = contract("");
+    let restless_text = unit(
+        &health(),
         "H",
         &format!("{restless}{}", clause("s: H::Health", "", FORMULA)),
     );
     let world = World::new(
-        domain,
-        &text,
+        health(),
+        &restless_text,
         &[(
             "s",
             serde_json::json!({"healthy": {"boolean": true},
@@ -539,7 +641,11 @@ fn the_first_binding_wins_even_when_a_later_binding_has_a_shorter_lasso() {
     let lasso = counterexample.lasso.as_ref().expect("a lasso");
     assert_eq!((lasso.entry, lasso.terminal_stutter), (1, false));
     assert_eq!(
-        counterexample.prefix.iter().map(receiver).collect::<Vec<_>>(),
+        counterexample
+            .prefix
+            .iter()
+            .map(receiver)
+            .collect::<Vec<_>>(),
         ['a', 'b', 'b', 'b']
     );
     let versions: Vec<(i64, i64)> = positions(&world, counterexample)
@@ -804,13 +910,7 @@ fn a_later_binding_is_not_evaluated_or_cancelled_after_the_first_refutes() {
             None
         }),
     };
-    let outcome = run(
-        &world,
-        &metered,
-        None,
-        ModelCheckLimits::default(),
-        &cancel,
-    );
+    let outcome = run(&world, &metered, None, ModelCheckLimits::default(), &cancel);
     let counterexample = violated(&outcome);
     assert_eq!(bound(counterexample), "a");
     assert_eq!(undefined_at(counterexample).0, 2);

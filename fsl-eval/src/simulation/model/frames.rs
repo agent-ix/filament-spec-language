@@ -1532,9 +1532,9 @@ impl Run<'_, '_, '_> {
             .map(|row| &row.reference)
             .collect();
         for extent in &mut extents {
-            extent
-                .instances
-                .retain(|(left, right)| !removed.contains(&left) && !removed.contains(&right));
+            extent.instances.retain(|instance| {
+                !removed.contains(&&instance.source) && !removed.contains(&&instance.target)
+            });
         }
         Ok(ModelState {
             populations,
@@ -2337,10 +2337,12 @@ fn is_closed(
     }
     let present: BTreeSet<&ObjectReference> = references.iter().collect();
     let clocks = match system.input.clock_declarations {
-        Some(table) => fsl_semantics::model::clock_reference::DeclaredClockPlaces::with_declaration_table(
-            system.input.timed_models,
-            table,
-        ),
+        Some(table) => {
+            fsl_semantics::model::clock_reference::DeclaredClockPlaces::with_declaration_table(
+                system.input.timed_models,
+                table,
+            )
+        }
         None => fsl_semantics::model::clock_reference::DeclaredClockPlaces::new(
             system.input.timed_models,
         ),

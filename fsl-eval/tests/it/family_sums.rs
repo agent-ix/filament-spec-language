@@ -83,7 +83,7 @@ fn assert_unproved_range(functions: &str) {
     assert!(
         refusals
             .iter()
-            .any(|refusal| matches!(refusal.cause, CheckCause::Unproved(_))),
+            .any(|refusal| matches!(refusal.cause.as_ref(), CheckCause::Unproved(_))),
         "{refusals:?}"
     );
 }
@@ -116,7 +116,7 @@ fn a_quantity_sum_adds_the_summands_in_the_unit_of_n() {
     .expect_err("an integer summand is not a quantity of m");
     assert!(
         refusals.iter().any(|refusal| matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(IllTypedCause::TypeMismatch)
         )),
         "{refusals:?}"
@@ -222,7 +222,7 @@ fn is_mismatch(functions: &str) -> bool {
         .iter()
         .any(|refusal| {
             matches!(
-                refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::IllTyped(IllTypedCause::TypeMismatch)
             )
         })

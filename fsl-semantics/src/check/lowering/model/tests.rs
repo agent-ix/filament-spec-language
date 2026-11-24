@@ -7,33 +7,36 @@
 use filament_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet};
 
-use filament_exact::{Integer, IntegerInterval, Presence};
+use filament_exact::{Integer, IntegerInterval, NodeKey, Presence, UnionMember};
 use fsl_forms::{
     BinaryOperator, BuiltinType, DeclaredClauseKind, Expression, FunctionDeclaration, TypeForm,
     TypeFormHead,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use super::super::tests::view::{node_ref, preimage};
-use super::super::{generated_location, type_declaration, Lowering, SemanticGraph, SemanticNode};
+use super::super::{Lowering, SemanticGraph, SemanticNode, generated_location, type_declaration};
 use super::*;
-use crate::check::checked_dispatch::{checked_dispatch_operation, DispatchRoot, OperationClauses};
+use crate::check::checked_dispatch::{DispatchRoot, OperationClauses, checked_dispatch_operation};
 use crate::check::family::fixtures::{empty_scope, fixture_source};
 use crate::check::family::{OccurrenceMap, OccurrenceRole};
-use crate::check::{CheckedGraph, PackageDeclarations};
-use crate::model::accounting::{Meter, ModelNormalizationLimits};
+use crate::check::{CheckCause, CheckedGraph, PackageDeclarations, Scope};
+use crate::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
 use crate::model::dispatch::GeneralizationClosure;
 use crate::model::domain_package::{
-    FieldMemberRecord, Multiplicity, NativeValueType, ObjectTypeRecord, OperationEffect,
-    OperationMemberRecord, OperationParameterRecord, OperationResult, PersistenceInterfaceRecord,
-    RecordValueTypeRecord, RelationshipDirection, RelationshipEnd, RelationshipRecord,
+    DomainPackage, DomainPackageRecord, DomainPackageRef, EnumRecord, FieldMemberRecord,
+    Multiplicity, NativeValueType, ObjectTypeRecord, OperationEffect, OperationMemberRecord,
+    OperationParameterRecord, OperationResult, PersistenceInterfaceRecord, RecordValueTypeRecord,
+    RelationshipDirection, RelationshipEnd, RelationshipRecord, SequenceTypeRecord,
     StateMachineRecord, StateMachineStateRecord, StateMachineTransitionRecord, ValueTypeRef,
+    VariantRecord,
 };
-use crate::model::normalize::{normalize, NormalizeOutcome};
+use crate::model::normalize::{NormalizeOutcome, normalize};
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
-    FieldDeclaration, ObjectTypeDeclaration, TypeEnvironment,
+    CompositeDeclaration, CompositeShape, FieldDeclaration, ObjectTypeDeclaration, TypeEnvironment,
+    UnionMemberDeclaration,
 };
 use filament_semantic_value::location::ExpressionLocation as Location;
 
@@ -92,6 +95,51 @@ fn key(name: &str) -> DeclarationKey {
         package: PACKAGE.to_owned(),
         node: format!("ix://acme/orders/{name}"),
     }
+}
+
+/// FR-953-AC-1: a non-native map key keeps its declared type identity in the
+/// rendered map type; unsupported key references have no rendering.
+#[trace("TC-2663", "FR-953-AC-1")]
+#[test]
+fn a_package_map_key_renders_its_declared_type_name() {
+    use crate::model::domain_package::AliasTypeRecord;
+
+    let map_key = key("OrderKey");
+    let records = BTreeMap::from([(
+        map_key.clone(),
+        DomainPackageRecord::AliasType(AliasTypeRecord {
+            key: map_key.clone(),
+            target: ValueTypeRef::Native(NativeValueType::Integer),
+        }),
+    )]);
+    assert_eq!(
+        rendered_map_type(
+            &records,
+            &ValueTypeRef::Package(map_key.clone()),
+            "ix://filament/native/Clock"
+        ),
+        Some(format!("Map<{}, ix://filament/native/Clock>", map_key.node))
+    );
+    assert_eq!(
+        rendered_map_type(
+            &records,
+            &ValueTypeRef::Native(NativeValueType::Text),
+            "ix://filament/native/Clock"
+        ),
+        Some("Map<Text, ix://filament/native/Clock>".to_owned())
+    );
+    assert_eq!(
+        rendered_map_type(
+            &records,
+            &ValueTypeRef::Native(NativeValueType::String),
+            "ix://filament/native/Clock"
+        ),
+        Some("Map<String, ix://filament/native/Clock>".to_owned())
+    );
+    assert_eq!(
+        rendered_map_type(&records, &ValueTypeRef::Clock, "ix://filament/native/Clock"),
+        None
+    );
 }
 
 fn one() -> Multiplicity {
@@ -382,7 +430,7 @@ fn dispatch(acme: &Acme, root: &str) -> PackageDeclarations {
 
 /// [`dispatch`] over `clauses` in place of [`clauses`].
 fn dispatch_with(acme: &Acme, root: &str, clauses: &OperationClauses) -> PackageDeclarations {
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     let mut declarations = checked_dispatch_operation(
         &acme.view,
         crate::check::model_type_environment("fixture", &acme.view).unwrap(),
@@ -428,11 +476,22 @@ fn lower_with_occurrences<T>(
     build: impl FnOnce(&mut Lowering<'_>) -> T,
 ) -> (T, SemanticGraph, OccurrenceMap<Location>) {
     let scope = empty_scope();
+    lower_in_scope(&scope, models, units, build)
+}
+
+/// Shared lowering setup over an explicit scope, for defensive model-shape
+/// tests whose admitted union type must reach the payload lowering branch.
+fn lower_in_scope<T>(
+    scope: &Scope,
+    models: &[AdmittedModel],
+    units: filament_semantic_value::quantity::UnitTable,
+    build: impl FnOnce(&mut Lowering<'_>) -> T,
+) -> (T, SemanticGraph, OccurrenceMap<Location>) {
     let mut occurrences = OccurrenceMap::default();
     let owner = crate::check::SourceOwner::from(&fixture_source());
     let mut meter = filament_exact::Meter::new(crate::check::family::SCALAR_LIMITS_UNLIMITED);
     let mut lowering = Lowering::new_with_source_owners(
-        &scope,
+        scope,
         &owner,
         &std::collections::BTreeMap::new(),
         models,
@@ -450,6 +509,110 @@ fn lower_with_occurrences<T>(
         .expect("lowering finishes")
         .graph;
     (built, graph, occurrences)
+}
+
+/// Exercise one malformed admitted union payload through the same lowering
+/// branch that writes the selected model-union row.
+fn model_union_refusal(
+    payload_type: Option<ValueTypeRef>,
+    retain_variant_record: bool,
+) -> (KeyFault, bool) {
+    let union_key = key("Phase");
+    let case_key = key("variant/Phase-On");
+    let mut records = vec![DomainPackageRecord::Enum(EnumRecord {
+        key: union_key.clone(),
+        name: "Phase".to_owned(),
+        members: vec!["On".to_owned()],
+    })];
+    if payload_type
+        .as_ref()
+        .is_some_and(|payload| matches!(payload, ValueTypeRef::Package(target) if target == &key("ClockSequence")))
+    {
+        records.push(DomainPackageRecord::SequenceType(SequenceTypeRecord {
+            key: key("ClockSequence"),
+            items: ValueTypeRef::Clock,
+        }));
+    }
+    records.push(DomainPackageRecord::Variant(VariantRecord {
+        key: case_key.clone(),
+        owner: union_key.clone(),
+        case: "On".to_owned(),
+        payload_type,
+        position: 0,
+    }));
+    let package = DomainPackage::new(
+        DomainPackageRef {
+            identity: PACKAGE.to_owned(),
+        },
+        records,
+    );
+    let NormalizeOutcome::Completed(view) =
+        normalize(&package, ModelNormalizationLimits::default())
+    else {
+        panic!("the malformed lowering fixture still normalizes")
+    };
+    let mut model = AdmittedModel::new(&package, &view).expect("the admitted model is indexed");
+    if !retain_variant_record {
+        assert!(model.records.remove(&case_key).is_some());
+    }
+    let handle = model_declaration_key(
+        PACKAGE,
+        NodeTag::Model,
+        "variant_type",
+        union_key.node.as_str(),
+    )
+    .expect("the model union handle is well formed");
+    let member = UnionMember::from_admitted(handle.clone(), "On").expect("a case identity");
+    let types = TypeEnvironment::new(
+        [CompositeDeclaration::new(
+            handle.clone(),
+            "Phase",
+            CompositeShape::Union(vec![UnionMemberDeclaration::from_verified(
+                member,
+                Vec::new(),
+            )]),
+        )],
+        [],
+    )
+    .expect("the union type is admitted");
+    let scope = crate::check::family::fixtures::scope_with(types, Vec::new());
+    let models = [model];
+    let location = generated_location();
+    let ((refusal, no_union_row), graph, _) =
+        lower_in_scope(&scope, &models, Default::default(), |lowering| {
+            let refusal = lowering
+                .model_union_payloads(&union_key, &handle, &handle, "M", &location)
+                .expect_err("the malformed selected model union refuses");
+            let no_union_row = lowering.graph.selected_model_unions().next().is_none();
+            (refusal, no_union_row)
+        });
+    let CheckCause::InternalFault(fault) = *refusal.cause else {
+        panic!(
+            "a typed internal union-lowering fault, got {:?}",
+            refusal.cause
+        );
+    };
+    assert!(graph.selected_model_unions().next().is_none());
+    (*fault, no_union_row)
+}
+
+/// FR-531-AC-49: both malformed union paths return their named typed fault and
+/// leave no selected model-union row, so no case is silently dropped.
+#[trace("TC-1331", "FR-531-AC-49")]
+#[test]
+fn malformed_selected_model_unions_refuse_without_emitting_a_union_row() {
+    let missing = model_union_refusal(None, false);
+    assert_eq!(missing.0, KeyFault::MissingUnionVariant(key("Phase")));
+    assert_eq!(missing.0.invariant(), "union-case-variant-retained");
+    assert!(missing.1, "a missing authored variant leaves no union row");
+
+    let unsupported = model_union_refusal(Some(ValueTypeRef::Package(key("ClockSequence"))), true);
+    assert_eq!(
+        unsupported.0,
+        KeyFault::UnsupportedUnionPayload(key("variant/Phase-On"))
+    );
+    assert_eq!(unsupported.0.invariant(), "union-payload-has-ir-form");
+    assert!(unsupported.1, "an unsupported payload leaves no union row");
 }
 
 // ---------------------------------------------------------------------
@@ -821,10 +984,10 @@ fn unmappable_model_inputs_are_internal_faults() {
             )
         });
     let fault = |result: Result<NodeKey, CheckRefusal>| match result {
-        Err(CheckRefusal {
-            cause: CheckCause::InternalFault(fault),
-            ..
-        }) => *fault,
+        Err(CheckRefusal { cause, .. }) => match *cause {
+            CheckCause::InternalFault(fault) => *fault,
+            cause => panic!("expected an internal fault cause, got {cause:?}"),
+        },
         other => panic!("expected an internal fault, got {other:?}"),
     };
     assert_eq!(fault(by_id), KeyFault::UnknownEffectiveId(unknown.clone()));
@@ -870,16 +1033,15 @@ fn keying_a_second_declaration_onto_a_recorded_node_refuses() {
         let keyed = lowering.model_node(&d2, &location);
         (keyed, lowering.correspondence.resolve(n.clone()).cloned())
     });
-    let Err(CheckRefusal {
-        cause: CheckCause::InternalFault(fault),
-        ..
-    }) = keyed
-    else {
+    let Err(CheckRefusal { ref cause, .. }) = keyed else {
+        panic!("expected an internal fault, got {keyed:?}");
+    };
+    let CheckCause::InternalFault(fault) = cause.as_ref() else {
         panic!("expected an internal fault, got {keyed:?}");
     };
     assert_eq!(
-        *fault,
-        KeyFault::CorrespondenceConflict(Box::new(
+        fault.as_ref(),
+        &KeyFault::CorrespondenceConflict(Box::new(
             crate::check::CorrespondenceConflict::NodeRebound {
                 node: n,
                 recorded: d1.clone(),
@@ -887,7 +1049,7 @@ fn keying_a_second_declaration_onto_a_recorded_node_refuses() {
             }
         ))
     );
-    let cause = CheckCause::InternalFault(fault);
+    let cause = CheckCause::InternalFault(fault.clone());
     assert_eq!(
         cause.code(),
         fsl_foundation::diagnostic::Code::RuntimeInvariant
@@ -936,6 +1098,22 @@ fn the_model_matches_have_no_catch_all_arm() {
 // TC-418: clause functions.
 // ---------------------------------------------------------------------
 
+/// FR-094-AC-16: all declared clause kinds lower to their exact wire text.
+#[trace("FR-094-AC-16")]
+#[test]
+fn declared_clause_kind_spellings_are_closed_and_exact() {
+    assert_eq!(
+        super::clause_spelling(DeclaredClauseKind::Invariant),
+        "invariant"
+    );
+    assert_eq!(
+        super::clause_spelling(DeclaredClauseKind::Precondition),
+        "precondition"
+    );
+    assert_eq!(super::clause_spelling(DeclaredClauseKind::Body), "body");
+    assert_eq!(super::clause_spelling(DeclaredClauseKind::Reward), "reward");
+}
+
 /// FR-094: a check selects one package for each domain package identity. A
 /// selection is the identity alone (FR-321), so two aliases that admit the
 /// same `acme/orders` package share one selection and check, while a
@@ -970,7 +1148,7 @@ fn two_admitted_versions_of_one_model_identity_refuse() {
         .expect_err("two packages of one identity refuse");
     assert!(
         matches!(
-            &refusals[0].cause,
+            refusals[0].cause.as_ref(),
             CheckCause::InternalFault(fault)
                 if **fault == KeyFault::DuplicateModelSelection("acme/orders".to_owned())
         ),
@@ -1074,7 +1252,7 @@ mod quantities {
     mod bounded;
     use crate::value::nominal_payload::NominalPayload;
     use crate::value::semantic_node::{NodeOwner, OwnerSelection, OwnerSubject};
-    use crate::value::unit::{admit_unit_graph, DimensionPreimage, UnitPreimage};
+    use crate::value::unit::{DimensionPreimage, UnitPreimage, admit_unit_graph};
     use filament_semantic_value::quantity::UnitTable;
 
     fn owner() -> NodeOwner {
@@ -1277,9 +1455,11 @@ mod quantities {
             parameter(graph, "a", 0).semantic_type(),
             Some(node_key(METRE))
         );
-        assert!(graph
-            .nodes()
-            .all(|node| node.semantic_form() != "compound_unit"));
+        assert!(
+            graph
+                .nodes()
+                .all(|node| node.semantic_form() != "compound_unit")
+        );
         // The type node is the unit's nominal node, typed by its dimension's
         // nominal node, which the graph holds too.
         let metre = graph.node(node_key(METRE)).expect("the metre unit node");
@@ -1317,7 +1497,7 @@ mod quantities {
         );
         assert_ne!(u1, node_key(METRE));
 
-        use filament_semantic_value::quantity::{result_unit, UnitOperation};
+        use filament_semantic_value::quantity::{UnitOperation, result_unit};
         let table = units();
         let unit = |hex: &str| {
             table
@@ -1783,9 +1963,11 @@ mod quantities {
         assert_ne!(keys[0], keys[2]);
         assert_ne!(keys[0], keys[3]);
         assert_eq!(keys[4], keys[5], "equal Rational carriers share one node");
-        assert!(graph
-            .nodes()
-            .any(|node| node.semantic_form() == "rational_range"));
+        assert!(
+            graph
+                .nodes()
+                .any(|node| node.semantic_form() == "rational_range")
+        );
         for key in [&keys[0], &keys[2], &keys[3], &keys[4]] {
             let node = graph.node((*key).clone()).expect("the carried type node");
             assert_eq!(node.node_tag(), NodeTag::ScalarType);
@@ -1927,13 +2109,8 @@ mod quantities {
         let (result, graph) = lower(&[], units(), |lowering| {
             lowering.type_node(&ValueType::Quantity(unheld.clone()), &generated_location())
         });
-        assert!(matches!(
-            result,
-            Err(CheckRefusal {
-                cause: CheckCause::InternalFault(fault),
-                ..
-            }) if *fault == KeyFault::UnheldUnit(unheld)
-        ));
+        assert!(matches!(result, Err(CheckRefusal { cause, .. })
+            if matches!(cause.as_ref(), CheckCause::InternalFault(fault) if **fault == KeyFault::UnheldUnit(unheld))));
         assert_eq!(graph.nodes().count(), 0);
     }
 
@@ -1955,13 +2132,8 @@ mod quantities {
         let (result, graph) = lower(&[], table, |lowering| {
             lowering.type_node(&quantity(METRE), &generated_location())
         });
-        assert!(matches!(
-            result,
-            Err(CheckRefusal {
-                cause: CheckCause::InternalFault(fault),
-                ..
-            }) if *fault == KeyFault::UnheldNominal(node_key(METRE))
-        ));
+        assert!(matches!(result, Err(CheckRefusal { cause, .. })
+            if matches!(cause.as_ref(), CheckCause::InternalFault(fault) if **fault == KeyFault::UnheldNominal(node_key(METRE)))));
         assert_eq!(graph.nodes().count(), 0);
     }
 

@@ -67,7 +67,10 @@ pub struct MeasureProbabilityDocument {
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Conditional {
-    Ratio(MeasureProbabilityDocument, MeasureProbabilityDocument),
+    Ratio(
+        Box<MeasureProbabilityDocument>,
+        Box<MeasureProbabilityDocument>,
+    ),
     Vacuous,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -343,65 +346,72 @@ pub fn measure_probability_product_key(
 ) -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
     poll(cancel)?;
     let mut admission = ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
-    let scope = RefCell::new(&mut admission as &mut dyn ModelKeyBudget);
-    struct Reserve<'a, 'b>(&'a RefCell<&'b mut dyn ModelKeyBudget>);
-    impl quire_canonical::Reservation for Reserve<'_, '_> {
-        fn reserve(&mut self, bytes: usize) -> Result<(), quire_canonical::ReservationDenied> {
-            self.0
+    let result = {
+        let scope = RefCell::new(&mut admission as &mut dyn ModelKeyBudget);
+        struct Reserve<'a, 'b>(&'a RefCell<&'b mut dyn ModelKeyBudget>);
+        impl quire_canonical::Reservation for Reserve<'_, '_> {
+            fn reserve(&mut self, bytes: usize) -> Result<(), quire_canonical::ReservationDenied> {
+                self.0
+                    .borrow_mut()
+                    .reserve(bytes)
+                    .map_err(|_| quire_canonical::ReservationDenied)
+            }
+        }
+        let identity = fsl_foundation::IdentityLimits::default();
+        (|| {
+            scope
                 .borrow_mut()
-                .reserve(bytes)
-                .map_err(|_| quire_canonical::ReservationDenied)
-        }
-    }
-    let identity = fsl_foundation::IdentityLimits::default();
-    let result = (|| {
-        scope
-            .borrow_mut()
-            .work(u64::try_from(raw.len()).unwrap_or(u64::MAX))
-            .map_err(|_| ModelKeyError::Denied)?;
-        let model =
-            quire_canonical::read_with_reservation(raw, identity.input_bytes, &mut Reserve(&scope))
-                .map_err(|error| key_parse_error(error, identity))?;
-        if !key::model_form(model.root()) {
-            return Err(ModelKeyError::Unsupported("canonical model body"));
-        }
-        let original = writer::encode_admitted(&model, identity.input_bytes, &mut Reserve(&scope))
-            .map_err(|_| ModelKeyError::Denied)?;
-        if original != raw {
-            return Err(ModelKeyError::Unsupported("canonical model body"));
-        }
-        let pending = pending
-            .map(|bytes| {
-                quire_canonical::read_with_reservation(
-                    bytes,
-                    identity.input_bytes,
-                    &mut Reserve(&scope),
-                )
-                .map_err(|error| key_parse_error(error, identity))
-            })
-            .transpose()?;
-        let key = fsl_eval::probabilistic::key::MeasureProductKey {
-            binding,
-            model: model.root(),
-            control,
-            accumulator,
-            pending: pending.as_ref().map(|pending| pending.root()),
-            reward: reward.map(|reward| fsl_eval::probabilistic::key::RewardKey {
-                model: &reward.model,
-                name: &reward.name,
-                unit: reward.unit.as_ref(),
-            }),
-            budget: &scope,
-            max_bytes: identity.input_bytes,
-        };
-        key.validate().map_err(ModelKeyError::Unsupported)?;
-        writer::encode_admitted(&key, identity.input_bytes, &mut Reserve(&scope))
-            .map(ProbabilityProductKey::from_canonical_bytes)
-            .map_err(|error| {
-                ModelKeyError::Encoding(fsl_eval::simulation::EncodingRefusal::of(&error, identity))
-            })
-    })();
-    drop(scope);
+                .work(u64::try_from(raw.len()).unwrap_or(u64::MAX))
+                .map_err(|_| ModelKeyError::Denied)?;
+            let model = quire_canonical::read_with_reservation(
+                raw,
+                identity.input_bytes,
+                &mut Reserve(&scope),
+            )
+            .map_err(|error| key_parse_error(error, identity))?;
+            if !key::model_form(model.root()) {
+                return Err(ModelKeyError::Unsupported("canonical model body"));
+            }
+            let original =
+                writer::encode_admitted(&model, identity.input_bytes, &mut Reserve(&scope))
+                    .map_err(|_| ModelKeyError::Denied)?;
+            if original != raw {
+                return Err(ModelKeyError::Unsupported("canonical model body"));
+            }
+            let pending = pending
+                .map(|bytes| {
+                    quire_canonical::read_with_reservation(
+                        bytes,
+                        identity.input_bytes,
+                        &mut Reserve(&scope),
+                    )
+                    .map_err(|error| key_parse_error(error, identity))
+                })
+                .transpose()?;
+            let key = fsl_eval::probabilistic::key::MeasureProductKey {
+                binding,
+                model: model.root(),
+                control,
+                accumulator,
+                pending: pending.as_ref().map(|pending| pending.root()),
+                reward: reward.map(|reward| fsl_eval::probabilistic::key::RewardKey {
+                    model: &reward.model,
+                    name: &reward.name,
+                    unit: reward.unit.as_ref(),
+                }),
+                budget: &scope,
+                max_bytes: identity.input_bytes,
+            };
+            key.validate().map_err(ModelKeyError::Unsupported)?;
+            writer::encode_admitted(&key, identity.input_bytes, &mut Reserve(&scope))
+                .map(ProbabilityProductKey::from_canonical_bytes)
+                .map_err(|error| {
+                    ModelKeyError::Encoding(fsl_eval::simulation::EncodingRefusal::of(
+                        &error, identity,
+                    ))
+                })
+        })()
+    };
     result.map_err(|error| admission.refusal(error))
 }
 
@@ -892,10 +902,14 @@ fn enumerate(
                             }))
                         })?;
                     action_labels.push(None);
-                    vec![steps
-                        .into_iter()
-                        .map(|step| Successor::Position(step.probability, step.post, step.rewards))
-                        .collect::<Vec<_>>()]
+                    vec![
+                        steps
+                            .into_iter()
+                            .map(|step| {
+                                Successor::Position(step.probability, step.post, step.rewards)
+                            })
+                            .collect::<Vec<_>>(),
+                    ]
                 } else {
                     let actions = system
                         .actions_with_budget(
@@ -1046,8 +1060,8 @@ fn enumerate(
                                 .map_err(|error| admission.refusal(error))?;
                             let pending = system
                                 .pending_key_bytes_with_budget(
-                                    &scheduled,
-                                    &random,
+                                    scheduled,
+                                    random,
                                     identity,
                                     &mut admission,
                                     cancel,
@@ -1456,7 +1470,7 @@ fn read_wire(
             Some(Box::new(match conditional.mode.as_str() {
                 "ratio" if objective.optimization == ProbabilityObjective::Workload => {
                     Conditional::Ratio(
-                        read_wire(
+                        Box::new(read_wire(
                             *conditional
                                 .numerator
                                 .ok_or(ProbabilityDocumentError::MalformedMember("numerator"))?,
@@ -1465,8 +1479,8 @@ fn read_wire(
                             meter,
                             storage,
                             depth + 1,
-                        )?,
-                        read_wire(
+                        )?),
+                        Box::new(read_wire(
                             *conditional
                                 .denominator
                                 .ok_or(ProbabilityDocumentError::MalformedMember("denominator"))?,
@@ -1475,7 +1489,7 @@ fn read_wire(
                             meter,
                             storage,
                             depth + 1,
-                        )?,
+                        )?),
                     )
                 }
                 "vacuous"
@@ -1487,7 +1501,7 @@ fn read_wire(
             }))
         }
         ("conditional", None) => {
-            return Err(ProbabilityDocumentError::MalformedMember("conditional"))
+            return Err(ProbabilityDocumentError::MalformedMember("conditional"));
         }
         _ => return Err(ProbabilityDocumentError::MalformedMember("kind")),
     };
@@ -1544,7 +1558,7 @@ pub fn read_measure_probability_certificate(
     let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
     let document =
         decode_measure_probability_certificate(bytes, limits, cancel, &mut meter, &mut 0)?;
-    validate_ranges(&document, limits, cancel, &mut meter)?;
+    validate_ranges(&document, cancel, &mut meter)?;
     Ok(document)
 }
 pub(super) fn identity(
@@ -1563,7 +1577,6 @@ pub(super) fn identity(
 }
 fn validate_ranges(
     document: &MeasureProbabilityDocument,
-    limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
 ) -> Result<(), ProbabilityDocumentError> {
@@ -1598,8 +1611,8 @@ fn validate_ranges(
     }
     if let Some(conditional) = &document.conditional {
         if let Conditional::Ratio(numerator, denominator) = conditional.as_ref() {
-            validate_ranges(numerator, limits, cancel, meter)?;
-            validate_ranges(denominator, limits, cancel, meter)?;
+            validate_ranges(numerator, cancel, meter)?;
+            validate_ranges(denominator, cancel, meter)?;
         }
     }
     Ok(())
@@ -1848,7 +1861,13 @@ pub fn measure_probability_certificate_document(
         ranking: graph
             .states
             .into_iter()
-            .map(|(key, state)| (key, state.rank))
+            .filter_map(|(key, state)| {
+                certificate
+                    .values
+                    .iter()
+                    .any(|value| value.state == key)
+                    .then_some((key, state.rank))
+            })
             .collect(),
         objective: plan.objective,
         conditional: None,
@@ -1911,7 +1930,10 @@ pub fn conditional_measure_probability_certificate(
         values: Vec::new(),
         ranking: Vec::new(),
         objective: numerator.objective.clone(),
-        conditional: Some(Box::new(Conditional::Ratio(numerator, denominator))),
+        conditional: Some(Box::new(Conditional::Ratio(
+            Box::new(numerator),
+            Box::new(denominator),
+        ))),
     })
 }
 
@@ -1921,6 +1943,7 @@ fn checked_values(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
+    partial_floor: Option<&Rational>,
 ) -> Result<
     Result<BTreeMap<ProbabilityProductKey, Rational>, ExactProbabilityCertificateCheck>,
     ProbabilityDocumentError,
@@ -1931,21 +1954,23 @@ fn checked_values(
             at: ProbabilityCertificateLocus::Member(member),
         })
     };
-    if document.values.len() != graph.states.len()
-        || document
-            .values
-            .iter()
-            .map(|row| &row.state)
-            .ne(graph.states.keys())
+    let keys = document
+        .values
+        .iter()
+        .map(|row| &row.state)
+        .collect::<Vec<_>>();
+    if (partial_floor.is_none() && document.values.len() != graph.states.len())
+        || keys.iter().any(|key| !graph.states.contains_key(*key))
+        || keys.windows(2).any(|pair| pair[0] >= pair[1])
     {
         return Ok(Err(shape("values")));
     }
-    if document.ranking.len() != graph.states.len()
+    if document.ranking.len() != document.values.len()
         || document
             .ranking
             .iter()
             .map(|row| &row.0)
-            .ne(graph.states.keys())
+            .ne(keys.iter().copied())
     {
         return Ok(Err(shape("ranking")));
     }
@@ -1954,7 +1979,11 @@ fn checked_values(
         .iter()
         .map(|row| (row.state.clone(), row.value.clone()))
         .collect::<BTreeMap<_, _>>();
-    for (key, state) in &graph.states {
+    for row in &document.values {
+        let key = &row.state;
+        let Some(state) = graph.states.get(key) else {
+            return Ok(Err(shape("values")));
+        };
         poll(cancel)?;
         if document
             .ranking
@@ -1973,7 +2002,12 @@ fn checked_values(
             None => {
                 let mut optimum: Option<Rational> = None;
                 for choice in &state.choices {
-                    let sum = action_sum(choice, &values, meter, cancel)?;
+                    let sum = match partial_floor {
+                        Some(floor) => {
+                            partial_lower_action_sum(choice, &values, floor, meter, cancel)?
+                        }
+                        None => action_sum(choice, &values, meter, cancel)?,
+                    };
                     optimum = Some(match optimum {
                         None => sum,
                         Some(old) => match document.objective.optimization {
@@ -1994,7 +2028,7 @@ fn checked_values(
                             ProbabilityObjective::Workload
                             | ProbabilityObjective::WorkloadMinimum
                             | ProbabilityObjective::WorkloadMaximum => {
-                                return Err(ProbabilityDocumentError::Malformed)
+                                return Err(ProbabilityDocumentError::Malformed);
                             }
                         },
                     });
@@ -2003,7 +2037,17 @@ fn checked_values(
             }
         };
         check_value_bits(&expected, limits.scalar_bits)?;
-        if values.get(key) != Some(&expected) {
+        let holds = match partial_floor {
+            Some(_) => ordered(
+                Order::LessOrEqual,
+                values.get(key).ok_or(ProbabilityDocumentError::Malformed)?,
+                &expected,
+                meter,
+                cancel,
+            )?,
+            None => values.get(key) == Some(&expected),
+        };
+        if !holds {
             return Ok(Err(rejected(
                 ProbabilityCertificateRule::InequalityFails,
                 key.clone(),
@@ -2026,6 +2070,136 @@ fn check_value_bits(value: &Rational, bits: u64) -> Result<(), ProbabilityDocume
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod partial_lower_tests {
+    use super::*;
+
+    fn limits() -> ProbabilityDocumentLimits {
+        ProbabilityDocumentLimits {
+            bytes: 1_000_000,
+            storage_bytes: 8_000_000,
+            states: 100,
+            edges: 100,
+            scalar_bits: 128,
+            accounting: crate::AccountingLimits::default().0,
+        }
+    }
+
+    #[test]
+    fn unnamed_shifted_successor_uses_negative_level() {
+        let root = ProbabilityProductKey::from_canonical_bytes(vec![1]);
+        let retained = ProbabilityProductKey::from_canonical_bytes(vec![2]);
+        let omitted = ProbabilityProductKey::from_canonical_bytes(vec![3]);
+        let half = Rational::new(Integer::one(), Integer::from(2_i64)).unwrap();
+        let mut states = BTreeMap::new();
+        states.insert(
+            root.clone(),
+            State {
+                terminal: None,
+                activation_terminal: None,
+                rank: 1,
+                choices: vec![vec![
+                    ProbabilityEdge {
+                        target: retained.clone(),
+                        probability: half.clone(),
+                    },
+                    ProbabilityEdge {
+                        target: omitted.clone(),
+                        probability: half,
+                    },
+                ]],
+                actions: vec![None],
+                activated: true,
+            },
+        );
+        states.insert(
+            retained.clone(),
+            State {
+                terminal: Some(super::super::rational(0)),
+                activation_terminal: None,
+                rank: 0,
+                choices: Vec::new(),
+                actions: Vec::new(),
+                activated: true,
+            },
+        );
+        states.insert(
+            omitted,
+            State {
+                terminal: Some(super::super::rational(0)),
+                activation_terminal: None,
+                rank: 0,
+                choices: Vec::new(),
+                actions: Vec::new(),
+                activated: true,
+            },
+        );
+        let graph = Graph {
+            initial: root.clone(),
+            initials: vec![(0, root.clone())],
+            states,
+        };
+        let mut document = MeasureProbabilityDocument {
+            identity: ObligationIdentity::new(
+                filament_exact::NodeKey::new(
+                    "partial",
+                    vec![filament_exact::PathSegment::Text("lower".into())],
+                    0,
+                )
+                .unwrap(),
+                None,
+                0,
+            ),
+            payoff: MeasurePayoffKind::Shifted,
+            values: vec![ExactProbabilityValue {
+                state: root.clone(),
+                value: Rational::new(Integer::from(-1_i64), Integer::from(5_i64)).unwrap(),
+            }],
+            ranking: vec![(root.clone(), 1)],
+            objective: Objective {
+                kind: "steps",
+                window: 1,
+                reward: None,
+                comparison: Some(MeasureComparison::Lt),
+                threshold: None,
+                level: Some(Rational::new(Integer::from(2_i64), Integer::from(5_i64)).unwrap()),
+                optimization: ProbabilityObjective::Minimum,
+                fairness: Vec::new(),
+            },
+            conditional: None,
+        };
+        let floor = document.objective.level.as_ref().unwrap().neg();
+        let mut meter = filament_exact::Meter::new(limits().accounting);
+        let result = checked_values(
+            &document,
+            &graph,
+            limits(),
+            &Cancel::new(),
+            &mut meter,
+            Some(&floor),
+        )
+        .unwrap();
+        assert!(
+            matches!(result, Ok(values) if values.get(&root) == Some(&document.values[0].value))
+        );
+        document.values[0].value = Rational::from_integer(Integer::zero());
+        let mut meter = filament_exact::Meter::new(limits().accounting);
+        let result = checked_values(
+            &document,
+            &graph,
+            limits(),
+            &Cancel::new(),
+            &mut meter,
+            Some(&floor),
+        )
+        .unwrap();
+        assert!(matches!(
+            result,
+            Err(ExactProbabilityCertificateCheck::Rejected(_))
+        ));
+    }
+}
 fn action_sum(
     choice: &[ProbabilityEdge],
     values: &BTreeMap<ProbabilityProductKey, Rational>,
@@ -2042,6 +2216,43 @@ fn action_sum(
         let value = values
             .get(&edge.target)
             .ok_or(ProbabilityDocumentError::MalformedMember("values"))?;
+        let term = arithmetic(
+            filament_exact::RationalArithmetic::Multiply(&edge.probability, value),
+            meter,
+            cancel,
+        )?;
+        sum = arithmetic(
+            filament_exact::RationalArithmetic::Add(&sum, &term),
+            meter,
+            cancel,
+        )?;
+        mass = arithmetic(
+            filament_exact::RationalArithmetic::Add(&mass, &edge.probability),
+            meter,
+            cancel,
+        )?;
+    }
+    if mass != super::rational(1) {
+        return Err(ProbabilityDocumentError::Malformed);
+    }
+    Ok(sum)
+}
+
+fn partial_lower_action_sum(
+    choice: &[ProbabilityEdge],
+    values: &BTreeMap<ProbabilityProductKey, Rational>,
+    floor: &Rational,
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<Rational, ProbabilityDocumentError> {
+    let mut sum = super::rational(0);
+    let mut mass = super::rational(0);
+    for edge in choice {
+        poll(cancel)?;
+        if edge.probability < super::rational(0) {
+            return Err(ProbabilityDocumentError::Malformed);
+        }
+        let value = values.get(&edge.target).unwrap_or(floor);
         let term = arithmetic(
             filament_exact::RationalArithmetic::Multiply(&edge.probability, value),
             meter,
@@ -2103,6 +2314,7 @@ fn acceptance(
     ExactProbabilityCertificateCheck::Accepted(ExactProbabilityAcceptance {
         initial_values: None,
         bound: None,
+        policy: Vec::new(),
         value,
         side,
         certificate: ExactProbabilityCertificate {
@@ -2117,6 +2329,9 @@ pub(super) fn check(
     claims: &[CheckedProbabilisticClaim],
     item: &ObligationIdentity,
     bytes: &[u8],
+    partial_lower: bool,
+    bound_side: Option<super::SubsystemBoundKind>,
+    role: super::CertificateRole,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
@@ -2152,7 +2367,7 @@ pub(super) fn check(
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     if document.conditional.is_none() {
-        if let Err(error) = validate_ranges(&document, limits, cancel, &mut meter) {
+        if let Err(error) = validate_ranges(&document, cancel, &mut meter) {
             return document_admission_error(error);
         }
     }
@@ -2218,7 +2433,7 @@ pub(super) fn check(
                 &mut meter,
                 &mut storage,
             )?;
-            if let Err(error) = validate_ranges(part, limits, cancel, &mut meter) {
+            if let Err(error) = validate_ranges(part, cancel, &mut meter) {
                 return document_admission_error(error);
             }
             if graph.is_none() {
@@ -2249,7 +2464,7 @@ pub(super) fn check(
                 }
             }
             let graph = graph.as_ref().ok_or(ProbabilityDocumentError::Malformed)?;
-            let values = match checked_values(part, graph, limits, cancel, &mut meter)? {
+            let values = match checked_values(part, graph, limits, cancel, &mut meter, None)? {
                 Ok(values) => values,
                 Err(mut rejection) => {
                     if let ExactProbabilityCertificateCheck::Rejected(failure) = &mut rejection {
@@ -2389,6 +2604,11 @@ pub(super) fn check(
         &mut storage,
         None,
     )?;
+    if let Some(side) = bound_side {
+        return check_value_bounds(
+            &document, &graph, &plan, side, role, bytes, limits, cancel, &mut meter,
+        );
+    }
     if graph.initials.len() != 1 {
         return Err(ProbabilityDocumentError::Unsupported);
     }
@@ -2400,7 +2620,29 @@ pub(super) fn check(
             graph.initial,
         ));
     }
-    let values = match checked_values(&document, &graph, limits, cancel, &mut meter)? {
+    let partial_floor = if partial_lower {
+        if document.payoff == MeasurePayoffKind::Shifted {
+            Some(
+                plan.objective
+                    .level
+                    .as_ref()
+                    .ok_or(ProbabilityDocumentError::Malformed)?
+                    .neg(),
+            )
+        } else {
+            Some(super::rational(0))
+        }
+    } else {
+        None
+    };
+    let values = match checked_values(
+        &document,
+        &graph,
+        limits,
+        cancel,
+        &mut meter,
+        partial_floor.as_ref(),
+    )? {
         Ok(values) => values,
         Err(rejection) => return Ok(rejection),
     };
@@ -2459,6 +2701,201 @@ pub(super) fn check(
     Ok(acceptance(&document, value, side, bytes))
 }
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
+fn check_value_bounds(
+    document: &MeasureProbabilityDocument,
+    graph: &Graph,
+    plan: &Plan<'_>,
+    side: super::SubsystemBoundKind,
+    role: super::CertificateRole,
+    bytes: &[u8],
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    let malformed = |member| {
+        ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+            rule: ProbabilityCertificateRule::Malformed,
+            at: ProbabilityCertificateLocus::Member(member),
+        })
+    };
+    let fail = |key| {
+        ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+            rule: ProbabilityCertificateRule::InequalityFails,
+            at: ProbabilityCertificateLocus::ProductState(key),
+        })
+    };
+    if document.conditional.is_some() || document.values.len() != graph.states.len() {
+        return Ok(malformed("values"));
+    }
+    let value_keys = document
+        .values
+        .iter()
+        .map(|row| &row.state)
+        .collect::<Vec<_>>();
+    if value_keys.windows(2).any(|pair| pair[0] >= pair[1])
+        || value_keys
+            .iter()
+            .any(|key| !graph.states.contains_key(*key))
+    {
+        return Ok(malformed("values"));
+    }
+    match side {
+        super::SubsystemBoundKind::Lower => {
+            if document.ranking.len() != document.values.len()
+                || document
+                    .ranking
+                    .iter()
+                    .map(|row| &row.0)
+                    .ne(value_keys.iter().copied())
+            {
+                return Ok(malformed("ranking"));
+            }
+        }
+        super::SubsystemBoundKind::Upper if !document.ranking.is_empty() => {
+            return Ok(malformed("ranking"));
+        }
+        super::SubsystemBoundKind::Upper => {}
+    }
+    let values = document
+        .values
+        .iter()
+        .map(|row| (row.state.clone(), row.value.clone()))
+        .collect::<BTreeMap<_, _>>();
+    for row in &document.values {
+        check_value_bits(&row.value, limits.scalar_bits)?;
+        let state = graph
+            .states
+            .get(&row.state)
+            .ok_or(ProbabilityDocumentError::MalformedMember("values"))?;
+        if side == super::SubsystemBoundKind::Lower {
+            let rank = document
+                .ranking
+                .binary_search_by(|entry| entry.0.cmp(&row.state))
+                .ok()
+                .and_then(|index| document.ranking.get(index))
+                .map(|entry| entry.1);
+            if rank != Some(state.rank) {
+                return Ok(ExactProbabilityCertificateCheck::Rejected(
+                    ProbabilityCertificateRejection {
+                        rule: ProbabilityCertificateRule::RankBroken,
+                        at: ProbabilityCertificateLocus::ProductState(row.state.clone()),
+                    },
+                ));
+            }
+        }
+        let Some(terminal) = &state.terminal else {
+            if state.choices.is_empty() {
+                return Err(ProbabilityDocumentError::Malformed);
+            }
+            let mut action_sums = Vec::with_capacity(state.choices.len());
+            for choice in &state.choices {
+                action_sums.push(action_sum(choice, &values, meter, cancel)?);
+            }
+            let all = matches!(
+                (side, document.objective.optimization),
+                (
+                    super::SubsystemBoundKind::Lower,
+                    ProbabilityObjective::Minimum
+                ) | (
+                    super::SubsystemBoundKind::Upper,
+                    ProbabilityObjective::Maximum
+                ) | (
+                    super::SubsystemBoundKind::Lower,
+                    ProbabilityObjective::Workload
+                ) | (
+                    super::SubsystemBoundKind::Upper,
+                    ProbabilityObjective::Workload
+                )
+            );
+            let holds = action_sums
+                .iter()
+                .map(|sum| match side {
+                    super::SubsystemBoundKind::Lower => {
+                        ordered(Order::LessOrEqual, &row.value, sum, meter, cancel)
+                    }
+                    super::SubsystemBoundKind::Upper => {
+                        ordered(Order::LessOrEqual, sum, &row.value, meter, cancel)
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if if all {
+                holds.iter().any(|holds| !holds)
+            } else {
+                !holds.iter().any(|holds| *holds)
+            } {
+                return Ok(fail(row.state.clone()));
+            }
+            continue;
+        };
+        let contains_terminal = match side {
+            super::SubsystemBoundKind::Lower => {
+                ordered(Order::LessOrEqual, &row.value, terminal, meter, cancel)?
+            }
+            super::SubsystemBoundKind::Upper => {
+                ordered(Order::GreaterOrEqual, &row.value, terminal, meter, cancel)?
+            }
+        };
+        if !contains_terminal {
+            return Ok(fail(row.state.clone()));
+        }
+    }
+    let initial = values
+        .get(&graph.initial)
+        .ok_or(ProbabilityDocumentError::MalformedMember("values"))?;
+    if role == super::CertificateRole::Claim {
+        let meets = if document.payoff == MeasurePayoffKind::Shifted {
+            if plan.strict {
+                ordered(
+                    Order::LessOrEqual,
+                    initial,
+                    &super::rational(0),
+                    meter,
+                    cancel,
+                )?
+            } else {
+                ordered(
+                    Order::GreaterOrEqual,
+                    initial,
+                    &super::rational(0),
+                    meter,
+                    cancel,
+                )?
+            }
+        } else {
+            match &plan.bound {
+                Bound::AtLeast(threshold) => {
+                    ordered(Order::GreaterOrEqual, initial, threshold, meter, cancel)?
+                }
+                Bound::AtMost(threshold) => {
+                    ordered(Order::LessOrEqual, initial, threshold, meter, cancel)?
+                }
+            }
+        };
+        if !meets {
+            return Ok(ExactProbabilityCertificateCheck::Rejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::ThresholdMissed,
+                    at: ProbabilityCertificateLocus::ProductState(graph.initial.clone()),
+                },
+            ));
+        }
+    }
+    let accepted_side = if document.payoff == MeasurePayoffKind::Shifted {
+        if plan.strict {
+            ProbabilityBoundSide::AtLeast
+        } else {
+            ProbabilityBoundSide::AtMost
+        }
+    } else {
+        match plan.bound {
+            Bound::AtLeast(_) => ProbabilityBoundSide::AtLeast,
+            Bound::AtMost(_) => ProbabilityBoundSide::AtMost,
+        }
+    };
+    Ok(acceptance(document, initial.clone(), accepted_side, bytes))
+}
+
 fn plan_for_part<'a>(
     system: &ModelSystem<'_>,
     claim: &'a CheckedProbabilisticClaim,
@@ -2686,7 +3123,7 @@ pub(in crate::probability_certificate) fn check_mean_refutation(
     if selected.objective != document.objective {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
-    validate_ranges(&document, limits, cancel, &mut meter)?;
+    validate_ranges(&document, cancel, &mut meter)?;
     let graph = enumerate(
         system,
         claim,
@@ -2697,10 +3134,10 @@ pub(in crate::probability_certificate) fn check_mean_refutation(
         &mut storage,
         None,
     )?;
-    let values = match checked_values(&document, &graph, limits, cancel, &mut meter)? {
+    let values = match checked_values(&document, &graph, limits, cancel, &mut meter, None)? {
         Ok(values) => values,
         Err(ExactProbabilityCertificateCheck::Rejected(rejection)) => {
-            return Ok(MeanRefutationCheck::Rejected(rejection))
+            return Ok(MeanRefutationCheck::Rejected(rejection));
         }
         Err(_) => return Err(ProbabilityDocumentError::Malformed),
     };

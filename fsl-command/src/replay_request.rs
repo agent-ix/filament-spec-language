@@ -334,6 +334,7 @@ fn decode<E: From<RequestDefect>>(
                 })
                 .collect::<Result<Vec<_>, RequestDefect>>()?,
         ),
+        "claim_free" => ReplaySource::ClaimFree,
         _ => return Err(RequestDefect::new("/source/kind", "unknown replay source").into()),
     };
     let mut stage_limits = BTreeMap::new();

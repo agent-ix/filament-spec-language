@@ -1107,6 +1107,7 @@ fn analyze_refusal_cause(refusal: &crate::analyze::AnalyzeRefusal) -> &'static s
         crate::analyze::AnalyzeRefusal::Binding(_) | crate::analyze::AnalyzeRefusal::Package(_) => {
             "invalid-value"
         }
+        crate::analyze::AnalyzeRefusal::HostAllocationFailed(_) => "host-allocation-failed",
         crate::analyze::AnalyzeRefusal::Emission(_) => "resource-exhausted",
     }
 }

@@ -1001,7 +1001,7 @@ fn protocol_results_preserve_independent_emission_when_a_join_is_refused() {
         "Broken is the aggregate's primary refusal"
     );
     assert!(matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         fsl_semantics::check::CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), fsl_semantics::check::ProtocolAnchorCause::Missing { segment, .. } if segment == "ghost")
     ));
@@ -1062,7 +1062,7 @@ fn protocol_results_preserve_independent_emission_when_a_join_is_refused() {
     };
     assert!(
         matches!(
-            (&reversed_refusal.cause, &refusal.cause),
+            (reversed_refusal.cause.as_ref(), refusal.cause.as_ref()),
             (
                 fsl_semantics::check::CheckCause::ProtocolAnchor(reversed),
                 fsl_semantics::check::CheckCause::ProtocolAnchor(original)
@@ -1149,7 +1149,7 @@ fn protocol_results_preserve_independent_emission_when_a_join_is_refused() {
     };
     assert!(
         matches!(
-            (&standalone_refusal.cause, &refusal.cause),
+            (standalone_refusal.cause.as_ref(), refusal.cause.as_ref()),
             (
                 fsl_semantics::check::CheckCause::ProtocolAnchor(standalone),
                 fsl_semantics::check::CheckCause::ProtocolAnchor(combined)
@@ -1205,7 +1205,7 @@ fn protocol_results_preserve_independent_emission_when_a_join_is_refused() {
     );
     assert_eq!(padded_refusal.location, standalone_refusal.location);
     assert!(matches!(
-        (&padded_refusal.cause, &standalone_refusal.cause),
+        (padded_refusal.cause.as_ref(), standalone_refusal.cause.as_ref()),
         (
             fsl_semantics::check::CheckCause::ProtocolAnchor(padded),
             fsl_semantics::check::CheckCause::ProtocolAnchor(standalone)
@@ -1309,7 +1309,7 @@ fn protocol_results_preserve_independent_emission_when_a_join_is_refused() {
                         if aggregate_primary == primary
                 )
                 && matches!(
-                    &dependent_refusal.cause,
+                    dependent_refusal.cause.as_ref(),
                     fsl_semantics::check::CheckCause::ProtocolAnchor(cause)
                         if matches!(
                             cause.as_ref(),
@@ -1848,7 +1848,7 @@ fn an_unstable_fifo_key_refuses_at_the_key() {
         );
         assert_eq!(refusal.cause.cause(), Some("operator-ineligible"), "{text}");
         if carries == "WithFloat" {
-            let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+            let CheckCause::ProtocolAnchor(cause) = &*refusal.cause else {
                 panic!("a protocol anchor cause: {refusal:?}");
             };
             let ProtocolAnchorCause::KeyEquality {

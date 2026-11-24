@@ -12,11 +12,11 @@ relationships:
 
 Verify what FSL supplies to the driver's `prove`: each engine's FR-331 manifest and the provider entry.
 
-Scope: FR-280-AC-1, FR-280-AC-2, FR-280-AC-4 to FR-280-AC-10.
+Scope: FR-280-AC-1, FR-280-AC-2, FR-280-AC-4 to FR-280-AC-11.
 
 ## Test Procedure
 
-1. Read each FSL engine's provider manifest with the FR-331 reader and convert it with FR-288's conversion.
+1. Inspect the source ownership boundary: each engine manifest is defined in its engine module, while `fsl-route` contains registry and conversion logic only. Read each FSL engine's provider manifest with the FR-331 reader and convert it with FR-288's conversion.
 2. For each TC-762 item, settle it `Supported` on its engine as a `NegotiatedItem` and pass it, with the `CheckedPackage`, `SubjectBinding`, `SourceProvision` and `AnalyzeLimits` of the same run, to `fsl_analyze::provider::run`; call `analyze` over `Engines::fsl()` with the same item settled `Supported` on the same backend.
 3. Convert EN-4's manifest, admit the descriptor, register it with a descriptor advertising the same pair with evidence `{exact}`, and compute the candidates of a `statistical` and of an `exact` probabilistic item.
 4. Check `Service` (FR-185-AC-7), supplemented with TC-628 step 4's independent `test/mixed-workload` selection and `Both` workload, and confirm `emit_checked` refuses the supplemented unit at `Both`. Keep `Service`'s stochastic model, `Steady` workload, claim, initial snapshot and universe unchanged. Pass its `CheckedPackage` and the `SourceProvision` of its source to `fsl_analyze::provider::run` with the `NegotiatedItem` settled `Supported(en-4)` for the `2 ms` claim of ADR-024 §7.2 over `Service` (`statistical`, Okamoto, seed 7, `max_witnesses` 3); call `analyze` with the same item, checked package, binding and limits; replay each returned witness with `replay_sampled_witness` over `Service`'s checked subject.
@@ -26,7 +26,7 @@ Scope: FR-280-AC-1, FR-280-AC-2, FR-280-AC-4 to FR-280-AC-10.
 8. Through `fsl_analyze::provider::run` over `Engines::fsl()`, run FR-281-AC-1's, AC-2's, AC-11's and AC-6 (a)'s items, each as a `NegotiatedItem` settled `Supported` on its engine, and call `analyze` with the same items.
 9. Pass step 2's items to the entry with a `SourceProvision` that omits the source the package names.
 
-Tag the tests `#[trace("TC-761", "<AC id>")]`.
+Tag the tests `#[trace("TC-761", "<AC id>")]`; tag step 1 ownership inspection with `FR-280-AC-11`.
 
 ## Expected Results
 

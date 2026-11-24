@@ -138,22 +138,28 @@ fn package_protocol_graph<M: crate::fill::Explored + Clone>(
         ws,
         path,
         memory,
-        roles,
-        source_absent,
-        cycle_keys,
-        None,
+        PackageProtocolGraphOptions {
+            roles,
+            source_absent,
+            cycle_keys,
+            snapshot: None,
+        },
         inspect,
     )
+}
+
+struct PackageProtocolGraphOptions<'a> {
+    roles: &'a [&'a str],
+    source_absent: bool,
+    cycle_keys: bool,
+    snapshot: Option<Vec<u8>>,
 }
 
 fn package_protocol_graph_with_snapshot<M: crate::fill::Explored + Clone>(
     ws: &Workspace,
     path: &std::path::Path,
     memory: M,
-    roles: &[&str],
-    source_absent: bool,
-    cycle_keys: bool,
-    snapshot: Option<Vec<u8>>,
+    options: PackageProtocolGraphOptions<'_>,
     inspect: impl FnOnce(
         &fsl_eval::simulation::protocol::ProtocolSystem<'_, M>,
         &fsl_eval::simulation::protocol::ProtocolSystem<'_, M>,
@@ -164,6 +170,13 @@ fn package_protocol_graph_with_snapshot<M: crate::fill::Explored + Clone>(
     use fsl_eval::simulation::protocol::{ProtocolSystem, ResolvedMemory};
     use fsl_package::{AnalysisView, BarePackage, BareSupply, EmitLimits, V2ReadLimits};
     use fsl_semantics::model::accounting::ModelNormalizationLimits;
+
+    let PackageProtocolGraphOptions {
+        roles,
+        source_absent,
+        cycle_keys,
+        snapshot,
+    } = options;
 
     let _ = package_request(ws, path);
     let compiled =
@@ -508,6 +521,7 @@ fn package_workflow_roles_replay_refuses_forged_actors() {
     let outcome = check_protocol(
         ProtocolCheckRequest {
             subject,
+            workers: 1,
             temporal_clock_selections: &[],
             item: ModelCheckItem::DeadlockFreedom,
             max_depth: None,
@@ -2090,6 +2104,7 @@ fn capacity_outcome(
     fsl_analyze::model_check::check_protocol(
         fsl_analyze::model_check::ProtocolCheckRequest {
             subject,
+            workers: 1,
             temporal_clock_selections: &[],
             item: fsl_replay::ModelCheckItem::DeadlockFreedom,
             max_depth: None,
@@ -2958,10 +2973,12 @@ fn channel_related_graph(ws: &Workspace, path: &std::path::Path, related: bool, 
         ws,
         path,
         Sc,
-        &["Planning", "Machining"],
-        false,
-        false,
-        Some(snapshot),
+        PackageProtocolGraphOptions {
+            roles: &["Planning", "Machining"],
+            source_absent: false,
+            cycle_keys: false,
+            snapshot: Some(snapshot),
+        },
         |_, _| {},
     );
     let queue_len = |at: usize| {
@@ -3602,6 +3619,134 @@ fn the_tso_race_freedom_item_has_source_and_package_route_parity() {
     );
     assert_eq!(package.item(0)["replay"], source.item(0)["replay"]);
     assert_eq!(package.item(0)["replay"]["reproduced"], true);
+}
+
+/// FR-882-AC-5: alongside the source fallback oracle in
+/// `weak_memory::an_access_footprint_is_stepped`, package execution uses the
+/// same helper-call footprint and TSO verdict as source.
+#[trace("TC-2506", "FR-882-AC-5")]
+#[test]
+fn a_helper_call_attempt_has_equal_tso_results_and_footprints() {
+    use fsl_eval::model_subject::ProtocolSubject;
+    use fsl_eval::simulation::model::{ModelSystem, PackageModelInput};
+    use fsl_eval::simulation::protocol::{MemorySelection, ProtocolSystem, ResolvedMemory, Tso};
+    use fsl_foundation::MemoryModelName;
+    use fsl_package::{AnalysisView, BarePackage, BareSupply, EmitLimits, V2ReadLimits};
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+
+    let run = format!(
+        "parallel Both {{ branch left sequence L {{ {} }} \
+         branch right sequence R {{ {} }} }} join all [left, right];",
+        crate::litmus::attempt("Sx", "c", "Core::look", "", "LooksY, Looked"),
+        crate::litmus::attempt("Sy", "c", "Core::look", "", "LooksY, Looked"),
+    );
+    let direct_contracts = crate::litmus::contracts().replace(
+        "pre LooksY using v on M::Core::look { c.id = 1 }",
+        "pre LooksY using v on M::Core::look { c.id = 0 }",
+    );
+    let helper_contracts = direct_contracts.replace(
+        "pre LooksY using v on M::Core::look { c.id = 0 }",
+        "pre LooksY using v on M::Core::look { is_zero(c.id) }",
+    );
+    let body = format!(
+        "function is_zero using v(x: Int[0, 3]): Boolean pure {{ x = 0 }}\n{helper_contracts}{}{}",
+        crate::litmus::protocol("SB", &run),
+        crate::litmus::NO_BOTH_ZERO,
+    );
+    let ws = Workspace::new("package-helper-attempt-footprint-tso");
+    let selection = request_extra(json!([{"claim": "NoBothZero"}]));
+    let source_request = litmus_request(&ws, &body, selection);
+    let source_result = analyze(&source_request);
+    assert!(
+        source_result.item(0)["record"].is_object(),
+        "source helper result: {}",
+        source_result.document()
+    );
+    let package_result = package_run(&ws, &source_request);
+    assert_eq!(
+        package_result.item(0),
+        source_result.item(0),
+        "{}",
+        package_result.document()
+    );
+    assert_eq!(package_result.exit, source_result.exit);
+
+    let compiled =
+        fsl_command::checked_handoff::compile(&ws.path(crate::analyze_cli_support::HANDOFF))
+            .expect("the helper-call litmus fixture compiles");
+    let documents = crate::litmus::Documents::new();
+    let selection = [MemorySelection {
+        parallel: "SB::Both".to_owned(),
+        model: MemoryModelName::Tso,
+    }];
+    let source = documents.subject(compiled.checked(), "SB", &selection);
+    let emission = fsl_package::emit_checked(compiled.checked(), EmitLimits::fixture())
+        .expect("the helper-call package emits");
+    let admitted = compiled.admitted();
+    let identities = emission
+        .identity_rows(admitted, &mut V2ReadLimits::fixture().native_join_budget())
+        .expect("package identities admit");
+    let equality = emission
+        .equality_witness(admitted, &mut V2ReadLimits::fixture().native_join_budget())
+        .expect("package equality admits");
+    let bare = BarePackage::new(admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("the package supply admits");
+    let input = PackageModelInput::of(
+        &bare,
+        &documents.packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the package model admits");
+    let mut model = documents
+        .subject(compiled.checked(), "SB", &selection)
+        .model;
+    model.simulation.input = input.input();
+    let execution = bare
+        .protocol_execution_named("SB")
+        .expect("the package protocol reads")
+        .expect("the package carries SB");
+    let package = ProtocolSubject {
+        model,
+        protocol: source.protocol.clone(),
+        over: source.over.clone(),
+        roles: source.roles.clone(),
+        capacities: source.capacities.clone(),
+        memory: ResolvedMemory::resolve_package(&execution, &selection)
+            .expect("the package TSO selection resolves"),
+    };
+    let source_system = ProtocolSystem::new(
+        ModelSystem::new(source.model.simulation.clone()).expect("source model admits"),
+        &source,
+        Tso::default(),
+    )
+    .expect("source protocol builds");
+    let package_system = ProtocolSystem::new_package(
+        ModelSystem::new(package.model.simulation.clone()).expect("package model admits"),
+        &package,
+        Tso::default(),
+    )
+    .expect("package protocol builds");
+    for step in ["Both/left/L/Sx", "Both/right/R/Sy"] {
+        let source_attempt = source_system
+            .weak_accesses()
+            .attempt(step)
+            .expect("source helper-call attempt is classified");
+        let package_attempt = package_system
+            .weak_accesses()
+            .attempt(step)
+            .expect("package helper-call attempt is classified");
+        assert_eq!(
+            package_attempt.instances, source_attempt.instances,
+            "package helper-call footprint for {step}",
+        );
+    }
 }
 
 /// FR-850-AC-11: the same SB protocol with no request memory member uses its

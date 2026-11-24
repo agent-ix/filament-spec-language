@@ -4,6 +4,7 @@
 //! typed refusal of that item alone. The selections are enumerated over every
 //! combination rather than sampled.
 
+use fsl_eval::simulation::TransitionSystem;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -11,6 +12,29 @@ use crate::analyze_cli_support::{
     analyze, clause, counter_request_with, label, request_members, Workspace,
 };
 use crate::counter::{document, symmetric_document};
+
+/// States reachable from the initial snapshot, bounded to `limit` unique keys.
+pub(crate) fn reachable_states(
+    system: &fsl_eval::simulation::model::ModelSystem<'_>,
+    limit: usize,
+) -> Vec<fsl_eval::simulation::model::ModelSimState> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut states = Vec::new();
+    let mut queue = system.initial();
+    while let Some(state) = queue.pop() {
+        let key = system.state_key(&state).expect("state encodes").0;
+        if !seen.insert(key) {
+            continue;
+        }
+        if states.len() == limit {
+            break;
+        }
+        let expansion = system.successors(&state).expect("the state expands");
+        queue.extend(expansion.successors.into_iter().map(|(_, next)| next));
+        states.push(state);
+    }
+    states
+}
 
 /// The Counter request over two interchangeable counters `a` and `b`.
 fn two_counters(ws: &Workspace, body: &str, items: Value) -> std::path::PathBuf {
@@ -153,9 +177,17 @@ mod generated {
     }
 
     pub(crate) fn subjects(min_size: usize) -> BoxedStrategy<Subject> {
+        subjects_for_sizes_and_bounds(min_size..=4, 1u64..=3)
+    }
+
+    fn subjects_for_sizes_and_bounds<S, B>(sizes: S, bounds: B) -> BoxedStrategy<Subject>
+    where
+        S: Strategy<Value = usize> + 'static,
+        B: Strategy<Value = u64> + 'static,
+    {
         (
-            min_size..=4usize,
-            1u64..=3,
+            sizes,
+            bounds,
             any::<bool>(),
             proptest::collection::vec(0u64..=3, 4),
             0usize..5,
@@ -180,6 +212,14 @@ mod generated {
                 }
             })
             .boxed()
+    }
+
+    /// P1/P2 still sample all 256 cases, populations of two to four, and
+    /// counter bounds one through three. They bias toward the smallest bound
+    /// so complete four-way searches meet QSL-2061's per-file runtime limit.
+    fn verdict_subjects() -> BoxedStrategy<Subject> {
+        let bounds = prop_oneof![64 => Just(1u64), 1 => Just(2u64), 1 => Just(3u64)];
+        subjects_for_sizes_and_bounds(2usize..=4, bounds)
     }
 
     /// Every distinct ordering of `values`.
@@ -364,15 +404,31 @@ mod generated {
     /// P1: all four selections settle the unreduced verdict.
     pub(crate) fn verdicts_agree(subject: &Subject, skew: bool) -> Result<Verdict, String> {
         let world = subject.world();
+        let outcomes = std::thread::scope(|scope| {
+            subject
+                .selections()
+                .into_iter()
+                .map(|(label, selection)| {
+                    let world = &world;
+                    scope.spawn(move || {
+                        let outcome = run(subject, world, skew, selection);
+                        let found = verdict(&outcome).ok_or_else(|| {
+                            format!(
+                                "{label} did not settle a verdict: {outcome:?}\n{}",
+                                subject.describe(skew)
+                            )
+                        });
+                        (label, found)
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|handle| handle.join().expect("a reduction search does not panic"))
+                .collect::<Vec<_>>()
+        });
         let mut expected = None;
-        for (label, selection) in subject.selections() {
-            let outcome = run(subject, &world, skew, selection);
-            let Some(found) = verdict(&outcome) else {
-                return Err(format!(
-                    "{label} did not settle a verdict: {outcome:?}\n{}",
-                    subject.describe(skew)
-                ));
-            };
+        for (label, found) in outcomes {
+            let found = found?;
             match expected {
                 None => expected = Some(found),
                 Some(unreduced) if unreduced != found => {
@@ -390,28 +446,71 @@ mod generated {
     /// P2: every counterexample of a reduced run replays on the unreduced model.
     fn counterexamples_replay(subject: &Subject, skew: bool) -> Result<bool, String> {
         let world = subject.world();
-        let mut replayed = false;
-        for (label, selection) in subject.selections() {
-            if let Ok(ModelCheckOutcome::Violated { counterexample, .. }) =
-                run(subject, &world, skew, selection)
-            {
-                if matches!(
-                    counterexample.kind,
-                    CounterexampleKind::UndefinedEvaluation(_)
-                ) {
-                    continue;
+        let mut witnesses = Vec::new();
+        // P2 concerns counterexamples produced by reduced runs; the unreduced
+        // run is not another candidate. The same witness can be returned by
+        // symmetry, partial-order, and combined search, so replay each distinct
+        // witness once rather than repeating identical source reconstruction.
+        let candidates = std::thread::scope(|scope| {
+            subject
+                .selections()
+                .into_iter()
+                .skip(1)
+                .map(|(label, selection)| {
+                    let world = &world;
+                    scope.spawn(move || {
+                        let candidate = match run(subject, world, skew, selection) {
+                            Ok(ModelCheckOutcome::Violated { counterexample, .. }) => {
+                                Some(counterexample.as_ref().clone())
+                            }
+                            _ => None,
+                        };
+                        (label, candidate)
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|handle| handle.join().expect("a reduction search does not panic"))
+                .collect::<Vec<_>>()
+        });
+        let candidates: Vec<_> = candidates
+            .into_iter()
+            .filter_map(|(label, candidate)| candidate.map(|witness| (label, witness)))
+            .filter(|(_, witness)| {
+                !matches!(witness.kind, CounterexampleKind::UndefinedEvaluation(_))
+            })
+            .filter(|(_, witness)| {
+                if witnesses.contains(witness) {
+                    false
+                } else {
+                    witnesses.push(witness.clone());
+                    true
                 }
-                replayed = true;
-                match world.replay_clause(0, subject.atoms(skew), counterexample.as_ref().clone()) {
-                    ModelTraceSettlement::Reproduced { .. } => {}
-                    other => {
-                        return Err(format!(
-                            "{label} counterexample does not replay: {other:?}\n{}",
-                            subject.describe(skew)
-                        ))
-                    }
-                }
-            }
+            })
+            .collect();
+        let replayed = !candidates.is_empty();
+        let results = std::thread::scope(|scope| {
+            candidates
+                .into_iter()
+                .map(|(label, counterexample)| {
+                    let world = &world;
+                    scope.spawn(move || {
+                        match world.replay_clause(0, subject.atoms(skew), counterexample) {
+                            ModelTraceSettlement::Reproduced { .. } => Ok(()),
+                            other => Err(format!(
+                                "{label} counterexample does not replay: {other:?}\n{}",
+                                subject.describe(skew)
+                            )),
+                        }
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|handle| handle.join().expect("a replay does not panic"))
+                .collect::<Vec<_>>()
+        });
+        for result in results {
+            result?;
         }
         Ok(replayed)
     }
@@ -421,19 +520,31 @@ mod generated {
     #[test]
     fn reductions_keep_the_verdict() {
         let seen = RefCell::new([0u32; 2]);
+        let populations = RefCell::new([0u32; 3]);
+        let bounds = RefCell::new([0u32; 3]);
         prop::run(
             "reductions_keep_the_verdict",
             prop::config(256),
-            &subjects(2),
+            &verdict_subjects(),
             |subject| {
                 let found = verdicts_agree(&subject, false).map_err(TestCaseError::fail)?;
                 seen.borrow_mut()[usize::from(found == Verdict::Violated)] += 1;
+                populations.borrow_mut()[subject.size - 2] += 1;
+                bounds.borrow_mut()[subject.max as usize - 1] += 1;
                 Ok(())
             },
         )
         .unwrap();
         let seen = seen.into_inner();
         assert!(seen[0] >= 20 && seen[1] >= 20, "holds/violated: {seen:?}");
+        assert!(
+            populations.into_inner().into_iter().all(|count| count > 0),
+            "each population size from two to four must be sampled"
+        );
+        assert!(
+            bounds.into_inner().into_iter().all(|count| count > 0),
+            "each counter bound from one through three must be sampled"
+        );
     }
 
     /// QSL-2061 P2 (FR-623-AC-1): a reduced counterexample replays unreduced.
@@ -441,11 +552,15 @@ mod generated {
     #[test]
     fn reduced_counterexamples_replay_unreduced() {
         let replays = RefCell::new(0u32);
+        let populations = RefCell::new([0u32; 3]);
+        let bounds = RefCell::new([0u32; 3]);
         prop::run(
             "reduced_counterexamples_replay_unreduced",
             prop::config(256),
-            &subjects(2),
+            &verdict_subjects(),
             |subject| {
+                populations.borrow_mut()[subject.size - 2] += 1;
+                bounds.borrow_mut()[subject.max as usize - 1] += 1;
                 if counterexamples_replay(&subject, false).map_err(TestCaseError::fail)? {
                     *replays.borrow_mut() += 1;
                 }
@@ -454,6 +569,14 @@ mod generated {
         )
         .unwrap();
         assert!(*replays.borrow() >= 20, "only {} replays", replays.borrow());
+        assert!(
+            populations.into_inner().into_iter().all(|count| count > 0),
+            "each population size from two to four must be sampled"
+        );
+        assert!(
+            bounds.into_inner().into_iter().all(|count| count > 0),
+            "each counter bound from one through three must be sampled"
+        );
     }
 
     /// Negative (QSL-2061): a symmetry declared over a property that is not
@@ -516,7 +639,7 @@ mod generated {
     // -------------------------------------------------------- canonical form
 
     use fsl_eval::simulation::model::ModelSimState;
-    use fsl_eval::simulation::{Permutation, SymmetryClass, SymmetryGroup, TransitionSystem};
+    use fsl_eval::simulation::{Permutation, SymmetryClass, SymmetryGroup};
 
     fn group(subject: &Subject) -> SymmetryGroup {
         SymmetryGroup {
@@ -525,23 +648,6 @@ mod generated {
                 keys: subject.keys().iter().map(|k| (*k).to_owned()).collect(),
             }],
         }
-    }
-
-    /// Every state reachable from the subject's start, at most 64 of them.
-    fn reachable(system: &fsl_eval::simulation::model::ModelSystem<'_>) -> Vec<ModelSimState> {
-        let key = |state: &ModelSimState| system.state_key(state).expect("encodes").0;
-        let mut seen = std::collections::BTreeSet::new();
-        let mut states = Vec::new();
-        let mut queue: Vec<ModelSimState> = system.initial();
-        while let Some(state) = queue.pop() {
-            if states.len() >= 64 || !seen.insert(key(&state)) {
-                continue;
-            }
-            let expansion = system.successors(&state).expect("the state expands");
-            queue.extend(expansion.successors.into_iter().map(|(_, next)| next));
-            states.push(state);
-        }
-        states
     }
 
     /// The permutation sending key `i` to key `images[i]`.
@@ -571,7 +677,7 @@ mod generated {
         let world = subject.world();
         let system = world.system();
         let group = group(subject);
-        let states = reachable(&system);
+        let states = super::reachable_states(&system, 64);
         let state = &states[pick % states.len()];
         let key = |state: &ModelSimState| system.state_key(state).expect("encodes").0;
         let canon =
@@ -626,7 +732,7 @@ mod generated {
 
     /// QSL-2061 P3 and P4 (FR-152): the sort canonicaliser is permutation
     /// invariant, idempotent, and returns a member of the state's orbit.
-    #[trace("FR-152")]
+    #[trace("TC-569", "FR-152-AC-2")]
     #[test]
     fn canonicalise_is_permutation_invariant() {
         prop::run(
@@ -641,7 +747,7 @@ mod generated {
     }
 
     /// QSL-2061 P4 (FR-152): `canon(canon(s)) = canon(s)` over every reachable state.
-    #[trace("FR-152")]
+    #[trace("TC-569", "FR-152-AC-4")]
     #[test]
     fn canonicalise_is_idempotent() {
         prop::run(
@@ -653,7 +759,7 @@ mod generated {
                 let system = world.system();
                 let group = group(&subject);
                 let key = |s: &ModelSimState| system.state_key(s).expect("encodes").0;
-                for state in reachable(&system) {
+                for state in super::reachable_states(&system, 64) {
                     let once = system
                         .canonicalise(&state, &group)
                         .expect("canonicalises")

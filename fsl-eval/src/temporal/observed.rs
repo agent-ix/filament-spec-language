@@ -375,6 +375,8 @@ pub fn evaluate_package_timed(
         stopped: None,
         undefined: None,
         activated: false,
+        fixed: BTreeMap::new(),
+        active: None,
     };
     let closed = loop_start.is_some() || through.is_some();
     let result = timed_result(clause, &mut letters, (stamps, loop_start, through), meter);
@@ -1903,6 +1905,10 @@ struct PackageLetters<'a> {
     stopped: Option<HoldsStop>,
     /// The first undefined reading, at the earliest position read.
     undefined: Option<FirstUndefined>,
+    /// Captures fixed by each activation.
+    fixed: BTreeMap<u64, Vec<Value>>,
+    /// The activation whose capture values the current atom reads.
+    active: Option<u64>,
 }
 
 impl NoteUndefined for PackageLetters<'_> {
@@ -1953,9 +1959,10 @@ impl TemporalLetters for PackageLetters<'_> {
             clause: self.key.clone(),
             position: atom.index(),
         };
+        let captures = self.active_captures()?;
         let evaluation = self
             .evaluator
-            .evaluate_holds(&named, over, &[], objects, meter);
+            .evaluate_holds(&named, over, captures, objects, meter);
         let reading =
             ObservedLetters::reading(&mut self.stopped, position, evaluation, HOLDS_CODES)?;
         if let AtomReading::Undefined(cause) = &reading {
@@ -1994,16 +2001,86 @@ impl TemporalLetters for PackageLetters<'_> {
 
     fn captures(
         &mut self,
-        _position: TemporalPosition,
-        _meter: &mut Meter,
+        position: TemporalPosition,
+        meter: &mut Meter,
     ) -> Result<CaptureReading, LetterStop> {
         if self.clause.captures().len() == 0 {
             return Ok(CaptureReading::Fixed);
         }
-        Err(LetterStop::Fault(InternalFault::new(
-            "temporal.observed",
-            "package-form-reads-no-capture-yet",
-        )))
+        let (objects, over) = self.subject(position)?;
+        let mut values = Vec::with_capacity(self.clause.captures().len());
+        for (index, (name, _)) in self.clause.captures().enumerate() {
+            let evaluation = self.evaluator.evaluate_package_capture(
+                self.key,
+                index,
+                over.clone(),
+                &values,
+                objects,
+                meter,
+            );
+            if let Ok(evaluation) = &evaluation {
+                if let FamilyOutcome::Evaluated(Outcome::Completed(value)) = &evaluation.outcome {
+                    values.push(value.clone());
+                    continue;
+                }
+            }
+            let reading =
+                ObservedLetters::reading(&mut self.stopped, position, evaluation, CAPTURE_CODES)?;
+            match reading {
+                AtomReading::Undefined(cause) => {
+                    self.note_undefined(ObservedLocus::Capture(name.to_owned()), position, &cause);
+                    return Ok(CaptureReading::Undefined {
+                        capture: name.to_owned(),
+                        cause,
+                    });
+                }
+                AtomReading::True | AtomReading::False => {
+                    return Err(LetterStop::Fault(InternalFault::new(
+                        "temporal.observed",
+                        CAPTURE_CODES[1],
+                    )));
+                }
+            }
+        }
+        self.fixed.insert(position.index(), values);
+        self.active = Some(position.index());
+        Ok(CaptureReading::Fixed)
+    }
+
+    fn reads_captures(&self, _atom: FormulaNodeId) -> bool {
+        // Package forms carry capture declarations but not the source
+        // condition bodies needed to distinguish which atom reads them.
+        // Conservatively defer every atom of a captured clause so its
+        // activation's values are selected before evaluation.
+        self.clause.captures().len() != 0
+    }
+
+    fn select_activation(&mut self, activation: TemporalPosition) -> Result<(), LetterStop> {
+        if !self.fixed.contains_key(&activation.index()) {
+            return Err(LetterStop::Fault(InternalFault::new(
+                "temporal.observed",
+                "selected-activation-fixed-its-captures",
+            )));
+        }
+        self.active = Some(activation.index());
+        Ok(())
+    }
+}
+
+impl PackageLetters<'_> {
+    fn active_captures(&self) -> Result<&[Value], LetterStop> {
+        if self.clause.captures().len() == 0 {
+            return Ok(&[]);
+        }
+        self.active
+            .and_then(|active| self.fixed.get(&active))
+            .map(Vec::as_slice)
+            .ok_or_else(|| {
+                LetterStop::Fault(InternalFault::new(
+                    "temporal.observed",
+                    "holds-atom-reads-its-activation-captures",
+                ))
+            })
     }
 }
 
@@ -2032,6 +2109,8 @@ pub fn evaluate_package_finite_window(
             stopped: None,
             undefined: None,
             activated: false,
+            fixed: BTreeMap::new(),
+            active: None,
         },
         valuations,
     };
@@ -2145,6 +2224,8 @@ pub fn package_observed_valuation(
         stopped: None,
         undefined: None,
         activated: false,
+        fixed: BTreeMap::new(),
+        active: None,
     };
     letters_valuation(clause, &mut letters, trace, meter)
 }
@@ -2204,6 +2285,8 @@ fn package_positions_run(
         stopped: None,
         undefined: None,
         activated: false,
+        fixed: BTreeMap::new(),
+        active: None,
     };
     let (result, decisive, inactive) = super::engine::run_seeking(
         super::engine::Subject::of_clause(clause),

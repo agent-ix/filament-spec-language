@@ -50,8 +50,8 @@
 //!   declared domain (an intermediate typed at the wide domain, for example by
 //!   a `let`, is refused correctly, FR-495-AC-14), so a `let` binds only a
 //!   root.
-//! - `min` and `max` are `reduce` over a `Sequence` only: `reduce` over a
-//!   `Set` or `Bag` is refused `operator-ineligible`.
+//! - FR-701 catalogues bounded ordered `min` and `max` reductions over a
+//!   `Set` or `Bag`.
 //! - Equality of two integers or text lengths is written over
 //!   `convert<Integer>(..)`: `=` of two `Int[..]` operands with different
 //!   inferred intervals is refused `unproved-range`.
@@ -60,7 +60,7 @@ use filament_eval::FamilyOutcome;
 use filament_exact::{
     admit_text, form_collection, CardinalityBound, CollectionKind, CollectionType, Decimal,
     FieldValue, Integer, IntegerInterval, Meter, OptionValue, Outcome, Rational, Refusal,
-    ScalarLimits, TextPayload, TextProfile, TextType, Undefined, Value, ValueType,
+    RationalDomain, ScalarLimits, TextPayload, TextProfile, TextType, Undefined, Value, ValueType,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
@@ -292,6 +292,12 @@ enum Arg {
         minimum: u64,
         items: Vec<i64>,
     },
+    CollRat {
+        kind: CollKind,
+        minimum: u64,
+        maximum: u64,
+        items: Vec<(i128, i128)>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -337,6 +343,41 @@ fn collection_value(kind: CollKind, minimum: u64, items: &[i64]) -> Value {
         .expect("the collection forms")
 }
 
+fn rational_domain() -> RationalDomain {
+    RationalDomain::new(int_interval(0, 4), int_interval(1, 2)).expect("bounded rational domain")
+}
+
+fn rational_collection_value(
+    kind: CollKind,
+    minimum: u64,
+    maximum: u64,
+    items: &[(i128, i128)],
+) -> Value {
+    let kind = match kind {
+        CollKind::Sequence => CollectionKind::Sequence,
+        CollKind::Set => CollectionKind::Set,
+        CollKind::Bag => CollectionKind::Bag,
+    };
+    let ty = CollectionType::new(
+        kind,
+        ValueType::Rational(rational_domain()),
+        Some(CardinalityBound::new(minimum, maximum).expect("bound")),
+    );
+    let members = items
+        .iter()
+        .map(|(numerator, denominator)| {
+            Value::Rational(
+                Rational::new(Integer::from(*numerator), Integer::from(*denominator))
+                    .expect("nonzero denominator"),
+            )
+        })
+        .collect();
+    form_collection(&ty, members, &mut Meter::new(UNLIMITED))
+        .expect("members are admitted")
+        .completed()
+        .expect("the collection forms")
+}
+
 impl Arg {
     fn value(&self) -> Value {
         match self {
@@ -370,6 +411,12 @@ impl Arg {
                 minimum,
                 items,
             } => collection_value(*kind, *minimum, items),
+            Arg::CollRat {
+                kind,
+                minimum,
+                maximum,
+                items,
+            } => rational_collection_value(*kind, *minimum, *maximum, items),
         }
     }
 }
@@ -1685,15 +1732,17 @@ struct AggregateCase {
 }
 
 impl AggregateCase {
-    /// `min` and `max` are `reduce`, which needs a nonempty collection.
     fn minimum(&self) -> u64 {
-        u64::from(matches!(self.aggregate, Aggregate::Min | Aggregate::Max))
+        u64::from(
+            self.kind == CollKind::Sequence
+                && matches!(self.aggregate, Aggregate::Min | Aggregate::Max),
+        )
     }
 }
 
 fn aggregate_source(kind: CollKind, aggregate: Aggregate) -> String {
     let nonempty = matches!(aggregate, Aggregate::Min | Aggregate::Max);
-    let minimum = u8::from(nonempty);
+    let minimum = u8::from(nonempty && kind == CollKind::Sequence);
     let parameters = format!("xs: {}<Int[-9, 9]>[{minimum}, 6]", kind.name());
     let (result, body) = match aggregate {
         Aggregate::Sum(k) => ("A", format!("sum<A>(x in xs: x + ({k}))")),
@@ -1701,11 +1750,19 @@ fn aggregate_source(kind: CollKind, aggregate: Aggregate) -> String {
         Aggregate::Count(k) => ("A", format!("count<A>(x in xs: x < ({k}))")),
         Aggregate::Min => (
             "A",
-            "reduce<A>(m, x in xs: if x < m then x else m)".to_owned(),
+            if kind == CollKind::Sequence {
+                "reduce<A>(m, x in xs: if x < m then x else m)".to_owned()
+            } else {
+                "fold<A>(m, x in xs: min(m, x), identity: 9)".to_owned()
+            },
         ),
         Aggregate::Max => (
             "A",
-            "reduce<A>(m, x in xs: if m < x then x else m)".to_owned(),
+            if kind == CollKind::Sequence {
+                "reduce<A>(m, x in xs: if m < x then x else m)".to_owned()
+            } else {
+                "fold<A>(m, x in xs: max(m, x), identity: -9)".to_owned()
+            },
         ),
         Aggregate::Exists(k) => ("Boolean", format!("exists(x in xs: x < ({k}))")),
         Aggregate::Forall(k) => ("Boolean", format!("forall(x in xs: x < ({k}))")),
@@ -1716,6 +1773,22 @@ fn aggregate_source(kind: CollKind, aggregate: Aggregate) -> String {
         "type A = Integer;\n"
     };
     unit(None, alias, &parameters, result, &body)
+}
+
+fn aggregate_reduce_source(kind: CollKind, aggregate: Aggregate) -> String {
+    let parameters = format!("xs: {}<Int[-9, 9]>[1, 6]", kind.name());
+    let body = match aggregate {
+        Aggregate::Min => "reduce<A>(m, x in xs: min(m, x))",
+        Aggregate::Max => "reduce<A>(m, x in xs: max(m, x))",
+        _ => unreachable!("only min/max have a reduction property"),
+    };
+    unit(
+        None,
+        "type A = Int[-9, 9];\n",
+        &parameters,
+        "A",
+        body,
+    )
 }
 
 /// The fold of `items` (the reference), independent of the order given.
@@ -1753,13 +1826,6 @@ fn aggregate_cases() -> BoxedStrategy<AggregateCase> {
         0usize..6,
     )
         .prop_map(|(kind, aggregate, unique, bag, rotation)| {
-            // `reduce` over a `Set` or `Bag` is refused by the checker
-            // (`operator-ineligible`), so `min` and `max` are Sequence-only.
-            let kind = if matches!(aggregate, Aggregate::Min | Aggregate::Max) {
-                CollKind::Sequence
-            } else {
-                kind
-            };
             AggregateCase {
                 kind,
                 aggregate,
@@ -2013,10 +2079,11 @@ fn p4_refusals_agree_with_the_reference() {
 
 // ---------------------------------------------------------------- P5
 
+#[trace("TC-1907", "FR-701-AC-3")]
 #[test]
-fn p5_aggregates_equal_the_reference_fold_in_any_order() {
+fn p5_min_max_aggregates_equal_the_reference_fold_in_any_order() {
     prop::run(
-        "p5_aggregates_equal_the_reference_fold_in_any_order",
+        "p5_min_max_aggregates_equal_the_reference_fold_in_any_order",
         prop::config(1000),
         &aggregate_cases(),
         |case| {
@@ -2028,7 +2095,7 @@ fn p5_aggregates_equal_the_reference_fold_in_any_order() {
             reversed.reverse();
             let mut rotated = case.items.clone();
             rotated.rotate_left(case.rotation % case.items.len());
-            for order in [case.items.clone(), reversed, rotated] {
+            for order in [case.items.clone(), reversed.clone(), rotated.clone()] {
                 let args = [Arg::Coll {
                     kind: case.kind,
                     minimum: case.minimum(),
@@ -2042,10 +2109,84 @@ fn p5_aggregates_equal_the_reference_fold_in_any_order() {
                     source
                 );
             }
+            if matches!(case.aggregate, Aggregate::Min | Aggregate::Max)
+                && case.kind != CollKind::Sequence
+            {
+                let empty_expected = if matches!(case.aggregate, Aggregate::Min) {
+                    show(&Rv::Int(9))
+                } else {
+                    show(&Rv::Int(-9))
+                };
+                let empty = [Arg::Coll {
+                    kind: case.kind,
+                    minimum: 0,
+                    items: Vec::new(),
+                }];
+                proptest::prop_assert_eq!(
+                    evaluate(&package, &empty),
+                    Ok(empty_expected),
+                    "empty fold\n{}",
+                    source
+                );
+
+                let reduce_source = aggregate_reduce_source(case.kind, case.aggregate);
+                let reduce_package = try_compile(&reduce_source, CheckMode::Linked)
+                    .map_err(|e| TestCaseError::fail(format!("{e}\n{reduce_source}")))?;
+                for order in [case.items.clone(), reversed, rotated] {
+                    let args = [Arg::Coll {
+                        kind: case.kind,
+                        minimum: 1,
+                        items: order.clone(),
+                    }];
+                    proptest::prop_assert_eq!(
+                        evaluate(&reduce_package, &args),
+                        Ok(expected.clone()),
+                        "reduce order {:?}\n{}",
+                        order,
+                        reduce_source
+                    );
+                }
+
+            }
             Ok(())
         },
     )
     .unwrap();
+}
+
+/// FR-701-AC-3: bounded Rational Bag reductions return the same extremum for
+/// every permutation of a fixed nonempty input.
+#[trace("TC-1907", "FR-701-AC-3")]
+#[test]
+fn bounded_rational_bag_min_max_reductions_are_permutation_invariant() {
+    let source_for = |operator: &str| {
+        unit(
+            None,
+            "type R = Rational[0, 4; 1, 2];\n",
+            "xs: Bag<R>[1, 3]",
+            "R",
+            &format!("reduce<R>(acc, x in xs: {operator}(acc, x))"),
+        )
+    };
+    let items = vec![(1, 2), (4, 1), (3, 2)];
+    let mut reversed = items.clone();
+    reversed.reverse();
+    let mut rotated = items.clone();
+    rotated.rotate_left(1);
+    for (operator, expected) in [("min", "q:1/2"), ("max", "q:4/1")] {
+        let source = source_for(operator);
+        let package = try_compile(&source, CheckMode::Linked)
+            .unwrap_or_else(|error| panic!("{error}\n{source}"));
+        for order in [&items, &reversed, &rotated] {
+            let args = [Arg::CollRat {
+                kind: CollKind::Bag,
+                minimum: 1,
+                maximum: 3,
+                items: order.clone(),
+            }];
+            assert_eq!(evaluate(&package, &args), Ok(expected.to_owned()), "{source}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------- negatives

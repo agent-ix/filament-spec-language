@@ -246,6 +246,7 @@ const MONITOR_ONLY: &[Setting] = &[
     Setting::MonitorMaxWindowValues,
     Setting::MonitorRetainedPositions,
     Setting::MonitorRetainedIdentities,
+    Setting::MonitorMaxActivations,
     Setting::MonitorPreparationWorkUnits,
     Setting::MonitorPreparationStorage,
 ];
@@ -378,8 +379,20 @@ impl CommandLimits {
     ///
     /// [`SettingUnavailable`] naming the first such setting.
     pub fn require_no_routed_only(&self) -> Result<(), SettingUnavailable> {
+        self.require_no_routed_only_with_target(false)
+    }
+
+    /// As [`Self::require_no_routed_only`], permitting activation capacity
+    /// only when a monitor request carries `target`.
+    pub(super) fn require_no_routed_only_with_target(
+        &self,
+        has_target: bool,
+    ) -> Result<(), SettingUnavailable> {
         for setting in self.stage.keys() {
-            if ENGINE_SETTINGS.contains(setting) || *setting == Setting::EmitOutputBytes {
+            if ENGINE_SETTINGS.contains(setting)
+                || *setting == Setting::EmitOutputBytes
+                || (*setting == Setting::MonitorMaxActivations && !has_target)
+            {
                 return Err(SettingUnavailable {
                     operation: self.operation,
                     setting: SettingName::Stage(*setting),
@@ -400,6 +413,13 @@ impl CommandLimits {
             preparation.set_bound(*setting, *bound);
         }
         preparation
+    }
+
+    /// The caller's required activation capacity for a request carrying a
+    /// timed monitor target.
+    #[must_use]
+    pub(super) fn monitor_max_activations(&self) -> Option<u64> {
+        self.stage.get(&Setting::MonitorMaxActivations).copied()
     }
 
     /// The bound on each replay read: `replay.input_bytes` when set. It
@@ -501,7 +521,11 @@ impl SettingLimits for CommandLimits {
             .resolved()
             .bounds()
             .into_iter()
-            .filter(|(setting, _)| self.exposes(*setting))
+            .filter(|(setting, _)| {
+                self.exposes(*setting)
+                    && (*setting != Setting::MonitorMaxActivations
+                        || self.stage.contains_key(&Setting::MonitorMaxActivations))
+            })
             .collect();
         if self.operation == LimitedOperation::Monitor {
             let monitor = self.monitor_limits();
@@ -517,6 +541,9 @@ impl SettingLimits for CommandLimits {
                 ),
             ]);
             bounds.extend(self.preparation().bounds());
+            if let Some(bound) = self.stage.get(&Setting::MonitorMaxActivations) {
+                bounds.push((Setting::MonitorMaxActivations, *bound));
+            }
         }
         bounds
     }
@@ -706,6 +733,31 @@ mod tests {
             assert!(!limits.set_bound(setting, 7));
             assert_eq!(limits.bounds(), before);
         }
+    }
+
+    /// FR-255-AC-24/FR-644-AC-16: activation capacity is caller-owned and
+    /// available only when the monitor request supplies a target.
+    #[trace("TC-721", "FR-255-AC-24", "FR-644-AC-16")]
+    #[test]
+    fn monitor_activation_setting_depends_on_target_presence() {
+        let mut limits = monitor();
+        limits
+            .set(SettingName::Stage(Setting::MonitorMaxActivations), 8)
+            .expect("monitor exposes activation capacity");
+        assert_eq!(limits.monitor_max_activations(), Some(8));
+        assert!(limits
+            .bounds()
+            .iter()
+            .any(|(setting, bound)| *setting == Setting::MonitorMaxActivations && *bound == 8));
+        assert!(limits.require_no_routed_only().is_err());
+        assert!(limits.require_no_routed_only_with_target(true).is_ok());
+
+        let without = monitor();
+        assert_eq!(without.monitor_max_activations(), None);
+        assert!(!without
+            .bounds()
+            .iter()
+            .any(|(setting, _)| *setting == Setting::MonitorMaxActivations));
     }
 
     /// TC-721 step 11, for the settings exposed today: every operation takes each accounting counter, and a

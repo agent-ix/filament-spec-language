@@ -6,7 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tempfile::TempDir;
 
 const COUNTER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction digits using v(x: Int[0,9], y: Int[0,9]): Integer pure { x * 10 + y }\n";
@@ -292,9 +292,7 @@ fn replay_fixture() -> Fixture {
 fn replay_fixture_source(source: &str) -> Fixture {
     let selected = fsl_replay::call_site(
         fsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native"),
-        "qualification".into(),
-        "inputs/unit.native",
-        source.as_bytes(),
+        fsl_replay::CallSiteUnit::new("qualification", "inputs/unit.native", source.as_bytes()),
         [],
         &fsl_replay::DependencyInput::default(),
         &fsl_replay::RequestClocks::default(),
@@ -416,7 +414,11 @@ fn replay_fixture_request(source: &str, native_request: fsl_replay::ReplayReques
     );
     let graph = fsl_replay::WireGraph::of_package_bytes(native_request.package.bytes()).unwrap();
     let node = |key| graph.wire_value(key).unwrap();
-    let declaration = native_request.replay_target.occurrence_key.as_ref().unwrap();
+    let declaration = native_request
+        .replay_target
+        .occurrence_key
+        .as_ref()
+        .unwrap();
     let fsl_replay::ReplaySource::Input(assignments) = &native_request.source else {
         panic!("the fixture starts with input assignments");
     };
@@ -487,6 +489,59 @@ fn replay_vectors_decode_and_execute_without_a_source_file_kind() {
         *fixture.expected_output.as_ref().unwrap()
     );
     assert_eq!(result.outputs, fixture.execute(&[]).outputs);
+}
+
+#[test]
+#[trace("TC-1325", "FR-350-AC-13")]
+fn replay_request_maps_a_closed_object_environment_and_rejects_extra_identity_members() {
+    let fixture = replay_fixture();
+    let request_path = fixture.corpus.join("inputs/request.json");
+    let mut request: Value = serde_json::from_slice(&fs::read(&request_path).unwrap()).unwrap();
+    let object_environment = json!({
+        "identity": {
+            "authority": "agent-ix",
+            "identity": "ix://fixture/environment"
+        }
+    });
+    request["object_environment"] = object_environment.clone();
+    fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
+
+    let decoded = fsl_command::replay_request::read(
+        &fs::read(&request_path).unwrap(),
+        fsl_replay::ReplayLimits::default().input_bytes,
+        |path, pointer| {
+            assert_eq!(pointer, "/byte_provision/0/bytes_path");
+            assert_eq!(path, "inputs/bytes.native");
+            Ok::<_, fsl_command::replay_request::RequestDefect>(
+                fs::read(fixture.corpus.join(path)).unwrap(),
+            )
+        },
+        Vec::new(),
+    )
+    .expect("the valid closed identity maps to a replay request");
+    assert_eq!(
+        decoded
+            .object_environment
+            .as_ref()
+            .expect("the object environment is retained")
+            .to_value(),
+        object_environment
+    );
+
+    request["object_environment"]["identity"]["revision"] = json!("r1");
+    fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let rejected = fixture.execute(&[]);
+    let rejected_report = report(&rejected);
+    assert_eq!(rejected.outcome.code, 1, "{rejected_report}");
+    let rejected_row = &rejected_report["capabilities"][0]["vectors"][0];
+    assert_eq!(rejected_row["outcome"], "tool-failure");
+    assert_eq!(rejected_row["actual"]["cause"], "corpus-decode");
+    assert!(
+        rejected_row["actual"]["pointer"]
+            .as_str()
+            .is_some_and(|pointer| pointer == "/object_environment"),
+        "the extra member is attributed to the closed identity: {rejected_row}"
+    );
 }
 
 #[test]
@@ -811,9 +866,11 @@ fn replay_evaluated_limits_retain_the_actual_named_charge_and_bound() {
     assert_eq!(row["limit"]["kind"], "work_units", "{row}");
     assert_eq!(row["limit"]["bound"], "1");
     assert_eq!(row["limit"]["setting"], "accounting.work_units");
-    assert!(row["limit"]["charge_point"]
-        .as_str()
-        .is_some_and(|point| !point.is_empty()));
+    assert!(
+        row["limit"]["charge_point"]
+            .as_str()
+            .is_some_and(|point| !point.is_empty())
+    );
     assert!(row.get("supplied").is_none());
     assert!(row["value"].is_null());
 }
@@ -942,8 +999,7 @@ fn population_subsetting_retains_inherited_redefined_optional_and_collection_val
             .insert(1, population);
         fs::write(call_path, serde_json::to_vec(&call).unwrap()).unwrap();
         assert_eq!(
-            report(&fixture.execute(&["--limit", "admission.work_units=7"]))["capabilities"][0]
-                ["outcome"],
+            report(&fixture.execute(&["--limit", "admission.work_units=7"]))["capabilities"][0]["outcome"],
             "incomplete"
         );
         assert_eq!(
@@ -1054,9 +1110,11 @@ fn genuine_witness_replay_retains_record_absence_regions_and_disagreement() {
     let undefined_source = FALSE.replace("x < 0", "10 mod (x - 1) > 0");
     let linked = fsl_replay::call_site(
         fsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native"),
-        "qualification".into(),
-        "inputs/unit.native",
-        undefined_source.as_bytes(),
+        fsl_replay::CallSiteUnit::new(
+            "qualification",
+            "inputs/unit.native",
+            undefined_source.as_bytes(),
+        ),
         [],
         &fsl_replay::DependencyInput::default(),
         &fsl_replay::RequestClocks::default(),
@@ -1078,9 +1136,11 @@ fn genuine_witness_replay_retains_record_absence_regions_and_disagreement() {
     let region = region
         .as_ref()
         .expect("the unproved operator has a source region");
-    assert!(undefined_source
-        [usize::try_from(region.start()).unwrap()..usize::try_from(region.end()).unwrap()]
-        .contains("mod"));
+    assert!(
+        undefined_source
+            [usize::try_from(region.start()).unwrap()..usize::try_from(region.end()).unwrap()]
+            .contains("mod")
+    );
     let mut undefined_fixture = kernel_replay_fixture_source(&undefined_source);
     let undefined_native = use_witness(&mut undefined_fixture);
     let fsl_replay::ReplayResult::Witness(undefined_arm) = undefined_native else {
@@ -1092,14 +1152,18 @@ fn genuine_witness_replay_retains_record_absence_regions_and_disagreement() {
         "the actual undefined operation retains its source"
     );
     let undefined_row = &undefined_fixture.value["vectors"][0]["expected"]["value"]["results"][0];
-    assert!(!undefined_row["resolved_regions"]
-        .as_array()
-        .unwrap()
-        .is_empty());
+    assert!(
+        !undefined_row["resolved_regions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
     let region = &undefined_arm.resolved_regions()[0];
-    assert!(undefined_source
-        [usize::try_from(region.start()).unwrap()..usize::try_from(region.end()).unwrap()]
-        .contains("mod"));
+    assert!(
+        undefined_source
+            [usize::try_from(region.start()).unwrap()..usize::try_from(region.end()).unwrap()]
+            .contains("mod")
+    );
     assert_eq!(undefined_row["resolved_regions"][0]["kind"], "region");
     assert_eq!(
         undefined_row["resolved_regions"][0]["start"],

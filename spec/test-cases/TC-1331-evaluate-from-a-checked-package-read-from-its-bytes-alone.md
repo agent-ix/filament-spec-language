@@ -19,7 +19,7 @@ relationships:
 ## Description
 
 Verify the bytes-only entry and its selected-monitor preparation boundary.
-Scope: FR-531-AC-1 through FR-531-AC-35, FR-531-AC-45 through FR-531-AC-48 and FR-531-AC-51. **R** is the package of FR-517.
+Scope: FR-531-AC-1 through FR-531-AC-35, FR-531-AC-45 through FR-531-AC-48, FR-531-AC-52 through FR-531-AC-58. **R** is the package of FR-517.
 The isolated bytes-only consumer test crate depends on `filament-contract-model`,
 `fsl-package` and `fsl-eval` only. Producer transport and selected-monitor
 preparation tests additionally obtain authentic final emissions, admitted model
@@ -34,7 +34,7 @@ rows or bytes to the consumer.
 | 2 | 2 | compile-fail probes of a `BarePackage` from bytes, from a decoded graph and from a term; API-surface listing of the signatures | each fails to compile; no signature names `CheckedPackage`, `Emission` or `AdmittedPackageRead` |
 | 3 | 4 | each clause form and each slot kind **R** holds; a non-temporal node; a non-protocol node | results; `clause-root-unresolved` and FR-390-AC-4's refusal, empty charge logs |
 | 4 | 5 | slot call with no supply, foreign rows, unknown rows; the temporal call with no supply; `read_checked_package` over a lock that selects a dependency the evidence lacks | `MissingIdentityWitness`, `ForeignIdentityWitness`, `UnknownIdentityWitness` as exit-21 `Admission`, meter untouched; the temporal call returns; the reader refuses `MissingImport`, so no package is admitted and no dependency refusal exists |
-| 5 | 6 | a package without `temporal_bindings`; without a profile row; with an unknown profile definition; with an infinite-trace profile | `Unavailable` with the clock `Missing`; `clause-unreadable` `profile-selection`; `clause-unreadable` `profile-unknown`; `not-finite-window-profile` |
+| 5 | 6 | an admitted `temporal_bindings` channel missing a required row for one admitted temporal clause | the call returns `activation = Unavailable` with the clock's `Missing` non-value; the meter's charge log remains empty |
 | 6 | 7 | encode **R**'s results; search for the clause names, `source:` labels and source map regions; read the progress binding | none present; the binding holds `package.name()` |
 | 7 | 8 | **R**'s directory: read `identities.json`; compare with the encoding of the in-process rows; write twice; omit the file from the supply | slot call evaluates; bytes equal; two writes equal; `MissingIdentityWitness` for the slot call only |
 | 8 | 9 | enumerate the public methods of `EvidencePackage` and `CheckedPackageEvaluation` against the inventory table | one row each; an unlisted method fails the test |
@@ -57,6 +57,18 @@ rows or bytes to the consumer.
 | 25 | 45, 46 | the admitted model union `Mode` with cases authored `Idle`, `Circle(Integer)`, `Armed(Clock)`; a final monitor-plan emission whose typed input reaches it; `Emission::selected_model_union_rows` | one row; the selected document, the cases in UTF-8 order `Armed`, `Circle`, `Idle` with ranks 0, 1, 2 and authored positions 2, 1, 0, and `Clock`, `Data`, `None` payloads; those rows as `SelectedMonitorClosureRows::model_unions` are admitted by the native closure and the union node projects; the same closure with no rows refuses `Exact(UnavailableIdentityWitness)` |
 | 26 | 47 | the payload classifier over normalized records: `Clock`, an alias of `Clock`, a sequence over `Clock`, a map over `Clock`, no payload, one data position, a data position with no payload type, two data positions | `Clock`, `Clock`, no form, no form, `None`, `Data`, no form, no form; public intake refuses alias, sequence and map payloads, so this step claims no end-to-end admission |
 | 27 | 48 | two documents of one variant type with the cases authored in opposite order | positions follow authored order; keys, exports and canonical order are equal |
+| 52 | 52 | a clock-configured temporal declaration whose required whole `temporal_bindings` channel is absent | Contract IR admission refuses `invalid_package`/`timed-node-reference` at the clause body before evaluation; no empty-channel admission |
+| 53 | 53 | strict-read a checked temporal-clause package after removing its matching `profile_selections` row | the reader refuses as `invalid_package`/`operation-law-unselected`, with typed cause `OperationLawUnselected` at the clause application's `/laws/0/definition` locus; no package is returned and no call occurs |
+| 54 | 54 | after strict admission, call with a selected definition identity unsupported by the evaluator | call-time `clause-unreadable/profile-unknown` |
+| 55 | 55 | after strict admission, call with a selected infinite-trace profile | call-time `not-finite-window-profile` temporal refusal |
+| 56 | 56 | compare charges for the AC-54 profile-unknown refusal with FR-516's source-route counterpart | equal source-route charges |
+| 57 | 57 | compare charges for the AC-55 infinite-profile refusal with FR-516's source-route counterpart | equal source-route charges |
+| 58 | 58 | inspect the AC-53 strict-read refusal before any evaluation call | no evaluation work is charged |
+
+Trace each procedure row with `TC-1331` and the AC id in its second column. In
+particular, the admitted missing-clock-row result owns `FR-531-AC-6`, and the
+strict-read missing-profile-row result owns `FR-531-AC-53`; the latter is not a
+call-time profile-selection test.
 
 For AC-26, write and read an authentic source-union emission with nullary and positional payload members, comparing complete original rows and native joined rows and byte-identical rewrites. For AC-27, reject format `/2`, absent `source_unions`, empty member identities, stale member names, foreign source owners and conflicting repeated rows with typed refusals and no partial read. Verify absent union witnesses through the bare union refusal tests.
 

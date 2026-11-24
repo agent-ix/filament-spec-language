@@ -63,7 +63,7 @@ use method::{
     clopper_pearson_decision, clopper_pearson_interval, clopper_pearson_sample_count,
     interval_decision, least, okamoto_sample_count, Sprt,
 };
-use regenerative::Cycles;
+use regenerative::{Cycles, RatioInterval};
 
 /// One statistical test's subject: an (initial state, `over` binding) pair
 /// of the subject, in subject order, after any symmetry reduction (FR-189
@@ -91,6 +91,9 @@ pub struct SampledRequest<'a> {
     pub method: StatisticalMethod,
     /// The seed.
     pub seed: u64,
+    /// The maximum sample workers requested by the caller (FR-191). A
+    /// sampler may retain the serial route while still honoring this input.
+    pub workers: usize,
     /// The sampler identity, recorded in the provenance.
     pub sampler: &'a DefinitionRef,
     /// The budgets.
@@ -211,6 +214,14 @@ pub enum WalkStep {
     },
     /// A contract conjunction evaluated undecided during the step.
     UndecidedSuccessor,
+    /// The behaviour reached a terminal state: it ends in an idle tail of
+    /// unbounded weight, so its long-run fraction is 1 when `P` holds at the
+    /// terminal position and 0 otherwise (FSpec FR-420 "Delay-weighted
+    /// cycles").
+    Terminal {
+        /// Whether `P` holds at the terminal position.
+        holds: bool,
+    },
 }
 
 /// Why a sample or a walk could not continue (FR-188 `SampleStop`).
@@ -265,6 +276,9 @@ pub trait BehaviourSampler {
     /// A regeneration walk.
     type Walk: RegenerationWalk;
 
+    /// The sampler's maximum concurrent sample width.
+    fn sample_batch_width(&self) -> usize;
+
     /// The sample at `trace` under `seed`, from `test`'s initial state,
     /// evaluated against the claim's event, fraction or activation, with
     /// the steps it took.
@@ -274,9 +288,32 @@ pub trait BehaviourSampler {
     /// A [`SampleHalt`] when the sample cannot be drawn to its end.
     fn sample(&mut self, test: &TestSubject, seed: u64, trace: u64) -> Result<Drawn, SampleHalt>;
 
+    /// Draw a bounded speculative batch. Entries may be returned in
+    /// completion order; the engine merges them by trace index.
+    fn sample_batch(
+        &mut self,
+        test: &TestSubject,
+        seed: u64,
+        traces: &[u64],
+    ) -> Vec<(u64, Result<Drawn, SampleHalt>)>;
+
     /// A walk of one behaviour at `trace` under `seed` from `test`'s
     /// initial state, for the regenerative method.
     fn walk(&mut self, test: &TestSubject, seed: u64, trace: u64) -> Self::Walk;
+}
+
+fn serial_sample_batch<S: BehaviourSampler>(
+    sampler: &mut S,
+    test: &TestSubject,
+    seed: u64,
+    traces: &[u64],
+) -> Vec<(u64, Result<Drawn, SampleHalt>)> {
+    traces
+        .first()
+        .copied()
+        .map(|trace| (trace, sampler.sample(test, seed, trace)))
+        .into_iter()
+        .collect()
 }
 
 /// One behaviour sampled step by step (FR-190).
@@ -314,6 +351,9 @@ enum TestEnd {
 struct Tally {
     counted: u64,
     draws: u64,
+    /// The independent behaviours a terminating long-run test drew; 0 for a
+    /// test of one behaviour.
+    behaviours: u64,
     /// The counted samples that held, kept as a count so a Bernoulli draw
     /// costs an increment, not a rational addition.
     held: u64,
@@ -332,6 +372,7 @@ impl Tally {
         Self {
             counted: 0,
             draws: 0,
+            behaviours: 0,
             held: 0,
             sum: int(0),
             measures: BTreeMap::new(),
@@ -461,6 +502,89 @@ struct Regeneration {
     z_upper: Rational,
     /// The fewest cycles a test closes before it decides.
     min_cycles: u64,
+}
+
+/// One behaviour's closed cycles and the cycle being walked.
+struct Run {
+    /// The closed cycles by weight.
+    cycles: Cycles,
+    /// The closed cycles by position count: the fraction a behaviour takes
+    /// when every cycle has total weight 0 (FSpec FR-420).
+    unweighted: Cycles,
+    held: Rational,
+    weight: Rational,
+    held_positions: u64,
+    positions: u64,
+    /// Steps since the last closed cycle.
+    cycle_steps: u64,
+}
+
+impl Run {
+    fn new() -> Self {
+        Self {
+            cycles: Cycles::new(),
+            unweighted: Cycles::new(),
+            held: int(0),
+            weight: int(0),
+            held_positions: 0,
+            positions: 0,
+            cycle_steps: 0,
+        }
+    }
+
+    /// Take one position of the open cycle.
+    fn position(&mut self, holds: bool, weight: &Rational) {
+        self.cycle_steps += 1;
+        self.positions += 1;
+        if holds {
+            self.held = self.held.add(weight);
+            self.held_positions += 1;
+        }
+        self.weight = self.weight.add(weight);
+    }
+
+    /// Close the open cycle. Under a timed claim a cycle of total delay 0 is
+    /// kept only in the unweighted tally: it adds nothing to the weighted
+    /// denominator, the weighted cycle count or the half-width.
+    fn close(&mut self, timed: bool) {
+        if !(timed && self.weight == int(0)) {
+            self.cycles.close(&self.held, &self.weight);
+        }
+        self.unweighted.close(
+            &Rational::from_integer(Integer::from(self.held_positions)),
+            &Rational::from_integer(Integer::from(self.positions)),
+        );
+        self.held = int(0);
+        self.weight = int(0);
+        self.held_positions = 0;
+        self.positions = 0;
+        self.cycle_steps = 0;
+    }
+
+    /// The cycles the estimate reads: the weighted ones, or the unweighted
+    /// ones for a timed claim that has closed no cycle of positive delay, so
+    /// a run decides before its first positive-delay cycle only when every
+    /// cycle so far has delay 0.
+    fn counted(&self, timed: bool) -> &Cycles {
+        if timed && self.cycles.count() == 0 {
+            &self.unweighted
+        } else {
+            &self.cycles
+        }
+    }
+
+    fn estimate(&self, timed: bool) -> Option<Rational> {
+        self.counted(timed).estimate()
+    }
+
+    fn interval_within(
+        &self,
+        timed: bool,
+        z_upper: &Rational,
+        limit: &Rational,
+    ) -> Result<Option<RatioInterval>, InternalFault> {
+        self.counted(timed).interval_within(z_upper, limit)
+    }
 }
 
 /// The per-test constants of one run (FR-189 "Tests").
@@ -598,6 +722,7 @@ impl Plan<'_> {
         // `None` when `N` exceeds every count a test can reach, so only a
         // budget ends the test.
         let fixed = count.as_ref().and_then(Integer::to_u64);
+        let mut speculative = BTreeMap::new();
         // A method with a fixed `N` compares it with the budgets before it
         // draws (FR-191): `N` counted samples need at least `N` draws.
         if let (StatisticalMethod::Okamoto | StatisticalMethod::ClopperPearson, Some(required)) =
@@ -676,7 +801,55 @@ impl Plan<'_> {
                     max_draws: limits.max_draws,
                     tests: self.tests,
                 })?;
-            let drawn = sampler.sample(subject, self.request.seed, trace);
+            if !speculative.contains_key(&trace) {
+                let remaining = limits.max_draws.saturating_sub(tally.draws).max(1);
+                let batch_len = self
+                    .request
+                    .workers
+                    .min(sampler.sample_batch_width())
+                    .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+                if batch_len == 0 {
+                    return Err(fault(InternalFault::new(
+                        "statistical",
+                        "sampler-declared-zero-sample-batch-width",
+                    )));
+                }
+                let mut traces = Vec::with_capacity(batch_len);
+                for offset in 0..batch_len {
+                    let sample_trace = tally
+                        .draws
+                        .checked_add(offset as u64)
+                        .and_then(|draw| draw.checked_mul(stride))
+                        .and_then(|base| base.checked_add(u64::from(index)))
+                        .ok_or(StatisticalRefusal::TraceIndexRange {
+                            max_draws: limits.max_draws,
+                            tests: self.tests,
+                        })?;
+                    traces.push(sample_trace);
+                }
+                let batch = sampler.sample_batch(subject, self.request.seed, &traces);
+                if let Some(cause) = cancelled(self.cancel) {
+                    return Ok(TestEnd::Stopped(StatisticalStop::Cancelled(cause)));
+                }
+                for (sample_trace, sample) in batch {
+                    if !traces.contains(&sample_trace) {
+                        return Err(fault(InternalFault::new(
+                            "statistical",
+                            "worker-batch-returned-an-unrequested-trace",
+                        )));
+                    }
+                    if speculative.insert(sample_trace, sample).is_some() {
+                        return Err(fault(InternalFault::new(
+                            "statistical",
+                            "worker-batch-returned-a-duplicate-trace",
+                        )));
+                    }
+                }
+            }
+            let drawn = speculative.remove(&trace).ok_or(fault(InternalFault::new(
+                "statistical",
+                "worker-batch-omitted-a-trace",
+            )))?;
             tally.draws += 1;
             let Drawn { sample, steps } = match drawn {
                 Err(halt) => return halted(halt),
@@ -730,7 +903,10 @@ impl Plan<'_> {
     }
 
     /// One regenerative test (FR-190): one behaviour at trace index `j`,
-    /// cut at each return to the initial state.
+    /// cut at each return to the initial state. A delay-weighted behaviour
+    /// that reaches a terminal state ends the regenerative method for the
+    /// test: the test then decides on the mean of the limits of independent
+    /// behaviours ([`Plan::terminal_behaviours`]).
     fn regenerative_test<S: BehaviourSampler>(
         &self,
         index: u32,
@@ -745,19 +921,16 @@ impl Plan<'_> {
         let limits = self.request.limits;
         let trace = u64::from(index);
         let mut walk = sampler.walk(subject, self.request.seed, trace);
-        let mut cycles = Cycles::new();
-        let mut cycle_steps: u64 = 0;
-        let mut held = int(0);
-        let mut weight = int(0);
+        let mut run = Run::new();
         loop {
-            tally.counted = cycles.count();
-            if cycles.count() == limits.max_samples {
+            tally.counted = run.counted(claim.timed).count();
+            if run.counted(claim.timed).count() == limits.max_samples {
                 return Ok(self.limit_stop(StatisticalLimit::MaxSamples));
             }
             if tally.draws == limits.max_draws {
                 return Ok(self.limit_stop(StatisticalLimit::MaxDraws));
             }
-            if cycle_steps == limits.max_cycle_steps {
+            if run.cycle_steps == limits.max_cycle_steps {
                 return Ok(self.limit_stop(StatisticalLimit::MaxCycleSteps));
             }
             if let Some(cause) = cancelled(self.cancel) {
@@ -772,10 +945,25 @@ impl Plan<'_> {
                 Ok(WalkStep::Undefined { evaluation, steps }) => {
                     let value = WitnessValue::Undefined(evaluation.clone());
                     witnesses.undefined = Some(witness(index, trace, steps, value));
-                    return Ok(undefined(index, trace, cycles.estimate(), evaluation));
+                    return Ok(undefined(
+                        index,
+                        trace,
+                        run.estimate(claim.timed),
+                        evaluation,
+                    ));
                 }
                 Ok(WalkStep::UndecidedSuccessor) => {
-                    return Ok(undecided_successor(cycles.estimate()));
+                    return Ok(undecided_successor(run.estimate(claim.timed)));
+                }
+                Ok(WalkStep::Terminal { .. }) => {
+                    return self.terminal_behaviours(
+                        index,
+                        subject,
+                        sampler,
+                        regeneration,
+                        tally,
+                        witnesses,
+                    );
                 }
                 Ok(WalkStep::Position {
                     holds,
@@ -783,24 +971,17 @@ impl Plan<'_> {
                     returned,
                 }) => (holds, weight, returned),
             };
-            cycle_steps += 1;
-            if holds {
-                held = held.add(&step_weight);
-            }
-            weight = weight.add(&step_weight);
+            run.position(holds, &step_weight);
             if !returned {
                 continue;
             }
-            cycles.close(&held, &weight);
-            tally.counted = cycles.count();
-            cycle_steps = 0;
-            held = int(0);
-            weight = int(0);
-            if cycles.count() < regeneration.min_cycles {
+            run.close(claim.timed);
+            tally.counted = run.counted(claim.timed).count();
+            if run.counted(claim.timed).count() < regeneration.min_cycles {
                 continue;
             }
-            let Some(interval) = cycles
-                .interval_within(&regeneration.z_upper, iota)
+            let Some(interval) = run
+                .interval_within(claim.timed, &regeneration.z_upper, iota)
                 .map_err(fault)?
             else {
                 continue;
@@ -814,6 +995,108 @@ impl Plan<'_> {
                 undefined: None,
             }));
         }
+    }
+
+    /// FSpec FR-420 "Delay-weighted cycles": the first behaviour of the test
+    /// terminated, so the test draws `N` fresh independent behaviours,
+    /// behaviour `j` (from 1) at trace index `j · m + test`. Each gives a value in `[0, 1]`: the
+    /// terminal limit when it terminates, its own `Σ Y / Σ L` when it closes
+    /// `min_cycles` cycles first. The estimate is their mean and the interval
+    /// the fixed-sample one, `v̄ ± ι`, over Okamoto's `N`.
+    #[allow(clippy::too_many_arguments)] // the test's own context, passed once
+    fn terminal_behaviours<S: BehaviourSampler>(
+        &self,
+        index: u32,
+        subject: &TestSubject,
+        sampler: &mut S,
+        regeneration: &Regeneration,
+        tally: &mut Tally,
+        witnesses: &mut Witnesses,
+    ) -> Result<TestEnd, StatisticalRefusal> {
+        let claim = self.request.claim;
+        let iota = claim.confidence().indifference();
+        let limits = self.request.limits;
+        let count = okamoto_sample_count(&self.alpha, &self.beta, iota).map_err(fault)?;
+        for limit in [StatisticalLimit::MaxSamples, StatisticalLimit::MaxDraws] {
+            let value = limits.value(limit);
+            if count > Integer::from(value) {
+                return Ok(TestEnd::Stopped(StatisticalStop::PreflightLimit {
+                    limit,
+                    value,
+                    required: count,
+                }));
+            }
+        }
+        let required = count.to_u64().ok_or(fault(EMPTY_FIXED_SAMPLE))?;
+        let stride = u64::from(self.tests);
+        // The probe behaviour at trace index `test` is not counted: the test
+        // entered this mode because it terminated, so it is not an
+        // independent draw. `N` fresh behaviours follow it.
+        let mut sum = int(0);
+        let mut behaviours: u64 = 0;
+        while behaviours < required {
+            let trace = behaviours
+                .checked_add(1)
+                .and_then(|next| next.checked_mul(stride))
+                .and_then(|base| base.checked_add(u64::from(index)))
+                .ok_or(StatisticalRefusal::TraceIndexRange {
+                    max_draws: limits.max_draws,
+                    tests: self.tests,
+                })?;
+            let mut walk = sampler.walk(subject, self.request.seed, trace);
+            let mut run = Run::new();
+            let value = loop {
+                if tally.draws == limits.max_draws {
+                    return Ok(self.limit_stop(StatisticalLimit::MaxDraws));
+                }
+                if run.cycle_steps == limits.max_cycle_steps {
+                    return Ok(self.limit_stop(StatisticalLimit::MaxCycleSteps));
+                }
+                if let Some(cause) = cancelled(self.cancel) {
+                    return Ok(TestEnd::Stopped(StatisticalStop::Cancelled(cause)));
+                }
+                let step = walk.step();
+                tally.draws += 1;
+                match step {
+                    Err(halt) => return halted(halt),
+                    Ok(WalkStep::Undefined { evaluation, steps }) => {
+                        let value = WitnessValue::Undefined(evaluation.clone());
+                        witnesses.undefined = Some(witness(index, trace, steps, value));
+                        return Ok(undefined(index, trace, None, evaluation));
+                    }
+                    Ok(WalkStep::UndecidedSuccessor) => return Ok(undecided_successor(None)),
+                    Ok(WalkStep::Terminal { holds }) => break int(i64::from(holds)),
+                    Ok(WalkStep::Position {
+                        holds,
+                        weight: Weight(weight),
+                        returned,
+                    }) => {
+                        run.position(holds, &weight);
+                        if !returned {
+                            continue;
+                        }
+                        run.close(true);
+                        if run.counted(true).count() >= regeneration.min_cycles {
+                            break run.estimate(true).ok_or(fault(EMPTY_FIXED_SAMPLE))?;
+                        }
+                    }
+                }
+            };
+            sum = sum.add(&value);
+            behaviours += 1;
+            // The probe's trace is part of the test's range, uncounted.
+            tally.behaviours = behaviours + 1;
+            tally.counted = behaviours;
+        }
+        let estimate =
+            quotient(&sum, &Rational::from_integer(Integer::from(required))).map_err(fault)?;
+        let (decision, interval) = interval_decision(claim.bound(), &estimate, iota);
+        Ok(TestEnd::Decided(Decided {
+            decision,
+            estimate: Some(estimate),
+            interval: Some(interval),
+            undefined: None,
+        }))
     }
 
     fn basis(&self, samples: u64, draws: u64) -> StatisticalBasis {
@@ -976,6 +1259,9 @@ fn check_sampled_with_meter<S: BehaviourSampler>(
     cancel: &Cancel,
     clause_meter: Meter,
 ) -> Result<StatisticalOutcome, StatisticalRefusal> {
+    if request.workers == 0 {
+        return Err(StatisticalRefusal::Workers);
+    }
     let form = request.claim.form();
     if !form.admits(request.method) {
         return Err(StatisticalRefusal::NotStatistical {
@@ -1056,7 +1342,7 @@ fn check_sampled_with_meter<S: BehaviourSampler>(
             None => plan.sampled_test(index, subject, sampler, &mut tally, &mut witnesses)?,
         };
         let used = match regenerative {
-            Some(_) => u64::from(tally.draws > 0),
+            Some(_) => tally.behaviours.max(u64::from(tally.draws > 0)),
             None => tally.draws,
         };
         provenance.push(TestProvenance {

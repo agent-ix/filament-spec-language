@@ -737,7 +737,9 @@ fn forms_s2_report(workspace_root: &Path) -> Result<String> {
     if !value_present || arms.iter().any(|arm| matches!(arm.pat, syn::Pat::Wild(_))) {
         return Err(Error::SeamProbeMismatch {
             unexpected_but_present: "[]".to_owned(),
-            expected_but_missing: format!("{FILE}::dispatch Value producer (LeadingTokenKind::Function => value::function) without wildcard"),
+            expected_but_missing: format!(
+                "{FILE}::dispatch Value producer (LeadingTokenKind::Function => value::function) without wildcard"
+            ),
         });
     }
     let state_model_arms: Vec<&syn::Arm> = arms
@@ -1198,9 +1200,12 @@ mod tests {
             "CheckCause::code"
         ));
         // The forms table is reported by `fsl-forms`' own probe build.
-        assert!(PROBE_BUILDS
-            .iter()
-            .any(|(package, flags)| *package == "fsl-forms" && flags.contains("seam_probe_forms")));
+        assert!(
+            PROBE_BUILDS
+                .iter()
+                .any(|(package, flags)| *package == "fsl-forms"
+                    && flags.contains("seam_probe_forms"))
+        );
     }
 
     /// FR-507-AC-6 (TC-1302): a `Capability` variant with no applicable-family
@@ -1706,7 +1711,7 @@ mod tests {
     }
 
     fn has_probe_cfg_setting(line: &str) -> bool {
-        let normalized = line.replace(|c| c == '\'' || c == '"', "");
+        let normalized = line.replace(['\'', '"'], "");
         let words: Vec<_> = normalized.split_whitespace().collect();
         let assignment_operator = |text: &str| {
             ["=", ":", "?=", "+="]

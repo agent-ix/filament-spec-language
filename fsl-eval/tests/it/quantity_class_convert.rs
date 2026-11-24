@@ -8,14 +8,18 @@ use filament_exact::{
     ChargePoint, Integer, LimitKind, Meter, Outcome, Quantity as ExactQuantity, Rational, Value,
     ValueType,
 };
+use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{BodyTerm, LeafTerm, MemberTerm, OperationMode, Operator};
+use fsl_semantics::check::{
+    BodyTerm, CheckCause, LeafTerm, LiteralValue, MemberTerm, Obligation, OperationMode, Operator,
+    PackageDeclarations,
+};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::Member;
 use ix_trace_rs::trace;
 
-use super::quantity_literals::{package_with, UNLIMITED};
+use super::quantity_literals::{package_with, truth, UNLIMITED};
 
 /// FR-091-AC-44's `Time` units, `Beat` units and the equivalence
 /// `equivalence` declares between them.
@@ -31,8 +35,70 @@ fn units(equivalence: &str) -> String {
     )
 }
 
+/// FR-093-AC-43/44: a second source unit class rooted at the same time
+/// dimension, with explicit and separately selectable class equivalence.
+fn period_units(equivalence: Option<&str>) -> String {
+    format!(
+        "dimension Time;\n\
+         unit s : Time = rational(1, 1);\n\
+         unit ms : Time = rational(1, 1000) * s;\n\
+         dimension Period;\n\
+         unit sec : Period = rational(1, 1);\n\
+         unit msec : Period = rational(1, 1000) * sec;\n\
+         {}\n",
+        equivalence.unwrap_or_default()
+    )
+}
+
+const PERIOD_EQUIVALENCE: &str = "dimension Period ~ Time by 1 sec = 1 s;";
+
+const VELOCITY_UNITS: &str = "\
+    dimension Time;\n\
+    unit s : Time = rational(1, 1);\n\
+    unit ms : Time = rational(1, 1000) * s;\n\
+    dimension Length;\n\
+    unit m : Length = rational(1, 1);\n\
+    dimension Velocity = Length / Time;\n\
+    unit mps : Velocity = rational(1, 1);\n";
+
 const QUARTER: &str = "dimension Beat ~ Time by 1 beat = rational(1, 4) s;";
 const EQUAL: &str = "dimension Beat ~ Time by 1 beat = 1 s;";
+
+fn refusal_region_text(functions: &str) -> (CheckCause, String) {
+    let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{functions}");
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("a", "u"),
+        "unit.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the refusal fixture");
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the refusal fixture");
+    let declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_owned(),
+        unit,
+        fsl_semantics::model::intake::SelectedModels::default(),
+        Vec::new(),
+    )
+    .expect("the refusal fixture assembles");
+    let regions = declarations.regions();
+    let refusal = declarations
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .expect_err("the source fixture refuses");
+    assert_eq!(refusal.len(), 1);
+    let region = regions
+        .refusal_region(&refusal[0])
+        .expect("the refusal maps to its source locus");
+    (
+        *refusal[0].cause.clone(),
+        text[region.start() as usize..region.end() as usize].to_owned(),
+    )
+}
 
 fn fraction(numerator: i64, denominator: i64) -> Rational {
     Rational::from_integer(Integer::from(numerator))
@@ -58,6 +124,586 @@ fn truth_at(package: &CheckedPackage, name: &str, magnitude: Rational) -> bool {
     match evaluation.outcome {
         FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(truth))) => truth,
         other => panic!("a completed Boolean, not {other:?}"),
+    }
+}
+
+fn truth_at_many(package: &CheckedPackage, name: &str, magnitudes: &[Rational]) -> bool {
+    let callable = package.graph().callable(name).expect("a callable");
+    assert_eq!(callable.parameters.len(), magnitudes.len(), "{name} arity");
+    let arguments = callable
+        .parameters
+        .iter()
+        .zip(magnitudes)
+        .map(|((_, value_type), magnitude)| {
+            let ValueType::Quantity(unit) = value_type else {
+                panic!("{name} parameter is a quantity");
+            };
+            Value::Quantity(ExactQuantity::new(magnitude.clone(), unit.clone()))
+        })
+        .collect();
+    let evaluation = package
+        .call(
+            &QualifiedName::unqualified(name).expect("an identifier"),
+            arguments,
+            &ObjectEnvironment::default(),
+            &mut Meter::new(UNLIMITED),
+        )
+        .unwrap_or_else(|error| panic!("the {name} call runs: {error:?}"));
+    match evaluation.outcome {
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(truth))) => truth,
+        other => panic!("a completed Boolean, not {other:?}"),
+    }
+}
+
+/// FR-093-AC-43: source unit classes lower exact conversions, strict package
+/// reading admits them, and calls produce literal expected truth values.
+#[trace("FR-093-AC-43")]
+#[test]
+fn equivalent_period_units_convert_and_evaluate_exactly() {
+    let functions = "\
+        function c1 using v(d: Quantity<s>): Boolean pure { convert<Quantity<sec>>(d) = 3 sec }\n\
+        function c2 using v(d: Quantity<s>): Boolean pure { convert<Quantity<msec>>(d) = 3000 msec }\n\
+        function c3 using v(e: Quantity<msec>): Boolean pure { convert<Quantity<s>>(e) = rational(3, 2) s }\n";
+    let package = package_with(&format!(
+        "{}{}{}",
+        period_units(Some(PERIOD_EQUIVALENCE)),
+        "dimension Length;\nunit m : Length = rational(1, 1);\n",
+        functions
+    ))
+    .expect("each equivalent-class conversion package-checks and strict-reads");
+    let conversions: Vec<_> = package
+        .graph()
+        .semantic_graph()
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.quantity.convert" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(conversions.len(), 3);
+    let mut targets = Vec::new();
+    for conversion in conversions {
+        assert_eq!(
+            conversion.operation.mode(),
+            Some(&OperationMode::Rounding(
+                filament_exact::RoundingMode::Exact
+            ))
+        );
+        let Some(Member::TypeArgument { declaration, .. }) = conversion.operation.member() else {
+            panic!("conversion carries its declared target type");
+        };
+        assert_eq!(conversion.result_type.admitted(), Some(declaration));
+        let target = package
+            .graph()
+            .semantic_graph()
+            .node(declaration.clone())
+            .expect("the result unit node");
+        assert_eq!(target.semantic_form(), "unit");
+        targets.push(
+            target
+                .declaration()
+                .expect("a declared unit")
+                .iter()
+                .map(|segment| segment.as_str())
+                .collect::<Vec<_>>()
+                .join("::"),
+        );
+    }
+    targets.sort();
+    assert_eq!(targets, ["msec", "s", "sec"]);
+    assert!(truth_at(&package, "c1", fraction(3, 1)));
+    assert!(!truth_at(&package, "c1", fraction(4, 1)));
+    assert!(truth_at(&package, "c2", fraction(3, 1)));
+    assert!(truth_at(&package, "c3", fraction(1500, 1)));
+
+    let cross_class = package_with(&format!(
+        "{}dimension Length;\nunit m : Length = rational(1, 1);\n\
+         function c4 using v(d: Quantity<s>): Boolean pure {{ convert<Quantity<m>>(d) = 3 m }}",
+        period_units(Some(PERIOD_EQUIVALENCE))
+    ))
+    .expect_err("a Time quantity cannot convert to Length");
+    assert!(matches!(
+        cross_class.as_slice(),
+        [refusal] if refusal.cause.as_ref() == &fsl_semantics::check::CheckCause::IllTyped(
+            filament_exact::IllTypedCause::TypeMismatch
+        )
+    ));
+    let no_equivalence = package_with(&format!(
+        "{}function c1 using v(d: Quantity<s>): Boolean pure {{ convert<Quantity<sec>>(d) = 3 sec }}",
+        period_units(None)
+    ))
+    .expect_err("the conversion is not admitted without a class equivalence");
+    assert!(matches!(
+        no_equivalence.as_slice(),
+        [refusal] if refusal.cause.as_ref() == &fsl_semantics::check::CheckCause::IllTyped(
+            filament_exact::IllTypedCause::TypeMismatch
+        )
+    ));
+}
+
+/// FR-093-AC-44: unlike units within an equivalence class still reject
+/// direct arithmetic and arguments; explicit conversions make the same
+/// operations well typed and evaluate to the literal results.
+#[trace("FR-093-AC-44")]
+#[test]
+fn period_unit_mismatches_refuse_and_explicit_conversions_work() {
+    let functions = [
+        (
+            "function a1 using v(d: Quantity<s>, p: Quantity<sec>): Boolean pure { d + p = d + p }",
+            &[][..],
+        ),
+        (
+            "function a2 using v(d: Quantity<s>, p: Quantity<sec>): Boolean pure { d = p }",
+            &[][..],
+        ),
+        (
+            "function a3 using v(d: Quantity<s>, p: Quantity<sec>): Boolean pure { d < p }",
+            &[][..],
+        ),
+        (
+            "function a4 using v(): Boolean pure { f(3 sec) }",
+            &["function f using v(d: Quantity<s>): Boolean pure { true }"][..],
+        ),
+    ];
+    for (function, prefix) in functions {
+        let refused = package_with(&format!(
+            "{}{}{}",
+            period_units(Some(PERIOD_EQUIVALENCE)),
+            prefix.join("\n"),
+            function
+        ))
+        .expect_err("an implicit conversion between distinct unit ids is refused");
+        assert!(
+            matches!(
+                refused.as_slice(),
+                [refusal] if refusal.cause.as_ref() == &fsl_semantics::check::CheckCause::IllTyped(
+                    filament_exact::IllTypedCause::TypeMismatch
+                )
+            ),
+            "{function}: {refused:?}"
+        );
+    }
+
+    let package = package_with(&format!(
+        "{}\
+         function f using v(d: Quantity<s>): Boolean pure {{ true }}\n\
+         function a5 using v(d: Quantity<s>, p: Quantity<sec>): Boolean pure {{ convert<Quantity<s>>(p) + d = 6 s }}\n\
+         function a6 using v(): Boolean pure {{ f(convert<Quantity<s>>(3 sec)) }}\n\
+         function a7 using v(d: Quantity<s>): Boolean pure {{ d / 3 sec = d / 3 s }}\n\
+         function a8 using v(d: Quantity<s>, p: Quantity<sec>): Boolean pure {{ d * p = d * d }}",
+        period_units(Some(PERIOD_EQUIVALENCE))
+    ))
+    .expect("explicit conversions make each intended operation type-check");
+    assert!(truth_at_many(
+        &package,
+        "a5",
+        &[fraction(3, 1), fraction(3, 1)]
+    ));
+    assert!(truth(&package, "a6"));
+    assert!(truth_at(&package, "a7", fraction(6, 1)));
+    assert!(truth_at_many(
+        &package,
+        "a8",
+        &[fraction(2, 1), fraction(2, 1)]
+    ));
+
+    let divisions: Vec<_> = package
+        .graph()
+        .semantic_graph()
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.quantity.div" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(divisions.len(), 2, "a7's two quotients lower");
+    assert_eq!(divisions[0].result_type, divisions[1].result_type);
+    let dimensionless = package
+        .graph()
+        .semantic_graph()
+        .node(
+            divisions[0]
+                .result_type
+                .admitted()
+                .expect("a result unit")
+                .clone(),
+        )
+        .expect("the quotient's compound unit");
+    assert_eq!(dimensionless.semantic_form(), "compound_unit");
+    let BodyTerm::Aggregate(body) = dimensionless.body() else {
+        panic!("compound unit is an aggregate");
+    };
+    assert!(body.members.is_empty(), "the quotient is dimensionless");
+
+    let products: Vec<_> = package
+        .graph()
+        .semantic_graph()
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.quantity.mul" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(products.len(), 2, "a8's two products lower");
+    assert_eq!(products[0].result_type, products[1].result_type);
+    let square = package
+        .graph()
+        .semantic_graph()
+        .node(
+            products[0]
+                .result_type
+                .admitted()
+                .expect("a product unit")
+                .clone(),
+        )
+        .expect("the shared compound unit");
+    assert_eq!(square.semantic_form(), "compound_unit");
+    let BodyTerm::Aggregate(square_terms) = square.body() else {
+        panic!("the squared unit is an aggregate");
+    };
+    let [MemberTerm::Group(factor)] = square_terms.members.as_slice() else {
+        panic!("the class root occurs once in the squared unit");
+    };
+    let [fsl_semantics::check::GroupMember::Binding(unit), fsl_semantics::check::GroupMember::Binding(exponent)] =
+        factor.members.as_slice()
+    else {
+        panic!("the factor binds its unit and exponent");
+    };
+    assert_eq!(unit.name, "unit");
+    let LeafTerm::Reference { target } = &unit.value else {
+        panic!("the factor names its class-root unit");
+    };
+    let root = package
+        .graph()
+        .semantic_graph()
+        .node(target.admitted().expect("an admitted root unit").clone())
+        .expect("the root unit node");
+    assert_eq!(root.semantic_form(), "unit");
+    assert_eq!(
+        root.declaration()
+            .expect("the root unit declaration")
+            .iter()
+            .map(|segment| segment.as_str())
+            .collect::<Vec<_>>(),
+        ["sec"]
+    );
+    assert_eq!(exponent.name, "exponent");
+    let LeafTerm::Literal {
+        value: LiteralValue::Integer(power),
+        ..
+    } = &exponent.value
+    else {
+        panic!("the factor exponent is an integer literal");
+    };
+    assert_eq!(power.to_string(), "2");
+}
+
+/// FR-093-AC-36: source divisions retain their shared literal and compound
+/// units, conversions use literal rational magnitudes, and each function
+/// evaluates to the specified result through checked-package linking.
+#[trace("FR-093-AC-36", "TC-483")]
+#[test]
+fn division_by_quantity_literals_keeps_exact_units_and_values() {
+    let shared_literal_package = package_with(&format!(
+        "{VELOCITY_UNITS}function p1 using v(d: Quantity<ms>, e: Quantity<ms>): Boolean pure {{ d / 3 ms = e / 3 ms }}"
+    ))
+    .expect("the p1 package checks and links through the v2 package reader");
+    let shared_graph = shared_literal_package.graph().semantic_graph();
+    let p1_divisions: Vec<_> = shared_graph
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.quantity.div" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(p1_divisions.len(), 2);
+    let [MemberTerm::Leaf(LeafTerm::Reference { .. }), MemberTerm::Leaf(LeafTerm::Reference {
+        target: left_literal,
+    })] = p1_divisions[0].arguments.as_slice()
+    else {
+        panic!("p1's first quotient references its parameter and shared literal");
+    };
+    let [MemberTerm::Leaf(LeafTerm::Reference { .. }), MemberTerm::Leaf(LeafTerm::Reference {
+        target: right_literal,
+    })] = p1_divisions[1].arguments.as_slice()
+    else {
+        panic!("p1's second quotient references its parameter and shared literal");
+    };
+    assert_eq!(
+        left_literal, right_literal,
+        "p1 shares the single 3 ms node"
+    );
+    assert_eq!(p1_divisions[0].result_type, p1_divisions[1].result_type);
+    let dimensionless = shared_graph
+        .node(
+            p1_divisions[0]
+                .result_type
+                .admitted()
+                .expect("p1's quotient result type")
+                .clone(),
+        )
+        .expect("p1's quotient unit");
+    assert_eq!(dimensionless.semantic_form(), "compound_unit");
+    let BodyTerm::Aggregate(terms) = dimensionless.body() else {
+        panic!("the dimensionless unit is an aggregate");
+    };
+    assert!(terms.members.is_empty(), "p1's quotient is dimensionless");
+
+    let package = package_with(&format!(
+        "{VELOCITY_UNITS}\
+         function p1 using v(d: Quantity<ms>, e: Quantity<ms>): Boolean pure {{ d / 3 ms = e / 3 ms }}\n\
+         function p2 using v(a: Quantity<m>, b: Quantity<mps>): Boolean pure {{ convert<Quantity<mps>>(a / 3 ms) = b }}\n\
+         function p3 using v(a: Quantity<m>, b: Quantity<mps>): Boolean pure {{ convert<Quantity<mps>>(a / rational(-3, 1) ms) = b }}\n\
+         function p4 using v(a: Quantity<m>, b: Quantity<mps>): Boolean pure {{ convert<Quantity<mps>>(a / 0.5 s) = b }}\n\
+         function p5 using v(d: Quantity<ms>, e: Quantity<ms>): Boolean pure {{ d / 3 s = e / 3 s }}\n\
+         function p6 using v(d: Quantity<ms>): Boolean pure {{ d = 0 ms }}\n"
+    ))
+    .expect("each AC-36 source package checks and links through the v2 package reader");
+
+    let graph = package.graph().semantic_graph();
+    let divisions: Vec<_> = graph
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.quantity.div" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        divisions.len(),
+        7,
+        "p1, p2, p3, p4 and p5 lower seven quotients"
+    );
+    let mut divisor_targets = Vec::new();
+    let mut divisor_values = Vec::new();
+    for division in &divisions {
+        let [_, MemberTerm::Leaf(LeafTerm::Reference { target })] = division.arguments.as_slice()
+        else {
+            panic!("the quotient divisor is a reference to its literal node");
+        };
+        let divisor = graph
+            .node(target.admitted().expect("an admitted divisor").clone())
+            .expect("the divisor literal node");
+        let BodyTerm::Leaf(LeafTerm::Literal { value, .. }) = divisor.body() else {
+            panic!("the divisor node is a literal");
+        };
+        divisor_targets.push(target.clone());
+        divisor_values.push(value.clone());
+    }
+    let shared = divisor_targets
+        .iter()
+        .find(|target| {
+            divisor_targets
+                .iter()
+                .filter(|other| *other == *target)
+                .count()
+                == 2
+        })
+        .expect("p1's two quotients share the 3 ms literal node");
+    let shared_index = divisor_targets
+        .iter()
+        .position(|target| target == shared)
+        .expect("the shared literal is in the divisor list");
+    assert_eq!(
+        divisor_values[shared_index],
+        LiteralValue::Quantity(fraction(3, 1))
+    );
+    assert!(divisor_values.contains(&LiteralValue::Quantity(fraction(-3, 1))));
+    assert!(divisor_values.contains(&LiteralValue::Quantity(fraction(1, 2))));
+
+    let converted_divisions: Vec<_> = divisions
+        .iter()
+        .filter(|division| {
+            let result = graph
+                .node(
+                    division
+                        .result_type
+                        .admitted()
+                        .expect("a quotient type")
+                        .clone(),
+                )
+                .expect("the quotient unit");
+            matches!(result.body(), BodyTerm::Aggregate(terms) if !terms.members.is_empty())
+        })
+        .collect();
+    assert_eq!(
+        converted_divisions.len(),
+        3,
+        "p2, p3 and p4 have velocity quotients"
+    );
+    assert!(converted_divisions
+        .iter()
+        .all(|division| division.result_type == converted_divisions[0].result_type));
+    let conversions: Vec<_> = graph
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.quantity.convert" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(conversions.len(), 3, "p2, p3 and p4 convert to mps");
+    for conversion in conversions {
+        let Some(Member::TypeArgument { declaration, .. }) = conversion.operation.member() else {
+            panic!("conversion names its target unit");
+        };
+        let target = graph.node(declaration.clone()).expect("the target unit");
+        assert_eq!(target.semantic_form(), "unit");
+        assert_eq!(
+            target
+                .declaration()
+                .expect("target declaration")
+                .iter()
+                .map(|segment| segment.as_str())
+                .collect::<Vec<_>>(),
+            ["mps"]
+        );
+    }
+
+    assert!(truth_at_many(
+        &package,
+        "p1",
+        &[fraction(6, 1), fraction(6, 1)]
+    ));
+    assert!(!truth_at_many(
+        &package,
+        "p1",
+        &[fraction(6, 1), fraction(3, 1)]
+    ));
+    assert!(truth_at_many(
+        &package,
+        "p2",
+        &[fraction(6, 1), fraction(2000, 1)]
+    ));
+    assert!(truth_at_many(
+        &package,
+        "p3",
+        &[fraction(6, 1), fraction(-2000, 1)]
+    ));
+    assert!(truth_at_many(
+        &package,
+        "p4",
+        &[fraction(6, 1), fraction(12, 1)]
+    ));
+    assert!(truth_at_many(
+        &package,
+        "p5",
+        &[fraction(6000, 1), fraction(6000, 1)]
+    ));
+    assert!(!truth_at_many(
+        &package,
+        "p5",
+        &[fraction(6000, 1), fraction(3000, 1)]
+    ));
+    assert!(truth_at(&package, "p6", fraction(0, 1)));
+}
+
+/// FR-093-AC-37: direct and nested negations of nonzero literals prove a
+/// divisor nonzero, while zero, parameters, guarded values, locals and call
+/// results remain unproved at the division site.
+#[trace("FR-093-AC-37", "TC-483", "FSpec-FR-146-AC-9")]
+#[test]
+fn only_directly_negated_nonzero_quantity_literals_prove_divisors() {
+    let positive = package_with(&format!(
+        "{VELOCITY_UNITS}\
+         function z9 using v(d: Quantity<ms>): Boolean pure {{ d / -3 ms = -(d / 3 ms) }}\n\
+         function z10 using v(d: Quantity<ms>): Boolean pure {{ d / -(-(3 ms)) = d / 3 ms }}\n"
+    ))
+    .expect("direct and nested negations of a nonzero quantity literal are proved");
+    let graph = positive.graph().semantic_graph();
+    let divisions: Vec<_> = graph
+        .nodes()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.quantity.div" =>
+            {
+                Some(application)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        divisions.len(),
+        3,
+        "the two functions lower three shared quotients"
+    );
+    assert!(divisions.iter().all(|division| {
+        graph
+            .node(
+                division
+                    .result_type
+                    .admitted()
+                    .expect("a quotient type")
+                    .clone(),
+            )
+            .is_some_and(|unit| {
+                unit.semantic_form() == "compound_unit"
+                    && matches!(unit.body(), BodyTerm::Aggregate(terms) if terms.members.is_empty())
+            })
+    }));
+    assert!(truth_at(&positive, "z9", fraction(6, 1)));
+    assert!(truth_at(&positive, "z10", fraction(6, 1)));
+
+    let refused_functions = [
+        "function z1 using v(d: Quantity<ms>): Boolean pure { d / 0 ms = d / 3 ms }",
+        "function z2 using v(d: Quantity<ms>): Boolean pure { d / rational(0, 1) ms = d / 3 ms }",
+        "function z3 using v(d: Quantity<ms>): Boolean pure { d / decimal(0, 1) ms = d / 3 ms }",
+        "function z4 using v(d: Quantity<ms>): Boolean pure { d / rational(1, 0) ms = d / 3 ms }",
+        "function z5 using v(d: Quantity<ms>, e: Quantity<ms>): Boolean pure { d / e = d / 3 ms }",
+        "function z6 using v(d: Quantity<ms>, e: Quantity<ms>): Boolean pure { if e != 0 ms then d / e = d / 3 ms else true }",
+        "function z7 using v(d: Quantity<ms>): Boolean pure { let k = 3 ms in d / k = d / 3 ms }",
+        "function z8 using v(d: Quantity<ms>): Boolean pure { d / convert<Quantity<ms>>(3 s) = d / 3 ms }",
+        "function z11 using v(d: Quantity<ms>): Boolean pure { d / -(0 ms) = d / 3 ms }",
+        "function z12 using v(d: Quantity<ms>, e: Quantity<ms>): Boolean pure { d / -e = d / 3 ms }",
+        "function z13 using v(d: Quantity<ms>): Boolean pure { let k = 3 ms in d / -k = d / 3 ms }",
+        "function z14 using v(d: Quantity<ms>): Boolean pure { d / -divisor() = d / 3 ms }",
+    ];
+    for function in refused_functions {
+        let declarations = if function.contains("z14") {
+            "function divisor using v(): Quantity<ms> pure { 3 ms }\n"
+        } else {
+            ""
+        };
+        let (cause, locus) =
+            refusal_region_text(&format!("{VELOCITY_UNITS}{declarations}{function}"));
+        assert_eq!(
+            cause,
+            CheckCause::Unproved(Obligation::Nonzero),
+            "{function}: refusal is the specified undefined-expression obligation"
+        );
+        if function.contains("z4") {
+            assert_eq!(
+                locus, "rational(1, 0) ms",
+                "z4 refuses at its zero-denominator quantity literal"
+            );
+        } else {
+            assert!(
+                locus.contains("/"),
+                "{function} refusal locus is its first division: {locus}"
+            );
+        }
     }
 }
 
@@ -158,7 +804,7 @@ fn arithmetic_and_comparison_across_a_class_require_conversion() {
             assert!(
                 matches!(
                     refusals.as_slice(),
-                    [refusal] if refusal.cause == CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+                    [refusal] if refusal.cause.as_ref() == &CheckCause::IllTyped(IllTypedCause::TypeMismatch)
                 ),
                 "{expression} under {equivalence}: {refusals:?}"
             );

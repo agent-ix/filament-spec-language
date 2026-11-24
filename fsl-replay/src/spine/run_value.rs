@@ -21,7 +21,7 @@ use fsl_foundation::diagnostic::Code;
 use fsl_package::{EnumScope, SourceEnumCatalog, SourceEnumCatalogError};
 use fsl_semantics::check::EnumBinding;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use serde_json::{json, Map, Value as Json};
+use serde_json::{Map, Value as Json, json};
 
 #[cfg(test)]
 mod accounting_tests;
@@ -31,9 +31,9 @@ mod canonical;
 mod references;
 pub(crate) use crate::NormalizationReferenceBudget;
 pub(crate) use references::{
-    catalog_error_cause, catalog_error_code, catalog_refusal, reference_cancel_cause,
-    reference_error_cause, reference_error_code, reference_error_pointer, reference_refusal,
-    take_normalization_refusal, write_run_value, SuppliedReferenceAdmission,
+    SuppliedReferenceAdmission, catalog_error_cause, catalog_error_code, catalog_refusal,
+    reference_cancel_cause, reference_error_cause, reference_error_code, reference_error_pointer,
+    reference_refusal, take_normalization_refusal, write_run_value,
 };
 
 /// One argument defect: the catalog code and cause FR-650's table names, and
@@ -72,6 +72,9 @@ pub(crate) enum WriteStop {
     Refusal(Box<super::RunRefusal>),
 }
 
+type CanonicalValueWriter<'a> = dyn Fn(&Value) -> Result<Json, WriteStop> + 'a;
+type ReferenceRestorer<'a> = dyn Fn(&Json, usize, u64) -> Result<ObjectReference, ReadStop> + 'a;
+
 /// The declarations of one checked package a value form names.
 #[derive(Clone, Copy)]
 pub(crate) struct Forms<'a> {
@@ -81,7 +84,7 @@ pub(crate) struct Forms<'a> {
     own_package: &'a str,
     /// The call's object world, when the call names a snapshot.
     world: Option<&'a World<'a>>,
-    canonical_writer: Option<&'a dyn Fn(&Value) -> Result<Json, WriteStop>>,
+    canonical_writer: Option<&'a CanonicalValueWriter<'a>>,
 }
 
 #[derive(Clone, Copy)]
@@ -106,8 +109,7 @@ pub(crate) struct World<'a> {
     pub objects: &'a ObjectEnvironment,
     /// The universe of the objects of a declared object type.
     pub universe_of: &'a dyn Fn(&EffectiveId) -> Option<UniverseId>,
-    pub restore_reference:
-        Option<&'a dyn Fn(&Json, usize, u64) -> Result<ObjectReference, ReadStop>>,
+    pub restore_reference: Option<&'a ReferenceRestorer<'a>>,
 }
 
 impl<'a> Forms<'a> {
@@ -796,7 +798,7 @@ impl<'a> Forms<'a> {
     fn enum_cases<'s>(
         &'s self,
         shape: &'s filament_exact::EnumShape,
-    ) -> Result<(&str, &'s filament_exact::EnumShape), ReadStop> {
+    ) -> Result<(&'s str, &'s filament_exact::EnumShape), ReadStop> {
         let name = self
             .source_enum_name(EnumQuery::Shape(shape))
             .map_err(ReadStop::Refusal)?;
@@ -898,7 +900,21 @@ impl<'a> Forms<'a> {
             .composites()
             .find(|candidate| declaration_name(candidate) == named)
             .map(filament_semantic_value::declaration::CompositeDeclaration::key)
-            .filter(|own| self.types.composite_conforms(own.clone(), declared.clone()))
+            .filter(|own| {
+                // Composite conformance excludes unions even reflexively;
+                // exact identity still admits a value of its declared union.
+                let exact_union = own == declared
+                    && self
+                        .types
+                        .composite(own.clone())
+                        .is_some_and(|declaration| {
+                            matches!(
+                                declaration.shape(),
+                                filament_semantic_value::declaration::CompositeShape::Union(_)
+                            )
+                        });
+                exact_union || self.types.composite_conforms(own.clone(), declared.clone())
+            })
             .ok_or_else(|| wrong_kind_at2(path, tag, "type"))?;
         Ok(own)
     }

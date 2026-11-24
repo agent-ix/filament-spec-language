@@ -30,10 +30,10 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::model::observation::Observation;
 
-use super::contracts::{verdict, Verdict};
+use super::contracts::{Verdict, verdict};
 use super::reference_bindings::ReferenceBinding;
-use super::walk::{rows_of, stop, Row};
-use super::{state_document, ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
+use super::walk::{Row, rows_of, stop};
+use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem, state_document};
 use crate::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use crate::simulation::StateKey;
 use crate::temporal::{AtomReading, CaptureReading};
@@ -219,7 +219,7 @@ impl<'a> ModelSystem<'a> {
                     self.types,
                     &self.populations,
                     &self.universes,
-                    &self.initial,
+                    &self.initial_base,
                     &budget,
                 )?)
             }
@@ -285,7 +285,7 @@ impl<'a> ModelSystem<'a> {
                     self.types,
                     &self.populations,
                     &self.universes,
-                    &self.initial,
+                    &self.initial_base,
                 )
                 .map_err(LettersRefusal::ReferenceBindingsAdmission)?
             }
@@ -297,7 +297,7 @@ impl<'a> ModelSystem<'a> {
                     self.types,
                     &self.populations,
                     &self.universes,
-                    &self.initial,
+                    &self.initial_base,
                 )
                 .map_err(LettersRefusal::ReferenceBindingsAdmission)?,
             (ClauseSource::Source(_), None) => self.reference_bindings.clone(),
@@ -577,7 +577,7 @@ impl ClauseLetters<'_, '_> {
     fn key_reference(&self, instance: &ModelInstance) -> Result<ObjectReference, AtomStop> {
         self.system
             .model
-            .object_reference(&self.type_key, &instance.key)
+            .object_reference(self.type_key, &instance.key)
             .map_err(|_| fault("instance-key-names-a-reference"))
     }
 

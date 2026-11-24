@@ -48,10 +48,10 @@ use filament_checked::node::{
     Arithmetic, CheckedLiteral, Connective, ConnectiveOrigin, NodeKind, OrderedKind, RecordField,
     RecordSlot, Visit,
 };
-use fsl_foundation::source::node_table::{
-    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList,
-};
 use fsl_foundation::Span;
+use fsl_foundation::source::node_table::{
+    DebugTable, DebugWith, NodeKeyDebug, NodeList, standalone,
+};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -62,7 +62,7 @@ mod integer_division_range;
 mod modulo_interval;
 mod native_literal;
 mod typing;
-use typing::{is_option_some_constructor, TypedOperand};
+use typing::{TypedOperand, is_option_some_constructor};
 
 use super::ir::{BodyBuilder, DispatchTable, EqualityProducerData, Node, NodeId, Slot};
 use super::model_spelling::{ModelSpellings, Spelled};
@@ -72,8 +72,8 @@ use super::refusal::{
     IdentityObserving, KeyFault, Obligation, ReservedSlotName, SlotTag, StageLimitCause,
 };
 use crate::model::operation::OperationTable;
-use crate::value::definition::{admit_ieee_profile, AdmittedIeeeProfile, DefinitionRole};
-use crate::value::enumeration::{mint_variant_id, AdmittedEnumDeclaration};
+use crate::value::definition::{AdmittedIeeeProfile, DefinitionRole, admit_ieee_profile};
+use crate::value::enumeration::{AdmittedEnumDeclaration, mint_variant_id};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
 use filament_exact::EffectiveId;
@@ -90,8 +90,8 @@ use filament_exact::{Value, ValueType};
 use filament_semantic_value::absence::AbsenceMode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
-    admits_equality_conversion, CompositeShape, EqualityOperand, EqualityOperator,
-    FieldDeclaration, StorageRequest, StorageUnit, TypeEnvironment,
+    CompositeShape, EqualityOperand, EqualityOperator, FieldDeclaration, StorageRequest,
+    StorageUnit, TypeEnvironment, admits_equality_conversion,
 };
 use filament_semantic_value::enumeration::{EnumDeclaration, EnumMemberIndex, EnumValue};
 use filament_semantic_value::location::{
@@ -99,8 +99,8 @@ use filament_semantic_value::location::{
 };
 use filament_semantic_value::quantity::UnitTable;
 use filament_semantic_value::quantity::{
-    check_comparable, evaluate_quantity_unit, result_unit, IdentifiedUnit, QuantityOperation,
-    QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
+    IdentifiedUnit, QuantityOperation, QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
+    check_comparable, evaluate_quantity_unit, result_unit,
 };
 use fsl_forms::{
     Accumulation, BinaryOperator, BinderQuery, ClauseKind, ExprId, ExprNode, ExprRef,
@@ -377,7 +377,8 @@ pub struct PackageDeclarations {
     /// conformance stage continues.
     pub model_inputs: Option<(
         Vec<crate::model::intake::SelectedModel>,
-        crate::model::accounting::Meter,
+        std::collections::BTreeMap<String, String>,
+        crate::model::accounting::NormalizationMeter,
     )>,
     /// Exact identity rows minted by model intake, kept alongside this
     /// package's checked declarations for IR projection after admission.
@@ -780,14 +781,20 @@ impl PackageDeclarations {
         identity: fsl_foundation::IdentityLimits,
         selected: crate::model::intake::SelectedModels,
     ) -> Self {
-        let (entries, meter, exact_declarations, exact_fields, tuple_declarations) =
-            selected.into_parts();
+        let crate::model::intake::SelectedModelsParts {
+            entries,
+            versions,
+            meter,
+            exact_declarations,
+            exact_fields,
+            tuple_declarations,
+        } = selected.into_parts();
         let mut declarations = Self::new(source, package_name, identity);
         declarations.models = entries
             .iter()
             .map(|entry| super::AdmittedModel::from_view(&entry.view))
             .collect();
-        declarations.model_inputs = Some((entries, meter));
+        declarations.model_inputs = Some((entries, versions, meter));
         declarations.selected_exact_identity_rows = (exact_declarations, exact_fields);
         declarations.selected_tuple_declaration_rows = tuple_declarations;
         declarations
@@ -2186,8 +2193,10 @@ impl Scope {
             location: Location::root(
                 filament_semantic_value::location::ExpressionOwner::Expression,
             ),
-            cause: CheckCause::InternalFault(Box::new(super::refusal::KeyFault::StageFault(
-                filament_semantic_value::catalog::InternalFault::new("S3", invariant),
+            cause: Box::new(CheckCause::InternalFault(Box::new(
+                super::refusal::KeyFault::StageFault(
+                    filament_semantic_value::catalog::InternalFault::new("S3", invariant),
+                ),
             ))),
         };
         let unions: Vec<(filament_exact::NodeKey, Vec<String>)> = self
@@ -2349,8 +2358,8 @@ impl Scope {
                 Some(
                     admit_ieee_profile(&[definition], &[]).map_err(|cause| CheckRefusal {
                         location: Location::root(Origin::Expression),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::IeeeProfileAdmission(
-                            cause,
+                        cause: Box::new(CheckCause::InternalFault(Box::new(
+                            KeyFault::IeeeProfileAdmission(cause),
                         ))),
                     })?,
                 );
@@ -2492,6 +2501,8 @@ pub(crate) struct Typer<'a> {
     limits: CheckingLimits,
     nodes: &'a mut u64,
     integer_division_work: u64,
+    /// Whether the current expression is a Set/Bag fold step (FR-701).
+    min_max_fold_step: bool,
     /// Let slots whose bound integer value lowers at Integer despite a
     /// bounded checked type. Slots are unique throughout this typing pass.
     integer_lowered_locals: BTreeSet<Slot>,
@@ -2742,6 +2753,11 @@ pub(crate) struct StateContext {
     pub(crate) kind: fsl_forms::StateClauseKind,
     /// The operation's name, for a `pre` or `post` clause.
     pub(crate) operation: Option<String>,
+    /// The operation designator exactly as written in the state clause
+    /// header. Qualified operation-parameter reads are valid only for this
+    /// active designator (including an inherited operation on the current
+    /// subtype).
+    pub(crate) authored_operation: Option<String>,
     /// The slot `self` reads.
     pub(crate) self_slot: Slot,
     /// The slot `result` reads: only in a postcondition of an operation
@@ -2767,7 +2783,7 @@ pub(super) const NO_CHARGE: filament_exact::ScalarLimits = filament_exact::Scala
 fn refuse(location: &Location, cause: CheckCause) -> CheckRefusal {
     CheckRefusal {
         location: location.clone(),
-        cause,
+        cause: Box::new(cause),
     }
 }
 
@@ -2886,11 +2902,11 @@ fn operand_mismatch(
 ) -> CheckRefusal {
     CheckRefusal {
         location: location.clone(),
-        cause: CheckCause::OperandTypeMismatch {
+        cause: Box::new(CheckCause::OperandTypeMismatch {
             operator,
             left_type: Box::new(left_type),
             right_type: Box::new(right_type),
-        },
+        }),
     }
 }
 
@@ -3230,6 +3246,7 @@ impl<'a> Typer<'a> {
             limits,
             nodes,
             integer_division_work: 0,
+            min_max_fold_step: false,
             integer_lowered_locals: BTreeSet::new(),
             cancel: None,
             locals: Vec::new(),
@@ -3449,16 +3466,16 @@ impl<'a> Typer<'a> {
             StageFailure::RefusedWithPayload(refusal, _) => *refusal,
             StageFailure::Limit(limit) => CheckRefusal {
                 location: location.clone(),
-                cause: super::limit_cause(&limit),
+                cause: Box::new(super::limit_cause(&limit)),
             },
             StageFailure::LimitWithPayload(limit, _) => CheckRefusal {
                 location: location.clone(),
-                cause: super::limit_cause(&limit),
+                cause: Box::new(super::limit_cause(&limit)),
             },
             StageFailure::Fault(fault) => CheckRefusal {
                 location: location.clone(),
-                cause: CheckCause::InternalFault(Box::new(super::refusal::KeyFault::StageFault(
-                    fault,
+                cause: Box::new(CheckCause::InternalFault(Box::new(
+                    super::refusal::KeyFault::StageFault(fault),
                 ))),
             },
             StageFailure::Cancelled(_) => super::state_model::fault(location),
@@ -3587,7 +3604,7 @@ impl<'a> Typer<'a> {
         site: Option<(&Location, usize)>,
     ) -> Result<Slot, CheckRefusal> {
         if let Some(mut refusal) = reserved_slot_refusal(name, None, location) {
-            if let CheckCause::ReservedSlotName(cause) = &mut refusal.cause {
+            if let CheckCause::ReservedSlotName(cause) = refusal.cause.as_mut() {
                 cause.binder = site.map(|(node, ordinal)| (node.clone(), ordinal));
             }
             return Err(refusal);
@@ -3607,13 +3624,15 @@ impl<'a> Typer<'a> {
             ));
         }
         if let Some(existing) = self.local(name) {
-            return Err(refuse(
-                location,
-                CheckCause::AmbiguousName {
-                    name: name.to_owned(),
-                    loci: vec![existing.location.clone(), location.clone()],
-                },
-            ));
+            if !(kind == LocalKind::Bound && existing.kind == LocalKind::Parameter) {
+                return Err(refuse(
+                    location,
+                    CheckCause::AmbiguousName {
+                        name: name.to_owned(),
+                        loci: vec![existing.location.clone(), location.clone()],
+                    },
+                ));
+            }
         }
         let slot = self.slots;
         self.slots = self.slots.saturating_add(1);
@@ -3631,8 +3650,13 @@ impl<'a> Typer<'a> {
 
     fn unbind(&mut self, count: usize) {
         let keep = self.locals.len().saturating_sub(count);
-        for local in self.locals.drain(keep..) {
-            self.local_names.remove(&local.name);
+        let removed: Vec<String> = self.locals.drain(keep..).map(|local| local.name).collect();
+        for name in removed {
+            if let Some(previous) = self.locals.iter().rposition(|bound| bound.name == name) {
+                self.local_names.insert(name, previous);
+            } else {
+                self.local_names.remove(&name);
+            }
         }
     }
 
@@ -4171,6 +4195,27 @@ impl<'a> Typer<'a> {
                 location,
             ));
         }
+        if let Some((operation, parameter)) = name.rsplit_once("::") {
+            if self
+                .state
+                .as_ref()
+                .and_then(|state| state.authored_operation.as_deref())
+                == Some(operation)
+            {
+                if let Some(local) = self
+                    .locals
+                    .iter()
+                    .rev()
+                    .find(|local| local.name == parameter && local.kind == LocalKind::Parameter)
+                {
+                    return Ok(node(
+                        NodeKind::Local(local.slot),
+                        local.value_type.clone(),
+                        location,
+                    ));
+                }
+            }
+        }
         let members: Vec<(&EnumBinding, &EnumValue)> =
             self.scope.enum_members_named(name).collect();
         match members.as_slice() {
@@ -4368,17 +4413,35 @@ impl<'a> Typer<'a> {
                 operand.stored = integer;
             }
         }
-        let check = |left: &EqualityOperand, right: &EqualityOperand| {
+        let conversion_location = if left.conversion_target.is_some() {
+            Some(left.node.location.clone())
+        } else if right.conversion_target.is_some() {
+            Some(right.node.location.clone())
+        } else {
+            None
+        };
+        let check = |left_equivalent: &EqualityOperand, right_equivalent: &EqualityOperand| {
             self.scope
                 .types
                 .check_equality_in(
                     &self.units,
                     operator,
-                    left.clone(),
-                    right.clone(),
+                    left_equivalent.clone(),
+                    right_equivalent.clone(),
                     &|shape: &EnumShape| self.scope.enum_members_of(shape),
                 )
-                .map_err(|refusal| CheckRefusal::from_ill_typed(location, refusal))
+                .map_err(|refusal| {
+                    // A type mismatch discovered while admitting an explicit
+                    // equality conversion belongs to that conversion operand,
+                    // whose target is part of the authored operation. Keep
+                    // other equality refusals at the equality expression.
+                    let refusal_location = if refusal.cause == IllTypedCause::TypeMismatch {
+                        conversion_location.as_ref().unwrap_or(location)
+                    } else {
+                        location
+                    };
+                    CheckRefusal::from_ill_typed(refusal_location, refusal)
+                })
         };
         let mut checked = check(&left.checked, &right.checked)?;
         if (&left.stored, &right.stored) != (&left.checked, &right.checked) {
@@ -4429,34 +4492,43 @@ impl<'a> Typer<'a> {
                     .get(unit_id.clone())
                     .ok_or_else(|| CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::UnheldUnit(unit_id))),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::UnheldUnit(
+                            unit_id,
+                        )))),
                     })?;
                 units.insert(unit.clone()).map_err(|refusal| CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::Identity(refusal),
+                    cause: Box::new(CheckCause::Identity(refusal)),
                 })?;
             }
         }
         let mut unit_type_facts = Vec::new();
         let mut operand_type_facts = Vec::new();
-        for (operand_position, operand) in [(0, &left), (1, &right)] {
-            let mut typed_roles = vec![(
-                &operand.source_type,
-                super::ir::EqualityUnitOperandRole::Source,
-            )];
-            if operand.conversion_target.is_some() {
-                typed_roles.push((
-                    &operand.node.value_type,
-                    super::ir::EqualityUnitOperandRole::ConversionTarget,
-                ));
-            }
+        for (operand_position, source_type, conversion_target, node_type) in [
+            (
+                0,
+                left.source_type,
+                left.conversion_target,
+                &left.node.value_type,
+            ),
+            (
+                1,
+                right.source_type,
+                right.conversion_target,
+                &right.node.value_type,
+            ),
+        ] {
+            let typed_roles =
+                std::iter::once((source_type, super::ir::EqualityUnitOperandRole::Source)).chain(
+                    conversion_target.map(|_| {
+                        (
+                            node_type.clone(),
+                            super::ir::EqualityUnitOperandRole::ConversionTarget,
+                        )
+                    }),
+                );
             for (value_type, role) in typed_roles {
-                operand_type_facts.push(super::ir::EqualityOperandTypeFact {
-                    operand_position,
-                    role,
-                    value_type: value_type.clone(),
-                });
-                let unit_id = match value_type {
+                let unit_id = match &value_type {
                     ValueType::Quantity(unit) => Some(unit.clone()),
                     ValueType::BoundedQuantity(quantity) => Some(quantity.unit().clone()),
                     ValueType::CarriedQuantity(quantity) => Some(quantity.unit().clone()),
@@ -4466,8 +4538,8 @@ impl<'a> Typer<'a> {
                     if !units.ids().any(|held| held == unit_id) {
                         return Err(CheckRefusal {
                             location: location.clone(),
-                            cause: CheckCause::InternalFault(Box::new(KeyFault::UnheldUnit(
-                                unit_id,
+                            cause: Box::new(CheckCause::InternalFault(Box::new(
+                                KeyFault::UnheldUnit(unit_id),
                             ))),
                         });
                     }
@@ -4478,13 +4550,20 @@ impl<'a> Typer<'a> {
                         value_type: value_type.clone(),
                     });
                 }
+                operand_type_facts.push(super::ir::EqualityOperandTypeFact {
+                    operand_position,
+                    role,
+                    value_type,
+                });
             }
         }
+        let authored_operands = [left.authored, right.authored];
+        let compared_operands = [left.stored, right.stored];
         let producer = EqualityProducerData {
             operator,
             schedule: checked.schedule(),
-            authored_operands: [left.authored.clone(), right.authored.clone()],
-            compared_operands: [left.stored.clone(), right.stored.clone()],
+            authored_operands,
+            compared_operands,
             operand_type_facts,
             units,
             unit_type_facts,
@@ -4762,31 +4841,24 @@ impl<'a> Typer<'a> {
                     ValueType::Quantity(unit.clone()),
                 )
             }
-            (l, r, ArithmeticOperator::Divide) if is_integer(l) && is_integer(r) => {
-                if !self.complete_value {
+            (l, r, ArithmeticOperator::Divide) if is_integer(l) && is_integer(r) => match hint {
+                Some(ValueType::Rational(domain)) if self.complete_value => (
+                    NodeKind::Divide {
+                        left: left_box,
+                        right: right_box,
+                        domain: domain.clone(),
+                    },
+                    ValueType::Rational(domain.clone()),
+                ),
+                Some(ValueType::Rational(_)) => {
                     return Err(refuse(
                         location,
                         CheckCause::ProfileProhibitedOperator(BinaryOperator::Divide),
                     ));
                 }
-                match hint {
-                    Some(ValueType::Rational(domain)) => (
-                        NodeKind::Divide {
-                            left: left_box,
-                            right: right_box,
-                            domain: domain.clone(),
-                        },
-                        ValueType::Rational(domain.clone()),
-                    ),
-                    Some(_) => return Err(mismatch(location)),
-                    None => {
-                        return Err(CheckRefusal::ill_typed(
-                            location,
-                            IllTypedCause::AmbiguousLiteral,
-                        ));
-                    }
-                }
-            }
+                Some(_) => return Err(mismatch(location)),
+                None => return Err(mismatch(location)),
+            },
             (l, r, _) if is_integer(l) && is_integer(r) => {
                 // `Divide` is taken by the preceding arm; naming it here keeps
                 // a later change from silently lowering `/` as `*`.
@@ -4877,7 +4949,7 @@ impl<'a> Typer<'a> {
                     .map_err(|refusal| CheckRefusal::from_ill_typed(location, refusal))?;
                 let unit = IdentifiedUnit::new(unit).map_err(|refusal| CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::Identity(refusal),
+                    cause: Box::new(CheckCause::Identity(refusal)),
                 })?;
                 (
                     NodeKind::Quantity(operator, left_box, right_box),
@@ -4893,11 +4965,11 @@ impl<'a> Typer<'a> {
                 };
                 return Err(CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::OperandTypeMismatch {
+                    cause: Box::new(CheckCause::OperandTypeMismatch {
                         operator,
                         left_type: Box::new(left_type),
                         right_type: Box::new(right_type),
-                    },
+                    }),
                 });
             }
         };
@@ -4935,7 +5007,7 @@ impl<'a> Typer<'a> {
             QuantityRefusal::IllTyped(_) => ineligible(location),
             QuantityRefusal::Identity(refusal) => CheckRefusal {
                 location: location.clone(),
-                cause: CheckCause::Identity(refusal),
+                cause: Box::new(CheckCause::Identity(refusal)),
             },
         })?;
         let base = self.push(operand);
@@ -5020,7 +5092,7 @@ impl<'a> Typer<'a> {
                     QuantityRefusal::IllTyped(_) => ineligible(location),
                     QuantityRefusal::Identity(refusal) => CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::Identity(refusal),
+                        cause: Box::new(CheckCause::Identity(refusal)),
                     },
                 })?;
                 (
@@ -5165,7 +5237,7 @@ impl<'a> Typer<'a> {
         field == "step"
             && self
                 .name(&name.name, None, &Location::root(Origin::Expression))
-                .is_err_and(|refusal| matches!(refusal.cause, CheckCause::MissingName(_)))
+                .is_err_and(|refusal| matches!(refusal.cause.as_ref(), CheckCause::MissingName(_)))
     }
 
     /// `comparison`, located at `location`, when it is `p = absent` or `p
@@ -6251,6 +6323,12 @@ impl<'a> Typer<'a> {
         form: IdentityForm,
         operand: &ValueType,
     ) -> Option<CheckRefusal> {
+        // FR-150 applies to checked clauses and refinement rows. Function
+        // bodies are type-checked with the same model scope, but their rules
+        // are deliberately unaffected by a population annotation (FR-150-AC-7).
+        if self.clause_kind == ClauseKind::Body {
+            return None;
+        }
         let population = self.scope.symmetric_population_in(operand)?.clone();
         Some(refuse(
             location,
@@ -6370,7 +6448,7 @@ impl<'a> Typer<'a> {
                 | ValueType::Rational(_)
                 | ValueType::Decimal(_),
             ) => {
-                use super::numeric_conversion::{classify, Class};
+                use super::numeric_conversion::{Class, classify};
                 let class = classify(&operand.value_type, target).ok_or_else(|| {
                     CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible)
                 })?;
@@ -6630,6 +6708,25 @@ impl<'a> Typer<'a> {
                     location,
                 )
             }
+            BinderQuery::Only => {
+                if source_type.kind() != filament_exact::CollectionKind::Set
+                    || !matches!(source_type.element(), ValueType::ClockReference)
+                {
+                    return Err(mismatch(location));
+                }
+                let value_type = body.value_type.clone();
+                node(
+                    NodeKind::Query {
+                        visit: Visit::Only,
+                        slot,
+                        name: self.slot_name(slot, location)?,
+                        source: self.push(source),
+                        body: self.push(body),
+                    },
+                    value_type,
+                    location,
+                )
+            }
         };
         self.unbind(1);
         Ok(typed)
@@ -6827,15 +6924,53 @@ impl Typer<'_> {
     }
 }
 
-/// Whether a well-typed step is in the FR-145 set-and-bag catalog: `acc OP t`
-/// or `t OP acc`, `acc` not in `t`, `t` of type `A`, and `+` or `*` on
-/// `Integer` or `and` or `or` on `Boolean`.
+/// Whether a well-typed step is in the FR-145 set-and-bag catalog: arithmetic
+/// and Boolean operators, or scalar min/max over an ordered accumulator.
 fn catalogued_step(
     body: &BodyBuilder,
     step: &Node,
     accumulator: Slot,
     value_type: &ValueType,
 ) -> bool {
+    if let NodeKind::If {
+        condition,
+        then,
+        otherwise,
+    } = &step.kind
+    {
+        let (Some(condition), Some(then), Some(otherwise)) =
+            (body.get(*condition), body.get(*then), body.get(*otherwise))
+        else {
+            return false;
+        };
+        let NodeKind::Order(OrderingOperator::Less, _, left, right) = &condition.kind else {
+            return false;
+        };
+        let (Some(left_node), Some(right_node)) = (body.get(*left), body.get(*right)) else {
+            return false;
+        };
+        let is_accumulator =
+            |operand: &Node| matches!(operand.kind, NodeKind::Local(slot) if slot == accumulator);
+        let other_node = if is_accumulator(left_node) {
+            right_node
+        } else if is_accumulator(right_node) {
+            left_node
+        } else {
+            return false;
+        };
+        let NodeKind::Local(other_slot) = &other_node.kind else {
+            return false;
+        };
+        let branch_is_accumulator = |operand: &Node| is_accumulator(operand);
+        let branch_is_other =
+            |operand: &Node| matches!(operand.kind, NodeKind::Local(slot) if slot == *other_slot);
+        if !((branch_is_accumulator(then) && branch_is_other(otherwise))
+            || (branch_is_other(then) && branch_is_accumulator(otherwise)))
+        {
+            return false;
+        }
+        return true;
+    }
     let (left, right) = match (&step.kind, value_type) {
         (
             NodeKind::Arithmetic(Arithmetic::Add | Arithmetic::Multiply, left, right),

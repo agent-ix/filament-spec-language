@@ -497,7 +497,9 @@ mod tests {
         use filament_semantic_value::checking::{CheckMode, CheckingLimits};
         use fsl_semantics::check::PackageDeclarations;
         use fsl_semantics::library::LibraryName;
-        let source = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{declarations}");
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{declarations}"
+        );
         let parsed = fsl_cst::parse(
             fsl_foundation::SourceIdentity::new("fixture", name),
             "unit.native",

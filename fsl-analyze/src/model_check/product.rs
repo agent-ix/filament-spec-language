@@ -5,6 +5,7 @@ use fsl_eval::simulation::{
     Expansion, ExpansionStop, Footprint, OfferedReductions, TransitionSystem,
 };
 use quire_canonical::{Encode, Sink, Writer};
+use quire_canonical_api as canonical_api;
 
 /// Both components of a product state, preserved independently.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,15 +24,187 @@ pub struct ProductKey<M, P> {
     pub property: P,
 }
 
+trait ProductKeyWriter<M, P> {
+    type Error;
+
+    fn begin_array(&mut self) -> Result<(), Self::Error>;
+    fn model(&mut self, model: &M) -> Result<(), Self::Error>;
+    fn property(&mut self, property: &P) -> Result<(), Self::Error>;
+    fn end_array(&mut self) -> Result<(), Self::Error>;
+}
+
+fn encode_product_key<W, M, P>(writer: &mut W, model: &M, property: &P) -> Result<(), W::Error>
+where
+    W: ProductKeyWriter<M, P>,
+{
+    writer.begin_array()?;
+    writer.model(model)?;
+    writer.property(property)?;
+    writer.end_array()
+}
+
+impl<S: Sink + ?Sized, M: Encode, P: Encode> ProductKeyWriter<M, P>
+    for quire_canonical::Writer<'_, S>
+{
+    type Error = quire_canonical::Error;
+
+    fn begin_array(&mut self) -> Result<(), Self::Error> {
+        Writer::begin_array(self)
+    }
+
+    fn model(&mut self, model: &M) -> Result<(), Self::Error> {
+        model.encode_into(self)
+    }
+
+    fn property(&mut self, property: &P) -> Result<(), Self::Error> {
+        property.encode_into(self)
+    }
+
+    fn end_array(&mut self) -> Result<(), Self::Error> {
+        Writer::end_array(self)
+    }
+}
+
+impl<S: canonical_api::Sink + ?Sized, M: canonical_api::Encode, P: canonical_api::Encode>
+    ProductKeyWriter<M, P> for canonical_api::Writer<'_, S>
+{
+    type Error = canonical_api::Error;
+
+    fn begin_array(&mut self) -> Result<(), Self::Error> {
+        canonical_api::Writer::begin_array(self)
+    }
+
+    fn model(&mut self, model: &M) -> Result<(), Self::Error> {
+        model.encode_into(self)
+    }
+
+    fn property(&mut self, property: &P) -> Result<(), Self::Error> {
+        property.encode_into(self)
+    }
+
+    fn end_array(&mut self) -> Result<(), Self::Error> {
+        canonical_api::Writer::end_array(self)
+    }
+}
+
 impl<M: Encode, P: Encode> Encode for ProductKey<M, P> {
     fn encode_into<S: Sink + ?Sized>(
         &self,
         writer: &mut Writer<'_, S>,
     ) -> Result<(), quire_canonical::Error> {
-        writer.begin_array()?;
-        self.model.encode_into(writer)?;
-        self.property.encode_into(writer)?;
-        writer.end_array()
+        encode_product_key(writer, &self.model, &self.property)
+    }
+}
+
+impl<M: canonical_api::Encode, P: canonical_api::Encode> canonical_api::Encode
+    for ProductKey<M, P>
+{
+    fn encode_into<S: canonical_api::Sink + ?Sized>(
+        &self,
+        writer: &mut canonical_api::Writer<'_, S>,
+    ) -> Result<(), canonical_api::Error> {
+        encode_product_key(writer, &self.model, &self.property)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CanonicalValueRef<'a>(&'a canonical_api::CanonicalValue);
+
+impl canonical_api::Encode for CanonicalValueRef<'_> {
+    fn encode_into<S: canonical_api::Sink + ?Sized>(
+        &self,
+        writer: &mut canonical_api::Writer<'_, S>,
+    ) -> Result<(), canonical_api::Error> {
+        writer.canonical_value(self.0)
+    }
+}
+
+impl<P: canonical_api::Encode> ProductKey<canonical_api::CanonicalValue, P> {
+    /// Encode a product key through its typed encoder, reusing a validated
+    /// canonical model key.
+    pub(crate) fn canonical_bytes_with_model_value(
+        model: &canonical_api::CanonicalValue,
+        property: P,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>, quire_canonical::Error> {
+        let key = ProductKey {
+            model: CanonicalValueRef(model),
+            property,
+        };
+        let mut bytes = Vec::new();
+        canonical_api::encode_in_order_with_reservation(
+            &mut bytes,
+            &key,
+            canonical_api::Limits::new(max_bytes),
+            &mut Unmetered,
+        )
+        .map_err(legacy_error)?;
+        Ok(bytes)
+    }
+}
+
+impl<P: canonical_api::Encode> ProductKey<canonical_api::CanonicalValue, P> {
+    /// Validate bytes previously returned by the canonical state-key encoder.
+    pub(crate) fn read_model_value(
+        model: &[u8],
+        max_input_bytes: u64,
+    ) -> Result<canonical_api::CanonicalValue, quire_canonical::Error> {
+        canonical_api::CanonicalValue::new(model, max_input_bytes).map_err(|error| match error {
+            canonical_api::CanonicalValueError::Read(canonical_api::ReadError::Limit(limit)) => {
+                legacy_error(canonical_api::Error::Limit(limit))
+            }
+            canonical_api::CanonicalValueError::Read(canonical_api::ReadError::Allocation {
+                requested,
+            }) => quire_canonical::Error::Allocation { requested },
+            canonical_api::CanonicalValueError::Encode(error) => legacy_error(error),
+            canonical_api::CanonicalValueError::Read(_)
+            | canonical_api::CanonicalValueError::NotCanonical => {
+                quire_canonical::Error::Internal {
+                    invariant: "canonical-model-key-can-be-read",
+                }
+            }
+            _ => quire_canonical::Error::Internal {
+                invariant: "canonical-model-key-error-is-classified",
+            },
+        })
+    }
+}
+
+fn legacy_error(error: canonical_api::Error) -> quire_canonical::Error {
+    match error {
+        canonical_api::Error::Limit(limit) => {
+            quire_canonical::Error::Limit(quire_canonical::LimitExceeded {
+                kind: match limit.kind {
+                    canonical_api::LimitKind::CanonicalBytes => {
+                        quire_canonical::LimitKind::CanonicalBytes
+                    }
+                    canonical_api::LimitKind::InputBytes => quire_canonical::LimitKind::InputBytes,
+                    canonical_api::LimitKind::WorkingBytes => {
+                        quire_canonical::LimitKind::WorkingBytes
+                    }
+                    canonical_api::LimitKind::ObjectBytes => {
+                        quire_canonical::LimitKind::ObjectBytes
+                    }
+                    _ => quire_canonical::LimitKind::CanonicalBytes,
+                },
+                bound: limit.bound,
+                required: limit.required,
+            })
+        }
+        canonical_api::Error::Allocation { requested } => {
+            quire_canonical::Error::Allocation { requested }
+        }
+        _ => quire_canonical::Error::Internal {
+            invariant: "canonical-api-error-maps-to-legacy-refusal",
+        },
+    }
+}
+
+struct Unmetered;
+
+impl canonical_api::Reservation for Unmetered {
+    fn reserve(&mut self, _bytes: usize) -> Result<(), canonical_api::ReservationDenied> {
+        Ok(())
     }
 }
 
@@ -86,8 +259,8 @@ pub trait PropertyComponent<M: TransitionSystem> {
     /// Findings exposed without interpretation by the product.
     type Finding: Clone + Eq + std::fmt::Debug;
 
-    /// States after reading the model's initial position.
-    fn initial(&self, model: &M::State) -> Vec<Self::State>;
+    /// States after reading the model's initial position, yielded on demand.
+    fn initial(&self, model: &M::State) -> impl Iterator<Item = Self::State> + use<Self, M>;
     /// Canonical key of a property state.
     fn key(&self, state: &Self::State) -> Self::Key;
     /// Property moves on a concrete model step or terminal repetition.
@@ -161,20 +334,28 @@ where
     type Key = ProductKey<M::Key, P::Key>;
     type Finding = ProductFinding<M::Finding, P::Finding>;
 
-    fn initial(&self) -> Vec<Self::State> {
-        self.model
-            .initial()
-            .into_iter()
-            .flat_map(|model| {
-                self.property
-                    .initial(&model)
-                    .into_iter()
-                    .map(move |property| ProductState {
-                        model: model.clone(),
-                        property,
-                    })
-            })
-            .collect()
+    type InitialError = M::InitialError;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        self.model.initial_iter().flat_map(move |model| {
+            let (states, refusal) = match model {
+                Ok(model) => {
+                    let properties = self.property.initial(&model);
+                    let states = properties.map(move |property| {
+                        Ok(ProductState {
+                            model: model.clone(),
+                            property,
+                        })
+                    });
+                    (Some(states), None)
+                }
+                Err(refusal) => (None, Some(refusal)),
+            };
+            refusal
+                .into_iter()
+                .map(Err)
+                .chain(states.into_iter().flatten())
+        })
     }
 
     fn key(&self, state: &Self::State) -> Self::Key {

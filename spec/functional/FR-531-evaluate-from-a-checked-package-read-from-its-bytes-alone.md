@@ -899,15 +899,23 @@ names this file beside `identities.json`.
   (FR-533 "Refusals and loci of the bare slot call"). A slot call whose walk holds no
   equality application does not read the equality rows and is not refused for their
   absence.
-- A package that carries no `temporal_bindings` rows, or none for a clause
-  occurrence, is not refused: the clause's clock row is absent and the call returns
-  the result FR-516 gives a withdrawn clock row (`activation = Unavailable`).
-  A package whose lock has no `profile_selections` row for a clause refuses
-  `clause-unreadable` with reason `profile-selection` (FR-515); a row whose
-  definition identity names no profile the evaluator evaluates refuses
-  `clause-unreadable` with reason `profile-unknown`; one that names an
-  infinite-trace profile returns the `not-finite-window-profile` temporal refusal
-  dimension, as on the in-process route.
+- When an admitted package carries a `temporal_bindings` channel but has no
+  row for a clause occurrence's clock, the clause's clock row is absent and
+  the call returns the result FR-516 gives a withdrawn clock row
+  (`activation = Unavailable`). Contract IR admission refuses a package
+  whose whole channel is absent when a temporal declaration requires a
+  binding (FSpec FR-322, `temporal_bindings` admission rule); absence is
+  permitted only where that rule allows it.
+  A lock with no `profile_selections` row for a temporal clause is malformed
+  checked-package content: strict package admission refuses it before an
+  evaluation call as `invalid_package`/`operation-law-unselected` at the
+  clause application's law. It does not produce a call-time
+  `clause-unreadable/profile-selection` result. Once strict admission has
+  accepted a row, a call whose selected definition is not one of the
+  evaluator's profiles refuses at call time as
+  `clause-unreadable/profile-unknown`; a call whose selected definition is an
+  infinite-trace profile returns the `not-finite-window-profile` temporal
+  refusal dimension at call time, as on the in-process route.
 - The 18 temporal refusal dimensions of FR-516, the five `PackageMismatch`
   variants and FR-390's refusals are the whole vocabulary of the bare route.
 
@@ -1125,7 +1133,7 @@ outcome map. Each carries a "Consumer entry" section that points here.
 | FR-531-AC-3 | The evaluation code reached from `BarePackage` does not read a source graph: the same calls over a `BarePackage` whose package was read in a run where the source unit was never compiled give the results the calls give where it was (TC-1331 row 1 runs the calls in a child run that is given the handoff directory only). | Test (TC-1331) |
 | FR-531-AC-4 | Over **R**'s three packages the bare route evaluates every temporal clause form (event position, fixed sample, timestamped event) and every protocol slot kind of FR-390's slot table that **R** holds; a node that is not a temporal clause refuses `clause-root-unresolved` and a slot node that is not a protocol node refuses as FR-390-AC-4 states, each with an empty charge log. | Test (TC-1331) |
 | FR-531-AC-5 | Over a `BarePackage` with no supply, a protocol-slot call refuses `MissingIdentityWitness`; with rows of another package, `ForeignIdentityWitness`; with rows of the package naming no admitted identity, `UnknownIdentityWitness`; rows of another package are `ForeignIdentityWitness` also when they name no admitted identity. Each is `CallFailure::Admission` with `unknown_required_feature`/`unsupported-feature`, category unsupported, exit 21, and the meter untouched. A temporal evidence call over the same `BarePackage` with no supply returns its result; and `read_checked_package` over bytes whose lock selects a dependency the evidence does not supply refuses `MissingImport`, so no `BarePackage` exists for it and no dependency refusal is defined. | Test (TC-1331) |
-| FR-531-AC-6 | Over a package whose `temporal_bindings` rows are absent, the call returns `activation = Unavailable` with the `Missing` non-value for the clock row; over a lock with no `profile_selections` row for the clause, `clause-unreadable` with reason `profile-selection`; over a lock whose row names a definition no profile of the evaluator, `clause-unreadable` with reason `profile-unknown`; over a row naming an infinite-trace profile, the `not-finite-window-profile` temporal refusal. Each has the charges FR-516 gives its counterpart over a source. | Test (TC-1331) |
+| FR-531-AC-6 | For an admitted temporal clause whose clock requires a `temporal_bindings` row but whose admitted channel has no row for that clause, the call returns `activation = Unavailable` with the `Missing` non-value for that clock, and the meter's charge log remains empty. | Test (TC-1331) |
 | FR-531-AC-7 | No result of the bare route holds, in its canonical bytes or its fields, a clause name, a source label or a source span: over **R**, the encoded `EvidenceResult` and `ProtocolSlotEvaluation` values do not contain the unit's `source:` labels or a byte region of the source map, and a clause name appears only as the `temporal_clause_names` row of its occurrence gives it, identically on every route. Identity is spelled as the "What the bytes do not carry" list states, and the progress binding of a result holds `package.name()`. | Test (TC-1331) |
 | FR-531-AC-8 | The handoff directory of **R** holds required `identities.json` with `format` `filament.checked-handoff.identities/7`; `ReadIdentityRows::read` over it and the package gives a slot call that evaluates; the file equals, byte for byte, the encoding above of the in-process unit's rows, and two writes of equal requests give equal files; omitting the file from a `BareSupply` makes the slot call refuse `MissingIdentityWitness` while the temporal call is unaffected. | Test |
 | FR-531-AC-12 | `ReadIdentityRows::read` over a file that is not JSON, one with an unknown or repeated member, one with another `format`, one with a row whose `structural_node` the package does not hold and one whose `form` does not match its identity returns `Malformed`, `Malformed`, `Format`, `Unjoined` and `Unjoined` respectively, naming the member, the format string or the first row, and returns no rows. | Test (TC-1331) |
@@ -1171,6 +1179,13 @@ outcome map. Each carries a "Consumer entry" section that points here.
 | FR-531-AC-49 | Lowering a union case that has no payload form refuses with the typed `UnsupportedUnionPayload` fault (invariant `union-payload-has-ir-form`), and lowering a case with no authored variant record refuses with `MissingUnionVariant` (invariant `union-case-variant-retained`). Each refusal retains no row for the union and omits no case silently. | Inspection |
 | FR-531-AC-50 | A checked source declaring unordered `Status { READY, DONE }` with only `READY` referenced, and ordered `Level { LOW, MID, HIGH }`, writes `source_enums` in identities/7. Strict package admission and identity-file reading supplied only the emitted artifacts preserve the checked declaration shapes, ordered flags, declaration and member keys, variant identities and canonical ranks: `DONE, READY` for Status and `LOW, MID, HIGH` for Level. The unused `DONE` case is retained; source rows do not appear in the model-enum channels. Native projection returns each original `ValueType::Enum` and its complete source enum row. Two writes of equal inputs are byte-identical. | Test |
 | FR-531-AC-51 | A selected model declares `tuple Slot(Clock, Integer)` and `union Phase { Armed(Clock), Idle }`, and a checked package reaches both declarations. `identities.json` uses format `/7` and carries one `model_tuples` row for `Slot` and one `model_unions` row for `Phase`; the tuple row preserves the selected document, original declaration identity, type handle, settled key, both positions in declaration order and each complete member type, including `Clock` at position zero. `ReadIdentityRows::read` joins both rows against the admitted package and the bare type projection preserves the tuple position and union case identities. Omitting `model_tuples`, omitting `model_unions`, or changing either row's selected document, declaration identity, key, position order or member type refuses before any partial projection; an empty channel is accepted only when the admitted selected documents contain no declaration of that kind. Two writes of equal input are byte-identical. | Test (TC-1331) |
+| FR-531-AC-52 | A checked package with a clock-configured temporal declaration that requires a `temporal_bindings` row, but whose whole channel is absent, is refused by Contract IR admission as `invalid_package`/`timed-node-reference` at the clause body before any evaluation call. It is never accepted as an empty channel. This is distinct from an admitted channel missing only that clause's row, which follows AC-6 and returns `activation = Unavailable`. | Test (TC-1331) |
+| FR-531-AC-53 | A checked package containing a temporal clause whose `temporal_profile` law has no matching `profile_selections` row is refused by strict package admission as `invalid_package`/`operation-law-unselected`, with typed cause `OperationLawUnselected` at that clause node's `/laws/0/definition` locus; no package is returned and no evaluation call occurs. It does not produce a call-time `clause-unreadable/profile-selection` result. | Test (TC-1331) |
+| FR-531-AC-54 | After strict admission of a package with a `profile_selections` row, when a call selects a definition identity that is not one of the evaluator's supported temporal profiles, the call refuses as `clause-unreadable/profile-unknown`. | Test (TC-1331) |
+| FR-531-AC-55 | After strict admission of a package with a `profile_selections` row, when a call selects an infinite-trace profile, the call returns the `not-finite-window-profile` temporal refusal. | Test (TC-1331) |
+| FR-531-AC-56 | For the profile-unknown refusal of AC-54, the call's charges equal the FR-516 source-route counterpart. | Test (TC-1331) |
+| FR-531-AC-57 | For the infinite-profile refusal of AC-55, the call's charges equal the FR-516 source-route counterpart. | Test (TC-1331) |
+| FR-531-AC-58 | The strict-read refusal of AC-53 occurs before any evaluation call and incurs no evaluation work. | Test (TC-1331) |
 
 ## Dependencies
 

@@ -2,7 +2,7 @@
 //! The helpers below are shared by every submodule.
 
 use filament_semantic_value::checking::CheckMode;
-use fsl_forms::{build_unit, AnchorSite, ProtocolDeclarationForm, ProtocolNodeKind};
+use fsl_forms::{AnchorSite, ProtocolDeclarationForm, ProtocolNodeKind, build_unit};
 use fsl_foundation::SourceIdentity;
 
 use super::super::{
@@ -17,7 +17,7 @@ mod attempt_fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_attempt.rs");
 }
-use attempt_fixture::{m_actor_model, HEADER};
+use attempt_fixture::{HEADER, m_actor_model};
 
 mod anchors;
 mod attempts;
@@ -125,7 +125,7 @@ fn check_refusals(declarations: &str) -> (String, Result<CheckedGraph, Vec<Check
     let (text, assembled) = assemble(declarations);
     let not_emission = |refusal: &CheckRefusal| {
         !matches!(
-                    &refusal.cause,
+                    refusal.cause.as_ref(),
         CheckCause::ProtocolReference(cause)
         if matches!(**cause, crate::check::refusal::ProtocolReferenceCause::NotEmitted { .. })
                 )
@@ -205,7 +205,7 @@ fn only_cause(declarations: &str) -> (CheckRefusal, ProtocolAnchorCause) {
 fn protocol_causes(refusals: &[CheckRefusal]) -> Vec<&ProtocolAnchorCause> {
     refusals
         .iter()
-        .map(|refusal| match &refusal.cause {
+        .map(|refusal| match refusal.cause.as_ref() {
             CheckCause::ProtocolAnchor(cause) => cause.as_ref(),
             other => panic!("a ProtocolAnchor cause, got {other:?}"),
         })

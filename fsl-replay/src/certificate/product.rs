@@ -27,7 +27,7 @@ pub use relation::{
 };
 
 use super::closure::{CertificateRejection, TemporalCertificateCheck};
-use super::scc::{check_partition, CertificateState, Component, ComponentWitness, ProductGraph};
+use super::scc::{CertificateState, Component, ComponentWitness, ProductGraph, check_partition};
 use super::{CertificateLocus, CertificateRule};
 use crate::{IncompleteCause, ModelCheckLimit, ModelCheckLimits};
 
@@ -988,12 +988,16 @@ impl TransitionSystem for Product<'_, '_> {
     type Key = HyperKey;
     type Finding = HyperFinding;
 
-    fn initial(&self) -> Vec<HyperState> {
-        match self {
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        (match self {
             Self::Universal(product) => product.initial(),
             Self::Witness(product) => product.initial(),
             Self::Projected(product) => product.initial(),
-        }
+        })
+        .into_iter()
+        .map(Ok)
     }
 
     fn key(&self, state: &HyperState) -> HyperKey {
@@ -1329,24 +1333,38 @@ fn fairness_graph(
         }
     }
     if matches!(clause.form(), Some(HyperForm::ForallExistsSafety)) {
-        graph.add_acceptance_set(members.iter().enumerate().filter_map(|(index, (_, state, _))|
-            matches!(&state.property, Property::Witnesses(witnesses) if witnesses.members().is_empty())
-                .then(|| vertices[index])))
+        graph.add_acceptance_set(
+            members
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, state, _))| {
+                    matches!(&state.property, Property::Witnesses(witnesses) if witnesses.members().is_empty())
+                })
+                .map(|(index, _)| vertices[index]),
+        )
             .map_err(|_| ProductClosureRefusal::Recompute("witness-acceptance"))?;
     } else if matches!(clause.form(), Some(HyperForm::Universal)) {
         if automaton.acceptance_set_count() == 0 {
             graph
-                .add_acceptance_set(members.iter().enumerate().filter_map(
-                    |(index, (_, state, _))| {
-                        matches!(state.property, Property::After(_)).then(|| vertices[index])
-                    },
-                ))
+                .add_acceptance_set(
+                    members
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, (_, state, _))| matches!(state.property, Property::After(_)))
+                        .map(|(index, _)| vertices[index]),
+                )
                 .map_err(|_| ProductClosureRefusal::Recompute("live-acceptance"))?;
         }
         for set in 0..automaton.acceptance_set_count() {
-            graph.add_acceptance_set(members.iter().enumerate().filter_map(|(index, (_, state, _))|
-                matches!(&state.property, Property::After(at) if automaton.is_accepting_in(set, *at))
-                    .then(|| vertices[index])))
+            graph.add_acceptance_set(
+                members
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (_, state, _))| {
+                        matches!(&state.property, Property::After(at) if automaton.is_accepting_in(set, *at))
+                    })
+                    .map(|(index, _)| vertices[index]),
+            )
                 .map_err(|_| ProductClosureRefusal::Recompute("automaton-acceptance"))?;
         }
     }

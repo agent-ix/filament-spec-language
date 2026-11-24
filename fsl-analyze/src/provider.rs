@@ -2,8 +2,8 @@
 //! FR-280's in-process provider boundary over the same admitted analyze request.
 
 use crate::analyze::{
-    analyze_bound, AnalyzeLimits, AnalyzeRefusal, Engines, ItemCounterexample, NegotiatedItem,
-    SourceProvision, SubjectBinding,
+    AnalyzeLimits, AnalyzeRefusal, Engines, ItemCounterexample, NegotiatedItem, SourceProvision,
+    SubjectBinding, analyze_bound,
 };
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::CatalogCode;
@@ -23,20 +23,20 @@ use fsl_foundation::bound::{DomainKey, DomainKind, FiniteBound, ProofBound};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::{EmitLimits, EmittedPackage};
-use fsl_replay::planner::{interface_mismatch, InterfaceMismatch};
+use fsl_replay::planner::{InterfaceMismatch, interface_mismatch};
 use fsl_replay::value_check::{Selection, ValueTarget};
 use fsl_replay::{Certification, InconclusiveCause, Value};
 use fsl_route::request::{ExtentClassification, ItemKind, RequirementItem};
 use fsl_route::{BackendDescriptor, CandidateOutcome, ProviderOrigin, Registry};
-use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::Capability;
+use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::PackageInput;
 
 use crate::analyze::{AnalyzeItem, Engine, EngineReport, Refusal};
 use crate::claim_family::claim_family;
 use crate::value_check::{
-    confirm_reported, manifest, ValueCounterexample, ValueRefusal, ValueReport,
+    ValueCounterexample, ValueRefusal, ValueReport, confirm_reported, manifest,
 };
 
 /// Records and reproduced counterexamples for one provider request.
@@ -78,9 +78,11 @@ pub fn run(
         provision,
         items,
         &std::collections::BTreeMap::new(),
-        engines,
-        limits,
-        cancel,
+        crate::analyze::AnalyzeExecution {
+            engines,
+            limits,
+            cancel,
+        },
     ) {
         Ok(staged) => {
             let outcome = staged.into_value();
@@ -1229,6 +1231,8 @@ pub(crate) enum NotAdmitted {
     /// The strict reader refused the package it was given back: the typed
     /// refusal, with the reader's code, cause and pointer.
     Refused(fsl_package::PackageAdmissionRefusal),
+    /// The strict reader's admitted allocation was refused by the host.
+    HostAllocationFailed(filament_contract_model::CheckedPackageHostAllocationFailed),
     /// The package did not emit, or the read failed for a reason that is no
     /// admission refusal: the emitter's own refusal when it named one.
     Other(Option<Box<fsl_package::EmitRefusal>>),
@@ -1284,7 +1288,10 @@ pub(crate) fn read_package_with_temporal_selections<'p>(
                     _ => None,
                 })
             },
-            NotAdmitted::Refused,
+            |typed| match typed.host_allocation_failure.as_deref() {
+                Some(failure) => NotAdmitted::HostAllocationFailed(*failure),
+                None => NotAdmitted::Refused(typed),
+            },
         )
     })
 }
@@ -1522,7 +1529,7 @@ pub(crate) fn finish(
             ProviderVerdict::Mismatch(_) => {
                 let mut detail = serde_json::Map::new();
                 detail.insert("pointer".to_owned(), "/counterexample".into());
-                EngineReport::Refused(Refusal::FailedWithDetail(
+                EngineReport::Refused(Refusal::failed_with_detail(
                     CatalogCode::new("invalid_result", "invalid-value"),
                     detail,
                 ))
@@ -1744,7 +1751,7 @@ fn read_contract(
     received: &fsl_replay::contract_check::ContractCounterexample,
 ) -> EngineReport {
     use crate::contract_check::ContractRefusal;
-    use crate::contract_check::{read_received, ContractOutcome, ContractReport, ReceivedContract};
+    use crate::contract_check::{ContractOutcome, ContractReport, ReceivedContract, read_received};
     let found = |outcome| EngineReport::Provider(Box::new(ProviderReport::Contract(outcome)));
     match read_received(request, received) {
         Ok(ReceivedContract::Reproduced(reproduced, wire)) => found(ContractReport::Found(

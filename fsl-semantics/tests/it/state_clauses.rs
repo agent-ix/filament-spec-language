@@ -443,7 +443,7 @@ fn a_complete_function_does_not_enable_integer_operators_in_a_state_only_clause(
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert_eq!(refusals[0].cause.code(), Code::UnsupportedConstruct);
     assert!(matches!(
-        refusals[0].cause,
+        refusals[0].cause.as_ref(),
         CheckCause::ProfileProhibitedOperator(fsl_forms::BinaryOperator::IntegerMod)
     ));
     assert_eq!(refusals[0].location.path(), vec![2, 0]);
@@ -452,7 +452,7 @@ fn a_complete_function_does_not_enable_integer_operators_in_a_state_only_clause(
 /// TC-459 step 2 / FR-104-AC-2: `post R using v on
 /// Config::ConfigVersion::attemptUpdate { result }` checks with
 /// `result: Boolean`.
-#[trace("TC-459", "FR-104-AC-2", "FSpec-V1-EXPR-020")]
+#[trace("TC-459", "FR-104-AC-2", "FR-104-AC-19", "FSpec-V1-EXPR-020")]
 #[test]
 fn a_postcondition_reads_result_typed_as_the_operations_result() {
     let document = config_version_document(
@@ -465,6 +465,36 @@ fn a_postcondition_reads_result_typed_as_the_operations_result() {
     let graph = check(&document, body).expect("`result` checks in a postcondition");
     let r = graph.state_clause("R").expect("R checked");
     assert_eq!(r.body().value_type(), &ValueType::Boolean);
+}
+
+/// FR-104-AC-19: a Boolean comparison is accepted as a postcondition root,
+/// while an integer field root refuses at the root with the literal cause.
+#[trace("TC-459", "FR-104-AC-19")]
+#[test]
+fn postcondition_comparison_is_boolean_and_integer_root_is_refused() {
+    let document = config_version_document(
+        attempt_update_modifies_version_number(),
+        Vec::new(),
+        Vec::new(),
+        json!([]),
+    );
+    let comparison = "post Equal using v on Config::ConfigVersion::attemptUpdate { self.versionNumber = self.versionNumber }\n";
+    let graph = check(&document, comparison).expect("the Boolean comparison checks");
+    assert_eq!(
+        graph
+            .state_clause("Equal")
+            .expect("Equal checked")
+            .body()
+            .value_type(),
+        &ValueType::Boolean
+    );
+
+    let integer_root =
+        "post Number using v on Config::ConfigVersion::attemptUpdate { self.versionNumber }\n";
+    let refusals = check(&document, integer_root).expect_err("an integer root refuses");
+    assert_eq!(refusals, [(Code::IllTyped, Some("non-boolean-root"))]);
+    let located = check_refusals(&document, integer_root).expect_err("an integer root refuses");
+    assert_eq!(located[0].location.path(), Vec::<usize>::new());
 }
 
 /// TC-459 step 3 / FR-104-AC-2: `result` in an invariant, and in a `pre`
@@ -513,8 +543,8 @@ fn result_outside_a_postcondition_refuses_wrong_anchor() {
         let refusals = check_refusals(&document, body).expect_err("check-stage refusal");
         assert_eq!(refusals.len(), 1);
         assert_eq!(
-            refusals[0].cause,
-            CheckCause::UnanchoredResult {
+            refusals[0].cause.as_ref(),
+            &CheckCause::UnanchoredResult {
                 clause: expected_kind,
                 operation: expected_operation.map(str::to_owned),
             }
@@ -917,8 +947,8 @@ fn pre_in_an_invariant_or_a_precondition_refuses_forbidden_pre_read_at_the_pre()
         let refusals = check_refusals(&document, body).expect_err("pre refuses outside a post");
         assert_eq!(refusals.len(), 1, "{body}");
         assert_eq!(
-            refusals[0].cause,
-            CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead),
+            refusals[0].cause.as_ref(),
+            &CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead),
             "{body}"
         );
         // `= 1`'s left child (index 0) is the `pre`.
@@ -5821,6 +5851,222 @@ fn the_function_body_deref_fact_is_a_range_fact_only() {
     assert_eq!(
         check(&document, &deref_function(alias)).expect_err("a let alias carries no deref fact"),
         vec![(Code::UndefinedExpression, Some("unproved-range"))]
+    );
+}
+
+/// A preceding range guard on the same model read proves a later addition in
+/// an operation precondition, object invariant, and function body. The
+/// unguarded sums retain their undefined-expression refusal, and comparison
+/// operands must have the same bounded integer type.
+#[trace("TC-1084", "FR-104-AC-12")]
+#[test]
+fn same_read_range_guards_prove_bounded_addition_in_all_clause_contexts() {
+    use crate::model_operations::{wire_construct, wire_field, wire_type, PACKAGE_IDENTITY};
+    use fsl_semantics::model::intake::meaning;
+
+    let counter = format!("ix://{PACKAGE_IDENTITY}/Counter");
+    let pair = format!("ix://{PACKAGE_IDENTITY}/Pair");
+    let small = format!("ix://{PACKAGE_IDENTITY}/SmallInt");
+    let small_type = wire_type(
+        &small,
+        "value_type",
+        json!({
+            "scalar": "integer",
+            "constraints": [
+                {"identity": format!("{small}/constraints/min"), "keyword": "min", "operands": {"value": "0"}, "appliesTo": "ix://filament/native/Integer", "diagnosticCode": "bound.min", "origin": {"generated": {"generatorIdentity": small, "generatorVersion": "1.0.0", "inputIdentities": [small]}}},
+                {"identity": format!("{small}/constraints/max"), "keyword": "max", "operands": {"value": "3"}, "appliesTo": "ix://filament/native/Integer", "diagnosticCode": "bound.max", "origin": {"generated": {"generatorIdentity": small, "generatorVersion": "1.0.0", "inputIdentities": [small]}}}
+            ]
+        }),
+    );
+    let mut bump = crate::model_operations::operation(
+        "bump",
+        json!([]),
+        Some("ix://filament/native/Boolean"),
+        crate::model_operations::empty_frame(),
+    );
+    bump["identity"] = json!(format!("{counter}/bump"));
+    let counter_type = wire_type(
+        &counter,
+        "object_type",
+        json!({
+            "supertypes": [],
+            "fields": [
+                wire_field(&format!("{counter}/tally"), "tally", &small, "required", 1),
+                wire_field(&format!("{counter}/next"), "next", &small, "required", 1)
+            ],
+            "operations": [bump],
+            "relationships": []
+        }),
+    );
+    let pair_construct = wire_construct("record_value_type", meaning::RECORD_VALUE_TYPE, json!({}));
+    let pair_type = wire_type(
+        &pair,
+        "record_value_type",
+        json!({
+            "fields": [wire_field(&format!("{pair}/tally"), "tally", &small, "required", 1)]
+        }),
+    );
+    let bytes = config_version_document(
+        attempt_update_modifies_version_number(),
+        vec![pair_construct],
+        vec![small_type, counter_type, pair_type],
+        json!([]),
+    );
+    let mut document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    document["populations"][0]["members"] =
+        json!([format!("ix://{PACKAGE_IDENTITY}/ConfigVersion"), counter]);
+    let document = serde_json::to_vec(&document).unwrap();
+
+    for body in [
+        "pre G using v on Config::Counter::bump { self.tally < 3 and self.next = self.tally + 1 }\n",
+        "invariant I using v on Config::Counter at current { self.tally < 3 and self.next = self.tally + 1 }\n",
+        "function f using v(earlier: Config::Pair, later: Config::Pair, n: Integer): Boolean pure { earlier.tally < 3 and later.tally = earlier.tally + 1 }\n",
+    ] {
+        check(&document, body).unwrap_or_else(|refusals| panic!("{body}: {refusals:?}"));
+    }
+    for body in [
+        "pre G using v on Config::Counter::bump { self.next = self.tally + 1 }\n",
+        "invariant I using v on Config::Counter at current { self.next = self.tally + 1 }\n",
+        "function f using v(earlier: Config::Pair, later: Config::Pair, n: Integer): Boolean pure { later.tally = earlier.tally + 1 }\n",
+    ] {
+        let located = check_refusals(&document, body).expect_err("unguarded addition refuses");
+        assert_eq!(located.len(), 1);
+        assert_eq!(located[0].location.path(), vec![1], "the sum is the right-hand side of `and`: {body}");
+        assert_eq!(
+            check(&document, body).expect_err("unguarded addition is not proved"),
+            vec![(Code::UndefinedExpression, Some("unproved-range"))],
+            "{body}"
+        );
+    }
+    check(
+        &document,
+        "function f using v(earlier: Config::Pair, later: Config::Pair, n: Integer): Boolean pure { later.tally = earlier.tally }\n",
+    )
+    .expect("equal bounded types compare");
+    for rhs in ["-earlier.tally", "n"] {
+        let body = format!("function f using v(earlier: Config::Pair, later: Config::Pair, n: Integer): Boolean pure {{ later.tally = {rhs} }}\n");
+        assert_eq!(
+            check(&document, &body).expect_err("mismatched types refuse"),
+            vec![(Code::IllTyped, Some("type-mismatch"))],
+            "{body}"
+        );
+        let located = check_refusals(&document, &body).expect_err("mismatched comparison refuses");
+        assert_eq!(located.len(), 1);
+        assert_eq!(
+            located[0].location.path(),
+            Vec::<usize>::new(),
+            "the comparison is the refusal locus: {body}"
+        );
+    }
+}
+
+/// FR-104-AC-10: process-owned `self.n` reads use the owner reference and
+/// the clause's own temporal observation, while a missing operation is
+/// rejected at its qualified name.
+#[trace("TC-459", "TC-460", "FR-104-AC-10")]
+#[test]
+fn process_operation_clauses_keep_owner_type_and_temporal_reads() {
+    use crate::model_operations::{wire_construct, wire_field, wire_type, PACKAGE_IDENTITY};
+    use fsl_semantics::model::intake::meaning;
+
+    let flow = format!("ix://{PACKAGE_IDENTITY}/Flow");
+    let flow_n = format!("{flow}/n");
+    let mut go = crate::model_operations::operation(
+        "go",
+        json!([]),
+        Some("ix://filament/native/Boolean"),
+        json!({"modifies": [flow_n], "creates": [], "deletes": []}),
+    );
+    go["identity"] = json!(format!("{flow}/go"));
+    let flow_construct = wire_construct(
+        "process",
+        meaning::PROCESS,
+        json!({"identityFields": "required", "steps": "required"}),
+    );
+    let flow_type = wire_type(
+        &flow,
+        "process",
+        json!({
+            "identityFields": [format!("{flow}/x")],
+            "steps": [{
+                "identity": format!("{flow}/start"),
+                "name": "start",
+                "stepKind": "command",
+                "consumes": [],
+                "emits": [],
+                "origin": {"generated": {
+                    "generatorIdentity": format!("{flow}/start"),
+                    "generatorVersion": "1.0.0",
+                    "inputIdentities": [format!("{flow}/start")]
+                }}
+            }],
+            "supertypes": [],
+            "fields": [
+                wire_field(&format!("{flow}/x"), "x", "ix://filament/native/UUID", "required", 1),
+                wire_field(&flow_n, "n", "ix://filament/native/Integer", "required", 1)
+            ],
+            "operations": [go],
+            "relationships": []
+        }),
+    );
+    let bytes = config_version_document(
+        attempt_update_modifies_version_number(),
+        vec![flow_construct],
+        vec![flow_type],
+        json!([]),
+    );
+    let mut document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    document["populations"][0]["members"] =
+        json!([format!("ix://{PACKAGE_IDENTITY}/ConfigVersion"), flow]);
+    let document = serde_json::to_vec(&document).unwrap();
+    let body = "pre P using v on Config::Flow::go { self.n < 3 }\n\
+        post Q using v on Config::Flow::go { self.n = pre(self.n) + 1 }\n\
+        invariant I using v on Config::Flow at current { self.n >= 0 }\n";
+    let graph = check(&document, body).expect("all three clauses check");
+
+    for (name, expected_kind, expected_reads) in [
+        ("P", StateClauseKind::Precondition, vec![Observation::Pre]),
+        (
+            "Q",
+            StateClauseKind::Postcondition,
+            vec![Observation::Post, Observation::Pre],
+        ),
+        ("I", StateClauseKind::Invariant, vec![Observation::Current]),
+    ] {
+        let clause = graph.state_clause(name).expect("checked state clause");
+        assert_eq!(clause.kind(), expected_kind);
+        assert_eq!(
+            clause.parameters()[0],
+            ("self".to_owned(), ValueType::Reference(clause.context()))
+        );
+        let attributes: Vec<_> = descendants(clause.body())
+            .into_iter()
+            .filter(|node| matches!(node.kind(), NodeKind::Attribute { .. }))
+            .collect();
+        assert_eq!(
+            attributes.len(),
+            if name == "Q" { 2 } else { 1 },
+            "{name} reads exactly its declared self.n occurrences"
+        );
+        assert!(attributes
+            .iter()
+            .all(|attribute| attribute.value_type() == &ValueType::Integer));
+        let mut reads: Vec<_> = clause.reads().map(|(_, observation)| observation).collect();
+        reads.sort();
+        let mut expected_reads = expected_reads;
+        expected_reads.sort();
+        assert_eq!(reads, expected_reads, "{name} read observations");
+    }
+
+    let missing = "pre M using v on Config::Flow::missing { true }\n";
+    let refusal = assembly_refusals(&document, missing);
+    assert_eq!(refusal.len(), 1);
+    assert_eq!(refusal[0].cause.code(), Code::MissingDeclaration);
+    let (unit, _) = crate::model_operations::config_unit_with_body(&document, missing);
+    assert_eq!(
+        &unit[refusal[0].span.start..refusal[0].span.end],
+        "missing",
+        "unknown operation is reported at its final qualified name"
     );
 }
 

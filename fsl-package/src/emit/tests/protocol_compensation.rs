@@ -152,8 +152,7 @@ fn checked_graph(unit: &str) -> Result<fsl_semantics::check::CheckedGraph, Vec<C
 #[trace("TC-2525", "FR-892-AC-1")]
 #[test]
 fn a_compensation_and_a_timed_await_emit_together() {
-    let temporal =
-        "temporal Due using t over (c: M::Ledger) clock \"model-steps\" on origin { always[0,120] true }\n";
+    let temporal = "temporal Due using t over (c: M::Ledger) clock \"model-steps\" on origin { always[0,120] true }\n";
     let mut unit = unit_text(temporal, "true", "false");
     unit = unit.replace(
         "role R on M::Ledger;\n",
@@ -230,8 +229,7 @@ fn a_compensation_and_a_timed_await_emit_together() {
 #[trace("TC-2525", "FR-892-AC-4")]
 #[test]
 fn the_missing_clock_message_names_the_template() {
-    let temporal =
-        "temporal Due using t over (c: M::Ledger) clock \"model-steps\" on origin { always[0,120] true }\n";
+    let temporal = "temporal Due using t over (c: M::Ledger) clock \"model-steps\" on origin { always[0,120] true }\n";
     let mut unit = unit_text(temporal, "true", "false");
     unit = unit.replace(
         "role R on M::Ledger;\n",
@@ -269,8 +267,7 @@ fn the_missing_clock_message_names_the_template() {
 #[trace("TC-2525", "FR-892-AC-4")]
 #[test]
 fn a_missing_await_clock_names_the_await() {
-    let temporal =
-        "temporal Due using t over (c: M::Ledger) clock \"model-steps\" on origin { always[0,120] true }\n";
+    let temporal = "temporal Due using t over (c: M::Ledger) clock \"model-steps\" on origin { always[0,120] true }\n";
     let mut unit = unit_text(temporal, "true", "false");
     unit = unit.replace(
         "role R on M::Ledger;\n",

@@ -19,9 +19,11 @@
 //! decided unreduced by EN-1's SCC refinement. Every concretised lasso also
 //! replays through FR-128.
 
+use filament_exact::LimitKind;
 use filament_exact::ScalarLimits;
 use fsl_analyze::model_check::ModelCheckRefusal;
 use fsl_eval::simulation::model::ModelSimState;
+use fsl_eval::simulation::{Permutation, SymmetryClass, SymmetryGroup, TransitionSystem};
 use fsl_replay::{
     AppliedReduction, IncompleteCause, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
     ModelStep, ModelTraceSettlement, ModelTraceValue, ProofCertificate, ReachedLimit,
@@ -111,6 +113,169 @@ fn moved(states: &[ModelSimState]) -> Vec<&'static str> {
                 .expect("a step changes its receiver")
         })
         .collect()
+}
+
+/// The three-counter symmetry class used by the `each`-fairness quotient.
+fn counter_group() -> SymmetryGroup {
+    SymmetryGroup {
+        classes: vec![SymmetryClass {
+            population: counters(),
+            keys: KEYS.iter().map(|key| (*key).to_owned()).collect(),
+        }],
+    }
+}
+
+/// A subject with the each-fairness clause used by the quotient integration
+/// cases and the supplied initial counter states.
+fn canonical_each_world(starts: &[[i64; 3]]) -> World {
+    let starts: Vec<_> = starts.iter().copied().map(start).collect();
+    World::new(
+        Shape {
+            symmetric: true,
+            max: 2,
+            link: false,
+        },
+        CYCLE,
+        &[Clause {
+            profile: INFINITE,
+            formula: PROOF,
+        }],
+        &starts,
+        &KEYS,
+    )
+}
+
+fn canonical_each_proof(starts: &[[i64; 3]], reductions: Reductions) -> u64 {
+    let world = canonical_each_world(starts);
+    match run(&world, |v| Some(v == 2), reductions) {
+        Ok(
+            ModelCheckOutcome::HoldsReduced { stats, .. } | ModelCheckOutcome::Holds { stats, .. },
+        ) => stats.product_states,
+        other => panic!("expected an each-fairness symmetry quotient proof: {other:?}"),
+    }
+}
+
+/// FR-152-AC-2 / FR-623-AC-1: running the real analyze quotient for the
+/// each-fairness clause gives the same explored quotient for every key
+/// permutation of the initial state.
+#[trace("TC-569", "FR-152-AC-2")]
+#[test]
+fn canonicalise_is_permutation_invariant_on_each_fairness_quotient() {
+    let all_starts = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    let world = canonical_each_world(&all_starts);
+    let system = world.system();
+    let group = counter_group();
+    let shuffles = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    for state in crate::reduction_proptest::reachable_states(&system, usize::MAX) {
+        let canonical = system
+            .canonicalise(&state, &group)
+            .expect("state canonicalises")
+            .0;
+        let canonical_key = system.state_key(&canonical).expect("canonical key").0;
+        for shuffle in shuffles {
+            let permuted = system
+                .permute(
+                    &state,
+                    &Permutation::of(
+                        &counters(),
+                        KEYS.iter()
+                            .zip(shuffle)
+                            .map(|(from, to)| ((*from).to_owned(), KEYS[to].to_owned())),
+                    ),
+                )
+                .expect("permutation applies");
+            let canonical_permuted = system
+                .canonicalise(&permuted, &group)
+                .expect("permuted state canonicalises")
+                .0;
+            assert_eq!(
+                system
+                    .state_key(&canonical_permuted)
+                    .expect("permuted canonical key")
+                    .0,
+                canonical_key,
+            );
+        }
+    }
+    let reduced = canonical_each_proof(&all_starts, symmetric());
+    let unreduced = canonical_each_proof(&all_starts, Reductions::default());
+    assert!(
+        reduced < unreduced,
+        "quotient {reduced} should be smaller than {unreduced}"
+    );
+}
+
+/// FR-152-AC-4 / FR-623-AC-1: canonicalizing an initial state twice gives the
+/// same actual analyze quotient under the each-fairness clause.
+#[trace("TC-569", "FR-152-AC-4")]
+#[test]
+fn canonicalise_is_idempotent_on_each_fairness_quotient() {
+    let all_starts = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    let world = canonical_each_world(&all_starts);
+    let system = world.system();
+    let group = counter_group();
+    for state in crate::reduction_proptest::reachable_states(&system, usize::MAX) {
+        let once = system
+            .canonicalise(&state, &group)
+            .expect("canonicalises")
+            .0;
+        let twice = system
+            .canonicalise(&once, &group)
+            .expect("canonicalises twice")
+            .0;
+        assert_eq!(
+            system.state_key(&once).expect("canonical key").0,
+            system.state_key(&twice).expect("twice canonical key").0,
+        );
+    }
+    let state = system.initial().into_iter().next().expect("initial state");
+    let once = system
+        .canonicalise(&state, &group)
+        .expect("canonicalises")
+        .0;
+    let twice = system
+        .canonicalise(&once, &group)
+        .expect("canonicalises twice")
+        .0;
+    let values = |state: &ModelSimState| [value(state, "a"), value(state, "b"), value(state, "c")];
+    assert_eq!(values(&once), values(&twice));
+    let once_values = values(&once);
+    let twice_values = values(&twice);
+    let permutations = |values: [i64; 3]| {
+        [
+            [values[0], values[1], values[2]],
+            [values[0], values[2], values[1]],
+            [values[1], values[0], values[2]],
+            [values[1], values[2], values[0]],
+            [values[2], values[0], values[1]],
+            [values[2], values[1], values[0]],
+        ]
+    };
+    assert_eq!(
+        canonical_each_proof(&permutations(once_values), symmetric()),
+        canonical_each_proof(&permutations(twice_values), symmetric()),
+    );
 }
 
 const PROOF: &str = "fair weak each M::Counter::bump; always eventually holds(x.v = 2)";
@@ -579,6 +744,160 @@ fn a_loop_that_needs_two_passes_closes_at_the_concrete_entry() {
     let holders: Vec<&str> = states.iter().map(holder).collect();
     assert_eq!(holders, ["b", "a", "b"], "pass(b), then pass(a)");
     assert!(reproduced(&world.replay(counterexample.clone())));
+}
+
+/// FR-161-AC-5: the real quotient paths charge two work units per concrete
+/// step and two transition units per lifted edge. The zero-lift run gives
+/// the independent work baseline; the successful bound must exceed it by
+/// exactly the amount the criterion names.
+#[trace("TC-586", "FR-161-AC-5")]
+#[test]
+fn concretisation_charges_exact_transition_and_work_budgets() {
+    fn meter(work_units: u64) -> ScalarLimits {
+        ScalarLimits {
+            work_units,
+            ..crate::counter::UNLIMITED
+        }
+    }
+
+    fn with_budgets(
+        world: &Flags,
+        max_transitions: usize,
+        work_units: u64,
+    ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
+        let mut limits = ModelCheckLimits::default();
+        limits.limits.max_transitions = max_transitions;
+        world.run_with_limits(symmetric(), limits, meter(work_units))
+    }
+
+    fn minimum_work(
+        world: &Flags,
+        max_transitions: usize,
+        accepts: impl Fn(&ModelCheckOutcome) -> bool,
+    ) -> u64 {
+        (0..=4096)
+            .find(|work| {
+                with_budgets(world, max_transitions, *work)
+                    .is_ok_and(|outcome| accepts(&outcome))
+            })
+            .expect("the bounded run reaches the requested terminal")
+    }
+
+    // FR-161-AC-1: the concrete walk for the symmetric Counter loop is
+    // three transitions and six work units, independent of quotient work.
+    let counter_world = configs(
+        "fair weak whole M::Counter::bump; always eventually holds(x.v = 2)",
+    );
+    let counter_outcome = counter_world.run_with_meter(
+        Some(0),
+        vec![atom(|v| Some(v == 2))],
+        symmetric(),
+        None,
+        ModelCheckLimits::default(),
+        meter(u64::MAX),
+    )
+    .expect("the reduced each loop concretises");
+    let ModelCheckOutcome::Violated { stats, .. } = &counter_outcome else {
+        panic!("the reduced each loop refutes: {counter_outcome:?}");
+    };
+    let counter_result = Ok(counter_outcome.clone());
+    let counterexample = violation(&counter_result);
+    assert_eq!(counterexample.len(), 3);
+    assert_eq!(moved(&counter_world.positions(counterexample)), ["b", "b", "b"]);
+    let counter_edges = usize::try_from(stats.product_edges).expect("small");
+    let counter_with_budgets = |max_transitions: usize, work_units: u64| {
+        let mut limits = ModelCheckLimits::default();
+        limits.limits.max_transitions = max_transitions;
+        counter_world.run_with_meter(
+            Some(0),
+            vec![atom(|v| Some(v == 2))],
+            symmetric(),
+            None,
+            limits,
+            meter(work_units),
+        )
+    };
+    let counter_minimum_work = |max_transitions: usize, succeeds: bool| {
+        (0..=4096)
+            .find(|work| {
+                counter_with_budgets(max_transitions, *work).is_ok_and(|outcome| {
+                    matches!(outcome, ModelCheckOutcome::Violated { .. }) == succeeds
+                })
+            })
+            .expect("the bounded counter run reaches the requested result")
+    };
+    assert_eq!(
+        counter_minimum_work(counter_edges, false)
+            .abs_diff(counter_minimum_work(counter_edges + 6, true)),
+        6
+    );
+
+    let world = Flags::new(Subject::Token, "", EVENTUALLY_FIRED);
+    let unrestricted = world.run(symmetric());
+    let counterexample_len = violation(&unrestricted).len();
+    let unrestricted = unrestricted.expect("the reduced run checks");
+    assert_eq!(counterexample_len, 2);
+    let ModelCheckOutcome::Violated { stats, .. } = &unrestricted else {
+        panic!("the reduced token run refutes: {unrestricted:?}");
+    };
+    let explored = usize::try_from(stats.product_edges).expect("small");
+    let full_transition_budget = explored + 2 * 2;
+
+    let exploration_work = minimum_work(&world, explored, |outcome| {
+        matches!(
+            outcome,
+            ModelCheckOutcome::Stopped {
+                limit: Some(ReachedLimit {
+                    limit: ModelCheckLimit::MaxTransitions,
+                    ..
+                }),
+                ..
+            }
+        )
+    });
+    let completion_work = minimum_work(&world, full_transition_budget, |outcome| {
+        matches!(outcome, ModelCheckOutcome::Violated { .. })
+    });
+    assert_eq!(completion_work - exploration_work, 4);
+
+    let one_work_short = with_budgets(
+        &world,
+        full_transition_budget,
+        completion_work - 1,
+    )
+    .expect("meter exhaustion is a typed outcome");
+    assert!(matches!(
+        one_work_short,
+        ModelCheckOutcome::Stopped {
+            limit: Some(ReachedLimit {
+                limit: ModelCheckLimit::EvaluationMeter {
+                    counter: LimitKind::WorkUnits,
+                },
+                ..
+            }),
+            ..
+        }
+    ));
+    let completed = with_budgets(&world, full_transition_budget, completion_work)
+        .expect("the exact budget concretises");
+    assert_eq!(violation(&Ok(completed)).len(), 2);
+
+    // M is the exact budget that admits quotient exploration plus the two
+    // concrete steps. M-1 refuses the counterexample; M-2 completes quotient
+    // exploration but cannot pay for any lifted transition.
+    let m = full_transition_budget;
+    let one_short = with_budgets(&world, m - 1, u64::MAX).expect("typed stop");
+    assert!(matches!(one_short, ModelCheckOutcome::Stopped {
+        cause: IncompleteCause::ResourceExhausted,
+        limit: Some(ReachedLimit { limit: ModelCheckLimit::MaxTransitions, value }),
+        ..
+    } if value == u64::try_from(m - 1).expect("small")));
+    let two_short = with_budgets(&world, m - 2, u64::MAX).expect("typed stop");
+    assert!(matches!(two_short, ModelCheckOutcome::Stopped {
+        cause: IncompleteCause::ResourceExhausted,
+        limit: Some(ReachedLimit { limit: ModelCheckLimit::MaxTransitions, .. }),
+        ..
+    }));
 }
 
 /// The reduced-refutation settlement clause (QSL-1045 tracks its wording): it

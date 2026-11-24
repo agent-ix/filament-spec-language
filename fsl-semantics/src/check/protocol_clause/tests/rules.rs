@@ -175,7 +175,7 @@ fn a_variant_without_a_well_founded_order_refuses_at_the_variant() {
         let [(refusal, _)] = found.as_slice() else {
             panic!("one refusal: {found:?}");
         };
-        let CheckCause::ProtocolAnchor(anchor) = &refusal.cause else {
+        let CheckCause::ProtocolAnchor(anchor) = refusal.cause.as_ref() else {
             panic!("a protocol anchor refusal: {refusal:?}");
         };
         let ProtocolAnchorCause::VariantType {
@@ -226,7 +226,7 @@ fn a_nonexhaustive_choice_and_a_duplicate_role_refuse_at_their_subject() {
     assert_eq!(at, ["R", "R"], "{twice:?}");
     assert!(
         twice.iter().all(|(refusal, _)| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             crate::check::CheckCause::ProtocolAnchor(cause)
                 if matches!(**cause, ProtocolAnchorCause::Ambiguous { ref name, .. } if name == "R")
         )),
@@ -253,7 +253,7 @@ fn the_over_read_refusal_is_at_the_read() {
     assert!(over.iter().all(|(refusal, at)| {
         at == "input.ready"
             && matches!(
-                &refusal.cause,
+                refusal.cause.as_ref(),
                 crate::check::CheckCause::ProtocolAnchor(cause)
                     if matches!(**cause, ProtocolAnchorCause::SlotModelState { ref node, .. } if node == "Pick")
             )
@@ -277,7 +277,7 @@ fn two_protocols_of_one_name_refuse_at_each_name() {
         .collect();
     assert_eq!(at, ["Flow", "Flow"], "{found:?}");
     assert!(found.iter().all(|(refusal, _)| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         crate::check::CheckCause::ProtocolAnchor(cause)
             if matches!(**cause, ProtocolAnchorCause::Ambiguous { ref name, ref loci, .. } if name == "Flow" && loci.len() == 2)
     )), "{found:?}");

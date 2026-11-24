@@ -16,12 +16,12 @@ use fsl_foundation::{Setting, Span};
 
 use super::{AssemblyCause, AssemblyError, AssemblyLimits, TopologyFault, TopologyRetained};
 use crate::check::lowering::AdmittedModel;
-use crate::check::lowering::{quantity_origin, strongly_connected, QuantityKind};
+use crate::check::lowering::{QuantityKind, quantity_origin, strongly_connected};
 use crate::check::node_key::SourceOwner;
 use crate::check::time_units::{package_unit_scale, rational, scalar_type_key};
 use crate::model::domain_package::{PackageDimensionRecord, PackageUnitRecord};
 use crate::value::semantic_node::{ModelSubject, NodeOwner, NominalRefusal, OwnerSelection};
-use crate::value::unit::{admit_unit_graph, DimensionPreimage, UnitPreimage};
+use crate::value::unit::{DimensionPreimage, UnitPreimage, admit_unit_graph};
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::semantic_node::{InvalidSemanticGraph, SemanticGraphCause};
 use filament_semantic_value::unit::UnitGraph;

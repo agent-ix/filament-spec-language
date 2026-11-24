@@ -133,9 +133,9 @@ use fsl_package::{ModelIdentity, ObligationIdentity};
 
 pub use admitted::{
     compile_admitted, compile_admitted_with_temporal_selections, AdmittedCompilation,
-    AdmittedComposite, AdmittedCompositeForm, AdmittedContext, AdmittedDimension, AdmittedEnum,
-    AdmittedEnumCase, AdmittedLookupRefusal, AdmittedRefusal, AdmittedResource,
-    AdmittedUnionMember, AdmittedUnit,
+    AdmittedComposite, AdmittedCompositeForm, AdmittedContext, AdmittedDimension,
+    AdmittedDimensionEquivalence, AdmittedEnum, AdmittedEnumCase, AdmittedLookupRefusal,
+    AdmittedRefusal, AdmittedResource, AdmittedUnionMember, AdmittedUnit,
 };
 pub use application::{
     acquire_checked_closure, acquire_checked_closure_with_integer_division,
@@ -149,7 +149,9 @@ pub use bounds::{BoundExceeded, ReplayLimits, DEFAULT_REPLAY_INPUT_BYTES};
 pub use build_inventory::{
     build_inventory, Advertisement, Application, BuildInventory, Consumer, Family, Profile,
 };
-pub use call_replay_context::{run_with_replay_context, CallReplayContext, RunWithReplayContext};
+pub use call_replay_context::{
+    run_with_replay_context, CallReplayContext, PackageId, RunWithReplayContext,
+};
 pub use call_requirements::{
     call_requirements_for, run_with_requirements, run_with_requirements_reading,
     run_with_requirements_reading_and_profile_catalog,
@@ -158,8 +160,8 @@ pub use call_requirements::{
 };
 pub use call_site::{
     call_site, locate_in_checked, CallSite, CallSiteRefusal, CallSiteSelection, ClauseName,
-    ClauseSite, FieldName, FieldSite, FunctionSite, ImportedFunctionName, ImportedFunctionSite,
-    OperationSite, PopulationName, PopulationSite, ValueParitySite,
+    CallSiteUnit, ClauseSite, FieldName, FieldSite, FunctionSite, ImportedFunctionName,
+    ImportedFunctionSite, OperationSite, PopulationName, PopulationSite, ValueParitySite,
 };
 pub use certificate::closed_form::check::{
     check_closed_form, CertificateRefusal, ClaimTriple, ClosedFormResult,
@@ -194,7 +196,8 @@ pub use certificate::simulation::{
     UndeterminedStep,
 };
 pub use certificate::smt::{
-    check_refinement_smt_proof, ProofFormat, RefinementSmtCertificate, RefutedQuery, SmtProofCheck,
+    check_refinement_smt_proof, check_smt_proof, ProofFormat, RefinementSmtCertificate,
+    RefutedQuery, SmtProofBasis, SmtProofCertificate, SmtProofCheck, SmtProofOutcome,
 };
 pub use certificate::state_graph::{
     check_state_graph, StateGraphCertificate, StateGraphCertificateRequest,
@@ -287,7 +290,7 @@ pub use identity::{
     DeclaredDomain, DefinitionSourceRef, EmptyQualifiedName, ProfileSelection, QualifiedName,
     TracePosition,
 };
-pub use limits::{AccountingLimits, CallerLimits, EngineLimits, RenderLimits};
+pub use limits::{AccountingLimits, CallerLimits, EngineLimits, RenderLimits, WorkerCounts};
 pub use model_check::counterexample::{
     undefined_finding, ClaimPredicate, ClauseRunCounterexample, ClosureStutter, CounterexampleKind,
     Lasso, LoopProofCounterexample, LoopProofFailure, LoopProofObligation, MappingSite,
@@ -330,6 +333,13 @@ pub use model_check::hyper_smt_outcome::{HyperSmtOutcome, HyperSmtResult, SmtMet
 pub use model_check::hyper_smt_query::{
     encode_hyper_query, HyperProductIdentity, HyperQuery, HyperQueryRequest,
 };
+/// The SMT replay API for HP-2 products, kept together as the replay module's
+/// narrow downstream surface (FR-315).
+pub mod replay {
+    pub use crate::{
+        encode_hyper_query, HyperProductIdentity, HyperQuery, HyperQueryRequest, SubjectIdentity,
+    };
+}
 pub use model_check::identity::{
     node_occurrence, ClauseIdentity, ClauseRootRefusal, HyperIdentity, StateGraphIdentity,
 };
@@ -372,12 +382,13 @@ pub use model_check::replay::{
 };
 pub use model_check::settle::{
     settle_model_check, settle_model_check_over_stutter_closure, settle_protocol_check,
-    CertificateChecker, Execution, ModelCheckRecord, RecordWarning, ResultLabel, Truth,
-    EXPLICIT_STATE, K_INDUCTION,
+    settle_smt_proof, CertificateChecker, Execution, ModelCheckRecord, RecordWarning, ResultLabel,
+    Truth, EXPLICIT_STATE, K_INDUCTION,
 };
 pub use model_check::smt_query::{
     encode_smt_query, Refusal, SmtEncodingLimits, SmtEncodingRefusal, SmtQueryKind,
 };
+pub use fsl_eval::smt::SmtRunLimits;
 pub use model_check::state_graph::{
     GraphEvidence, GraphEvidenceEnvelope, GraphUndefined, GraphWitness, LassoWitness, ModelLasso,
     ModelPath, OpenCause, RunEnd, StateGraphInstanceOutcome, StateGraphOutcome,
@@ -408,12 +419,15 @@ pub use refinement_query::{
 };
 
 pub use refinement::{
-    abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
+    abstract_classes, candidate_edge_target_ordinal, candidate_stutter_target_ordinal,
+    candidate_lasso_has_fair_run,
+    candidate_lasso_has_fair_run_with_recurring_edge, check_initial, check_protocol_initial,
     check_protocol_state_relations, check_protocol_step, check_step, initial_history, map_state,
-    open_protocol_systems, open_systems, protocol_observation_label, protocol_transition_class,
+    open_protocol_systems, open_protocol_systems_with_initial_limit, open_systems,
+    open_systems_with_initial_limit, protocol_observation_label, protocol_transition_class,
     step_history, step_view_over, AbstractClass, AbstractInitial, AbstractProtocolSystem,
     AssumptionIdentity, AssumptionOrigin, AssumptionSelectedMember, AssumptionSide,
-    AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep,
+    AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep, CandidateStep,
     CandidateLivenessError, ConcreteStep, EvalFailure, FieldMapping, HiddenSlot, HistoryValues,
     LivenessHalf, MappedState, MappingExpression, MappingFailure, MappingRowRef, MappingTarget,
     MappingUndetermined, ObjectKey, ObjectMapping, ObservationField, ObservationLabel,
@@ -441,20 +455,19 @@ pub use outcome::{
     assignments_wire, assignments_wire_with_enum_members, certificate_identity_wire,
     claim_locus_wire, graph_evidence_wire, hyper_counterexample_wire, omitted_witnesses,
     probabilistic_undefined_wire, probabilistic_wire, probabilistic_wire_with_enum_members,
-    protocol_temporal_wire,
-    read_outcome_diagnostics, read_task_temporal_counterexample, read_task_temporal_document,
-    read_temporal_counterexample, replay_model_trace_document, replay_task_product_trace,
-    sampled_witness_wire, state_key_wire, task_product_transition_wire,
+    protocol_temporal_wire, read_outcome_diagnostics, read_task_temporal_counterexample,
+    read_task_temporal_document, read_temporal_counterexample, replay_model_trace_document,
+    replay_task_product_trace, sampled_witness_wire, state_key_wire, task_product_transition_wire,
     task_source_transition_wire, task_temporal_wire, task_temporal_wire_with_queue_growth,
     task_transition_wire, temporal_wire, ClauseRunNotAnItem, ConformanceClosureOutput,
     ConformanceGlobalOutput, ConformanceMessageBoundOutput, ConformanceObligationOutput,
     ConformancePrefixOutput, ConformanceProjectionOutput, ConformanceRecordingIdentity,
-    ConformanceReplayOutput, CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel, OmittedWitness, Operation,
-    OutcomeDiagnostic, OutcomeDiagnosticRead, OutcomeDocument, OutcomeItem, OutcomeItemError,
-    OutcomeLocus, OutcomeStage, OutcomeWriteError, ParityReason, ProtocolConformanceOutput,
-    ProtocolWire, ReadCounterexample, ResultLimit, ResultValue, TaskProductCounterexampleDocument,
-    TaskProductTraceReplayRefusal, TemporalCounterexampleReadRefusal, TraceAlphabet,
-    WitnessOmission, OUTCOME_FORMAT,
+    ConformanceReplayOutput, CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel,
+    OmittedWitness, Operation, OutcomeDiagnostic, OutcomeDiagnosticRead, OutcomeDocument,
+    OutcomeItem, OutcomeItemError, OutcomeLocus, OutcomeStage, OutcomeWriteError, ParityReason,
+    ProtocolConformanceOutput, ProtocolWire, ReadCounterexample, ResultLimit, ResultValue,
+    TaskProductCounterexampleDocument, TaskProductTraceReplayRefusal,
+    TemporalCounterexampleReadRefusal, TraceAlphabet, WitnessOmission, OUTCOME_FORMAT,
 };
 pub use planner::{
     read_premise_item, read_result_entry, read_settlement_request, Budget, PlannerDeclaration,
@@ -473,42 +486,43 @@ pub use probability_certificate::{
 };
 pub use probability_certificate::{
     admit_expected_reward_certificate_subject, check_claim_exact_reachability,
-    check_probability_certificate_document, check_probability_certificate_package,
-    check_probability_certificate_source, claim_binding,
+    check_probability_certificate_document, check_probability_certificate_document_as,
+    check_probability_certificate_package, check_probability_certificate_source, claim_binding,
     conditional_measure_probability_certificate, cyclic_mdp_probability_certificate_document,
     cyclic_mdp_reward_probability_certificate_document, digital_key_clocks,
     digital_probability_product_key, long_run_probability_certificate_document,
     measure_probability_certificate_document, measure_probability_objective,
-    measure_probability_product_key, on_each_outcome, probabilistic_claim_identity,
-    probabilistic_formula_monitor_context, probability_certificate_document,
-    probability_proof_document, read_long_run_probability_certificate,
-    read_measure_probability_certificate, read_probability_certificate,
-    read_probability_proof_document, read_weighted_long_run_probability_certificate,
-    region_probability_product_key, replay_on_each_witness, replay_probabilistic_undefined,
-    replay_probabilistic_witness, replay_probabilistic_witness_from_package,
-    vacuous_measure_probability_certificate_document,
+    measure_probability_product_key, on_each_has_instance, on_each_outcome,
+    probabilistic_claim_identity, probabilistic_formula_monitor_context,
+    probability_certificate_document, probability_proof_document,
+    read_long_run_probability_certificate, read_measure_probability_certificate,
+    read_probability_certificate, read_probability_proof_document,
+    read_weighted_long_run_probability_certificate, region_probability_product_key,
+    replay_on_each_witness, replay_probabilistic_undefined, replay_probabilistic_witness,
+    replay_probabilistic_witness_from_package, vacuous_measure_probability_certificate_document,
     weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
-    write_measure_probability_certificate, write_probability_certificate,
+    write_measure_probability_certificate, write_value_bounds_measure_certificate,
+    write_probability_certificate,
     write_probability_proof_document, write_value_bounds_certificate,
     write_value_bounds_proof_document, write_weighted_long_run_probability_certificate,
     ActivationPhase, ClaimBinding, DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput,
-    DigitalTail, ExactProbabilityAcceptance, ExactProbabilityCertificate,
+    CertificateRole, DigitalTail, ExactProbabilityAcceptance, ExactProbabilityCertificate,
     ExactProbabilityCertificateCheck, ExactProbabilityGraphError, ExactProbabilityValue,
-    LongRunOptimization, LongRunPolicyRow, LongRunProbabilityComponent, LongRunProbabilityDocument,
-    MeasurePayoffKind, MeasureProbabilityDocument, OnEachOutcome, ProbabilisticCounterexample,
-    ProbabilisticSchedulerChoice, ProbabilityBoundSide, ProbabilityCertificateDocument,
-    ProbabilityCertificateLocus, ProbabilityCertificatePart, ProbabilityCertificateRejection,
-    ProbabilityCertificateRule, ProbabilityDocumentError, ProbabilityDocumentIoLimits,
-    ProbabilityDocumentLimit, ProbabilityDocumentLimits, ProbabilityKeyAdmission,
-    ProbabilityObjective, ProbabilityPackageRequest, ProbabilityProductKey,
-    ProbabilityProofDocument, ProbabilityRewardObjective, ProbabilitySourceError,
-    ProbabilitySourceLimits, ProbabilitySourceRequest, ProbabilityStateEvent,
-    ProbabilitySubsystemCertificate, ProbabilityUndefinedWitness, ProbabilityVacuityAcceptance,
-    ProbabilityWitnessError, ProbabilityWitnessPath, ProbabilityWitnessReplay,
-    ProbabilityWitnessStep, RegionClockKey, RegionDeadlineKey, RegionKeyKind,
-    RegionProductKeyInput, ReproducedProbabilityWitness, SubsystemBoundKind, TimedProbabilityForm,
-    TimedProbabilityObjective, TimedProbabilityRoute, WeightedLongRunProbabilityDocument,
-    WorkloadFreeDelayRefusal,
+    LongRunOptimization, LongRunPolicyChoice, LongRunPolicyRow, LongRunProbabilityComponent,
+    LongRunProbabilityDocument, MeasurePayoffKind, MeasureProbabilityDocument, OnEachOutcome,
+    ProbabilisticCounterexample, ProbabilisticSchedulerChoice, ProbabilityBoundSide,
+    ProbabilityCertificateDocument, ProbabilityCertificateLocus, ProbabilityCertificatePart,
+    ProbabilityCertificateRejection, ProbabilityCertificateRule, ProbabilityDocumentError,
+    ProbabilityDocumentIoLimits, ProbabilityDocumentLimit, ProbabilityDocumentLimits,
+    ProbabilityKeyAdmission, ProbabilityObjective, ProbabilityPackageRequest,
+    ProbabilityProductKey, ProbabilityProofDocument, ProbabilityRewardObjective,
+    ProbabilitySourceError, ProbabilitySourceLimits, ProbabilitySourceRequest,
+    ProbabilityStateEvent, ProbabilitySubsystemCertificate, ProbabilityUndefinedWitness,
+    ProbabilityVacuityAcceptance, ProbabilityWitnessError, ProbabilityWitnessPath,
+    ProbabilityWitnessReplay, ProbabilityWitnessStep, RegionClockKey, RegionDeadlineKey,
+    RegionKeyKind, RegionProductKeyInput, ReproducedProbabilityWitness, SubsystemBoundKind,
+    TimedProbabilityForm, TimedProbabilityObjective, TimedProbabilityRoute,
+    WeightedLongRunProbabilityDocument, WorkloadFreeDelayRefusal,
 };
 #[cfg(feature = "test-support")]
 pub use probability_certificate::{
@@ -526,8 +540,9 @@ pub use proof_result::{
     read_plugin_basis, read_plugin_cause_kind, read_plugin_certification,
     read_plugin_hybrid_counterexample, read_plugin_hybrid_counterexample_over,
     read_plugin_inconclusive_cause, read_plugin_inconclusive_cause_over, AppliedReduction,
-    BackendProviderSource, BoundsMethod, Certification, DeclineCode, EmptyEnvelopeSet,
-    ExactBinding, ExactEntry, ExactOrBounds, ExactRational, Extremum, FslOnlyCause,
+    BackendProviderSource, BoundsExploration, BoundsMethod, Certification, DeclineCode,
+    EmptyEnvelopeSet, ExactBinding, ExactBound, ExactEntry, ExactOrBounds, ExactRational,
+    Extremum, FslOnlyCause,
     IncompleteCause, InconclusiveCause, InstanceBound, MemoryBound, MemoryBoundMember,
     PluginReplayContext, PluginReplayRefusal, PluginResultRefusal, PremiseOutcome, ProofBasis,
     ProofRefusalCause, ProofResultEnvelope, ProofResultRefusal, Proviso, ReportedInconclusiveCause,
@@ -540,9 +555,7 @@ pub use proof_result::{
 // select by. They are defined in `spine` because the spine compile reads
 // them; re-exported at the root so CG names them without naming `spine`,
 // which it may not (ADR-011 §3 FB-05, T-12 rule (a)).
-pub use spine::{
-    DependencyInput, DependencyInputRefusal, OperationName, SourceHolder, SuppliedLibrary,
-};
+pub use spine::{DependencyInput, DependencyInputRefusal, OperationName, SourceHolder, SuppliedLibrary};
 // FR-121, FR-640: the clock selections `call_site` compiles under.
 pub use spine::{InvalidClock, RequestClocks};
 // The O-07 occurrence key and O-12 source region these envelopes carry
@@ -564,7 +577,9 @@ pub use fsl_foundation::source::provenance::{OccurrenceKey, SourceRegion};
 // T-12-governed constructor (ADR-011 §3 FB-05), so no rule is broken; CG
 // needs exactly these to build the requests `call_site` and `replay`
 // (FR-098) and `replay_frame` (FR-116) read.
-pub use filament_exact::{Identifier, NodeKey, Origin, Role, ScalarLimits, Value};
+pub use filament_eval::ExecutionBackendChoice;
+pub use filament_exact::{Identifier, NodeKey, Origin, PathSegment, Role, ScalarLimits, Value};
+pub use filament_semantic_value::supplied_stop::SuppliedLimits;
 pub use fsl_foundation::SourceIdentity;
 // FR-395: the types of `run`'s signature and result that the root did not
 // export, so a consumer calls `run_with_requirements` and reads its result
@@ -799,9 +814,11 @@ mod redaction_tests {
         // A separately, validly constructed witness from the trimmed block
         // still returns the marker through its typed accessor.
         let valid_witness = Witness::parse(format!("<<<assertion|h|c|{marker}=1>>>")).unwrap();
-        assert!(valid_witness
-            .concrete_values()
-            .iter()
-            .any(|(name, _)| name == marker));
+        assert!(
+            valid_witness
+                .concrete_values()
+                .iter()
+                .any(|(name, _)| name == marker)
+        );
     }
 }

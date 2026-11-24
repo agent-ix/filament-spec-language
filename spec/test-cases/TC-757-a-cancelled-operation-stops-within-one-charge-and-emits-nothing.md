@@ -12,7 +12,7 @@ relationships:
 
 Verify `Cancel`: a pre-cancelled handle, a cancellation from another thread during `check` and `execute`, a cancellation inside a two-item `analyze`, the category of every cancelled failure, and the evaluator result beneath a cancelled `execute`.
 
-Scope: FR-276-AC-1 to FR-276-AC-6.
+Scope: FR-093-AC-26 and FR-276-AC-1 to FR-276-AC-7.
 
 ## Test Procedure
 
@@ -23,7 +23,7 @@ Scope: FR-276-AC-1 to FR-276-AC-6.
 5. Map `StageFailure::Cancelled(Requested)`, `StageFailure::Cancelled(Deadline)` and `CallFailure::Cancelled(Requested)` through FR-285.
 6. Cancel a handle with `Requested`, install it in a meter, and `call` FR-262-AC-1's `count` with `3` over that meter; then `execute` the same function with the same handle.
 
-Tag the tests `#[trace("TC-757", "<AC id>")]`.
+Tag the tests `#[trace("TC-757", "<AC id>")]`; tag step 7 with `FR-093-AC-26` and `FR-276-AC-7`.
 
 ## Expected Results
 

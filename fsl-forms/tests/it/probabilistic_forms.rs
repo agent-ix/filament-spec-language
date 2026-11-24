@@ -231,9 +231,8 @@ fn each_leading_word_builds_only_its_own_form() {
     assert!(matches!(unit.forms(), [form] if matches!(form.form(), DeclarationForm::Workload(_))));
 }
 
-/// TC-890 step 3, the S2 half of FR-311-AC-3: a zero weight and a workload
-/// that omit nothing S2 checks both build. That S3 refuses them is asserted in
-/// `fsl-semantics`, for the zero weight only, so this test tags no criterion.
+/// TC-890 step 3: a zero random weight and a workload that omits a required
+/// operation both build as forms at S2.
 #[trace("TC-890")]
 #[test]
 fn a_zero_weight_and_an_incomplete_workload_build_at_s2() {
@@ -350,7 +349,7 @@ fn the_adr_024_claims_build_their_probabilistic_forms() {
         reward,
         window,
         span,
-    } = measure
+    } = measure.as_ref()
     else {
         panic!("an accumulate measure: {measure:?}");
     };
@@ -502,12 +501,13 @@ fn mean_expected_steps_and_elapsed_build_their_bodies() {
 
     let (_, body) = body_of("quantile 0.5 of (steps from holds(A) until holds(B) within 10) <= 5");
     let ProbabilisticBody::Quantile {
-        measure: MeasureForm::Steps { window, .. },
-        threshold,
-        ..
+        measure, threshold, ..
     } = body
     else {
         panic!("a quantile over steps: {body:?}");
+    };
+    let MeasureForm::Steps { window, .. } = *measure else {
+        panic!("a steps measure: {measure:?}");
     };
     assert!(matches!(window.within, HorizonForm::Steps(steps) if steps.value == 10));
     assert!(matches!(
@@ -517,12 +517,11 @@ fn mean_expected_steps_and_elapsed_build_their_bodies() {
 
     let (_, body) =
         body_of("quantile 0.5 of (elapsed from holds(A) until holds(B) within 10 ms) <= 5 ms");
-    let ProbabilisticBody::Quantile {
-        measure: MeasureForm::Elapsed { window, .. },
-        ..
-    } = body
-    else {
+    let ProbabilisticBody::Quantile { measure, .. } = body else {
         panic!("a quantile over elapsed: {body:?}");
+    };
+    let MeasureForm::Elapsed { window, .. } = *measure else {
+        panic!("an elapsed measure: {measure:?}");
     };
     let HorizonForm::Quantity(horizon) = window.within else {
         panic!("a quantity horizon: {:?}", window.within);

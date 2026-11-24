@@ -32,7 +32,8 @@ Fixture: `RingIsQueue` with universes `rings = {r}`, `slots = {s0, s1}`.
 6. Check FR-139-AC-6's `sum` row at S3 with symbolic `n`, recording `[0, 2n]`;
    then admit it against `Int[0, 4]` and `Int[2, 4]` with `n = 2`. Evaluate it
    where no slot satisfies the condition.
-7. Read the `UndefinedRecord` of step 4's two results.
+7. Read the `UndefinedRecord` of step 4's two results, including its reason
+   and payload.
 
 Tag the tests `#[trace("TC-544", "FR-139-AC-n")]`.
 
@@ -49,4 +50,6 @@ Tag the tests `#[trace("TC-544", "FR-139-AC-n")]`.
 - Step 6: S3 records `[0, 2n]` without refusing; at admission, `Int[0, 4]` is
   admitted and `Int[2, 4]` refuses `ill_typed`/`type-mismatch` naming the row,
   `R::slots` and universe size 2; the empty sum evaluates to 0.
-- Step 7: reason `only-not-one` for both.
+- Step 7: reason `only-not-one` for both; each payload names the population
+  binding, `only` locus and enclosing row, with no match count for either the
+  zero-match or two-match case.

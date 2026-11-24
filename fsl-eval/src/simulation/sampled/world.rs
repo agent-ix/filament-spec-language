@@ -242,6 +242,13 @@ impl World {
         Self::checked(model, profiles, &[], &crate::value::S6aRewardEvaluator)
     }
 
+    /// Give the model population the supplied finite identity universe. The
+    /// initial snapshot remains the one declared by `model`.
+    pub(crate) fn with_universe_keys(mut self, keys: &[&str]) -> Self {
+        self.universe.keys = keys.iter().map(|key| (*key).to_owned()).collect();
+        self
+    }
+
     /// `model` whose operations `queries` names, as (operation, result type
     /// reference), each return that type: a query when its frame is empty.
     pub(crate) fn with_queries(model: &Model, queries: &[(&str, &str)]) -> Self {

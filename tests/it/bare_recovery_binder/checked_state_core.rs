@@ -105,10 +105,7 @@ fn bytes_only_recovery_reports_the_unavailable_target_only_on_the_branch_that_re
                     binder("recoveredFull"),
                     SuppliedValue::Value(recipe.recovery(&bare, &[2, 2, 5])).into(),
                 ),
-                (
-                    target.clone(),
-                    SuppliedValue::Unavailable(cause.clone()).into(),
-                ),
+                (target.clone(), SuppliedValue::Unavailable(cause).into()),
                 (
                     binder("activatedFull"),
                     SuppliedValue::Value(Value::Boolean(activated)).into(),

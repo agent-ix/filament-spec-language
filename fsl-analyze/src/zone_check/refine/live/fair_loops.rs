@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_semantic_value::fairness::FairnessConstraint;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{EdgeLabel, Identity, Vertex};
-use fsl_replay::{AbstractClass, TemporalCounterexample};
+use fsl_replay::{AbstractClass, CandidateStep, TemporalCounterexample};
 
 use super::{Decided, FairScope, Live};
 use crate::model_check::fair_summary::{
@@ -50,7 +50,7 @@ pub(super) struct ComponentView<'a> {
 /// What the search decided for one component.
 pub(super) enum Refuted {
     /// A closed walk with no fair candidate run, concretised.
-    By(TemporalCounterexample),
+    By(Box<TemporalCounterexample>),
     /// Such walks exist and every one examined fails to concretise; walks
     /// under a prefix whose summary a retained one subsumes are not tried,
     /// so the half is undecided.
@@ -63,7 +63,7 @@ pub(super) enum Refuted {
 
 /// One hidden valuation of a vertex's position and the abstract transitions
 /// enabled from it.
-type Candidates = Vec<(Vec<u8>, Vec<ModelTransition>)>;
+type Candidates = Vec<(usize, Vec<u8>, Vec<ModelTransition>)>;
 
 impl Product<'_, '_> {
     /// Decide `component` over every closed walk that is concretely fair and
@@ -102,10 +102,10 @@ impl Product<'_, '_> {
         for &start in component.members {
             run.poll()?;
             let mut identity = CandidateRelation::new();
-            for (key, _) in vertex_of(&candidates, start.index())? {
+            for (ordinal, key, _) in vertex_of(&candidates, start.index())? {
                 insert_relation_label(
                     &mut identity,
-                    (key.clone(), key.clone()),
+                    ((*ordinal, key.clone()), (*ordinal, key.clone())),
                     neutral_label(classes.len()),
                 );
             }
@@ -133,18 +133,21 @@ impl Product<'_, '_> {
                         .and_then(|out| out.get(position))
                         .copied()
                         .ok_or(ZoneCheckRefusal::Fault("walk-edge"))?;
-                    if !relations.contains_key(&arc_index) {
+                    if let std::collections::btree_map::Entry::Vacant(entry) =
+                        relations.entry(arc_index)
+                    {
                         let arc = live
                             .arcs
                             .get(arc_index)
                             .ok_or(ZoneCheckRefusal::Fault("walk-edge"))?;
                         let relation = arc_relation(
                             arc.taken.as_ref(),
+                            &arc.candidate_stutters,
                             &enables(vertex_of(&candidates, arc.from)?),
                             &enables(vertex_of(&candidates, arc.to)?),
                             classes,
                         )?;
-                        relations.insert(arc_index, relation);
+                        entry.insert(relation);
                     }
                     let edge_relation = relations
                         .get(&arc_index)
@@ -248,7 +251,7 @@ impl Product<'_, '_> {
             .first()
             .ok_or(ZoneCheckRefusal::Fault("hidden-component-has-a-class"))?;
         Ok(match self.lasso(run, live, class, named, entry, cycle)? {
-            Some(found) => Refuted::By(found),
+            Some(found) => Refuted::By(Box::new(found)),
             None => Refuted::NotConcretised,
         })
     }
@@ -267,7 +270,7 @@ fn vertex_of(
 fn enables(candidates: &Candidates) -> Vec<CandidateEnables<'_>> {
     candidates
         .iter()
-        .map(|(key, enabled)| (key.as_slice(), enabled.as_slice()))
+        .map(|(ordinal, key, enabled)| (*ordinal, key.as_slice(), enabled.as_slice()))
         .collect()
 }
 
@@ -276,6 +279,7 @@ fn enables(candidates: &Candidates) -> Vec<CandidateEnables<'_>> {
 /// candidate.
 fn arc_relation(
     taken: Option<&Taken>,
+    stutters: &[CandidateStep],
     source: &[CandidateEnables<'_>],
     target: &[CandidateEnables<'_>],
     classes: &[AbstractClass],
@@ -284,8 +288,10 @@ fn arc_relation(
         Some(Taken::CandidateSteps(rows)) => candidate_steps_relation(
             rows.iter().map(|row| {
                 (
+                    row.pre_candidate,
                     row.pre_state.as_slice(),
                     row.transition.as_ref(),
+                    row.post_candidate,
                     row.post_state.as_slice(),
                 )
             }),
@@ -294,7 +300,27 @@ fn arc_relation(
             classes,
         )
         .map_err(ZoneCheckRefusal::Fault),
-        Some(Taken::Stutter | Taken::Failing) | None => Ok(candidate_stutter_relation(source, target, classes)),
+        Some(Taken::Stutter | Taken::Failing) | None => {
+            if stutters.is_empty() {
+                Ok(candidate_stutter_relation(source, target, classes))
+            } else {
+                candidate_steps_relation(
+                    stutters.iter().map(|row| {
+                        (
+                            row.pre_candidate,
+                            row.pre_state.as_slice(),
+                            None,
+                            row.post_candidate,
+                            row.post_state.as_slice(),
+                        )
+                    }),
+                    source,
+                    target,
+                    classes,
+                )
+                .map_err(ZoneCheckRefusal::Fault)
+            }
+        }
         Some(Taken::Abstract(_)) => Err(ZoneCheckRefusal::Fault(
             "hidden-model-edge-retains-candidate-steps",
         )),
@@ -359,10 +385,12 @@ mod tests {
 
     fn cycle_of_three() -> CandidateRelation {
         let mut relation = CandidateRelation::new();
-        for (from, to) in [(b"a", b"b"), (b"b", b"c"), (b"c", b"a")] {
+        for (from_ordinal, to_ordinal, from, to) in
+            [(0, 1, b"a", b"b"), (1, 2, b"b", b"c"), (2, 0, b"c", b"a")]
+        {
             insert_relation_label(
                 &mut relation,
-                (from.to_vec(), to.to_vec()),
+                ((from_ordinal, from.to_vec()), (to_ordinal, to.to_vec())),
                 neutral_label(1),
             );
         }
@@ -382,9 +410,9 @@ mod tests {
         assert_eq!(
             pairs,
             [
-                (b"a".to_vec(), b"a".to_vec()),
-                (b"b".to_vec(), b"b".to_vec()),
-                (b"c".to_vec(), b"c".to_vec()),
+                ((0, b"a".to_vec()), (0, b"a".to_vec())),
+                ((1, b"b".to_vec()), (1, b"b".to_vec())),
+                ((2, b"c".to_vec()), (2, b"c".to_vec())),
             ]
         );
     }

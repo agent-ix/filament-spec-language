@@ -27,7 +27,8 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 
-use super::{fault, Lowering};
+use super::{Lowering, fault};
+use crate::check::Signature;
 use crate::check::family::OccurrenceRole;
 use crate::check::hybrid::{
     ArithmeticOp, CheckedHybridClaim, CheckedHybridModel, CompareOp, HybridActivation, HybridClock,
@@ -39,7 +40,6 @@ use crate::check::node_key::{
 };
 use crate::check::profile::TemporalProfile;
 use crate::check::refusal::{CheckRefusal, KeyFault};
-use crate::check::Signature;
 use crate::value::member::{FairnessTarget, Member, TimedMember};
 use fsl_foundation::bound::{TemporalInterval, TemporalUpper};
 
@@ -558,7 +558,7 @@ impl Lowering<'_> {
                             ("filament.op.temporal.triggered", Some(i), 2)
                         }
                         HybridFormula::Holds(_) => {
-                            return Err(stage_fault(location, "holds-is-a-leaf"))
+                            return Err(stage_fault(location, "holds-is-a-leaf"));
                         }
                     };
                     let mut arguments = Vec::with_capacity(operands);
@@ -744,7 +744,7 @@ impl Lowering<'_> {
                         | HybridTerm::Capture(_)
                         | HybridTerm::Constant(_)
                         | HybridTerm::Boolean(_) => {
-                            return Err(stage_fault(location, "leaf-is-not-built"))
+                            return Err(stage_fault(location, "leaf-is-not-built"));
                         }
                     };
                     let mut operand_terms = Vec::with_capacity(operands + 1);
@@ -782,7 +782,7 @@ impl Lowering<'_> {
                         | HybridTerm::Capture(_)
                         | HybridTerm::Constant(_)
                         | HybridTerm::Boolean(_) => {
-                            return Err(stage_fault(location, "leaf-is-not-built"))
+                            return Err(stage_fault(location, "leaf-is-not-built"));
                         }
                     };
                     if let HybridTerm::Call(function, _) = term {

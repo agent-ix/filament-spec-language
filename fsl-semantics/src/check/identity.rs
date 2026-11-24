@@ -67,7 +67,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use fsl_foundation::source::node_table::{
-    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeMap,
+    DebugTable, DebugWith, NodeKeyDebug, NodeMap, standalone,
 };
 
 use filament_exact::{

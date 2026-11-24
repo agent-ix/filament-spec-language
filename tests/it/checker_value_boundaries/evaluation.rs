@@ -52,16 +52,19 @@ fn evaluated(body: &str, function: &str) -> Value {
 }
 
 #[test]
-#[trace("TC-1231")]
-#[ignore = "QSL-2878: source native constructor/operation name resolution; desired octet/length oracle remains strict"]
+#[trace("TC-1231", "FR-091-AC-56", "FR-091-AC-78")]
+#[trace("FSpec-TC-280", "FSpec-FR-322-AC-103")]
 fn byte_concatenation_preserves_zero_octets_and_input_order() {
-    let value = evaluated("function octets using v(): Boolean pure { concat(Bytes(\"0001\"), Bytes(\"ff00\")) = Bytes(\"0001ff00\") and length(concat(Bytes(\"0001\"), Bytes(\"ff00\"))) = 4 and concat(Bytes(\"0001\"), Bytes(\"ff00\")) != concat(Bytes(\"ff00\"), Bytes(\"0001\")) }", "octets");
+    let value = evaluated(
+        "function octets using v(): Boolean pure { concat(Bytes(\"0001\"), Bytes(\"ff00\")) = Bytes(\"0001ff00\") and length(concat(Bytes(\"0001\"), Bytes(\"ff00\"))) = 4 and concat(Bytes(\"0001\"), Bytes(\"ff00\")) != concat(Bytes(\"ff00\"), Bytes(\"0001\")) }",
+        "octets",
+    );
     assert!(matches!(value, Value::Boolean(true)));
 }
 
 #[test]
-#[trace("TC-1231", "TC-992")]
-#[ignore = "QSL-2878: source JsonObject constructor name resolution; desired payload-meaning oracle remains strict"]
+#[trace("TC-1231", "TC-992", "FR-091-AC-56")]
+#[trace("FSpec-TC-280", "FSpec-FR-149-AC-23")]
 fn native_json_and_raw_strings_preserve_distinct_payload_meanings() {
     let value = evaluated(
         r#"function meanings using v(): Boolean pure { JsonObject("[null,false,7]") != JsonObject("[false,null,7]") and JsonObject("null") != JsonObject("\"null\"") and "é" != "é" }"#,
@@ -110,7 +113,7 @@ fn recursive_work_fuel_is_exact_at_the_last_required_charge() {
         let FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)) = stopped.outcome else { panic!("fuel exhaustion must be typed: {stopped:?}") };
         assert_eq!(incomplete.limit_kind, LimitKind::WorkUnits);
         assert_eq!(incomplete.limit, work - 1);
-        assert!(incomplete.consumed <= work - 1);
+        assert!(incomplete.consumed < work);
         assert!(incomplete.next_charge > Integer::zero());
         let mut exact = Meter::new(limits(work));
         let completed = invoke(&mut exact);
@@ -120,7 +123,6 @@ fn recursive_work_fuel_is_exact_at_the_last_required_charge() {
 }
 
 #[test]
-#[trace("FR-262-AC-2", "TC-735")]
 fn nested_value_type_clone_compare_hash_debug_and_drop_use_bounded_stack() {
     std::thread::Builder::new()
         .stack_size(512 * 1024)
@@ -149,7 +151,6 @@ fn nested_value_type_clone_compare_hash_debug_and_drop_use_bounded_stack() {
 }
 
 #[test]
-#[trace("FR-262-AC-2", "TC-735")]
 fn recursively_built_record_values_compare_clone_and_drop_at_real_depth() {
     std::thread::Builder::new().stack_size(512 * 1024).spawn(|| {
         let source = "record Link { head: Int[0,9]; tail: Option<Link>; } function chain using v(n: Int[0,100000]): Option<Link> pure decreases(n) { if n = 0 then none else Some(Link { head: 7, tail: chain(n - 1) }) }";

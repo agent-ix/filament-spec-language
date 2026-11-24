@@ -3,10 +3,10 @@
 
 use filament_checked::key::DeclarationKey;
 use filament_contract_model::{CheckedNodeId, CheckedTerm, RefinementKey, RefinementStepTarget};
-use filament_exact::{NodeKey, Value};
+use filament_exact::{MemberOwner, NodeKey, Value};
 use filament_semantic_value::fairness::FairnessConstraint;
-use fsl_eval::simulation::model::{ModelSystem, PackageModelInput, RowReading, StateObservation};
 use fsl_eval::simulation::ExpansionStop;
+use fsl_eval::simulation::model::{ModelSystem, PackageModelInput, RowReading, StateObservation};
 use fsl_package::{
     BarePackage, BareWorld, ReaderProtocolProjection, RefinementRowRefusal, RefinementView,
 };
@@ -109,13 +109,16 @@ impl ObjectMapping for Object<'_> {
     }
 }
 
+struct OperationTarget<'a> {
+    key: DeclarationKey,
+    target_type: DeclarationKey,
+    receiver: Expression<'a>,
+    arguments: Vec<Expression<'a>>,
+    binds_result: bool,
+}
+
 enum Target<'a> {
-    Operation {
-        key: DeclarationKey,
-        receiver: Expression<'a>,
-        arguments: Vec<Expression<'a>>,
-        binds_result: bool,
-    },
+    Operation(Box<OperationTarget<'a>>),
     Stutter,
     Any,
 }
@@ -130,20 +133,16 @@ impl StepMapping for Step<'_> {
     }
     fn target(&self) -> MappingTarget<'_> {
         match &self.target {
-            Target::Operation {
-                key,
-                receiver,
-                arguments,
-                binds_result,
-            } => MappingTarget::Abstract {
-                operation: key,
-                target_type: None,
-                receiver,
-                arguments: arguments
+            Target::Operation(operation) => MappingTarget::Abstract {
+                operation: &operation.key,
+                target_type: Some(&operation.target_type),
+                receiver: &operation.receiver,
+                arguments: operation
+                    .arguments
                     .iter()
                     .map(|argument| Some(argument as &dyn MappingExpression))
                     .collect(),
-                binds_result: *binds_result,
+                binds_result: operation.binds_result,
             },
             Target::Stutter => MappingTarget::Stutter,
             Target::Any => MappingTarget::Any,
@@ -278,20 +277,46 @@ impl<'a> PackageRefinement<'a> {
         }
         let mut objects = Vec::new();
         for row in view.objects() {
-            let abstract_type = object_key(package, local(&row.abstract_type)?)?;
+            let abstract_node = local(&row.abstract_type)?;
+            let abstract_type = object_key(package, abstract_node)?;
             let concrete_type = object_key(package, &row.concrete_type)?;
-            let declared = input
-                .refinement_model()
-                .fields(&abstract_type)
-                .map_err(|_| unsupported("abstract field declarations"))?
-                .ok_or_else(|| unsupported("abstract field declarations"))?;
+            let declared = package
+                .package()
+                .model_object_fields(abstract_node)
+                .map_err(|_| unsupported("abstract field declarations"))?;
+            let identities = package
+                .identities()
+                .ok_or_else(|| unsupported("abstract field identities"))?;
+            let identity_key = |field: &filament_contract_model::CheckedModelField|
+             -> Result<DeclarationKey, PackageRefinementRefusal> {
+                let owner = package
+                    .node_key(field.declaring_node_id())
+                    .ok_or_else(|| unsupported("abstract field owner identity"))?;
+                let identity = identities
+                    .field_rows()
+                    .iter()
+                    .find(|identity| {
+                        identity.record_node == *abstract_node
+                            && identity.member_id.member() == field.name()
+                            && identity.member_id.owner() == &MemberOwner::Node(owner.clone())
+                    })
+                    .ok_or_else(|| unsupported("abstract field identity"))?;
+                Ok(DeclarationKey {
+                    package: identity.selected_document.to_string(),
+                    node: identity.field_original_identity.to_string(),
+                })
+            };
+            let declared_keys = declared
+                .fields()
+                .iter()
+                .map(identity_key)
+                .collect::<Result<Vec<_>, _>>()?;
             let mut fields = Vec::new();
             for field in &row.fields {
-                let key = declared
-                    .iter()
-                    .find(|declared| declared.name == field.name.as_ref())
-                    .map(|declared| declared.key.clone())
+                let admitted = declared
+                    .field(field.name.as_ref())
                     .ok_or_else(|| unsupported("abstract field identity"))?;
+                let key = identity_key(admitted)?;
                 fields.push(Field {
                     key,
                     expression: Expression {
@@ -304,10 +329,9 @@ impl<'a> PackageRefinement<'a> {
                     },
                 });
             }
-            let hidden = declared
+            let hidden = declared_keys
                 .into_iter()
-                .filter(|declared| !fields.iter().any(|field| field.key == declared.key))
-                .map(|declared| declared.key)
+                .filter(|key| !fields.iter().any(|field| field.key == *key))
                 .collect();
             objects.push(Object {
                 abstract_type,
@@ -329,27 +353,39 @@ impl<'a> PackageRefinement<'a> {
             let target = match &row.target {
                 RefinementStepTarget::Operation {
                     operation: target,
+                    target_type,
                     receiver,
                     arguments,
                 } => {
                     let abstract_operation = operation(package, input, local(target)?)?;
-                    if arguments.iter().any(|argument| {
-                        matches!(
-                            argument,
-                            filament_contract_model::RefinementStepArgument::Open(_)
-                        )
-                    }) {
-                        return Err(unsupported("open step arguments"));
-                    }
-                    if !concrete.parameters.is_empty() || !abstract_operation.parameters.is_empty()
+                    let target_type = object_key(package, local(target_type)?)?;
+                    if concrete.parameters.len() != abstract_operation.parameters.len()
+                        || arguments.len() != abstract_operation.parameters.len()
                     {
-                        return Err(unsupported("mapping operation parameters"));
-                    }
-                    if !arguments.is_empty() {
                         return Err(unsupported("step argument arity"));
                     }
-                    Target::Operation {
+                    let arguments = arguments
+                        .iter()
+                        .map(|argument| {
+                            let filament_contract_model::RefinementStepArgument::Term(term) =
+                                argument
+                            else {
+                                return Err(unsupported("open step arguments"));
+                            };
+                            Ok(Expression {
+                                world,
+                                projection: package.project_refinement_step_argument(
+                                    term,
+                                    receiver,
+                                    step_region,
+                                    world,
+                                )?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, PackageRefinementRefusal>>()?;
+                    Target::Operation(Box::new(OperationTarget {
                         key: abstract_operation.key.clone(),
+                        target_type,
                         receiver: Expression {
                             world,
                             projection: package.project_refinement_row(
@@ -358,15 +394,15 @@ impl<'a> PackageRefinement<'a> {
                                 world,
                             )?,
                         },
-                        arguments: Vec::new(),
+                        arguments,
                         binds_result: concrete.result.is_some()
                             && abstract_operation.result.is_some(),
-                    }
+                    }))
                 }
                 RefinementStepTarget::Stutter => Target::Stutter,
                 RefinementStepTarget::Any => Target::Any,
                 RefinementStepTarget::ProtocolStep { .. } => {
-                    return Err(unsupported("protocol step"))
+                    return Err(unsupported("protocol step"));
                 }
             };
             steps.push(Step {

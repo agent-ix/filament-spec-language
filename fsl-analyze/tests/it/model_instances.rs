@@ -9,8 +9,7 @@
 //! FR-125-AC-11 and AC-12 read the bound parameter through the production
 //! letters of the checked clause (`ModelSystem::clause_letters`).
 //!
-//! Not covered: FR-125-AC-9 and AC-15, whose reads are of the reference
-//! itself; no state-graph claim (FR-165) is instantiated here.
+//! Not covered: FR-125-AC-9, whose reads are of the reference itself.
 
 use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
@@ -20,9 +19,10 @@ use filament_exact::{Cancel, Meter};
 use filament_semantic_value::catalog::{UndefinedReason, UndefinedRecord};
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_analyze::model_check::{
-    check_model, check_state_graph, ModelCheckRefusal, ModelCheckRequest, StateGraphItem,
-    StateGraphRequest,
+    ModelCheckRefusal, ModelCheckRequest, StateGraphItem, StateGraphRequest, check_model,
+    check_state_graph,
 };
+use fsl_eval::hyper::{CheckedHyperLetters, HyperLetters, ParameterBinding};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ModelSubject};
 use fsl_eval::simulation::model::{
     ClauseOutcome, ExpansionLimits, LettersRefusal, ModelSimState, ModelSimulationRequest,
@@ -33,18 +33,20 @@ use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::Code;
 use fsl_package::CheckedPackage;
-use fsl_replay::{check_closure, CertificateRequest, ClosureCertificate, ClosureRefusal};
+use fsl_replay::{CertificateRequest, ClosureCertificate, ClosureRefusal, check_closure};
 use fsl_replay::{CounterexampleKind, ModelCheckItem, ModelCheckLimits};
 use fsl_replay::{ModelCheckOutcome, UndecidedCause};
-use fsl_semantics::check::{CheckedTemporalClause, FormulaNode, FormulaNodeId};
+use fsl_semantics::check::{
+    CheckCause, CheckedTemporalClause, FormulaNode, FormulaNodeId, HyperCause,
+};
 use fsl_semantics::family::ClaimExtent;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{meaning, package_input};
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef, ObservationLimits};
 use ix_trace_rs::trace;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
-use crate::counter::{declarations_in, declarations_with_model_profile, UNLIMITED};
+use crate::counter::{UNLIMITED, declarations_in, declarations_with_model_profile};
 
 const PACKAGE: &str = "test/things";
 
@@ -298,10 +300,22 @@ impl World {
         universes: Vec<PopulationUniverse>,
         holds: bool,
     ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
+        self.run_within(over, universes, holds, ModelCheckLimits::default())
+    }
+
+    /// [`Self::run`] under `limits`.
+    fn run_within(
+        &self,
+        over: &str,
+        universes: Vec<PopulationUniverse>,
+        holds: bool,
+        limits: ModelCheckLimits,
+    ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
         let (package, clause) = self.clause(over);
         let letters = Constant(holds);
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: self.subject(&package, universes),
                 item: ModelCheckItem::Clause {
@@ -309,7 +323,9 @@ impl World {
                     letters: &letters,
                 },
                 max_depth: None,
-                limits: ModelCheckLimits::default(),
+                limits,
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
@@ -324,6 +340,40 @@ impl World {
         over: &str,
         universes: Vec<PopulationUniverse>,
     ) -> Result<Vec<String>, ModelCheckRefusal> {
+        self.reach_within(over, universes, ModelCheckLimits::default())
+    }
+
+    /// [`Self::reach`] under `limits`.
+    fn reach_within(
+        &self,
+        over: &str,
+        universes: Vec<PopulationUniverse>,
+        limits: ModelCheckLimits,
+    ) -> Result<Vec<String>, ModelCheckRefusal> {
+        let run = self.reach_run(over, universes, limits)?;
+        let [instances] = run.items.as_slice() else {
+            panic!("one item");
+        };
+        if matches!(instances.as_slice(), [instance] if instance.outcome == fsl_replay::StateGraphOutcome::NoInstance)
+        {
+            return Ok(Vec::new());
+        }
+        Ok(instances
+            .iter()
+            .map(|instance| {
+                let reference = instance.over.as_ref().expect("a bound object");
+                reference.object().as_str().to_owned()
+            })
+            .collect())
+    }
+
+    /// The state-graph run of [`Self::reach`]'s claim under `limits`.
+    fn reach_run(
+        &self,
+        over: &str,
+        universes: Vec<PopulationUniverse>,
+        limits: ModelCheckLimits,
+    ) -> Result<fsl_analyze::model_check::StateGraphRun, ModelCheckRefusal> {
         let body = format!("possible Reach using v over (x: M::{over}) {{ true }}\n");
         let graph = declarations_in(PACKAGE, &self.document, &body)
             .check(
@@ -344,25 +394,12 @@ impl World {
                 reductions: Default::default(),
                 deadlock_freedom: false,
                 max_depth: None,
-                limits: ModelCheckLimits::default(),
+                limits,
                 seed: None,
             },
             &Cancel::new(),
         )?;
-        let [instances] = run.items.as_slice() else {
-            panic!("one item");
-        };
-        if matches!(instances.as_slice(), [instance] if instance.outcome == fsl_replay::StateGraphOutcome::NoInstance)
-        {
-            return Ok(Vec::new());
-        }
-        Ok(instances
-            .iter()
-            .map(|instance| {
-                let reference = instance.over.as_ref().expect("a bound object");
-                reference.object().as_str().to_owned()
-            })
-            .collect())
+        Ok(run)
     }
 
     /// The core's closure check of `over`'s clause under `universes`, of an
@@ -470,8 +507,8 @@ fn instances_are_each_key_of_each_admitting_population_in_canonical_order() {
         &[P1, P2, Q],
         &[
             ("P1", &[("d", "Lamp"), ("c", "Switch")]),
-            ("P2", &[("b", "Lamp")]),
-            ("Q", &[]),
+            ("P2", &[("b", "Lamp"), ("a", "Switch")]),
+            ("Q", &[("z", "Other")]),
         ],
     );
     let bounded = || universes(&[("Q", &["z"]), ("P2", &["b", "a"]), ("P1", &["d", "c"])]);
@@ -499,7 +536,10 @@ fn instances_are_each_key_of_each_admitting_population_in_canonical_order() {
             .expect("bounded"),
         vec![instance("P1", "d"), instance("P1", "c")]
     );
-    let supertype = self::world(&[P2, Q], &[("P2", &[("b", "Lamp")]), ("Q", &[])]);
+    let supertype = self::world(
+        &[P2, Q],
+        &[("P2", &[("b", "Lamp"), ("a", "Switch")]), ("Q", &[])],
+    );
     assert_eq!(
         supertype
             .instances("Lamp", universes(&[("Q", &["z"]), ("P2", &["b", "a"])]))
@@ -517,6 +557,189 @@ fn instances_are_each_key_of_each_admitting_population_in_canonical_order() {
         world.run("Thing", bounded(), true).expect("checked"),
         ModelCheckOutcome::Holds { .. }
     ));
+}
+
+/// A key listed in an overlapping population's universe but
+/// absent from every initial record is excluded, including when the key is
+/// repeated in another population. Excluded keys retain first population and
+/// universe occurrence order; a non-overlapping population does not contribute.
+#[trace("TC-520", "FR-125-AC-10")]
+#[test]
+fn excluded_keys_are_initially_unadmitted_and_deduplicated_in_instance_order() {
+    let world = world(
+        &[P1, P2, Q],
+        &[
+            ("P1", &[("d", "Lamp")]),
+            ("P2", &[("a", "Lamp")]),
+            ("Q", &[("z", "Other")]),
+        ],
+    );
+    let universes = universes(&[
+        ("Q", &["z"]),
+        ("P2", &["u", "a", "v"]),
+        ("P1", &["d", "u", "w"]),
+    ]);
+    let package = world.formula("Thing", "always holds(true)");
+    let system = ModelSystem::new(world.subject(&package, universes).simulation)
+        .expect("the bounded subject admits");
+    let [clause] = package.graph().temporal_clauses() else {
+        panic!("one temporal clause");
+    };
+    assert_eq!(
+        system
+            .instances(&clause.clause().over().1)
+            .expect("instances"),
+        [instance("P1", "d"), instance("P2", "a")],
+    );
+    assert_eq!(
+        system
+            .excluded_keys(&clause.clause().over().1)
+            .expect("excluded keys"),
+        ["u", "w", "v"],
+    );
+}
+
+/// FR-125-AC-15: a state-graph claim uses the same ordered instances as a
+/// temporal claim over AC-10's populations, and both expose the same excluded
+/// universe keys.
+#[trace("TC-520", "FR-125-AC-15")]
+#[test]
+fn state_graph_claims_share_temporal_instance_and_excluded_key_order() {
+    let world = world(
+        &[P1, P2, Q],
+        &[
+            ("P1", &[("d", "Lamp")]),
+            ("P2", &[("a", "Lamp")]),
+            ("Q", &[]),
+        ],
+    );
+    let bounded = universes(&[
+        ("Q", &["z"]),
+        ("P2", &["u", "a", "v"]),
+        ("P1", &["d", "u", "w"]),
+    ]);
+    let package = world.formula("Thing", "always holds(true)");
+    let system = ModelSystem::new(world.subject(&package, bounded.clone()).simulation)
+        .expect("the bounded subject admits");
+    let [temporal] = package.graph().temporal_clauses() else {
+        panic!("one temporal clause");
+    };
+    let temporal_instances = system
+        .instances(&temporal.clause().over().1)
+        .expect("instances");
+    let excluded = system
+        .excluded_keys(&temporal.clause().over().1)
+        .expect("excluded keys");
+    let graph_instances = world.reach("Thing", bounded).expect("state graph claim");
+    assert_eq!(
+        temporal_instances,
+        [instance("P1", "d"), instance("P2", "a")]
+    );
+    assert_eq!(graph_instances, ["d", "a"]);
+    assert_eq!(excluded, ["u", "w", "v"]);
+}
+
+/// FR-125-AC-15: a `Thing` hyper parameter reads the key `s` as its held
+/// `Switch` reference. The narrower `Lamp` parameter reads the same key as an
+/// `absent-key` undefined value, with the production checked hyper letters.
+#[trace("TC-520", "FR-125-AC-15")]
+#[test]
+fn hyper_parameters_read_the_held_most_specific_type_or_absent_key() {
+    let world = world(&[P1], &[("P1", &[("l", "Lamp"), ("s", "Switch")])]);
+    let body = "hyper HThing using t0 over behaviours (v: M::Thing) \
+        forall trace a of M { always holds((v = M::Switch#\"s\") @ a) }\n\
+        hyper HLamp using t0 over behaviours (v: M::Lamp) \
+        forall trace a of M { always holds((v = v) @ a) }\n";
+    let graph = declarations_in(PACKAGE, &world.document, body)
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("hyper clauses check: {refusals:?}"));
+    let package = CheckedPackage::link(graph);
+    let universe = universes(&[("P1", &["l", "s"])]);
+    let system =
+        ModelSystem::new(world.subject(&package, universe).simulation).expect("the subject admits");
+    let state = &system.initial_states()[0];
+    let held_references = system
+        .invocation_receivers(state)
+        .expect("the initial state exposes its objects");
+    assert!(
+        held_references.iter().any(|(_, reference)| {
+            reference.object().as_str() == "s"
+                && format!("{:?}", reference.object_type()).contains("Switch")
+        }),
+        "the initial state must hold key s with its most-specific Switch type: {held_references:?}"
+    );
+    let clauses = package.graph().hyper_clauses();
+    assert_eq!(clauses.len(), 2);
+    let thing_index = clauses[0]
+        .body()
+        .nodes()
+        .iter()
+        .position(|node| matches!(node, FormulaNode::Holds { .. }))
+        .expect("Thing has one holds atom");
+    let thing_atom = clauses[0]
+        .body()
+        .node_id(thing_index)
+        .expect("Thing atom has an id");
+    let binding = [ParameterBinding {
+        parameter: "v".to_owned(),
+        instance: instance("P1", "s"),
+    }];
+    let thing_letters = CheckedHyperLetters::new(&package, &clauses[0], vec![&system])
+        .expect("Thing hyper letters");
+    assert_eq!(
+        thing_letters
+            .atom(thing_atom, &binding, &[state], &mut Meter::new(UNLIMITED),)
+            .expect("the held Switch reference is read"),
+        AtomReading::True,
+    );
+    let lamp_index = clauses[1]
+        .body()
+        .nodes()
+        .iter()
+        .position(|node| matches!(node, FormulaNode::Holds { .. }))
+        .expect("Lamp has one holds atom");
+    let lamp_atom = clauses[1]
+        .body()
+        .node_id(lamp_index)
+        .expect("Lamp atom has an id");
+    let lamp_letters =
+        CheckedHyperLetters::new(&package, &clauses[1], vec![&system]).expect("Lamp hyper letters");
+    let absent = lamp_letters
+        .atom(lamp_atom, &binding, &[state], &mut Meter::new(UNLIMITED))
+        .expect("an absent key is undefined, not a refusal");
+    assert!(
+        matches!(
+            absent,
+        AtomReading::Undefined(UndefinedCause::Family(ref record))
+            if record.reason == UndefinedReason::AbsentKey
+        ),
+        "{absent:?}"
+    );
+
+    let unrelated = "hyper HUnrelated using t0 over behaviours (v: M::Other) \
+        forall trace a of M { always holds(v = v) }\n";
+    let refusal = declarations_in(PACKAGE, &world.document, unrelated)
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .expect_err("an unrelated type has no overlapping population");
+    assert!(
+        refusal
+            .iter()
+            .any(|refusal| matches!(
+                refusal.cause.as_ref(),
+                CheckCause::Hyper(cause)
+                    if matches!(cause.as_ref(), HyperCause::UnresolvedPopulation { parameter, .. }
+                        if parameter == "v")
+            )),
+        "the unrelated parameter keeps its typed unresolved-population refusal: {refusal:?}"
+    );
 }
 
 /// FR-125-AC-8: a population that admits `T` and has no universe is
@@ -589,21 +812,174 @@ fn an_unbounded_admitting_population_requires_a_bound_and_no_key_is_no_instance(
     ));
 }
 
+/// FR-125-AC-13: instancing exits before exploration in the specified order.
+/// An unbounded overlapping population requires a universe even with no
+/// initial state; bounded empty initials report NoInitialState; conflicting
+/// same-key types refuse before any instance is formed; agreeing types admit;
+/// and a bounded subject with no admitted key reports NoInstance.
+#[trace("TC-520", "FR-125-AC-13")]
+#[test]
+fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
+    let mut unbounded = self::world(&[("animals", &["Animal"])], &[]);
+    unbounded.initial.clear();
+    let refusal = unbounded
+        .run("Animal", Vec::new(), true)
+        .expect_err("an overlapping unbounded population requires a bound");
+    assert!(
+        matches!(refusal, ModelCheckRefusal::RequiresBound(_)),
+        "{refusal:?}"
+    );
+
+    let mut empty = self::world(&[("animals", &["Animal"])], &[("animals", &[])]);
+    empty.initial.clear();
+    assert!(matches!(
+        empty.run("Animal", universes(&[("animals", &["c"])]), true),
+        Ok(ModelCheckOutcome::Undecided {
+            cause: UndecidedCause::NoInitialState,
+            stats,
+        }) if stats.product_states == 0
+    ));
+
+    let conflict = |split: bool| {
+        let mut world = if split {
+            self::world(
+                &[("animals", &["Animal"]), ("dogs", &["Dog"])],
+                &[("animals", &[("c", "Animal")]), ("dogs", &[])],
+            )
+        } else {
+            self::world(
+                &[("animals", &["Animal"]), ("dogs", &["Dog"])],
+                &[("animals", &[("c", "Animal")]), ("dogs", &[("c", "Dog")])],
+            )
+        };
+        if split {
+            let identity = "s1";
+            let second = serde_json::json!({
+                "format": "filament.state.snapshot/v1",
+                "identity": {"authority": "test", "identity": identity},
+                "observation": "current",
+                "model": {"identity": PACKAGE},
+                "anchor": {"kind": "initialization", "name": "start"},
+                "populations": [
+                    {"population": ident("animals"), "complete": true, "objects": []},
+                    {"population": ident("dogs"), "complete": true,
+                     "objects": [{"key": "c", "type": ident("Dog"),
+                                 "fields": {"age": {"integer": "5"}}}]}
+                ]
+            })
+            .to_string()
+            .into_bytes();
+            let reference = fsl_semantics::model::observation::document_reference(&second)
+                .expect("snapshot identifies itself");
+            world.snapshots.insert(reference.clone(), second);
+            world.initial = vec![
+                world.initial[0].clone(),
+                DocumentRef {
+                    authority: "test".into(),
+                    identity: identity.into(),
+                },
+            ];
+        }
+        world.run(
+            "Animal",
+            universes(&[("animals", &["c"]), ("dogs", &["c"])]),
+            true,
+        )
+    };
+    for split in [false, true] {
+        let refusal = conflict(split).expect_err("one key cannot have two object types");
+        let ModelCheckRefusal::Admission(failure) = refusal else {
+            panic!("identity conflict is an admission refusal: {refusal:?}");
+        };
+        let AdmissionFailure::Refused(record) = *failure else {
+            panic!("identity conflict is a typed refusal: {failure:?}");
+        };
+        assert_eq!(record.catalog.code(), Code::InvalidRuntimeInput.as_str());
+        assert_eq!(record.catalog.cause(), "conflicting-identity");
+        assert_eq!(record.fields.get("key").map(String::as_str), Some("c"));
+        assert_eq!(
+            record.fields.get("first_type").map(String::as_str),
+            Some(ident("Animal").as_str())
+        );
+        assert_eq!(
+            record.fields.get("second_type").map(String::as_str),
+            Some(ident("Dog").as_str())
+        );
+    }
+
+    let agreeing = self::world(
+        &[("animals", &["Animal"]), ("moreAnimals", &["Animal"])],
+        &[
+            ("animals", &[("c", "Animal")]),
+            ("moreAnimals", &[("c", "Animal")]),
+        ],
+    );
+    let (agreeing_package, _) = agreeing.clause("Animal");
+    assert!(ModelSystem::new(
+        agreeing
+            .subject(
+                &agreeing_package,
+                universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
+            )
+            .simulation,
+    )
+    .is_ok());
+    assert_eq!(
+        agreeing.instances(
+            "Animal",
+            universes(&[("animals", &["c"]), ("moreAnimals", &["c"])])
+        ),
+        Ok(vec![instance("animals", "c")])
+    );
+    let system = ModelSystem::new(
+        agreeing
+            .subject(
+                &agreeing_package,
+                universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
+            )
+            .simulation,
+    )
+    .expect("agreeing shared reference admits");
+    let initials = fsl_eval::simulation::TransitionSystem::initial(&system);
+    let expansion = fsl_eval::simulation::TransitionSystem::successors(&system, &initials[0]);
+    assert!(expansion.is_ok(), "{expansion:?}");
+    assert!(matches!(
+        agreeing.run(
+            "Animal",
+            universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
+            true,
+        ),
+        Ok(ModelCheckOutcome::Holds { stats, .. }) if stats.product_states == 1
+    ));
+    let no_key = self::world(&[("animals", &["Animal"])], &[("animals", &[])]);
+    let no_key_result = no_key.run("Animal", universes(&[("animals", &["c"])]), true);
+    assert!(
+        matches!(
+            &no_key_result,
+            Ok(ModelCheckOutcome::Undecided {
+                cause: UndecidedCause::NoInstance,
+                stats,
+            }) if stats.product_states == 0
+        ),
+        "{no_key_result:?}"
+    );
+}
+
 /// FR-125's Instancing for a state-graph claim: `possible Reach ... over (x:
 /// M::Thing) { true }` is read through the same derivation as a clause, so
 /// over the populations of the instance tests a subtype-conforming population
 /// yields its objects in canonical order, a population that admits `Thing`
 /// and has no universe refuses the run `RequiresBound` naming it, and no
 /// admitting key gives the item no instance.
-#[trace("TC-520")]
+#[trace("TC-520", "FR-125-AC-7")]
 #[test]
 fn a_state_graph_claim_is_instanced_like_a_clause() {
     let world = world(
         &[P1, P2, Q],
         &[
             ("P1", &[("d", "Lamp"), ("c", "Switch")]),
-            ("P2", &[("b", "Lamp")]),
-            ("Q", &[]),
+            ("P2", &[("b", "Lamp"), ("a", "Switch")]),
+            ("Q", &[("z", "Other")]),
         ],
     );
     let bounded = || universes(&[("Q", &["z"]), ("P2", &["b", "a"]), ("P1", &["d", "c"])]);
@@ -737,6 +1113,7 @@ impl World {
         let letters = system.clause_letters(node).expect("an unguarded clause");
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: self.subject(&package, universes),
                 item: ModelCheckItem::Clause {
@@ -745,6 +1122,8 @@ impl World {
                 },
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
@@ -767,6 +1146,7 @@ impl World {
         let letters = system.clause_letters(node).expect("a clause");
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: self.subject(&package, universes),
                 item: ModelCheckItem::Clause {
@@ -775,6 +1155,8 @@ impl World {
                 },
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
@@ -1143,11 +1525,14 @@ fn a_key_holding_no_object_of_the_type_reads_absent_key() {
         let run = |subject, clause, letters| {
             check_model(
                 ModelCheckRequest {
+                    workers: 1,
                     temporal_clock_selections: &[],
                     subject,
                     item: ModelCheckItem::Clause { clause, letters },
                     max_depth: None,
                     limits: ModelCheckLimits::default(),
+                    smt_encoding: Default::default(),
+                    smt_run: Default::default(),
                     reductions: Default::default(),
                 },
                 &Cancel::new(),
@@ -1443,6 +1828,7 @@ fn absent_key_guard_provenance_flows_through_let_aliases_and_helpers() {
         let letters = system.clause_letters(node).expect("an unguarded clause");
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 subject,
                 temporal_clock_selections: &[],
                 item: ModelCheckItem::Clause {
@@ -1451,6 +1837,8 @@ fn absent_key_guard_provenance_flows_through_let_aliases_and_helpers() {
                 },
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
@@ -1607,6 +1995,7 @@ fn a_refused_holds_evaluation_is_a_refusal_of_the_atom_and_of_the_check() {
 
     let checked = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: world.subject(&package, bounded()),
             item: ModelCheckItem::Clause {
@@ -1615,6 +2004,8 @@ fn a_refused_holds_evaluation_is_a_refusal_of_the_atom_and_of_the_check() {
             },
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),
@@ -1720,4 +2111,108 @@ fn a_changed_state_is_observed_afresh() {
         );
     }
     assert_eq!(cached.observations(), 4);
+}
+
+/// `max_states` 0 as the model-check limits.
+fn no_states() -> ModelCheckLimits {
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_states = 0;
+    limits
+}
+
+/// `max_states` 1 as the model-check limits.
+fn one_state() -> ModelCheckLimits {
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_states = 1;
+    limits
+}
+
+/// FR-126-AC-26 (TC-521): `check_model` keys its initial set one state at a
+/// time and refuses at `max_states` before keying the rest. Two distinct
+/// initial states are both keyed under the default budget, but only the first
+/// under `max_states` 0, which stops with `MaxStates` naming 0.
+#[trace("TC-521", "FR-126-AC-26")]
+#[test]
+fn check_model_refuses_at_max_states_before_keying_the_later_initial_states() {
+    use fsl_eval::simulation::model::generated_initial_states;
+
+    let world = two_state_world();
+    let both = || universes(&[("P1", &["l", "s"])]);
+    let before = fsl_analyze::model_check::keyed_initial_states();
+    let held = world.run("Thing", both(), true).expect("checked");
+    assert!(matches!(held, ModelCheckOutcome::Holds { .. }), "{held:?}");
+    assert_eq!(fsl_analyze::model_check::keyed_initial_states() - before, 2);
+    let before = fsl_analyze::model_check::keyed_initial_states();
+    let generated_before = generated_initial_states();
+    let stopped = world
+        .run_within("Thing", both(), true, no_states())
+        .expect("checked");
+    assert!(
+        matches!(
+            stopped,
+            ModelCheckOutcome::Stopped {
+                cause: fsl_replay::IncompleteCause::ResourceExhausted,
+                limit: Some(fsl_replay::ReachedLimit {
+                    limit: fsl_replay::ModelCheckLimit::MaxStates,
+                    value: 0,
+                }),
+                ..
+            }
+        ),
+        "{stopped:?}"
+    );
+    assert_eq!(fsl_analyze::model_check::keyed_initial_states() - before, 0);
+    assert_eq!(generated_initial_states() - generated_before, 0);
+
+    let generated_before = generated_initial_states();
+    let stopped = world
+        .run_within("Thing", both(), true, one_state())
+        .expect("checked");
+    assert!(
+        matches!(
+            stopped,
+            ModelCheckOutcome::Stopped {
+                cause: fsl_replay::IncompleteCause::ResourceExhausted,
+                limit: Some(fsl_replay::ReachedLimit {
+                    limit: fsl_replay::ModelCheckLimit::MaxStates,
+                    value: 1,
+                }),
+                ..
+            }
+        ),
+        "{stopped:?}"
+    );
+    assert_eq!(generated_initial_states() - generated_before, 1);
+}
+
+/// FR-126-AC-26 (TC-521): the state-graph explorer refuses at `max_states`
+/// the same way, keying only the first of two initial states under `max_states`
+/// 0.
+#[trace("TC-521", "FR-126-AC-26")]
+#[test]
+fn state_graph_refuses_at_max_states_before_keying_the_later_initial_states() {
+    use fsl_eval::simulation::model::generated_initial_states;
+
+    let world = two_state_world();
+    let before = fsl_analyze::model_check::keyed_initial_states();
+    let generated_before = generated_initial_states();
+    let run = world
+        .reach_run("Thing", universes(&[("P1", &["l", "s"])]), no_states())
+        .expect("checked");
+    assert!(
+        matches!(
+            run.graph.end,
+            fsl_replay::RunEnd::Stopped {
+                cause: fsl_replay::IncompleteCause::ResourceExhausted,
+                limit: Some(fsl_replay::ReachedLimit {
+                    limit: fsl_replay::ModelCheckLimit::MaxStates,
+                    value: 0,
+                }),
+            }
+        ),
+        "{:?}",
+        run.graph.end
+    );
+    assert_eq!(fsl_analyze::model_check::keyed_initial_states() - before, 0);
+    assert_eq!(generated_initial_states() - generated_before, 0);
 }

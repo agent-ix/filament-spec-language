@@ -91,13 +91,15 @@ fn elements(member: &TerminationSubject<'_>, measure: CheckedNode<'_>) -> Vec<Op
                     ValueType::Composite(_) => Some(Element::Structural(*slot)),
                     _ => None,
                 },
-                NodeKind::Size(operand) => match through_measure_coercions(part.at(*operand)).kind() {
-                    NodeKind::Local(slot) => match parameter(*slot)? {
-                        ValueType::Collection(_) => Some(Element::Cardinality(*slot)),
+                NodeKind::Size(operand) => {
+                    match through_measure_coercions(part.at(*operand)).kind() {
+                        NodeKind::Local(slot) => match parameter(*slot)? {
+                            ValueType::Collection(_) => Some(Element::Cardinality(*slot)),
+                            _ => None,
+                        },
                         _ => None,
-                    },
-                    _ => None,
-                },
+                    }
+                }
                 _ => None,
             }
         })
@@ -397,7 +399,7 @@ fn dispatch_cycle_refusal(
         .collect();
     Some(CheckRefusal {
         location,
-        cause: CheckCause::DefinitionCycle { edges: named_edges },
+        cause: Box::new(CheckCause::DefinitionCycle { edges: named_edges }),
     })
 }
 
@@ -468,13 +470,13 @@ fn check_component(
     cycle.extend(path(members, component, parent, edge.callee, caller));
     Err(CheckRefusal {
         location: edge.location.clone(),
-        cause: CheckCause::UnprovedDecrease {
+        cause: Box::new(CheckCause::UnprovedDecrease {
             cycle: cycle
                 .into_iter()
                 .filter_map(|index| members.get(index).map(|member| member.name.to_owned()))
                 .collect(),
             obligation,
-        },
+        }),
     })
 }
 
@@ -915,7 +917,7 @@ mod tests {
             multi_member_components += expected.iter().filter(|c| c.len() > 1).count();
             refusals_seen += refusals.len();
             for refusal in &refusals {
-                obligations_seen.insert(match &refusal.cause {
+                obligations_seen.insert(match refusal.cause.as_ref() {
                     CheckCause::UnprovedDecrease { obligation, .. } => obligation.as_str(),
                     CheckCause::DefinitionCycle { .. } => "definition-cycle",
                     other => panic!("unexpected refusal {other:?}"),
@@ -983,9 +985,11 @@ mod tests {
                     })
                     .collect();
                 let names = names(LENGTH);
-                assert!(recursive_components(&members(&names, &chain))
-                    .list
-                    .is_empty());
+                assert!(
+                    recursive_components(&members(&names, &chain))
+                        .list
+                        .is_empty()
+                );
                 let ring: Vec<Vec<CallSite>> = (0..LENGTH)
                     .map(|member| vec![call((member + 1) % LENGTH, EdgeKind::Ordinary, 0)])
                     .collect();

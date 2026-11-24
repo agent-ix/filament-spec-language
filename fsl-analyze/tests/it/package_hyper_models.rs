@@ -391,7 +391,7 @@ fn two_model_hyper_foreign_population_is_refused() {
             &ws,
             &unit,
             &model,
-            &[snapshot.clone()],
+            std::slice::from_ref(&snapshot),
             json!({"models": models, "items": [{"claim": "Same"}]}),
         );
         let mut request: Value =

@@ -64,5 +64,7 @@ pub use sampled::{
     SampledRecord, SampledReplay, SampledReplayRefusal, SampledStep, StepAt, TimedDelayRefusal,
     draw_timed_delay, replay_sampled, sample_probabilistic,
 };
-pub use subject::{Bounded, ConstraintError, Cut, SubjectSystem, SubjectTransition};
+pub use subject::{
+    Bounded, ConstraintError, Cut, InitialStateRefusal, SubjectSystem, SubjectTransition,
+};
 pub use trace::{ReplayError, SampleProvenance, Step, StopReason, Trace, replay};

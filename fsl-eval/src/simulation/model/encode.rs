@@ -1073,6 +1073,8 @@ pub(crate) fn typed_value_enc(
 /// A reference's replacement in a key-free encoding (FR-152): `Some` for a
 /// reference the encoding names by a placeholder, `None` to encode it.
 pub(super) type Placeholder<'p> = dyn Fn(&ObjectReference) -> Option<Enc> + 'p;
+pub(super) type InitialOverrides = projection::InitialOverrides;
+pub(super) type InitialRenaming = projection::InitialRenaming;
 
 /// FR-181's typed canonical form of `value`, as [`value_enc`], with each
 /// reference `placeholder` replaces written as its replacement, recursively
@@ -1220,23 +1222,59 @@ pub fn package_value_json(
     typed_value_json_with_enum_members(value, types, &[], enum_members)
 }
 
-/// Write a borrowed run value through the shared typed projection, admitting
-/// every visit, identity copy, decimal conversion and buffer reservation
-/// before work. No retained encoding tree is constructed first.
+/// The immutable type and identity inputs that determine a run value's bytes.
+pub struct RunValueContext<'a> {
+    types: &'a TypeEnvironment,
+    enums: &'a [EnumBinding],
+    variants: &'a [VariantTypeDeclaration],
+    enum_members: Option<&'a filament_semantic_value::enumeration::EnumMemberIndex>,
+    identity: fsl_foundation::IdentityLimits,
+}
+
+impl<'a> RunValueContext<'a> {
+    /// Build the typed and identity context for one borrowed run value.
+    pub fn new(
+        types: &'a TypeEnvironment,
+        enums: &'a [EnumBinding],
+        variants: &'a [VariantTypeDeclaration],
+        enum_members: Option<&'a filament_semantic_value::enumeration::EnumMemberIndex>,
+        identity: fsl_foundation::IdentityLimits,
+    ) -> Self {
+        Self {
+            types,
+            enums,
+            variants,
+            enum_members,
+            identity,
+        }
+    }
+}
+
+/// Write one borrowed value using the supplied typed and identity context.
+///
+/// The context groups the declarations and identity limit that determine the
+/// canonical value bytes. The budget and cancellation token remain operation
+/// inputs because they govern this individual write.
 ///
 /// # Errors
 /// The original caller work/storage/cancellation refusal, a physical
 /// allocation failure, or an unencodable admitted value.
+///
+/// Every visit, identity copy, decimal conversion and buffer reservation is
+/// admitted before work. No retained encoding tree is constructed first.
 pub fn run_value_bytes(
     value: &Value,
-    types: &TypeEnvironment,
-    enums: &[EnumBinding],
-    variants: &[VariantTypeDeclaration],
-    enum_members: Option<&filament_semantic_value::enumeration::EnumMemberIndex>,
-    identity: fsl_foundation::IdentityLimits,
+    context: RunValueContext<'_>,
     budget: &mut dyn RunValueBudget,
     cancel: &filament_exact::Cancel,
 ) -> Result<Vec<u8>, super::ModelKeyError> {
+    let RunValueContext {
+        types,
+        enums,
+        variants,
+        enum_members,
+        identity,
+    } = context;
     bounded::value_bytes(
         value,
         Typing::with_variants(types, variants)
@@ -1345,6 +1383,17 @@ pub(super) fn object_enc(
     projection::object(model, object, typing, placeholder)
 }
 
+pub(super) fn initial_object_enc(
+    model: &StateModel,
+    object: &fsl_semantics::model::state::StateObject,
+    typing: Typing<'_>,
+    placeholder: &Placeholder<'_>,
+    overrides: &InitialOverrides,
+    renaming: &InitialRenaming,
+) -> Enc {
+    projection::initial_object(model, object, typing, placeholder, overrides, renaming)
+}
+
 /// A declaration's identity text, or `None` when it has no canonical
 /// encoding.
 pub fn declaration_identity_text(key: &DeclarationKey) -> Option<String> {
@@ -1357,11 +1406,23 @@ pub(super) fn model_key(model: &StateModel, state: &ModelState, typing: Typing<'
     ModelKey(projection::model_state(model, state, typing))
 }
 
+pub(super) fn initial_model_key(
+    model: &StateModel,
+    state: &ModelState,
+    typing: Typing<'_>,
+    overrides: &InitialOverrides,
+    renaming: &InitialRenaming,
+) -> ModelKey {
+    ModelKey(projection::initial_model_state(
+        model, state, typing, overrides, renaming,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use filament_exact::{
-        from_admitted, CollectionKind, CollectionType, Integer, Quantity, Rational, Timestamp,
-        UnitId, Uuid, ValueType,
+        CollectionKind, CollectionType, Integer, Quantity, Rational, Timestamp, UnitId, Uuid,
+        ValueType, from_admitted,
     };
     use ix_trace_rs::trace;
 
@@ -1575,7 +1636,7 @@ mod tests {
     /// with the nullary member `none` and the member `tagged(Tag)` (`33…`),
     /// and the values `Tag { sku }`, `Pair(true, -3)` and `none`.
     pub(super) fn declared() -> (TypeEnvironment, impl Fn(i64) -> Value, Value, Value) {
-        use filament_exact::{from_admitted_slots, Presence, UnionMember, UnionValue};
+        use filament_exact::{Presence, UnionMember, UnionValue, from_admitted_slots};
         use filament_semantic_value::declaration::{
             CompositeDeclaration, FieldDeclaration, UnionMemberDeclaration,
         };

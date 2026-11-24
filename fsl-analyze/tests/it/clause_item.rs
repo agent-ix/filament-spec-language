@@ -410,6 +410,7 @@ fn a_package_of_two_source_units_replays_from_its_complete_provision() {
         .expect("the multi-unit clause letters");
     let raw = fsl_analyze::model_check::check_model(
         fsl_analyze::model_check::ModelCheckRequest {
+            workers: 1,
             subject: raw_subject,
             temporal_clock_selections: &[],
             item: fsl_replay::ModelCheckItem::Clause {
@@ -418,6 +419,8 @@ fn a_package_of_two_source_units_replays_from_its_complete_provision() {
             },
             max_depth: None,
             limits: fsl_replay::ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),

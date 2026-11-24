@@ -1003,3 +1003,5 @@ fn begin_observes_a_handle_that_trips_during_admission() {
     assert!(polls.load(Ordering::SeqCst) >= TRIP_AT);
     assert_no_consumption(&meter);
 }
+
+mod lifecycle;

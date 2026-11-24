@@ -5,7 +5,7 @@ use filament_contract_model::{
     NativeJoinBudget, NativeJoinChargeKind, NativeJoinLocus, NativeJoinLocusSource,
 };
 use fsl_foundation::source::provenance::SourceRegion;
-use fsl_semantics::check::{composition_components, CompositionGraphRefusal};
+use fsl_semantics::check::{CompositionGraphRefusal, composition_components};
 
 /// An authenticated edge between declared guarantees, in rely-then-depends order.
 pub(super) struct CompositionEdge<'a> {
@@ -157,6 +157,87 @@ pub(super) fn composition_cycle_rows(
     Ok(cycles)
 }
 
+fn invalid_edge(
+    index: usize,
+    edge: &CompositionEdge<'_>,
+    guarantee_count: usize,
+) -> CompositionCycleRefusal {
+    CompositionCycleRefusal::InvalidEdge {
+        edge: index,
+        from: edge.from,
+        to: edge.to,
+        guarantee_count,
+    }
+}
+
+struct CycleProvision<'a> {
+    budget: &'a mut NativeJoinBudget,
+}
+
+impl CycleProvision<'_> {
+    fn charge(
+        &mut self,
+        kind: NativeJoinChargeKind,
+        amount: u128,
+        edge: Option<usize>,
+    ) -> Result<(), CompositionCycleRefusal> {
+        let locus = NativeJoinLocus {
+            source: edge.map_or(
+                NativeJoinLocusSource::Package,
+                NativeJoinLocusSource::AdapterRow,
+            ),
+            form: "composition_cycle_rows",
+        };
+        self.budget
+            .accounted_charge(kind, amount, locus)
+            .map_err(|denied| {
+                CompositionGraphRefusal::Budget {
+                    denied,
+                    locus: self.budget.first_unpaid_locus(),
+                    configured_bound: match denied.kind {
+                        NativeJoinChargeKind::Work => self.budget.work_limit(),
+                        NativeJoinChargeKind::Storage => self.budget.storage_limit(),
+                    },
+                }
+                .into()
+            })
+    }
+
+    fn work(&mut self, amount: u128, edge: Option<usize>) -> Result<(), CompositionCycleRefusal> {
+        self.charge(NativeJoinChargeKind::Work, amount, edge)
+    }
+
+    fn room<T>(
+        &mut self,
+        list: &mut Vec<T>,
+        additional: usize,
+        edge: Option<usize>,
+    ) -> Result<(), CompositionCycleRefusal> {
+        let needed = list.len() as u128 + additional as u128;
+        if needed > list.capacity() as u128 {
+            let target = needed.max(list.capacity().saturating_mul(2) as u128);
+            self.charge(NativeJoinChargeKind::Storage, 1 + target, edge)?;
+            list.try_reserve_exact(usize::try_from(target).unwrap_or(usize::MAX) - list.len())
+                .map_err(CompositionGraphRefusal::Allocation)?;
+        }
+        Ok(())
+    }
+
+    fn contains(
+        &mut self,
+        members: &[usize],
+        wanted: usize,
+        edge: usize,
+    ) -> Result<bool, CompositionCycleRefusal> {
+        for member in members {
+            self.work(1, Some(edge))?;
+            if *member == wanted {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
 #[cfg(test)]
 mod cycle_rows_tests {
     use super::*;
@@ -399,87 +480,5 @@ mod cycle_rows_tests {
         assert_eq!(budget.consumed().work, 1);
         assert_eq!(budget.consumed().storage, storage);
         assert_eq!(budget.first_unpaid(), None);
-    }
-}
-
-fn invalid_edge(
-    index: usize,
-    edge: &CompositionEdge<'_>,
-    guarantee_count: usize,
-) -> CompositionCycleRefusal {
-    CompositionCycleRefusal::InvalidEdge {
-        edge: index,
-        from: edge.from,
-        to: edge.to,
-        guarantee_count,
-    }
-}
-
-struct CycleProvision<'a> {
-    budget: &'a mut NativeJoinBudget,
-}
-
-impl CycleProvision<'_> {
-    fn charge(
-        &mut self,
-        kind: NativeJoinChargeKind,
-        amount: u128,
-        edge: Option<usize>,
-    ) -> Result<(), CompositionCycleRefusal> {
-        let locus = NativeJoinLocus {
-            source: edge.map_or(
-                NativeJoinLocusSource::Package,
-                NativeJoinLocusSource::AdapterRow,
-            ),
-            form: "composition_cycle_rows",
-        };
-        self.budget
-            .accounted_charge(kind, amount, locus)
-            .map_err(|denied| {
-                CompositionGraphRefusal::Budget {
-                    denied,
-                    locus: self.budget.first_unpaid_locus(),
-                    configured_bound: match denied.kind {
-                        NativeJoinChargeKind::Work => self.budget.work_limit(),
-                        NativeJoinChargeKind::Storage => self.budget.storage_limit(),
-                    },
-                }
-                .into()
-            })
-    }
-
-    fn work(&mut self, amount: u128, edge: Option<usize>) -> Result<(), CompositionCycleRefusal> {
-        self.charge(NativeJoinChargeKind::Work, amount, edge)
-    }
-
-    fn room<T>(
-        &mut self,
-        list: &mut Vec<T>,
-        additional: usize,
-        edge: Option<usize>,
-    ) -> Result<(), CompositionCycleRefusal> {
-        let needed = list.len() as u128 + additional as u128;
-        if needed > list.capacity() as u128 {
-            let target = needed.max(list.capacity().saturating_mul(2) as u128);
-            self.charge(NativeJoinChargeKind::Storage, 1 + target, edge)?;
-            list.try_reserve_exact(usize::try_from(target).unwrap_or(usize::MAX) - list.len())
-                .map_err(CompositionGraphRefusal::Allocation)?;
-        }
-        Ok(())
-    }
-
-    fn contains(
-        &mut self,
-        members: &[usize],
-        wanted: usize,
-        edge: usize,
-    ) -> Result<bool, CompositionCycleRefusal> {
-        for member in members {
-            self.work(1, Some(edge))?;
-            if *member == wanted {
-                return Ok(true);
-            }
-        }
-        Ok(false)
     }
 }

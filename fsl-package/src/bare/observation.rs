@@ -115,10 +115,10 @@ impl BarePackage<'_> {
         let table = match self.clock_declaration_table() {
             Ok(table) => table,
             Err(AdmissionFailure::Refused(record)) => {
-                return ObservationAdmission::Refused(*record)
+                return ObservationAdmission::Refused(*record);
             }
             Err(AdmissionFailure::Incomplete(record)) => {
-                return ObservationAdmission::Incomplete(*record)
+                return ObservationAdmission::Incomplete(*record);
             }
             Err(AdmissionFailure::Fault(fault)) => return ObservationAdmission::Fault(fault),
         };
@@ -322,10 +322,10 @@ impl BarePackage<'_> {
         let table = match self.clock_declaration_table() {
             Ok(table) => table,
             Err(AdmissionFailure::Refused(record)) => {
-                return ObservationAdmission::Refused(*record)
+                return ObservationAdmission::Refused(*record);
             }
             Err(AdmissionFailure::Incomplete(record)) => {
-                return ObservationAdmission::Incomplete(*record)
+                return ObservationAdmission::Incomplete(*record);
             }
             Err(AdmissionFailure::Fault(fault)) => return ObservationAdmission::Fault(fault),
         };

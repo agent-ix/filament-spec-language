@@ -345,7 +345,9 @@ fn atoms(order: [usize; 4]) -> String {
         &declared_on(
             "Due",
             "on each (q: Config::ConfigVersion) when (q.versionNumber >= 2)",
-            &format!("capture n: Int[0, 1000] = c.versionNumber; always[0,5] ({a} and {b} and {c} and {d})"),
+            &format!(
+                "capture n: Int[0, 1000] = c.versionNumber; always[0,5] ({a} and {b} and {c} and {d})"
+            ),
         ),
     )
 }
@@ -393,7 +395,8 @@ fn aggregate_formula_graph_retains_members_and_capture_binding() {
         .iter()
         .find(|entry| entry.kind() == Some(crate::checked_views::FormulaOperation::Aggregate))
         .expect("one aggregate atom");
-    let filament_contract_model::CheckedTerm::Aggregate { members, .. } = aggregate.aggregate.unwrap()
+    let filament_contract_model::CheckedTerm::Aggregate { members, .. } =
+        aggregate.aggregate.unwrap()
     else {
         panic!("aggregate bindings");
     };

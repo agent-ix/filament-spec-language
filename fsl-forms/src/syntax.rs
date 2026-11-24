@@ -425,6 +425,8 @@ pub enum BinderQuery {
     Forall,
     /// `exists(x in c: p)`.
     Exists,
+    /// `only(x in c: e)`, requiring exactly one source element.
+    Only,
 }
 
 /// A population-valued form of a refinement row (FR-139, ADR-020 RM-8).
@@ -4641,7 +4643,7 @@ pub enum ProbabilisticBody {
         /// The level `q`.
         level: ExactValueForm,
         /// The measure.
-        measure: MeasureForm,
+        measure: Box<MeasureForm>,
         /// The comparison.
         op: BoundOp,
         /// The threshold, as written.
@@ -4650,7 +4652,7 @@ pub enum ProbabilisticBody {
     /// `mean of (fraction) op threshold`.
     MeanOfFraction {
         /// The fraction.
-        fraction: FractionForm,
+        fraction: Box<FractionForm>,
         /// The comparison.
         op: BoundOp,
         /// The threshold.

@@ -20,18 +20,18 @@ use filament_exact::{
 };
 
 use super::{
-    generated_location, identifiers, refuse, require_admitted, type_declaration, Lowering,
-    NodeContent,
+    Lowering, NodeContent, generated_location, identifiers, refuse, require_admitted,
+    type_declaration,
 };
 use crate::check::assemble::DimensionEquivalence;
 use crate::check::family::OccurrenceRole;
 
+use crate::check::VariantTypeDeclaration;
 use crate::check::node_key::{
     Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LeafTerm, MemberTerm, ModelOwner,
     NodeRef, NodeTag, Owner,
 };
 use crate::check::refusal::{CheckCause, CheckRefusal, KeyFault};
-use crate::check::VariantTypeDeclaration;
 use crate::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, NativeValueType, PopulationRecord,
     ValueTypeRef,
@@ -336,6 +336,39 @@ fn field_member_type(
 /// The rendered type of a source object field typed `Clock` (FR-569-AC-17).
 pub fn clock_field_member_type(field: &crate::model::domain_package::FieldMemberRecord) -> String {
     field_member_type(field, "ix://filament/native/Clock".to_owned())
+}
+
+/// The declared name of a scalar map key. Unsupported references return
+/// `None` so a clock-place path is omitted instead of borrowing the map type's
+/// identity as its key rendering.
+fn rendered_map_key_name(
+    records: &BTreeMap<DeclarationKey, DomainPackageRecord>,
+    value_type: &ValueTypeRef,
+) -> Option<String> {
+    match value_type {
+        ValueTypeRef::Native(native) => Some(native.as_str().to_owned()),
+        ValueTypeRef::Package(key) => match records.get(key) {
+            Some(
+                DomainPackageRecord::AliasType(_)
+                | DomainPackageRecord::ScalarType(_)
+                | DomainPackageRecord::Enum(_),
+            ) => Some(key.node.clone()),
+            _ => None,
+        },
+        ValueTypeRef::Unit(name) => Some(name.clone()),
+        ValueTypeRef::Clock | ValueTypeRef::Resolved(_) => None,
+    }
+}
+
+fn rendered_map_type(
+    records: &BTreeMap<DeclarationKey, DomainPackageRecord>,
+    key_type: &ValueTypeRef,
+    value_type: &str,
+) -> Option<String> {
+    Some(format!(
+        "Map<{}, {value_type}>",
+        rendered_map_key_name(records, key_type)?
+    ))
 }
 
 /// Whether `field` holds one value: multiplicity `[1, 1]`, not a collection.
@@ -685,13 +718,13 @@ impl AdmittedModel {
         &self,
         key: &DeclarationKey,
     ) -> Option<crate::model::systems::ConnectionCheckOutcome> {
-        use crate::model::accounting::Meter;
-        use crate::model::systems::{check_connection, Kind};
+        use crate::model::accounting::NormalizationMeter;
+        use crate::model::systems::{Kind, check_connection};
         let systems = self.systems.as_ref()?;
         if systems.actual_kind(key) != Kind::Connection {
             return None;
         }
-        let mut meter = Meter::new(self.normalization_limits);
+        let mut meter = NormalizationMeter::new(self.normalization_limits);
         Some(check_connection(&self.index, systems, key, &mut meter))
     }
 
@@ -916,6 +949,7 @@ impl AdmittedModel {
             key = &alias.target;
         }
         match key {
+            ValueTypeRef::Native(NativeValueType::Boolean) => Some(ValueType::Boolean),
             ValueTypeRef::Native(NativeValueType::Text | NativeValueType::String) => {
                 Some(ValueType::String)
             }
@@ -1171,7 +1205,7 @@ impl AdmittedModel {
             index: view.shared_model_index().clone(),
             systems: crate::model::systems::classify(
                 view.shared_model_index().package(),
-                &mut crate::model::accounting::Meter::new(*view.effective_limits()),
+                &mut crate::model::accounting::NormalizationMeter::new(*view.effective_limits()),
             )
             .ok(),
             normalization_limits: *view.effective_limits(),
@@ -1238,7 +1272,7 @@ impl AdmittedModel {
             )),
             systems: crate::model::systems::classify(
                 domain_package,
-                &mut crate::model::accounting::Meter::new(
+                &mut crate::model::accounting::NormalizationMeter::new(
                     crate::model::accounting::ModelNormalizationLimits::default(),
                 ),
             )
@@ -1366,11 +1400,14 @@ impl AdmittedModel {
                 source: true,
             };
             let value_ref = crate::model::domain_package::ValueTypeRef::Package(key.clone());
+            let Some(reached) = self.rendered(&value_ref) else {
+                continue;
+            };
             let mut places = Vec::new();
             self.places_below(
                 &value_ref,
                 root,
-                self.rendered(&value_ref),
+                reached,
                 false,
                 false,
                 &mut Vec::new(),
@@ -1977,8 +2014,9 @@ impl AdmittedModel {
     /// `value_type` rendered for a `resolved_path` row (FSpec FR-322
     /// "Timed-model nodes"): `Clock` and natives by their `ix://filament/native`
     /// identity, a package type by its identity, an alias as the type it
-    /// aliases and a package sequence type as `Sequence<items>`.
-    fn rendered(&self, value_type: &crate::model::domain_package::ValueTypeRef) -> String {
+    /// aliases, a package sequence type as `Sequence<items>`, and a package
+    /// map type as `Map<keys, values>`.
+    fn rendered(&self, value_type: &crate::model::domain_package::ValueTypeRef) -> Option<String> {
         use crate::model::domain_package::ValueTypeRef;
         let mut wrappers = 0_usize;
         let mut named = value_type;
@@ -1986,14 +2024,12 @@ impl AdmittedModel {
         let base = loop {
             steps += 1;
             match named {
-                ValueTypeRef::Clock => break "ix://filament/native/Clock".to_owned(),
+                ValueTypeRef::Clock => break Some("ix://filament/native/Clock".to_owned()),
                 ValueTypeRef::Native(native) => {
-                    break format!("ix://filament/native/{}", native.as_str());
+                    break Some(format!("ix://filament/native/{}", native.as_str()));
                 }
-                ValueTypeRef::Unit(name) => break name.clone(),
-                ValueTypeRef::Resolved(value_type) => {
-                    break self.resolved_identity(value_type).unwrap_or_default();
-                }
+                ValueTypeRef::Unit(name) => break Some(name.clone()),
+                ValueTypeRef::Resolved(value_type) => break self.resolved_identity(value_type),
                 ValueTypeRef::Package(key) => match self.records.get(key) {
                     Some(DomainPackageRecord::AliasType(alias)) if steps <= self.records.len() => {
                         named = &alias.target;
@@ -2004,11 +2040,15 @@ impl AdmittedModel {
                         wrappers += 1;
                         named = &sequence.items;
                     }
-                    _ => break key.node.clone(),
+                    Some(DomainPackageRecord::MapType(map)) => {
+                        let values = self.rendered(&map.values)?;
+                        return rendered_map_type(&self.records, &map.keys, &values);
+                    }
+                    _ => break Some(key.node.clone()),
                 },
             }
         };
-        (0..wrappers).fold(base, |inner, _| format!("Sequence<{inner}>"))
+        Some((0..wrappers).fold(base?, |inner, _| format!("Sequence<{inner}>")))
     }
 
     /// The places a member `field` holds below `at`, which already names the
@@ -2023,7 +2063,9 @@ impl AdmittedModel {
     ) {
         // The field step's row: the member's declared type, its collection
         // or `Option` around the type it holds.
-        let declared = self.rendered(&field.value_type);
+        let Some(declared) = self.rendered(&field.value_type) else {
+            return;
+        };
         let resolved = matches!(
             &field.value_type,
             crate::model::domain_package::ValueTypeRef::Resolved(_)
@@ -2144,7 +2186,9 @@ impl AdmittedModel {
                     below
                         .path
                         .push(PlaceStep::Field(position.ordinal.to_string()));
-                    let declared = self.rendered(&position.value_type);
+                    let Some(declared) = self.rendered(&position.value_type) else {
+                        continue;
+                    };
                     below
                         .members
                         .push((declared.clone(), Some(position.key.node.clone())));
@@ -2219,7 +2263,10 @@ impl AdmittedModel {
                     max: map.upper,
                     map: true,
                 }));
-                let values = self.rendered(&map.values);
+                let Some(values) = self.rendered(&map.values) else {
+                    visiting.pop();
+                    return;
+                };
                 at.members.push((values.clone(), None));
                 self.places_below(&map.values, at, values, above, false, visiting, places);
                 visiting.pop();
@@ -3055,7 +3102,7 @@ impl<'a> Lowering<'a> {
                     return Err(fault(
                         location,
                         KeyFault::UnsupportedUnionPayload(record.key.clone()),
-                    ))
+                    ));
                 }
             };
             cases.push(SelectedModelUnionCase {

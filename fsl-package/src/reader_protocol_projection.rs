@@ -100,10 +100,16 @@ impl ReaderProtocolProjection {
     /// locate: its location and the occurrence its row binds (FSpec FR-322).
     pub fn located_applications(
         &self,
-    ) -> impl Iterator<Item = (&Location, &fsl_foundation::source::provenance::OccurrenceKey)> {
-        self.nodes.iter().filter(|node| node.captured_body).filter_map(|node| {
-            Some((node.location.as_ref()?, node.occurrence.as_ref()?))
-        })
+    ) -> impl Iterator<
+        Item = (
+            &Location,
+            &fsl_foundation::source::provenance::OccurrenceKey,
+        ),
+    > {
+        self.nodes
+            .iter()
+            .filter(|node| node.captured_body)
+            .filter_map(|node| Some((node.location.as_ref()?, node.occurrence.as_ref()?)))
     }
 
     /// The occurrence bound to this walk position by its captured location
@@ -1085,7 +1091,7 @@ pub(crate) fn admit_equality_decisions(
                 Ok(value) => Ok(value),
                 Err(crate::equality_file::EqualityDecisionFailure::Witness(error)) => Err(error),
                 Err(crate::equality_file::EqualityDecisionFailure::Exhausted(error)) => {
-                    return Err(crate::NativeJoinFailure::Equality(error))
+                    return Err(crate::NativeJoinFailure::Equality(error));
                 }
             },
         };
@@ -1104,6 +1110,9 @@ struct WireIndex<'wire> {
     ids: std::collections::HashMap<NodeKey, &'wire CheckedNodeId>,
     graph: WireGraph,
     identities: std::borrow::Cow<'wire, filament_contract_model::SelectedExactIdentities>,
+    /// Source-object identities joined to this package for source-operation
+    /// function signatures. Other reader routes leave this absent.
+    source_object_ids: Option<&'wire BTreeMap<CheckedNodeId, filament_exact::EffectiveId>>,
     /// Whether the walk reads names and term structure for printing an atom,
     /// which needs no exact type of a declaration the identity rows select
     /// (FR-931 "The lowering input").
@@ -1150,6 +1159,7 @@ impl<'wire> WireIndex<'wire> {
             ids,
             graph,
             identities,
+            source_object_ids: None,
             print: false,
         })
     }
@@ -1267,6 +1277,7 @@ impl<'wire> WireIndex<'wire> {
             nodes: &self.nodes,
             graph: &self.graph,
             projections: &self.projections,
+            source_object_ids: self.source_object_ids,
         }
     }
 
@@ -1555,6 +1566,17 @@ impl<'wire> BareWalker<'wire> {
         package: &'wire crate::bare::BarePackage<'wire>,
     ) -> Self {
         self.index.populations = Some(package);
+        self
+    }
+
+    /// Resolve source-object reference types only for a route whose package
+    /// supply joined those source identities. The identity rows stay scoped
+    /// to this package walk.
+    pub(crate) fn with_source_objects(
+        mut self,
+        identities: Option<&'wire BTreeMap<CheckedNodeId, filament_exact::EffectiveId>>,
+    ) -> Self {
+        self.index.source_object_ids = identities;
         self
     }
 
@@ -3487,7 +3509,10 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             let CheckedTerm::Aggregate { members, .. } = value.as_ref() else {
                 return Err(fault("reader-union-case-arm-has-body").into());
             };
-            let [CheckedTerm::Aggregate { members: binders, .. }, body] = members.as_slice() else {
+            let [CheckedTerm::Aggregate {
+                members: binders, ..
+            }, body] = members.as_slice()
+            else {
                 return Err(fault("reader-union-case-arm-has-binders-and-body").into());
             };
             let mut arm_locals = locals.clone();
@@ -3984,6 +4009,7 @@ pub(crate) struct TypeReader<'a> {
     pub(crate) nodes: &'a BTreeMap<&'a CheckedNodeId, &'a CheckedSemanticNodeV2>,
     pub(crate) graph: &'a WireGraph,
     pub(crate) projections: &'a ExactProjections,
+    pub(crate) source_object_ids: Option<&'a BTreeMap<CheckedNodeId, filament_exact::EffectiveId>>,
 }
 
 impl TypeReader<'_> {
@@ -4315,17 +4341,26 @@ fn reference_node_type(
     let [CheckedTerm::Reference { target }] = members.as_slice() else {
         return Err(TypeError::Unsupported);
     };
+    if let Some(identity) =
+        index
+            .identities
+            .declaration_rows()
+            .find_map(|row| match &row.exact_identity {
+                filament_contract_model::SelectedExactIdentity::Object(identity)
+                    if row.structural_node == *target =>
+                {
+                    Some(ValueType::Reference(identity.clone()))
+                }
+                _ => None,
+            })
+    {
+        return Ok(identity);
+    }
     index
-        .identities
-        .declaration_rows()
-        .find_map(|row| match &row.exact_identity {
-            filament_contract_model::SelectedExactIdentity::Object(identity)
-                if row.structural_node == *target =>
-            {
-                Some(ValueType::Reference(identity.clone()))
-            }
-            _ => None,
-        })
+        .source_object_ids
+        .and_then(|identities| identities.get(target))
+        .cloned()
+        .map(ValueType::Reference)
         .ok_or(TypeError::Unsupported)
 }
 

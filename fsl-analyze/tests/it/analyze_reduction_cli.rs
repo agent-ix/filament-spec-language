@@ -8,7 +8,8 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    analyze, clause, counter_request_with, counter_snapshot, label, request_members, Workspace,
+    analyze, clause, counter_request_with, counter_snapshot, label, package_selection,
+    request_members, Workspace, HANDOFF,
 };
 use crate::counter::{document, symmetric_document};
 
@@ -145,7 +146,7 @@ fn an_unsound_symmetry_is_refused_not_ignored() {
 fn a_constraint_never_proves_past_its_boundary() {
     let ws = Workspace::new("red-constraint");
     let body = format!(
-        "invariant Low using v on M::Counter at current {{ self.value <= 1 }}\n{}",
+        "constraint Low using v on M::Counter at current {{ self.value <= 1 }}\n{}",
         clause("Holds", "", "always holds(c.value <= 3)")
     );
     let run = analyze(&request(
@@ -156,6 +157,255 @@ fn a_constraint_never_proves_past_its_boundary() {
     ));
     let item = run.item(0);
     assert_ne!(label(&item), "proved", "{item}");
+}
+
+/// TC-581: a request naming Low runs AC-1's boundary counterexample and
+/// retains the selected constraint's node key in its request echo. A request naming the
+/// invariant Wide by name or package node key refuses before any state is
+/// expanded, and a constraint anchored at an operation refuses during source
+/// compilation.
+#[trace("TC-581", "FR-158-AC-6")]
+#[test]
+fn constraint_request_key_truth_and_invalid_selections_are_typed() {
+    let body = format!(
+        "constraint Low using v on M::Counter at current {{ self.value <= 1 }}\n\
+         invariant Wide using v on M::Counter at current {{ self.value <= 3 }}\n{}",
+        clause("Claim", "", "always holds(c.value <= 1)")
+    );
+    let ws = Workspace::new("fr158-constraint-wire-key");
+    let selection = request_members(Some(json!([
+        {"claim": "Claim", "reductions": {"constraint": "Low"}}
+    ])));
+    let _ = counter_request_with(&ws, &body, selection.clone());
+    ws.write(
+        "start.json",
+        &counter_snapshot(&[("a", 0), ("b", 0), ("c", 0)]),
+    );
+    let (selected, package_bytes) = package_selection(&ws, &selection);
+    assert!(
+        !package_bytes.is_empty(),
+        "the compiled request has package bytes"
+    );
+    let package: Value = serde_json::from_slice(&package_bytes).expect("the package is JSON");
+    let nodes = package["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("the package emits semantic nodes");
+    let wide_key = nodes
+        .iter()
+        .find(|node| {
+            node["node_tag"] == "state"
+                && node["semantic_form"] == "state_clause"
+                && node["body"]["operation"]["member"]["clause"] == "invariant"
+        })
+        .expect("Wide emits an invariant state-clause node")["node_id"]
+        .clone();
+    let package_path = ws.write(
+        "analyze-package.json",
+        json!({"format": "native-analyze/1", "request": selected})
+            .to_string()
+            .as_bytes(),
+    );
+    let valid = analyze(&package_path).item(0);
+    assert_eq!(label(&valid), "refuted", "{valid}");
+    assert_eq!(valid["record"]["result"], "refuted", "{valid}");
+    assert_eq!(valid["replay"]["reproduced"], true, "{valid}");
+    assert_eq!(
+        valid["request"]["reductions"]["constraint"],
+        json!({
+            "ordinal": 0,
+            "package": "analyze-unit",
+            "path": [
+                "state",
+                "state_clause",
+                "constraint",
+                {"node": 8},
+                {"node": 22}
+            ]
+        }),
+        "the request echoes Low's canonical node key: {valid}"
+    );
+    let run_invalid = |name: &str, constraint: Value| {
+        let ws = Workspace::new(name);
+        let path = counter_request_with(
+            &ws,
+            &body,
+            request_members(Some(json!([
+                {"claim": "Claim", "reductions": {"constraint": constraint}}
+            ]))),
+        );
+        ws.write(
+            "start.json",
+            &counter_snapshot(&[("a", 0), ("b", 0), ("c", 0)]),
+        );
+        analyze(&path).item(0)
+    };
+    let item = run_invalid("state-constraint-invalid", json!("Absent"));
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "invalid-value",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["name"], "Absent",
+        "{item}"
+    );
+    assert!(
+        item["exploration"].is_null(),
+        "no state was expanded: {item}"
+    );
+
+    let invalid_package = |name: &str, constraint: Value| {
+        let ws = Workspace::new(name);
+        let selection = request_members(Some(json!([
+            {"claim": "Claim", "reductions": {"constraint": constraint}}
+        ])));
+        let _ = counter_request_with(&ws, &body, selection.clone());
+        let (selected, _) = package_selection(&ws, &selection);
+        ws.write(
+            "analyze-package.json",
+            json!({"format": "native-analyze/1", "request": selected})
+                .to_string()
+                .as_bytes(),
+        )
+    };
+    for (name, key) in [
+        ("state-constraint-invariant-name", json!("Wide")),
+        ("state-constraint-invariant-key", wide_key.clone()),
+    ] {
+        let invalid = analyze(&invalid_package(name, key.clone())).item(0);
+        assert_eq!(
+            invalid["record"]["diagnostic"]["code"], "invalid_runtime_input",
+            "{invalid}"
+        );
+        assert_eq!(
+            invalid["record"]["diagnostic"]["cause"], "invalid-value",
+            "{invalid}"
+        );
+        let diagnostic_name = &invalid["record"]["diagnostic"]["detail"]["name"];
+        if name == "state-constraint-invariant-key" {
+            assert_eq!(
+                diagnostic_name,
+                &json!({
+                    "ordinal": 0,
+                    "package": "analyze-unit",
+                    "path": [
+                        "state",
+                        "state_clause",
+                        "invariant",
+                        {"node": 8},
+                        {"node": 23}
+                    ]
+                }),
+                "the refusal names the canonical node key for Wide: {invalid}"
+            );
+        } else {
+            assert_eq!(diagnostic_name, &key, "{invalid}");
+        }
+        assert!(
+            invalid["exploration"].is_null(),
+            "no state was expanded: {invalid}"
+        );
+    }
+
+    let bad_ws = Workspace::new("state-constraint-operation-anchor");
+    let bad = "constraint Bad using v on M::Counter::bump { true }\n";
+    let _ = counter_request_with(&bad_ws, bad, request_members(None));
+    let source_request = request_members(None);
+    let compile_request = json!({"format": "native-compile/1", "request": {
+        "models": source_request["models"], "program": source_request["program"],
+        "handoff": {"directory": HANDOFF, "package_name": "bad-constraint",
+            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}
+    }});
+    let compile_path = bad_ws.write("compile.json", compile_request.to_string().as_bytes());
+    let refusal = match fsl_command::command::compile_outcome(&compile_path) {
+        Err(refusal) => refusal,
+        Ok(_) => panic!("Bad cannot anchor a state constraint at an operation"),
+    };
+    let diagnostic: Value = serde_json::from_slice(
+        &refusal
+            .outcome_document(fsl_replay::Operation::Package)
+            .to_bytes()
+            .expect("the typed refusal serializes"),
+    )
+    .expect("the refusal document is JSON");
+    let source_diagnostic = &diagnostic["diagnostics"][0];
+    assert_eq!(source_diagnostic["code"], "invalid_syntax", "{diagnostic}");
+    assert_eq!(source_diagnostic["locus"]["kind"], "region", "{diagnostic}");
+    assert!(
+        source_diagnostic["locus"]["source"].is_object(),
+        "{diagnostic}"
+    );
+    assert!(
+        source_diagnostic["locus"]["start"].as_u64().is_some(),
+        "{diagnostic}"
+    );
+    assert!(
+        source_diagnostic["locus"]["end"].as_u64().is_some(),
+        "{diagnostic}"
+    );
+    assert!(
+        source_diagnostic["locus"]["end"].as_u64() > source_diagnostic["locus"]["start"].as_u64(),
+        "{diagnostic}"
+    );
+}
+
+/// Partial TC-581 coverage: the constrained and unconstrained requests keep
+/// one obligation identity, have different request identities, and settle
+/// independently. AC-4 remains open for the terminal method member and
+/// equal boundary counts, which the current public outcome API does not expose.
+#[trace("TC-581")]
+#[test]
+fn a_constraint_keeps_obligation_identity_but_has_a_distinct_request_identity() {
+    let ws = Workspace::new("fr158-independent-method-results");
+    let body = format!(
+        "constraint Low using v on M::Counter at current {{ self.value <= 1 }}\n{}",
+        clause("Claim", "", "always holds(c.value <= 3)")
+    );
+    let selections = json!([
+        {"claim": "Claim", "reductions": {"constraint": "Low"}},
+        {"claim": "Claim"}
+    ]);
+    let path = counter_request_with(&ws, &body, request_members(Some(selections.clone())));
+    ws.write(
+        "start.json",
+        &counter_snapshot(&[("a", 0), ("b", 0), ("c", 0)]),
+    );
+    let run = analyze(&path);
+    let constrained = run.item(0);
+    let unconstrained = run.item(1);
+
+    assert_ne!(selections[0], selections[1], "the method requests differ");
+    let constrained_obligation_identity = constrained["request"]["claim"].clone();
+    let unconstrained_obligation_identity = unconstrained["request"]["claim"].clone();
+    assert_eq!(
+        constrained_obligation_identity, unconstrained_obligation_identity,
+        "adding Low leaves the claim's obligation identity unchanged"
+    );
+    let constrained_request_identity = constrained["request_index"]
+        .as_u64()
+        .expect("the constrained item has a request identity");
+    let unconstrained_request_identity = unconstrained["request_index"]
+        .as_u64()
+        .expect("the plain item has a request identity");
+    assert_ne!(
+        constrained_request_identity, unconstrained_request_identity,
+        "the constrained and plain items have distinct request identities"
+    );
+    assert!(constrained["request"]["reductions"]["constraint"].is_object());
+    assert!(unconstrained["request"]["reductions"].is_null());
+    assert_eq!(label(&constrained), "inconclusive", "{constrained}");
+    assert_eq!(
+        constrained["record"]["cause"]["kind"], "constraint-reached",
+        "{constrained}"
+    );
+    assert_eq!(label(&unconstrained), "proved", "{unconstrained}");
+    assert_eq!(
+        unconstrained["record"]["result"], "proved",
+        "{unconstrained}"
+    );
 }
 
 /// FR-621 "The record's `backend` member": a malformed reduction selection

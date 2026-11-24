@@ -248,7 +248,7 @@ fn interval_send_records_count_entries_and_zero_delivery() {
          receive ReadC via Pay of Main::Sent as (readC: Boolean) { true }; }",
     );
     let exact_system = system(&exact);
-    let initial_states = exact_system.initial();
+    let initial_states = exact_system.try_initial().expect("initial states settle");
     let [initial] = initial_states.as_slice() else {
         panic!("one initial state");
     };
@@ -321,7 +321,9 @@ fn interval_send_records_count_entries_and_zero_delivery() {
         "sequence Main { send Sent via Pay as (sent: Boolean) { true }; }",
     );
     let rejected_system = system(&rejected);
-    let rejected_initial = rejected_system.initial();
+    let rejected_initial = rejected_system
+        .try_initial()
+        .expect("initial states settle");
     let rejected_expansion = rejected_system
         .successors(&rejected_initial[0])
         .expect("overflow send expands");
@@ -341,7 +343,9 @@ fn interval_send_records_count_entries_and_zero_delivery() {
          receive Got via Pay of Main::Sent as (got: Boolean) { true }; }",
     );
     let optional_system = system(&optional);
-    let initial_states = optional_system.initial();
+    let initial_states = optional_system
+        .try_initial()
+        .expect("initial states settle");
     let [initial] = initial_states.as_slice() else {
         panic!("one initial state");
     };
@@ -375,7 +379,7 @@ fn interval_send_records_count_entries_and_zero_delivery() {
          send Second via Pay as (readB: Boolean) { readB }; }",
     );
     let full_system = system(&full);
-    let full_initial = full_system.initial();
+    let full_initial = full_system.try_initial().expect("initial states settle");
     let first_expansion = full_system
         .successors(&full_initial[0])
         .expect("first send expands");
@@ -415,7 +419,7 @@ fn interval_send_records_count_entries_and_zero_delivery() {
          } join all [l, r];",
     );
     let pending_system = system(&pending);
-    let pending_initial = pending_system.initial();
+    let pending_initial = pending_system.try_initial().expect("initial states settle");
     let fork_expansion = pending_system
         .successors(&pending_initial[0])
         .expect("parallel forks");
@@ -496,7 +500,7 @@ fn interval_send_record_places_displacement_on_the_attempted_entry() {
         "sequence Main { send Sent via Pay as (sent: Boolean) { true }; }",
     );
     let system = system(&source);
-    let initial = system.initial();
+    let initial = system.try_initial().expect("initial states settle");
     let expansion = system.successors(&initial[0]).expect("loss send expands");
     let sends = send_transitions(&expansion);
     assert_eq!(sends.len(), 2, "one send for each Boolean payload");
@@ -535,7 +539,7 @@ fn fifo_pending_states_keep_count_payload_and_distinct_keys() {
          } join all [l, r];",
     );
     let system = system(&pending);
-    let initial_states = system.initial();
+    let initial_states = system.try_initial().expect("initial states settle");
     let [initial] = initial_states.as_slice() else {
         panic!("one initial state");
     };
@@ -663,7 +667,9 @@ fn interval_send_work_limit_keeps_frontier_and_unlimited_counts() {
     let run = "sequence Main { send P via Pay as (payload: Boolean) { payload }; }";
     let unlimited = fixture("[0,1000]", 2, "reject", run);
     let unlimited_system = system(&unlimited);
-    let initial_states = unlimited_system.initial();
+    let initial_states = unlimited_system
+        .try_initial()
+        .expect("initial states settle");
     let [initial] = initial_states.as_slice() else {
         panic!("one initial state");
     };
@@ -679,7 +685,7 @@ fn interval_send_work_limit_keeps_frontier_and_unlimited_counts() {
     let mut d0 = fixture("[0,0]", 2, "reject", run);
     d0.max_candidates = 3;
     let d0_system = system(&d0);
-    let d0_initial = d0_system.initial();
+    let d0_initial = d0_system.try_initial().expect("initial states settle");
     let [state] = d0_initial.as_slice() else {
         panic!("one d=0 initial state");
     };
@@ -691,7 +697,7 @@ fn interval_send_work_limit_keeps_frontier_and_unlimited_counts() {
     let mut d1 = fixture("[0,1]", 2, "reject", run);
     d1.max_candidates = 5;
     let d1_system = system(&d1);
-    let d1_initial = d1_system.initial();
+    let d1_initial = d1_system.try_initial().expect("initial states settle");
     let [state] = d1_initial.as_slice() else {
         panic!("one d=1 initial state");
     };
@@ -710,7 +716,7 @@ fn interval_send_work_limit_keeps_frontier_and_unlimited_counts() {
     let mut limited = fixture("[0,1000]", 2, "reject", run);
     limited.max_candidates = 5; // W0 = 2 Boolean values; W0 + 3 charges d=0, d=1 and its entry.
     let limited_system = system(&limited);
-    let initial_states = limited_system.initial();
+    let initial_states = limited_system.try_initial().expect("initial states settle");
     let [initial] = initial_states.as_slice() else {
         panic!("one initial state");
     };

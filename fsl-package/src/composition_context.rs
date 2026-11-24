@@ -180,7 +180,7 @@ pub(crate) fn common_rows<'a>(
             Ok(node) => node,
             Err(StructuralKeyMaterializationError::Wire(error)) => return Err(error.into()),
             Err(StructuralKeyMaterializationError::Budget { denied, .. }) => {
-                return Err(NativeRowError::exhausted(denied, budget).into())
+                return Err(NativeRowError::exhausted(denied, budget).into());
             }
             Err(StructuralKeyMaterializationError::Allocation(error)) => return Err(error.into()),
         };

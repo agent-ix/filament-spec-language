@@ -65,11 +65,10 @@ fn codes(refusals: &[CheckRefusal]) -> Vec<Option<CatalogCode>> {
 }
 
 fn assert_missing_name_span(refusals: &[CheckRefusal], source: &str, name: &str) {
-    let [CheckRefusal {
-        cause: CheckCause::MissingQualifiedName(missing),
-        ..
-    }] = refusals
-    else {
+    let [CheckRefusal { cause, .. }] = refusals else {
+        panic!("expected one missing-name refusal: {refusals:?}");
+    };
+    let CheckCause::MissingQualifiedName(missing) = cause.as_ref() else {
         panic!("expected one missing-name refusal: {refusals:?}");
     };
     let start = source
@@ -100,10 +99,10 @@ fn an_unbounded_synthesis_domain_refuses_unbounded_extent() {
         ))],
         "{refusals:?}"
     );
-    let [CheckRefusal {
-        cause: fsl_semantics::check::CheckCause::SynthesisUnboundedDomain { span, .. },
-        ..
-    }] = refusals.as_slice()
+    let [CheckRefusal { cause, .. }] = refusals.as_slice() else {
+        panic!("expected a located unbounded-domain refusal: {refusals:?}");
+    };
+    let fsl_semantics::check::CheckCause::SynthesisUnboundedDomain { span, .. } = cause.as_ref()
     else {
         panic!("expected a located unbounded-domain refusal: {refusals:?}");
     };
@@ -122,10 +121,11 @@ fn an_unbounded_synthesis_domain_refuses_unbounded_extent() {
         ))],
         "{refusals:?}"
     );
-    let [CheckRefusal {
-        cause: fsl_semantics::check::CheckCause::SynthesisUnboundedDomain { component, span },
-        ..
-    }] = refusals.as_slice()
+    let [CheckRefusal { cause, .. }] = refusals.as_slice() else {
+        panic!("expected a located unbounded-domain refusal: {refusals:?}");
+    };
+    let fsl_semantics::check::CheckCause::SynthesisUnboundedDomain { component, span } =
+        cause.as_ref()
     else {
         panic!("expected a located unbounded-domain refusal: {refusals:?}");
     };
@@ -163,10 +163,11 @@ fn composite_synthesis_domains_name_the_first_unbounded_component() {
             ))],
             "{refusals:?}"
         );
-        let [CheckRefusal {
-            cause: fsl_semantics::check::CheckCause::SynthesisUnboundedDomain { component, span },
-            ..
-        }] = refusals.as_slice()
+        let [CheckRefusal { cause, .. }] = refusals.as_slice() else {
+            panic!("expected one unbounded-domain refusal: {refusals:?}");
+        };
+        let fsl_semantics::check::CheckCause::SynthesisUnboundedDomain { component, span } =
+            cause.as_ref()
         else {
             panic!("expected one unbounded-domain refusal: {refusals:?}");
         };
@@ -210,11 +211,10 @@ fn a_plan_dependency_cycle_refuses_definition_cycle() {
         ))],
         "{refusals:?}"
     );
-    let [CheckRefusal {
-        cause: CheckCause::DefinitionCycle { edges },
-        ..
-    }] = refusals.as_slice()
-    else {
+    let [CheckRefusal { cause, .. }] = refusals.as_slice() else {
+        panic!("the cycle refusal retains its edges: {refusals:?}");
+    };
+    let CheckCause::DefinitionCycle { edges } = cause.as_ref() else {
         panic!("the cycle refusal retains its edges: {refusals:?}");
     };
     assert_eq!(
@@ -268,11 +268,10 @@ fn plan_step_name_and_method_refusals() {
         ))],
         "{duplicate:?}"
     );
-    let [CheckRefusal {
-        cause: CheckCause::DuplicateVerificationStep { first, second, .. },
-        ..
-    }] = duplicate.as_slice()
-    else {
+    let [CheckRefusal { cause, .. }] = duplicate.as_slice() else {
+        panic!("the duplicate refusal retains both spans: {duplicate:?}");
+    };
+    let CheckCause::DuplicateVerificationStep { first, second, .. } = cause.as_ref() else {
         panic!("the duplicate refusal retains both spans: {duplicate:?}");
     };
     let first_start = duplicate_source.find("check a").unwrap() + "check ".len();
@@ -393,11 +392,10 @@ fn plan_reference_bound_and_method_applicability_refusals() {
         ))],
         "{zero_bound:?}"
     );
-    let [CheckRefusal {
-        cause: CheckCause::VerificationPlanBoundZero { span },
-        ..
-    }] = zero_bound.as_slice()
-    else {
+    let [CheckRefusal { cause, .. }] = zero_bound.as_slice() else {
+        panic!("the bound refusal retains its span: {zero_bound:?}");
+    };
+    let CheckCause::VerificationPlanBoundZero { span } = cause.as_ref() else {
         panic!("the bound refusal retains its span: {zero_bound:?}");
     };
     let zero_source = format!(
@@ -422,11 +420,10 @@ fn plan_reference_bound_and_method_applicability_refusals() {
         ))],
         "{inapplicable:?}"
     );
-    let [CheckRefusal {
-        cause: CheckCause::VerificationPlanInapplicableMethod { span, .. },
-        ..
-    }] = inapplicable.as_slice()
-    else {
+    let [CheckRefusal { cause, .. }] = inapplicable.as_slice() else {
+        panic!("the inapplicable-method refusal retains its span: {inapplicable:?}");
+    };
+    let CheckCause::VerificationPlanInapplicableMethod { span, .. } = cause.as_ref() else {
         panic!("the inapplicable-method refusal retains its span: {inapplicable:?}");
     };
     let method_source = format!(

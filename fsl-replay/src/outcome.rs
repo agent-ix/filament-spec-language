@@ -2253,7 +2253,7 @@ fn has_timed_trace_subject_refusal(refusal: &CompileRefusal) -> bool {
     };
     refusals.iter().any(|refusal| {
         matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             fsl_semantics::check::CheckCause::Temporal(cause)
                 if matches!(
                     cause.as_ref(),
@@ -2523,6 +2523,13 @@ impl OutcomeDiagnostic {
             text: None,
             details: None,
         }
+    }
+
+    /// This diagnostic with the source label a blank-label refusal names.
+    #[must_use]
+    pub fn with_source_label(mut self, label: Option<SourceLabel>) -> Self {
+        self.label = label;
+        self
     }
 
     /// This diagnostic with the kind of the missing thing (FR-286 "Missing
@@ -3758,6 +3765,7 @@ fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
         ReplayRefusal::RecompileWithProtocolResults { refusal, .. }
         | ReplayRefusal::RefinementInternals { refusal, .. } => Some(refusal.stage().into()),
         ReplayRefusal::Fault(_)
+        | ReplayRefusal::HostAllocationFailed(_)
         | ReplayRefusal::InvalidPackageName(_)
         | ReplayRefusal::ObservedTemporalRefusal(fsl_eval::temporal::TemporalRefusal::Fault(_))
         | ReplayRefusal::Admission(AdmissionFailure::Fault(_)) => None,

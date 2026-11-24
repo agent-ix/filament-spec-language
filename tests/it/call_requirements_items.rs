@@ -14,8 +14,8 @@ use filament_semantic_value::supplied_stop::SuppliedLimits;
 use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::{default_accounting, SpineLimits};
 use fsl_replay::{
-    run_with_requirements, Call, CallArgument, DependencyInput, Integer, ObjectEnvironment,
-    OccurrenceKey, Value,
+    call_requirements_for, run_with_requirements, Call, CallArgument, DependencyInput, Integer,
+    ObjectEnvironment, OccurrenceKey, Value,
 };
 use fsl_route::request::items_from_requirements;
 use fsl_route::Registry;
@@ -93,6 +93,36 @@ fn check(text: &str, packages: &fsl_semantics::model::intake::PackageInput) -> C
         .expect("the unit checks")
 }
 
+fn checked_unit(text: &str) -> fsl_replay::spine::CheckedUnit {
+    let source = SourceIdentity::new("agent-ix", "test:fr531-call-requirements");
+    let cancel = Cancel::new();
+    let limits = SpineLimits::default();
+    let parsed = fsl_replay::spine::parse(
+        &fsl_replay::spine::ParseRequest {
+            source: &source,
+            path: "call-requirements.native",
+            bytes: text.as_bytes(),
+        },
+        limits.source,
+        &cancel,
+    )
+    .expect("the unit parses")
+    .into_value();
+    let models = fsl_replay::spine::select(&parsed, &BTreeMap::new(), limits.model, &cancel)
+        .expect("no domain packages are selected")
+        .into_value();
+    fsl_replay::spine::check(
+        &parsed,
+        "fixture".to_owned(),
+        &models,
+        &DependencyInput::default(),
+        limits,
+        &cancel,
+    )
+    .expect("the unit checks")
+    .into_value()
+}
+
 /// FR-395-AC-2 and FR-075-AC-17: over K, each member's request index is its
 /// key's position in the package order, the item `items_from_requirements`
 /// writes at that index has the member's key, and the members of `inc` and
@@ -114,6 +144,233 @@ fn members_pair_with_the_items_at_their_request_index() {
     }
     seen.sort_unstable();
     assert_eq!(seen, [0, 1, 2, 3]);
+}
+
+/// FR-531-AC-35 (TC-3133): the bytes-only reader projects all eight admitted
+/// rows to the same function-owned occurrence and original request index as
+/// FR-395; it never shortens a list after a row is removed.
+#[trace("FR-531-AC-35", "TC-3133")]
+#[test]
+fn bare_call_requirements_match_the_compiled_unit_and_strictly_read_all_rows() {
+    let source = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.value.complete/v1\";\n\
+        function g using v(p: Int[0, 10]): Boolean pure { true }\n\
+        function f using v(n: Integer): Boolean pure { if n >= 0 and n < 10 then g(n + 1) else true }\n\
+        function g2 using v(p: Int[0, 10]): Boolean pure { true }\n\
+        function h2 using v(q: Int[0, 20]): Boolean pure { true }\n\
+        function f2 using v(x: Int[0, 9]): Boolean pure { g2(x + 1) and h2(x + 1) }\n\
+        function sq using v(x: Int[0, 9]): Integer pure { (x + 1) * (x + 1) }\n";
+    let checked = checked_unit(source);
+    let emitted = fsl_package::emit_checked(checked.package(), fsl_package::EmitLimits::fixture())
+        .expect("the unit emits");
+    let empty_domains = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+        .expect("the fixture has no domain packages");
+    let read = fsl_package::read_evaluation_emission(
+        checked.package(),
+        &emitted,
+        fsl_semantics::library::LibraryName::new("fixture").expect("library name"),
+        &empty_domains,
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+        fsl_package::SourceWitnessSupplier::new(&emitted),
+    )
+    .expect("the strict reader admits all eight rows");
+    let bare =
+        fsl_package::BarePackage::new(read.admitted()).with_canonical_bytes(read.canonical_bytes());
+    assert_eq!(read.admitted().requirement_items().len(), 8);
+
+    let request_call = |function: &str| {
+        Call::new(
+            function.to_owned(),
+            Vec::new(),
+            default_accounting(1_000_000),
+            SuppliedLimits::default(),
+        )
+    };
+    for (function, expected_count) in [("f", 3), ("f2", 2), ("sq", 3)] {
+        let call = request_call(function);
+        let source_members = call_requirements_for(&checked, &call)
+            .expect("the compiled unit has valid owned rows")
+            .members()
+            .to_vec();
+        let bare_members = bare.call_requirements(function);
+        assert_eq!(bare_members.len(), expected_count, "{function}");
+        assert_eq!(bare_members.len(), source_members.len(), "{function}");
+        let requirements = checked.package().graph().requirements();
+        for (bare_member, source_member) in bare_members.iter().zip(&source_members) {
+            assert_eq!(
+                bare_member.occurrence(),
+                source_member.occurrence(),
+                "{function}"
+            );
+            assert_eq!(
+                bare_member.request_index(),
+                source_member.request_index(),
+                "{function}"
+            );
+            assert_eq!(
+                bare_member.item().kind,
+                filament_contract_model::CapabilityKind::ValueValidity
+            );
+            let source_record = requirements
+                .get(source_member.occurrence())
+                .expect("the compiled unit retains the exact requirement record");
+            assert_eq!(source_record.owner(), Some(function));
+            assert_eq!(
+                source_record.requirements().kind(),
+                Capability::ValueValidity
+            );
+            let filament_contract_model::RequirementRecord::ValueValidity(record) = bare_member
+                .item()
+                .record
+                .as_ref()
+                .expect("a value-validity row has its record")
+            else {
+                panic!("{function} has value-validity records")
+            };
+            assert_eq!(
+                bare.node_key(&record.application),
+                Some(source_member.occurrence().node().clone())
+            );
+            assert_eq!(
+                record.occurrence,
+                source_member.occurrence().origin().ordinal()
+            );
+            let owner = read
+                .admitted()
+                .resolved_graph()
+                .nodes
+                .iter()
+                .find(|node| node.node_id == record.owner)
+                .expect("the record's owner is an admitted node");
+            assert_eq!(owner.semantic_form.as_ref(), "pure_function");
+            assert_eq!(
+                owner
+                    .declaration
+                    .as_ref()
+                    .and_then(|declaration| declaration.qualified_name.last())
+                    .map(|name| name.as_ref()),
+                Some(function)
+            );
+            assert_eq!(
+                bare.node_key(&record.result_bound),
+                Some(source_record.result_bound().node())
+            );
+            let converted = record.conversion.as_ref().map(|(node, ordinal)| {
+                fsl_foundation::source::provenance::OccurrenceKey::new(
+                    bare.node_key(node)
+                        .expect("the conversion node is admitted"),
+                    filament_exact::Origin::new(filament_exact::Role::new("expression"), *ordinal),
+                )
+            });
+            assert_eq!(converted.as_ref(), source_record.conversion_context());
+            let mut frames = Vec::new();
+            let mut frame = record.path_condition_frame;
+            while let Some(id) = frame {
+                let row = read
+                    .admitted()
+                    .path_condition_frames()
+                    .get(id.0)
+                    .expect("each path-condition frame is admitted");
+                frames.push((
+                    fsl_foundation::source::provenance::OccurrenceKey::new(
+                        bare.node_key(&row.guard)
+                            .expect("the guard node is admitted"),
+                        filament_exact::Origin::new(
+                            filament_exact::Role::new("expression"),
+                            row.occurrence,
+                        ),
+                    ),
+                    row.holds,
+                ));
+                frame = row.parent;
+            }
+            frames.reverse();
+            let source_guards = source_record
+                .path_condition()
+                .iter()
+                .map(|guard| (guard.occurrence().clone(), guard.holds()))
+                .collect::<Vec<_>>();
+            assert_eq!(frames, source_guards);
+            let roots = record
+                .extent_roots
+                .iter()
+                .map(|root| bare.node_key(root).expect("extent root is admitted"))
+                .collect::<std::collections::BTreeSet<_>>();
+            assert_eq!(&roots, source_record.extent_roots());
+            assert!(
+                record.objects.is_empty(),
+                "these functions read no model objects"
+            );
+            match (function, &bare_member.item().extent) {
+                ("f", filament_contract_model::RequirementExtent::Unbounded(domains)) => {
+                    assert_eq!(domains.len(), 1, "f's requirement has one Integer domain");
+                }
+                ("f", other) => panic!("f's RR-12 rows are unbounded: {other:?}"),
+                (_, filament_contract_model::RequirementExtent::Bounded) => {}
+                (_, other) => panic!("{function}'s rows are bounded: {other:?}"),
+            }
+        }
+    }
+    assert!(bare.call_requirements("g").is_empty());
+
+    let mut removed = serde_json::from_slice::<serde_json::Value>(emitted.package().bytes())
+        .expect("emitted canonical package JSON");
+    let f2_members = bare.call_requirements("f2");
+    let f2_second_index = f2_members[1].request_index().get();
+    let rows = removed["requirement_items"]
+        .as_array_mut()
+        .expect("requirement rows");
+    let filament_contract_model::RequirementRecord::ValueValidity(record) = f2_members[1]
+        .item()
+        .record
+        .as_ref()
+        .expect("f2's second row carries a value-validity record")
+    else {
+        panic!("f2's second row is a value-validity record")
+    };
+    let record_position = read
+        .admitted()
+        .resolved_graph()
+        .nodes
+        .iter()
+        .position(|node| node.node_id == record.node)
+        .expect("the referenced value-validity node remains");
+    rows.remove(f2_second_index);
+    let removed_bytes = quire_canonical::to_vec(&removed, quire_canonical::Limits::new(u64::MAX))
+        .expect("the mutated package is canonical");
+    let mut reader_evidence = filament_contract_model::CheckedPackageEvidence::new();
+    for feature in removed["lock"]["required_features"]
+        .as_array()
+        .expect("the package lists its required capabilities")
+    {
+        reader_evidence.support_feature(
+            feature
+                .as_str()
+                .expect("each required capability is a string"),
+        );
+    }
+    let refusal = match filament_contract_model::CheckedPackageV2::read(
+        &removed_bytes,
+        filament_contract_model::CheckedPackageReadLimits::bounded(),
+        &reader_evidence,
+    ) {
+        filament_contract_model::CheckedPackageV2ReadResult::Refused(refusal) => refusal,
+        other => panic!("removing f2's second record must be refused: {other:?}"),
+    };
+    assert_eq!(
+        refusal.code,
+        filament_contract_model::CheckedPackageRefusalCode::InvalidPackage
+    );
+    assert_eq!(
+        refusal.cause,
+        Some(filament_contract_model::CheckedPackageRefusalCause::InvalidValue)
+    );
+    let expected_path = format!("/semantic_graph/nodes/{record_position}/body");
+    assert_eq!(
+        refusal.loci[0].path.as_ref().map(ToString::to_string),
+        Some(expected_path)
+    );
 }
 
 /// FR-062-AC-14 (TC-1089 step 6): a `value-validity` record has the function
@@ -350,7 +607,7 @@ fn recursive_predicate_cycles_without_measures_refuse_on_the_spine() {
     };
     let cycles: Vec<_> = refusals
         .iter()
-        .filter_map(|refusal| match &refusal.cause {
+        .filter_map(|refusal| match &*refusal.cause {
             fsl_semantics::check::CheckCause::UnprovedDecrease {
                 cycle,
                 obligation: fsl_semantics::check::MeasureObligation::MissingMeasure,
@@ -424,7 +681,7 @@ fn recursive_predicate_cycles_with_decreasing_measures_admit_on_the_spine() {
         };
         assert!(
             refusals.iter().any(|refusal| matches!(
-                &refusal.cause,
+                refusal.cause.as_ref(),
                 fsl_semantics::check::CheckCause::UnprovedDecrease {
                     obligation: fsl_semantics::check::MeasureObligation::Decrease,
                     ..

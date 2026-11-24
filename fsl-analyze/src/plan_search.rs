@@ -16,7 +16,7 @@
 pub mod certificate;
 pub mod replay;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, CancelCause, LimitKind, Rational};
 use filament_semantic_value::model_transition::ModelTransition;
@@ -1196,15 +1196,20 @@ impl<R: PlanRules> Search<'_, '_, R> {
                 })
             })
             .collect::<Result<_, RuleStop>>()?;
-        let enabled: BTreeSet<PlanStep> = candidates
-            .iter()
-            .map(|candidate| candidate.step.clone())
-            .collect();
+        let mut enabled: BTreeMap<_, Vec<PlanStep>> = BTreeMap::new();
+        for candidate in &candidates {
+            enabled
+                .entry(candidate.key.0.clone())
+                .or_default()
+                .push(candidate.step.clone());
+        }
         for step in identities {
-            if !enabled.contains(&PlanStep::from(step.clone())) {
-                let step = PlanStep::from(step);
+            let step = PlanStep::from(step);
+            let key = self.rules.step_key(&step)?;
+            let already_enabled = enabled.get(&key).is_some_and(|steps| steps.contains(&step));
+            if !already_enabled {
                 candidates.push(Candidate {
-                    key: (self.rules.step_key(&step)?, None),
+                    key: (key, None),
                     step,
                     post: None,
                 });

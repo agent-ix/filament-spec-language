@@ -14,7 +14,7 @@
 //! abstraction-relation binding it also has a second requirement, the code
 //! claim.
 
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
@@ -31,32 +31,32 @@ use fsl_forms::{
     QuantifierKind, SpanId, StepLabelForm, TemporalFormulaForm, TemporalNodeForm, TemporalOperator,
     TypeFormHead,
 };
+use fsl_foundation::Span;
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::{Code, StageFailure, Staged};
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::Span;
 
+use super::Scope;
 use super::abstraction::{AbstractionKey, CheckedAbstractionRelation, OperationKey};
 use super::check::{HyperTyping, Signatures, Typer};
 use super::ir::{CheckedBody, CheckedNode};
 use super::profile::TemporalProfile;
 use super::refusal::{CheckCause, CheckRefusal, Obligation, TemporalCause};
-use super::state_clause::{population_of, PopulationDomain};
+use super::state_clause::{PopulationDomain, populations_overlapping};
 use super::temporal_clause::FormulaNodeId;
 use super::temporal_clause::{
-    build_formula, checked_constraint, checked_operators, in_safety_fragment, CheckedFormula,
-    CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations,
+    CheckedFormula, CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations,
+    build_formula, checked_constraint, checked_operators, in_safety_fragment,
 };
-use super::Scope;
 use super::{AdmittedModel, Capability};
-use crate::family::requirements::{classify_domains, ClaimExtent, ClassifyFailure, Requirements};
+use crate::family::requirements::{ClaimExtent, ClassifyFailure, Requirements, classify_domains};
 use crate::family::{CheckContext, CheckOutcome, FamilyContract};
 use crate::model::operation::OperationLookup;
 
 pub(crate) mod emission;
 pub(crate) mod lowering;
 
-pub use lowering::{operation_text, AtomSlot, STUTTER_TEXT};
+pub use lowering::{AtomSlot, STUTTER_TEXT, operation_text};
 
 /// The stage name this module's faults report.
 const STAGE: &str = "check.hyper";
@@ -880,6 +880,12 @@ impl CheckedHyperClause {
     /// The object parameters, in source order.
     pub fn parameters(&self) -> &[ObjectParameter] {
         &self.parameters
+    }
+
+    /// The declared object type of parameter `index`, before resolving it to
+    /// the canonical member type of its selected population.
+    pub fn parameter_object_type(&self, index: usize) -> Option<&EffectiveId> {
+        self.parameter_objects.get(index)
     }
 
     /// The quantifier prefix, in source order.
@@ -1723,7 +1729,7 @@ impl Found {
             // cause; value-typer refusals retain their original declaration
             // location so package region lookup can resolve the source node.
             location,
-            cause,
+            cause: Box::new(cause),
         })
     }
 }
@@ -2455,20 +2461,22 @@ fn checked_parameters(
             }));
             continue;
         };
-        match population_of(declarations.models, object.clone(), scope.types()) {
-            Ok(Some(population)) => checked.push((
+        let populations =
+            populations_overlapping(declarations.models, object.clone(), scope.types());
+        match populations.as_slice() {
+            [population] => checked.push((
                 ObjectParameter {
                     name,
                     alias: ModelAlias(alias.to_owned()),
-                    population,
+                    population: population.clone(),
                 },
                 object,
             )),
-            Ok(None) => found.push(Found::Hyper(HyperCause::UnresolvedPopulation {
+            [] => found.push(Found::Hyper(HyperCause::UnresolvedPopulation {
                 parameter: name,
                 span,
             })),
-            Err(_) => found.push(Found::Hyper(HyperCause::AmbiguousPopulation {
+            _ => found.push(Found::Hyper(HyperCause::AmbiguousPopulation {
                 parameter: name,
                 span,
             })),
@@ -2525,12 +2533,15 @@ fn body_refusal_at(
     execution_fields: &BTreeMap<String, BTreeSet<String>>,
     scope: &Scope,
 ) -> Found {
-    if matches!(&refusal.cause, CheckCause::ResourceExhausted(_)) {
+    if matches!(refusal.cause.as_ref(), CheckCause::ResourceExhausted(_)) {
         return Found::Raw(refusal, span);
     }
     let location = refusal.location.clone();
     let path = location.path();
-    if matches!(&refusal.cause, CheckCause::Unproved(Obligation::Nonzero)) {
+    if matches!(
+        refusal.cause.as_ref(),
+        CheckCause::Unproved(Obligation::Nonzero)
+    ) {
         if let Some(divisor_span) = unproved_nonzero_divisor_span(expression, spans, span) {
             span = divisor_span;
         }
@@ -2567,7 +2578,7 @@ fn body_refusal_at(
             return None;
         }
         let exists = scope.types().attribute(object.clone(), name).is_some();
-        let legacy_execution_root = matches!(&refusal.cause, CheckCause::MissingName(_));
+        let legacy_execution_root = matches!(refusal.cause.as_ref(), CheckCause::MissingName(_));
         (!exists || legacy_execution_root).then(|| {
             span = node_spans
                 .as_ref()
@@ -2577,7 +2588,7 @@ fn body_refusal_at(
             name.to_owned()
         })
     });
-    let untyped = match &refusal.cause {
+    let untyped = match refusal.cause.as_ref() {
         CheckCause::StateModel(state) => match &state.cause {
             CheckCause::UntypedMember(untyped) => Some((**untyped).clone()),
             _ => None,
@@ -2596,7 +2607,7 @@ fn body_refusal_at(
             location,
         );
     }
-    let cause = match refusal.cause {
+    let cause = match *refusal.cause {
         CheckCause::MissingName(_) if missing_member.is_some() => HyperCause::BodyMissing {
             name: missing_member.expect("checked above"),
             span,

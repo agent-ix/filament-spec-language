@@ -19,7 +19,7 @@
 //! [`PackageDeclarations::check`]: super::PackageDeclarations::check
 
 use filament_checked::node::{AuthoredBound, NodeKind};
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{EffectiveId, Identifier, NodeKey, Origin, ValueType};
@@ -28,18 +28,18 @@ use fsl_foundation::bound::DomainKey;
 use fsl_foundation::diagnostic::{StageFailure, Staged};
 use fsl_foundation::selection::ProfileSelection;
 
-use super::check::{bind_parameters, Signatures, StateContext, Typer};
-use super::claims::{wire, RequirementRecord};
+use super::check::{Signatures, StateContext, Typer, bind_parameters};
+use super::claims::{RequirementRecord, wire};
 use super::facts::{CheckedFacts, Definedness};
 use super::ir::{CheckedBody, CheckedNode, DispatchTable};
 use super::lowering::{AdmittedModel, LoweredClause};
 use super::observation::Observations;
-use super::references::{body_objects, ModelReferences};
+use super::references::{ModelReferences, body_objects};
 use super::refusal::{CheckCause, CheckRefusal, KeyFault};
 use super::{Capability, Scope};
 use crate::family::{
-    classify_domains, classify_extent, CheckContext, CheckOutcome, ClaimExtent, ClassifyFailure,
-    FamilyContract, Requirements,
+    CheckContext, CheckOutcome, ClaimExtent, ClassifyFailure, FamilyContract, Requirements,
+    classify_domains, classify_extent,
 };
 use crate::model::clause_observation::Observation;
 use crate::model::operation::OperationDeclaration;
@@ -194,11 +194,12 @@ pub struct AttemptDeclaration {
     pub frame_population: Option<PopulationDomain>,
 }
 
-/// One state clause the FR-091 assembler admitted (FR-104 "Inputs"): every
+/// One invariant, constraint, precondition or postcondition the FR-091
+/// assembler admitted (FR-104 "Inputs"): every
 /// name of its header resolved, its body as S2 built it.
 #[derive(Clone, Debug)]
 pub struct StateClauseDeclaration {
-    /// Invariant, precondition or postcondition.
+    /// Invariant, constraint, precondition or postcondition.
     pub kind: StateClauseKind,
     /// The declared clause name.
     pub name: String,
@@ -253,6 +254,7 @@ impl StateClauseDeclaration {
             context: Some(self.context.clone()),
             receiver: Some(("self", ValueType::Reference(self.context.clone()))),
             operation: self.operation.as_ref(),
+            authored_operation: self.authored_operation.as_deref(),
             context_population: self.context_population.clone(),
             frame_population: self.frame_population.clone(),
             binders: &[],
@@ -290,6 +292,7 @@ pub(crate) struct ClauseView<'a> {
     /// `over`).
     pub(crate) receiver: Option<(&'a str, ValueType)>,
     pub(crate) operation: Option<&'a ClauseOperation>,
+    pub(crate) authored_operation: Option<&'a str>,
     pub(crate) context_population: Option<PopulationDomain>,
     pub(crate) frame_population: Option<PopulationDomain>,
     /// Further parameters after the operation's: the collection elements a
@@ -517,7 +520,7 @@ pub(crate) fn check_type_invariant<'a>(
     {
         return Err(invariant.refusal(CheckRefusal {
             location: declarations.location.clone(),
-            cause: CheckCause::ObjectReadInValueInvariant,
+            cause: Box::new(CheckCause::ObjectReadInValueInvariant),
         }));
     }
     Ok((
@@ -642,6 +645,7 @@ pub struct ClauseClaim {
 /// lowering keys it.
 #[derive(Debug)]
 pub struct TypedStateClause {
+    pub(crate) kind: StateClauseKind,
     pub(crate) facts: CheckedFacts,
     pub(crate) parameters: Vec<(String, ValueType)>,
     pub(crate) body: CheckedBody,
@@ -804,10 +808,12 @@ fn walked_bound(
 fn state_model_refusal(refusal: CheckRefusal) -> CheckRefusal {
     CheckRefusal {
         location: refusal.location,
-        cause: CheckCause::StateModel(Box::new(super::state_model::StateModelRefusal {
-            cause: refusal.cause,
-            receiver: None,
-        })),
+        cause: Box::new(CheckCause::StateModel(Box::new(
+            super::state_model::StateModelRefusal {
+                cause: *refusal.cause,
+                receiver: None,
+            },
+        ))),
     }
 }
 
@@ -826,10 +832,10 @@ fn ambiguous_population(
     let populations: Vec<&str> = populations.iter().map(|key| key.node.as_str()).collect();
     CheckRefusal {
         location: location.clone(),
-        cause: CheckCause::AmbiguousName {
+        cause: Box::new(CheckCause::AmbiguousName {
             name: format!("{name} ({})", populations.join(", ")),
             loci: vec![location.clone()],
-        },
+        }),
     }
 }
 
@@ -862,7 +868,11 @@ impl FamilyContract for ProtocolClauseFamily {
     }
 
     fn requirements(checked: &TypedStateClause) -> Vec<ClauseClaim> {
-        checked.claims.clone()
+        if checked.kind == StateClauseKind::Constraint {
+            Vec::new()
+        } else {
+            checked.claims.clone()
+        }
     }
 }
 
@@ -878,7 +888,7 @@ fn parent_slot_refusal(
     };
     CheckRefusal {
         location: location.clone(),
-        cause,
+        cause: Box::new(cause),
     }
 }
 
@@ -933,7 +943,7 @@ fn check_clause_in(
     check_clause_typed(form, input, cx, named).map_err(|refusal| {
         // FR-056-AC-43: a clause naming a parameter of its operation that has
         // no checked type reaches an untyped member, not a missing name.
-        let CheckCause::MissingName(name) = &refusal.cause else {
+        let CheckCause::MissingName(name) = refusal.cause.as_ref() else {
             return refusal;
         };
         let Some(operation) = form.operation.as_ref() else {
@@ -963,7 +973,7 @@ fn check_clause_in(
         match untyped {
             Some(cause) => CheckRefusal {
                 location: refusal.location,
-                cause,
+                cause: Box::new(cause),
             },
             None => refusal,
         }
@@ -1018,6 +1028,7 @@ fn check_clause_typed(
         operation: form
             .operation
             .map(|operation| operation.declaration.name().to_owned()),
+        authored_operation: form.authored_operation.map(str::to_owned),
         self_slot: 0,
         result_slot: has_result.then_some(1),
     });
@@ -1025,7 +1036,7 @@ fn check_clause_typed(
     if body.root().value_type() != &ValueType::Boolean {
         return Err(CheckRefusal {
             location: location.clone(),
-            cause: CheckCause::NonBooleanRoot,
+            cause: Box::new(CheckCause::NonBooleanRoot),
         });
     }
     let slots = typer.slots();
@@ -1119,6 +1130,7 @@ fn check_clause_typed(
         .into_iter()
         .collect();
     Ok(TypedStateClause {
+        kind: form.kind,
         facts,
         parameters,
         body,
@@ -1134,7 +1146,8 @@ fn check_clause_typed(
     })
 }
 
-/// One state clause S3 checked (FR-104 "Outputs"): its kind, context,
+/// One invariant, constraint, precondition or postcondition S3 checked
+/// (FR-104 "Outputs"): its kind, context,
 /// operation, checked Boolean body with each model read's observation, its
 /// node identity and its `claim` occurrence.
 pub struct CheckedStateClause {
@@ -1431,11 +1444,13 @@ pub(crate) fn classify_refusal(failure: ClassifyFailure, location: &Location) ->
     match failure {
         ClassifyFailure::Limit(exceeded) => CheckRefusal {
             location: location.clone(),
-            cause: super::limit_cause(&exceeded),
+            cause: Box::new(super::limit_cause(&exceeded)),
         },
         ClassifyFailure::Fault(fault) => CheckRefusal {
             location: location.clone(),
-            cause: CheckCause::InternalFault(Box::new(KeyFault::UnclassifiedExtent(fault))),
+            cause: Box::new(CheckCause::InternalFault(Box::new(
+                KeyFault::UnclassifiedExtent(fault),
+            ))),
         },
     }
 }
@@ -1524,7 +1539,9 @@ pub(crate) fn clause_records(
     };
     let unkeyable = || CheckRefusal {
         location: location.clone(),
-        cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+        cause: Box::new(CheckCause::InternalFault(Box::new(
+            KeyFault::UnkeyableRequirements,
+        ))),
     };
     let classify = |failure: ClassifyFailure| classify_refusal(failure, location);
     let mut keyed = Vec::with_capacity(claims.len());

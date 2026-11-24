@@ -631,7 +631,7 @@ impl CompileRefusal {
                 // FR-366: a refusal in a type-level invariant names the
                 // clause and the `TypeDefinition.clauses[k]` member it is at,
                 // since its location is a bare expression.
-                if let Some(refusal) = refusals.iter().find_map(|refusal| match &refusal.cause {
+                if let Some(refusal) = refusals.iter().find_map(|refusal| match &*refusal.cause {
                     CheckCause::TypeInvariant(refusal) => Some(refusal),
                     _ => None,
                 }) {
@@ -747,6 +747,7 @@ impl CompileRefusal {
                 | Setting::MonitorMaxWindowValues
                 | Setting::MonitorRetainedPositions
                 | Setting::MonitorRetainedIdentities
+                | Setting::MonitorMaxActivations
                 | Setting::MonitorPreparationWorkUnits
                 | Setting::MonitorPreparationStorage
                 | Setting::TemporalEvidenceFormulaNodes
@@ -763,7 +764,6 @@ impl CompileRefusal {
                 | Setting::TemporalEvidenceResultBytes
                 | Setting::TemporalEvidenceMemberBytes
                 | Setting::InspectMaxViewEntries
-
                 | Setting::SimulationMaxSteps
                 | Setting::ExactProbMaxStates
                 | Setting::ExactProbMaxTransitions
@@ -847,7 +847,7 @@ impl CompileRefusal {
             Self::Check { refusals, .. } | Self::CheckDiagnostics { refusals, .. } => refusals,
             _ => return None,
         };
-        refusals.iter().find_map(|refusal| match &refusal.cause {
+        refusals.iter().find_map(|refusal| match &*refusal.cause {
             CheckCause::PlanUnboundedParameter { origin, .. } => Some(origin.as_deref()),
             _ => None,
         })
@@ -1465,7 +1465,7 @@ fn checked_diagnostic(
     region: Option<&SourceRegion>,
 ) -> crate::outcome::OutcomeDiagnostic {
     use crate::outcome::{OutcomeDiagnostic, OutcomeLocus};
-    let locus = match &refusal.cause {
+    let locus = match &*refusal.cause {
         CheckCause::PlanUnboundedParameter { origin, .. } => {
             origin.as_ref().map(|origin| OutcomeLocus::ImportedLocated {
                 file: origin.path.clone(),
@@ -1488,14 +1488,14 @@ fn check_message_one(first: &CheckRefusal) -> String {
     if let Some(cause) = first.cause.cause() {
         message = format!("{message} ({cause})");
     }
-    if let CheckCause::TypeInvariant(refusal) = &first.cause {
+    if let CheckCause::TypeInvariant(refusal) = &*first.cause {
         message = format!(
             "{message}: the invariant `{}` at {}",
             refusal.clause.node,
             refusal.member()
         );
     }
-    match &first.cause {
+    match &*first.cause {
         CheckCause::NullExpression => {
             message = format!(
                 "{message}: `null` is only a record field's explicit-null state; \
@@ -3529,11 +3529,11 @@ mod tests {
     fn refinement_missing_row_messages_name_the_missing_subject() {
         let refusal = |cause| CheckRefusal {
             location: Location::root(Origin::Expression),
-            cause: CheckCause::Refinement(Box::new(RefinementRefusal {
+            cause: Box::new(CheckCause::Refinement(Box::new(RefinementRefusal {
                 refinement: "ClientChargesOnce".to_owned(),
                 span: Span { start: 0, end: 1 },
                 cause,
-            })),
+            }))),
         };
         let refusals = [
             refusal(RefinementCause::MissingRow {
@@ -3643,7 +3643,7 @@ mod tests {
                     assert_eq!(cause.type_check_stage(), Some(CheckingStage::Typing));
                     let refusal = CompileRefusal::Check {
                         refusals: vec![CheckRefusal {
-                            cause,
+                            cause: Box::new(cause),
                             location: location.clone(),
                         }],
                         region: None,
@@ -3695,7 +3695,7 @@ mod tests {
         let refusal = CompileRefusal::Check {
             refusals: vec![CheckRefusal {
                 location: Location::root(Origin::Expression),
-                cause,
+                cause: Box::new(cause),
             }],
             region: None,
         };
@@ -3706,14 +3706,16 @@ mod tests {
             refusals: vec![
                 CheckRefusal {
                     location: Location::root(Origin::Expression),
-                    cause: CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch),
+                    cause: Box::new(CheckCause::IllTyped(
+                        filament_exact::IllTypedCause::TypeMismatch,
+                    )),
                 },
                 CheckRefusal {
                     location: Location::root(Origin::Expression),
-                    cause: CheckCause::TypeCheckCapacity(StorageRequest::new(
+                    cause: Box::new(CheckCause::TypeCheckCapacity(StorageRequest::new(
                         23,
                         StorageUnit::AdditionalElements,
-                    )),
+                    ))),
                 },
             ],
             region: None,
@@ -3745,9 +3747,11 @@ mod tests {
     fn hybrid_claim_refusal_message_does_not_mislabel_its_declaration() {
         let refusal = CheckRefusal {
             location: Location::root(Origin::Expression),
-            cause: CheckCause::Hybrid(Box::new(HybridCause::UnsupportedClock {
-                span: Span { start: 0, end: 12 },
-            })),
+            cause: Box::new(CheckCause::Hybrid(Box::new(
+                HybridCause::UnsupportedClock {
+                    span: Span { start: 0, end: 12 },
+                },
+            ))),
         };
         let message = check_message(&[refusal]);
         assert!(message.contains("temporal claim"), "{message}");
@@ -3886,7 +3890,7 @@ mod tests {
         for (cause, expected) in cases {
             let refusal = CheckRefusal {
                 location: Location::root(Origin::Expression),
-                cause: CheckCause::ProtocolAnchor(Box::new(cause)),
+                cause: Box::new(CheckCause::ProtocolAnchor(Box::new(cause))),
             };
             let message = check_message(&[refusal]);
             assert!(message.ends_with(expected), "{message}");
@@ -3900,14 +3904,14 @@ mod tests {
     fn channel_delivery_range_message_names_the_channel_and_both_counts() {
         let refusal = CheckRefusal {
             location: Location::root(Origin::Expression),
-            cause: CheckCause::ProtocolAnchor(Box::new(
+            cause: Box::new(CheckCause::ProtocolAnchor(Box::new(
                 ProtocolAnchorCause::ChannelDeliveryRange {
                     channel: "Pay".to_owned(),
                     lower: 4,
                     upper: 3,
                     span: Span { start: 4, end: 9 },
                 },
-            )),
+            ))),
         };
         let message = check_message(&[refusal]);
         assert!(
@@ -3925,13 +3929,15 @@ mod tests {
     fn fifo_key_instability_message_names_the_type_and_channel() {
         let refusal = CheckRefusal {
             location: Location::root(Origin::Expression),
-            cause: CheckCause::ProtocolAnchor(Box::new(ProtocolAnchorCause::KeyEquality {
-                channel: "Q".to_owned(),
-                operator: "=".to_owned(),
-                key_text: "m.ready".to_owned(),
-                key_type: Box::new(ValueType::Integer),
-                span: Span { start: 0, end: 1 },
-            })),
+            cause: Box::new(CheckCause::ProtocolAnchor(Box::new(
+                ProtocolAnchorCause::KeyEquality {
+                    channel: "Q".to_owned(),
+                    operator: "=".to_owned(),
+                    key_text: "m.ready".to_owned(),
+                    key_type: Box::new(ValueType::Integer),
+                    span: Span { start: 0, end: 1 },
+                },
+            ))),
         };
         let message = check_message(&[refusal]);
         assert!(
@@ -3946,16 +3952,18 @@ mod tests {
     fn refused_protocol_dependency_message_includes_typed_target_cause() {
         let refusal = CheckRefusal {
             location: Location::root(Origin::Expression),
-            cause: CheckCause::ProtocolAnchor(Box::new(ProtocolAnchorCause::RefusedDependency {
-                function: "Retired".to_owned(),
-                refused_dependency: Box::new(RefusedProtocolDependency {
-                    declaration: "Retired".to_owned(),
-                    code: Code::UnsupportedConstruct,
-                    cause: "not-yet-implemented",
-                }),
-                consequence: true,
-                span: Span { start: 4, end: 11 },
-            })),
+            cause: Box::new(CheckCause::ProtocolAnchor(Box::new(
+                ProtocolAnchorCause::RefusedDependency {
+                    function: "Retired".to_owned(),
+                    refused_dependency: Box::new(RefusedProtocolDependency {
+                        declaration: "Retired".to_owned(),
+                        code: Code::UnsupportedConstruct,
+                        cause: "not-yet-implemented",
+                    }),
+                    consequence: true,
+                    span: Span { start: 4, end: 11 },
+                },
+            ))),
         };
         let message = check_message(&[refusal]);
         assert!(
@@ -4159,7 +4167,7 @@ mod tests {
             CompileRefusal::Check {
                 refusals: vec![CheckRefusal {
                     location: Location::root(Origin::Expression),
-                    cause: CheckCause::Probabilistic(Box::new(cause)),
+                    cause: Box::new(CheckCause::Probabilistic(Box::new(cause))),
                 }],
                 region: None,
             }
@@ -4207,12 +4215,14 @@ mod tests {
         let refusal = CompileRefusal::Check {
             refusals: vec![CheckRefusal {
                 location: Location::root(Origin::Expression),
-                cause: CheckCause::Probabilistic(Box::new(ProbabilisticCause::UnitMismatch {
-                    claim: "P95".to_owned(),
-                    threshold: "Length".to_owned(),
-                    reward: "Time".to_owned(),
-                    span: fsl_foundation::Span { start: 0, end: 1 },
-                })),
+                cause: Box::new(CheckCause::Probabilistic(Box::new(
+                    ProbabilisticCause::UnitMismatch {
+                        claim: "P95".to_owned(),
+                        threshold: "Length".to_owned(),
+                        reward: "Time".to_owned(),
+                        span: fsl_foundation::Span { start: 0, end: 1 },
+                    },
+                ))),
             }],
             region: None,
         };
@@ -4259,7 +4269,7 @@ mod tests {
                 // binder types and the undeclared channel each refuse.
                 assert!(
                     refusals.iter().any(|refusal| matches!(
-                        &refusal.cause,
+                        refusal.cause.as_ref(),
                         fsl_semantics::check::CheckCause::ProtocolAnchor(cause)
                             if matches!(
                                 cause.as_ref(),

@@ -6,10 +6,10 @@
 //! has no expression tree for a `Location` path to walk.
 
 use filament_exact::ValueType;
-use fsl_foundation::diagnostic::Code;
 use fsl_foundation::Span;
+use fsl_foundation::diagnostic::Code;
 
-use crate::check::refusal::{type_fault_class, CheckCause};
+use crate::check::refusal::{CheckCause, type_fault_class};
 use crate::check::type_form::TypeFormFault;
 
 /// The stage whose expression a refusal is about (FR-381 "Names a stage may

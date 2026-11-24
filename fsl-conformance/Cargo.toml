@@ -34,7 +34,10 @@ jsonschema = { version = "0.17.1", default-features = false, features = ["draft2
 tempfile = "3.27.0"
 fsl-cst = { path = "../fsl-cst" }
 fsl-forms = { path = "../fsl-forms" }
+fsl-semantics = { path = "../fsl-semantics", features = ["test-support"] }
+fsl-package = { path = "../fsl-package", features = ["test-support"] }
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
+quire-canonical = { workspace = true }
 fsl-analyze = { path = "../fsl-analyze", features = ["test-support"] }
 
 [[test]]

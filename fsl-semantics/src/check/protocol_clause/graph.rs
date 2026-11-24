@@ -61,9 +61,9 @@ fn fault(invariant: &'static str) -> Vec<(Span, CheckRefusal)> {
             location: filament_semantic_value::location::ExpressionLocation::root(
                 filament_semantic_value::location::ExpressionOwner::Expression,
             ),
-            cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+            cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
                 filament_semantic_value::catalog::InternalFault::new("check.protocol", invariant),
-            ))),
+            )))),
         },
     )]
 }
@@ -634,11 +634,7 @@ fn required_labels(parallel: &ParallelForm) -> BTreeSet<&str> {
         JoinPolicy::Any => listed.len() == 1,
         JoinPolicy::Predicate(_) => false,
     };
-    if all {
-        listed
-    } else {
-        BTreeSet::new()
-    }
+    if all { listed } else { BTreeSet::new() }
 }
 
 /// Whether `commit` dominates `effect` (FR-381 "Retry, commit and

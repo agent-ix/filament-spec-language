@@ -40,6 +40,48 @@ fn named(name: &str) -> TypeForm {
     TypeForm::name(name, SPAN)
 }
 
+/// FR-092-AC-12: a declared node id comes from the declaration path and
+/// ordinal, even when the checker receives a different caller handle.
+#[trace("FR-092-AC-12", "TC-413")]
+#[test]
+fn declared_point_identity_uses_its_path_not_its_caller_handle() {
+    let caller_handle = NodeKey::new(
+        "fixture",
+        vec![filament_exact::PathSegment::Text(
+            "caller-handle".to_owned(),
+        )],
+        0,
+    )
+    .expect("a distinct caller handle");
+    let point = CompositeDeclaration::new(
+        caller_handle.clone(),
+        "Point",
+        CompositeShape::Record(vec![required("x", ValueType::Integer)]),
+    );
+    let checked = package(vec![point], Vec::new())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
+        .expect("Point checks");
+    let declared = checked
+        .semantic_graph()
+        .nodes()
+        .find(|node| {
+            node.semantic_form() == "record"
+                && preimage(node)["declaration"]["qualified_name"] == json!(["Point"])
+        })
+        .expect("the declared Point node");
+    assert_eq!(declared.key().package(), "fixture");
+    assert_eq!(
+        declared.key().path(),
+        [filament_exact::PathSegment::Text("Point".to_owned())]
+    );
+    assert_eq!(declared.key().ordinal(), 0);
+    assert_ne!(declared.key(), caller_handle);
+}
+
 /// `function <name>(<left>: T, <right>: T): Boolean { <left> = <right> }`.
 fn equality(name: &str, (left, right): (&str, &str), operand: TypeForm) -> FunctionDeclaration {
     function(
@@ -136,6 +178,189 @@ fn equality_leaves(records: Vec<CompositeDeclaration>, compared: &str) -> Vec<St
             format!("{} ({mode})", path.join("/"))
         })
         .collect()
+}
+
+fn union_comparison_leaf_json(
+    records: Vec<CompositeDeclaration>,
+    compared: TypeForm,
+    operator: BinaryOperator,
+    operation: &str,
+) -> Json {
+    let comparison = function(
+        "compare",
+        &[("a", compared.clone()), ("b", compared)],
+        boolean(),
+        None,
+        binary(operator, name_expr("a"), name_expr("b")),
+    );
+    let checked = package(records, vec![comparison])
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("union equality checks: {refusals:?}"));
+    application(checked.semantic_graph(), operation)["body"]["operation"]["leaves"].clone()
+}
+
+fn assert_union_comparison_leaves(
+    records: Vec<CompositeDeclaration>,
+    compared: TypeForm,
+    expected: Json,
+) {
+    assert_eq!(
+        union_comparison_leaf_json(
+            records.clone(),
+            compared.clone(),
+            BinaryOperator::Equal,
+            "filament.op.structural.eq",
+        ),
+        expected,
+        "structural equality leaves"
+    );
+    assert_eq!(
+        union_comparison_leaf_json(
+            records,
+            compared,
+            BinaryOperator::NotEqual,
+            "filament.op.structural.ne",
+        ),
+        expected,
+        "structural inequality leaves"
+    );
+}
+
+fn union_collection_type(kind: CollectionKind) -> TypeForm {
+    TypeForm::collection(kind, SPAN)
+        .with_arguments(vec![named("Choice")])
+        .with_bounds(vec!["0".into(), "4".into()])
+}
+
+fn collection_leaf_json(
+    declarations: Vec<CompositeDeclaration>,
+    function_declaration: FunctionDeclaration,
+    operation: &str,
+) -> Json {
+    let checked = package(declarations, vec![function_declaration])
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("collection expression checks: {refusals:?}"));
+    application(checked.semantic_graph(), operation)["body"]["operation"]["leaves"].clone()
+}
+
+/// FR-093-AC-24: collection equality walks the collection's element with
+/// `inner`; contains and result-inner start at the selected element itself.
+#[trace("FR-093-AC-24", "TC-415")]
+#[test]
+fn collection_leaf_sources_follow_their_catalogued_paths() {
+    let text_definition = json!({
+        "authority": "agent-ix",
+        "identity": "filament.value.text.unicode-17.0.0/v1"
+    });
+    let leaf = |path: &[&str], profile: &str| {
+        json!({
+            "path": path,
+            "laws": [{"role":"text_profile", "definition": text_definition}],
+            "mode": {"kind":"text_profile", "value":profile}
+        })
+    };
+    let expected_inner = json!([
+        leaf(&["inner", "member:Right", "position:0"], "binary-utf8"),
+        leaf(&["inner", "member:Right", "position:1"], "nfc"),
+        leaf(&["inner", "member:Left", "position:0"], "nfc"),
+    ]);
+    let expected_element = json!([
+        leaf(&["member:Right", "position:0"], "binary-utf8"),
+        leaf(&["member:Right", "position:1"], "nfc"),
+        leaf(&["member:Left", "position:0"], "nfc"),
+    ]);
+    let choice = || {
+        union_declaration(
+            "Choice",
+            vec![
+                (
+                    "Right",
+                    vec![text(8, TextProfile::BinaryUtf8), text(8, TextProfile::Nfc)],
+                ),
+                ("Left", vec![text(8, TextProfile::Nfc)]),
+                ("Empty", vec![]),
+            ],
+        )
+    };
+    for kind in [
+        CollectionKind::Set,
+        CollectionKind::Bag,
+        CollectionKind::OrderedSet,
+    ] {
+        let collection = union_collection_type(kind);
+        assert_eq!(
+            union_comparison_leaf_json(
+                vec![choice()],
+                collection.clone(),
+                BinaryOperator::Equal,
+                "filament.op.structural.eq",
+            ),
+            expected_inner,
+            "{kind:?} equality visits each Choice path through collection inner"
+        );
+        let contains = function(
+            "contains_choice",
+            &[("items", collection.clone()), ("item", named("Choice"))],
+            boolean(),
+            None,
+            Expression::contains(name_expr("items"), name_expr("item")),
+        );
+        assert_eq!(
+            collection_leaf_json(vec![choice()], contains, "filament.op.collection.contains"),
+            expected_element,
+            "{kind:?} contains selects the element path without inner"
+        );
+        let constructor = match kind {
+            CollectionKind::Set => "filament.op.collection.set",
+            CollectionKind::Bag => "filament.op.collection.bag",
+            CollectionKind::OrderedSet => "filament.op.collection.ordered_set",
+            CollectionKind::Sequence => unreachable!(),
+        };
+        let build_collection = function(
+            "build_collection",
+            &[("item", named("Choice"))],
+            collection,
+            None,
+            Expression::collection(kind, vec![name_expr("item")]),
+        );
+        assert_eq!(
+            collection_leaf_json(vec![choice()], build_collection, constructor),
+            expected_element,
+            "{kind:?} result_inner selects Choice with no prefix"
+        );
+    }
+    let sequence = union_collection_type(CollectionKind::Sequence);
+    let sequence_equality = union_comparison_leaf_json(
+        vec![choice()],
+        sequence.clone(),
+        BinaryOperator::Equal,
+        "filament.op.structural.eq",
+    );
+    assert_eq!(sequence_equality, expected_inner);
+    let sequence_constructor = function(
+        "build_sequence",
+        &[("item", named("Choice"))],
+        sequence,
+        None,
+        Expression::collection(CollectionKind::Sequence, vec![name_expr("item")]),
+    );
+    assert_eq!(
+        collection_leaf_json(
+            vec![choice()],
+            sequence_constructor,
+            "filament.op.collection.sequence"
+        ),
+        json!([]),
+        "Sequence's result_inner has no leaves"
+    );
 }
 
 /// TC-415 step 9 (FR-093-AC-11): an optional field's leaf passes through
@@ -241,6 +466,226 @@ fn union_declaration(name: &str, members: Vec<(&str, Vec<ValueType>)>) -> Compos
                 .collect(),
         ),
     )
+}
+
+/// FR-093-AC-23: all seven union vectors use declaration and payload order,
+/// including text-law identity, optional paths and recursion depth.
+#[trace("FR-093-AC-23", "TC-415")]
+#[test]
+fn union_leaf_vectors_match_the_complete_ordered_contract() {
+    let text_definition = json!({
+        "authority": "agent-ix",
+        "identity": "filament.value.text.unicode-17.0.0/v1"
+    });
+    let leaf = |path: &[&str], profile: &str| {
+        json!({
+            "path": path,
+            "laws": [{"role":"text_profile", "definition": text_definition}],
+            "mode": {"kind":"text_profile", "value":profile}
+        })
+    };
+    let recursion = |path: &[&str]| json!({"path":path,"laws":[],"mode":null});
+    let nfc = || text(8, TextProfile::Nfc);
+    let binary = || text(8, TextProfile::BinaryUtf8);
+    let empty = || union_declaration("Empty", vec![("None", vec![]), ("Done", vec![])]);
+    assert_union_comparison_leaves(vec![empty()], named("Empty"), json!([]));
+
+    let choice = || {
+        union_declaration(
+            "Choice",
+            vec![
+                ("Right", vec![binary(), nfc()]),
+                ("Left", vec![nfc()]),
+                ("Empty", vec![]),
+            ],
+        )
+    };
+    let choice_expected = json!([
+        leaf(&["member:Right", "position:0"], "binary-utf8"),
+        leaf(&["member:Right", "position:1"], "nfc"),
+        leaf(&["member:Left", "position:0"], "nfc"),
+    ]);
+    assert_union_comparison_leaves(vec![choice()], named("Choice"), choice_expected.clone());
+    let renamed = union_declaration(
+        "Choice",
+        vec![
+            ("Right", vec![binary(), nfc()]),
+            ("Other", vec![nfc()]),
+            ("Empty", vec![]),
+        ],
+    );
+    assert_union_comparison_leaves(
+        vec![renamed],
+        named("Choice"),
+        json!([
+            leaf(&["member:Right", "position:0"], "binary-utf8"),
+            leaf(&["member:Right", "position:1"], "nfc"),
+            leaf(&["member:Other", "position:0"], "nfc"),
+        ]),
+    );
+    let reordered = union_declaration(
+        "Choice",
+        vec![
+            ("Left", vec![nfc()]),
+            ("Right", vec![binary(), nfc()]),
+            ("Empty", vec![]),
+        ],
+    );
+    assert_union_comparison_leaves(
+        vec![reordered],
+        named("Choice"),
+        json!([
+            leaf(&["member:Left", "position:0"], "nfc"),
+            leaf(&["member:Right", "position:0"], "binary-utf8"),
+            leaf(&["member:Right", "position:1"], "nfc"),
+        ]),
+    );
+    let swapped = union_declaration(
+        "Choice",
+        vec![
+            ("Right", vec![nfc(), binary()]),
+            ("Left", vec![nfc()]),
+            ("Empty", vec![]),
+        ],
+    );
+    assert_union_comparison_leaves(
+        vec![swapped],
+        named("Choice"),
+        json!([
+            leaf(&["member:Right", "position:0"], "nfc"),
+            leaf(&["member:Right", "position:1"], "binary-utf8"),
+            leaf(&["member:Left", "position:0"], "nfc"),
+        ]),
+    );
+
+    let source_case_leaves = |arms: &str| {
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\"; profile v = \"filament.value.complete/v1\"; \
+             union Choice {{ Right(Text[0, 8; binary-utf8], Text[0, 8; nfc]), Left(Text[0, 8; nfc]), Empty }} \
+             function f using v(a: Choice, b: Choice): Boolean pure {{ case a {{ {arms} }} }}"
+        );
+        let parsed = fsl_cst::parse(
+            SourceIdentity::new("union-vector", "source-arm-order"),
+            "union.native",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("S1 reads the source");
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+        let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the source forms");
+        let checked = PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "fixture".to_owned(),
+            unit,
+            crate::model::intake::SelectedModels::default(),
+            Vec::new(),
+        )
+        .expect("the source assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
+        .expect("the source checks");
+        application(checked.semantic_graph(), "filament.op.structural.eq")["body"]["operation"]
+            ["leaves"]
+            .clone()
+    };
+    assert_eq!(
+        source_case_leaves("Right(x, y): a = b; Left(x): a = b; Empty: a = b;"),
+        choice_expected
+    );
+    assert_eq!(
+        source_case_leaves("Empty: a = b; Left(x): a = b; Right(x, y): a = b;"),
+        choice_expected
+    );
+
+    let wrapped = union_declaration(
+        "Wrapped",
+        vec![
+            (
+                "Item",
+                vec![ValueType::option(sequence(nfc(), Some((0, 2))))],
+            ),
+            ("Empty", vec![]),
+        ],
+    );
+    assert_union_comparison_leaves(
+        vec![wrapped],
+        TypeForm::builtin(BuiltinType::Option, SPAN).with_arguments(vec![named("Wrapped")]),
+        json!([leaf(
+            &["inner", "member:Item", "position:0", "inner", "inner"],
+            "nfc"
+        )]),
+    );
+    let chain = || {
+        union_declaration(
+            "Chain",
+            vec![
+                ("End", vec![nfc()]),
+                (
+                    "Next",
+                    vec![ValueType::option(ValueType::Composite(handle("Chain")))],
+                ),
+            ],
+        )
+    };
+    assert_union_comparison_leaves(
+        vec![chain()],
+        named("Chain"),
+        json!([
+            leaf(&["member:End", "position:0"], "nfc"),
+            recursion(&["member:Next", "position:0", "inner", "recursion:0"])
+        ]),
+    );
+    assert_union_comparison_leaves(
+        vec![chain()],
+        TypeForm::builtin(BuiltinType::Option, SPAN).with_arguments(vec![named("Chain")]),
+        json!([
+            leaf(&["inner", "member:End", "position:0"], "nfc"),
+            recursion(&["inner", "member:Next", "position:0", "inner", "recursion:1"])
+        ]),
+    );
+    let silent = union_declaration(
+        "Silent",
+        vec![
+            ("End", vec![]),
+            (
+                "Next",
+                vec![ValueType::option(ValueType::Composite(handle("Silent")))],
+            ),
+        ],
+    );
+    assert_union_comparison_leaves(vec![silent], named("Silent"), json!([]));
+    let link = union_declaration(
+        "Link",
+        vec![
+            ("End", vec![binary()]),
+            ("More", vec![ValueType::Composite(handle("Cell"))]),
+        ],
+    );
+    let cell = record(
+        "Cell",
+        vec![
+            required("tag", nfc()),
+            optional("next", ValueType::Composite(handle("Link"))),
+        ],
+    );
+    assert_union_comparison_leaves(
+        vec![link, cell],
+        named("Link"),
+        json!([
+            leaf(&["member:End", "position:0"], "binary-utf8"),
+            leaf(&["member:More", "position:0", "field:tag"], "nfc"),
+            recursion(&[
+                "member:More",
+                "position:0",
+                "field:next",
+                "inner",
+                "recursion:0"
+            ])
+        ]),
+    );
 }
 
 /// FSpec FR-440's "Structural leaves": every declared member is an anchor,
@@ -359,6 +804,10 @@ fn node_limit(nodes: u64) -> CheckingLimits {
     CheckingLimits::new(nodes)
 }
 
+fn work_limit(work: u64) -> CheckingLimits {
+    CheckingLimits::default().with_work_budget(work)
+}
+
 /// The smallest node limit `checks` passes under.
 fn smallest_limit(checks: impl Fn(u64) -> bool) -> u64 {
     let (mut refused, mut admitted) = (0_u64, 4096_u64);
@@ -377,7 +826,7 @@ fn smallest_limit(checks: impl Fn(u64) -> bool) -> u64 {
 /// TC-415 step 9 (FR-093-AC-11): `eq` over `Node` charges its two leaves
 /// to the node limit: under a limit that admits the package's nodes but not
 /// also its two leaves, it refuses on the node limit and yields no node.
-#[trace("FR-093-AC-11", "TC-415")]
+#[trace("FR-093-AC-11", "FR-093-AC-25", "TC-415")]
 #[test]
 fn a_leaf_walk_charges_the_node_limit() {
     let admitted = smallest_limit(|limit| eq_over_node(node_limit(limit)).is_ok());
@@ -397,7 +846,7 @@ fn a_leaf_walk_charges_the_node_limit() {
     let exhausted = |refusals: Vec<CheckRefusal>, limit: u64| {
         assert!(
             matches!(
-                refusals[0].cause,
+                *refusals[0].cause,
                 CheckCause::ResourceExhausted(ref exceeded)
                     if exceeded.kind == CheckingLimitKind::Nodes && exceeded.limit == limit
             ),
@@ -412,6 +861,133 @@ fn a_leaf_walk_charges_the_node_limit() {
             limit,
         );
     }
+}
+
+#[trace("FR-093-AC-25", "TC-415")]
+#[test]
+fn an_union_leaf_walk_charges_its_composite_and_full_path_bytes() {
+    let union = || {
+        union_declaration(
+            "U",
+            vec![("M", vec![text(8, TextProfile::Nfc)]), ("Empty", vec![])],
+        )
+    };
+    package(vec![union()], vec![equality("eq", ("a", "b"), named("U"))])
+        .check(
+            CheckMode::Linked,
+            work_limit(52),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
+        .expect("52 units admit the composite and full leaf path");
+    let refusals = package(vec![union()], vec![equality("eq", ("a", "b"), named("U"))])
+        .check(
+            CheckMode::Linked,
+            work_limit(51),
+            &crate::check::test_support::ZeroRewardEvaluator,
+        )
+        .expect_err("the union composite and text leaf path each charge work");
+    assert_eq!(refusals[0].cause.code().as_str(), "stage_limit_exceeded");
+    assert_eq!(refusals[0].cause.cause(), Some("work-budget-exceeded"));
+    assert!(matches!(
+        refusals[0].cause.as_ref(),
+        CheckCause::ResourceExhausted(ref limit)
+            if limit.kind == CheckingLimitKind::WorkBudget
+                && limit.limit == 51
+                && limit.actual == 52
+    ));
+}
+
+/// FR-093-AC-26 (TC-757): cancellation and the one-below work limit stop the
+/// same Union text-leaf walk without returning a partial checked graph.
+#[trace("FR-093-AC-26", "TC-757")]
+#[test]
+fn a_cancelled_union_leaf_walk_stops_at_the_next_charge() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, OnceLock};
+
+    let declarations = || {
+        package(
+            vec![union_declaration(
+                "U",
+                vec![("M", vec![text(8, TextProfile::Nfc)]), ("Empty", vec![])],
+            )],
+            vec![equality("eq", ("a", "b"), named("U"))],
+        )
+    };
+
+    let limit_cancel = filament_exact::Cancel::new();
+    let limit_refusals = declarations()
+        .check_with_cancel(
+            CheckMode::Linked,
+            work_limit(51),
+            &crate::check::test_support::ZeroRewardEvaluator,
+            &limit_cancel,
+        )
+        .expect_err("one unit below the 52-unit Union leaf walk refuses");
+    assert_eq!(limit_cancel.tripped(), None);
+    assert_eq!(limit_refusals.len(), 1);
+    assert_eq!(
+        limit_refusals[0].cause.code().as_str(),
+        "stage_limit_exceeded"
+    );
+    assert_eq!(
+        limit_refusals[0].cause.cause(),
+        Some("work-budget-exceeded")
+    );
+    assert!(matches!(
+        limit_refusals[0].cause.as_ref(),
+        CheckCause::ResourceExhausted(ref limit)
+            if limit.stage == CheckingStage::Typing
+                && limit.kind == CheckingLimitKind::WorkBudget
+                && limit.limit == 51
+                && limit.actual == 52
+    ));
+
+    let charges = Arc::new(AtomicUsize::new(0));
+    let cancel_slot = Arc::new(OnceLock::<filament_exact::Cancel>::new());
+    let observed_charges = Arc::clone(&charges);
+    let observed_cancel = Arc::clone(&cancel_slot);
+    let cancel = filament_exact::Cancel::observing(move || {
+        if observed_charges.fetch_add(1, Ordering::Relaxed) + 1 == 31 {
+            observed_cancel
+                .get()
+                .expect("the checking handle is installed")
+                .cancel(filament_exact::CancelCause::Requested);
+        }
+    });
+    cancel_slot
+        .set(cancel.clone())
+        .expect("the observing handle is installed once");
+    let cancelled_refusals = declarations()
+        .check_with_cancel(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+            &cancel,
+        )
+        .expect_err("cancellation denies the next Union leaf-walk charge");
+    assert_eq!(charges.load(Ordering::Relaxed), 31);
+    assert_eq!(
+        cancel.tripped(),
+        Some(filament_exact::CancelCause::Requested)
+    );
+    assert_eq!(cancelled_refusals.len(), 1);
+    assert_eq!(
+        cancelled_refusals[0].cause.code().as_str(),
+        "stage_limit_exceeded"
+    );
+    assert_eq!(
+        cancelled_refusals[0].cause.cause(),
+        Some("work-budget-exceeded")
+    );
+    assert!(matches!(
+        cancelled_refusals[0].cause.as_ref(),
+        CheckCause::ResourceExhausted(ref limit)
+            if limit.stage == CheckingStage::Typing
+                && limit.kind == CheckingLimitKind::WorkBudget
+                && limit.limit == 51
+                && limit.actual == 52
+    ));
 }
 
 /// `n` records `R0` .. `R{n-1}`, each with a `label` text field and an
@@ -443,7 +1019,7 @@ fn a_text_reachable_cluster_refuses_on_the_default_node_ceiling() {
     let refusals = eq_over(text_cluster(9), "R0", CheckingLimits::default())
         .expect_err("the nine-record cluster's leaves pass the default node ceiling");
     assert_eq!(
-        refusals[0].cause,
+        *refusals[0].cause,
         CheckCause::ResourceExhausted(Box::new(StageLimitCause {
             stage: CheckingStage::Typing,
             kind: CheckingLimitKind::Nodes,
@@ -550,7 +1126,7 @@ fn deep_wide(chain: usize, levels: usize, name: &str) -> Vec<CompositeDeclaratio
 /// 30-record chain overflows a debug test thread's 2 MiB stack in
 /// composite lowering, before any leaf walk; `fsl-bench`'s `deep-wide`
 /// probe runs the reviewer's 46-record chain in release.)
-#[trace("NFR-011-M-4", "TC-423")]
+#[trace("FR-093-AC-25", "NFR-011-M-4", "TC-423")]
 #[test]
 fn long_leaf_paths_refuse_on_the_default_work_budget() {
     let name = format!("n{}", "x".repeat(255));
@@ -558,7 +1134,7 @@ fn long_leaf_paths_refuse_on_the_default_work_budget() {
         .expect_err("the leaves' key bytes pass the default work budget");
     assert!(
         matches!(
-            refusals[0].cause,
+            *refusals[0].cause,
             CheckCause::ResourceExhausted(ref exceeded)
                 if exceeded.stage == CheckingStage::Typing
                     && exceeded.kind == CheckingLimitKind::WorkBudget

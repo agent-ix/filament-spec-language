@@ -93,7 +93,13 @@ fn integer(value: i64) -> Rational {
 
 /// FR-093-AC-49 a, b, c, c2, z, q, r, k, k2 and v2 (TC-1285 step 1): each
 /// checks and evaluates to the exact negation in the operand's own unit.
-#[trace("FR-093-AC-49", "TC-1285", "FR-146-AC-9")]
+#[trace(
+    "FR-093-AC-49",
+    "TC-1285",
+    "FR-146-AC-9",
+    "FSpec-FR-142-AC-25",
+    "FSpec-TC-187"
+)]
 #[test]
 fn a_quantity_negation_evaluates_to_the_exact_negation_in_its_own_unit() {
     let package = package_with(&units_and(
@@ -156,7 +162,7 @@ fn a_negation_of_an_affine_or_non_quantity_operand_refuses_without_a_node() {
     ] {
         let refusal = refusal(functions);
         assert!(
-            matches!(&refusal.cause, CheckCause::IllTyped(found) if *found == cause),
+            matches!(refusal.cause.as_ref(), CheckCause::IllTyped(found) if *found == cause),
             "{functions}: {refusal:?}"
         );
     }
@@ -182,7 +188,10 @@ fn a_division_by_a_negation_not_rooted_in_a_nonzero_literal_refuses() {
     ] {
         let refusal = refusal(functions);
         assert!(
-            matches!(refusal.cause, CheckCause::Unproved(Obligation::Nonzero)),
+            matches!(
+                refusal.cause.as_ref(),
+                CheckCause::Unproved(Obligation::Nonzero)
+            ),
             "{functions}: {refusal:?}"
         );
         assert_at(&refusal, &[0]);

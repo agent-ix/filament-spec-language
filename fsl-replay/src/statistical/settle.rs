@@ -119,6 +119,10 @@ impl NotStatisticalRequest {
 /// A refusal FR-192 settles with no terminal record.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum UnsettledRefusal {
+    /// FR-191's `Workers` refusal: invalid request input reported by EN-4's
+    /// caller, not a terminal statistical outcome.
+    #[error("statistical.workers must be greater than zero")]
+    Workers,
     /// FR-192's `NotStatistical` row: a negotiation outcome.
     #[error(transparent)]
     NotStatistical(NotStatisticalRequest),
@@ -135,10 +139,6 @@ pub enum UnsettledRefusal {
     /// request is invalid, so the refusal is the caller's to report.
     #[error("a symmetry declaration is malformed")]
     Symmetry,
-    /// The claim's form is valid but no engine samples it yet: the caller
-    /// reports it `unsupported`, `not-yet-implemented`.
-    #[error("sampling the claim's form is not yet implemented")]
-    NotYetImplemented,
 }
 
 /// FR-192: settle `outcome` as one terminal record. `subject` supplies the
@@ -259,7 +259,7 @@ fn expansion_stop(stop: &ExpansionStop, subject: SubjectLimits<'_>) -> Statistic
 /// # Errors
 ///
 /// [`UnsettledRefusal`] for a `NotStatistical`, `RequiresBound`,
-/// `Admission` or `Symmetry` refusal, which settles no terminal record.
+/// `Admission`, `Symmetry` or `Workers` refusal, which settles no terminal record.
 pub fn settle_statistical_refusal(
     refusal: &StatisticalRefusal,
 ) -> Result<StatisticalRecord, UnsettledRefusal> {
@@ -278,7 +278,6 @@ pub fn settle_statistical_refusal(
         StatisticalRefusal::RequiresBound(_) => return Err(UnsettledRefusal::RequiresBound),
         StatisticalRefusal::Admission(_) => return Err(UnsettledRefusal::Admission),
         StatisticalRefusal::Symmetry(_) => return Err(UnsettledRefusal::Symmetry),
-        StatisticalRefusal::DelayWeighting => return Err(UnsettledRefusal::NotYetImplemented),
         StatisticalRefusal::PredicateRefused(outcome) => predicate_refused(outcome),
         StatisticalRefusal::GeneratorMismatch { .. } => {
             request(StatisticalRequestRefusal::GeneratorMismatch)
@@ -295,6 +294,7 @@ pub fn settle_statistical_refusal(
         StatisticalRefusal::MissingConfidence => {
             request(StatisticalRequestRefusal::MissingConfidence)
         }
+        StatisticalRefusal::Workers => return Err(UnsettledRefusal::Workers),
         StatisticalRefusal::ConfidenceBeyondPrecision => StatisticalRecord::of(
             TerminalValue::Unsupported(UnavailabilityCause::ConfidenceBeyondPrecision),
         ),
@@ -754,6 +754,10 @@ mod tests {
         let settled = |refusal: StatisticalRefusal| {
             settle_statistical_refusal(&refusal).expect("a terminal record")
         };
+        assert_eq!(
+            settle_statistical_refusal(&StatisticalRefusal::Workers),
+            Err(UnsettledRefusal::Workers)
+        );
         assert_eq!(
             settled(StatisticalRefusal::NoTest).value,
             TerminalValue::Inconclusive(InconclusiveCause::NoInitialState)

@@ -27,19 +27,19 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_forms::{BinaryOperator, DeclaredClauseKind, ExprNode, Expression, StateClauseKind};
-use fsl_foundation::diagnostic::Code;
 use fsl_foundation::Span;
+use fsl_foundation::diagnostic::Code;
 
 use super::check::DispatchOperation;
 use super::checked_dispatch::{
-    body_clause, body_function, checked_dispatch_core, rename_names, DispatchBridgeRefusal,
-    DispatchRoot, OperationClauses,
+    DispatchBridgeRefusal, DispatchRoot, OperationClauses, body_clause, body_function,
+    checked_dispatch_core, rename_names,
 };
 use super::ir::{DispatchCandidate, DispatchTable};
 use super::lowering::ModelClause;
 use super::refusal::{DispatchLinkCause, DispatchSubtypeFailure};
 use super::{CheckCause, CheckRefusal, PackageDeclarations};
-use crate::model::accounting::{Meter, ModelNormalizationLimits};
+use crate::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
 use crate::model::dispatch::{DispatchLinkOutcome, GeneralizationClosure, LinkCheckOutcome};
 use crate::model::domain_package::DomainPackageRecord;
 use crate::model::intake::member_identity_name;
@@ -120,7 +120,7 @@ impl PendingLinks {
 /// The member and receiver type of a call the check found no dispatch
 /// operation for.
 fn unresolved_call(refusal: &CheckRefusal) -> Option<(&str, EffectiveId)> {
-    match &refusal.cause {
+    match refusal.cause.as_ref() {
         CheckCause::StateModel(model) => match (&model.cause, model.receiver.clone()) {
             (CheckCause::MissingName(name), Some(receiver)) => Some((name, receiver)),
             (CheckCause::MissingQualifiedName(name), Some(receiver)) => {
@@ -150,7 +150,7 @@ impl PackageDeclarations {
         limits: ModelNormalizationLimits,
     ) -> Result<PendingLinks, Vec<CheckRefusal>> {
         let called = self.called_members();
-        let mut meter = Meter::new(limits);
+        let mut meter = NormalizationMeter::new(limits);
         let mut pending = PendingLinks::default();
         let mut linked = Vec::new();
         let mut clauses: BTreeMap<String, Option<OperationClauses>> = BTreeMap::new();
@@ -680,7 +680,7 @@ impl PackageDeclarations {
 fn dispatch_link(cause: DispatchLinkCause) -> CheckRefusal {
     CheckRefusal {
         location: Location::root(Origin::Expression),
-        cause: CheckCause::DispatchLink(Box::new(cause)),
+        cause: Box::new(CheckCause::DispatchLink(Box::new(cause))),
     }
 }
 

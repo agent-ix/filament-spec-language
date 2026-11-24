@@ -27,7 +27,7 @@
 //! one object type the model's populations range over.
 
 use fsl_foundation::source::node_table::{
-    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
+    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -40,22 +40,22 @@ use fsl_forms::{
     BinaryOperator, ExprId, ExprNode, ExpressionForm, QuantityForm, StateClauseKind,
     TimeInvariantForm, TypeFormHead, UrgentForm, UrgentTarget,
 };
-use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::Span;
+use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 
 pub use self::collection_write::{CollectionWrite, Written};
 use super::assemble::TimedDeclaration;
 use super::check::NamedScope;
 use super::ir::{CheckedBody, CheckedNode};
-use super::lowering::{strictly_below, AdmittedModel, CollectionShape, PlaceStep};
+use super::lowering::{AdmittedModel, CollectionShape, PlaceStep, strictly_below};
 use super::refusal::TimedConstruct;
 use super::refusal::{
     CheckCause, CheckRefusal, ExcludedClauseForm, TemporalCause, TimedOmission,
     UnwrittenTimedMember,
 };
 use super::state_clause::{
-    check_clause, check_clause_named, population_of, ClauseDeclarations, ClauseOperation,
-    ClauseView, PopulationDomain, StateClauseDeclaration,
+    ClauseDeclarations, ClauseOperation, ClauseView, PopulationDomain, StateClauseDeclaration,
+    check_clause, check_clause_named, population_of,
 };
 use super::state_graph_claim::StatePredicate;
 use super::temporal_clause::{ModelTimeSource, TimeSourceKind};
@@ -1943,7 +1943,7 @@ fn refusal(cause: CheckCause) -> CheckRefusal {
         location: filament_semantic_value::location::ExpressionLocation::root(
             filament_semantic_value::location::ExpressionOwner::Expression,
         ),
-        cause,
+        cause: Box::new(cause),
     }
 }
 
@@ -3432,11 +3432,7 @@ fn part_predicate(
                 | DataLiteral::Presence(_)
                 | DataLiteral::ElementPresence(..) => return None,
             };
-            if positive {
-                Some(cut)
-            } else {
-                cut.negated()
-            }
+            if positive { Some(cut) } else { cut.negated() }
         })
         .collect::<Option<Vec<_>>>()?;
     ExpressionForm::conjunction(operands)
@@ -4842,10 +4838,10 @@ pub(crate) fn prepare(
                     name: clock_reading_site(name),
                 },
             ),
-            cause: CheckCause::UnprovedDecrease {
+            cause: Box::new(CheckCause::UnprovedDecrease {
                 cycle,
                 obligation: super::refusal::MeasureObligation::MissingMeasure,
-            },
+            }),
         });
     }
     prepare_models(inputs, state_clauses, meter).map_err(refusal)
@@ -5469,7 +5465,7 @@ fn typed_in(
             .unwrap_or(Span { start: 0, end: 0 });
         // A population name that names nothing is located at its second
         // segment (FR-391 "Resolution").
-        let span = match &refused.cause {
+        let span = match refused.cause.as_ref() {
             CheckCause::MissingSegment { offset, span, .. } => {
                 let name = span.unwrap_or(located);
                 Span {
@@ -5480,7 +5476,7 @@ fn typed_in(
             _ => located,
         };
         refusal(timed(TemporalCause::TimedPredicate {
-            cause: Box::new(refused.cause),
+            cause: refused.cause,
             span,
         }))
     })?;
@@ -5558,6 +5554,7 @@ fn state_view<'v>(
         context: Some(draft.context.clone()),
         receiver: Some(("self", ValueType::Reference(draft.context.clone()))),
         operation: None,
+        authored_operation: None,
         context_population: draft.population.clone(),
         frame_population: None,
         binders: &[],
@@ -5612,6 +5609,7 @@ fn check_part(
                 context: Some(clause.context.clone()),
                 receiver: Some(("self", ValueType::Reference(clause.context.clone()))),
                 operation: Some(operation),
+                authored_operation: clause.authored_operation.as_deref(),
                 context_population: clause.context_population.clone(),
                 frame_population: clause.frame_population.clone(),
                 binders: &binders,
@@ -5908,6 +5906,7 @@ pub(crate) fn check(
                                         ValueType::Reference(written.context.clone()),
                                     )),
                                     operation: None,
+                                    authored_operation: None,
                                     context_population: None,
                                     frame_population: None,
                                     binders: &binders,
@@ -5989,7 +5988,7 @@ pub(crate) fn not_emitted(model: &TimedModel) -> Option<CheckRefusal> {
 
 #[cfg(test)]
 mod tests {
-    use fsl_forms::{parse_clause_text, ExpressionForm, ExpressionSpans};
+    use fsl_forms::{ExpressionForm, ExpressionSpans, parse_clause_text};
     use ix_trace_rs::trace;
 
     use super::DataLiteral;

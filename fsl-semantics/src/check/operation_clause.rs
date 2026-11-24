@@ -22,10 +22,10 @@ use filament_semantic_value::location::{
 };
 use fsl_forms::StateClauseKind;
 
+use super::StatePredicate;
 use super::observation::Observations;
 use super::refusal::CheckRefusal;
 use super::state_clause::{ClauseOperation, ClauseView, TypedStateClause};
-use super::StatePredicate;
 use crate::model::domain_package::ParsedOperationClause;
 use crate::model::refusal::{MemberPath, MemberRoot};
 
@@ -71,6 +71,7 @@ impl OperationClauseDeclaration {
                 filament_exact::ValueType::Reference(self.context.clone()),
             )),
             operation: Some(&self.operation),
+            authored_operation: None,
             context_population: None,
             frame_population: None,
             binders: &[],

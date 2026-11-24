@@ -913,7 +913,7 @@ fn validate_population(
     let Some(population) = population else {
         return Ok(());
     };
-    let on_each = matches!(protocol.on_each, true);
+    let on_each = protocol.on_each;
     let mut groups = BTreeSet::new();
     for group in population {
         let Some(role) = protocol.roles.iter().find(|role| role.name == group.role) else {
@@ -1136,7 +1136,7 @@ fn validate_closure_premises(
         // whatever the closure state.
         return Ok(!(population.is_none() && has_fanout_scope(protocol)));
     }
-    let on_each = matches!(protocol.on_each, true);
+    let on_each = protocol.on_each;
     let instances = if on_each {
         document
             .observations
@@ -3063,7 +3063,7 @@ fn add_fanout_control_obligations(
     population: Option<&[ActivatedRolePopulation]>,
     obligations: &mut Vec<RecordingObligation>,
 ) {
-    let on_each = matches!(protocol.on_each, true);
+    let on_each = protocol.on_each;
     let instances = recording_instances(document);
     for control in &protocol.controls.controls {
         if control.kind != fsl_forms::ProtocolNodeKind::Branch {
@@ -3511,7 +3511,7 @@ pub fn recording_predicate_package(
     meter: &mut Meter,
 ) -> Option<Value> {
     recording_predicate(
-        &CheckedPackage::Package(input.clone()),
+        &CheckedPackage::Package(Box::new(input.clone())),
         bytes,
         node,
         position,
@@ -3600,9 +3600,7 @@ fn branch_completion(
     branch_node: &str,
     instance: Option<&str>,
 ) -> Option<bool> {
-    let premise_instance = matches!(protocol.on_each, true)
-        .then_some(instance)
-        .flatten();
+    let premise_instance = protocol.on_each.then_some(instance).flatten();
     let fanout_roles = protocol
         .owners
         .iter()

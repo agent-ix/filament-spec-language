@@ -23,7 +23,7 @@ mod fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_obligations.rs");
 }
-use fixture::{obligation_model, HEADER};
+use fixture::{HEADER, obligation_model};
 
 /// A unit cannot be empty, so every package opens with the protocol `Base`
 /// of no checks; then one protocol per `(name, check count)`, each running
@@ -96,7 +96,7 @@ fn exact(text: &str, make: Cap, kind: CheckingLimitKind) -> u64 {
             panic!("one limit refusal, got {refusals:?}");
         };
         assert!(
-            matches!(&refusal.cause, CheckCause::ResourceExhausted(limit)
+            matches!(refusal.cause.as_ref(), CheckCause::ResourceExhausted(limit)
                 if limit.kind == kind && limit.limit == below),
             "{refusal:?}"
         );

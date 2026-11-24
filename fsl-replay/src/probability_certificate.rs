@@ -753,6 +753,9 @@ pub struct ExactProbabilityAcceptance {
     document: Option<Box<[u8]>>,
     // The FR-1042 side this acceptance certified; absent for an exact value.
     bound: Option<SubsystemBoundKind>,
+    // The action the checker selected at each existential state of a bound
+    // document, in key order; empty where no existential choice was checked.
+    policy: Vec<(ProbabilityProductKey, crate::ProductAction)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -773,6 +776,13 @@ impl ExactProbabilityAcceptance {
     /// for an exact value.
     pub fn bound(&self) -> Option<SubsystemBoundKind> {
         self.bound
+    }
+    /// FR-1042: the action the checker selected at each existential state of a
+    /// bound document, hinted or the first satisfying one in canonical
+    /// full-product-action order, in key order. Empty for a document that
+    /// checks no existential choice.
+    pub fn policy(&self) -> &[(ProbabilityProductKey, crate::ProductAction)] {
+        &self.policy
     }
     /// The exact certificate this checker accepted, retained with its token.
     pub fn certificate(&self) -> &ExactProbabilityCertificate {
@@ -1051,10 +1061,7 @@ fn enumerate_model_graph_with_distributions<P: StatePredicate>(
     distributions: &mut impl FnMut(
         &ModelSimState,
         &mut dyn FnMut(crate::ExactProbBuildIssue),
-    ) -> Result<
-        Vec<Vec<(Rational, ModelSimState)>>,
-        ExactProbabilityGraphError,
-    >,
+    ) -> Result<Vec<ModelDistribution>, ExactProbabilityGraphError>,
     visit: &mut impl FnMut(
         &ProbabilityProductKey,
         &ModelSimState,
@@ -1099,10 +1106,7 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
     distributions: &mut impl FnMut(
         &ModelSimState,
         &mut dyn FnMut(crate::ExactProbBuildIssue),
-    ) -> Result<
-        Vec<Vec<(Rational, ModelSimState)>>,
-        ExactProbabilityGraphError,
-    >,
+    ) -> Result<Vec<ModelDistribution>, ExactProbabilityGraphError>,
     visit_phase: ModelVisitPhase,
     visit: &mut impl FnMut(
         &ProbabilityProductKey,
@@ -1137,6 +1141,7 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
     reserve(bytes)?;
     let mut pending = VecDeque::from([(root.clone(), first)]);
     let mut states = BTreeMap::new();
+    let mut actions_by_state = BTreeMap::new();
     let mut seen = BTreeSet::from([root.clone()]);
     let mut edge_count = 0usize;
     while let Some((key, state)) = pending.pop_front() {
@@ -1175,8 +1180,8 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
         if visit_phase == ModelVisitPhase::AfterTarget {
             visit(&key, &state, terminal)?;
         }
-        let choices = if terminal.is_some() && stop_at_target {
-            Vec::new()
+        let (choices, action_hints) = if terminal.is_some() && stop_at_target {
+            (Vec::new(), Vec::new())
         } else {
             let distributions = distributions(&state, failure)?;
             if distributions.is_empty() {
@@ -1197,7 +1202,8 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
                     .ok_or(ExactProbabilityGraphError::TooManyEdges)?,
             )?;
             let mut choices = Vec::with_capacity(distributions.len());
-            for distribution in distributions {
+            let mut action_hints = Vec::with_capacity(distributions.len());
+            for (action_hint, distribution) in distributions {
                 poll_cancel(cancel)?;
                 let mut choice = Vec::new();
                 for (probability, successor) in distribution {
@@ -1245,15 +1251,33 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
                     }
                 }
                 choices.push(choice);
+                action_hints.push(action_hint);
             }
-            choices
+            (choices, action_hints)
         };
         reserve(std::mem::size_of::<(ProbabilityProductKey, CheckerState)>())?;
-        states.insert(key, CheckerState { terminal, choices });
+        states.insert(key.clone(), CheckerState { terminal, choices });
+        if !action_hints.is_empty() {
+            let action_bytes = action_hints.iter().fold(0usize, |total, action| {
+                total
+                    .saturating_add(std::mem::size_of::<Option<crate::Schedule>>())
+                    .saturating_add(action.as_ref().map_or(0, |action| action.as_bytes().len()))
+            });
+            let action_bytes = action_bytes
+                .saturating_add(std::mem::size_of::<(
+                    ProbabilityProductKey,
+                    Vec<Option<crate::Schedule>>,
+                )>())
+                .saturating_add(key.as_bytes().len());
+            reserve(action_bytes)?;
+            actions_by_state.insert(key, action_hints);
+        }
     }
     Ok(CheckerGraph {
         initial: root,
         states,
+        scheduler_actions: Default::default(),
+        actions_by_state: Some(actions_by_state),
     })
 }
 
@@ -1276,7 +1300,7 @@ fn model_distributions(
     workload: Option<&Workload>,
     cancel: &Cancel,
     failure: &mut impl FnMut(crate::ExactProbBuildIssue),
-) -> Result<Vec<Vec<(Rational, ModelSimState)>>, ExactProbabilityGraphError> {
+) -> Result<Vec<ModelDistribution>, ExactProbabilityGraphError> {
     model_distributions_observing(
         system,
         state,
@@ -1295,7 +1319,7 @@ fn model_distributions_observing(
     cancel: &Cancel,
     #[cfg(feature = "test-support")] observe: &mut dyn FnMut(ProbabilityWitnessSemanticPhase),
     failure: &mut dyn FnMut(crate::ExactProbBuildIssue),
-) -> Result<Vec<Vec<(Rational, ModelSimState)>>, ExactProbabilityGraphError> {
+) -> Result<Vec<ModelDistribution>, ExactProbabilityGraphError> {
     let mut expansion = |stop| {
         if let Err(error) = poll_cancel(cancel) {
             return error;
@@ -1335,7 +1359,7 @@ fn model_distributions_observing(
         failure(crate::ExactProbBuildIssue::UndecidedSuccessor);
         ExactProbabilityGraphError::ExpansionRefused
     })?;
-    action_distributions(actions, cancel)
+    action_distributions(system, actions, cancel)
 }
 
 fn model_distributions_with_budget(
@@ -1345,7 +1369,7 @@ fn model_distributions_with_budget(
     identity: fsl_foundation::IdentityLimits,
     admission: &mut ProbabilityKeyAdmission<'_>,
     cancel: &Cancel,
-) -> Result<Vec<Vec<(Rational, ModelSimState)>>, ProbabilityDocumentError> {
+) -> Result<Vec<ModelDistribution>, ProbabilityDocumentError> {
     if let Some(workload) = workload {
         let steps = system
             .weighted_steps_with_budget(state, workload, identity, admission, cancel)
@@ -1370,12 +1394,12 @@ fn model_distributions_with_budget(
                 crate::ExactProbBuildIssue::UndecidedSuccessor,
             ))
         })?;
-    action_distributions(actions, cancel).map_err(Into::into)
+    action_distributions(system, actions, cancel).map_err(Into::into)
 }
 
 fn workload_distribution(
     steps: Vec<fsl_eval::simulation::model::WeightedStep>,
-) -> Result<Vec<Vec<(Rational, ModelSimState)>>, ExactProbabilityGraphError> {
+) -> Result<Vec<ModelDistribution>, ExactProbabilityGraphError> {
     if steps.iter().any(|step| {
         matches!(
             step.transition,
@@ -1388,16 +1412,20 @@ fn workload_distribution(
             Err(ExactProbabilityGraphError::UnsupportedDraw)
         };
     }
-    Ok(vec![steps
-        .into_iter()
-        .map(|step| (step.probability, step.post))
-        .collect()])
+    Ok(vec![(
+        None,
+        steps
+            .into_iter()
+            .map(|step| (step.probability, step.post))
+            .collect(),
+    )])
 }
 
 fn action_distributions(
+    system: &ModelSystem<'_>,
     actions: Vec<fsl_eval::simulation::model::Action>,
     cancel: &Cancel,
-) -> Result<Vec<Vec<(Rational, ModelSimState)>>, ExactProbabilityGraphError> {
+) -> Result<Vec<ModelDistribution>, ExactProbabilityGraphError> {
     let mut distributions = Vec::with_capacity(actions.len());
     for action in actions {
         poll_cancel(cancel)?;
@@ -1417,7 +1445,9 @@ fn action_distributions(
                 .ok_or(ExactProbabilityGraphError::UnsupportedDraw)?;
             distribution.push((draw.probability, successor));
         }
-        distributions.push(distribution);
+        let schedule = crate::Schedule::of(system, &action.identity)
+            .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
+        distributions.push((Some(schedule), distribution));
     }
     Ok(distributions)
 }
@@ -1589,15 +1619,17 @@ pub fn claim_binding(
     let filament_exact::ValueType::Reference(object) = &over.value_type else {
         return Err(ExactProbabilityGraphError::UnsupportedBinding);
     };
-    let mut instances = system.instances(&over.value_type).map_err(|error| match error {
-        fsl_eval::simulation::NotSimulated::RequiresBound(_) => {
-            ExactProbabilityGraphError::RequiresBound
-        }
-        fsl_eval::simulation::NotSimulated::Extent(fsl_semantics::family::ClassifyFailure::Limit(
-            _,
-        )) => ExactProbabilityGraphError::ExtentLimit,
-        _ => ExactProbabilityGraphError::ExpansionRefused,
-    })?;
+    let mut instances = system
+        .instances(&over.value_type)
+        .map_err(|error| match error {
+            fsl_eval::simulation::NotSimulated::RequiresBound(_) => {
+                ExactProbabilityGraphError::RequiresBound
+            }
+            fsl_eval::simulation::NotSimulated::Extent(
+                fsl_semantics::family::ClassifyFailure::Limit(_),
+            ) => ExactProbabilityGraphError::ExtentLimit,
+            _ => ExactProbabilityGraphError::ExpansionRefused,
+        })?;
     let (Some(instance), None) = (instances.pop(), instances.pop()) else {
         return Err(ExactProbabilityGraphError::UnsupportedBinding);
     };
@@ -1630,6 +1662,7 @@ struct ProbabilityEdge {
 
 /// One action's probabilistic successors.
 type ProbabilityChoice = Vec<ProbabilityEdge>;
+type ModelDistribution = (Option<crate::Schedule>, Vec<(Rational, ModelSimState)>);
 
 /// One checker-enumerated state. This type is private so an eventual replay
 /// facade owns graph construction instead of trusting solver data.
@@ -1644,6 +1677,10 @@ struct CheckerState {
 struct CheckerGraph {
     initial: ProbabilityProductKey,
     states: BTreeMap<ProbabilityProductKey, CheckerState>,
+    /// Canonical action aliases for choices at timed mixed given/free races.
+    /// Other checker graphs leave this empty.
+    scheduler_actions: BTreeMap<ProbabilityProductKey, Vec<Vec<crate::ProductAction>>>,
+    actions_by_state: Option<BTreeMap<ProbabilityProductKey, Vec<Option<crate::Schedule>>>>,
 }
 
 /// Which pass of [`bottom_components`] a charged step belongs to.
@@ -1825,33 +1862,77 @@ fn check_exact_reachability(
     )
 }
 
+/// FR-1042: whether the caller checks a document as the one the claim rests
+/// on or as the other end of a value-bounds interval.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CertificateRole {
+    /// The claim side: an exact document, a `lower` document of an `AtLeast`
+    /// claim or an `upper` document of an `AtMost` claim. Its initial value
+    /// must meet the claim's threshold; a bound document of the other kind is
+    /// rejected `Malformed` at `kind`.
+    Claim,
+    /// The counterpart of a value-bounds proof: a bound document that meets
+    /// its own conditions and no threshold. Any other document is rejected
+    /// `Malformed` at `kind`.
+    Counterpart,
+}
+
 /// How a certified value relates to the Bellman value the checker recomputes
-/// (FR-1042): equal, at most (`lower`) or at least (`upper`).
+/// (FR-1042): equal, at most (`lower`) or at least (`upper`), with the role
+/// a bound document was offered in.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ValueRelation {
     Exact,
-    Lower,
-    Upper,
+    Lower(CertificateRole),
+    Upper(CertificateRole),
 }
 
 impl ValueRelation {
+    /// The relation a document of bound `side` (none for an exact document)
+    /// states when checked in `role`.
+    fn of(side: Option<SubsystemBoundKind>, role: CertificateRole) -> Self {
+        match side {
+            None => Self::Exact,
+            Some(SubsystemBoundKind::Lower) => Self::Lower(role),
+            Some(SubsystemBoundKind::Upper) => Self::Upper(role),
+        }
+    }
+
     /// Whether `certified` stands in this relation to the recomputed `actual`.
     fn holds(self, certified: &Rational, actual: &Rational) -> bool {
         match self {
             Self::Exact => certified == actual,
-            Self::Lower => certified <= actual,
-            Self::Upper => certified >= actual,
+            Self::Lower(_) => certified <= actual,
+            Self::Upper(_) => certified >= actual,
         }
     }
 
-    /// Whether the claim bound is tested at the initial value: always for an
-    /// exact value, and for a bound only on the claim's own side.
-    fn tests_threshold(self, bound: &Bound) -> bool {
+    /// Whether the claim bound is tested at the initial value: for an exact
+    /// value and for a claim-side bound, never for a counterpart.
+    fn tests_threshold(self) -> bool {
         matches!(
-            (self, bound),
-            (Self::Exact, _) | (Self::Lower, Bound::AtLeast(_)) | (Self::Upper, Bound::AtMost(_))
+            self,
+            Self::Exact | Self::Lower(CertificateRole::Claim) | Self::Upper(CertificateRole::Claim)
         )
     }
+
+    /// Whether a claim-side bound document has the kind opposite to the
+    /// claim's direction.
+    fn misplaced(self, bound: &Bound) -> bool {
+        matches!(
+            (self, bound),
+            (Self::Lower(CertificateRole::Claim), Bound::AtMost(_))
+                | (Self::Upper(CertificateRole::Claim), Bound::AtLeast(_))
+        )
+    }
+}
+
+/// The rejection of a document offered in a role its kind cannot fill.
+fn misplaced_kind() -> ExactProbabilityCertificateCheck {
+    ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+        rule: ProbabilityCertificateRule::Malformed,
+        at: ProbabilityCertificateLocus::Member("kind"),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1865,8 +1946,14 @@ fn check_reachability_values(
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ExactProbabilityGraphError> {
     poll_cancel(cancel)?;
-    let values = match certificate_values(graph, certificate, cancel)? {
+    if relation.misplaced(bound) {
+        return Ok(misplaced_kind());
+    }
+    let values = match certificate_values(graph, certificate, cancel, false)? {
         CertificateValues::Complete(values) => values,
+        CertificateValues::Partial { .. } => {
+            return Err(ExactProbabilityGraphError::ExpansionRefused)
+        }
         CertificateValues::Rejected(rejection) => {
             return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
@@ -2047,7 +2134,7 @@ fn check_reachability_values(
             graph.initial.clone(),
         ));
     };
-    let meets_bound = !relation.tests_threshold(bound)
+    let meets_bound = !relation.tests_threshold()
         || match bound {
             Bound::AtLeast(threshold) => initial >= threshold,
             Bound::AtMost(threshold) => initial <= threshold,
@@ -2063,6 +2150,7 @@ fn check_reachability_values(
         ExactProbabilityAcceptance {
             initial_values: None,
             bound: None,
+            policy: Vec::new(),
             document: None,
             value: initial.clone(),
             certificate: certificate.clone(),
@@ -2104,8 +2192,11 @@ fn check_exact_terminal_rewards(
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ExactProbabilityGraphError> {
     poll_cancel(cancel)?;
-    let values = match certificate_values(graph, certificate, cancel)? {
+    let values = match certificate_values(graph, certificate, cancel, false)? {
         CertificateValues::Complete(values) => values,
+        CertificateValues::Partial { .. } => {
+            return Err(ExactProbabilityGraphError::ExpansionRefused)
+        }
         CertificateValues::Rejected(rejection) => {
             return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
@@ -2159,6 +2250,7 @@ fn check_exact_terminal_rewards(
             ExactProbabilityAcceptance {
                 initial_values: None,
                 bound: None,
+                policy: Vec::new(),
                 document: None,
                 value: value.clone(),
                 certificate: certificate.clone(),
@@ -2270,6 +2362,10 @@ fn choice_values(
 
 enum CertificateValues {
     Complete(BTreeMap<ProbabilityProductKey, Rational>),
+    Partial {
+        values: BTreeMap<ProbabilityProductKey, Rational>,
+        named: BTreeSet<ProbabilityProductKey>,
+    },
     Rejected(ProbabilityCertificateRejection),
 }
 
@@ -2277,6 +2373,7 @@ fn certificate_values(
     graph: &CheckerGraph,
     certificate: &ExactProbabilityCertificate,
     cancel: &Cancel,
+    allow_partial_lower: bool,
 ) -> Result<CertificateValues, ExactProbabilityGraphError> {
     let mut values = BTreeMap::new();
     let mut previous = None;
@@ -2303,6 +2400,21 @@ fn certificate_values(
                 },
             ));
         }
+    }
+    if values.len() != graph.states.len() && allow_partial_lower {
+        if !values.contains_key(&graph.initial) {
+            return Ok(CertificateValues::Rejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::Malformed,
+                    at: ProbabilityCertificateLocus::Member("values"),
+                },
+            ));
+        }
+        let named = values.keys().cloned().collect::<BTreeSet<_>>();
+        for key in graph.states.keys() {
+            values.entry(key.clone()).or_insert_with(|| Rational::from_integer(0_i64.into()));
+        }
+        return Ok(CertificateValues::Partial { values, named });
     }
     if values.len() != graph.states.len() {
         poll_cancel(cancel)?;
@@ -2678,6 +2790,7 @@ mod tests {
             certificate: ExactProbabilityCertificate { values: Vec::new() },
             document: None,
             bound: None,
+            policy: Vec::new(),
             initial_values: Some(CheckedInitialValues {
                 values: vec![(0, None), (1, Some(value.clone()))],
                 bindings: vec![None, None],
@@ -2757,7 +2870,12 @@ mod tests {
                 choices: Vec::new(),
             },
         );
-        CheckerGraph { initial, states }
+        CheckerGraph {
+            initial,
+            states,
+            scheduler_actions: Default::default(),
+            actions_by_state: None,
+        }
     }
 
     fn zero_time_mec_graph() -> CheckerGraph {
@@ -2790,7 +2908,12 @@ mod tests {
                 choices: Vec::new(),
             },
         );
-        CheckerGraph { initial, states }
+        CheckerGraph {
+            initial,
+            states,
+            scheduler_actions: Default::default(),
+            actions_by_state: None,
+        }
     }
 
     fn zero_time_mec_certificate(initial: i64) -> ExactProbabilityCertificate {
@@ -2875,7 +2998,12 @@ mod tests {
                 choices: Vec::new(),
             },
         );
-        let graph = CheckerGraph { initial, states };
+        let graph = CheckerGraph {
+            initial,
+            states,
+            scheduler_actions: Default::default(),
+            actions_by_state: None,
+        };
         let certificate = ExactProbabilityCertificate {
             values: vec![
                 ExactProbabilityValue {
@@ -2958,6 +3086,7 @@ mod tests {
         .expect("clocked timed key is valid");
         let graph = |state: ProbabilityProductKey| CheckerGraph {
             initial: state.clone(),
+            actions_by_state: None,
             states: BTreeMap::from([(
                 state.clone(),
                 CheckerState {
@@ -2968,6 +3097,7 @@ mod tests {
                     }]],
                 },
             )]),
+            scheduler_actions: Default::default(),
         };
         let positive_cost = BTreeMap::from([(no_clock.clone(), vec![vec![rational(1)]])]);
         assert!(nonprogressive_end_components(
@@ -3121,6 +3251,7 @@ mod tests {
             ExactProbabilityCertificateCheck::Accepted(ExactProbabilityAcceptance {
                 initial_values: None,
                 bound: None,
+                policy: Vec::new(),
                 document: None,
                 value: Rational::new(Integer::from(4_i64), Integer::from(5_i64)).unwrap(),
                 side: ProbabilityBoundSide::AtLeast,
@@ -3211,7 +3342,12 @@ mod tests {
                 choices: Vec::new(),
             },
         );
-        let graph = CheckerGraph { initial, states };
+        let graph = CheckerGraph {
+            initial,
+            states,
+            scheduler_actions: Default::default(),
+            actions_by_state: None,
+        };
         let forged = ExactProbabilityCertificate {
             values: vec![
                 ExactProbabilityValue {
@@ -3395,13 +3531,21 @@ mod tests {
                 choices.push(vec![edge(3, 1, 1)]);
             }
             let mut states = BTreeMap::new();
-            states.insert(key(0), CheckerState { terminal: None, choices });
+            states.insert(
+                key(0),
+                CheckerState {
+                    terminal: None,
+                    choices,
+                },
+            );
             for target in 1..=3 {
                 states.insert(key(target), terminal());
             }
             CheckerGraph {
                 initial: key(0),
                 states,
+                scheduler_actions: Default::default(),
+                actions_by_state: None,
             }
         };
         let rewards: BTreeMap<_, _> = BTreeMap::from([
@@ -3447,7 +3591,10 @@ mod tests {
         match check(&graph(false), rational(0), &[0]) {
             ExactProbabilityCertificateCheck::Rejected(rejection) => {
                 assert_eq!(rejection.rule, ProbabilityCertificateRule::InequalityFails);
-                assert_eq!(rejection.at, ProbabilityCertificateLocus::ProductState(key(0)));
+                assert_eq!(
+                    rejection.at,
+                    ProbabilityCertificateLocus::ProductState(key(0))
+                );
             }
             other => panic!("expected a rejection, got {other:?}"),
         }

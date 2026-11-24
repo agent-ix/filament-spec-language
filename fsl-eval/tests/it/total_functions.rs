@@ -249,7 +249,7 @@ fn unproved_decrease(
     let refusal = refusal(result);
     assert_eq!(refusal.cause.code().as_str(), "undefined_expression");
     assert_eq!(refusal.cause.cause(), Some("unproved-decrease"));
-    match refusal.cause {
+    match *refusal.cause {
         CheckCause::UnprovedDecrease { cycle, obligation } => (cycle, obligation),
         other => panic!("unproved-decrease, not {other:?}"),
     }
@@ -444,7 +444,7 @@ fn unproved(result: Result<CheckedGraph, Vec<CheckRefusal>>) -> (Obligation, &'s
     let refusal = refusal(result);
     assert_eq!(refusal.cause.code().as_str(), "undefined_expression");
     let cause = refusal.cause.cause().unwrap();
-    match refusal.cause {
+    match *refusal.cause {
         CheckCause::Unproved(obligation) => (obligation, cause),
         other => panic!("an unproved obligation, not {other:?}"),
     }
@@ -569,7 +569,7 @@ fn p05_unreachable_calls_still_resolve_and_model_operations_are_ineligible() {
     let ineligible = refusal(model);
     assert_eq!(
         ineligible.cause,
-        CheckCause::IllTyped(IllTypedCause::OperatorIneligible)
+        Box::new(CheckCause::IllTyped(IllTypedCause::OperatorIneligible))
     );
     assert_eq!(ineligible.location.path(), vec![2]);
 }
@@ -1156,7 +1156,7 @@ fn p10_stable_paths_ieee_conversion_references_duplicates_and_node_limits() {
     assert_eq!(dereference.dereferences("f").unwrap().len(), 1);
     let dereference_refusal =
         refusal(package(field(Expression::deref(name("ro")), "n")).map(|_| unreachable!()));
-    let CheckCause::StateModel(owner) = &dereference_refusal.cause else {
+    let CheckCause::StateModel(owner) = &*dereference_refusal.cause else {
         panic!("StateModel ownership: {dereference_refusal:?}");
     };
     assert_eq!(owner.family(), FamilyKind::StateModel);
@@ -1171,7 +1171,7 @@ fn p10_stable_paths_ieee_conversion_references_duplicates_and_node_limits() {
     for refusal in &duplicates {
         assert_eq!(refusal.cause.code().as_str(), "ambiguous_declaration");
         assert_eq!(refusal.cause.cause(), Some("ambiguous-name"));
-        let CheckCause::AmbiguousName { loci, .. } = &refusal.cause else {
+        let CheckCause::AmbiguousName { loci, .. } = &*refusal.cause else {
             panic!("ambiguous-name");
         };
         assert_eq!(loci.len(), 2);
@@ -1196,7 +1196,7 @@ fn p10_stable_paths_ieee_conversion_references_duplicates_and_node_limits() {
     assert_eq!(exhausted.cause.cause(), Some("node-count-exceeded"));
     assert!(
         matches!(
-            exhausted.cause,
+            exhausted.cause.as_ref(),
             CheckCause::ResourceExhausted(ref exceeded)
                 if exceeded.stage == CheckingStage::Typing
                     && exceeded.kind == CheckingLimitKind::Nodes
@@ -1290,7 +1290,7 @@ fn nodes_limit_is_enforced_across_the_whole_package_not_per_declaration() {
     );
     assert_eq!(
         exhausted.cause,
-        CheckCause::ResourceExhausted(Box::new(StageLimitCause {
+        Box::new(CheckCause::ResourceExhausted(Box::new(StageLimitCause {
             stage: CheckingStage::Typing,
             kind: CheckingLimitKind::Nodes,
             // The caller's own original configured limit (4), not a
@@ -1299,7 +1299,7 @@ fn nodes_limit_is_enforced_across_the_whole_package_not_per_declaration() {
             limit: 4,
             actual: 5,
             region: None,
-        }))
+        })))
     );
 }
 
@@ -1330,7 +1330,7 @@ fn p_input_bytes_limit_refuses_through_package_declarations_check() {
     let exhausted = refusal(limited);
     assert!(
         matches!(
-            exhausted.cause,
+            exhausted.cause.as_ref(),
             CheckCause::ResourceExhausted(ref exceeded)
                 if exceeded.stage == CheckingStage::Typing
                     && exceeded.kind == CheckingLimitKind::InputBytes
@@ -1385,7 +1385,7 @@ fn p_work_budget_limit_refuses_through_package_declarations_check() {
     let exhausted = refusal(limited);
     assert!(
         matches!(
-            exhausted.cause,
+            exhausted.cause.as_ref(),
             CheckCause::ResourceExhausted(ref exceeded)
                 if exceeded.stage == CheckingStage::Typing
                     && exceeded.kind == CheckingLimitKind::WorkBudget

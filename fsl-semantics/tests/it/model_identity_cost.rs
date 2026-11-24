@@ -8,7 +8,7 @@
 //! code under test.
 
 use filament_checked::key::DeclarationKey;
-use fsl_semantics::model::accounting::{LimitKind, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{ModelNormalizationLimits, NormalizationLimitKind};
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, ObjectTypeRecord,
 };
@@ -111,9 +111,9 @@ fn counters(nodes: &[Node]) -> Counters {
         other => panic!("the shape completes at the defaults, got {other:?}"),
     }
     Counters {
-        facts: meter.consumed(LimitKind::DerivationFacts),
-        work_units: meter.consumed(LimitKind::WorkUnits),
-        declarations: meter.consumed(LimitKind::EffectiveDeclarations),
+        facts: meter.consumed(NormalizationLimitKind::DerivationFacts),
+        work_units: meter.consumed(NormalizationLimitKind::WorkUnits),
+        declarations: meter.consumed(NormalizationLimitKind::EffectiveDeclarations),
     }
 }
 

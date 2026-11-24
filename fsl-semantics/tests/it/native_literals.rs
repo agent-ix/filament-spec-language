@@ -12,7 +12,7 @@ use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{
-    ApplicationTerm, BodyTerm, CheckCause, CheckRefusal, CheckedGraph, I128Limit,
+    ApplicationTerm, BindingValue, BodyTerm, CheckCause, CheckRefusal, CheckedGraph, I128Limit,
     IntegerOutsideI128, IntegerSite, LawRole, LeafTerm, LiteralValue, MemberTerm, NodeTag,
     OperationMode, PackageDeclarations, SemanticNode,
 };
@@ -90,6 +90,32 @@ fn literals<'a>(all: &[&'a SemanticNode], kind: &str) -> Vec<(&'a SemanticNode, 
             (found == kind).then_some((*node, value))
         })
         .collect()
+}
+
+/// The name of the parameter referenced by an operation argument.
+fn referenced_parameter_name(graph: &CheckedGraph, argument: &MemberTerm) -> String {
+    let MemberTerm::Leaf(LeafTerm::Reference { target }) = argument else {
+        panic!("the operation argument is a reference: {argument:?}");
+    };
+    let parameter = graph
+        .semantic_graph()
+        .node(target.admitted().expect("admitted reference").clone())
+        .expect("the parameter node exists");
+    assert_eq!(parameter.semantic_form(), "parameter");
+    let BodyTerm::Aggregate(body) = parameter.body() else {
+        panic!("the parameter has aggregate form: {parameter:?}");
+    };
+    let Some(MemberTerm::Binding(binding)) = body.members.first() else {
+        panic!("the parameter begins with its name: {parameter:?}");
+    };
+    let BindingValue::Leaf(LeafTerm::Literal {
+        value: LiteralValue::Text(name),
+        ..
+    }) = &binding.value
+    else {
+        panic!("the parameter name is text: {parameter:?}");
+    };
+    name.clone()
 }
 
 /// FR-091-AC-41, FR-093-AC-29, TC-1052 steps 1 and 5: each literal lowers to
@@ -216,7 +242,7 @@ fn a_non_canonical_uuid_literal_refuses_with_its_argument() {
             "function f using v(): UUID pure {{ UUID(\"{text}\") }}"
         ));
         assert_eq!(
-            refusal.cause,
+            *refusal.cause,
             CheckCause::MalformedUuidLiteral {
                 argument: text.to_owned()
             },
@@ -244,7 +270,7 @@ fn a_timestamp_outside_i128_refuses_as_the_integer_literal() {
         "function f using v(): Timestamp pure {{ Timestamp({too_high}) }}"
     ));
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::IntegerOutsideI128(IntegerOutsideI128 {
             site: IntegerSite::Literal,
             value: too_high.to_owned(),
@@ -257,7 +283,7 @@ fn a_timestamp_outside_i128_refuses_as_the_integer_literal() {
         "function f using v(): Timestamp pure {{ Timestamp(-{too_low}) }}"
     ));
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::IntegerOutsideI128(IntegerOutsideI128 {
             site: IntegerSite::Literal,
             value: too_low.to_owned(),
@@ -290,7 +316,7 @@ fn a_call_that_is_not_the_literal_form_refuses_type_mismatch() {
         let refusal = refused(&format!(
             "function f using v({parameters}): {result} pure {{ {body} }}"
         ));
-        assert_eq!(refusal.cause, mismatch(), "{body}");
+        assert_eq!(*refusal.cause, mismatch(), "{body}");
         assert_eq!(refusal.location.path(), path, "{body}");
     }
 }
@@ -306,7 +332,7 @@ fn a_function_named_like_a_native_literal_makes_the_call_ambiguous() {
         "function UUID using v(): Boolean pure {{ true }}\n\
          function f using v(): UUID pure {{ UUID(\"{U1}\") }}"
     ));
-    let CheckCause::AmbiguousName { name, loci } = &refusal.cause else {
+    let CheckCause::AmbiguousName { name, loci } = refusal.cause.as_ref() else {
         panic!("ambiguous name: {:?}", refusal.cause);
     };
     assert_eq!(name, "UUID");
@@ -341,7 +367,7 @@ fn a_literal_never_adapts_to_a_slot_of_another_type() {
         let refusal = refused(&format!(
             "function f using v({parameters}): {result} pure {{ {body} }}"
         ));
-        assert_eq!(refusal.cause, mismatch(), "{body}");
+        assert_eq!(*refusal.cause, mismatch(), "{body}");
     }
     for body in [
         "\"abc\" < \"abd\"".to_owned(),
@@ -350,7 +376,7 @@ fn a_literal_never_adapts_to_a_slot_of_another_type() {
     ] {
         let refusal = refused(&format!("function f using v(): Boolean pure {{ {body} }}"));
         assert_eq!(
-            refusal.cause,
+            *refusal.cause,
             CheckCause::IllTyped(IllTypedCause::OperatorIneligible),
             "{body}"
         );
@@ -373,7 +399,7 @@ fn native_scalars_reject_ordering() {
             };
             let refusal = refused(&format!("function f using v(): Boolean pure {{ {body} }}"));
             assert_eq!(
-                refusal.cause,
+                *refusal.cause,
                 CheckCause::IllTyped(IllTypedCause::OperatorIneligible),
                 "{ty} rejects {operator}"
             );
@@ -416,7 +442,7 @@ fn a_function_named_text_makes_the_constructor_call_ambiguous() {
         "function Text using v(): Boolean pure { true }\n\
          function f using v(): Text[0, 8; nfc] pure { Text(\"abc\") }",
     );
-    let CheckCause::AmbiguousName { name, loci } = &refusal.cause else {
+    let CheckCause::AmbiguousName { name, loci } = refusal.cause.as_ref() else {
         panic!("ambiguous name: {:?}", refusal.cause);
     };
     assert_eq!(name, "Text");
@@ -442,13 +468,13 @@ fn a_qualified_constructor_name_is_an_ordinary_name() {
         let refusal = refused(&format!("function f using v(): {result} pure {{ {body} }}"));
         assert!(
             matches!(
-                refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::MissingQualifiedName(_) | CheckCause::MissingName(_)
             ),
             "{body}: {:?}",
             refusal.cause
         );
-        causes.push(std::mem::discriminant(&refusal.cause));
+        causes.push(std::mem::discriminant(refusal.cause.as_ref()));
     }
     assert!(causes.windows(2).all(|pair| pair[0] == pair[1]));
 }
@@ -524,6 +550,105 @@ fn text_literals_share_one_node_and_compare_by_the_profile_equality() {
     assert_ne!(first.admitted(), Some(&literal.key()), "the parameter");
 }
 
+/// FR-091-AC-78 / FR-093-AC-78, TC-1231: `length` and `concat` resolve as
+/// native calls, retain source argument order, and lower without extra laws.
+#[trace(
+    "FR-091-AC-78",
+    "FR-093-AC-78",
+    "TC-1231",
+    "FSpec-FR-322-AC-103",
+    "FSpec-TC-280"
+)]
+#[test]
+fn bytes_length_and_concat_lower_to_native_operations() {
+    let graph = check(
+        "function len using v(a: Bytes, b: Bytes): Integer pure { length(b) }\n\
+         function cat using v(a: Bytes, b: Bytes): Bytes pure { concat(a, b) }",
+    )
+    .expect("both native calls check");
+    let all = nodes(&graph);
+    let operations: Vec<_> = all
+        .iter()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(term)
+                if matches!(
+                    term.operation.identity(),
+                    "filament.op.bytes.length" | "filament.op.bytes.concat"
+                ) =>
+            {
+                Some(term)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(operations.len(), 2);
+    for operation in &operations {
+        assert!(operation.operation.laws().is_empty());
+        assert_eq!(operation.operation.mode(), None);
+    }
+    let length = operations
+        .iter()
+        .find(|term| term.operation.identity() == "filament.op.bytes.length")
+        .expect("length operation");
+    assert_eq!(length.arguments.len(), 1);
+    assert_eq!(referenced_parameter_name(&graph, &length.arguments[0]), "b");
+    let concat = operations
+        .iter()
+        .find(|term| term.operation.identity() == "filament.op.bytes.concat")
+        .expect("concat operation");
+    assert_eq!(concat.arguments.len(), 2);
+    assert_eq!(
+        concat
+            .arguments
+            .iter()
+            .map(|argument| referenced_parameter_name(&graph, argument))
+            .collect::<Vec<_>>(),
+        vec!["a".to_owned(), "b".to_owned()],
+        "the references are [ref(a), ref(b)] in source order"
+    );
+}
+
+/// FR-091-AC-78: native operation names share ordinary declaration ambiguity
+/// behavior and reject malformed argument lists and non-Bytes operands.
+#[trace("FR-091-AC-78", "TC-1231")]
+#[test]
+fn bytes_operations_refuse_ambiguity_and_invalid_shapes() {
+    let ambiguous = refused(
+        "function length using v(a: Bytes): Bytes pure { a }\n\
+         function use using v(a: Bytes): Integer pure { length(a) }",
+    );
+    assert!(
+        matches!(ambiguous.cause.as_ref(), CheckCause::AmbiguousName { name, .. } if name == "length")
+    );
+    let ambiguous_concat = refused(
+        "function concat using v(a: Bytes, b: Bytes): Bytes pure { a }\n\
+         function use using v(a: Bytes, b: Bytes): Bytes pure { concat(a, b) }",
+    );
+    assert!(
+        matches!(ambiguous_concat.cause.as_ref(), CheckCause::AmbiguousName { name, .. } if name == "concat")
+    );
+    let qualified = refused("function f using v(a: Bytes): Integer pure { M::length(a) }");
+    assert!(matches!(
+        qualified.cause.as_ref(),
+        CheckCause::MissingQualifiedName(_)
+    ));
+    for source in [
+        "function f using v(a: Bytes): Integer pure { length() }",
+        "function f using v(a: String): Integer pure { length(a) }",
+        "function f using v(a: Bytes): Bytes pure { concat(a) }",
+        "function f using v(a: Bytes, b: String): Bytes pure { concat(a, b) }",
+    ] {
+        let refusal = refused(source);
+        assert!(
+            matches!(
+                refusal.cause.as_ref(),
+                CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+            ),
+            "{refusal:?}"
+        );
+    }
+}
+
 /// QSL-1461, FR-056-AC-52 / TC-1052: the retained sequence determines the
 /// Text bound refusal and its typed cause carries the declared profile data.
 #[trace("FR-056-AC-52", "TC-1052")]
@@ -567,7 +692,7 @@ fn a_text_literal_outside_its_retained_bounds_refuses_at_the_call() {
             "function f using v(): {result} pure {{ Text(\"{literal}\") }}"
         ));
         assert_eq!(
-            refusal.cause,
+            *refusal.cause,
             CheckCause::TextLiteralOutsideBounds {
                 argument: literal
                     .replace("\\u0301", "\u{301}")
@@ -605,7 +730,7 @@ fn text_literals_require_a_text_position_and_one_quoted_argument() {
         let refusal = refused(&format!(
             "function f using v({parameters}): {result} pure {{ {body} }}"
         ));
-        assert_eq!(refusal.cause, mismatch(), "{body}");
+        assert_eq!(*refusal.cause, mismatch(), "{body}");
         assert_eq!(refusal.location.path(), path, "{body}");
         assert!(matches!(
             refusal.location.origin,
@@ -625,7 +750,7 @@ fn decimal_arithmetic_rejects_mixed_types_unless_an_operand_is_converted() {
          type R = Decimal[0, 1000; 1, 1; exact];\n\
          function mixed using v(p: P, r: R): P pure { p + r }",
     );
-    assert_eq!(refusal.cause, mismatch());
+    assert_eq!(*refusal.cause, mismatch());
     assert_eq!(
         (refusal.cause.code().as_str(), refusal.cause.cause()),
         ("ill_typed", Some("type-mismatch"))
@@ -636,7 +761,7 @@ fn decimal_arithmetic_rejects_mixed_types_unless_an_operand_is_converted() {
          type R = Decimal[0, 1000; 1, 1; exact];\n\
          function wrongResult using v(p: P, q: P): R pure { p + q }",
     );
-    assert_eq!(refusal.cause, mismatch());
+    assert_eq!(*refusal.cause, mismatch());
 
     check(
         "type P = Decimal[0, 10000; 2, 2; exact];\n\

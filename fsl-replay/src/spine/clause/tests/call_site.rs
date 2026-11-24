@@ -15,11 +15,11 @@
 
 use super::frame::identifier;
 use super::*;
-use crate::spine::OperationName;
 use crate::FrameOperation;
+use crate::spine::OperationName;
 use crate::{
-    call_site, CallSite, CallSiteRefusal, ClauseName, ClauseSite, NodeKey, OccurrenceKey,
-    OperationSite, Origin, QualifiedName, Role,
+    CallSite, CallSiteRefusal, ClauseName, ClauseSite, NodeKey, OccurrenceKey, OperationSite,
+    Origin, QualifiedName, Role, call_site,
 };
 
 fn wire(node: NodeKey) -> NodeKey {
@@ -52,9 +52,11 @@ fn operation_site(
     let document = config_version_domain_document();
     call_site(
         source(),
-        "fixture".to_owned(),
-        "clause-run-config-version.native",
-        unit.as_bytes(),
+        crate::CallSiteUnit::new(
+            "fixture".to_owned(),
+            "clause-run-config-version.native",
+            unit.as_bytes(),
+        ),
         [document.as_slice()],
         &DependencyInput::default(),
         &crate::RequestClocks::default(),
@@ -137,9 +139,7 @@ fn locate<S: crate::CallSiteSelection>(
 ) -> Result<CallSite<S::Site>, Box<CallSiteRefusal>> {
     call_site(
         source(),
-        "fixture".to_owned(),
-        "call-site.native",
-        unit.as_bytes(),
+        crate::CallSiteUnit::new("fixture".to_owned(), "call-site.native", unit.as_bytes()),
         [document],
         &DependencyInput::default(),
         &crate::RequestClocks::default(),
@@ -426,9 +426,7 @@ fn function_site_names_its_function_node_and_declaration_occurrence() {
     let site = |unit: &str, name: &str| {
         call_site(
             source(),
-            "fixture".to_owned(),
-            "pq.native",
-            unit.as_bytes(),
+            crate::CallSiteUnit::new("fixture".to_owned(), "pq.native", unit.as_bytes()),
             [],
             &DependencyInput::default(),
             &crate::RequestClocks::default(),
@@ -530,9 +528,7 @@ fn call_site_refuses_an_unsupplied_domain_package_as_model_intake() {
     let (unit, _) = two_operation_unit(true);
     let refusal = call_site(
         source(),
-        "fixture".to_owned(),
-        "call-site.native",
-        unit.as_bytes(),
+        crate::CallSiteUnit::new("fixture".to_owned(), "call-site.native", unit.as_bytes()),
         [],
         &DependencyInput::default(),
         &crate::RequestClocks::default(),
@@ -570,9 +566,7 @@ fn call_site_refusal_codes_for_operations_clauses_and_intake() {
 
     let refusal = call_site(
         source(),
-        "fixture".to_owned(),
-        "call-site.native",
-        unit.as_bytes(),
+        crate::CallSiteUnit::new("fixture".to_owned(), "call-site.native", unit.as_bytes()),
         [],
         &DependencyInput::default(),
         &crate::RequestClocks::default(),
@@ -589,7 +583,7 @@ fn call_site_refusal_codes_for_operations_clauses_and_intake() {
         &[],
         crate::ReplayTarget::function(
             crate::QualifiedName::new(vec![
-                filament_exact::Identifier::new("attemptUpdate").unwrap()
+                filament_exact::Identifier::new("attemptUpdate").unwrap(),
             ])
             .unwrap(),
             Some(crate::target::test_key()),

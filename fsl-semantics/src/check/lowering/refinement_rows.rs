@@ -15,7 +15,7 @@ use filament_semantic_value::location::{
 };
 
 use super::state::AnchorInput;
-use super::{fault, Binder, Binders, Lowering};
+use super::{Binder, Binders, Lowering, fault};
 use crate::check::claims::BinderSite;
 use crate::check::family::OccurrenceRole;
 use crate::check::node_key::{LeafTerm, LiteralValue};
@@ -99,11 +99,14 @@ impl Lowering<'_> {
             let target = match &row.target {
                 StepTarget::Abstract {
                     operation,
+                    target_type,
                     receiver,
                     arguments,
                     ..
                 } => KeyedStepTarget::Operation {
                     operation: self.operation_anchor_of(operation, location)?,
+                    target_type: self
+                        .located(location, |this| this.model_node(target_type, location))?,
                     receiver: self.row_term(receiver)?,
                     arguments: self.row_arguments(arguments)?,
                 },

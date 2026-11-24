@@ -356,6 +356,9 @@ pub struct TemporalItem {
     pub smt_encoding: Option<fsl_replay::SmtEncodingLimits>,
     /// The reductions the caller selected.
     pub reductions: fsl_route::reductions::Reductions,
+    /// The checked node key of the selected state constraint. The request
+    /// echo writes this key on the wire while model checking reads its name.
+    pub constraint_node_key: Option<filament_exact::NodeKey>,
     /// The most live clocks one timed state holds (FSpec FR-415); the
     /// published default when absent.
     pub max_clocks: Option<std::num::NonZeroU64>,
@@ -410,6 +413,7 @@ impl Default for TemporalItem {
             max_candidates: super::clause_item::DEFAULT_MAX_CANDIDATES,
             smt_encoding: None,
             reductions: fsl_route::reductions::Reductions::default(),
+            constraint_node_key: None,
             max_clocks: None,
             pending_reductions: None,
             witness_samples: None,
@@ -555,9 +559,11 @@ pub fn analyze(
         &request.provision,
         &request.items,
         &BTreeMap::new(),
-        engines,
-        limits,
-        cancel,
+        AnalyzeExecution {
+            engines,
+            limits,
+            cancel,
+        },
     )
 }
 
@@ -570,13 +576,16 @@ pub(crate) fn analyze_bound<'a>(
     provision: &SourceProvision,
     requested: &[NegotiatedItem],
     components: &BTreeMap<RequestIndex, Arc<fsl_package::CheckedPackage>>,
-    engines: &super::Engines,
-    limits: &super::AnalyzeLimits,
-    cancel: &filament_exact::Cancel,
+    execution: AnalyzeExecution<'_>,
 ) -> Result<
     fsl_foundation::diagnostic::Staged<super::AnalyzeOutcome>,
     fsl_foundation::diagnostic::StageFailure<super::AnalyzeRefusal>,
 > {
+    let AnalyzeExecution {
+        engines,
+        limits,
+        cancel,
+    } = execution;
     let (package, input) = (analysis.package, &analysis.model);
     use fsl_foundation::diagnostic::{StageFailure, Staged};
     // The compiled package is read back through the strict reader once,
@@ -598,6 +607,11 @@ pub(crate) fn analyze_bound<'a>(
             return Err(StageFailure::Refused(super::AnalyzeRefusal::Package(
                 refusal,
             )));
+        }
+        Err(crate::provider::NotAdmitted::HostAllocationFailed(failure)) => {
+            return Err(StageFailure::Refused(
+                super::AnalyzeRefusal::HostAllocationFailed(failure),
+            ));
         }
         Err(crate::provider::NotAdmitted::Other(refusal)) => {
             own_refusal = refusal;
@@ -637,6 +651,11 @@ pub(crate) fn analyze_bound<'a>(
                 return Err(StageFailure::Refused(super::AnalyzeRefusal::Package(
                     refusal,
                 )));
+            }
+            Err(crate::provider::NotAdmitted::HostAllocationFailed(failure)) => {
+                return Err(StageFailure::Refused(
+                    super::AnalyzeRefusal::HostAllocationFailed(failure),
+                ));
             }
             Err(crate::provider::NotAdmitted::Other(refusal)) => {
                 Err(super::GraphUnavailable::of_not_admitted(refusal))
@@ -704,6 +723,12 @@ pub(crate) fn analyze_bound<'a>(
             dependencies: dependency_graphs,
         },
     }))
+}
+
+pub(crate) struct AnalyzeExecution<'a> {
+    pub(crate) engines: &'a super::Engines,
+    pub(crate) limits: &'a super::AnalyzeLimits,
+    pub(crate) cancel: &'a filament_exact::Cancel,
 }
 
 fn check_provision(
@@ -860,6 +885,7 @@ fn probability_work<'a>(
                         claim,
                         method,
                         seed,
+                        workers: form.workers.map_or(1, |workers| workers.get() as usize),
                         sampler: sampler.clone(),
                         limits: statistical,
                         max_witnesses: form
@@ -1787,7 +1813,7 @@ mod tests {
     #[trace("FR-741-AC-6", "FR-255-AC-23")]
     #[test]
     fn both_probability_requests_use_the_finite_local_candidate_default() {
-        use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest, SpineLimits};
+        use fsl_replay::spine::{DependencyInput, ParseRequest, SpineLimits, check, parse, select};
 
         let model = include_bytes!(
             "../../../tools/fsl-probability-check/tests/fixtures/link.semantic-ir.json"
@@ -1910,7 +1936,7 @@ mod tests {
     #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14", "TC-845", "FR-335-AC-2")]
     #[test]
     fn request_work_forwards_operation_contract_finite_bound_availability() {
-        use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest, SpineLimits};
+        use fsl_replay::spine::{DependencyInput, ParseRequest, SpineLimits, check, parse, select};
 
         let model = include_bytes!(
             "../../../tools/fsl-probability-check/tests/fixtures/link.semantic-ir.json"
@@ -2065,7 +2091,8 @@ mod caller_limit_tests {
     fn each_exact_prob_setting_changes_only_its_bound() {
         use crate::exact_probabilistic::ExactProbLimits;
         let base = ExactProbLimits::default();
-        let rows: [(Setting, fn(&ExactProbLimits) -> u64); 9] = [
+        type ExactLimitReader = fn(&ExactProbLimits) -> u64;
+        let rows: [(Setting, ExactLimitReader); 9] = [
             (Setting::ExactProbMaxStates, |l| {
                 l.model.limits.max_states as u64
             }),
@@ -2114,7 +2141,8 @@ mod caller_limit_tests {
     fn each_statistical_setting_changes_only_its_bound() {
         use fsl_replay::statistical::{StatisticalLimits, TimedSampling};
         let base = StatisticalLimits::default();
-        let rows: [(Setting, fn(&StatisticalLimits) -> u64); 3] = [
+        type StatisticalLimitReader = fn(&StatisticalLimits) -> u64;
+        let rows: [(Setting, StatisticalLimitReader); 3] = [
             (Setting::StatisticalMaxSamples, |l| l.max_samples),
             (Setting::StatisticalMaxDraws, |l| l.max_draws),
             (Setting::StatisticalMaxCycleSteps, |l| l.max_cycle_steps),

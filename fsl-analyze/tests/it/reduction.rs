@@ -14,7 +14,7 @@ mod completion_boundaries;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use filament_exact::Cancel;
+use filament_exact::{Cancel, ScalarLimits};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::fairness::PropertyForm;
@@ -53,10 +53,10 @@ pub(crate) const CYCLE: &str = "post Cycle using v on M::Counter::bump { \
 /// `Wide` (`v <= 3`), `Started` (`v >= 1`) and `Odd`, undefined at `v = 2`.
 const COUNT: &str = "pre Below using v on M::Counter::bump { self.v < 3 }\n\
      post Up using v on M::Counter::bump { self.v - pre(self.v) = 1 }\n\
-     invariant Low using v on M::Counter at current { self.v <= 1 }\n\
+     constraint Low using v on M::Counter at current { self.v <= 1 }\n\
      invariant Wide using v on M::Counter at current { self.v <= 3 }\n\
-     invariant Started using v on M::Counter at current { self.v >= 1 }\n\
-     invariant Odd using v on M::Counter at current { odd_value(self.v) }\n\
+     constraint Started using v on M::Counter at current { self.v >= 1 }\n\
+     constraint Odd using v on M::Counter at current { odd_value(self.v) }\n\
      function odd_value using v(n: Int[0, 3]): Boolean pure { 6 mod (2 - n) >= 0 }\n";
 
 const KEYS: [&str; 3] = ["a", "b", "c"];
@@ -87,11 +87,192 @@ pub(crate) fn count(clauses: &[Clause<'_>]) -> World {
     )
 }
 
+/// §7.3's subject with its named state constraints declared as constraints,
+/// for runs that select `Low` or `Wide` under FR-158.
+fn count_with_state_constraints(clauses: &[Clause<'_>]) -> World {
+    let body = COUNT
+        .replace("invariant Low", "constraint Low")
+        .replace("invariant Wide", "constraint Wide");
+    World::new_with_mode(
+        shape(false, 3),
+        &body,
+        clauses,
+        &[start([0, 0, 0])],
+        &KEYS,
+        CheckMode::Kernel,
+    )
+}
+
+fn count_with_started_constraint(clauses: &[Clause<'_>]) -> World {
+    let body = COUNT
+        .replace("invariant Started", "constraint Started")
+        .replace("invariant Odd", "constraint Odd");
+    World::new_with_mode(
+        shape(false, 3),
+        &body,
+        clauses,
+        &[start([0, 0, 0])],
+        &KEYS,
+        CheckMode::Kernel,
+    )
+}
+
 pub(crate) fn infinite(formula: &str) -> Clause<'_> {
     Clause {
         profile: INFINITE,
         formula,
     }
+}
+
+/// TC-581, FR-158-AC-6: a source `constraint` is a Constraint state clause
+/// distinct from the neighboring invariant; S4 emits its node and the I2
+/// reader admits the emitted package.
+#[trace("TC-581", "FR-158-AC-6")]
+#[test]
+fn a_source_constraint_is_typed_and_selectable_by_name() {
+    let body = "constraint Low using v on M::Counter at current { self.v <= 1 }\n\
+                invariant Wide using v on M::Counter at current { self.v <= 3 }\n";
+    let world = World::new(
+        shape(false, 3),
+        body,
+        &[infinite("always holds(x.v <= 3)")],
+        &[start([0, 0, 0])],
+        &KEYS,
+    );
+    let graph = world.package.graph();
+    assert_eq!(
+        graph.state_clause("Low").expect("Low is checked").kind(),
+        fsl_forms::StateClauseKind::Constraint
+    );
+    assert_eq!(
+        graph.state_clause("Wide").expect("Wide is checked").kind(),
+        fsl_forms::StateClauseKind::Invariant
+    );
+    let outcome = world
+        .run(
+            Some(0),
+            vec![atom(|v| Some(v <= 3))],
+            constraint("Low"),
+            None,
+            ModelCheckLimits::default(),
+        )
+        .expect("Low is accepted as the selected constraint");
+    assert!(matches!(
+        outcome,
+        ModelCheckOutcome::Reduction {
+            cause: ReductionCause::ConstraintReached { .. },
+            ..
+        }
+    ));
+
+    let low = graph.state_clause("Low").expect("Low remains checked");
+    let wide = graph.state_clause("Wide").expect("Wide remains checked");
+    let low_key = fsl_foundation::node_wire::node_key_to_json(&low.identity())
+        .expect("the checked Low identity has a wire node key");
+    assert_eq!(low_key["package"], "package");
+    assert_eq!(low_key["path"][0], "state");
+    assert_eq!(low_key["path"][1], "state_clause");
+    assert_eq!(low_key["path"][2], "constraint");
+    assert_eq!(
+        low.parameters()
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        ["self"]
+    );
+    let occurrence = |clause: &fsl_semantics::check::CheckedStateClause| {
+        fsl_replay::OccurrenceKey::new(clause.identity(), clause.claim().clone())
+    };
+    assert!(
+        graph.requirements().get(&occurrence(wide)).is_some(),
+        "Wide has a requirement record"
+    );
+    assert!(
+        graph.requirements().get(&occurrence(low)).is_none(),
+        "Low has no requirement record"
+    );
+
+    let emitted = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .expect("S4 emits the checked unit");
+    let emitted_bytes = emitted.package().bytes();
+    let wire: serde_json::Value = serde_json::from_slice(emitted_bytes).expect("S4 JSON");
+    let low_nodes: Vec<_> = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic nodes")
+        .iter()
+        .filter(|node| {
+            node["node_tag"] == "state"
+                && node["semantic_form"] == "state_clause"
+                && node["body"]["operation"]["member"]["clause"] == "constraint"
+        })
+        .collect();
+    let [low_node] = low_nodes.as_slice() else {
+        panic!("S4 emits exactly one state clause node for Low: {low_nodes:?}");
+    };
+    assert_eq!(
+        low_node["body"]["operation"]["member"],
+        serde_json::json!({"kind": "state_clause", "clause": "constraint"})
+    );
+    let arguments = low_node["body"]["arguments"]
+        .as_array()
+        .expect("state clause arguments");
+    assert_eq!(
+        arguments[0]["members"]
+            .as_array()
+            .expect("self binding")
+            .len(),
+        1
+    );
+    let anchor_id = &arguments[1]["target"];
+    let anchor = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic nodes")
+        .iter()
+        .find(|node| &node["node_id"] == anchor_id)
+        .expect("the Counter anchor node is emitted");
+    assert_eq!(anchor["node_tag"], "model");
+    assert_eq!(anchor["semantic_form"], "object_type");
+    assert_eq!(anchor["owner"]["node"], "ix://test/sym/Counter");
+    let domain_bytes = crate::reduction_world::document(Shape {
+        symmetric: false,
+        max: 3,
+        link: false,
+    });
+    let domain = fsl_semantics::model::intake::package_input([domain_bytes.as_slice()])
+        .expect("the model domain admits");
+    fsl_package::admit_checked_package(
+        emitted_bytes,
+        &domain,
+        fsl_package::V2ReadLimits::fixture(),
+    )
+    .expect("FSL I2 reads the emitted package");
+}
+
+/// TC-581, FR-158-AC-6: FR-109 evaluates `Low` as true over the initial
+/// snapshot where every counter is zero.
+#[trace("TC-581", "FR-158-AC-6")]
+#[test]
+fn a_clause_run_of_low_reports_true_at_the_zero_snapshot() {
+    let world = World::new(
+        shape(false, 3),
+        "constraint Low using v on M::Counter at current { self.v <= 1 }\n\
+         invariant Wide using v on M::Counter at current { self.v <= 3 }\n",
+        &[],
+        &[start([0, 0, 0])],
+        &KEYS,
+    );
+    let report = world.run_state_clause("Low");
+    assert!(
+        matches!(
+            report.disposition,
+            fsl_replay::spine::ClauseDisposition::Evaluate(
+                fsl_replay::spine::CallOutcome::Completed(fsl_replay::spine::CallValue::Boolean(
+                    true
+                ))
+            )
+        ),
+        "{report:?}"
+    );
 }
 
 fn keys(keys: &[&str]) -> Vec<String> {
@@ -152,6 +333,49 @@ fn run(
         .expect("checked")
 }
 
+/// POR has no symmetry closure to read. A nontrivial symmetry closure also
+/// stops as soon as its initial orbits exceed the budget.
+#[trace("TC-521", "FR-126-AC-26")]
+#[test]
+fn reductions_respect_max_states_during_initial_admission() {
+    use fsl_eval::simulation::model::generated_initial_states;
+
+    let world = cycle(
+        true,
+        &[[0, 0, 0], [0, 1, 1], [0, 2, 2], [1, 2, 2]],
+        &[infinite("always holds(x.v <= 2)")],
+    );
+    for reductions in [partial_order(), symmetry(&[&["b", "c"]])] {
+        let mut limits = ModelCheckLimits::default();
+        limits.limits.max_states = 1;
+        let before = generated_initial_states();
+        let outcome = world
+            .run(
+                Some(0),
+                vec![atom(|v| Some(v <= 2))],
+                reductions,
+                None,
+                limits,
+            )
+            .expect("the reductions admit");
+        assert!(
+            matches!(
+                outcome,
+                ModelCheckOutcome::Stopped {
+                    cause: IncompleteCause::ResourceExhausted,
+                    limit: Some(ReachedLimit {
+                        limit: ModelCheckLimit::MaxStates,
+                        value: 1
+                    }),
+                    ..
+                }
+            ),
+            "{outcome:?}"
+        );
+        assert_eq!(generated_initial_states() - before, 1);
+    }
+}
+
 /// Constraints and partial-order reduction already produce concrete paths:
 /// neither may rewrite the witness while settling it through subject replay.
 #[trace("FR-161-AC-4")]
@@ -180,6 +404,75 @@ fn concrete_constraint_and_partial_order_refutations_keep_the_unreduced_witness(
         assert_eq!(record.value, TerminalValue::Refuted);
         assert_eq!(record.basis, SettlementBasis::DecisiveCounterexample);
         assert_eq!(record.counterexample.as_ref(), Some(expected));
+    }
+}
+
+/// FR-161-AC-5: AC-4's already-concrete POR and constraint counterexamples
+/// fit exactly inside their exploration transition and work budgets.
+#[trace("TC-586", "FR-161-AC-5")]
+#[test]
+fn emitting_constrained_and_por_witnesses_adds_no_transition_or_work_charge() {
+    let world = count(&[infinite("always holds(x.v <= 0)")]);
+    let atoms = || vec![atom(|v| Some(v <= 0))];
+    let meter = |work_units| ScalarLimits {
+        work_units,
+        ..crate::counter::UNLIMITED
+    };
+    for selection in [constraint("Low"), partial_order()] {
+        let unrestricted = world
+            .run(
+                Some(0),
+                atoms(),
+                selection.clone(),
+                None,
+                ModelCheckLimits::default(),
+            )
+            .expect("the concrete reduction run refutes");
+        let expected = violation(&unrestricted).clone();
+        let ModelCheckOutcome::Violated { stats, .. } = &unrestricted else {
+            unreachable!("a violation");
+        };
+        let transition_budget = usize::try_from(stats.product_edges).expect("small");
+        let with_budgets = |max_transitions, work_units| {
+            let mut limits = ModelCheckLimits::default();
+            limits.limits.max_transitions = max_transitions;
+            world.run_with_meter(
+                Some(0),
+                atoms(),
+                selection.clone(),
+                None,
+                limits,
+                meter(work_units),
+            )
+        };
+        let minimum_work = (0..=4096)
+            .find(|work_units| {
+                with_budgets(transition_budget, *work_units)
+                    .is_ok_and(|outcome| matches!(outcome, ModelCheckOutcome::Violated { .. }))
+            })
+            .expect("the run completes within its exploration budget");
+        let bounded = with_budgets(transition_budget, minimum_work)
+            .expect("the exact work and transition budgets admit the witness");
+        assert_eq!(violation(&bounded), &expected, "the witness is unchanged");
+        assert_eq!(
+            bounded.stats().product_edges,
+            u64::try_from(transition_budget).expect("small"),
+            "witness emission adds no transition edges"
+        );
+        let one_work_short = with_budgets(transition_budget, minimum_work - 1)
+            .expect("the work limit is a typed outcome");
+        assert!(matches!(
+            one_work_short,
+            ModelCheckOutcome::Stopped {
+                limit: Some(ReachedLimit {
+                    limit: ModelCheckLimit::EvaluationMeter {
+                        counter: filament_exact::LimitKind::WorkUnits,
+                    },
+                    ..
+                }),
+                ..
+            }
+        ));
     }
 }
 
@@ -735,7 +1028,7 @@ fn an_authored_clauses_letter_is_read_before_a_state_constraint() {
 #[trace("TC-581", "FR-158-AC-3")]
 #[test]
 fn undefined_absent_and_initially_false_constraints_and_bounds() {
-    let world = count(&[infinite("always holds(x.v <= 3)")]);
+    let world = count_with_started_constraint(&[infinite("always holds(x.v <= 3)")]);
     let wide = || vec![atom(|v| Some(v <= 3))];
     let outcome = run(&world, Some(0), wide(), constraint("Odd"));
     let CounterexampleKind::UndefinedEvaluation(evaluation) = &violation(&outcome).kind else {
@@ -809,8 +1102,11 @@ fn undefined_absent_and_initially_false_constraints_and_bounds() {
     ));
 }
 
-/// FR-158-AC-4's determinism clause: repeating the constrained run gives
-/// equal outcomes and equal boundary counts.
+/// Partial TC-581 coverage: repeating the constrained run gives equal
+/// outcomes and the literal boundary and state counts. The analyzer test
+/// separately checks one claim with independent constrained/unconstrained
+/// results; explicit request identity and terminal method fields are absent.
+#[trace("TC-581")]
 #[test]
 fn a_constrained_run_is_deterministic() {
     let world = count(&[infinite("always holds(x.v <= 2)")]);
@@ -827,6 +1123,89 @@ fn a_constrained_run_is_deterministic() {
         constraint("Low"),
     );
     assert_eq!(first, second);
+    assert!(matches!(
+        first,
+        ModelCheckOutcome::Reduction {
+            cause: ReductionCause::ConstraintReached {
+                boundary_states: 12
+            },
+            stats: RunStats {
+                product_states: 20,
+                ..
+            },
+        }
+    ));
+}
+
+/// Partial TC-581 coverage: a constraint does not alter the full obligation
+/// identity, including the model subject that owns it. It remains a request
+/// selection; AC-4 stays open for the terminal method and boundary count.
+#[trace("TC-581")]
+#[test]
+fn a_constraint_preserves_full_model_obligation_identity() {
+    let world = count(&[infinite("always holds(x.v <= 3)")]);
+    let subject = world.subject();
+    let context = SubjectContext::new(&subject).expect("the package emits");
+    let [clause] = world.package.graph().temporal_clauses() else {
+        panic!("one declared clause");
+    };
+    let written = |reductions: Reductions| {
+        let mut request = ModelRequest::reduced(reductions);
+        let index = context
+            .author_clause(&mut request, clause)
+            .expect("the clause has a record");
+        let obligation = request.obligation(index).expect("written").clone();
+        let selected = request.items()[index.get()].reductions().to_vec();
+        (obligation, selected)
+    };
+
+    let (plain, plain_selection) = written(Reductions::default());
+    let (constrained, constrained_selection) = written(constraint("Low"));
+    assert_eq!(
+        plain.subject, constrained.subject,
+        "the owning model subject is equal"
+    );
+    assert_eq!(
+        plain.kind, constrained.kind,
+        "the claim occurrence is equal"
+    );
+    assert_eq!(
+        plain, constrained,
+        "the constraint is a method selection, outside the full obligation identity"
+    );
+    assert!(plain_selection.is_empty());
+    assert_eq!(constrained_selection, [ReductionKind::StateConstraint]);
+}
+
+/// Partial TC-581 coverage: repeating the AC-1 run produces equal outcomes,
+/// paths and product-state counts. This engine API does not expose the
+/// number of boundary states for a violated outcome.
+#[trace("TC-581")]
+#[test]
+fn two_ac1_runs_have_equal_outcomes_and_counterexample_paths() {
+    let world = count(&[infinite("always holds(x.v <= 1)")]);
+    let first = run(
+        &world,
+        Some(0),
+        vec![atom(|v| Some(v <= 1))],
+        constraint("Low"),
+    );
+    let second = run(
+        &world,
+        Some(0),
+        vec![atom(|v| Some(v <= 1))],
+        constraint("Low"),
+    );
+    assert_eq!(first, second, "repeating AC-1 gives an equal outcome");
+    let first_path = path(&world, &first);
+    let second_path = path(&world, &second);
+    assert_eq!(
+        first_path, second_path,
+        "repeating AC-1 gives an equal path"
+    );
+    assert_eq!(first_path, [(0, 0, 0), (1, 0, 0), (2, 0, 0)]);
+    assert_eq!(receivers(&world, &first), ["a", "a"]);
+    assert_eq!(first.stats().product_states, second.stats().product_states);
 }
 
 /// FR-159-AC-1: over the annotated §7.2-style counters, `always[0,2]
@@ -940,8 +1319,10 @@ impl TransitionSystem for Bare {
     type Key = String;
     type Finding = ();
 
-    fn initial(&self) -> Vec<u8> {
-        vec![0]
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        std::iter::once(Ok(0))
     }
 
     fn key(&self, state: &u8) -> String {
@@ -1179,46 +1560,40 @@ fn reduced_outcomes_settle_through_the_one_map() {
     );
 }
 
-/// FR-160-AC-2: over §7.3, `always holds(x.v <= 3)` with constraint `Wide`
-/// reaches no boundary state and settles `Proved{Exhaustive, Uncertified}`;
-/// `always holds(x.v <= 2)` with `Low` and `max_depth` 2 completes depth 2,
-/// reaching boundary states there, and settles `ConstraintReached`, not
-/// `BoundReached`.
+/// FR-160-AC-2 (TC-584): the `Wide` constraint proves the full finite subject
+/// and is named in the method; `Low` reaches boundary states at depth 2, so
+/// `ConstraintReached` takes precedence over `BoundReached`.
+#[trace("TC-584", "FR-160-AC-2")]
 #[test]
 fn a_constraint_only_proof_is_exhaustive_and_constraint_reached_wins_over_the_horizon() {
-    let world = count(&[
+    let world = count_with_state_constraints(&[
         infinite("always holds(x.v <= 3)"),
         infinite("always holds(x.v <= 2)"),
     ]);
-    let outcome = run(
-        &world,
-        Some(0),
-        vec![atom(|v| Some(v <= 3))],
-        constraint("Wide"),
-    );
+    let wide = world.analyze_clause(0, vec![atom(|v| Some(v <= 3))], constraint("Wide"), None);
+    let wide = wide
+        .model_check
+        .expect("the analyze record has its model result");
     assert_eq!(
-        settle(&world, &outcome).value,
+        wide.value,
         TerminalValue::Proved {
             basis: ProofBasis::Exhaustive,
             certification: Certification::Uncertified,
         }
     );
-    let horizon = world
-        .run(
-            Some(1),
-            vec![atom(|v| Some(v <= 2))],
-            constraint("Low"),
-            Some(2),
-            ModelCheckLimits::default(),
-        )
-        .expect("checked");
-    assert!(
-        matches!(
-            settle(&world, &horizon).value,
-            TerminalValue::Inconclusive(InconclusiveCause::ConstraintReached { .. })
-        ),
-        "{horizon:?}"
+    assert_eq!(wide.method, "explicit-state (constraint: Wide)");
+
+    let low = world.analyze_clause(1, vec![atom(|v| Some(v <= 2))], constraint("Low"), Some(2));
+    let low = low
+        .model_check
+        .expect("the analyze record has its model result");
+    assert_eq!(
+        low.value,
+        TerminalValue::Inconclusive(InconclusiveCause::ConstraintReached { boundary_states: 3 }),
+        "the boundary states at depth two take precedence over the horizon"
     );
+    assert_eq!(low.method, "explicit-state (constraint: Low)");
+    assert_eq!(low.exploration.expect("EN-1 reports exploration").depth, 2);
 }
 
 /// FR-160-AC-3's symmetry row: §7.1 under symmetry only with `max_depth` 1
@@ -1241,12 +1616,13 @@ fn a_symmetry_run_to_its_horizon_settles_bound_reached() {
     );
 }
 
-/// FR-160-AC-5's run, without its replay: over the annotated §7.1 subject
+/// FR-160-AC-5: over the annotated §7.1 subject
 /// with `[[a, b, c]]`, `always holds(6 mod (2 - x.v) >= 0)` (the division
 /// written `mod`, as `crate::model_check_safety` does) for `x = a` is
 /// violated with `UndefinedEvaluation`, division by zero, where `a.v = 2`;
 /// its counterexample re-executes on the subject, two steps long, as the
 /// unreduced run's.
+#[trace("TC-588", "FR-160-AC-5")]
 #[test]
 fn an_undefined_evaluation_on_a_reduced_run_refutes_with_a_concrete_prefix() {
     let world = cycle(
@@ -1276,7 +1652,23 @@ fn an_undefined_evaluation_on_a_reduced_run_refutes_with_a_concrete_prefix() {
         );
         let positions = world.positions(counterexample);
         assert_eq!(positions.last().map(|state| value(state, "a")), Some(2));
+        assert_eq!(
+            world.replay_clause(0, undefined(), counterexample.clone()),
+            ModelTraceSettlement::Reproduced {
+                value: ModelTraceValue::Undefined(evaluation.clone()),
+                trace_position: counterexample.trace_position(),
+            }
+        );
     }
+    let record = settle(&world, &reduced);
+    assert_eq!(record.value, TerminalValue::Refuted);
+    assert_eq!(record.label, ResultLabel::Refuted);
+    assert_eq!(record.basis, SettlementBasis::DecisiveCounterexample);
+    assert_eq!(record.method, "explicit-state");
+    let settled_witness = record
+        .counterexample
+        .expect("refutation retains replayed witness");
+    assert_eq!(settled_witness, *violation(&unreduced));
 }
 
 /// FR-161's start and step rules on a prefix through moved keys: the

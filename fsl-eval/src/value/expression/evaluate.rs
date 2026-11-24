@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use super::causes::{
     ClockIdentityAllocation, ClockOriginUnavailable, HistoryUnresolved, ModelQueryRefusal,
-    NamedPopulationIncomplete, NavigationRefusal, ObjectFieldIllTyped, ProtocolClauseSnapshot,
-    UnsupportedConstruct,
+    NamedPopulationIncomplete, NavigationRefusal, ObjectFieldIllTyped, OnlyNotOneCause,
+    ProtocolClauseSnapshot, UnsupportedConstruct,
 };
 use super::protocol_slot::charges::{BinderCharges, ChargeRouting, Owner, Owners};
 use super::s6a::separation::{
@@ -47,8 +47,9 @@ use filament_exact::{
     IeeeFlags, IeeeOperation, IeeeValue, IeeeWidth,
 };
 use filament_exact::{
-    compare_keys, form, form_grouped, retain_composite, CollectionValue, CompositeValue,
-    FieldValue, ObjectReference, OptionValue, Quantity, UnionValue, Value, ValueType,
+    compare_keys, form, form_grouped, retain_composite, ClockPlaceReference, CollectionValue,
+    CompositeValue, FieldValue, ObjectReference, OptionValue, Quantity, UnionValue, Value,
+    ValueType,
 };
 use filament_exact::{
     evaluate_boolean, evaluate_integer_arithmetic, evaluate_rational_arithmetic, order_numbers,
@@ -60,7 +61,7 @@ use filament_exact::{
     BoundViolation, CardinalityBound, Charge, ChargePoint, CollectionKind, Incomplete, Integer,
     LimitKind, Meter, PopulationId,
 };
-use filament_exact::{DivisionMember, IntegerDomain};
+use filament_exact::{DivisionMember, IntegerDomain, IntegerInterval};
 use filament_exact::{FloatType, Rational};
 use filament_exact::{Outcome, Refusal, Undefined};
 use filament_semantic_value::catalog::{render_identity, InternalFault};
@@ -68,7 +69,7 @@ use filament_semantic_value::declaration::{
     operand_value, CompositeShape, EqualityOperator, FieldDeclaration, FieldRef, TypeEnvironment,
 };
 use filament_semantic_value::enumeration::{compare_enum, EnumMemberIndex};
-use filament_semantic_value::location::ExpressionLocation as Location;
+use filament_semantic_value::location::{ExpressionLocation as Location, ExpressionOwner};
 use filament_semantic_value::loss::{LocatedLoss, ValueLoss};
 use filament_semantic_value::quantity::{
     compare_quantity, convert_quantity, evaluate_quantity_unit, ConvertedValue, QuantityOperation,
@@ -205,6 +206,47 @@ fn unresolved_unit() -> Halt {
         "S6a",
         "quantity-unit-unresolved-past-admission",
     ))
+}
+
+/// The expression-tree path of a node as a stable, human-readable locus.
+fn expression_locus(location: &Location) -> String {
+    let path = location.path();
+    if path.is_empty() {
+        "root".to_owned()
+    } else {
+        let suffix = path
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join("/");
+        format!("root/{suffix}")
+    }
+}
+
+/// The named expression owner enclosing a population row, without relying on
+/// the owner's debug representation as a diagnostic wire value.
+fn expression_owner_name(owner: &ExpressionOwner) -> String {
+    match owner {
+        ExpressionOwner::Body { function, .. } => format!("function {function}"),
+        ExpressionOwner::Measure { function, .. } => format!("measure {function}"),
+        ExpressionOwner::Expression => "expression".to_owned(),
+        ExpressionOwner::TypeDeclaration { name } => name.clone(),
+        ExpressionOwner::StateClause { clause, .. } => clause.clone(),
+        ExpressionOwner::ProtocolAttempt { protocol, attempt } => {
+            format!("protocol attempt {protocol}/{attempt}")
+        }
+        ExpressionOwner::ModelOperationClause {
+            operation,
+            kind,
+            position,
+        } => {
+            let kind = match kind {
+                filament_semantic_value::location::OperationClauseKind::Requires => "requires",
+                filament_semantic_value::location::OperationClauseKind::Ensures => "ensures",
+            };
+            format!("{operation} {kind} clause {position}")
+        }
+    }
 }
 
 impl From<Stop> for Halt {
@@ -586,6 +628,8 @@ struct PoppedArguments {
     reference_origins: Vec<ReferenceOrigins>,
 }
 
+type OwnedPoppedArguments = (Vec<Value>, Vec<Owner>, Vec<ReferenceOrigins>);
+
 /// One live occurrence for the call frame plus all occurrences retained by
 /// the values bound to its parameters, matching `filament_eval::Session`.
 fn frame_occurrences(arguments: &[Value]) -> Integer {
@@ -730,6 +774,9 @@ fn ordering_composition<'a, N: NodeSource<'a>>(node: N) -> bool {
 enum Task<'a, N> {
     Eval(N),
     Apply(N),
+    /// Apply a division operator against the bounded consumer domain of a
+    /// direct `Coerce` wrapper, so the kernel refuses before retaining it.
+    ApplyDivisionInDomain(N, IntegerInterval),
     /// FR-397 "Ordering parts": a `numeric_equal` evaluated as an ordering
     /// part, which decides without charging.
     ApplyPart(N),
@@ -874,6 +921,9 @@ pub(crate) struct Machine<'a, 'm, N> {
             fsl_semantics::model::clause_observation::Observation,
         >,
     >,
+    /// The declared refinement row whose value is being evaluated, when
+    /// supplied by the refinement mapping evaluator.
+    enclosing_row: Option<String>,
     /// Which family this `Machine` evaluates (SR-750 FND-011 round 2): set
     /// once, explicitly, by whichever constructor built it, rather than
     /// inferred from `reads.is_some()`. [`Self::new`] always builds
@@ -1087,6 +1137,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         self
     }
 
+    /// Attach the declared refinement row to evaluation-time diagnostics.
+    pub(crate) fn with_enclosing_row(mut self, row: &str) -> Self {
+        self.enclosing_row = Some(row.to_owned());
+        self
+    }
+
     /// Enforce the enclosing scheduler's aggregate count for this machine.
     pub(crate) fn with_live_context(mut self, context: LiveContext) -> Self {
         self.live_context = Some(context);
@@ -1198,6 +1254,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 .map(|graph| graph.clock_declaration_table().clone()),
             pre_objects,
             reads,
+            enclosing_row: None,
             family,
             meter,
             observed_applications: None,
@@ -1256,15 +1313,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         origins: &ReferenceOrigins,
         place: &NodeKey,
         selectors: Vec<Value>,
-    ) -> Result<ObjectReference, Halt> {
+    ) -> Result<ClockPlaceReference, Halt> {
         use fsl_semantics::model::clock_reference::identity::{
             Decimal, PathEntry, PlaceIdentity, SlotIndex,
         };
-        use fsl_semantics::model::clock_reference::{encode_identity, is_declared_identity};
-        let ValueType::Reference(clock_type) = node.value_type() else {
-            return Err(invariant("place-reference-result-type-expected"));
-        };
-        if !fsl_semantics::model::clock_reference::is_clock_type(clock_type) {
+        use fsl_semantics::model::clock_reference::is_declared_identity;
+        // FSL FR-230-AC-71 gives `Reference<Clock>` its dedicated kernel type.
+        // It is not an object reference to the native Clock declaration.
+        if !matches!(node.value_type(), ValueType::ClockReference) {
             return Err(invariant("place-reference-result-type-expected"));
         }
         let unavailable = || unavailable_clock_origin(origins);
@@ -1330,12 +1386,13 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         ) {
             return Err(Stop::Undefined(Undefined::NoElement).into());
         }
-        encode_identity(
-            owner,
-            &identity,
-            quire_canonical::Limits::new(fsl_foundation::IdentityLimits::default().input_bytes),
-        )
-        .map_err(clock_identity_halt)
+        let text = identity
+            .encode(quire_canonical::Limits::new(
+                fsl_foundation::IdentityLimits::default().input_bytes,
+            ))
+            .map_err(clock_identity_halt)?;
+        ClockPlaceReference::new(owner.universe().clone(), &text)
+            .map_err(|_| invariant("checked-clock-place-identity-is-canonical"))
     }
 
     /// FR-1000: evaluate against the reference literals admitted with the
@@ -1771,6 +1828,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             let located: N = match &task {
                 Task::Eval(node)
                 | Task::Apply(node)
+                | Task::ApplyDivisionInDomain(node, _)
                 | Task::Branch(node)
                 | Task::Short(node, _)
                 | Task::ApplyPart(node)
@@ -2168,10 +2226,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         Ok((values, owners))
     }
 
-    fn pop_many_owned_with_origins(
-        &mut self,
-        count: usize,
-    ) -> Result<(Vec<Value>, Vec<Owner>, Vec<ReferenceOrigins>), Halt> {
+    fn pop_many_owned_with_origins(&mut self, count: usize) -> Result<OwnedPoppedArguments, Halt> {
         let PoppedArguments {
             values,
             provenance,
@@ -2606,6 +2661,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         match task {
             Task::Eval(node) => self.eval(node),
             Task::Apply(node) => self.apply(node),
+            Task::ApplyDivisionInDomain(node, domain) => {
+                self.apply_division_in_domain(node, domain)
+            }
             Task::ApplyPart(node) => self.apply_ordering_part(node),
             Task::EvalAt(node, position) => self.eval_at(node, position),
             Task::Branch(node) => {
@@ -2855,15 +2913,30 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     }
 
     fn apply(&mut self, node: N) -> Result<(), Halt> {
-        self.apply_as(node, Application::Standalone)
+        self.apply_as(node, Application::Standalone, None)
+    }
+
+    fn apply_division_in_domain(&mut self, node: N, domain: IntegerInterval) -> Result<(), Halt> {
+        self.apply_as(node, Application::Standalone, Some(domain))
     }
 
     fn apply_ordering_part(&mut self, node: N) -> Result<(), Halt> {
-        self.apply_as(node, Application::OrderingPart)
+        self.apply_as(node, Application::OrderingPart, None)
     }
 
     fn eval(&mut self, node: N) -> Result<(), Halt> {
         match node.kind() {
+            NodeKind::Coerce(operand, domain)
+                if matches!(node.at(*operand).kind(), NodeKind::IntegerDivision { .. }) =>
+            {
+                let division = node.at(*operand);
+                self.tasks
+                    .push(Task::ApplyDivisionInDomain(division, domain.clone()));
+                for child in division.children().into_iter().rev() {
+                    self.tasks.push(Task::Eval(child));
+                }
+                return Ok(());
+            }
             NodeKind::ReferenceLiteral {
                 object_type,
                 identity,
@@ -3036,7 +3109,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// (or expressed as a refutable `let ... else`, which this lint does not
     /// reach) rather than left to this `deny` -- see each site's own note.
     #[deny(clippy::wildcard_enum_match_arm)]
-    fn apply_as(&mut self, node: N, application: Application) -> Result<(), Halt> {
+    fn apply_as(
+        &mut self,
+        node: N,
+        application: Application,
+        division_domain: Option<IntegerInterval>,
+    ) -> Result<(), Halt> {
         let mut result_origins = ReferenceOrigins::default();
         let value = match node.kind() {
             NodeKind::Literal(_)
@@ -3293,13 +3371,24 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             member,
                             &left,
                             &right,
-                            &IntegerDomain::Mathematical,
+                            &division_domain
+                                .as_ref()
+                                .map_or(IntegerDomain::Mathematical, |domain| {
+                                    IntegerDomain::Bounded(domain.clone())
+                                }),
                             self.meter,
                         )
                     }
-                    IntegerDivisionOperator::Mod => {
-                        integer_modulo(&left, &right, &IntegerDomain::Mathematical, self.meter)
-                    }
+                    IntegerDivisionOperator::Mod => integer_modulo(
+                        &left,
+                        &right,
+                        &division_domain
+                            .as_ref()
+                            .map_or(IntegerDomain::Mathematical, |domain| {
+                                IntegerDomain::Bounded(domain.clone())
+                            }),
+                        self.meter,
+                    ),
                 };
                 Value::Integer(outcome_into_stop(outcome)?)
             }
@@ -3900,7 +3989,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 let origins = origins
                     .first()
                     .ok_or_else(|| invariant("place-reference-owner-origin-slot"))?;
-                Value::Reference(self.clock_place_reference(
+                Value::ClockReference(self.clock_place_reference(
                     node,
                     &owner,
                     origins,
@@ -4233,6 +4322,26 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 } else {
                     retain_scalar(Value::Integer(size_of(operand)?), self.meter)?
                 }
+            }
+            NodeKind::BytesLength(_) => {
+                let Value::Bytes(bytes) = self.pop()? else {
+                    return Err(invariant("bytes-length-operand-kind"));
+                };
+                retain_scalar(
+                    Value::Integer(filament_eval::bytes::length(&bytes)),
+                    self.meter,
+                )?
+            }
+            NodeKind::BytesConcat(_, _) => {
+                let Value::Bytes(right) = self.pop()? else {
+                    return Err(invariant("bytes-concat-right-kind"));
+                };
+                let Value::Bytes(left) = self.pop()? else {
+                    return Err(invariant("bytes-concat-left-kind"));
+                };
+                let bytes = filament_eval::bytes::concat(&left, &right)
+                    .map_err(|_| invariant("bytes-concat-failed"))?;
+                retain_scalar(Value::Bytes(bytes), self.meter)?
             }
             NodeKind::Contains(_, _) => {
                 let item = self.pop()?;
@@ -5362,7 +5471,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         let spec = Self::iteration_spec(node)?;
         let state = match IterationState::start(&spec, source, identity, reduce, self.meter) {
             Ok(state) => state,
-            Err(collections::Halt::OnlyNotOne { found }) => {
+            Err(collections::Halt::OnlyNotOne { .. }) => {
                 self.iterations = self.iterations.saturating_sub(1);
                 let NodeKind::Query {
                     source: operand, ..
@@ -5371,9 +5480,36 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     return Err(invariant("iteration-node-invalid"));
                 };
                 return Err(Halt::Family(FamilyResult::Undefined(Box::new(
-                    StateModelUndefined::OnlyNotOne {
+                    OnlyNotOneCause {
                         population: population_of(node.at(*operand))?,
-                        found,
+                        locus: self.enclosing_row.as_ref().map_or_else(
+                            || {
+                                node.location().map_or_else(
+                                    || "unknown".to_owned(),
+                                    |location| {
+                                        format!(
+                                            "{}#{}",
+                                            expression_owner_name(&location.origin),
+                                            expression_locus(location)
+                                        )
+                                    },
+                                )
+                            },
+                            |row| {
+                                let path = node
+                                    .location()
+                                    .map_or_else(|| "unknown".to_owned(), expression_locus);
+                                format!("{row}#{path}")
+                            },
+                        ),
+                        row: self
+                            .enclosing_row
+                            .clone()
+                            .or_else(|| {
+                                node.location()
+                                    .map(|location| expression_owner_name(&location.origin))
+                            })
+                            .unwrap_or_else(|| "unknown".to_owned()),
                     },
                 ))));
             }
@@ -7186,9 +7322,9 @@ mod tests {
         assert_eq!(decisions.iter().flatten().count(), 1, "{decisions:?}");
         assert!(decisions.contains(&Some(true)));
     }
-    /// FR-265: whether a connective records a decision is read from its
-    /// origin, not from where it sits. Every node of this body has one
-    /// location, so an authored connective shares its left operand's.
+    /// Whether a connective records a decision is read from its origin, not
+    /// from where it sits. Every node of this body has one location, so an
+    /// authored connective shares its left operand's.
     #[trace("TC-1091", "FR-397-AC-12")]
     #[test]
     fn a_connective_records_a_decision_by_its_origin_not_its_location() {

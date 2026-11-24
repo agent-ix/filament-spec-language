@@ -1435,7 +1435,7 @@ fn a_sampled_witness_never_hides_an_undefined_target() {
 /// sampled witness per instance, the exploration stops at `max_states`, and
 /// the outcome is `WitnessedUnchecked` with `Sampled` sources; with
 /// `witness_samples` 0 the same run decides nothing.
-#[trace("TC-614", "FR-168-AC-8")]
+#[trace("TC-614", "FR-166-AC-6", "FR-168-AC-8")]
 #[test]
 fn a_stopped_exploration_leaves_sampled_witnesses_unchecked() {
     let world = config_world(REACHES_TWO, &[(0, 0)]);
@@ -1475,21 +1475,26 @@ fn a_stopped_exploration_leaves_sampled_witnesses_unchecked() {
 }
 
 /// A `max_states` below the subject's distinct initial states stops the run
-/// before any node is inserted: `ReachesTwo` decides nothing, never a
-/// witness for each initial state with no path, though phase 0 sampled one
-/// for each.
+/// before sampling, inserting a node, or deciding `ReachesTwo`.
+#[trace("TC-521", "FR-126-AC-26")]
 #[test]
 fn a_state_limit_below_the_initial_states_decides_nothing() {
-    let world = config_world(REACHES_TWO, &[(0, 0), (1, 1)]);
+    use fsl_eval::simulation::model::generated_initial_states;
+
+    let world = config_world(REACHES_TWO, &[(0, 0), (1, 1), (2, 2)]);
     let end = stopped_at(ModelCheckLimit::MaxStates, 1);
+    let before = generated_initial_states();
     let result = run(world.request(
         AB,
         vec![world.item("ReachesTwo")],
         max_states(ModelCheckLimits::default(), 1),
     ));
     assert_eq!(result.graph.end, end);
+    assert_eq!(generated_initial_states() - before, 1);
     assert!(result.graph.nodes.is_empty());
     for instance in &result.items[0] {
+        assert!(instance.sampled.is_empty());
+        assert_eq!(instance.walks_stopped, 0);
         assert_eq!(
             instance.outcome,
             StateGraphOutcome::NoDecision {
@@ -1497,6 +1502,111 @@ fn a_state_limit_below_the_initial_states_decides_nothing() {
                 open: BTreeSet::new()
             }
         );
+    }
+}
+
+/// A nontrivial declared group checks closure only after bounded admission.
+#[trace("TC-521", "FR-126-AC-26")]
+#[test]
+fn state_graph_symmetry_closure_respects_max_states_before_sampling() {
+    use fsl_eval::simulation::model::generated_initial_states;
+
+    let keys = &["a", "b", "c"];
+    let world = crate::graph_world::symmetric_config_world_over(
+        "",
+        REACHES_TWO,
+        keys,
+        &[vec![0, 0, 0], vec![0, 1, 1], vec![0, 2, 2], vec![1, 2, 2]],
+    );
+    let mut request = world.request(
+        keys,
+        vec![world.item("ReachesTwo")],
+        max_states(ModelCheckLimits::default(), 1),
+    );
+    request
+        .reductions
+        .symmetry
+        .push(fsl_route::reductions::SymmetryDeclaration {
+            population: filament_checked::key::DeclarationKey {
+                package: "test/config".to_owned(),
+                node: "ix://test/config/config_history".to_owned(),
+            },
+            classes: vec![vec!["b".to_owned(), "c".to_owned()]],
+        });
+    let before = generated_initial_states();
+    let result = run(request);
+    assert_eq!(result.graph.end, stopped_at(ModelCheckLimit::MaxStates, 1));
+    assert_eq!(generated_initial_states() - before, 1);
+    assert!(result.items[0]
+        .iter()
+        .all(|instance| instance.sampled.is_empty()));
+}
+
+/// Two distinct concrete initial recipes related by the selected swap close
+/// the initial set; symmetry admission must not replace one recipe with the
+/// other's canonical representative before closure checks it.
+#[trace("TC-521", "FR-126-AC-26", "FR-151-AC-4")]
+#[test]
+fn state_graph_symmetry_closure_keeps_concrete_initial_roots() {
+    let keys = &["a", "b", "c"];
+    let world = crate::graph_world::symmetric_config_world_over(
+        "",
+        REACHES_TWO,
+        keys,
+        &[vec![0, 1, 2], vec![0, 2, 1]],
+    );
+    let mut request = world.request(keys, vec![world.item("ReachesTwo")], no_samples());
+    request.max_depth = Some(0);
+    request
+        .reductions
+        .symmetry
+        .push(fsl_route::reductions::SymmetryDeclaration {
+            population: filament_checked::key::DeclarationKey {
+                package: "test/config".to_owned(),
+                node: "ix://test/config/config_history".to_owned(),
+            },
+            classes: vec![vec!["b".to_owned(), "c".to_owned()]],
+        });
+
+    let result = run(request);
+    assert_eq!(
+        result.graph.initial().len(),
+        2,
+        "the graph keeps both concrete initial roots"
+    );
+    assert_eq!(result.graph.stats.nodes, 2, "both admitted roots are explored");
+    assert!(matches!(
+        result.items[0][0].outcome,
+        StateGraphOutcome::NoDecision { .. }
+    ));
+}
+
+/// Phase 0 and phase 1 reuse the same declaration-order initial states.
+#[trace("TC-521", "FR-126-AC-26")]
+#[test]
+fn sampled_state_graph_generates_each_initial_state_once() {
+    use fsl_eval::simulation::model::generated_initial_states;
+
+    let starts = [(0, 0), (1, 1), (1, 2), (2, 2)];
+    let world = config_world(REACHES_TWO, &starts);
+    let mut limits = ModelCheckLimits::default();
+    limits.witness_samples = 1;
+    let mut request = world.request(AB, vec![world.item("ReachesTwo")], limits);
+    request.max_depth = Some(0);
+    let before = generated_initial_states();
+    let result = run(request);
+    assert_eq!(generated_initial_states() - before, starts.len() as u64);
+    assert_eq!(result.graph.initial().len(), starts.len());
+    for instance in &result.items[0] {
+        assert_eq!(instance.sampled.len(), starts.len());
+        let witness = instance.sampled[3]
+            .as_ref()
+            .expect("the fourth start holds the target");
+        assert_eq!(witness.path.initial, 3);
+        let WitnessSource::Sampled(provenance) = &witness.source else {
+            panic!("expected a sampled witness: {witness:?}");
+        };
+        assert_eq!(provenance.trace, 3);
     }
 }
 
@@ -1592,6 +1702,98 @@ fn the_walk_budget_bounds_and_counts_each_walk() {
         };
         assert_eq!(witness.path.steps.len(), 2);
     }
+}
+
+/// FR-168-AC-15 (TC-593): an impossible target is trapped at the initial
+/// state under either symmetry or partial-order reduction.
+#[trace("TC-593", "FR-168-AC-15")]
+#[test]
+fn an_impossible_target_is_trapped_under_each_reduction() {
+    let world = crate::graph_world::symmetric_config_world_over(
+        "",
+        "possible Impossible using v over (c: Config::ConfigVersion) { c.versionNumber = 0 and c.versionNumber = 1 }\n",
+        &["a", "b", "c"],
+        &[vec![0, 0, 0]],
+    );
+    let mut symmetry = world.request(
+        &["a", "b", "c"],
+        vec![world.item("Impossible")],
+        no_samples(),
+    );
+    symmetry
+        .reductions
+        .symmetry
+        .push(fsl_route::reductions::SymmetryDeclaration {
+            population: filament_checked::key::DeclarationKey {
+                package: "test/config".to_owned(),
+                node: "ix://test/config/config_history".to_owned(),
+            },
+            classes: vec![vec!["a".to_owned(), "b".to_owned(), "c".to_owned()]],
+        });
+    let result = run(symmetry);
+    assert_eq!(result.graph.end, RunEnd::Completed);
+    let instance = &result.items[0][0];
+    let StateGraphOutcome::Trapped { stem } = &instance.outcome else {
+        panic!("the symmetric impossible target is trapped: {:?}", instance.outcome);
+    };
+    assert_eq!(stem.initial, 0);
+    assert!(stem.steps.is_empty());
+    let bound = ModelInstance {
+        population: filament_checked::key::DeclarationKey {
+            package: "test/config".to_owned(),
+            node: "ix://test/config/config_history".to_owned(),
+        },
+        key: "a".to_owned(),
+    };
+    let replay = world
+        .replay_evidence(
+            world.claim("Impossible"),
+            fsl_replay::GraphEvidence::Trap {
+                stem: stem.clone(),
+                closure: fsl_replay::TrapClosure::StateGraph,
+                over: Some(bound),
+            },
+            &["a", "b", "c"],
+            Default::default(),
+        )
+        .expect("the trap replays over the concrete closure");
+    assert_eq!(replay.settlement, fsl_replay::GraphReplaySettlement::Reproduced);
+
+    let job = job_world_with_claims(
+        false,
+        false,
+        "possible Impossible using v over (j: M::Job) { j.a = 0 and j.a = 1 }\n",
+    );
+    let mut por = job.request(&["j"], vec![job.item("Impossible")], no_samples());
+    por.reductions.partial_order = true;
+    let result = run(por);
+    assert_eq!(result.graph.end, RunEnd::Completed);
+    let instance = &result.items[0][0];
+    let StateGraphOutcome::Trapped { stem } = &instance.outcome else {
+        panic!("the POR impossible target is trapped: {:?}", instance.outcome);
+    };
+    assert_eq!(stem.initial, 0);
+    assert!(stem.steps.is_empty());
+    let bound = ModelInstance {
+        population: filament_checked::key::DeclarationKey {
+            package: "test/job".to_owned(),
+            node: "ix://test/job/jobs".to_owned(),
+        },
+        key: "j".to_owned(),
+    };
+    let replay = job
+        .replay_evidence(
+            job.claim("Impossible"),
+            fsl_replay::GraphEvidence::Trap {
+                stem: stem.clone(),
+                closure: fsl_replay::TrapClosure::StateGraph,
+                over: Some(bound),
+            },
+            &["j"],
+            Default::default(),
+        )
+        .expect("the POR trap replays over the concrete closure");
+    assert_eq!(replay.settlement, fsl_replay::GraphReplaySettlement::Reproduced);
 }
 
 // ---------------------------------------------------------------- FR-168
@@ -1881,6 +2083,104 @@ fn an_undefined_target_refutes_in_place_of_a_witness() {
     );
 }
 
+/// FR-168-AC-11 (TC-612): after reaching `versionNumber = 2`, evaluation of
+/// the `Guard` precondition is undefined. The result identifies the state
+/// and contract clause, rather than misreporting a target-predicate failure.
+#[trace("TC-612", "FR-168-AC-11")]
+#[test]
+fn an_undefined_operation_guard_is_reported_at_its_contract_site() {
+    let guard = "pre Guard using v on Config::ConfigVersion::attemptUpdate { \
+        quotient(2 - self.versionNumber) >= 1 }\n";
+    let world = config_kernel_world_over(
+        guard,
+        REACHES_TWO,
+        &["a", "b"],
+        &[vec![0, 0]],
+    );
+    let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
+    let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
+        panic!("an undefined guard: {:?}", result.items[0][0].outcome);
+    };
+    assert_eq!(versions(&world, stem), vec![(0, 0), (1, 0), (2, 0)]);
+    assert_eq!(undefined.state_key, stem.steps[1].post_state);
+    assert_eq!(undefined.predicate, None);
+    assert!(undefined.locus.is_some());
+    assert_eq!(undefined.transition, Some(stem.steps[1].transition.clone()));
+    assert_eq!(
+        undefined.cause,
+        fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
+    );
+}
+
+/// FR-168-AC-12 (TC-612): a terminal predicate has no value at `value = 3`,
+/// even though that state satisfies the possible target.
+#[trace("TC-612", "FR-168-AC-12")]
+#[test]
+fn an_undefined_terminal_predicate_is_reported_without_a_claim_predicate() {
+    let model = Model {
+        package: "test/counter",
+        alias: "C",
+        object: "Counter",
+        population: "counters",
+        symmetric: false,
+        fields: vec![Field {
+            name: "value",
+            range: Some((0, 3)),
+        }],
+        operations: vec![Operation {
+            name: "inc",
+            modifies: &["value"],
+        }],
+    };
+    let body = "pre CanInc using v on C::Counter::inc { self.value < 3 }\n\
+        post Inc using v on C::Counter::inc { self.value = pre(self.value) + 1 }\n\
+        terminal Done using v on C when { 6 mod (3 - self.value) = 0 };\n\
+        possible AtThree using v over (c: C::Counter) { c.value = 3 }\n";
+    let world = World::new(model, body, &[&[("c", &[("value", 0)])]]);
+    let result = run(world.request(
+        &["c"],
+        vec![world.item("AtThree")],
+        no_samples(),
+    ));
+    let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
+        panic!("undefined terminal predicate: {:?}", result.items[0][0].outcome);
+    };
+    assert_eq!(stem.steps.len(), 3);
+    let path_states = positions(&world, &["c"], stem);
+    assert_eq!(world.value(path_states.last().expect("terminal state"), "c", "value"), 3);
+    assert_eq!(undefined.state_key, stem.steps[2].post_state);
+    assert_eq!(undefined.predicate, None);
+    assert!(undefined.locus.is_some());
+    assert_eq!(undefined.transition, None);
+    assert_eq!(
+        undefined.cause,
+        fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
+    );
+}
+
+/// FR-168-AC-13 (TC-612): the selected `Half` state constraint is evaluated
+/// at each explored state and becomes undefined at `va = 2`.
+#[trace("TC-612", "FR-168-AC-13")]
+#[test]
+fn an_undefined_selected_state_constraint_is_not_a_boundary() {
+    let extra = "constraint Half using v on Config::ConfigVersion at current { \
+        quotient(2 - self.versionNumber) >= 1 }\n";
+    let world = config_kernel_world_over(extra, REACHES_TWO, &["a"], &[vec![0]]);
+    let mut request = world.request(&["a"], vec![world.item("ReachesTwo")], no_samples());
+    request.reductions.constraint = Some("Half".to_owned());
+    let result = run(request);
+    let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
+        panic!("undefined state constraint: {:?}", result.items[0][0].outcome);
+    };
+    assert_eq!(versions(&world, stem), vec![(0, 0), (1, 0), (2, 0)]);
+    assert_eq!(undefined.state_key, stem.steps[1].post_state);
+    assert_eq!(undefined.predicate, None);
+    assert!(undefined.locus.is_some());
+    assert_eq!(undefined.transition, None);
+    let at = node_of(&result, undefined.state_key.clone());
+    assert_eq!(result.graph.open.get(&at), Some(&OpenCause::UndecidedSuccessor));
+}
+
 /// FR-168-AC-6: `ReachesTwo` with `witness_samples` 64 and with 0 both
 /// return `Witnessed`, with `Sampled` and `Explored` sources.
 #[trace("TC-593", "FR-168-AC-6")]
@@ -1968,7 +2268,7 @@ fn bound(result: &StateGraphRun, index: usize) -> Vec<Option<ObjectReference>> {
 /// once, yields `a`, `b` over `{a, b}` and `a` over a subject whose universe
 /// is `{a}`, without being re-checked; a subject with an empty universe gives
 /// it no instance.
-#[trace("TC-520")]
+#[trace("TC-520", "FR-125-AC-7")]
 #[test]
 fn a_state_graph_claim_is_instanced_over_the_subjects_universe() {
     let claims = format!("{REACHES_TWO}{REACHES_THREE}possible Anything using v {{ true }}\n");

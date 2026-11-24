@@ -808,7 +808,7 @@ fn aggregate_resolves_a_reused_import_alias_per_source_unit() {
         panic!("expected an unbound qualified-name refusal, got {refusal:?}");
     };
     assert!(refusals.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         fsl_semantics::check::CheckCause::MissingQualifiedName(name) if name.name == "m::f"
     )));
 }

@@ -38,7 +38,10 @@ mod value_invariants;
 pub(crate) use bare::evaluate_generated_package_protocol_slot;
 pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol_slot;
 pub(crate) use bare::post_targets as bare_post_targets;
-pub use bare::{evaluate_bare_expression, evaluate_bare_refinement_row};
+pub use bare::{
+    evaluate_bare_expression, evaluate_bare_refinement_row, evaluate_bare_source_operation_clause,
+    BareSourceOperationEvaluationFailure,
+};
 pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations, ProjectedReward};
 pub(crate) use bare::{
     evaluate_probability_predicate as evaluate_bare_probability_predicate,
@@ -406,6 +409,7 @@ pub fn evaluate_refinement_row(
         meter,
         package.graph().dispatch_tables(),
     )
+    .with_enclosing_row(row.name())
     .run(row.body(), row.slots(), bindings)
 }
 
@@ -1625,6 +1629,24 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
 
+    /// Evaluate capture `index` of the selected package temporal clause,
+    /// with the clause's `over` value and all earlier captures bound.
+    fn evaluate_package_capture(
+        &self,
+        clause: &NodeKey,
+        index: usize,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        let _ = (clause, index, over, captures, objects, meter);
+        Err(CallFailure::Fault(InternalFault::new(
+            "FR-940",
+            "package-capture-on-source-route",
+        )))
+    }
+
     /// Evaluate a model behaviour's holds condition with FR-107 model-read accounting.
     /// With `absent_population`, `over` is a reference to an absent instance:
     /// constants evaluate normally, field reads are undefined and lookup retains
@@ -1748,10 +1770,10 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     /// the entries together with their combined outcome (FR-120).
     ///
     /// Invariants come first, then preconditions, then postconditions, each
-    /// group in ascending name order. The preconditions stop at the first one
-    /// that is not `Completed(true)` (FR-006's short-circuit): the ones after
-    /// it are neither evaluated nor charged. Postconditions are evaluated only
-    /// when every precondition is `Completed(true)`. Refuses as
+    /// group in ascending name order. A `Completed(false)` or incomplete
+    /// precondition stops the group. Undecided preconditions remain in the
+    /// results and later preconditions are evaluated. Postconditions are
+    /// evaluated only when every precondition is `Completed(true)`. Refuses as
     /// [`Self::evaluate_clause`] does for an unknown clause or mismatched
     /// observations, before evaluating any clause.
     fn evaluate_clause_set(
@@ -3009,6 +3031,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
         }
         let mut env = s6a::protocol_clause::ProtocolClauseEnv::new(
             self.graph(),
+            Some(setup.declaration),
             setup.current,
             setup.pre,
             setup.bindings,
@@ -3590,6 +3613,7 @@ mod tests {
                 S6aFamilyKind::ProtocolClause => {
                     let mut env = s6a::protocol_clause::ProtocolClauseEnv::new(
                         empty.graph(),
+                        None,
                         &objects,
                         None,
                         Vec::new(),

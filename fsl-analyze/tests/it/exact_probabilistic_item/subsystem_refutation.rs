@@ -44,6 +44,12 @@ fn claim(name: &str, scheduler: &str, body: &str) -> String {
     )
 }
 
+fn avail2_claim(name: &str, scheduler: &str, body: &str) -> String {
+    format!(
+        "probabilistic {name} using inf on M over (s: M::Server) under {scheduler} on origin {{ {body} }}\n"
+    )
+}
+
 fn limits() -> fsl_replay::ProbabilityDocumentLimits {
     fsl_replay::ProbabilityDocumentLimits {
         bytes: 1_000_000,
@@ -105,6 +111,112 @@ fn call(world: &World, ok: bool) -> ProductAction {
         })
         .expect("call(ok) is enabled");
     ProductAction::Identity(Schedule::of(&system, &action.identity).unwrap())
+}
+
+/// Resolve a named operation in the reachable, one-step `Avail2` chain.
+fn call_named(world: &World, name: &str) -> ProductAction {
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let mut states = system.initial().to_vec();
+    for state in states.clone() {
+        if let Ok(actions) = system.actions(&state).unwrap() {
+            for action in actions {
+                for draw in action.draws {
+                    states.extend(draw.successors.into_iter().map(|(_, post)| post));
+                }
+            }
+        }
+    }
+    states.sort_by_key(|state| system.state_key(state).unwrap().0);
+    states.dedup_by(|left, right| {
+        system.state_key(left).unwrap().0 == system.state_key(right).unwrap().0
+    });
+    for state in states {
+        if let Ok(actions) = system.actions(&state).unwrap() {
+            if let Some(action) = actions
+                .into_iter()
+                .find(|action| action.identity.operation.contains(name))
+            {
+                return ProductAction::Identity(Schedule::of(&system, &action.identity).unwrap());
+            }
+        }
+    }
+    panic!("{name} is enabled in the reachable model");
+}
+
+fn fast_avail2_witness(world: &World) -> ProbabilisticCounterexample {
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let claims = world.package.graph().probabilistic_model().claims();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim("AtLeast")).unwrap();
+    let binding = claim_binding(&system, world.claim("AtLeast"))
+        .unwrap()
+        .unwrap();
+    let (up, down) = keys(world, "AtLeast");
+    let rational = |n: i64, d: i64| Rational::new(Integer::from(n), Integer::from(d)).unwrap();
+    let row = |state: &ProbabilityProductKey, value: Rational| fsl_replay::ExactProbabilityValue {
+        state: state.clone(),
+        value,
+    };
+    let tick = call_named(world, "tick");
+    let fast = call_named(world, "repair_fast");
+    let mut values = vec![
+        row(&up, rational(1800, 1801)),
+        row(&down, rational(1800, 1801)),
+    ];
+    values.sort_by(|a, b| a.state.cmp(&b.state));
+    // The document's canonical first key is down, whose bias is zero.
+    let mut bias = vec![row(&up, rational(2000, 1801)), row(&down, rational(0, 1))];
+    bias.sort_by(|a, b| a.state.cmp(&b.state));
+    let mut policy = vec![
+        fsl_replay::LongRunPolicyRow {
+            state: up.clone(),
+            choice: fsl_replay::LongRunPolicyChoice::Deterministic(tick.clone()),
+        },
+        fsl_replay::LongRunPolicyRow {
+            state: down.clone(),
+            choice: fsl_replay::LongRunPolicyChoice::Deterministic(fast.clone()),
+        },
+    ];
+    policy.sort_by(|a, b| a.state.cmp(&b.state));
+    let certificate = fsl_replay::long_run_probability_certificate_document(
+        &system,
+        claims,
+        &item,
+        values,
+        vec![fsl_replay::LongRunProbabilityComponent {
+            value: rational(1800, 1801),
+            gain: rational(1800, 1801),
+            bias,
+            policy: Some(policy),
+        }],
+        limits(),
+        &Cancel::new(),
+    )
+    .unwrap();
+    let subsystem = fsl_replay::ProbabilitySubsystemCertificate::from_long_run(
+        &certificate,
+        limits(),
+        &Cancel::new(),
+    )
+    .unwrap();
+    let initial = system.initial()[0].clone();
+    let mut scheduler = vec![
+        (
+            up.clone(),
+            ProbabilisticSchedulerChoice::Deterministic(tick),
+        ),
+        (down, ProbabilisticSchedulerChoice::Deterministic(fast)),
+    ];
+    scheduler.sort_by(|a, b| a.0.cmp(&b.0));
+    ProbabilisticCounterexample {
+        item,
+        binding: Some(binding.reference),
+        instance: None,
+        initial,
+        initial_key: up,
+        scheduler,
+        paths: Vec::new(),
+        subsystem: Some(Box::new(subsystem)),
+    }
 }
 
 fn refuted(world: &World, name: &str) -> fsl_analyze::analyze::AnalyzeRecord {
@@ -481,7 +593,7 @@ fn an_every_scheduler_expected_total_carries_its_scheduler_and_a_proper_upper_ce
     );
     let doc = document(&found);
     assert_eq!(doc["kind"], "upper");
-    let mut values = vec![(down.clone(), q(1, 1), 1), (up.clone(), q(0, 1), 0)];
+    let mut values = [(down.clone(), q(1, 1), 1), (up.clone(), q(0, 1), 0)];
     values.sort_by(|a, b| a.0.cmp(&b.0));
     assert_eq!(
         doc["values"],
@@ -615,6 +727,65 @@ fn an_every_scheduler_eventually_without_random_is_refuted_by_event_avoidance() 
     certificate_rejected(&changed, CertificateRule::InequalityFails, &down);
 }
 
+/// An unwindowed `always` under a workload whose calls fail 1 time in 1,000
+/// has exact value 0: the path masses `(999/1000)^n` of a path-set search
+/// never close the gap, so the claim is refuted by the rejecting-union
+/// `lower` certificate over the cyclic chain instead: no path-set search
+/// starts (FR-202-AC-21's cyclic `always` clause), and the counterexample
+/// carries no path.
+#[trace("FR-202-AC-21")]
+#[test]
+fn a_rarely_failing_workload_always_is_refuted_by_its_rejecting_union() {
+    let world = World::new(&architecture(
+        true,
+        &format!(
+            "random Service::call(ok) ~ {{ true: 999, false: 1 }};\n\
+             workload Traffic on M {{ weight Service::call = 1; }}\n{}",
+            claim(
+                "StaysUp",
+                "Traffic",
+                "probability >= 0.99 [ always holds(s.up) ]"
+            ),
+        ),
+    ));
+    let (up, down) = keys(&world, "StaysUp");
+    fsl_analyze::exact_probabilistic::reset_product_construction_counts();
+    let record = refuted(&world, "StaysUp");
+    assert_eq!(
+        fsl_analyze::exact_probabilistic::product_construction_counts().path_searches,
+        0,
+        "no path-set search on the cyclic subject"
+    );
+    decisive(&record);
+    let found = evidence(&record);
+    assert!(found.scheduler.is_empty());
+    assert!(found.paths.is_empty());
+    let doc = document(&found);
+    assert_eq!(doc["kind"], "lower");
+    assert_eq!(doc["objective"]["base"]["event"], "always");
+    let mut expected = [(up.clone(), q(1, 1), 1), (down.clone(), q(1, 1), 0)];
+    expected.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        doc["values"],
+        Value::Array(
+            expected
+                .iter()
+                .map(|(key, value, _)| json!({"state": encoded(key), "value": value}))
+                .collect()
+        )
+    );
+    assert_eq!(
+        doc["ranking"],
+        Value::Array(
+            expected
+                .iter()
+                .map(|(key, _, rank)| json!({"state": encoded(key), "rank": rank}))
+                .collect()
+        )
+    );
+    reproduced(replay(&world, &found));
+}
+
 /// FSpec FR-412-AC-24's chain: `s` reaches event `e` and the self-looping
 /// event-free `a` with probability 1/2 each.
 fn split(claims: &str) -> prob_world::Model {
@@ -695,7 +866,7 @@ fn event_avoidance_derives_the_event_free_bottom_component_itself() {
         .into_iter()
         .find(|key| *key != a)
         .expect("the event state");
-    let mut expected = vec![(s.clone(), q(1, 2), 1), (a.clone(), q(1, 1), 0)];
+    let mut expected = [(s.clone(), q(1, 2), 1), (a.clone(), q(1, 1), 0)];
     expected.sort_by(|left, right| left.0.cmp(&right.0));
     assert_eq!(
         doc["values"],
@@ -1098,11 +1269,15 @@ fn scheduled_long_run(
                     let mut rows = vec![
                         fsl_replay::LongRunPolicyRow {
                             state: down.clone(),
-                            choice: call(world, true),
+                            choice: fsl_replay::LongRunPolicyChoice::Deterministic(call(
+                                world, true,
+                            )),
                         },
                         fsl_replay::LongRunPolicyRow {
                             state: up.clone(),
-                            choice: call_staying_up(world),
+                            choice: fsl_replay::LongRunPolicyChoice::Deterministic(
+                                call_staying_up(world),
+                            ),
                         },
                     ];
                     rows.sort_by(|a, b| a.state.cmp(&b.state));
@@ -1119,7 +1294,7 @@ fn scheduled_long_run(
                 bias: vec![row(&down, rational(0))],
                 policy: Some(vec![fsl_replay::LongRunPolicyRow {
                     state: down.clone(),
-                    choice: call(world, false),
+                    choice: fsl_replay::LongRunPolicyChoice::Deterministic(call(world, false)),
                 }]),
             },
         )
@@ -1367,7 +1542,7 @@ fn failing_witness(world: &World, name: &str) -> ProbabilisticCounterexample {
             bias: vec![row(&down_key)],
             policy: Some(vec![fsl_replay::LongRunPolicyRow {
                 state: down_key.clone(),
-                choice: fail_at_down.clone(),
+                choice: fsl_replay::LongRunPolicyChoice::Deterministic(fail_at_down.clone()),
             }]),
         }],
         limits(),
@@ -1494,4 +1669,165 @@ fn an_every_scheduler_long_run_claim_settles_refuted_with_its_scheduler_witness(
         assert_eq!(doc["components"][0]["value"], q(0, 1), "{name}");
         reproduced(replay(&world, &found));
     }
+}
+
+#[trace("TC-3191", "FR-202-AC-45")]
+#[test]
+fn avail2_every_scheduler_long_run_refutations_replay_their_induced_chains() {
+    let world = World::new(&prob_world::avail2(&format!(
+        "{}{}{}{}",
+        avail2_claim(
+            "AtLeast",
+            "every scheduler",
+            "long_run_fraction holds(s.up) >= rational(9993, 10000)"
+        ),
+        avail2_claim(
+            "AtMost",
+            "every scheduler",
+            "long_run_fraction holds(s.up) <= rational(999, 1000)"
+        ),
+        avail2_claim(
+            "Proof",
+            "every scheduler",
+            "long_run_fraction holds(s.up) >= rational(1, 2)"
+        ),
+        avail2_claim(
+            "EventPosition",
+            "every scheduler",
+            "long_run_fraction holds(s.up) >= rational(9993, 10000)"
+        )
+        .replace("using inf", "using ev"),
+    )));
+
+    let slow = evidence(&refuted(&world, "AtLeast"));
+    let slow_document = document(&slow);
+    assert_eq!(slow_document["kind"], "long-run");
+    assert_eq!(slow_document["objective"]["optimization"], "minimum");
+    assert_eq!(slow_document["components"][0]["value"], q(1000, 1001));
+    assert_eq!(slow_document["components"][0]["gain"], q(1000, 1001));
+    assert!(format!("{:?}", slow.scheduler).contains("repair_slow"));
+    let (up, down) = keys(&world, "AtLeast");
+    let bias = slow_document["components"][0]["bias"].as_array().unwrap();
+    assert_eq!(
+        bias.iter()
+            .find(|row| row["state"] == encoded(&down))
+            .unwrap()["value"],
+        q(0, 1)
+    );
+    assert_eq!(
+        bias.iter()
+            .find(|row| row["state"] == encoded(&up))
+            .unwrap()["value"],
+        q(2000, 1001)
+    );
+    reproduced(replay(&world, &slow));
+
+    let fast_at_least = fast_avail2_witness(&world);
+    let fast_document = document(&fast_at_least);
+    let mut wrong_fast_certificate = slow_document.clone();
+    wrong_fast_certificate["components"][0]["policy"] =
+        fast_document["components"][0]["policy"].clone();
+    let fast_with_slow_certificate = offering(&fast_at_least, &wrong_fast_certificate);
+    let wrong_replay = replay(&world, &fast_with_slow_certificate);
+    assert!(
+        matches!(
+            &wrong_replay,
+            Err(ProbabilityWitnessError::CertificateRejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::InequalityFails,
+                    at: ProbabilityCertificateLocus::ProductState(_),
+                }
+            ))
+        ),
+        "the slow certificate with fast policy is rejected: {wrong_replay:?}"
+    );
+
+    let fast = evidence(&refuted(&world, "AtMost"));
+    assert!(format!("{:?}", fast.scheduler).contains("repair_fast"));
+    assert_eq!(document(&fast)["components"][0]["value"], q(1800, 1801));
+    reproduced(replay(&world, &fast));
+
+    let event_position = evidence(&refuted(&world, "EventPosition"));
+    assert!(format!("{:?}", event_position.scheduler).contains("repair_slow"));
+    assert_eq!(
+        document(&event_position)["components"][0]["value"],
+        q(1000, 1001)
+    );
+    reproduced(replay(&world, &event_position));
+    assert!(matches!(
+        replay(&world, &offering(&event_position, &slow_document)),
+        Err(ProbabilityWitnessError::Refused)
+    ));
+
+    assert_eq!(
+        document(&fast_at_least)["components"][0]["value"],
+        q(1800, 1801)
+    );
+    let proof_record = settle(&world, "Proof", ModelCheckLimits::default());
+    assert!(matches!(
+        proof_record.terminal().unwrap().value(),
+        TerminalValue::Proved { .. }
+    ));
+    assert!(proof_record.probabilistic_counterexample.is_none());
+    let proof_bytes = proof_record
+        .terminal()
+        .unwrap()
+        .exact_certificate_document()
+        .expect("the accepted FR-201 MDP long-run proof has a document");
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim("Proof")).unwrap();
+    assert!(matches!(
+        fsl_replay::check_probability_certificate_document(
+            &system,
+            world.package.graph().probabilistic_model().claims(),
+            &item,
+            proof_bytes,
+            limits(),
+            &Cancel::new(),
+        ),
+        Ok(fsl_replay::ExactProbabilityCertificateCheck::Accepted(_))
+    ));
+    assert!(!matches!(
+        replay(&world, &fast_at_least),
+        Ok(ProbabilityWitnessReplay::Reproduced(_))
+    ));
+
+    let mut missing_scheduler = slow.clone();
+    missing_scheduler.scheduler.clear();
+    assert!(!matches!(
+        replay(&world, &missing_scheduler),
+        Ok(ProbabilityWitnessReplay::Reproduced(_))
+    ));
+    let mut randomized_scheduler = slow.clone();
+    let slow_row = randomized_scheduler
+        .scheduler
+        .iter_mut()
+        .find(|(_, choice)| format!("{choice:?}").contains("repair_slow"))
+        .expect("the counterexample names repair_slow");
+    slow_row.1 = ProbabilisticSchedulerChoice::Randomized(vec![
+        (
+            call_named(&world, "repair_slow"),
+            Rational::new(Integer::from(1i64), Integer::from(2i64)).unwrap(),
+        ),
+        (
+            call_named(&world, "repair_fast"),
+            Rational::new(Integer::from(1i64), Integer::from(2i64)).unwrap(),
+        ),
+    ]);
+    assert!(!matches!(
+        replay(&world, &randomized_scheduler),
+        Ok(ProbabilityWitnessReplay::Reproduced(_))
+    ));
+
+    let equality = World::new(&prob_world::avail2(&avail2_claim(
+        "Equality",
+        "every scheduler",
+        "long_run_fraction holds(s.up) >= rational(1000, 1001)",
+    )));
+    let equality_record = settle(&equality, "Equality", ModelCheckLimits::default());
+    assert_ne!(
+        equality_record.terminal().map(|terminal| terminal.value()),
+        Some(&TerminalValue::Refuted)
+    );
+    assert!(equality_record.probabilistic_counterexample.is_none());
 }

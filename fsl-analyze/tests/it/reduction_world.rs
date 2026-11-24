@@ -336,6 +336,49 @@ impl World {
         world
     }
 
+    /// FR-109's state-clause run for one named clause over the §7.3 initial
+    /// snapshot, whose three counters are all zero.
+    pub(crate) fn run_state_clause(&self, name: &str) -> fsl_replay::spine::ClauseRunReport {
+        use fsl_replay::spine::{
+            run_clause, ClauseRunRequest, ClauseRunSelection, ClauseRunSource, SpineLimits,
+        };
+        use fsl_semantics::model::observation::{
+            AnchorKind, ClauseSelection, ClauseSelectionInput, SelectedAnchor, SelectedObject,
+        };
+
+        run_clause(ClauseRunRequest {
+            clocks: Default::default(),
+            source: ClauseRunSource::Program {
+                identity: SourceIdentity::new("agent-ix", "reduction"),
+                path: "reduction.native".to_owned(),
+                bytes: self.text.as_bytes().to_vec(),
+            },
+            package_name: "package".to_owned(),
+            packages: self.packages.clone(),
+            dependencies: Default::default(),
+            snapshots: self.snapshots.clone(),
+            invocations: BTreeMap::new(),
+            selection: ClauseRunSelection::Clause(ClauseSelection {
+                name: name.to_owned(),
+                input: ClauseSelectionInput::Current {
+                    snapshot: self.initial[0].clone(),
+                    anchor: SelectedAnchor {
+                        kind: AnchorKind::Initialization,
+                        name: "start".to_owned(),
+                    },
+                    self_object: Some(SelectedObject {
+                        population: ident("counters"),
+                        key: "a".to_owned(),
+                    }),
+                },
+            }),
+            limits: SpineLimits::default(),
+            observation_limits: ObservationLimits::default(),
+            accounting: self.meter,
+        })
+        .expect("the clause run reports")
+    }
+
     fn snapshot(&mut self, name: &str, objects: &[(&str, Json)]) -> DocumentRef {
         let objects: Vec<Json> = objects
             .iter()
@@ -415,6 +458,19 @@ impl World {
         max_depth: Option<usize>,
         limits: ModelCheckLimits,
     ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
+        self.run_with_meter(clause, atoms, reductions, max_depth, limits, self.meter)
+    }
+
+    /// The run with a caller supplied scalar evaluation meter.
+    pub(crate) fn run_with_meter(
+        &self,
+        clause: Option<usize>,
+        atoms: Vec<Atom>,
+        reductions: Reductions,
+        max_depth: Option<usize>,
+        limits: ModelCheckLimits,
+        meter: ScalarLimits,
+    ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
         let letters = clause.map(|index| Letters::new(self, index, atoms));
         let item = match (clause, &letters) {
             (Some(index), Some(letters)) => ModelCheckItem::Clause {
@@ -425,15 +481,88 @@ impl World {
         };
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
-                subject: self.subject(),
+                subject: {
+                    let mut subject = self.subject();
+                    subject.simulation.meter = meter;
+                    subject
+                },
                 item,
                 max_depth,
                 limits,
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions,
             },
             &Cancel::new(),
         )
+    }
+
+    /// Runs and settles one clause through EN-1's analyze adapter with the
+    /// supplied constraint selection and depth horizon.
+    pub(crate) fn analyze_clause(
+        &self,
+        clause_index: usize,
+        atoms: Vec<Atom>,
+        reductions: Reductions,
+        max_depth: Option<usize>,
+    ) -> fsl_analyze::analyze::AnalyzeRecord {
+        let letters = Letters::new(self, clause_index, atoms);
+        let clause = &self.clauses[clause_index];
+        let request_item = ModelCheckItem::Clause {
+            clause,
+            letters: &letters,
+        };
+        let certificate_item = ModelCheckItem::Clause {
+            clause,
+            letters: &letters,
+        };
+        let request = ModelCheckRequest {
+            workers: 1,
+            temporal_clock_selections: &[],
+            subject: self.subject(),
+            item: request_item,
+            max_depth,
+            limits: ModelCheckLimits::default(),
+            reductions,
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
+        };
+        let certificate = CertificateRequest {
+            temporal_clock_selections: &[],
+            subject: self.subject(),
+            item: certificate_item,
+            smt_encoding: fsl_replay::SmtEncodingLimits::default(),
+        };
+        let unit = self.replay_unit();
+        let trace_subject = self.trace_subject();
+        let identity = clause_identity(&self.package, clause_index);
+        let model_item = fsl_analyze::analyze::ModelItem {
+            request,
+            stutter_closure: false,
+            certificate,
+            replay: Box::new(|counterexample| {
+                replay_unit_result(
+                    &unit,
+                    &trace_subject,
+                    counterexample.clone(),
+                    Some(identity),
+                    &letters,
+                )
+            }),
+        };
+        let analyze_item =
+            fsl_analyze::analyze::model_item(fsl_foundation::RequestIndex::new(0), model_item)
+                .expect("the clause creates an analyze item");
+        let mut engines = fsl_analyze::analyze::Engines::default();
+        engines
+            .with(fsl_analyze::analyze::Engine::model_check().expect("EN-1 is registered"))
+            .expect("the engine id is unique");
+        let mut records =
+            fsl_analyze::analyze::analyze_items(&engines, vec![analyze_item], &Cancel::new());
+        assert_eq!(records.len(), 1);
+        records.remove(0)
     }
 
     /// The model state at each position of `counterexample`, read by

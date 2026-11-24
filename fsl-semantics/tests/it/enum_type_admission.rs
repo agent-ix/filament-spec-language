@@ -38,7 +38,7 @@ fn an_absent_enum_type_name_is_a_typed_missing_name() {
         .expect_err("an undeclared enum type name must be refused");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert!(matches!(
-        &refusals[0].cause,
+        refusals[0].cause.as_ref(),
         CheckCause::MissingName(name) if name == "AbsentStatus"
     ));
     assert_eq!(refusals[0].cause.code(), Code::MissingDeclaration);

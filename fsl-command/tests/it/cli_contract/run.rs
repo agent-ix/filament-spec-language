@@ -5,6 +5,7 @@
 //! `--clocks`, `--limit`, `--request-bytes` and `--dependent-bytes` inputs,
 //! and odd request and source input.
 
+use crate::config_version_spine::spine as config_domain;
 use fsl_command::command::{RequestOverrides, RunLimits};
 use ix_trace_rs::trace;
 use serde_json::value::RawValue;
@@ -18,13 +19,6 @@ const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
     function IsPacked using v(n: Int[0, 10]): Boolean pure { n >= 6 }\n";
 
 const STAMPED: &str = "filament.temporal.timestamped-event.finite-window/v1";
-
-#[path = "../../../../examples/config-version/spine_unit.rs"]
-#[allow(
-    dead_code,
-    reason = "the command regression uses the genuine domain package"
-)]
-mod config_domain;
 
 fn request(file: &str, function: &str, arguments: &[(&str, Value)]) -> Value {
     let arguments: Vec<Value> = arguments
@@ -930,7 +924,6 @@ fn request_and_dependent_byte_ceilings_are_reached_and_raised() {
         RunLimits {
             request_bytes: request_size,
             dependent_bytes: SOURCE.len(),
-            ..RunLimits::default()
         },
         &RequestOverrides::default(),
     );
@@ -1160,6 +1153,51 @@ fn clause_overrides_reach_accounting_and_stages(extracted: bool) {
     );
     assert_eq!(with.exit, control.exit, "{}", with.document);
     assert_eq!(with.document, control.document);
+}
+
+/// FR-312-AC-9: the request's observation document limit is reported as
+/// `observation.input_bytes`, separately from the outer dependent-file limit.
+#[test]
+#[trace("TC-2982")]
+fn clause_observation_document_limit_names_input_bytes() {
+    let case = Case::new();
+    let (mut job, _) = spine_clause(&case, false);
+    let bytes = std::fs::read(case.path("spine-snapshot.json")).unwrap();
+    let n = bytes.len() as u64;
+    job["request"]["clause"]["observation_limits"] = json!({"document_bytes": n - 1});
+    let limited_path = case.json("clause-observation-limited.json", &job);
+    let dependent_bytes = RunLimits::default().dependent_bytes;
+    assert!(dependent_bytes as u64 > n);
+    let limited = run(
+        &limited_path,
+        RunLimits {
+            dependent_bytes,
+            ..RunLimits::default()
+        },
+        &RequestOverrides::default(),
+    );
+    let document = limited.expect("monitor", "incomplete", 22);
+    let item = &document["items"][0];
+    assert_eq!(item["result"], "incomplete", "{document}");
+    assert_eq!(item["category"], "incomplete", "{document}");
+    assert_eq!(item["cause"]["code"], "stage_limit_exceeded", "{document}");
+    assert_eq!(item["cause"]["kind"], "input-bytes-exceeded", "{document}");
+    assert_eq!(item["cause"]["bound"], (n - 1).to_string(), "{document}");
+    assert_eq!(item["cause"]["counter"], n.to_string(), "{document}");
+    assert_eq!(
+        item["cause"]["setting"], "observation.input_bytes",
+        "{document}"
+    );
+    assert!(document["diagnostics"].as_array().unwrap().is_empty());
+
+    let mut exact = job;
+    exact["request"]["clause"]["observation_limits"] = json!({"document_bytes": n});
+    let exact_path = case.json("clause-observation-exact.json", &exact);
+    assert_eq!(
+        plain(&exact_path).exit,
+        0,
+        "the exact observation bound admits"
+    );
 }
 
 /// FR-640-AC-14, FR-651-AC-1: an ordinary clause run honors the caller's

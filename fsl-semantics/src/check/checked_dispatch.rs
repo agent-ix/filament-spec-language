@@ -106,10 +106,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use super::check::{DispatchOperation, PackageDeclarations};
 use super::ir::{DispatchCandidate, DispatchTable};
 use super::lowering::{AdmittedModel, ModelClause};
-use crate::model::accounting::Meter;
+use crate::model::accounting::NormalizationMeter;
 use crate::model::dispatch::{
-    link_dispatch_counted, DispatchLinkOutcome, FamilySteps, GeneralizationClosure,
-    LinkCheckOutcome,
+    DispatchLinkOutcome, FamilySteps, GeneralizationClosure, LinkCheckOutcome,
+    link_dispatch_counted,
 };
 use crate::model::domain_package::{DomainPackage, DomainPackageRecord, OperationMemberRecord};
 use crate::model::normalize::{EffectiveView, ModelRefusal, ModelRefusalCause};
@@ -977,7 +977,7 @@ pub fn checked_dispatch_operation(
     clauses: &OperationClauses,
     source: fsl_foundation::source::provenance::RawSourceRef,
     package_name: String,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
     identity: fsl_foundation::IdentityLimits,
 ) -> Result<PackageDeclarations, DispatchBridgeRefusal> {
     let mut declarations =
@@ -995,7 +995,7 @@ pub(crate) fn checked_dispatch_core(
     clauses: &OperationClauses,
     source: fsl_foundation::source::provenance::RawSourceRef,
     package_name: String,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
     identity: fsl_foundation::IdentityLimits,
 ) -> Result<PackageDeclarations, DispatchBridgeRefusal> {
     let mut steps = FamilySteps::new(&root.key, meter.limits().family_steps);
@@ -1331,8 +1331,14 @@ pub fn checked_dispatch_selected_operation(
     source: fsl_foundation::source::provenance::RawSourceRef,
     identity: fsl_foundation::IdentityLimits,
 ) -> Result<PackageDeclarations, DispatchBridgeRefusal> {
-    let (entries, mut meter, exact_declarations, exact_fields, tuple_declarations) =
-        selected.into_parts();
+    let crate::model::intake::SelectedModelsParts {
+        entries,
+        versions,
+        mut meter,
+        exact_declarations,
+        exact_fields,
+        tuple_declarations,
+    } = selected.into_parts();
     let Some(ordinal) = entries
         .iter()
         .position(|entry| entry.view.model_selection().identity == root.key.package)
@@ -1356,7 +1362,7 @@ pub fn checked_dispatch_selected_operation(
                 .push(AdmittedModel::from_view(&entry.view));
         }
     }
-    declarations.model_inputs = Some((entries, meter));
+    declarations.model_inputs = Some((entries, versions, meter));
     declarations.selected_exact_identity_rows = (exact_declarations, exact_fields);
     declarations.selected_tuple_declaration_rows = tuple_declarations;
     Ok(declarations)
@@ -1369,8 +1375,8 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::{
-        ancestor_closure, effective_terms, rekey_object_types, rename_parameters, substitute_names,
-        DispatchBridgeRefusal, OperationClauses,
+        DispatchBridgeRefusal, OperationClauses, ancestor_closure, effective_terms,
+        rekey_object_types, rename_parameters, substitute_names,
     };
     use crate::model::dispatch::FamilySteps;
     use crate::model::domain_package::{

@@ -758,7 +758,7 @@ fn spine_refuses_every_invisible_guard_atom_even_in_a_skipped_operand() {
             };
             assert!(
                 refusals.iter().any(|refusal| matches!(
-                    &refusal.cause,
+                    refusal.cause.as_ref(),
                     CheckCause::ProtocolAnchor(cause)
                         if matches!(cause.as_ref(),
                             ProtocolAnchorCause::WrongObservation { .. }
@@ -789,12 +789,12 @@ fn spine_refuses_every_invisible_guard_atom_even_in_a_skipped_operand() {
         false,
     );
     assert!(sibling.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), ProtocolAnchorCause::SlotClause { .. })
     )));
     assert!(sibling_direct.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), ProtocolAnchorCause::SlotClause { .. })
     )));
@@ -814,12 +814,12 @@ fn spine_refuses_every_invisible_guard_atom_even_in_a_skipped_operand() {
         true,
     );
     assert!(effect.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), ProtocolAnchorCause::WrongObservation { .. })
     )));
     assert!(effect_direct.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), ProtocolAnchorCause::WrongObservation { .. })
     )));
@@ -840,12 +840,12 @@ fn spine_refuses_every_invisible_guard_atom_even_in_a_skipped_operand() {
         false,
     );
     assert!(other_role.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), ProtocolAnchorCause::WrongObservation { .. })
     )));
     assert!(other_role_direct.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), ProtocolAnchorCause::WrongObservation { .. })
     )));
@@ -893,7 +893,7 @@ fn spine_refuses_a_same_spelled_binder_and_an_other_protocol_read() {
         ));
         let shadow = found.iter().find(|refusal| {
             matches!(
-                &refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::ProtocolAnchor(cause)
                     if matches!(cause.as_ref(),
                         ProtocolAnchorCause::Shadow {
@@ -996,7 +996,7 @@ fn spine_refuses_repeat_guard_reads_outside_entry_visibility() {
         };
         assert!(
             refusals.iter().any(|refusal| matches!(
-                &refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::ProtocolAnchor(cause)
                     if matches!(cause.as_ref(), ProtocolAnchorCause::SlotClause { .. })
             )),
@@ -1079,7 +1079,7 @@ fn profile_aware_spine_check_retains_closure_and_distinct_wrong_kind() {
             refusal.as_ref(),
             CompileRefusal::Check { refusals, .. }
                 if refusals.iter().any(|refusal| matches!(
-                    &refusal.cause,
+                    refusal.cause.as_ref(),
                     fsl_semantics::check::CheckCause::ProtocolAnchor(cause)
                         if matches!(cause.as_ref(), fsl_semantics::check::ProtocolAnchorCause::WrongProfileKind { .. })
                 ))
@@ -1862,6 +1862,7 @@ fn aggregate_check_resolves_profiles_selected_under_later_unit_aliases() {
 
 /// FR-514-AC-5, FR-480-AC-6 and FR-091-AC-47: aggregate quantity failures preserve their
 /// topology cause, dependency edges, declaration span and owning source.
+#[trace("FSpec-TC-187", "FSpec-FR-142-AC-17")]
 #[trace("FR-514-AC-5", "FR-480-AC-6", "FR-091-AC-47", "TC-1309")]
 #[test]
 fn aggregate_quantity_cycles_and_zero_scale_name_the_declaration_source() {
@@ -1933,6 +1934,19 @@ fn aggregate_quantity_cycles_and_zero_scale_name_the_declaration_source() {
     assert_eq!(zero_scale.code(), Code::InvalidPackage);
     assert_eq!(zero_scale.cause(), Some("invalid-value"));
     assert_region_source(&zero_scale, &identities[0], document_one.1, "unit", "z");
+    let zero_region = zero_scale
+        .region()
+        .expect("U11q's first refusal has a source region");
+    assert_eq!(
+        zero_region.source().authority(),
+        "agent-ix",
+        "[doc1, doc2] names doc1's source authority"
+    );
+    assert_eq!(
+        zero_region.source().identity(),
+        document_one.0,
+        "[doc1, doc2] attributes the zero-scale refusal to doc1"
+    );
 
     let (single_cycle, identities) = refusal(&[document_two, document_one]);
     assert_eq!(single_cycle.code(), Code::InvalidPackage);
@@ -1943,6 +1957,19 @@ fn aggregate_quantity_cycles_and_zero_scale_name_the_declaration_source() {
         document_two.1,
         "unit",
         "u_self",
+    );
+    let cycle_region = single_cycle
+        .region()
+        .expect("U11q's second refusal has a source region");
+    assert_eq!(
+        cycle_region.source().authority(),
+        "agent-ix",
+        "[doc2, doc1] names doc2's source authority"
+    );
+    assert_eq!(
+        cycle_region.source().identity(),
+        document_two.0,
+        "[doc2, doc1] attributes the cycle refusal to doc2"
     );
     let CompileRefusal::Assembly {
         refusal: assembly_refusal,
@@ -3545,7 +3572,7 @@ fn an_unimported_library_internal_list_defect_refuses_the_compile_at_its_owner()
     let [refusal] = refusals.as_slice() else {
         panic!("one typed library-value refusal: {refusals:?}");
     };
-    let fsl_semantics::check::CheckCause::Refinement(refusal) = &refusal.cause else {
+    let fsl_semantics::check::CheckCause::Refinement(refusal) = &*refusal.cause else {
         panic!("the internal-list defect is typed: {refusal:?}");
     };
     let fsl_semantics::check::RefinementCause::InternalList(defect) = &refusal.cause else {
@@ -4415,7 +4442,9 @@ fn an_internal_invariant_failure_is_a_fault() {
             location: filament_semantic_value::location::ExpressionLocation::root(
                 filament_semantic_value::location::ExpressionOwner::Expression,
             ),
-            cause: CheckCause::InternalFault(Box::new(KeyFault::UnresolvedDraft)),
+            cause: Box::new(CheckCause::InternalFault(Box::new(
+                KeyFault::UnresolvedDraft,
+            ))),
         }],
         region: None,
     });
@@ -4449,13 +4478,13 @@ fn a_rebound_model_node_leaves_the_front_end_as_an_internal_failure_with_no_pack
             location: filament_semantic_value::location::ExpressionLocation::root(
                 filament_semantic_value::location::ExpressionOwner::Expression,
             ),
-            cause: CheckCause::InternalFault(Box::new(KeyFault::CorrespondenceConflict(Box::new(
-                CorrespondenceConflict::NodeRebound {
+            cause: Box::new(CheckCause::InternalFault(Box::new(
+                KeyFault::CorrespondenceConflict(Box::new(CorrespondenceConflict::NodeRebound {
                     node: node.clone(),
                     recorded: d1.clone(),
                     offered: d2.clone(),
-                },
-            )))),
+                })),
+            ))),
         }],
         region: None,
     });
@@ -4670,14 +4699,14 @@ fn type_invariant_check_refusal(cause: fsl_semantics::check::CheckCause) -> Comp
             location: filament_semantic_value::location::ExpressionLocation::root(
                 filament_semantic_value::location::ExpressionOwner::Expression,
             ),
-            cause: CheckCause::TypeInvariant(Box::new(TypeInvariantRefusal {
+            cause: Box::new(CheckCause::TypeInvariant(Box::new(TypeInvariantRefusal {
                 clause: filament_checked::key::DeclarationKey {
                     package: "acme/orders".to_owned(),
                     node: "ix://acme/orders/Widget/Stable".to_owned(),
                 },
                 position: 1,
                 cause,
-            })),
+            }))),
         }],
         region: None,
     }

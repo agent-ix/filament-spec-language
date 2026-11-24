@@ -25,7 +25,7 @@ returns its evidence for FR-248.
 ## Use case
 
 An embedded engineer gets each task's exact worst-case response time, or the response-time iterates that prove a miss, from an analysis that
-terminates on its own and needs no iteration cap.
+terminates on its own and refuses at `max_demand_points` rather than iterating without bound.
 
 ## Inputs
 
@@ -67,7 +67,7 @@ pub enum ClosedFormOutcome {
   when a high-mode criterion fails.
 - **Response claims.** For a `response N on S.τ <= d under fixed_priority;` claim, EN-7 SHALL compare
   the computed response time of `τ` with `d`.
-- EN-7 SHALL count demand points checked and stop with
+- EN-7 SHALL count every recurrence step (a QPA demand point, a busy-period or fixed-priority window iteration) and stop with
   `Stopped(LimitReached, MaxDemandPoints)` when the count would exceed
   `max_demand_points`, and `Stopped(Cancelled, …)` when the `Cancel` handle
   is cancelled.
@@ -82,6 +82,7 @@ pub enum ClosedFormOutcome {
 | FR-247-AC-2 | `Ctl` with the third WCET 6 returns, under fixed priority, `Miss` for the third task, job 0, iterates `6, 10, 13`. A set of `a` (`C = 1`, `T = D = 4`, priority 1) and `b` (`C = 2`, `T = D = 6`, jitter 1, blocking 3, priority 2) returns `Miss` for `b`, job 0, iterates `5, 7` (response `8 > 6`), and `check_closed_form` accepts that evidence; under EDF, `Miss(Utilization(13/12))`. | Test (TC-702) |
 | FR-247-AC-3 | AMC set `Mc`: `a` `LO`, `C = 1`, `T = D = 4`, priority 1; `b` `HI`, `C(LO) = 1`, `C(HI) = 3`, `T = D = 6`, priority 2. It returns `Schedulable` with low-mode response 2 for `b` and high-mode response 4. With `C(HI) = 6` it returns `SufficientTestFailed`; with `C(LO) = C(HI) = 5` it returns `Miss` in low mode. | Test (TC-702) |
 | FR-247-AC-4 | An EDF set with utilization below 1 whose QPA check sequence under the default limit has more than 3 points, run with `max_demand_points` 3, returns `Stopped(LimitReached, MaxDemandPoints)` naming the value 3. | Test (TC-702) |
+| FR-247-AC-5 | `Ctl` under fixed priority with `max_demand_points` 1 returns `Stopped(LimitReached, MaxDemandPoints)` naming the value 1, and so does `Ctl` under EDF, although both are decided under the default limit: each fixed-priority window iteration, each EDF busy-period iteration and each QPA demand point costs one unit of `max_demand_points`, checked before the step it pays for. | Test (TC-702) |
 
 ## Dependencies
 

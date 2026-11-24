@@ -149,8 +149,8 @@ fn a_universe_that_overflows_the_used_type_is_refused_at_admission() {
         panic!("one refusal: {found:?}");
     };
     assert_eq!(
-        refusal.cause,
-        RefinementCause::PopulationBound {
+        &refusal.cause,
+        &RefinementCause::PopulationBound {
             row: "Q::Queue.used".to_owned(),
             population: "R::slots".to_owned(),
             size: 3,
@@ -519,9 +519,7 @@ fn a_sum_records_its_bound_and_is_checked_at_admission() {
     let Err(found) = refinement.admit_universes(&BTreeMap::from([(slots(), 3)])) else {
         panic!("three slots overflow Int[0, 2]");
     };
-    assert!(found.iter().any(|refusal| matches!(
-        &refusal.cause,
-        RefinementCause::PopulationBound { row, size: 3, .. } if row == "Q::Queue.total"
+    assert!(found.iter().any(|refusal| matches!(& refusal.cause, RefinementCause::PopulationBound { row, size: 3, .. } if row == "Q::Queue.total"
     )));
 }
 

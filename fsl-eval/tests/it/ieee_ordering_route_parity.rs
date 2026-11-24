@@ -6,15 +6,24 @@
 //! function evaluated from its checked graph and from its written bytes are
 //! equal entry for entry.
 
-use filament_eval::CallFailure;
-use filament_exact::{ChargePoint, IeeeValue, LimitKind, Meter, ScalarLimits, Value};
+use filament_eval::{CallFailure, FamilyOutcome};
+use filament_exact::{
+    ChargePoint, IeeeFlag, IeeeValue, LimitKind, Meter, ObjectId, ObjectReference, ScalarLimits,
+    UniverseId, Value, ValueType,
+};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+use filament_semantic_value::location::ExpressionOwner as LocationOwner;
+use filament_semantic_value::loss::ValueLoss;
+use filament_semantic_value::object_closure::ObjectClosure;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
+use fsl_semantics::model::observation::{
+    AdmissionUsage, AdmittedObservations, DocumentRef, Observation, SelfKind,
+};
 use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
 use ix_trace_rs::trace;
 
@@ -135,6 +144,16 @@ fn checked_unit(functions: &str) -> (CheckedPackage, fsl_package::Emission) {
     let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
         .expect("the checked package emits");
     (package, emission)
+}
+
+fn signature_after<'a>(source: &'a str, marker: &str) -> &'a str {
+    source
+        .split_once(marker)
+        .unwrap_or_else(|| panic!("missing public API marker {marker}"))
+        .1
+        .split_once('{')
+        .expect("function signature has a body")
+        .0
 }
 
 /// `entry` called at `arguments` on the source route over `package` and on the
@@ -786,4 +805,480 @@ fn a_source_models_clause_function_is_named_alike_on_both_routes() {
     let expected = "ix://u/Order/measure.precondition";
     assert_eq!(source_names, [expected]);
     assert_eq!(package_names, source_names);
+}
+
+/// FR-531-AC-40: the source-owned operation clause is selected by its
+/// admitted operation anchor on the bytes route, and both evaluators retain
+/// the source identity and child paths across the full work-unit sweep.
+#[test]
+fn source_operation_precondition_is_selected_by_anchor_and_located_on_both_routes() {
+    let text = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.model.complete/v1\";\n\
+        object ConfigVersion { versionNumber: Integer; operation probe(): Integer; operation size(): Integer; }\n\
+        object Sub extends ConfigVersion { operation size(): Integer redefines ConfigVersion::size; }\n\
+        object Leaf extends Sub { operation size(): Integer redefines Sub::size; }\n\
+        body sizeA using v on ConfigVersion::size() { 1 }\n\
+        body sizeB using v on Sub::size() { 2 }\n\
+        body sizeC using v on Leaf::size() { 3 }\n\
+        pre rootCall using v on ConfigVersion::probe { self.size() > 0 }\n\
+        pre sqrtPre using v on ConfigVersion::size { filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) <= filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) }\n";
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "u"),
+        "unit.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the source object unit");
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the source object unit");
+    let mut declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_owned(),
+        unit,
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect("S3 admits the source object operations and clauses");
+    declarations
+        .link_dispatch(Default::default())
+        .expect("rootCall reaches the source size operation");
+    declarations.ieee_profile = Some(
+        admit_ieee_profile(&[DefinitionRole::IeeeProfile.reference()], &[])
+            .expect("the IEEE value profile is admitted"),
+    );
+    let package = CheckedPackage::link(
+        declarations
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
+            .unwrap_or_else(|refusal| panic!("{refusal:?}")),
+    );
+    let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
+        .expect("S4 emits source-owner clause identities and body locations");
+    let bytes = emission.package().bytes();
+    assert!(
+        !bytes
+            .windows(b"ix://source/".len())
+            .any(|window| window == b"ix://source/"),
+        "the emitted package has no checker fallback identity"
+    );
+
+    let source_clause = package
+        .graph()
+        .state_clause("sqrtPre")
+        .expect("the authored operation precondition is checked");
+    let reference = ObjectReference::new(
+        UniverseId::new(source_clause.identity()),
+        source_clause.context(),
+        ObjectId::new("size-instance").expect("non-empty object identity"),
+    );
+    let pre = Observation {
+        identity: DocumentRef {
+            authority: "fixture".to_owned(),
+            identity: "fr531-ac40-pre".to_owned(),
+        },
+        environment: ObjectEnvironment::default(),
+        populations: Default::default(),
+        out_of_range: Vec::new(),
+    };
+    let observations = AdmittedObservations {
+        usage: AdmissionUsage::default(),
+        clause: source_clause.identity(),
+        current: None,
+        pre: Some(pre),
+        post: None,
+        self_object: reference.clone(),
+        self_population: None,
+        value_origins: Default::default(),
+        invocation: None,
+        self_kind: SelfKind::Object,
+        receiver_pre: None,
+        receiver_post: None,
+        parameters: Vec::new(),
+        result: None,
+        created: Vec::new(),
+        deleted: Vec::new(),
+    };
+    let evaluate_source = |limits| {
+        let mut meter = Meter::new(limits);
+        let evaluation = package
+            .evaluate_clause(
+                &QualifiedName::unqualified("sqrtPre").expect("the authored clause name"),
+                &observations,
+                &mut meter,
+            )
+            .expect("the checked source precondition evaluates")
+            .evaluation;
+        (evaluation, meter)
+    };
+    let (source, source_meter) = evaluate_source(UNLIMITED);
+
+    let empty_models = package_input(std::iter::empty::<&[u8]>()).expect("no model imports");
+    let read = fsl_package::read_evaluation_emission(
+        &package,
+        &emission,
+        LibraryName::new("fixture").expect("a library name"),
+        &empty_models,
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+        fsl_package::SourceWitnessSupplier::new(&emission),
+    )
+    .expect("the bytes-only reader admits the emitted package");
+    let admitted = read.admitted();
+    let mut supply_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let identities = emission
+        .identity_rows(admitted, &mut supply_budget)
+        .expect("the source identity rows materialize");
+    let bare = fsl_package::BarePackage::new(admitted)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &identities,
+                equality: None,
+            },
+            &mut supply_budget,
+        )
+        .expect("the package joins the selected source operation");
+    let operation = identities
+        .source_operations()
+        .iter()
+        .find(|row| row.source_identity.as_ref() == "ConfigVersion::size")
+        .expect("the admitted size operation identity row");
+    let anchor = operation.anchor_id.clone();
+    let selected_operations = identities
+        .selected_source_operations(admitted, 1_000_000)
+        .expect("the source-operation rows join to this admitted package");
+    let selected_callable = admitted
+        .source_operation_callable(&selected_operations, &anchor, 1_000_000)
+        .expect("the size operation anchor resolves from its selected identity");
+    assert!(
+        selected_callable.callable().is_some(),
+        "the admitted operation identity is exact"
+    );
+    let context = selected_callable
+        .callable()
+        .and_then(|callable| callable.context.as_ref())
+        .expect("the selected source operation retains its type context");
+    let context_owner = admitted
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| node.node_id == *context)
+        .and_then(|node| node.owner.as_ref())
+        .expect("the operation context has its source owner");
+    let clause_candidates = admitted
+        .resolved_graph()
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            let declaration = node.declaration.as_ref()?;
+            let names = &declaration.qualified_name;
+            (names
+                .first()
+                .is_some_and(|name| name.as_ref() == "ConfigVersion")
+                && names.get(1).is_some_and(|name| name.as_ref() == "size"))
+            .then_some((node.owner.as_ref(), names))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        clause_candidates
+            .iter()
+            .filter(|(owner, names)| {
+                *owner == Some(context_owner)
+                    && names
+                        .get(2)
+                        .is_some_and(|name| name.as_ref() == "precondition")
+            })
+            .count(),
+        1,
+        "the exact owner/name clause join is visible: {clause_candidates:?}"
+    );
+    let bare_world = bare
+        .world_with_source_objects()
+        .expect("the source-object types project under their declaring-unit identities");
+    let objects = ObjectEnvironment::new(
+        ObjectClosure::new(bare_world.types(), [(reference.clone(), Vec::new())], &[])
+            .expect("the source-owned receiver admits in the bare world"),
+    );
+    let evaluate_bytes = |limits| {
+        let mut meter = Meter::new(limits);
+        let mut native_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+        let evaluation = fsl_eval::value::evaluate_bare_source_operation_clause(
+            &bare,
+            &anchor,
+            fsl_package::SourceOperationClause::Precondition {
+                name: "sqrtPre".to_owned(),
+            },
+            vec![Value::Reference(reference.clone())],
+            &objects,
+            &mut meter,
+            &mut native_budget,
+        )
+        .expect("the selected bytes-only operation precondition evaluates");
+        (evaluation, meter)
+    };
+    let mut projection_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let debug_projection = bare
+        .project_source_operation_clause(
+            &anchor,
+            fsl_package::SourceOperationClause::Precondition {
+                name: "sqrtPre".to_owned(),
+            },
+            &mut projection_budget,
+        )
+        .expect("the source operation clause is selected by its admitted anchor");
+    assert_eq!(
+        debug_projection
+            .selected_function()
+            .and_then(|function| function.parameters.first())
+            .map(|parameter| &parameter.value_type),
+        Some(&ValueType::Reference(source_clause.context().clone())),
+        "the bytes route preserves the source-owned receiver type"
+    );
+    let (packaged, package_meter) = evaluate_bytes(UNLIMITED);
+    assert!(matches!(
+        &source.outcome,
+        FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(Value::Boolean(true)))
+    ));
+    assert!(matches!(
+        &packaged.outcome,
+        FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(Value::Boolean(true)))
+    ));
+
+    let wire: serde_json::Value = serde_json::from_slice(bytes).expect("canonical JSON");
+    let rows = wire["checked_term_data"]["body_locations"]
+        .as_array()
+        .expect("body location rows");
+    let clause_rows = rows
+        .iter()
+        .filter(|row| {
+            row["location"]["origin"]["name"]
+                .as_str()
+                .is_some_and(|name| {
+                    name.starts_with("ix://u/")
+                        && name.ends_with("/ConfigVersion/size.precondition")
+                })
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !clause_rows.is_empty(),
+        "the clause body has retained locations"
+    );
+    let function_name = clause_rows[0]["location"]["origin"]["name"]
+        .as_str()
+        .expect("source-owned body function name");
+    let function_index = clause_rows[0]["location"]["origin"]["index"]
+        .as_u64()
+        .expect("source-owned body function index") as usize;
+    assert!(function_name.starts_with("ix://u/"), "{function_name}");
+    for row in clause_rows {
+        assert_eq!(row["location"]["origin"]["name"], function_name);
+        assert_eq!(row["location"]["origin"]["index"], function_index);
+    }
+    for evaluation in [&source, &packaged] {
+        assert_eq!(evaluation.losses.len(), 2);
+        for (loss, path) in evaluation.losses.iter().zip([[0], [1]]) {
+            assert!(matches!(
+                loss.loss,
+                ValueLoss::IeeeFlags(flags)
+                    if flags.contains(IeeeFlag::Inexact)
+                        && flags.iter().collect::<Vec<_>>() == [IeeeFlag::Inexact]
+            ));
+            assert_eq!(
+                loss.location.origin,
+                LocationOwner::Body {
+                    function: function_name.to_owned(),
+                    index: function_index,
+                }
+            );
+            assert_eq!(loss.location.path(), path);
+        }
+    }
+    assert_eq!(
+        source_meter.consumed(LimitKind::WorkUnits),
+        package_meter.consumed(LimitKind::WorkUnits)
+    );
+    for limit in 0..source_meter.consumed(LimitKind::WorkUnits) {
+        let limits = ScalarLimits {
+            work_units: limit,
+            ..UNLIMITED
+        };
+        let (source, source_meter) = evaluate_source(limits);
+        let (packaged, package_meter) = evaluate_bytes(limits);
+        let FamilyOutcome::Evaluated(filament_exact::Outcome::Incomplete(source_stop)) =
+            &source.outcome
+        else {
+            panic!(
+                "source evaluator stops on the work limit: {:?}",
+                source.outcome
+            );
+        };
+        let FamilyOutcome::Evaluated(filament_exact::Outcome::Incomplete(package_stop)) =
+            &packaged.outcome
+        else {
+            panic!(
+                "bytes evaluator stops on the work limit: {:?}",
+                packaged.outcome
+            );
+        };
+        assert_eq!(source_stop, package_stop, "work limit {limit}");
+        assert_eq!(source.location, packaged.location, "work limit {limit}");
+        assert_eq!(
+            source_meter.consumed(LimitKind::WorkUnits),
+            package_meter.consumed(LimitKind::WorkUnits),
+            "work limit {limit}"
+        );
+    }
+}
+
+/// TC-1331: public native joins have caller-owned finite budgets, the
+/// bytes-only operation selector retains typed work-limit failure at its
+/// package locus, and BarePackage has no copying constructor trait.
+#[trace("TC-1331", "FR-531-AC-25")]
+#[test]
+fn bare_operation_selection_uses_a_finite_caller_budget_and_keeps_its_typed_limit() {
+    let text = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.model.complete/v1\";\n\
+        object ConfigVersion { versionNumber: Integer; operation probe(): Integer; operation size(): Integer; }\n\
+        body sizeA using v on ConfigVersion::size() { 1 }\n\
+        pre rootCall using v on ConfigVersion::probe { self.size() > 0 }\n\
+        pre sqrtPre using v on ConfigVersion::size { true }\n";
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "u"),
+        "unit.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the source-operation unit");
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the source-operation unit");
+    let mut declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_owned(),
+        unit,
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect("S3 admits the source operation");
+    declarations
+        .link_dispatch(Default::default())
+        .expect("the source operation dispatch links");
+    declarations.ieee_profile = Some(
+        admit_ieee_profile(&[DefinitionRole::IeeeProfile.reference()], &[])
+            .expect("the value profile is admitted"),
+    );
+    let package = CheckedPackage::link(
+        declarations
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
+            .expect("the source operation checks"),
+    );
+    let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
+        .expect("the checked source operation emits");
+    let no_models = package_input(std::iter::empty::<&[u8]>()).expect("no model imports");
+    let read = fsl_package::read_evaluation_emission(
+        &package,
+        &emission,
+        LibraryName::new("fixture").expect("library name"),
+        &no_models,
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+        fsl_package::SourceWitnessSupplier::new(&emission),
+    )
+    .expect("the checked bytes are admitted");
+    let admitted = read.admitted();
+    let mut supply_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let identities = emission
+        .identity_rows(admitted, &mut supply_budget)
+        .expect("the source identity rows materialize");
+    let bare = fsl_package::BarePackage::new(admitted)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &identities,
+                equality: None,
+            },
+            &mut supply_budget,
+        )
+        .expect("the finite supply budget admits its rows");
+    let anchor = identities
+        .source_operations()
+        .iter()
+        .find(|row| row.source_identity.as_ref() == "ConfigVersion::size")
+        .expect("the exact source-operation row")
+        .anchor_id
+        .clone();
+    let mut no_native_work = fsl_package::NativeJoinBudget::new(0, 0);
+    let refusal = match bare.project_source_operation_clause(
+        &anchor,
+        fsl_package::SourceOperationClause::Precondition {
+            name: "sqrtPre".to_owned(),
+        },
+        &mut no_native_work,
+    ) {
+        Err(refusal) => refusal,
+        Ok(_) => panic!("zero native work refuses before source-operation selection"),
+    };
+    let fsl_package::BareSourceOperationFailure::NativeJoin(failure) = refusal else {
+        panic!("zero native work is a typed native-join refusal: {refusal:?}");
+    };
+    assert_eq!(
+        failure.setting(),
+        Some(fsl_foundation::Setting::I2WorkUnits)
+    );
+    assert!(matches!(
+        failure.native(),
+        fsl_package::NativeJoinFailure::Rows(error)
+            if error.code() == fsl_package::NativeRowErrorCode::WorkLimit
+                && error.locus().is_some_and(|locus| locus.form == "source-operation-clause")
+    ));
+    assert_eq!(
+        failure.limit().map(|limit| limit.setting()),
+        Some(fsl_foundation::Setting::I2WorkUnits)
+    );
+    assert_eq!(
+        failure.limit().map(|limit| limit.configured_bound()),
+        Some(0)
+    );
+
+    let intake = include_str!("../../../fsl-semantics/src/model/intake.rs");
+    let selected_models = include_str!("../../../fsl-semantics/src/model/intake/unit.rs");
+    let checked_graph = include_str!("../../../fsl-semantics/src/check/mod.rs");
+    let package_source = include_str!("../../../fsl-package/src/bare.rs");
+    let evidence = include_str!("../../../fsl-eval/src/temporal/evidence/package.rs");
+    let evaluator = include_str!("../../../fsl-eval/src/value/expression/bare.rs");
+    for signature in [
+        signature_after(intake, "pub fn selected_exact_identities_from_rows("),
+        signature_after(selected_models, "pub fn exact_identities("),
+        signature_after(checked_graph, "pub fn selected_exact_identities("),
+        signature_after(package_source, "pub fn selected("),
+        signature_after(package_source, "pub fn with_supply("),
+        signature_after(evidence, "pub fn from_emission("),
+        signature_after(evidence, "pub fn from_read("),
+        signature_after(evidence, "pub fn from_package("),
+    ] {
+        assert!(signature.contains("budget: &mut"), "{signature}");
+        assert!(signature.contains("NativeJoinBudget"), "{signature}");
+    }
+    let selector = include_str!("../../../fsl-package/src/bare_slot.rs");
+    let selector = signature_after(selector, "pub fn project_source_operation_clause(");
+    assert!(selector.contains("budget: &mut"));
+    assert!(selector.contains("NativeJoinBudget"));
+    assert!(!selector.contains("u64::MAX"));
+    assert!(!selector.contains("NativeJoinBudget::new"));
+    let evaluator_entry = evaluator
+        .split_once("pub fn evaluate_bare_source_operation_clause(")
+        .expect("the public bytes-only source-operation entry")
+        .1
+        .split_once("/// A selection or projection refusal")
+        .expect("the entry body ends before the ordinary refusal mapper")
+        .0;
+    assert!(!evaluator_entry.contains("u64::MAX"));
+    assert!(!evaluator_entry.contains("NativeJoinBudget::new"));
+    assert!(!package_source.contains("u64::MAX"));
+    assert!(!package_source.contains("NativeJoinBudget::new"));
+    assert!(package_source.contains("#[derive(Debug)]\npub struct BarePackage"));
+    assert!(!package_source.contains("impl Clone for BarePackage"));
+    assert!(!package_source.contains("impl Copy for BarePackage"));
 }

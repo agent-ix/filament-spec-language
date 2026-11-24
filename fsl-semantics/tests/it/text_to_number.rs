@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! QSL-2241: text-to-number conversion type checking and checked lowering.
 
+use filament_exact::{TextProfile, TextType, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-use fsl_forms::build_unit;
+use fsl_forms::{build_unit, BuiltinType, Expression, TypeForm};
 use fsl_foundation::{Code, SourceIdentity};
 use fsl_semantics::check::{
     ApplicationTerm, AssemblyRefusal, BodyTerm, CheckRefusal, CheckedGraph, LawRole, LeafTerm,
@@ -76,7 +77,7 @@ fn applications(graph: &CheckedGraph) -> Vec<&ApplicationTerm> {
         .collect()
 }
 
-#[trace("TC-1196", "FR-093-AC-35")]
+#[trace("TC-1196", "FR-093-AC-35", "FR-093-AC-66")]
 #[test]
 fn text_and_string_conversions_build_their_typed_operations() {
     let graph = check(&format!(
@@ -281,7 +282,7 @@ fn text_conversion_inside_equality_references_the_convert_node() {
     }));
 }
 
-#[trace("TC-1196", "FR-093-AC-47")]
+#[trace("TC-1196", "FR-093-AC-47", "FR-093-AC-66")]
 #[test]
 fn text_to_non_numeric_targets_is_refused_as_operator_ineligible() {
     assert_refused(
@@ -313,7 +314,7 @@ fn text_to_non_numeric_targets_is_refused_as_operator_ineligible() {
     );
 }
 
-#[trace("TC-1196", "FR-093-AC-47")]
+#[trace("TC-1196", "FR-093-AC-47", "FR-093-AC-66")]
 #[test]
 fn conversion_to_the_same_text_type_is_an_identity_without_a_node() {
     let graph = check(
@@ -334,4 +335,65 @@ fn conversion_to_the_same_text_type_is_an_identity_without_a_node() {
         first, second,
         "the identity conversion leaves the operand reference intact"
     );
+}
+
+/// FR-093-AC-66: a bare Decimal or Rational target fails in S1 at the
+/// closing angle bracket, before type checking or lowering can begin.
+#[trace("TC-1196", "FR-093-AC-66")]
+#[test]
+fn bare_decimal_and_rational_conversion_targets_fail_at_s1() {
+    for (target, expression) in [
+        ("Decimal", "convert<Decimal>(t)"),
+        ("Rational", "convert<Rational>(t)"),
+    ] {
+        let source = unit_text(&format!(
+            "function f using v(t: Text[0, 64; unicode-scalars]): Boolean pure {{ {expression} }}"
+        ));
+        let parsed = fsl_cst::parse(
+            SourceIdentity::new("test", "bare-numeric-conversion"),
+            "text-conversion.native",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("the source bytes admit");
+        assert!(!parsed.is_admissible(), "bare {target} fails during S1");
+        let [diagnostic] = parsed.diagnostics() else {
+            panic!("one S1 refusal for {target}: {:?}", parsed.diagnostics());
+        };
+        assert_eq!(diagnostic.phase, fsl_foundation::Phase::Parse);
+        assert_eq!(diagnostic.code, fsl_cst::CompleteCode::InvalidSyntax);
+        assert_eq!(diagnostic.cause, fsl_cst::CompleteCause::UnexpectedToken);
+        let span = diagnostic.byte_span().expect("the token has a source span");
+        assert_eq!(&source[span.start..span.end], ">");
+    }
+}
+
+/// FR-093-AC-66: a bound-less Decimal passed through the expression-check
+/// API is refused before a text conversion node can be produced.
+#[trace("TC-1196", "FR-093-AC-66")]
+#[test]
+fn a_boundless_decimal_target_is_refused_by_standalone_expression_check() {
+    let graph = check("function anchor using v(): Boolean pure { true }")
+        .expect("the anchor package checks");
+    let text_type = ValueType::Text(
+        TextType::new(0, 64, TextProfile::UnicodeScalars).expect("bounded text type"),
+    );
+    let expression = Expression::convert(
+        TypeForm::builtin(
+            BuiltinType::Decimal,
+            fsl_foundation::Span { start: 0, end: 0 },
+        ),
+        Expression::name("t"),
+    );
+    let refusal = graph
+        .check_expression(
+            vec![("t".to_owned(), text_type)],
+            &expression,
+            None,
+            CheckMode::Linked,
+            CheckingLimits::default(),
+        )
+        .expect_err("a bare Decimal target has no value bounds");
+    assert_eq!(refusal.cause.code(), Code::IllTyped);
+    assert_eq!(refusal.cause.cause(), Some("type-mismatch"));
 }

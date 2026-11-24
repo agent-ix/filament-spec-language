@@ -23,6 +23,110 @@ use crate::analyze_cli_support::{
 use crate::counter::{document, package_with_mode, CONTRACT};
 use filament_semantic_value::checking::CheckMode;
 
+/// FR-940-AC-32: direct source and admitted-package calls over the same
+/// payload-bearing union argument retain their semantic outcomes and ordered
+/// evaluation charge logs. The command-level run test separately verifies
+/// the public canonical argument and requirement-item boundary.
+#[trace("TC-2958", "FR-940-AC-32")]
+#[test]
+fn package_union_function_call_has_source_charge_logs() {
+    use filament_exact::{Meter, Outcome, Value};
+    use filament_eval::FamilyOutcome;
+    use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
+    use fsl_package::{
+        admit_checked_package, BarePackage, BareSupply, ReadIdentityRows, V2ReadLimits,
+    };
+
+    const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.value.complete/v1\";\n\
+        union Shape { Empty, Circle(Boolean) }\n\
+        function isCircle using v(s: Shape): Boolean pure {\
+          case s { Empty: false; Circle(payload): payload; }\
+        }\n\
+        function shape using v(): Shape pure { Shape::Circle(true) }\n\
+        function emptyShape using v(): Shape pure { Shape::Empty }\n";
+    let ws = Workspace::new("package-union-call-charge-logs");
+    ws.write("program.fsl", UNIT.as_bytes());
+    let request = serde_json::json!({
+        "models": [],
+        "program": {"source": {"file": "program.fsl", "authority": "test",
+            "identity": "union-call", "document": "UnionCall", "formal_revision": 1}}
+    });
+    let (_, bytes) = package_selection(&ws, &request);
+    let compiled = fsl_command::checked_handoff::compile(&ws.path(HANDOFF))
+        .expect("the exact producer handoff recompiles");
+    let limits = V2ReadLimits::bounded(1 << 24);
+    let admitted = admit_checked_package(&bytes, compiled.packages(), limits)
+        .expect("the producer bytes admit");
+    let mut budget = limits.native_join_limits().budget();
+    let identities = ReadIdentityRows::read(
+        &std::fs::read(ws.path(&format!("{HANDOFF}/identities.json")))
+            .expect("the handoff identity rows"),
+        &admitted,
+        &mut budget,
+    )
+    .expect("the identity rows join");
+    let bare = BarePackage::new(&admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: None,
+            },
+            &mut budget,
+        )
+        .expect("the package identity supply joins");
+    let source = compiled.checked();
+    let name = |function: &str| {
+        QualifiedName::new(vec![function.to_owned()]).expect("function name")
+    };
+    let objects = ObjectEnvironment::default();
+
+    for (constructor, expected) in [("shape", true), ("emptyShape", false)] {
+        let mut value_meter = Meter::new(UNLIMITED);
+        let value = source
+            .call(&name(constructor), Vec::new(), &objects, &mut value_meter)
+            .expect("source constructor call");
+        let argument = match value.outcome {
+            FamilyOutcome::Evaluated(Outcome::Completed(value)) => value,
+            other => panic!("constructor returns a union value: {other:?}"),
+        };
+        let mut source_meter = Meter::new(UNLIMITED);
+        let mut package_meter = Meter::new(UNLIMITED);
+        let source_result = source
+            .call(
+                &name("isCircle"),
+                vec![argument.clone()],
+                &objects,
+                &mut source_meter,
+            )
+            .expect("source function accepts the union argument");
+        let package_result = bare
+            .call(
+                &name("isCircle"),
+                vec![argument],
+                &objects,
+                &mut package_meter,
+            )
+            .expect("admitted package function accepts the same union argument");
+        assert_eq!(
+            format!("{:?}", source_result.outcome),
+            format!("{:?}", package_result.outcome)
+        );
+        assert!(matches!(
+            source_result.outcome,
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(actual))) if actual == expected
+        ));
+        assert!(!source_meter.admitted_charges().is_empty());
+        assert!(!source_meter.charge_log_truncated());
+        assert!(!package_meter.charge_log_truncated());
+        assert_eq!(
+            package_meter.admitted_charges(),
+            source_meter.admitted_charges(),
+            "ordered semantic charge log for {constructor}"
+        );
+    }
+}
+
 const UNLIMITED: ScalarLimits = ScalarLimits {
     integer_bits: u64::MAX,
     decimal_digits: u64::MAX,

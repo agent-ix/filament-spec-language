@@ -107,7 +107,7 @@ fn some_with_a_payload_outside_the_element_type_refuses_at_the_call() {
     assert_eq!(refusal.cause.code(), Code::IllTyped);
     assert_eq!(refusal.cause.cause(), Some("type-mismatch"));
     assert!(matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
     ));
     assert!(matches!(
@@ -147,7 +147,7 @@ fn a_null_expression_is_ill_typed_at_s3() {
             Some("type-mismatch"),
             "{declaration}"
         );
-        assert!(matches!(&refusal.cause, CheckCause::NullExpression));
+        assert!(matches!(refusal.cause.as_ref(), CheckCause::NullExpression));
         assert!(matches!(
             &refusal.location.origin,
             Origin::Body { function, index: 0, .. } if function == "bad"

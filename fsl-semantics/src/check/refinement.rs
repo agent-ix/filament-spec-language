@@ -33,7 +33,7 @@ mod protocol;
 mod rows;
 mod step_label;
 
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug, With};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, With, standalone};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::check::wire_id::structural_id;
@@ -71,18 +71,18 @@ pub(crate) use rows::{
     KeyedFairnessRow, KeyedHistoryRow, KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows,
     KeyedStepRow, KeyedStepTarget,
 };
-pub use step_label::{observation, LabelStep, RowObservation, StepLabel};
+pub use step_label::{LabelStep, RowObservation, StepLabel, observation};
 
 use super::check::{
-    bind_parameters, PopulationScope, ScopedHistory, ScopedPopulation, StateContext, Typer,
+    PopulationScope, ScopedHistory, ScopedPopulation, StateContext, Typer, bind_parameters,
 };
-use super::ir::{static_integer_range, CheckedBody, CheckedNode};
+use super::ir::{CheckedBody, CheckedNode, static_integer_range};
 use super::lowering::AdmittedModel;
 use super::observation::Observations;
 use super::profile::TemporalProfile;
 use super::protocol_clause::ProtocolNodeId;
 use super::refusal::{CheckCause, CheckRefusal, KeyFault};
-use super::state_clause::{observation_of, ClauseDeclarations, ClauseOperation, PopulationDomain};
+use super::state_clause::{ClauseDeclarations, ClauseOperation, PopulationDomain, observation_of};
 use crate::family::CheckContext;
 use crate::model::clause_observation::Observation;
 use crate::model::domain_package::{DomainPackageRef, PopulationRecord};
@@ -391,6 +391,9 @@ pub struct CheckedRow {
     pub(crate) observations: Observations,
     /// The name each body slot was bound under, indexed by slot.
     pub(crate) slot_names: Vec<String>,
+    /// The refinement row this expression belongs to, as `Type.field` or
+    /// `step operation` (FR-139 diagnostic ownership).
+    pub(crate) name: String,
     /// The declaration site the body's locations name: the row
     /// expression, whose span tree [`Self::spans`] is (see [`row_site`]).
     pub(crate) site: String,
@@ -408,6 +411,7 @@ impl std::fmt::Debug for CheckedRow {
             .field("uses", &self.uses)
             .field("observations", &self.observations)
             .field("slot_names", &self.slot_names)
+            .field("name", &self.name)
             .finish_non_exhaustive()
     }
 }
@@ -438,6 +442,11 @@ impl CheckedRow {
     /// which a subject's admission checks (FR-139).
     pub fn population_uses(&self) -> &[PopulationUse] {
         &self.uses
+    }
+
+    /// The enclosing refinement row, as `Type.field` or `step operation`.
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -683,10 +692,12 @@ impl CheckedRefinement {
             let target = match &row.target {
                 KeyedStepTarget::Operation {
                     operation,
+                    target_type,
                     receiver,
                     arguments: written,
                 } => RefinementStepTarget::Operation {
                     operation: local(operation),
+                    target_type: local(target_type),
                     receiver: Box::new(term(receiver)?),
                     arguments: arguments(written)?,
                 },
@@ -938,7 +949,7 @@ impl CheckedRefinement {
                         receiver,
                         arguments,
                         ..
-                    } => std::iter::once(receiver)
+                    } => std::iter::once(receiver.as_ref())
                         .chain(arguments.iter().flatten())
                         .collect::<Vec<_>>(),
                     StepTarget::Node { arguments, .. } => {
@@ -1123,7 +1134,7 @@ fn leaf_checked_term(
     use crate::check::node_key::{LeafTerm, LiteralValue, NodeRef};
     use filament_contract_model::CheckedTerm;
     use serde::de::Error as _;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     let admitted = |node: &NodeRef| {
         node.admitted().map(structural_id).ok_or_else(|| {
             RefinementV2EncodingError::Body(serde_json::Error::custom(
@@ -1314,7 +1325,7 @@ pub enum StepTarget {
         /// type, or a subtype of it when the operation is inherited (FR-141-AC-16).
         target_type: DeclarationKey,
         /// The receiver, over the concrete step.
-        receiver: CheckedRow,
+        receiver: Box<CheckedRow>,
         /// One entry per abstract parameter; `None` is `_`.
         arguments: Vec<Option<CheckedRow>>,
         /// Whether both operations declare a result, which the abstract
@@ -1531,12 +1542,18 @@ pub struct CheckedRefinement {
     /// The canonical selected package for the abstract side; its identity
     /// is independent of the source alias (FR-135).
     pub(crate) abstract_model_selection: DomainPackageRef,
+    /// The admitted version of the abstract package selection, when its
+    /// selected package document declares one (FR-135).
+    pub(crate) abstract_model_version: Option<String>,
     pub(crate) abstract_side: AbstractSide,
     pub(crate) abstract_internal: Vec<AbstractStepClass>,
     pub(crate) concrete_model: String,
     /// The canonical selected package for the concrete side; its identity
     /// is independent of the source alias (FR-135).
     pub(crate) concrete_model_selection: DomainPackageRef,
+    /// The admitted version of the concrete package selection, when its
+    /// selected package document declares one (FR-135).
+    pub(crate) concrete_model_version: Option<String>,
     pub(crate) populations: Vec<PopulationRow>,
     pub(crate) objects: Vec<ObjectRow>,
     pub(crate) steps: Vec<StepRow>,
@@ -1598,10 +1615,12 @@ impl DebugWith for CheckedRefinement {
             profile,
             abstract_model,
             abstract_model_selection,
+            abstract_model_version,
             abstract_side,
             abstract_internal,
             concrete_model,
             concrete_model_selection,
+            concrete_model_version,
             populations,
             objects,
             steps,
@@ -1629,10 +1648,12 @@ impl DebugWith for CheckedRefinement {
             .field("profile", &profile)
             .field("abstract_model", &abstract_model)
             .field("abstract_model_selection", &abstract_model_selection)
+            .field("abstract_model_version", &abstract_model_version)
             .field("abstract_side", &abstract_side)
             .field("abstract_internal", &abstract_internal)
             .field("concrete_model", &concrete_model)
             .field("concrete_model_selection", &concrete_model_selection)
+            .field("concrete_model_version", &concrete_model_version)
             .field("populations", &With(populations, table))
             .field("objects", &objects)
             .field("steps", &steps)
@@ -1768,6 +1789,11 @@ impl CheckedRefinement {
         &self.abstract_model_selection
     }
 
+    /// The selected abstract model package's source version, when admitted.
+    pub fn abstract_model_version(&self) -> Option<&str> {
+        self.abstract_model_version.as_deref()
+    }
+
     /// The abstract subject: the model, or a protocol clause of it (FR-147).
     pub fn abstract_side(&self) -> &AbstractSide {
         &self.abstract_side
@@ -1789,6 +1815,11 @@ impl CheckedRefinement {
     /// The selected package identity for the concrete model.
     pub fn concrete_model_selection(&self) -> &DomainPackageRef {
         &self.concrete_model_selection
+    }
+
+    /// The selected concrete model package's source version, when admitted.
+    pub fn concrete_model_version(&self) -> Option<&str> {
+        self.concrete_model_version.as_deref()
     }
 
     /// The population rows, in source order.
@@ -1877,7 +1908,7 @@ impl CheckedRefinement {
                 receiver,
                 arguments,
                 ..
-            } => std::iter::once(receiver)
+            } => std::iter::once(receiver.as_ref())
                 .chain(arguments.iter().flatten())
                 .collect::<Vec<_>>(),
             StepTarget::Node { arguments, .. } => arguments.iter().flatten().collect(),
@@ -2079,11 +2110,11 @@ impl Findings {
     fn refuse(&mut self, span: Span, cause: RefinementCause) {
         self.refusals.push(CheckRefusal {
             location: Location::root(Origin::Expression),
-            cause: CheckCause::Refinement(Box::new(RefinementRefusal {
+            cause: Box::new(CheckCause::Refinement(Box::new(RefinementRefusal {
                 refinement: self.refinement.clone(),
                 span,
                 cause,
-            })),
+            }))),
         });
     }
 
@@ -2118,9 +2149,8 @@ impl Findings {
     fn fault(&mut self, invariant: &'static str) {
         self.refusals.push(CheckRefusal {
             location: Location::root(Origin::Expression),
-            cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(InternalFault::new(
-                "check.refinement",
-                invariant,
+            cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                InternalFault::new("check.refinement", invariant),
             )))),
         });
     }
@@ -2410,7 +2440,9 @@ pub(crate) fn check_refinement<'f: 'c, 'a, 'c>(
             return (
                 RefinementCheck::Refused(vec![CheckRefusal {
                     location: Location::root(Origin::Expression),
-                    cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(fault))),
+                    cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                        fault,
+                    )))),
                 }]),
                 nodes,
             );
@@ -2431,6 +2463,7 @@ pub(crate) fn check_refinement<'f: 'c, 'a, 'c>(
         profile: declaration.selection.clone(),
         abstract_model: abstract_alias.name.clone(),
         abstract_model_selection,
+        abstract_model_version: None,
         abstract_side: match &form.abstract_side {
             AbstractSideForm::Model(_) => AbstractSide::Model,
             AbstractSideForm::Protocol { clause, .. } => AbstractSide::Protocol {
@@ -2446,6 +2479,7 @@ pub(crate) fn check_refinement<'f: 'c, 'a, 'c>(
         },
         concrete_model: form.concrete.name.clone(),
         concrete_model_selection,
+        concrete_model_version: None,
         populations,
         objects,
         steps: Vec::new(),
@@ -3432,6 +3466,7 @@ impl<'c, 'a> Checker<'c, 'a> {
                 parent_projections: BTreeMap::new(),
                 kind,
                 operation,
+                authored_operation: None,
                 self_slot: 0,
                 result_slot: None,
             });
@@ -3476,6 +3511,7 @@ impl<'c, 'a> Checker<'c, 'a> {
                     uses,
                     observations,
                     slot_names,
+                    name: label,
                     site,
                     spans: expression.spans.clone(),
                 })
@@ -3488,7 +3524,7 @@ impl<'c, 'a> Checker<'c, 'a> {
                 {
                     Some(span) => self
                         .findings
-                        .refuse(span, RefinementCause::Check(refusal.cause)),
+                        .refuse(span, RefinementCause::Check(*refusal.cause)),
                     None => self.fault("row-expression-has-a-span"),
                 }
                 None
@@ -4006,7 +4042,7 @@ impl<'c, 'a> Checker<'c, 'a> {
             StepTarget::Abstract {
                 operation: key,
                 target_type: target_type.key.clone(),
-                receiver,
+                receiver: Box::new(receiver),
                 arguments: checked,
                 binds_result,
             },
@@ -4116,7 +4152,7 @@ struct RowContext {
 fn refuse_with(location: &Location, cause: CheckCause) -> CheckRefusal {
     CheckRefusal {
         location: location.clone(),
-        cause,
+        cause: Box::new(cause),
     }
 }
 
@@ -4281,10 +4317,11 @@ fn population_uses(
                 && collection.bound().is_none_or(|bound| bound.minimum() == 0)
         }
         (PopulationValue::Count | PopulationValue::Sum { .. }, ValueType::Integer) => true,
-        (PopulationValue::Count | PopulationValue::Sum { .. }, ValueType::Int(target)) => {
-            // `n` is at least 0, and a sum over no object is 0.
-            (target.lower().is_negative() || target.lower().is_zero())
-                && !target.upper().is_negative()
+        (PopulationValue::Count | PopulationValue::Sum { .. }, ValueType::Int(_)) => {
+            // The exact interval depends on the admitted universe size. A
+            // `where` may select no object, so sums include zero; defer all
+            // bounded-integer compatibility to subject admission.
+            true
         }
         _ => false,
     };
@@ -4324,7 +4361,7 @@ fn relaxed_conforms(types: &TypeEnvironment, actual: &ValueType, required: &Valu
 pub(crate) fn not_emitted(name: String, span: Span) -> CheckRefusal {
     CheckRefusal {
         location: Location::root(Origin::Expression),
-        cause: CheckCause::RefinementNotEmitted { name, span },
+        cause: Box::new(CheckCause::RefinementNotEmitted { name, span }),
     }
 }
 

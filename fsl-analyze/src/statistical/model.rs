@@ -29,7 +29,8 @@ use fsl_eval::automaton::{
 };
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{
-    ModelSimState, ModelSystem, PredicateReading, TimedRaceStop, TimedSampleStop, TimedSystem,
+    advance_timed, ModelSimState, ModelSystem, PredicateReading, TimedAdvance, TimedRaceStep,
+    TimedRaceStop, TimedSampleStop, TimedState, TimedStop, TimedSystem, TransitionId,
 };
 use fsl_eval::simulation::{
     ExpansionStop, NotSimulated, Permutation, ProbabilisticSampler, SampleStop, SampledPosition,
@@ -75,6 +76,9 @@ pub struct StatisticalRequest<'a> {
     pub method: StatisticalMethod,
     /// The seed.
     pub seed: u64,
+    /// Number of concurrent sample workers requested (FR-191); zero is
+    /// refused before admission or sampling.
+    pub workers: usize,
     /// The sampler, checked by identity: `filament.simulation.sampler/v1`.
     pub sampler: DefinitionRef,
     /// The budgets (FR-191).
@@ -112,7 +116,8 @@ fn fault(invariant: &'static str) -> StatisticalRefusal {
 /// evidence decides; [`StatisticalRefusal::NotStatistical`];
 /// [`StatisticalRefusal::Admission`] when the subject does not admit;
 /// [`StatisticalRefusal::RequiresBound`] when the `over` type's population has
-/// no universe; [`StatisticalRefusal::GeneratorMismatch`]; and every refusal
+/// no universe; [`StatisticalRefusal::Workers`] for zero workers;
+/// [`StatisticalRefusal::GeneratorMismatch`]; and every refusal
 /// of [`check_sampled`].
 pub fn check_statistical(
     request: StatisticalRequest<'_>,
@@ -123,23 +128,20 @@ pub fn check_statistical(
         claim,
         method,
         seed,
+        workers,
         sampler,
         limits,
         max_witnesses,
         symmetry,
         timed_sampling,
     } = request;
+    if workers == 0 {
+        return Err(StatisticalRefusal::Workers);
+    }
     require_statistical(claim)?;
     let (statistical, reading) = reduce(claim)?;
     let scalar_limits = subject.simulation.meter;
     let form = statistical.form();
-    if matches!(
-        &reading,
-        Reading::LongRun { weight, .. }
-            if matches!(weight, Some(Weighting::Delay))
-    ) {
-        return Err(StatisticalRefusal::DelayWeighting);
-    }
     if !form.admits(method) {
         return Err(StatisticalRefusal::NotStatistical { method, form });
     }
@@ -188,6 +190,7 @@ pub fn check_statistical(
             tests: &tests,
             method,
             seed,
+            workers,
             sampler: &sampler,
             limits,
             max_witnesses,
@@ -1533,8 +1536,21 @@ impl<'c> Shared<'_, '_, 'c> {
 impl<'s, 'a, 'c> BehaviourSampler for ModelSampler<'s, 'a, 'c> {
     type Walk = ModelWalk<'s, 'a, 'c>;
 
+    fn sample_batch_width(&self) -> usize {
+        1
+    }
+
     fn sample(&mut self, test: &TestSubject, seed: u64, trace: u64) -> Result<Drawn, SampleHalt> {
         self.shared.borrow_mut().sample(test, seed, trace)
+    }
+
+    fn sample_batch(
+        &mut self,
+        test: &TestSubject,
+        seed: u64,
+        traces: &[u64],
+    ) -> Vec<(u64, Result<Drawn, SampleHalt>)> {
+        super::serial_sample_batch(self, test, seed, traces)
     }
 
     fn walk(&mut self, test: &TestSubject, seed: u64, trace: u64) -> Self::Walk {
@@ -1544,6 +1560,7 @@ impl<'s, 'a, 'c> BehaviourSampler for ModelSampler<'s, 'a, 'c> {
             seed,
             trace,
             walk: None,
+            timed: None,
         }
     }
 }
@@ -1568,15 +1585,187 @@ struct ModelWalk<'s, 'a, 'c> {
     seed: u64,
     trace: u64,
     walk: Option<Walking>,
+    timed: Option<TimedWalking>,
+}
+
+/// Where a delay-weighted regeneration walk stands (FSpec FR-420).
+struct TimedWalking {
+    binding: usize,
+    /// The initial timed state's key: its discrete state and every clock. A
+    /// position with this key and no tied step pending regenerates the run;
+    /// each race redraws every delay, so no draw is pending at one.
+    initial: fsl_eval::simulation::StateKey,
+    state: TimedState,
+    /// The tied steps of the last race still to take, in order.
+    pending: std::collections::VecDeque<TimedRaceStep>,
+    steps: Vec<SampledStep>,
+    stamp: Rational,
+    /// Positions read.
+    taken: u64,
+    /// Delay advanced to an invariant boundary before the next race, owed to
+    /// the weight of the step leaving the current position.
+    owed: Rational,
+}
+
+/// The halt of a refused timed advance.
+fn timed_halt(stop: TimedSampleStop) -> SampleHalt {
+    match stop {
+        TimedSampleStop::Race(TimedRaceStop::NotStochastic { state, identity }) => {
+            SampleHalt::NotStochastic { state, identity }
+        }
+        TimedSampleStop::TimeLockedSample { state } => SampleHalt::TimeLockedSample { state },
+        TimedSampleStop::Race(TimedRaceStop::Timed(TimedStop::Expansion(stop))) => {
+            SampleHalt::Expansion(stop)
+        }
+        _ => broken(),
+    }
 }
 
 impl ModelWalk<'_, '_, '_> {
+    /// The next position of a delay-weighted walk: `P` at the position, then
+    /// the next race, the position weighed by the delay of the step that
+    /// leaves it.
+    fn timed_step(&mut self) -> Result<WalkStep, Ended> {
+        let mut shared = self.shared.borrow_mut();
+        let Reading::LongRun { predicate, .. } = &shared.reading else {
+            return Err(broken().into());
+        };
+        let predicate = *predicate;
+        let Shared {
+            system,
+            workload,
+            timed_system,
+            timed_sampling,
+            bindings,
+            truths,
+            cancel,
+            ..
+        } = &mut *shared;
+        let timed = timed_system.as_ref().ok_or_else(broken)?;
+        let mut walk = match self.timed.take() {
+            Some(walk) => walk,
+            None => {
+                let binding = bindings
+                    .iter()
+                    .position(|(binding, _)| *binding == self.test.binding)
+                    .ok_or_else(broken)?;
+                let state = timed
+                    .initial()
+                    .into_iter()
+                    .nth(usize::try_from(self.test.initial).unwrap_or(usize::MAX))
+                    .ok_or_else(broken)?;
+                TimedWalking {
+                    binding,
+                    initial: timed.state_key(&state).map_err(|_| broken())?,
+                    state,
+                    pending: std::collections::VecDeque::new(),
+                    steps: Vec::new(),
+                    stamp: Rational::from_integer(Integer::zero()),
+                    taken: 0,
+                    owed: Rational::from_integer(Integer::zero()),
+                }
+            }
+        };
+        let discrete = system
+            .state_key(walk.state.discrete())
+            .map_err(|_| broken())?;
+        let key = (walk.binding, discrete.0.to_vec());
+        let readings = match truths.get(&key) {
+            Some(known) => known.clone(),
+            None => {
+                let over = bindings
+                    .get(walk.binding)
+                    .and_then(|(_, over)| over.as_ref());
+                let readings = system
+                    .state_predicates(walk.state.discrete(), &[(predicate, over)])
+                    .map_err(SampleHalt::Expansion)?;
+                truths.insert(key, readings.clone());
+                readings
+            }
+        };
+        let holds = match readings.first().ok_or_else(broken)? {
+            PredicateReading::True => true,
+            PredicateReading::False => false,
+            PredicateReading::Undefined { cause, .. } => {
+                return Ok(WalkStep::Undefined {
+                    evaluation: UndefinedEvaluation {
+                        site: UndefinedSite {
+                            position: walk.taken,
+                            state_key: discrete.1,
+                            locus: UndefinedLocus::ClaimPredicate(ClaimPredicate::Target),
+                            transition: None,
+                            time: Some(Box::new(fsl_replay::TimedPoint {
+                                stamp: walk.stamp.clone(),
+                                clocks: walk.state.clocks().values().to_vec(),
+                            })),
+                        },
+                        cause: cause.clone(),
+                    },
+                    steps: walk.steps,
+                })
+            }
+            PredicateReading::Refused(outcome) => {
+                return Err(SampleHalt::PredicateRefused(outcome.clone()).into())
+            }
+        };
+        if let Some(cause) = cancel.cause() {
+            return Err(SampleHalt::Cancelled(cause).into());
+        }
+        if walk.pending.is_empty() {
+            let at = fsl_eval::simulation::ChoicePoint {
+                seed: self.seed,
+                trace: self.trace,
+                step: u64::try_from(walk.steps.len()).map_err(|_| broken())?,
+                choice: 0,
+            };
+            match advance_timed(timed, &walk.state, workload, at, timed_sampling.q)
+                .map_err(timed_halt)?
+            {
+                TimedAdvance::Terminal => {
+                    self.timed = Some(walk);
+                    return Ok(WalkStep::Terminal { holds });
+                }
+                TimedAdvance::Race { elapsed, steps } => {
+                    walk.owed = elapsed;
+                    walk.pending = steps.into();
+                }
+            }
+        }
+        let leaving = walk.pending.pop_front().ok_or_else(broken)?;
+        let weight = leaving.delay.add(&walk.owed);
+        walk.owed = Rational::from_integer(Integer::zero());
+        walk.stamp = walk.stamp.add(&weight);
+        let post = timed.state_key(&leaving.state).map_err(|_| broken())?;
+        walk.steps.push(SampledStep {
+            transition: TransitionId::Operation(leaving.transition),
+            delay: Some(leaving.delay),
+            post_state: post.clone(),
+            choices: leaving.choices,
+            random: Vec::new(),
+            probability: leaving.probability,
+            rewards: Vec::new(),
+        });
+        let returned = walk.pending.is_empty() && post == walk.initial;
+        walk.state = leaving.state;
+        walk.taken = walk.taken.checked_add(1).ok_or_else(broken)?;
+        self.timed = Some(walk);
+        Ok(WalkStep::Position {
+            holds,
+            weight: Weight::try_from(weight).map_err(|_| broken())?,
+            returned,
+        })
+    }
+
     fn step_or_end(&mut self) -> Result<WalkStep, Ended> {
         let mut shared = self.shared.borrow_mut();
         let Reading::LongRun { predicate, weight } = &shared.reading else {
             return Err(broken().into());
         };
         let (predicate, weight) = (*predicate, *weight);
+        if matches!(weight, Some(Weighting::Delay)) {
+            drop(shared);
+            return self.timed_step();
+        }
         let walk = match self.walk.take() {
             Some(walk) => walk,
             None => {
@@ -1765,6 +1954,7 @@ impl WitnessReader for ModelWitnessReader<'_, '_, '_> {
                 seed,
                 trace,
                 walk: None,
+                timed: None,
             };
             for _ in 0..=steps {
                 match walk.step_or_end() {
@@ -1775,7 +1965,8 @@ impl WitnessReader for ModelWitnessReader<'_, '_, '_> {
                         })
                     }
                     Ok(WalkStep::Position { .. }) => {}
-                    Ok(WalkStep::UndecidedSuccessor) | Err(Ended::Undecided) => break,
+                    Ok(WalkStep::UndecidedSuccessor | WalkStep::Terminal { .. })
+                    | Err(Ended::Undecided) => break,
                     Err(Ended::Halt(halt)) => return Err(halt.into()),
                 }
             }

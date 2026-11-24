@@ -408,9 +408,11 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
         .collect()
     );
     assert_eq!(member["admitted_name"], "point");
-    assert!(member["original_member_identity"]
-        .as_str()
-        .is_some_and(|identity| !identity.is_empty()));
+    assert!(
+        member["original_member_identity"]
+            .as_str()
+            .is_some_and(|identity| !identity.is_empty())
+    );
     assert_eq!(member["presence"], "required");
     assert!(member["type_node"].is_object());
     assert!(member["value_type"].is_object());
@@ -427,10 +429,11 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
     assert_eq!(read, rows);
     assert_eq!(read.to_bytes(&package).unwrap(), bytes);
     assert_eq!(read.source_objects().len(), 1);
-    assert!(read
-        .source_objects()
-        .iter()
-        .any(|row| row.source_identity.as_ref() == "Order"));
+    assert!(
+        read.source_objects()
+            .iter()
+            .any(|row| row.source_identity.as_ref() == "Order")
+    );
     assert_eq!(
         read.source_object_operations(),
         emission.source_object_operations()
@@ -1142,8 +1145,8 @@ fn a_source_selection_key_reads_back_and_a_foreign_spelling_refuses() {
         .expect("the `Order` table");
     for (member, value) in [("node", json!("Order")), ("package", json!("other/unit"))] {
         let mut edited = wire.clone();
-        edited["checked_term_data"]["dispatch_tables"][table]["candidates"][0]["selection_key"]
-            ["original"][member] = value;
+        edited["checked_term_data"]["dispatch_tables"][table]["candidates"][0]["selection_key"]["original"]
+            [member] = value;
         assert_eq!(
             refused(&edited),
             (
@@ -1375,11 +1378,13 @@ fn source_operations_carry_operation_body_rows() {
         ]
     );
     let identity = owner_identity(&wire, "Order");
-    assert!(wire["operation_bodies"]
-        .as_array()
-        .expect("rows")
-        .iter()
-        .all(|row| row["document"] == json!(identity)));
+    assert!(
+        wire["operation_bodies"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .all(|row| row["document"] == json!(identity))
+    );
 }
 
 #[trace("FR-997-AC-2", "TC-2821", "FSpec-FR-790-AC-2", "FSpec-TC-1920")]
@@ -1967,9 +1972,6 @@ fn fixture_s_regions_and_rows_follow_the_owner_walk_numbering() {
         );
     }
     assert!(shared > 0, "fixture S shares an application between owners");
-    let data = admitted
-        .checked_term_data()
-        .expect("fixture S has term rows");
     let data = admitted
         .checked_term_data()
         .expect("fixture S has term rows");

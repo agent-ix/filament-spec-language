@@ -6,8 +6,8 @@
 use filament_exact::Rational;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
-use fsl_foundation::diagnostic::Code;
 use fsl_foundation::SourceIdentity;
+use fsl_foundation::diagnostic::Code;
 use ix_trace_rs::trace;
 
 use crate::check::{
@@ -120,7 +120,7 @@ fn sole_refusal(declarations: &str) -> (Code, &'static str, String) {
     let [(refusal, named)] = refusals.as_slice() else {
         panic!("one refusal for `{declarations}`: {refusals:?}");
     };
-    let CheckCause::Hybrid(cause) = &refusal.cause else {
+    let CheckCause::Hybrid(cause) = refusal.cause.as_ref() else {
         panic!("a hybrid cause: {refusal:?}");
     };
     (cause.code(), cause.tag(), named.clone().expect("a region"))
@@ -134,7 +134,7 @@ fn sole_cause(declarations: &str) -> HybridCause {
     let [(refusal, _)] = refusals.as_slice() else {
         panic!("one refusal for `{declarations}`: {refusals:?}");
     };
-    let CheckCause::Hybrid(cause) = &refusal.cause else {
+    let CheckCause::Hybrid(cause) = refusal.cause.as_ref() else {
         panic!("a hybrid cause: {refusal:?}");
     };
     (**cause).clone()
