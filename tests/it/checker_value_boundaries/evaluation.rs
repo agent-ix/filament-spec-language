@@ -52,7 +52,8 @@ fn evaluated(body: &str, function: &str) -> Value {
 }
 
 #[test]
-#[trace("TC-1231")]
+#[trace("TC-1231", "FR-091-AC-56")]
+#[trace("FSpec-TC-280", "FSpec-FR-322-AC-103")]
 #[ignore = "QSL-3043: source native Bytes literal and operation calls await owning acceptance coverage and implementation"]
 fn byte_concatenation_preserves_zero_octets_and_input_order() {
     let value = evaluated("function octets using v(): Boolean pure { concat(Bytes(\"0001\"), Bytes(\"ff00\")) = Bytes(\"0001ff00\") and length(concat(Bytes(\"0001\"), Bytes(\"ff00\"))) = 4 and concat(Bytes(\"0001\"), Bytes(\"ff00\")) != concat(Bytes(\"ff00\"), Bytes(\"0001\")) }", "octets");
@@ -60,7 +61,8 @@ fn byte_concatenation_preserves_zero_octets_and_input_order() {
 }
 
 #[test]
-#[trace("TC-1231", "TC-992")]
+#[trace("TC-1231", "TC-992", "FR-091-AC-56")]
+#[trace("FSpec-TC-280", "FSpec-FR-149-AC-23")]
 #[ignore = "QSL-3043: source JsonObject literal call awaits owning acceptance coverage and implementation"]
 fn native_json_and_raw_strings_preserve_distinct_payload_meanings() {
     let value = evaluated(
