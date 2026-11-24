@@ -1995,7 +1995,7 @@ fn fair_eventual_w_exact_minimum_maximum_and_forgery_vectors() {
             .enumerate()
             .map(|(index, name)| {
                 exact_probabilistic_item(
-                    RequestIndex::new(index as u32),
+                    RequestIndex::new(index),
                     world.request(name, ModelCheckLimits::default()),
                 )
             })
