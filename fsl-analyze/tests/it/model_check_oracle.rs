@@ -8,7 +8,7 @@ use std::collections::{BTreeSet, VecDeque};
 use ix_trace_rs::trace;
 use serde_json::json;
 
-use crate::analyze_cli_support::{analyze, bounded, counter_request, label, Workspace};
+use crate::analyze_cli_support::{Workspace, analyze, bounded, counter_request, label};
 
 /// The Counter subject's reachable states and steps from `start`, with
 /// `inc` enabled below 3 and adding 1, counted independently of EN-1.

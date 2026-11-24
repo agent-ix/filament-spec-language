@@ -24,22 +24,22 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as LocationOrigin,
 };
 use fsl_analyze::analyze::{
-    analyze_items, value_item, AnalyzeItem, AnalyzeRecord, DispositionKind, Engine, Engines,
-    Settlement,
+    AnalyzeItem, AnalyzeRecord, DispositionKind, Engine, Engines, Settlement, analyze_items,
+    value_item,
 };
-use fsl_analyze::provider::{provider_item, ExternalProvider, ProviderRequest, ProviderVerdict};
-use fsl_analyze::value_check::{manifest, ValueRequest};
+use fsl_analyze::provider::{ExternalProvider, ProviderRequest, ProviderVerdict, provider_item};
+use fsl_analyze::value_check::{ValueRequest, manifest};
 use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
-use fsl_replay::value_check::{ParameterDomain, Selection, ValueTarget, Verdict, Violation};
 use fsl_replay::OutcomeItem;
+use fsl_replay::value_check::{ParameterDomain, Selection, ValueTarget, Verdict, Violation};
 use fsl_replay::{
     Certification, DisagreementCause, IncompleteCause, InconclusiveCause, ModelCheckLimit,
     OccurrenceKey, ProofBasis, TerminalValue,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, NodeTag, PackageDeclarations};
-use fsl_semantics::value::{admit_integer_division, DefinitionRole};
+use fsl_semantics::value::{DefinitionRole, admit_integer_division};
 use ix_trace_rs::trace;
 use serde_json::Value as Json;
 
@@ -1003,9 +1003,11 @@ fn an_undefined_subexpression_is_located_at_its_own_occurrence() {
         .expect("the item has a wire representation");
     assert_eq!(written["cause"]["kind"], "undefined-evaluation");
     assert_eq!(written["cause"]["cause"], NATIVE_ZERO_DIVISOR_CAUSE);
-    assert!(written["cause"]["where"]
-        .as_str()
-        .is_some_and(|where_| where_.contains(&at.locus.node().to_string())));
+    assert!(
+        written["cause"]["where"]
+            .as_str()
+            .is_some_and(|where_| where_.contains(&at.locus.node().to_string()))
+    );
     // The assignment is the first violating one in enumeration order.
     let first = [integer(-1), integer(0)];
     assert_eq!(found.reproduced.assignment().len(), first.len());
@@ -1110,39 +1112,49 @@ fn a_replay_confirms_the_violation_it_was_asked_about_and_no_other() {
     let Verdict::Violated(actual) = target.evaluate(&at, &Cancel::new()).unwrap() else {
         panic!("undefined at b = 0")
     };
-    assert!(target
-        .replay(&at, &actual, &Cancel::new())
-        .unwrap()
-        .is_some());
+    assert!(
+        target
+            .replay(&at, &actual, &Cancel::new())
+            .unwrap()
+            .is_some()
+    );
     // A false goal is not the undefined one the candidate claimed.
     let claimed_false = Violation { undefined: None };
-    assert!(target
-        .replay(&at, &claimed_false, &Cancel::new())
-        .unwrap()
-        .is_none());
+    assert!(
+        target
+            .replay(&at, &claimed_false, &Cancel::new())
+            .unwrap()
+            .is_none()
+    );
     // A different locus or reason is not the same violation.
     let mut elsewhere = actual.clone();
     elsewhere.undefined.as_mut().unwrap().reason = "none-value";
-    assert!(target
-        .replay(&at, &elsewhere, &Cancel::new())
-        .unwrap()
-        .is_none());
+    assert!(
+        target
+            .replay(&at, &elsewhere, &Cancel::new())
+            .unwrap()
+            .is_none()
+    );
     let mut other_locus = actual.clone();
     other_locus.undefined.as_mut().unwrap().locus = key.clone();
-    assert!(target
-        .replay(&at, &other_locus, &Cancel::new())
-        .unwrap()
-        .is_none());
+    assert!(
+        target
+            .replay(&at, &other_locus, &Cancel::new())
+            .unwrap()
+            .is_none()
+    );
     // Where the goal holds, no violation is reproduced.
     let fine = [integer(1), integer(1)];
     assert_eq!(
         target.evaluate(&fine, &Cancel::new()).unwrap(),
         Verdict::Holds
     );
-    assert!(target
-        .replay(&fine, &actual, &Cancel::new())
-        .unwrap()
-        .is_none());
+    assert!(
+        target
+            .replay(&fine, &actual, &Cancel::new())
+            .unwrap()
+            .is_none()
+    );
     // A false goal replays only as a false goal.
     let false_goal = package_of("function subject using v(x: Int[0, 3]): Boolean pure { x < 3 }");
     let key = key_of(
@@ -1152,14 +1164,18 @@ fn a_replay_confirms_the_violation_it_was_asked_about_and_no_other() {
     );
     let target = ValueTarget::select(&false_goal, "subject", &key).unwrap();
     let three = [integer(3)];
-    assert!(target
-        .replay(&three, &claimed_false, &Cancel::new())
-        .unwrap()
-        .is_some());
-    assert!(target
-        .replay(&three, &actual, &Cancel::new())
-        .unwrap()
-        .is_none());
+    assert!(
+        target
+            .replay(&three, &claimed_false, &Cancel::new())
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        target
+            .replay(&three, &actual, &Cancel::new())
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[trace("FSpec-TC-972", "FSpec-FR-483-AC-5")]
@@ -1447,8 +1463,8 @@ fn the_production_registry_holds_the_arm_and_an_absent_provider_is_refused() {
 #[test]
 fn a_check_arm_descriptor_needs_a_positive_max_cases_default() {
     use fsl_route::{
-        descriptor_from_manifest_with_max_cases, Candidate, ManifestMembers, MaxCasesMember,
-        ProviderOrigin,
+        Candidate, ManifestMembers, MaxCasesMember, ProviderOrigin,
+        descriptor_from_manifest_with_max_cases,
     };
     let member = |bounds: &Json| match bounds {
         Json::Null => MaxCasesMember::Absent,
@@ -1489,18 +1505,20 @@ fn a_check_arm_descriptor_needs_a_positive_max_cases_default() {
         }
     }
     // A backend of another kind is not asked for one.
-    assert!(descriptor_from_manifest_with_max_cases(
-        Candidate::new(fsl_foundation::BackendId::new("other")),
-        ProviderOrigin::Linked,
-        [(Some("refinement"), Some("bounded"))],
-        ManifestMembers {
-            domains: Some(&["integer"]),
-            ..ManifestMembers::default()
-        },
-        MaxCasesMember::Absent,
-    )
-    .map_or_else(|e| format!("{e:?}"), |_| String::new())
-    .is_empty());
+    assert!(
+        descriptor_from_manifest_with_max_cases(
+            Candidate::new(fsl_foundation::BackendId::new("other")),
+            ProviderOrigin::Linked,
+            [(Some("refinement"), Some("bounded"))],
+            ManifestMembers {
+                domains: Some(&["integer"]),
+                ..ManifestMembers::default()
+            },
+            MaxCasesMember::Absent,
+        )
+        .map_or_else(|e| format!("{e:?}"), |_| String::new())
+        .is_empty()
+    );
 }
 
 #[trace("FSpec-TC-972", "FSpec-FR-483-AC-6")]
@@ -1666,10 +1684,12 @@ fn a_mathematical_integer_division_counterexample_replays_to_the_violation() {
     let key = only_scalar_key(&violated, "q");
     let key_of_violated = key.clone();
     let target = ValueTarget::select(&violated, "q", &key).unwrap();
-    assert!(target
-        .parameters()
-        .iter()
-        .all(|p| matches!(p.domain(), ParameterDomain::Unbounded)));
+    assert!(
+        target
+            .parameters()
+            .iter()
+            .all(|p| matches!(p.domain(), ParameterDomain::Unbounded))
+    );
     let at = [integer(1_i128 << 100), integer(0)];
     assert!(target.admits(&at), "an Integer counterexample is admitted");
     let Verdict::Violated(found) = target.evaluate(&at, &Cancel::new()).unwrap() else {
@@ -1690,15 +1710,19 @@ fn a_mathematical_integer_division_counterexample_replays_to_the_violation() {
         target.evaluate(&defined, &Cancel::new()).unwrap(),
         Verdict::Holds
     );
-    assert!(target
-        .replay(&defined, &found, &Cancel::new())
-        .unwrap()
-        .is_none());
+    assert!(
+        target
+            .replay(&defined, &found, &Cancel::new())
+            .unwrap()
+            .is_none()
+    );
     let claimed_false = Violation { undefined: None };
-    assert!(target
-        .replay(&at, &claimed_false, &Cancel::new())
-        .unwrap()
-        .is_none());
+    assert!(
+        target
+            .replay(&at, &claimed_false, &Cancel::new())
+            .unwrap()
+            .is_none()
+    );
     assert!(!target.admits(&[Value::Boolean(true), integer(0)]));
 
     // The holding obligation: the guard keeps the divisor nonzero, so no
@@ -1721,10 +1745,12 @@ fn a_mathematical_integer_division_counterexample_replays_to_the_violation() {
             "{at:?}: {verdict:?}"
         );
     }
-    assert!(target
-        .replay(&[integer(7), integer(0)], &found, &Cancel::new())
-        .unwrap()
-        .is_none());
+    assert!(
+        target
+            .replay(&[integer(7), integer(0)], &found, &Cancel::new())
+            .unwrap()
+            .is_none()
+    );
 
     // Item level, the bounded arm owns no unbounded item (FR-495-AC-7, FSpec
     // FR-147-AC-3): a reported candidate, the counterexample included, settles

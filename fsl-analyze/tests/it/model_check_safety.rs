@@ -22,23 +22,23 @@
 //! unit and reads the guard through the production letters.
 
 use filament_exact::{Cancel, Charge, ChargePoint, Incomplete, LimitKind, Meter};
-use fsl_analyze::model_check::{check_model, Atoms, ModelCheckRefusal, ModelCheckRequest, Por};
+use fsl_analyze::model_check::{Atoms, ModelCheckRefusal, ModelCheckRequest, Por, check_model};
 use fsl_eval::automaton::translate;
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::temporal::AtomReading;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::{
-    settle_model_check, CertificateRequest, CounterexampleKind, IncompleteCause, ModelCheckItem,
-    ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ReachedLimit, SmtEncodingLimits,
-    TemporalCounterexample, TerminalValue, UndefinedLocus,
+    CertificateRequest, CounterexampleKind, IncompleteCause, ModelCheckItem, ModelCheckLimit,
+    ModelCheckLimits, ModelCheckOutcome, ReachedLimit, SmtEncodingLimits, TemporalCounterexample,
+    TerminalValue, UndefinedLocus, settle_model_check,
 };
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::counter::{CONTRACT, UNLIMITED};
-use crate::model_world::{self, Atom, Clause, Letters, World, BOUNDED, INFINITE};
+use crate::model_world::{self, Atom, BOUNDED, Clause, INFINITE, Letters, World};
 
 const ORIGIN: &str = "on origin";
 
@@ -655,8 +655,8 @@ fn the_production_letters_read_the_counter_guard_and_its_footprint() {
 #[trace("TC-520", "FR-125-AC-18")]
 #[test]
 fn production_letters_decide_each_guard_row_and_include_guard_only_por_visibility() {
-    use fsl_eval::simulation::model::ModelSystem;
     use fsl_eval::simulation::TransitionSystem;
+    use fsl_eval::simulation::model::ModelSystem;
     use fsl_semantics::check::footprint::{FootprintObject, SymbolicLocation};
 
     let run = |profile: &str, guard: &str, formula: &str| {
@@ -763,16 +763,19 @@ fn production_letters_decide_each_guard_row_and_include_guard_only_por_visibilit
         .find(|(_, state)| por_world.domain.integer(state, "c", "value") == 1)
         .expect("inc is enabled")
         .0;
-    assert!(por
-        .visible(&start, &inc)
-        .expect("the visibility is derived"));
-    assert!(letters
-        .activation_reads()
-        .expect("the guard has a footprint")
-        .contains(&SymbolicLocation::Field {
-            object: FootprintObject::Receiver,
-            field: por_world.domain.key("Counter/value"),
-        }));
+    assert!(
+        por.visible(&start, &inc)
+            .expect("the visibility is derived")
+    );
+    assert!(
+        letters
+            .activation_reads()
+            .expect("the guard has a footprint")
+            .contains(&SymbolicLocation::Field {
+                object: FootprintObject::Receiver,
+                field: por_world.domain.key("Counter/value"),
+            })
+    );
 }
 
 /// A TP-4 clause is decided by the liveness engine (here its proof is
@@ -1105,8 +1108,8 @@ fn an_on_each_past_or_interval_proof_settles_certified() {
         &world.clauses[0],
         vec![value(|v| Some(v <= 3)), value(|v| Some(v <= 3))],
     );
-    let outcome = run_letters(&world, 0, &["c"], &letters, ModelCheckLimits::default())
-        .expect("checked");
+    let outcome =
+        run_letters(&world, 0, &["c"], &letters, ModelCheckLimits::default()).expect("checked");
     let ModelCheckOutcome::Holds { certificate, .. } = &outcome else {
         panic!("expected Holds, got {outcome:?}");
     };

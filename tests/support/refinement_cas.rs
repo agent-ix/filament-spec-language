@@ -30,7 +30,7 @@ use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef, ObservationLimits};
 use fsl_semantics::model::state::{ModelState, StateObject};
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 pub const SPEC: &str = "example/counter-spec";
 pub const CAS: &str = "example/counter-cas";

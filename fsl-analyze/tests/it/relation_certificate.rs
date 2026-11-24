@@ -21,7 +21,7 @@ use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
 use crate::hyper_world::{self, Vault};
-use crate::relation_claims::{
+use crate::relation_claims_support::{
     initial_world, package_and_relation, package_and_relation_with_document,
     step_with_result_document, subjects, DETERMINISTIC,
 };

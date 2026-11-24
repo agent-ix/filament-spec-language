@@ -2,9 +2,9 @@
 //! Package-native recommendation calls and their result-free constraints.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::analyze_cli_support::{analyze, package_selection_named, Workspace};
+use crate::analyze_cli_support::{Workspace, analyze, package_selection_named};
 
 const SOURCE: &str = include_str!("../../../examples/protocol-recommendation/workflow.native");
 const REQUEST: &str = include_str!("../../../examples/protocol-recommendation/analyze.json");

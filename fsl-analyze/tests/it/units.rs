@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(
+    dead_code,
+    reason = "shared fixture support spans split integration test binaries"
+)]
 //! Units other than `Counter` for the model-check tests: ADR-018 §6's
 //! ConfigVersion example and shipped units over `examples/config-version`'s
 //! domain package, and FR-126-AC-4's `Health` unit over a domain package
@@ -23,7 +27,7 @@ use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId, PackageDeclarat
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use crate::counter::UNLIMITED;
 
@@ -32,7 +36,11 @@ use crate::counter::UNLIMITED;
 #[path = "../../../examples/config-version/spine_unit.rs"]
 mod config_version;
 
-pub(crate) use config_version::{unit_text as shipped_unit_text, PACKAGE_IDENTITY as CONFIG};
+#[allow(
+    unused_imports,
+    reason = "only the model-check integration binary uses this fixture export"
+)]
+pub(crate) use config_version::{PACKAGE_IDENTITY as CONFIG, unit_text as shipped_unit_text};
 
 /// A domain package and where its objects live.
 pub(crate) struct Domain {

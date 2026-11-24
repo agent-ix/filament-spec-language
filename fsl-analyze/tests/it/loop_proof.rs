@@ -7,7 +7,7 @@ use crate::derived_request::{items_of_kind, protocol_request_under};
 use crate::protocol_system::Case;
 use filament_exact::Cancel;
 use fsl_analyze::analyze::{
-    analyze_items, derived_protocol_item, split_records, Engines, ProtocolItem,
+    Engines, ProtocolItem, analyze_items, derived_protocol_item, split_records,
 };
 use fsl_analyze::model_check::ProtocolCheckRequest;
 use fsl_replay::{
@@ -648,7 +648,7 @@ fn undecided_guards_preserve_initial_and_post_body_loop_proof_failures() {
 #[trace("TC-2022", "FR-730-AC-5", "FR-730-AC-6", "FR-620")]
 #[test]
 fn source_loop_proof_documents_settle_both_item_kinds() {
-    use crate::analyze_cli_support::{analyze, label, request_over, Run, Workspace};
+    use crate::analyze_cli_support::{Run, Workspace, analyze, label, request_over};
     use serde_json::json;
 
     let item_with_record = |run: &Run, index: usize, phase: &str| {

@@ -6,10 +6,10 @@
 //! through the driver binary (`$FSL_BIN`).
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, counter_request, label, request_members, request_over, Workspace,
+    Workspace, analyze, counter_request, label, request_members, request_over,
 };
 
 /// The two items' results, in request order.
@@ -485,7 +485,7 @@ fn a_nested_reference_row_checks_and_proves() {
 #[test]
 fn non_interference_proves_and_refutes() {
     use crate::hyper_world::{
-        non_interference, request_files_over_starts, Vault, EQUAL_INPUTS, STARTS,
+        EQUAL_INPUTS, STARTS, Vault, non_interference, request_files_over_starts,
     };
     for (vault, expected) in [(Vault::Secure, "proved"), (Vault::Leaky, "refuted")] {
         let (unit, model, snapshots) =
@@ -514,7 +514,7 @@ fn non_interference_proves_and_refutes() {
 #[trace("TC-1591", "FR-631-AC-4")]
 #[test]
 fn an_object_free_hyper_clause_is_analyzed() {
-    use crate::hyper_world::{request_files, Vault};
+    use crate::hyper_world::{Vault, request_files};
     let declaration = "hyper Whole using inf over behaviours () \
                        forall trace a of V forall trace b of V { always holds(true) }";
     let (unit, model, snapshot) = request_files(Vault::Secure, false, (1, 0), declaration);
@@ -538,7 +538,7 @@ pub(crate) fn rpc_unit(t: u32, claim: &str) -> String {
 /// `self.x {timeout} {t} ms`: ADR-026 section 11's strict-guard variant is
 /// `("> 3", ">")`.
 pub(crate) fn rpc_unit_with(t: u32, reply: &str, timeout: &str, claim: &str) -> String {
-    use crate::timed_world::{unit_text, DENSE, PACKAGE};
+    use crate::timed_world::{DENSE, PACKAGE, unit_text};
     let body = format!(
         "{DENSE}\
          pre SendIdle using v on M::Call::send {{ self.phase = 0 }}\n\
@@ -641,12 +641,14 @@ impl fsl_analyze::analyze::document::Negotiate for ClosedFormNegotiation {
             .registrations()
             .find(|descriptor| descriptor.id().as_str() == "en-7")
             .expect("EN-7 is registered");
-        assert!(en7
-            .advertises()
-            .any(|pair| pair == (item.kind, fsl_route::Mode::Unbounded)));
-        assert!(!en7
-            .advertises()
-            .any(|pair| pair == (item.kind, fsl_route::Mode::Bounded)));
+        assert!(
+            en7.advertises()
+                .any(|pair| pair == (item.kind, fsl_route::Mode::Unbounded))
+        );
+        assert!(
+            !en7.advertises()
+                .any(|pair| pair == (item.kind, fsl_route::Mode::Bounded))
+        );
         assert_eq!(item.candidates.len(), 1);
         assert_eq!(item.candidates[0].id().as_str(), "en-7");
         self.0.set(self.0.get() + 1);
@@ -942,13 +944,15 @@ fn an_item_naming_a_registered_provider_settles_on_it() {
     assert!(registry.contains(&json!(provider)));
     assert!(registry.contains(&json!("en-1")) && registry.contains(&json!("en-7")));
     // FR-635 "Outputs": each entry carries its backend's FSpec FR-331 tool.
-    assert!(run.document()["registry"]
-        .as_array()
-        .expect("registry")
-        .iter()
-        .all(|entry| entry["tool"]["name"]
-            .as_str()
-            .is_some_and(|name| !name.is_empty())));
+    assert!(
+        run.document()["registry"]
+            .as_array()
+            .expect("registry")
+            .iter()
+            .all(|entry| entry["tool"]["name"]
+                .as_str()
+                .is_some_and(|name| !name.is_empty()))
+    );
     assert_eq!(label(&run.item(1)), "proved");
 }
 
@@ -1300,8 +1304,8 @@ fn a_two_model_hyper_counterexample_replays_through_the_engine() {
     use fsl_eval::hyper::{CheckedHyperLetters, CheckedStepMatch, ParameterBinding};
     use fsl_eval::model_subject::ModelInstance;
     use fsl_replay::{
-        replay_hyper_trace_tuple, settle_hyper_check, HyperOutcome, HyperReplay, ModelCheckLimits,
-        TerminalValue,
+        HyperOutcome, HyperReplay, ModelCheckLimits, TerminalValue, replay_hyper_trace_tuple,
+        settle_hyper_check,
     };
 
     let declaration = "hyper Saves using ep over behaviours (v: V::Vault, w: N::Vault) \

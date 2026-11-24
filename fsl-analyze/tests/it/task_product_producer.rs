@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 
 use filament_exact::Cancel;
 use fsl_analyze::zone_check::{
-    explore_task_symbolic, no_release_task_product_certificate, read_back_unchanged,
-    task_product_certificate, SymbolicGraph, SymbolicStop, ZoneCheckLimits,
+    SymbolicGraph, SymbolicStop, ZoneCheckLimits, explore_task_symbolic,
+    no_release_task_product_certificate, read_back_unchanged, task_product_certificate,
 };
 use fsl_eval::simulation::model::{TaskAutomaton, TaskProductSystem, TimedSystem};
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -19,13 +19,13 @@ use fsl_replay::{
     ZoneCertificate, ZoneCertificateVerdict,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::task_product_certificate::{
-    claim_of, no_release, over_utilised, preempting, rejected, releasable, solo, tied, verdict,
-    Certificate,
+    Certificate, claim_of, no_release, over_utilised, preempting, rejected, releasable, solo, tied,
+    verdict,
 };
-use crate::timed_world::{document, world, World, DENSE};
+use crate::timed_world::{DENSE, World, document, world};
 use crate::zone_search::TIMED;
 
 fn no_release_emitted(
@@ -45,36 +45,48 @@ fn no_release_emitted(
 }
 
 fn unreachable_release() -> World {
-    world(&document(&[], &[("fire_a", &["phase"])]), TIMED, &format!(
-        "{DENSE}taskset N {{ task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
+    world(
+        &document(&[], &[("fire_a", &["phase"])]),
+        TIMED,
+        &format!(
+            "{DENSE}taskset N {{ task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
          schedulable NFp on N under fixed_priority;\n\
          pre Blocked using v on M::Call::fire_a {{ self.phase = 1 }}\n\
          post Fire using v on M::Call::fire_a {{ self.phase = pre(self.phase) }}\n\
          release N.a on M::Call::fire_a;\n"
-    ))
+        ),
+    )
 }
 
 fn release_after_enable() -> World {
-    world(&document(&[], &[("fire_a", &["phase"]), ("enable", &["phase"])]), TIMED, &format!(
-        "{DENSE}taskset N {{ task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
+    world(
+        &document(&[], &[("fire_a", &["phase"]), ("enable", &["phase"])]),
+        TIMED,
+        &format!(
+            "{DENSE}taskset N {{ task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
          schedulable NFp on N under fixed_priority;\n\
          pre Blocked using v on M::Call::fire_a {{ self.phase = 1 }}\n\
          post Fire using v on M::Call::fire_a {{ self.phase = pre(self.phase) }}\n\
          post Enable using v on M::Call::enable {{ self.phase = 1 }}\n\
          release N.a on M::Call::fire_a;\n"
-    ))
+        ),
+    )
 }
 
 fn clockful_unreachable_release() -> World {
-    world(&document(&["x"], &[("fire_a", &["phase"]), ("tick", &["phase", "x"])]), TIMED, &format!(
-        "{DENSE}taskset N {{ task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
+    world(
+        &document(&["x"], &[("fire_a", &["phase"]), ("tick", &["phase", "x"])]),
+        TIMED,
+        &format!(
+            "{DENSE}taskset N {{ task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
          schedulable NFp on N under fixed_priority;\n\
          pre Blocked using v on M::Call::fire_a {{ self.phase = 1 }}\n\
          post Fire using v on M::Call::fire_a {{ self.phase = pre(self.phase) }}\n\
          pre Tick using v on M::Call::tick {{ (self.x >= 1 ms and self.x <= 2 ms) or self.x >= 3 ms }}\n\
          post Ticked using v on M::Call::tick {{ self.phase = pre(self.phase) and self.x = 0 ms }}\n\
          release N.a on M::Call::fire_a;\n"
-    ))
+        ),
+    )
 }
 
 /// The original clock-place encoding and every source guard part survive
@@ -138,12 +150,14 @@ fn clockful_no_release_transport_preserves_context_and_rejects_tampering() {
     );
     let mut wrong_clock = wire.clone();
     wrong_clock["bounds"][0]["clock"] = json!("not-the-source-clock");
-    assert!(ZoneCertificate::from_wire_with_source(
-        &wrong_clock,
-        built.obligation.clone(),
-        product.source()
-    )
-    .is_err());
+    assert!(
+        ZoneCertificate::from_wire_with_source(
+            &wrong_clock,
+            built.obligation.clone(),
+            product.source()
+        )
+        .is_err()
+    );
     let mut fragment = wire.clone();
     fragment["edges"][0]["part"] = json!(999);
     assert!(matches!(
@@ -201,12 +215,14 @@ fn clockful_no_release_transport_preserves_context_and_rejects_tampering() {
         .expect("edges")
         .last_mut()
         .expect("delay")["part"] = json!(0);
-    assert!(ZoneCertificate::from_wire_with_source(
-        &delay_part,
-        built.obligation.clone(),
-        product.source()
-    )
-    .is_err());
+    assert!(
+        ZoneCertificate::from_wire_with_source(
+            &delay_part,
+            built.obligation.clone(),
+            product.source()
+        )
+        .is_err()
+    );
     assert!(matches!(
         verdict(&world, "NFp", &read, CertificateCheckLimits::default()),
         Ok(ZoneCertificateVerdict::Rejected(_))
@@ -252,11 +268,15 @@ fn the_no_reachable_release_producer_certificate_is_accepted_from_its_json() {
 #[trace("FSpec-TC-371", "FSpec-FR-418-AC-14")]
 #[test]
 fn a_no_release_source_without_admitted_behaviour_builds_no_certificate() {
-    let world = world(&document(&["x"], &[]), TIMED, &format!(
-        "{DENSE}taskset N {{ task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
+    let world = world(
+        &document(&["x"], &[]),
+        TIMED,
+        &format!(
+            "{DENSE}taskset N {{ task a periodic 4 ms deadline 4 ms bcet 1 ms wcet 2 ms priority 1 lo; }}\n\
          schedulable NFp on N under fixed_priority;\n\
          time invariant Cap when {{ self.phase = 0 }} {{ self.x <= 1 ms }}\n"
-    ));
+        ),
+    );
     assert!(
         no_release_emitted(&world, ZoneCheckLimits::default(), &Cancel::new())
             .expect("source search runs")

@@ -4,7 +4,7 @@
 //! checked-package writer refuses explicitly.
 
 use filament_exact::{Cancel, Meter};
-use fsl_analyze::model_check::{check_protocol, ProtocolCheckRequest};
+use fsl_analyze::model_check::{ProtocolCheckRequest, check_protocol};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::protocol::{MemorySelection, ProtocolSystem, StepKind, Tso};
@@ -14,7 +14,7 @@ use fsl_replay::{ModelCheckItem, ModelCheckLimits, ModelCheckOutcome};
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
 
-use crate::litmus::{attempt, contracts, field, package, protocol, Documents};
+use crate::litmus::{Documents, attempt, contracts, field, package, protocol};
 use crate::weak_memory::select;
 
 const PRETEST_CLAIM: &str = "temporal NoLoad using t0 over (k: M::Core) clock \"model-steps\" \

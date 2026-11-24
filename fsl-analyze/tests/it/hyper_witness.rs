@@ -32,7 +32,7 @@ use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
 
 use crate::counter::ZERO;
-use crate::hyper::{input, inputs, positions, refuted};
+use crate::hyper_support::{input, inputs, positions, refuted};
 use crate::hyper_world::{assert_hyper_division_refused, high, low, opaque, Vault, World, STARTS};
 
 /// The clause of FR-177's third criterion: two existential variables and no universal one.

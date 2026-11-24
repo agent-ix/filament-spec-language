@@ -7,20 +7,20 @@ use std::collections::BTreeSet;
 use filament_exact::{Cancel, Integer, Meter, Rational, Undefined};
 use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::zone_check::{
-    certificate_item, check_timed_model, ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits,
-    ZoneCheckOutcome, ZoneCheckRefusal, ZoneCheckRequest, ZoneStop, ZoneUndecided,
+    ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRefusal,
+    ZoneCheckRequest, ZoneStop, ZoneUndecided, certificate_item, check_timed_model,
 };
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem, TimedBehaviour, TimedSystem};
 use fsl_eval::temporal::{
-    evaluate_timed_at, AtomReading, InsufficientData, LetterStop, TemporalLetters, TemporalOutcome,
-    TemporalPosition, TimedTrace, UndefinedCause,
+    AtomReading, InsufficientData, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
+    TimedTrace, UndefinedCause, evaluate_timed_at,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
-    check_zone_certificate, CertEdge, CertificateCheckLimits, CertifiedItem, CounterexampleKind,
-    DivergentTarget, TemporalCounterexample, TimedPoint, UndefinedLocus, ZoneCertificate,
-    ZoneCertificateRefusal, ZoneCertificateRequest, ZoneCertificateVerdict,
+    CertEdge, CertificateCheckLimits, CertifiedItem, CounterexampleKind, DivergentTarget,
+    TemporalCounterexample, TimedPoint, UndefinedLocus, ZoneCertificate, ZoneCertificateRefusal,
+    ZoneCertificateRequest, ZoneCertificateVerdict, check_zone_certificate,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::Reductions;
@@ -28,7 +28,7 @@ use fsl_semantics::check::footprint::{FootprintRefusal, SymbolicLocation};
 use fsl_semantics::check::{FormulaNode, FormulaNodeId};
 use ix_trace_rs::trace;
 
-use crate::timed_world::{document, world, World, DENSE, PACKAGE};
+use crate::timed_world::{DENSE, PACKAGE, World, document, world};
 
 pub(crate) const INFINITE: &str = "profile inf = \"filament.temporal.infinite-trace/v1\";\n";
 pub(crate) const TIMED: &str = "profile tt = \"filament.temporal.timed/v1\";\n";
@@ -1057,10 +1057,12 @@ fn a_safety_proof_carries_a_reachability_certificate() {
     assert_eq!(certificate.lu_bounds.lower.len(), 1);
     assert!(certificate.nodes.len() > 1);
     // Edges by source in discovery order.
-    assert!(certificate
-        .edges
-        .windows(2)
-        .all(|pair| pair[0].from <= pair[1].from));
+    assert!(
+        certificate
+            .edges
+            .windows(2)
+            .all(|pair| pair[0].from <= pair[1].from)
+    );
     assert_edges_cover(&four, &certificate);
     // `Idle`, the initial state with no invariant, is quiescent.
     let admitted = certificate.admitted.as_ref().unwrap();
@@ -1126,13 +1128,15 @@ fn a_locked_node_is_listed_with_its_edges() {
         certificate.admitted.as_ref().unwrap().target,
         DivergentTarget::Quiescent(0)
     );
-    assert!(certificate
-        .admitted
-        .as_ref()
-        .unwrap()
-        .path
-        .iter()
-        .all(|&edge| !certificate.nodes[certificate.edges[edge].to].locked));
+    assert!(
+        certificate
+            .admitted
+            .as_ref()
+            .unwrap()
+            .path
+            .iter()
+            .all(|&edge| !certificate.nodes[certificate.edges[edge].to].locked)
+    );
 }
 
 fn edge_index(certificate: &Certificate, edge: &CertEdge) -> usize {
@@ -1622,10 +1626,12 @@ fn a_timed_invariant_builds_no_automaton() {
         );
         let stats = match claim(&timed, ZoneCheckLimits::default(), &Cancel::new()) {
             ZoneCheckOutcome::Holds { stats, certificate } => {
-                assert!(certificate
-                    .nodes
-                    .iter()
-                    .all(|node| node.automaton_state == 0));
+                assert!(
+                    certificate
+                        .nodes
+                        .iter()
+                        .all(|node| node.automaton_state == 0)
+                );
                 assert_edges_cover(&timed, &certificate);
                 stats
             }

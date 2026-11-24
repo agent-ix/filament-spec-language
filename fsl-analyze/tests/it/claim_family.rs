@@ -13,18 +13,18 @@ use std::cell::Cell;
 use filament_exact::{Cancel, NodeKey, Origin, Role};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_analyze::analyze::{
-    analyze_items, AnalyzeItem, AnalyzeRecord, DispositionKind, Engine, Engines, Payload,
-    Settlement,
+    AnalyzeItem, AnalyzeRecord, DispositionKind, Engine, Engines, Payload, Settlement,
+    analyze_items,
 };
 use fsl_analyze::claim_family::claim_family;
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
 use fsl_route::request::ItemKind;
 use fsl_semantics::check::{Capability, DeclarationFamily};
 use ix_trace_rs::trace;
 
-use crate::graph_world::{config_version, World, CONFIG_CONTRACT, REACHES_TWO};
+use crate::graph_world::{CONFIG_CONTRACT, REACHES_TWO, World, config_version};
 
 const PROBE: &str = "probe";
 
@@ -324,7 +324,7 @@ fn a_bound_relations_model_and_code_claims_are_read_as_relation_claims() {
 #[test]
 fn the_operation_contract_arm_runs_a_relations_code_claim() {
     use fsl_analyze::analyze::contract_item;
-    use fsl_analyze::contract_check::{manifest, ContractRequest};
+    use fsl_analyze::contract_check::{ContractRequest, manifest};
     use fsl_replay::contract_check::select_contract;
     use fsl_replay::{TerminalValue, UnavailabilityCause};
 
@@ -372,7 +372,7 @@ fn the_operation_contract_arm_runs_a_relations_code_claim() {
 #[trace("TC-1302", "FR-507-AC-7")]
 #[test]
 fn a_proof_eligible_refinements_four_occurrences_are_relation_claims() {
-    use crate::refinement_fixture::{lost_update_refinement, Variant, World as Cas};
+    use crate::refinement_fixture::{Variant, World as Cas, lost_update_refinement};
 
     let world = Cas::with(Variant::LOST_UPDATE, &lost_update_refinement());
     let (declaration, obligations) = refinement_claims(&world);
@@ -432,7 +432,7 @@ fn a_proof_eligible_refinements_four_occurrences_are_relation_claims() {
 #[trace("TC-1302", "FR-507-AC-8")]
 #[test]
 fn derived_items_take_temporal_trace_from_their_item_kind_on_any_anchor() {
-    use crate::protocol_roles::{unit, EACH};
+    use crate::protocol_roles::{EACH, unit};
     use crate::protocol_system::touch;
 
     let temporal = DeclarationFamily::TemporalTrace;

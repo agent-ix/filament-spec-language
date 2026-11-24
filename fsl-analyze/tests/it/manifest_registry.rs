@@ -3,8 +3,8 @@
 
 use std::num::NonZeroU64;
 
-use fsl_foundation::bound::DomainKind;
 use fsl_foundation::BackendId;
+use fsl_foundation::bound::DomainKind;
 use fsl_route::{
     Candidate, ManifestMembers, MaxCasesMember, Mode, ProviderOrigin, RegistrationCause, Registry,
 };

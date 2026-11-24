@@ -11,16 +11,16 @@ use filament_exact::Cancel;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity, FairnessKind};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
-    replay_model_trace, settle_model_check, CertificateRequest, CounterexampleKind, ModelCheckItem,
-    ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord, ModelTraceReplayResult,
-    ModelTraceSettlement, ModelTraceSubject, ReplayLimits, ResultLabel, StrongFairnessHint,
-    TemporalCounterexample, TerminalValue,
+    CertificateRequest, CounterexampleKind, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome,
+    ModelCheckRecord, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject,
+    ReplayLimits, ResultLabel, StrongFairnessHint, TemporalCounterexample, TerminalValue,
+    replay_model_trace, settle_model_check,
 };
 use fsl_semantics::check::CheckedTemporalClause;
 use ix_trace_rs::trace;
 
-use crate::counter::{document, document_with_ranged_parameter, CONTRACT};
-use crate::example_units::{config_over, decide, receiver, violated, Versions, FORMULA, WHOLE};
+use crate::counter::{CONTRACT, document, document_with_ranged_parameter};
+use crate::example_units::{FORMULA, Versions, WHOLE, config_over, decide, receiver, violated};
 use crate::lasso_replay::{bounded_fixture, hints_of};
 use crate::liveness::{counter, is_zero};
 use crate::model_settle;
@@ -157,10 +157,12 @@ fn an_operation_the_loop_takes_in_part_is_named_each_with_the_identity_it_leaves
     assert_eq!(hint.suggested.operation().name(), "setTo");
     let identity = hint.identity.as_ref().expect("an identity");
     assert!(identity.operation().contains("Counter/setTo"));
-    assert!(counterexample
-        .prefix
-        .iter()
-        .all(|step| step.transition != *identity));
+    assert!(
+        counterexample
+            .prefix
+            .iter()
+            .all(|step| step.transition != *identity)
+    );
     assert_eq!(hint.first_enabled_position, 0);
 
     // With no constraint the loop is `setTo(0)` alone: `inc` is enabled and
@@ -199,10 +201,12 @@ fn a_stutter_loop_a_bounded_prefix_and_a_deadlock_carry_no_hint() {
     let ModelCheckOutcome::Violated { counterexample, .. } = &outcome else {
         panic!("expected a violation, got {outcome:?}");
     };
-    assert!(counterexample
-        .lasso
-        .as_ref()
-        .is_some_and(|lasso| lasso.terminal_stutter));
+    assert!(
+        counterexample
+            .lasso
+            .as_ref()
+            .is_some_and(|lasso| lasso.terminal_stutter)
+    );
     assert!(hints_of(&stutter, counterexample, is_zero).is_empty());
 
     let bounded = bounded_fixture("eventually[0,1] holds(c.value = 3)");
@@ -261,10 +265,12 @@ fn the_weak_each_mutex_refutation_names_acq_one_at_loop_position_zero() {
     assert_eq!(hint.first_enabled_position, 0);
     let identity = hint.identity.as_ref().expect("an identity");
     assert!(identity.operation().contains("Counter/setTo"));
-    assert!(counterexample
-        .prefix
-        .iter()
-        .all(|step| step.transition != *identity));
+    assert!(
+        counterexample
+            .prefix
+            .iter()
+            .all(|step| step.transition != *identity)
+    );
 
     // The same loop behind a stem: the position is the loop's, not the
     // trace's, so it is still 0 where `acq(1)` is first enabled in the loop.
@@ -311,10 +317,12 @@ fn the_strong_whole_mutex_refutation_carries_the_same_hint() {
     assert_eq!(hint.suggested.operation().name(), "setTo");
     assert_eq!(hint.first_enabled_position, 0);
     let identity = hint.identity.as_ref().expect("an identity");
-    assert!(counterexample
-        .prefix
-        .iter()
-        .all(|step| step.transition != *identity));
+    assert!(
+        counterexample
+            .prefix
+            .iter()
+            .all(|step| step.transition != *identity)
+    );
     assert!(identity.operation().contains("Counter/setTo"));
     assert_eq!(
         identity.arguments(),

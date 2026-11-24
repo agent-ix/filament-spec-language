@@ -5,14 +5,14 @@
 
 use filament_exact::Cancel;
 use fsl_analyze::analyze::{
-    analyze, AnalyzeLimits, AnalyzeRefusal, AnalyzeRequest, Engines, SourceProvision,
-    SubjectBinding,
+    AnalyzeLimits, AnalyzeRefusal, AnalyzeRequest, Engines, SourceProvision, SubjectBinding,
+    analyze,
 };
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_semantics::model::intake::PackageInput;
 use ix_trace_rs::trace;
 
-use crate::counter::{document, package, universe, Documents, CONTRACT};
+use crate::counter::{CONTRACT, Documents, document, package, universe};
 
 /// The Counter unit selects the `test/counter` domain package, and a binding
 /// whose `packages` leave that package out makes the strict reader refuse the

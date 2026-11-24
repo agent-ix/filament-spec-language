@@ -11,7 +11,7 @@
 use filament_exact::{Cancel, Meter};
 use fsl_analyze::analyze::ProtocolItem;
 use fsl_analyze::model_check::{
-    check_model, check_protocol, ModelCheckRequest, ProtocolCheckRequest,
+    ModelCheckRequest, ProtocolCheckRequest, check_model, check_protocol,
 };
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ProtocolSubject};
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimState};
@@ -20,18 +20,18 @@ use fsl_eval::simulation::protocol::{
 };
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_eval::temporal::{
-    evaluate_at, AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
-    TemporalTrace,
+    AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition, TemporalTrace,
+    evaluate_at,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    check_protocol_closure, replay_protocol_trace_with_temporal_selections, settle_protocol_check,
     CertificateLocus, CertificateRejection, CertificateRule, Certification, ClauseIdentity,
     ClosureCertificate, IncompleteCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
     ModelCheckOutcome, ModelCheckRecord, ModelTraceSubject, ProductStateRef, ProofBasis,
     ProofCertificate, ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits, ResultLabel,
-    TemporalCertificateCheck, TemporalCounterexample, TerminalValue,
+    TemporalCertificateCheck, TemporalCounterexample, TerminalValue, check_protocol_closure,
+    replay_protocol_trace_with_temporal_selections, settle_protocol_check,
 };
 use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId};
 use fsl_semantics::model::observation::DocumentRef;
@@ -39,10 +39,10 @@ use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
 use crate::fill::{
-    attempt, contracts, document, fill_unit, instance, model_subject, package, protocol, reachable,
-    sc_system, subject, unit_text, universe, v, Documents, Reached,
+    Documents, Reached, attempt, contracts, document, fill_unit, instance, model_subject, package,
+    protocol, reachable, sc_system, subject, unit_text, universe, v,
 };
-use crate::model_settle::{envelope_at, request};
+use crate::model_settle_support::{envelope_at, request};
 use crate::protocol_compensation::pay;
 
 /// A claim over `k: M::Cell`, `on origin`, under event-position
@@ -293,7 +293,7 @@ impl Case {
 #[trace("TC-770", "FR-286-AC-14")]
 #[test]
 fn a_refuted_protocol_clause_carries_its_spelled_counterexample() {
-    use fsl_analyze::analyze::{analyze_items, protocol_item, split_records, Engines};
+    use fsl_analyze::analyze::{Engines, analyze_items, protocol_item, split_records};
     use fsl_foundation::RequestIndex;
     use fsl_replay::TerminalValue;
 
@@ -340,7 +340,7 @@ fn a_refuted_protocol_clause_carries_its_spelled_counterexample() {
 /// claim, `analyze` would refuse it `inapplicable-kind`.
 #[test]
 fn a_protocol_clause_item_is_settled_by_en1_not_refused() {
-    use fsl_analyze::analyze::{analyze_items, protocol_item, Engines, Settlement};
+    use fsl_analyze::analyze::{Engines, Settlement, analyze_items, protocol_item};
     use fsl_foundation::RequestIndex;
 
     let case = repaired_fill("eventually[0,2] holds(k.v >= 2)");
@@ -883,7 +883,13 @@ pub(crate) fn closure_check_over(
     letters: &dyn ModelLetters,
     certificate: &ClosureCertificate,
 ) -> TemporalCertificateCheck {
-    closure_check_with(case, protocol, letters, certificate, &ModelCheckLimits::default())
+    closure_check_with(
+        case,
+        protocol,
+        letters,
+        certificate,
+        &ModelCheckLimits::default(),
+    )
 }
 
 /// [`closure_check_over`] under `limits`.
@@ -894,7 +900,14 @@ fn closure_check_with(
     certificate: &ClosureCertificate,
     limits: &ModelCheckLimits,
 ) -> TemporalCertificateCheck {
-    closure_check_bounded(case, protocol, letters, certificate, limits, (None, None, None))
+    closure_check_bounded(
+        case,
+        protocol,
+        letters,
+        certificate,
+        limits,
+        (None, None, None),
+    )
 }
 
 /// [`closure_check_with`] under the request bounds `(max_store_buffer,
@@ -979,9 +992,11 @@ fn a_closure_with_a_fair_uncounted_cycle_is_rejected_as_a_proof() {
         .filter(|s| owes_interval(s))
         .collect();
     // The initial product state owes the interval too, and is off the cycle.
-    assert!(owing
-        .iter()
-        .any(|state| !cycle.contains(&state.model_state)));
+    assert!(
+        owing
+            .iter()
+            .any(|state| !cycle.contains(&state.model_state))
+    );
     let expected = owing
         .iter()
         .filter(|state| cycle.contains(&state.model_state))
@@ -1058,10 +1073,12 @@ fn a_cycle_that_takes_a_counted_step_is_not_a_zero_progress_refutation() {
         panic!("{:?}", outcome.stats());
     };
     assert!(counterexample.lasso.is_none(), "{counterexample:?}");
-    assert!(counterexample
-        .prefix
-        .iter()
-        .all(|step| step.transition.counts()));
+    assert!(
+        counterexample
+            .prefix
+            .iter()
+            .all(|step| step.transition.counts())
+    );
     assert_eq!(case.label("P", &letters, &outcome), ResultLabel::Refuted);
 }
 
@@ -1190,8 +1207,7 @@ pub(crate) struct CellAtoms {
 
 impl CellAtoms {
     pub(crate) fn of(clause: &CheckedTemporalClause, reads: &[fn(i64) -> bool]) -> Self {
-        let automaton =
-            fsl_eval::automaton::translate(clause, 256).expect("the clause translates");
+        let automaton = fsl_eval::automaton::translate(clause, 256).expect("the clause translates");
         assert_eq!(automaton.atoms().len(), reads.len(), "one reading per atom");
         Self {
             atoms: automaton.atoms().to_vec(),
@@ -1299,8 +1315,8 @@ fn walked_before_violation(
     reads: &[fn(i64) -> bool],
 ) -> (ClosureCertificate, fsl_eval::automaton::AutomatonStateKey) {
     use fsl_eval::automaton::{
-        translate_counted, Atom, ContextBinding, Letter, Monitor, SafetyStates, StateContext,
-        SubjectKind,
+        Atom, ContextBinding, Letter, Monitor, SafetyStates, StateContext, SubjectKind,
+        translate_counted,
     };
     let subject = case.subject(protocol);
     let system = sc_system(&subject).with_cycle_keys(std::collections::BTreeSet::new());
@@ -1320,11 +1336,8 @@ fn walked_before_violation(
     )];
     let context = StateContext::clause(clause, identity.occurrence().clone(), binding);
     let keys = SafetyStates::clause(clause, &context, SubjectKind::Protocol).expect("translates");
-    let mut monitor = Monitor::bad_prefix(
-        translate_counted(clause, 256).expect("translates"),
-        256,
-    )
-    .expect("a safety automaton");
+    let mut monitor = Monitor::bad_prefix(translate_counted(clause, 256).expect("translates"), 256)
+        .expect("a safety automaton");
     let uncounted = monitor.automaton().uncounted();
     let letter = |state: &ProtocolState<Sc>, counted: bool| {
         let model = system.atom_state(state).into_owned();
@@ -1454,8 +1467,12 @@ fn a_tp3_certificate_is_checked_under_the_request_bounds() {
     assert_eq!(held, reachable_keys(&system));
 
     let limits = ModelCheckLimits::default();
-    let check = |bounds| closure_check_bounded(&case, "Fill", &letters, certificate, &limits, bounds);
-    assert_eq!(check((None, None, None)), TemporalCertificateCheck::Accepted);
+    let check =
+        |bounds| closure_check_bounded(&case, "Fill", &letters, certificate, &limits, bounds);
+    assert_eq!(
+        check((None, None, None)),
+        TemporalCertificateCheck::Accepted
+    );
     assert_eq!(
         check((Some(4), Some(4), Some(3))),
         TemporalCertificateCheck::Accepted
@@ -1507,16 +1524,17 @@ fn a_past_tp3_clause_over_the_repaired_fill_keys_distance_history() {
             certification: Certification::Certified,
         }
     );
-    assert!(certificate
-        .states
-        .iter()
-        .any(|state| String::from_utf8_lossy(state.automaton_state.as_bytes())
-            .contains("distance-history")));
+    assert!(certificate.states.iter().any(|state| {
+        String::from_utf8_lossy(state.automaton_state.as_bytes()).contains("distance-history")
+    }));
 
     let distances: std::collections::BTreeSet<Vec<u64>> =
         certificate.states.iter().map(bucket_distances).collect();
     for expected in [vec![], vec![0], vec![0, 1]] {
-        assert!(distances.contains(&expected), "{expected:?} in {distances:?}");
+        assert!(
+            distances.contains(&expected),
+            "{expected:?} in {distances:?}"
+        );
     }
 
     let subject = case.subject("Fill");

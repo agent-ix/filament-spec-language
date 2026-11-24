@@ -4,10 +4,10 @@
 //! to 3 and then stops.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, counter_request, label, resetting_counter_request, staying_counter_request, Workspace,
+    Workspace, analyze, counter_request, label, resetting_counter_request, staying_counter_request,
 };
 
 const CLAIMS: &str = "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n\
@@ -134,9 +134,11 @@ fn witness_samples_on_another_form_is_refused_naming_the_member() {
             item["record"]["diagnostic"]["code"],
             "invalid_runtime_input"
         );
-        assert!(item["record"]["diagnostic"]["detail"]["member"]
-            .as_str()
-            .is_some_and(|member| member.starts_with("temporal.")));
+        assert!(
+            item["record"]["diagnostic"]["detail"]["member"]
+                .as_str()
+                .is_some_and(|member| member.starts_with("temporal."))
+        );
     }
     assert_eq!(label(&run.item(2)), "proved");
 }

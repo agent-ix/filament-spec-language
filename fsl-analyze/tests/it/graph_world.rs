@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(
+    dead_code,
+    reason = "shared analyzer fixture support spans split integration test binaries"
+)]
 //! The state-graph tests' worlds: a one-type domain package whose fields are
 //! bounded integers and whose operations take no parameter, a native unit
 //! selecting it with a contract and state-graph claims, and the snapshots,
@@ -31,10 +35,10 @@ use fsl_semantics::check::{CheckedStateGraphClaim, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{
-    declared_type_universe_for, DocumentRef, ObservationLimits,
+    DocumentRef, ObservationLimits, declared_type_universe_for,
 };
-use fsl_semantics::value::{admit_integer_division, DefinitionRole};
-use serde_json::{json, Value as Json};
+use fsl_semantics::value::{DefinitionRole, admit_integer_division};
+use serde_json::{Value as Json, json};
 
 use crate::counter::UNLIMITED;
 
@@ -576,8 +580,7 @@ pub(crate) fn symmetric_config_version() -> Model {
 }
 
 /// §7.1's contract.
-pub(crate) const CONFIG_CONTRACT: &str =
-    "post Advance using v on Config::ConfigVersion::attemptUpdate { \
+pub(crate) const CONFIG_CONTRACT: &str = "post Advance using v on Config::ConfigVersion::attemptUpdate { \
      (pre(self.versionNumber) < 2 and self.versionNumber = pre(self.versionNumber) + 1) or \
      (pre(self.versionNumber) = 2 and self.versionNumber = 0) }\n";
 

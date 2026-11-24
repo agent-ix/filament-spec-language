@@ -14,17 +14,17 @@ use fsl_eval::automaton::translate;
 use fsl_eval::model_subject::{ProtocolSubject, RoleBinding};
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{
-    visible, AnchorName, ClaimReads, MemoryModel, ParallelInstance, ProtocolLocation,
-    ProtocolState, ProtocolSystem, ProtocolTransition, ReachRefusal, Sc, StepKind, ThreadPath,
+    AnchorName, ClaimReads, MemoryModel, ParallelInstance, ProtocolLocation, ProtocolState,
+    ProtocolSystem, ProtocolTransition, ReachRefusal, Sc, StepKind, ThreadPath, visible,
 };
-use fsl_eval::simulation::{independent, Footprint, Limit, Location, TransitionSystem};
+use fsl_eval::simulation::{Footprint, Limit, Location, TransitionSystem, independent};
 use fsl_package::CheckedPackage;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
 use crate::fill::{
-    attempt, contracts, fill_unit, instance, key, model_subject, package, protocol, reachable,
-    sc_system, source_memory, Documents, Reached, PACKAGE,
+    Documents, PACKAGE, Reached, attempt, contracts, fill_unit, instance, key, model_subject,
+    package, protocol, reachable, sc_system, source_memory,
 };
 use crate::protocol_compensation as compensation;
 use crate::protocol_roles as roles;
@@ -666,6 +666,7 @@ fn after_both<M: MemoryModel>(
 /// every pair of enabled steps reported independent commutes: each stays
 /// enabled after the other, and both orders reach the same states. The
 /// number of independent pairs checked.
+#[expect(dead_code, reason = "used by the refinement integration binary")]
 pub(crate) fn assert_independent_steps_commute<M: MemoryModel>(
     system: &ProtocolSystem<'_, M>,
     reached: &[Reached<M>],

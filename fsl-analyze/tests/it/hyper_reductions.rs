@@ -15,7 +15,7 @@ use fsl_route::reductions::{Reductions, SymmetryDeclaration};
 use fsl_semantics::check::{HyperForm, TemporalProfile};
 use ix_trace_rs::trace;
 
-use crate::hyper::refuted;
+use crate::hyper_support::refuted;
 use crate::hyper_world::{key, non_interference, opaque, Vault, World, EQUAL_INPUTS, STARTS};
 
 /// The two vaults `v` and `w` of one initial state.
@@ -648,8 +648,8 @@ fn a_finite_first_closed_refutation_precedes_later_sibling_budget_work() {
     assert_eq!(ample.kind, fsl_replay::HyperCounterexampleKind::Closed);
     assert_eq!(ample.traces.len(), 2);
     assert!(ample.traces.iter().all(|trace| trace.steps.len() == 1));
-    assert_eq!(crate::hyper::inputs(&ample, 0), vec![0]);
-    assert_eq!(crate::hyper::inputs(&ample, 1), vec![1]);
+    assert_eq!(crate::hyper_support::inputs(&ample, 0), vec![0]);
+    assert_eq!(crate::hyper_support::inputs(&ample, 1), vec![1]);
     assert!(matches!(
         world.replay(&ample),
         Ok(ModelTraceSettlement::Reproduced { .. })
@@ -709,8 +709,8 @@ fn a_finite_selected_closed_refutation_precedes_later_orbit_budget_work() {
     let ample = refuted(run(100));
     let bounded = refuted(run(2));
     assert_eq!(bounded, ample);
-    assert_eq!(crate::hyper::inputs(&bounded, 0), vec![0]);
-    assert_eq!(crate::hyper::inputs(&bounded, 1), vec![1]);
+    assert_eq!(crate::hyper_support::inputs(&bounded, 0), vec![0]);
+    assert_eq!(crate::hyper_support::inputs(&bounded, 1), vec![1]);
     assert!(matches!(
         world.replay(&bounded),
         Ok(ModelTraceSettlement::Reproduced { .. })
@@ -751,8 +751,8 @@ fn a_finite_stream_keeps_component_cartesian_order_across_joint_depths() {
         crate::counter::UNLIMITED,
         &Cancel::new(),
     ));
-    assert_eq!(crate::hyper::inputs(&counterexample, 0), vec![0, 0]);
-    assert_eq!(crate::hyper::inputs(&counterexample, 1), vec![1, 0]);
+    assert_eq!(crate::hyper_support::inputs(&counterexample, 0), vec![0, 0]);
+    assert_eq!(crate::hyper_support::inputs(&counterexample, 1), vec![1, 0]);
     assert!(matches!(
         world.replay(&counterexample),
         Ok(ModelTraceSettlement::Reproduced { .. })

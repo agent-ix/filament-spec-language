@@ -6,10 +6,10 @@
 //! for a fact the source route reads.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, bounded, counter_request, label, package_selection, request_members, Workspace,
+    Workspace, analyze, bounded, counter_request, label, package_selection, request_members,
 };
 
 /// A Boolean value clause over a bounded integer that holds everywhere.

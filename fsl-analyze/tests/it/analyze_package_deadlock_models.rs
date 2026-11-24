@@ -9,12 +9,12 @@
 //! `not-yet-implemented` refusal.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, label, package_selection, request_members, request_over, Run, Workspace, HANDOFF,
+    HANDOFF, Run, Workspace, analyze, label, package_selection, request_members, request_over,
 };
-use crate::hyper_world::{self, Vault, KEY, PACKAGE};
+use crate::hyper_world::{self, KEY, PACKAGE, Vault};
 
 const OTHER: &str = "test/vault-other";
 

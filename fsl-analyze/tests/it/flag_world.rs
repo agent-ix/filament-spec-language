@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(dead_code, reason = "shared model fixture support spans split integration test binaries")]
 //! The boolean-flag subjects of the annotated-quotient tests
 //! (`crate::quotient`), each a `test/<name>` domain package with one object
 //! type in a population declared `symmetric`, over the universe `{a, b}`:

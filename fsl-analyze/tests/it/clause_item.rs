@@ -10,8 +10,8 @@
 use filament_exact::{Cancel, Origin, Role};
 use filament_semantic_value::catalog::Category;
 use fsl_analyze::analyze::{
-    analyze_items, AnalyzeLimits, ClauseItemRefusal, ClauseLimits, ClauseSubject, Engine, Engines,
-    SourceProvision,
+    AnalyzeLimits, ClauseItemRefusal, ClauseLimits, ClauseSubject, Engine, Engines,
+    SourceProvision, analyze_items,
 };
 use fsl_eval::simulation::Limits;
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -24,7 +24,7 @@ use ix_trace_rs::trace;
 use serde_json::json;
 
 use crate::counter::CONTRACT;
-use crate::model_world::{self, Clause, World, INFINITE};
+use crate::model_world::{self, Clause, INFINITE, World};
 
 /// The Counter world with `always holds(c.value <= 1)`: `inc` breaks it at
 /// value 2.
@@ -323,8 +323,8 @@ fn a_key_with_another_claim_occurrence_is_an_unknown_clause() {
 #[test]
 fn a_package_of_two_source_units_replays_from_its_complete_provision() {
     use fsl_replay::spine::{
-        admit_parsed_unit_list, check_units, parse, select_units, DependencyInput, ParseRequest,
-        SpineLimits,
+        DependencyInput, ParseRequest, SpineLimits, admit_parsed_unit_list, check_units, parse,
+        select_units,
     };
     use fsl_semantics::model::accounting::ModelNormalizationLimits;
     use fsl_semantics::model::intake::package_input;
@@ -478,9 +478,11 @@ fn a_tampered_counterexample_or_another_unit_is_refused_by_the_replay() {
 
     let mut outside = counterexample.clone();
     outside.initial_state = 1;
-    assert!(subject(&world, ClauseLimits::default())
-        .replay_counterexample(&outside)
-        .is_err());
+    assert!(
+        subject(&world, ClauseLimits::default())
+            .replay_counterexample(&outside)
+            .is_err()
+    );
 
     let node = &world.package.graph().temporal_clauses()[0];
     let key = OccurrenceKey::new(node.identity(), node.claim().clone());
@@ -787,8 +789,8 @@ fn a_failed_replay_emission_settles_failed_with_the_package_emission_fault() {
 #[test]
 fn a_package_over_the_emit_limit_reports_the_typed_cause_not_a_nested_id() {
     use fsl_analyze::analyze::document::{
-        settle_run, AnalyzeDocumentError, AnalyzeRun, HeldIdentityError, ResolvedClaim,
-        ResolvedItem, SubjectSelection,
+        AnalyzeDocumentError, AnalyzeRun, HeldIdentityError, ResolvedClaim, ResolvedItem,
+        SubjectSelection, settle_run,
     };
     use fsl_analyze::analyze::{ClaimItem, GraphUnavailable, ItemOptions};
     use fsl_route::request::ExtentClassification;

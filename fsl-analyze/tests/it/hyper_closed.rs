@@ -17,7 +17,7 @@ use fsl_route::reductions::Reductions;
 use fsl_semantics::check::{HyperForm, TemporalProfile};
 use ix_trace_rs::trace;
 
-use crate::hyper::refuted;
+use crate::hyper_support::refuted;
 use crate::hyper_world::{Vault, World, KEY};
 
 /// The Secure vault twice, `V` and `N`, started from `h = 1`, `l = 0`.
@@ -168,7 +168,7 @@ fn aligned(body: &str) -> String {
 #[test]
 fn an_event_position_projection_aligned_clause_reaches_a_verdict() {
     let body = "always [0, 2] holds(v.l @ a = v.l @ b)";
-    let held = World::busy(Vault::Busy, &crate::hyper_projected::IDLE, &aligned(body));
+    let held = World::busy(Vault::Busy, &crate::hyper_projected_support::IDLE, &aligned(body));
     assert_eq!(held.clause.form(), Some(&HyperForm::ProjectionAligned));
     let outcome = held
         .run(ModelCheckLimits::default(), &Cancel::new())
@@ -180,7 +180,7 @@ fn an_event_position_projection_aligned_clause_reaches_a_verdict() {
     assert_eq!(settled(&held, &outcome).0, ResultLabel::Proved);
     let leaky = World::busy(
         Vault::BusyLeaky,
-        &crate::hyper_projected::MID_OPERATION,
+        &crate::hyper_projected_support::MID_OPERATION,
         &aligned(body),
     );
     let outcome = leaky

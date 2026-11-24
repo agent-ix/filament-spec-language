@@ -14,29 +14,29 @@
 use filament_exact::{Cancel, CancelCause, Identifier, NodeKey, Origin, Role};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::catalog::InternalFault;
-use fsl_analyze::model_check::{check_model, ModelCheckRequest};
-use fsl_eval::simulation::model::ExpansionLimits;
+use fsl_analyze::model_check::{ModelCheckRequest, check_model};
 use fsl_eval::simulation::SubjectTransition;
+use fsl_eval::simulation::model::ExpansionLimits;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    replay_model_trace, settle_model_check, CertificateRequest, CounterexampleKind,
-    DisagreementCause, EnvelopeSource, Execution, IncompleteCause, InconclusiveCause,
-    ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelTraceRefusal,
-    ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject, ModelTraceValue,
-    QualifiedName, ReachedLimit, ReplayLimits, ReplayRefusal, ReplayRequestWire, ReplaySource,
-    ResultLabel, RunStats, SettlementBasis, StateEnvironment, TemporalCounterexample,
-    TerminalValue, Truth, UndecidedCause, UndefinedLocus, Witness, WitnessEnvelope, WitnessPacket,
-    EXPLICIT_STATE,
+    CertificateRequest, CounterexampleKind, DisagreementCause, EXPLICIT_STATE, EnvelopeSource,
+    Execution, IncompleteCause, InconclusiveCause, ModelCheckItem, ModelCheckLimit,
+    ModelCheckLimits, ModelCheckOutcome, ModelTraceRefusal, ModelTraceReplayResult,
+    ModelTraceSettlement, ModelTraceSubject, ModelTraceValue, QualifiedName, ReachedLimit,
+    ReplayLimits, ReplayRefusal, ReplayRequestWire, ReplaySource, ResultLabel, RunStats,
+    SettlementBasis, StateEnvironment, TemporalCounterexample, TerminalValue, Truth,
+    UndecidedCause, UndefinedLocus, Witness, WitnessEnvelope, WitnessPacket, replay_model_trace,
+    settle_model_check,
 };
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
 use crate::counter::{
-    document, package_with_mode, subject, unit_text, universe, Documents, Letters, CONTRACT,
-    UNLIMITED,
+    CONTRACT, Documents, Letters, UNLIMITED, document, package_with_mode, subject, unit_text,
+    universe,
 };
 use filament_semantic_value::checking::CheckMode;
 
@@ -86,7 +86,7 @@ pub(crate) fn assert_allocation_outcome(records: &[fsl_replay::TerminalRecord], 
 #[test]
 #[trace("FR-259", "FR-1046-AC-7")]
 fn a_model_replay_allocation_keeps_the_actual_item_resource_evidence() {
-    use fsl_analyze::analyze::{analyze_items, split_records, Engines};
+    use fsl_analyze::analyze::{Engines, analyze_items, split_records};
     let case = case(&crate::derived_request::counter_body(""), &[0]);
     let mut item = case.model_item();
     let calls = std::cell::Cell::new(0);

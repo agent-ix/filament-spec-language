@@ -12,20 +12,19 @@ use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_foundation::diagnostic::Code;
 use fsl_replay::{
-    replay_checked_source_model_trace, replay_model_trace_with_temporal_selections,
-    settle_model_check_over_stutter_closure, ClosureRule, ClosureStutter, CounterexampleKind,
-    DisagreementCause, InconclusiveCause, Lasso, ModelCheckLimits, ModelCheckOutcome, ModelStep,
-    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject,
-    ModelTraceValue, ReplayLimits, ReplayRefusal, RunStats, StepSite, TemporalCounterexample,
-    TerminalValue,
+    ClosureRule, ClosureStutter, CounterexampleKind, DisagreementCause, InconclusiveCause, Lasso,
+    ModelCheckLimits, ModelCheckOutcome, ModelStep, ModelTraceRefusal, ModelTraceReplayResult,
+    ModelTraceSettlement, ModelTraceSubject, ModelTraceValue, ReplayLimits, ReplayRefusal,
+    RunStats, StepSite, TemporalCounterexample, TerminalValue, replay_checked_source_model_trace,
+    replay_model_trace_with_temporal_selections, settle_model_check_over_stutter_closure,
 };
 use ix_trace_rs::trace;
 
 use crate::counter::{
-    document, document_with_ranged_parameter, subject, value, Letters, UNLIMITED,
+    Letters, UNLIMITED, document, document_with_ranged_parameter, subject, value,
 };
 use crate::lasso_replay::{clause_identity, found, refusal, subject_of};
-use crate::liveness::{counter, is_zero, Fixture};
+use crate::liveness::{Fixture, counter, is_zero};
 use crate::model_settle::{envelope_at, request};
 
 const FORMULA: &str = "always eventually holds(c.value = 3)";
@@ -449,10 +448,12 @@ fn a_closure_lasso_is_fair_only_where_the_constraint_is_disabled() {
     // flag.
     let terminal = counter(document(false), "", ZERO);
     let payload = found(&terminal, is_zero);
-    assert!(payload
-        .lasso
-        .as_ref()
-        .is_some_and(|lasso| lasso.terminal_stutter));
+    assert!(
+        payload
+            .lasso
+            .as_ref()
+            .is_some_and(|lasso| lasso.terminal_stutter)
+    );
     assert!(payload.closure_stutters.is_empty());
     for selected in [false, true] {
         for result in both_routes(&terminal, &payload, &Letters { atom: is_zero }, selected) {

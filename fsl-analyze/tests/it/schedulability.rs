@@ -6,13 +6,13 @@
 
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use filament_semantic_value::catalog::Category;
-use fsl_analyze::schedulability::{analyze, ScheduleLimits};
+use fsl_analyze::schedulability::{ScheduleLimits, analyze};
 use fsl_replay::{
-    recompute, settle, AmcEvidence, Arrival, Certification, ClosedFormAnalysis, ClosedFormCheck,
+    AmcEvidence, Arrival, Certification, ClosedFormAnalysis, ClosedFormCheck,
     ClosedFormDisagreement, ClosedFormEvidence, ClosedFormOutcome, Code, Criticality,
     DisagreementCause, Identifier, InconclusiveCause, JobIterates, MissEvidence, ProofBasis,
     QualifiedName, ScheduleClaim, ScheduleSubject, SchedulingPolicy, Task, TaskFixpoint, TaskSet,
-    TaskSetRefusal, TerminalValue, TimeMember, Verdict, Wcet,
+    TaskSetRefusal, TerminalValue, TimeMember, Verdict, Wcet, recompute, settle,
 };
 use fsl_replay::{IncompleteCause, ModelCheckLimit};
 use ix_trace_rs::trace;

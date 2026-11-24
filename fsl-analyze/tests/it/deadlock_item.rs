@@ -14,7 +14,7 @@ use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
-use crate::counter::{document, package, Documents, CONTRACT, PACKAGE};
+use crate::counter::{CONTRACT, Documents, PACKAGE, document, package};
 use crate::derived_request::derived_items;
 
 /// The `Counter` subject: universe `{c}`, initial value 0.

@@ -12,26 +12,26 @@
 //! since the payload carries neither member yet.
 
 use filament_exact::{Cancel, NodeKey};
-use fsl_analyze::model_check::{check_model, ModelCheckRequest};
+use fsl_analyze::model_check::{ModelCheckRequest, check_model};
 use fsl_eval::model_subject::ModelLetters;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSystem};
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
-    replay_model_trace_with_temporal_selections, settle_model_check, CertificateRequest,
-    DisagreementCause, InconclusiveCause, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome,
-    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject,
-    ModelTraceValue, ReplayLimits, ReplayRefusal, ResultLabel, TemporalCounterexample,
-    TerminalValue, UndefinedEvaluation, UndefinedLocus,
+    CertificateRequest, DisagreementCause, InconclusiveCause, ModelCheckItem, ModelCheckLimits,
+    ModelCheckOutcome, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement,
+    ModelTraceSubject, ModelTraceValue, ReplayLimits, ReplayRefusal, ResultLabel,
+    TemporalCounterexample, TerminalValue, UndefinedEvaluation, UndefinedLocus,
+    replay_model_trace_with_temporal_selections, settle_model_check,
 };
 use ix_trace_rs::trace;
 
 use crate::counter::{
-    document, document_with_ranged_parameter, package_from_text, subject, unit_text, universe,
-    Documents, Letters, CONTRACT, UNLIMITED,
+    CONTRACT, Documents, Letters, UNLIMITED, document, document_with_ranged_parameter,
+    package_from_text, subject, unit_text, universe,
 };
-use crate::liveness::{counter, fixture_in_mode, is_zero, Fixture};
+use crate::liveness::{Fixture, counter, fixture_in_mode, is_zero};
 use crate::model_settle::{envelope_at, request};
 
 const FORMULA: &str = "always eventually holds(c.value = 3)";
@@ -203,17 +203,19 @@ fn a_guarded_on_each_prefix_replays_through_production_letters() {
     let letters = system
         .clause_letters(node)
         .expect("the production letters build");
-    assert!(letters
-        .activation_reads()
-        .expect("the guard footprint is derived")
-        .iter()
-        .any(|read| matches!(
-            read,
-            fsl_semantics::check::footprint::SymbolicLocation::Field {
-                object: FootprintObject::Receiver,
-                ..
-            }
-        )));
+    assert!(
+        letters
+            .activation_reads()
+            .expect("the guard footprint is derived")
+            .iter()
+            .any(|read| matches!(
+                read,
+                fsl_semantics::check::footprint::SymbolicLocation::Field {
+                    object: FootprintObject::Receiver,
+                    ..
+                }
+            ))
+    );
     let outcome = check_model(
         ModelCheckRequest {
             workers: 1,

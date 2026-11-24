@@ -4,10 +4,10 @@
 //! only) `temporal.max_history` as key members with no default.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, bounded, counter_request, label, litmus_request, order_protocol, Run, Workspace,
+    Run, Workspace, analyze, bounded, counter_request, label, litmus_request, order_protocol,
 };
 
 fn root() -> Value {

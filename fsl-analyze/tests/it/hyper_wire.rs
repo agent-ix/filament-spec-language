@@ -154,7 +154,7 @@ fn analyze_hyper_projected_holds_and_refutes() {
         (Vault::BusyLeaky, "refuted", 10),
     ] {
         let (unit, model, snapshots) =
-            request_files_over_starts(vault, false, &STARTS, &crate::hyper_projected::aligned(&[]));
+            request_files_over_starts(vault, false, &STARTS, &crate::hyper_projected_support::aligned(&[]));
         let ws = Workspace::new(&format!("hyper-wire-projected-{expected}"));
         let run = analyze(&request_over(
             &ws,

@@ -15,19 +15,19 @@ use std::collections::{BTreeMap, VecDeque};
 
 use filament_exact::{Cancel, Integer};
 use fsl_eval::simulation::model::{
-    TaskAutomaton, TaskProductSystem, TimedSystem, DEFAULT_MAX_CLOCKS,
+    DEFAULT_MAX_CLOCKS, TaskAutomaton, TaskProductSystem, TimedSystem,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
-    check_zone_certificate, explore_task_product, recomputed_member, CertEdge, CertNode,
-    CertificateCheckLimits, CertificateItem, CertificateLocus, CertificateMember, CertificateRule,
-    CertifiedItem, DivergenceWitness, DivergentTarget, QuotientIdentity, QuotientStop,
-    TaskProductQuotient, Zone, ZoneCertificate, ZoneCertificateRefusal, ZoneCertificateRequest,
-    ZoneCertificateVerdict,
+    CertEdge, CertNode, CertificateCheckLimits, CertificateItem, CertificateLocus,
+    CertificateMember, CertificateRule, CertifiedItem, DivergenceWitness, DivergentTarget,
+    QuotientIdentity, QuotientStop, TaskProductQuotient, Zone, ZoneCertificate,
+    ZoneCertificateRefusal, ZoneCertificateRequest, ZoneCertificateVerdict, check_zone_certificate,
+    explore_task_product, recomputed_member,
 };
 use ix_trace_rs::trace;
 
-use crate::timed_world::{document, world, World, DENSE};
+use crate::timed_world::{DENSE, World, document, world};
 use crate::zone_search::TIMED;
 
 /// A source of one guard-free state: each task is released by its own
@@ -805,12 +805,11 @@ fn an_edf_tie_dispatches_the_canonically_first_task() {
                 .is_some_and(|t| t.action == fsl_replay::TaskTransitionAction::Dispatch)
         })
         .collect();
-    assert!(dispatches.iter().all(|edge| edge
-        .task_transition
-        .as_ref()
-        .unwrap()
-        .priority
-        .is_none()));
+    assert!(
+        dispatches
+            .iter()
+            .all(|edge| edge.task_transition.as_ref().unwrap().priority.is_none())
+    );
     // At the node holding both ready jobs the only dispatch is `a`.
     let both = built
         .certificate

@@ -6,18 +6,18 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::zone_check::{
-    check_timed_refinement, TimedLivenessHalf, TimedLivenessOutcome, TimedRefinementOutcome,
-    TimedRefinementUndecided, TimedSafetyOutcome, ZoneUndecided,
+    TimedLivenessHalf, TimedLivenessOutcome, TimedRefinementOutcome, TimedRefinementUndecided,
+    TimedSafetyOutcome, ZoneUndecided, check_timed_refinement,
 };
 use fsl_eval::simulation::Limits;
 use fsl_replay::{
-    open_systems, replay_timed_refinement_trace, Lasso, ModelTraceRefusal, RefinementFailure,
-    RefinementTraceSettlement, ReplayRefusal, TemporalCounterexample,
+    Lasso, ModelTraceRefusal, RefinementFailure, RefinementTraceSettlement, ReplayRefusal,
+    TemporalCounterexample, open_systems, replay_timed_refinement_trace,
 };
 use ix_trace_rs::trace;
 
 use crate::timed_refinement::{analyzed, refinement, replay, replay_attempt, safety_request};
-use crate::timed_world::{document, refining, renamed_package, Refining, DENSE};
+use crate::timed_world::{DENSE, Refining, document, refining, renamed_package};
 
 /// FR-430-AC-5's `Req`: `send` with the precondition `not self.sent` (here
 /// `inflight`), and `ensure fair weak Req::send`.
@@ -823,15 +823,17 @@ fn timed_abstract_enabledness_is_read_over_the_positive_delay_loop() {
     )
     .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let counterexample = violation(check(&world));
-    assert!(counterexample
-        .prefix
-        .iter()
-        .filter(|step| step.transition.operation().contains("/Call/poll\""))
-        .any(|step| {
-            step.delay
-                .as_ref()
-                .is_some_and(|delay| delay > &Rational::from_integer(Integer::zero()))
-        }));
+    assert!(
+        counterexample
+            .prefix
+            .iter()
+            .filter(|step| step.transition.operation().contains("/Call/poll\""))
+            .any(|step| {
+                step.delay
+                    .as_ref()
+                    .is_some_and(|delay| delay > &Rational::from_integer(Integer::zero()))
+            })
+    );
     assert!(matches!(
         replay(&world, &counterexample),
         RefinementTraceSettlement::Reproduced { .. }
@@ -902,9 +904,11 @@ fn a_tick_source_refutes_by_a_loop_of_ticks() {
     );
     let counterexample = violation(check(&world));
     let entry = counterexample.lasso.as_ref().expect("a lasso").entry;
-    assert!(names(&counterexample)[entry..]
-        .iter()
-        .all(|name| name == "tick"));
+    assert!(
+        names(&counterexample)[entry..]
+            .iter()
+            .all(|name| name == "tick")
+    );
     assert!(matches!(
         counterexample.refinement,
         Some(RefinementFailure::Divergence { .. })

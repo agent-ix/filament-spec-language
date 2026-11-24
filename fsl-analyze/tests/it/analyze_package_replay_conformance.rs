@@ -6,10 +6,10 @@
 
 use fsl_eval::simulation::protocol::StepKind;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, label, litmus_request, order_protocol, package_selection, Run, Workspace, HANDOFF,
+    HANDOFF, Run, Workspace, analyze, label, litmus_request, order_protocol, package_selection,
 };
 use crate::protocol_composition::{order_steps, trace_document};
 
@@ -127,7 +127,9 @@ fn assert_recording_charge_parity(ws: &Workspace, bytes: &[u8], document: &Value
         (Some(ExactValue::Boolean(actual)), Some(ExactValue::Boolean(expected))) => {
             assert_eq!(actual, expected);
         }
-        _ => panic!("recording predicate must evaluate to Boolean on both routes: package={package:?}, source={source:?}"),
+        _ => panic!(
+            "recording predicate must evaluate to Boolean on both routes: package={package:?}, source={source:?}"
+        ),
     }
     assert!(
         !source_meter.admitted_charges().is_empty(),

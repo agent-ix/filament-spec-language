@@ -14,13 +14,13 @@ use fsl_package::{BarePackage, BareSupply, ReadEqualityRows, ReadIdentityRows};
 use fsl_semantics::check::{FormulaNode, FormulaNodeId, TemporalClauseNode};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::model::observation::{admit_trace_snapshot, DocumentRef, ObservationLimits};
+use fsl_semantics::model::observation::{DocumentRef, ObservationLimits, admit_trace_snapshot};
 use ix_trace_rs::trace;
 
 use crate::analyze_cli_support::{
-    counter_request_with, counter_snapshot, package_selection, request_members, Workspace, HANDOFF,
+    HANDOFF, Workspace, counter_request_with, counter_snapshot, package_selection, request_members,
 };
-use crate::counter::{document, package_with_mode, CONTRACT};
+use crate::counter::{CONTRACT, document, package_with_mode};
 use filament_semantic_value::checking::CheckMode;
 
 /// FR-940-AC-32: direct source and admitted-package calls over the same
@@ -30,11 +30,11 @@ use filament_semantic_value::checking::CheckMode;
 #[trace("TC-2958", "FR-940-AC-32")]
 #[test]
 fn package_union_function_call_has_source_charge_logs() {
-    use filament_exact::{Meter, Outcome, Value};
     use filament_eval::FamilyOutcome;
+    use filament_exact::{Meter, Outcome, Value};
     use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
     use fsl_package::{
-        admit_checked_package, BarePackage, BareSupply, ReadIdentityRows, V2ReadLimits,
+        BarePackage, BareSupply, ReadIdentityRows, V2ReadLimits, admit_checked_package,
     };
 
     const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -76,9 +76,8 @@ fn package_union_function_call_has_source_charge_logs() {
         )
         .expect("the package identity supply joins");
     let source = compiled.checked();
-    let name = |function: &str| {
-        QualifiedName::new(vec![function.to_owned()]).expect("function name")
-    };
+    let name =
+        |function: &str| QualifiedName::new(vec![function.to_owned()]).expect("function name");
     let objects = ObjectEnvironment::default();
 
     for (constructor, expected) in [("shape", true), ("emptyShape", false)] {
@@ -626,7 +625,7 @@ fn document_ref(label: &str) -> DocumentRef {
 fn package_frame_equals_source_frame() {
     use filament_exact::Identifier;
     use fsl_semantics::model::observation::{
-        admit_frame_invocation, FrameFacts, OperationFacts, Provisions,
+        FrameFacts, OperationFacts, Provisions, admit_frame_invocation,
     };
 
     let (_ws, handoff, mut budget) = handoff("package-forms-frame");
@@ -977,7 +976,7 @@ fn admit_clause(
     input: fsl_semantics::model::observation::ClauseSelectionInput,
 ) -> fsl_semantics::model::observation::AdmittedObservations {
     use fsl_semantics::model::observation::{
-        admit_observations, ClauseFacts, ClauseSelection, OperationFacts, Provisions,
+        ClauseFacts, ClauseSelection, OperationFacts, Provisions, admit_observations,
     };
     let graph = handoff.compiled.checked().graph();
     let clause = graph.state_clause(name).expect("the clause");

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(dead_code, reason = "shared model fixture support spans split integration test binaries")]
 //! The subjects of ADR-021 §7.5 and §7.6 and FR-156-AC-3 for the
 //! partial-order tests (`crate::partial_order`): a `test/por` domain package
 //! of object types with boolean and bounded-integer fields, references and

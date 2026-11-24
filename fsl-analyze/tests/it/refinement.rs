@@ -1,7 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! refinement integration tests.
 
+mod analyze_cli_support;
+mod counter;
+mod dense_route_support;
+mod derived_request_support;
+mod fill;
+mod fixture_ids;
+mod flag_world;
+mod graph_world;
+mod hyper_world;
 mod litmus;
+mod model_settle_support;
+mod partial_order;
+mod por_world;
+mod protocol_footprint_support;
+mod relation_claims_support;
+mod units;
+
 mod load_buffering;
 mod operation_contract;
 #[path = "../../../tests/support/published_fspec.rs"]
@@ -31,9 +47,7 @@ mod refinement_reads;
 mod refinement_replay;
 mod refinement_request;
 mod refinement_safety;
-mod related_by;
 mod relation_certificate;
-mod relation_claims;
 mod relation_vs_smt;
 mod release_acquire;
 #[path = "../../../tests/support/ring_world.rs"]

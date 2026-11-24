@@ -5,9 +5,9 @@
 //! and the object, and settles no claim.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::analyze_cli_support::{analyze, counter_request, Workspace};
+use crate::analyze_cli_support::{Workspace, analyze, counter_request};
 
 const AT_MOST_TWO: &str =
     "invariant AtMostTwo using v on M::Counter at current { self.value <= 2 }\n";

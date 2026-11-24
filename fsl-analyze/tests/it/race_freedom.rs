@@ -43,8 +43,8 @@ use fsl_semantics::check::Capability;
 use fsl_semantics::family::{ClaimExtent, Requirements};
 use serde_json::{json, Value as Json};
 
-use crate::dense_route::{ids, registry};
-use crate::derived_request::{
+use crate::dense_route_support::{ids, registry};
+use crate::derived_request_support::{
     derived_subjects, items_of_kind, protocol_request, protocol_request_under, settled,
 };
 use crate::fill::tcb_01_event_position_selection;

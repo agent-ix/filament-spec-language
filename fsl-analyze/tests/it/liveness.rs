@@ -16,23 +16,23 @@
 
 use filament_exact::{Cancel, CancelCause, Meter, ScalarLimits};
 use fsl_analyze::model_check::{
-    check_model, ModelCheckRefusal, ModelCheckRequest, Product, ProductTransition,
-    PropertyComponent,
+    ModelCheckRefusal, ModelCheckRequest, Product, ProductTransition, PropertyComponent,
+    check_model,
 };
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::{ExpansionStop, TransitionSystem};
 use fsl_eval::temporal::{
-    evaluate, AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
-    TemporalTrace, UndefinedCause,
+    AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition, TemporalTrace,
+    UndefinedCause, evaluate,
 };
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    check_components, check_components_over_stutter_closure, CertificateRequest,
-    ComponentCertificate, ComponentWitness, CounterexampleKind, IncompleteCause, Lasso,
-    ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ProofCertificate,
-    ReachedLimit, SmtEncodingLimits, TemporalCertificateCheck, TemporalCounterexample,
-    UndefinedLocus,
+    CertificateRequest, ComponentCertificate, ComponentWitness, CounterexampleKind,
+    IncompleteCause, Lasso, ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
+    ProofCertificate, ReachedLimit, SmtEncodingLimits, TemporalCertificateCheck,
+    TemporalCounterexample, UndefinedLocus, check_components,
+    check_components_over_stutter_closure,
 };
 use fsl_semantics::check::CheckedTemporalClause;
 use fsl_semantics::check::FormulaNodeId;
@@ -40,8 +40,8 @@ use fsl_semantics::model::observation::{AnchorKind, DocumentRef};
 use ix_trace_rs::trace;
 
 use crate::counter::{
-    clause_text, document, document_with_ranged_parameter, key, subject, unit_text, value,
-    Documents, Letters, CONTRACT, UNLIMITED, ZERO,
+    CONTRACT, Documents, Letters, UNLIMITED, ZERO, clause_text, document,
+    document_with_ranged_parameter, key, subject, unit_text, value,
 };
 
 /// A Counter world with one declared clause.
@@ -391,10 +391,12 @@ fn a_behaviour_that_ends_is_the_lasso_whose_loop_is_the_terminal_stutter_step() 
     assert_eq!(counterexample.initial_state, 0);
     assert_eq!(counterexample.over_binding, Some(instance("c")));
     assert_eq!(counterexample.trace_position(), Some(0));
-    assert!(counterexample
-        .prefix
-        .iter()
-        .all(|step| applies(step, "inc")));
+    assert!(
+        counterexample
+            .prefix
+            .iter()
+            .all(|step| applies(step, "inc"))
+    );
 }
 
 /// FR-126 "Second phase": the first phase's states are the product's: a
@@ -698,8 +700,7 @@ fn an_undefined_letter_refutes_a_liveness_claim_before_any_lasso() {
     );
     assert_eq!(counterexample.trace_position(), Some(2));
 
-    let guarded =
-        "pre CanInc using v on M::Counter::inc { undefined_remainder(2 - self.value) >= 0 }\n\
+    let guarded = "pre CanInc using v on M::Counter::inc { undefined_remainder(2 - self.value) >= 0 }\n\
                    post Inc using v on M::Counter::inc { self.value - pre(self.value) = 1 }\n";
     let fixture = fixture_in_mode(
         document(false),
@@ -1029,10 +1030,12 @@ fn a_bounded_always_reads_past_closure_as_false_only_under_event_position_false_
         Ok(ModelCheckOutcome::Holds { .. })
     ));
     let outcome = recurs.decide(is_zero).expect("checked");
-    assert!(violated(&outcome)
-        .lasso
-        .as_ref()
-        .is_some_and(|lasso| lasso.terminal_stutter));
+    assert!(
+        violated(&outcome)
+            .lasso
+            .as_ref()
+            .is_some_and(|lasso| lasso.terminal_stutter)
+    );
 }
 
 /// A property component that reads nothing, so a [`Product`] over it is the
@@ -1088,11 +1091,13 @@ fn the_counter_behaviour_is_positions_anchored_by_initialization_then_each_inc_a
     assert_eq!(initial.len(), 1, "one initial state");
     let mut state = initial.remove(0);
     let mut values = vec![value(&state.model, "c")];
-    let mut anchors = vec![state
-        .model
-        .required_anchor()
-        .expect("an admitted initial anchor")
-        .clone()];
+    let mut anchors = vec![
+        state
+            .model
+            .required_anchor()
+            .expect("an admitted initial anchor")
+            .clone(),
+    ];
     let mut incs = Vec::new();
     for _ in 0..3 {
         let mut steps = product.successors(&state).expect("expands").successors;
@@ -1120,11 +1125,13 @@ fn the_counter_behaviour_is_positions_anchored_by_initialization_then_each_inc_a
     }));
     assert_eq!(anchors[1..].iter().collect::<Vec<_>>(), [&anchors[1]; 3]);
 
-    assert!(model
-        .successors(&state.model)
-        .expect("expands")
-        .successors
-        .is_empty());
+    assert!(
+        model
+            .successors(&state.model)
+            .expect("expands")
+            .successors
+            .is_empty()
+    );
     let mut steps = product.successors(&state).expect("expands").successors;
     assert_eq!(steps.len(), 1, "the stutter is the only step: {steps:?}");
     let (stutter, again) = steps.remove(0);

@@ -6,11 +6,11 @@
 //! `a_package_selection_analyzes_as_its_source`.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, below_three, bounded, clause, counter_request, label, package_selection,
-    request_members, Run, Workspace, HANDOFF,
+    HANDOFF, Run, Workspace, analyze, below_three, bounded, clause, counter_request, label,
+    package_selection, request_members,
 };
 
 fn at_most_two() -> String {
@@ -69,7 +69,10 @@ fn a_package_analyze_refuses_request_clocks_before_file_intake() {
     assert_eq!(first_diagnostic(&run)["code"], "invalid_package");
     assert!(first_diagnostic(&run).to_string().contains("missing-file"));
 
-    let body = format!("record ClockReading {{ ready: Boolean; }}\ntemporal Clocked using ep over (r: ClockReading) clock \"events\" on origin {{ always[0,1] holds(r.ready) }}\n{}", bounded());
+    let body = format!(
+        "record ClockReading {{ ready: Boolean; }}\ntemporal Clocked using ep over (r: ClockReading) clock \"events\" on origin {{ always[0,1] holds(r.ready) }}\n{}",
+        bounded()
+    );
     // The source control admits a required clock selection without requesting
     // an engine item; the clock must still be supplied to compilation.
     let source = counter_request(&ws, &body, json!([]));

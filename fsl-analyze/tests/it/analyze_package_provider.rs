@@ -12,11 +12,11 @@ use fsl_analyze::analyze::{BackendTool, Engine};
 use fsl_analyze::provider::{ExternalProvider, ProviderRequest, ProviderVerdict};
 use fsl_route::Mode;
 use ix_trace_rs::trace;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use crate::analyze_cli_support::{
-    analyze_with_providers, bounded, counter_request, label, package_selection, request_members,
-    Run, Workspace,
+    Run, Workspace, analyze_with_providers, bounded, counter_request, label, package_selection,
+    request_members,
 };
 
 const SMT: &str = "fsl.test-smt";
@@ -288,12 +288,17 @@ fn contract_package_reads_operation_contract_requirement_records() {
             let item = &right["items"][0];
             assert_eq!(item["claim_name"], name, "{item}");
             assert!(
-                !right.to_string().contains("operation-contract requirement record"),
+                !right
+                    .to_string()
+                    .contains("operation-contract requirement record"),
                 "{right}"
             );
             if backend == Some(SMT) {
                 let diagnostic = &item["record"]["diagnostic"];
-                assert_eq!(diagnostic["cause"], "unsupported-requested-capability", "{item}");
+                assert_eq!(
+                    diagnostic["cause"], "unsupported-requested-capability",
+                    "{item}"
+                );
                 assert_eq!(diagnostic["detail"]["kind"], "operation-contract", "{item}");
                 assert_eq!(left["items"][0]["record"]["result"], "proved", "{left}");
                 assert!(package.requests.is_empty(), "{right}");
@@ -328,10 +333,11 @@ fn contract_package_keeps_ambiguous_contract_candidates() {
         "{item}"
     );
     assert!(item.to_string().contains("ambiguous-backend"), "{item}");
-    assert!(!run
-        .document()
-        .to_string()
-        .contains("operation-contract requirement record"));
+    assert!(
+        !run.document()
+            .to_string()
+            .contains("operation-contract requirement record")
+    );
     assert!(seen.lock().expect("the provider log").is_empty());
 }
 
@@ -376,10 +382,11 @@ fn contract_package_keeps_the_native_invariant_tie() {
         );
         if backend == Some("contract-checker") {
             assert_eq!(run.document()["items"].as_array().map(Vec::len), Some(1));
-            assert!(!run
-                .document()
-                .to_string()
-                .contains("operation-contract requirement record"));
+            assert!(
+                !run.document()
+                    .to_string()
+                    .contains("operation-contract requirement record")
+            );
         } else {
             assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
             assert_eq!(run.item(0)["record"]["backend"], "en-1");
@@ -441,7 +448,9 @@ fn unbounded_operation_contract_item_is_written_requires_bound() {
     let package = analyze_with_providers(
         &ws.write(
             "analyze-package.json",
-            json!({"format": "native-analyze/1", "request": members}).to_string().as_bytes(),
+            json!({"format": "native-analyze/1", "request": members})
+                .to_string()
+                .as_bytes(),
         ),
         vec![],
     );
@@ -502,7 +511,10 @@ fn each_unusable_provider_counterexample_reason_settles_replay_parity_with_one_i
             Reason::AssignmentNotClaimParameter,
             "assignment-not-claim-parameter",
         ),
-        (Reason::ClaimParameterUnassigned, "claim-parameter-unassigned"),
+        (
+            Reason::ClaimParameterUnassigned,
+            "claim-parameter-unassigned",
+        ),
         (
             Reason::ParameterValueKindMismatch,
             "parameter-value-kind-mismatch",
@@ -551,7 +563,10 @@ fn each_unusable_provider_counterexample_reason_settles_replay_parity_with_one_i
                 ("wrong cause", mutate(&|d| d[0]["cause"] = json!("other"))),
                 ("empty array", mutate(&|d| *d = json!([]))),
             ] {
-                assert!(!compiled.is_valid(&mutated), "{spelling}: {what}: {mutated}");
+                assert!(
+                    !compiled.is_valid(&mutated),
+                    "{spelling}: {what}: {mutated}"
+                );
             }
         }
         assert_eq!(reason.as_str(), spelling);
@@ -613,7 +628,13 @@ fn coexisting_defects_select_the_declared_priority_and_unknown_spellings_name_no
         assert_eq!(Reason::select([low, high]), Some(expected));
     }
     assert_eq!(Reason::select([]), None);
-    for text in ["", "node-id-unresolved ", "Node-Id-Unresolved", "boom", "other"] {
+    for text in [
+        "",
+        "node-id-unresolved ",
+        "Node-Id-Unresolved",
+        "boom",
+        "other",
+    ] {
         assert_eq!(Reason::from_spelling(text), None, "{text:?}");
     }
 }

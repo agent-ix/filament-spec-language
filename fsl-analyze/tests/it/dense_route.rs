@@ -9,15 +9,15 @@ use fsl_analyze::model_check::manifest as en1;
 use fsl_analyze::zone_check::manifest as en6;
 use fsl_replay::node_occurrence;
 use fsl_route::deadlock::ModelTemporalItem;
-use fsl_route::request::items_from_requirements;
 use fsl_route::request::ItemKind;
+use fsl_route::request::items_from_requirements;
 use fsl_route::{CandidateOutcome, ProviderOrigin, Registry};
 use fsl_semantics::check::TimedPropertyForm;
 use ix_trace_rs::trace;
 
 use crate::derived_request::derived_items;
-use crate::timed_world::{document, world, World, PACKAGE};
-use crate::zone_search::{rpc_claim, INFINITE, TIMED};
+use crate::timed_world::{PACKAGE, World, document, world};
+use crate::zone_search::{INFINITE, TIMED, rpc_claim};
 
 /// EN-1 and EN-6, each registered from its own manifest.
 pub(crate) fn registry() -> Registry {
@@ -103,7 +103,11 @@ fn timed_items_over_a_dense_subject_route_to_en6_alone() {
     let clause = |profile: &str, body: &str| {
         format!(
             "temporal P using {profile} over (c: M::Call) clock \"{clock}\" on origin {{ {body} }}\n",
-            clock = if profile == "tt" { "model-time" } else { "model-steps" },
+            clock = if profile == "tt" {
+                "model-time"
+            } else {
+                "model-steps"
+            },
         )
     };
     let infinite = rpc_claim(4, INFINITE, &clause("inf", "always holds(not c.late)"));
@@ -188,9 +192,9 @@ fn an_item_over_an_untimed_subject_keeps_its_candidates() {
 /// `zone_item`: the zone search, FR-245's certificate check and FR-237's
 /// replay, under the package identity `package`.
 fn analyzed(world: &World) -> fsl_analyze::analyze::AnalyzeRecord {
-    use fsl_analyze::analyze::{analyze_items, zone_item, Engines, TimedItem};
+    use fsl_analyze::analyze::{Engines, TimedItem, analyze_items, zone_item};
     use fsl_analyze::zone_check::{ZoneCheckItem, ZoneCheckLimits, ZoneCheckRequest};
-    use fsl_eval::simulation::model::{TimedSystem, DEFAULT_MAX_CLOCKS};
+    use fsl_eval::simulation::model::{DEFAULT_MAX_CLOCKS, TimedSystem};
     use fsl_replay::{CertificateCheckLimits, CertifiedItem, ModelTraceReplayResult};
     use fsl_route::deadlock::{ItemObligation, ObligationKind};
     use fsl_route::reductions::{ObligationReductions, Reductions};
@@ -287,18 +291,20 @@ fn a_dense_clause_settles_on_en6_through_analyze() {
 #[trace("TC-549", "FR-144-AC-1")]
 #[test]
 fn an_untimed_refinement_record_routes_to_explicit_state_alone() {
-    use crate::refinement_fixture::{cas_refines_counter, World as Cas};
+    use crate::refinement_fixture::{World as Cas, cas_refines_counter};
     let world = Cas::new(&cas_refines_counter());
     let occurrence = world
         .refinement()
         .requirement_occurrence()
         .expect("the refinement has a record");
     let records = world.package().graph().requirements();
-    assert!(!records
-        .get(occurrence)
-        .expect("its record")
-        .requirements()
-        .timed());
+    assert!(
+        !records
+            .get(occurrence)
+            .expect("its record")
+            .requirements()
+            .timed()
+    );
     let items = items_from_requirements(records, &registry(), None);
     let item = items
         .iter()
@@ -317,8 +323,8 @@ fn an_untimed_refinement_record_routes_to_explicit_state_alone() {
 #[trace("TC-549", "FR-144-AC-1")]
 #[test]
 fn a_mixed_package_routes_each_record_by_its_own_subject() {
-    use crate::timed_refinement::{refinement, req, treq, CONTRACTS};
-    use crate::timed_world::{refining, DENSE};
+    use crate::timed_refinement::{CONTRACTS, refinement, req, treq};
+    use crate::timed_world::{DENSE, refining};
     let clauses = "temporal DenseClause using inf over (c: M::Call) clock \"model-steps\" on \
          origin { always holds(not c.late) }\n\
          temporal UntimedClause using inf over (c: A::Call) clock \"model-steps\" on \

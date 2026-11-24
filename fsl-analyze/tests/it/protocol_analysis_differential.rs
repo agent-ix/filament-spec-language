@@ -5,7 +5,7 @@
 use ix_trace_rs::trace;
 use serde_json::json;
 
-use crate::analyze_cli_support::{analyze, label, litmus_request, order_protocol, Workspace};
+use crate::analyze_cli_support::{Workspace, analyze, label, litmus_request, order_protocol};
 
 /// FR-636-AC-2: global deadlock freedom agrees with projection.
 #[trace("TC-1596", "FR-636-AC-2")]

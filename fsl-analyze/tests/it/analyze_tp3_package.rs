@@ -6,12 +6,12 @@
 //! certificate on each route.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, counter_request, label, package_selection, request_over, Run, Workspace,
+    Run, Workspace, analyze, counter_request, label, package_selection, request_over,
 };
-use crate::counter::{clause_text_on, CONTRACT};
+use crate::counter::{CONTRACT, clause_text_on};
 
 /// `request`'s members run from source and, after the compile writes its
 /// handoff and the source is removed, from the package it selects.
@@ -260,8 +260,8 @@ fn the_emitted_clause_node_carries_its_on_each_activation() {
 #[test]
 fn an_echo_on_each_tp3_claim_settles_from_the_package_as_from_source() {
     for (scheduling, expected) in [("", "proved"), ("scheduling adversarial;", "refuted")] {
-        let body = crate::protocol_bounded_lasso::echo_body(scheduling)
-            + &crate::protocol_counted_steps::tp3(
+        let body = crate::protocol_bounded_support::echo_body(scheduling)
+            + &crate::protocol_counted_support::tp3(
                 "on each (q: M::Cell)",
                 "holds(k.v = 0) implies eventually[1,2] holds(k.v = 0)",
             );

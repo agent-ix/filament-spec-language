@@ -11,9 +11,9 @@ use fsl_replay::{
 };
 use ix_trace_rs::trace;
 
-use crate::timed_world::{document, world, World, DENSE};
+use crate::timed_world::{DENSE, World, document, world};
 use crate::zone_replay::{replay, reproduced};
-use crate::zone_search::{claim, delays, rpc_claim, violated, windowed, Outcome, INFINITE};
+use crate::zone_search::{INFINITE, Outcome, claim, delays, rpc_claim, violated, windowed};
 
 pub(crate) fn decide(world: &World) -> Outcome {
     claim(world, ZoneCheckLimits::default(), &Cancel::new())
@@ -81,9 +81,11 @@ fn a_response_claim_holds_and_a_zeno_loop_is_not_reported() {
     let resetting = rpc_echo();
     let counterexample = reproduced_lasso(&resetting, decide(&resetting));
     let entry = counterexample.lasso.as_ref().expect("a lasso").entry;
-    assert!(names(&counterexample, entry)
-        .iter()
-        .all(|name| name == "echo"));
+    assert!(
+        names(&counterexample, entry)
+            .iter()
+            .all(|name| name == "echo")
+    );
 }
 
 /// FR-240-AC-1's variant of [`response`] over `Rpc` with `T = 4 ms`, where
@@ -271,9 +273,11 @@ fn a_tick_source_diverges_by_its_ticks() {
     let idle = ticking("eventually holds(c.phase = 1)");
     let counterexample = reproduced_lasso(&idle, decide(&idle));
     let entry = counterexample.lasso.as_ref().expect("a lasso").entry;
-    assert!(names(&counterexample, entry)
-        .iter()
-        .all(|name| name == "tick"));
+    assert!(
+        names(&counterexample, entry)
+            .iter()
+            .all(|name| name == "tick")
+    );
     let spinning = ticking("always eventually holds(c.phase = 0)");
     let outcome = decide(&spinning);
     assert!(holds(&outcome), "{outcome:?}");

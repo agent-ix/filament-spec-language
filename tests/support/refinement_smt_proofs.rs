@@ -7,11 +7,11 @@
 
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::smt::{
-    encode_refinement_query, RefinementCertificateRequest, RefinementQueryKind, SmtEncodingRefusal,
+    RefinementCertificateRequest, RefinementQueryKind, SmtEncodingRefusal, encode_refinement_query,
 };
 use fsl_replay::{ProofFormat, RefinementSmtCertificate, RefutedQuery};
 
-use crate::refinement_fixture::{World, SPEC, UNLIMITED};
+use crate::refinement_fixture::{SPEC, UNLIMITED, World};
 
 /// The subjects of `world`'s refinement.
 pub(crate) fn subjects(world: &World) -> (ModelSubject<'_>, ModelSubject<'_>) {

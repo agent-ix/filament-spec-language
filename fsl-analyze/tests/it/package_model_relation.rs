@@ -3,7 +3,7 @@
 
 use filament_exact::Cancel;
 use fsl_analyze::model_check::{
-    check_model_relation_input, ModelRelationInput, ModelRelationOutcome,
+    ModelRelationInput, ModelRelationOutcome, check_model_relation_input,
 };
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{
@@ -12,20 +12,20 @@ use fsl_eval::simulation::model::{
 };
 use fsl_package::{AnalysisView, BarePackage, BareSupply, ReadEqualityRows, ReadIdentityRows};
 use fsl_replay::{
-    check_model_relation_closure, ModelCheckLimits, ModelRelationClosureRequest, ProductClosure,
-    ProductClosureCheck, ProductClosureRefusal,
+    ModelCheckLimits, ModelRelationClosureRequest, ProductClosure, ProductClosureCheck,
+    ProductClosureRefusal, check_model_relation_closure,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::ObservationLimits;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, label, package_selection, request_members, request_over, Workspace, HANDOFF,
+    HANDOFF, Workspace, analyze, label, package_selection, request_members, request_over,
 };
 use crate::counter::UNLIMITED;
-use crate::hyper_world::{self, request_files_over_starts, Vault, STARTS};
-use crate::relation_claims::{initial_world, step_with_result_document, DETERMINISTIC};
+use crate::hyper_world::{self, STARTS, Vault, request_files_over_starts};
+use crate::relation_claims::{DETERMINISTIC, initial_world, step_with_result_document};
 
 fn analyze_package(ws: &Workspace, name: &str, members: &Value) -> crate::analyze_cli_support::Run {
     analyze(
@@ -53,8 +53,8 @@ pub(super) fn assert_tuple_evaluator_parity(
     expect_no_charges: bool,
 ) -> [bool; 3] {
     use filament_exact::Meter;
-    use fsl_eval::simulation::model::{ModelEvaluator, ModelRelationTuple, ModelSystem};
     use fsl_eval::simulation::TransitionSystem;
+    use fsl_eval::simulation::model::{ModelEvaluator, ModelRelationTuple, ModelSystem};
     use fsl_eval::value::ModelRelationEvaluation;
 
     let compiled = fsl_command::checked_handoff::compile(&ws.path(HANDOFF))
@@ -74,21 +74,22 @@ pub(super) fn assert_tuple_evaluator_parity(
     let packages =
         fsl_semantics::model::intake::package_input(model_documents.iter().map(Vec::as_slice))
             .expect("model fixtures admit");
-    let snapshots: fsl_semantics::model::observation::DocumentProvision = request["request"]
-        ["documents"]
-        .as_array()
-        .expect("documents")
-        .iter()
-        .map(|document| {
-            let bytes = std::fs::read(ws.path(document["file"].as_str().expect("snapshot file")))
-                .expect("snapshot fixture");
-            (
-                fsl_semantics::model::observation::document_reference(&bytes)
-                    .expect("snapshot identity"),
-                bytes,
-            )
-        })
-        .collect();
+    let snapshots: fsl_semantics::model::observation::DocumentProvision =
+        request["request"]["documents"]
+            .as_array()
+            .expect("documents")
+            .iter()
+            .map(|document| {
+                let bytes =
+                    std::fs::read(ws.path(document["file"].as_str().expect("snapshot file")))
+                        .expect("snapshot fixture");
+                (
+                    fsl_semantics::model::observation::document_reference(&bytes)
+                        .expect("snapshot identity"),
+                    bytes,
+                )
+            })
+            .collect();
     let limits = fsl_package::V2ReadLimits::bounded(1 << 24);
     let admitted = fsl_package::admit_checked_package(bytes, &packages, limits)
         .expect("the evaluator package admits");
@@ -276,8 +277,24 @@ fn hp1_package_analyze_matches_source_after_source_deletion() {
         "post Step using v on V::Vault::step { self.l = i or self.l = 1 - i }\n";
     for (case, vault, relation, temporal, expected) in [
         ("holds", Vault::Secure, DETERMINISTIC, json!({}), "proved"),
-        ("results-holds", Vault::Custom("post Step using v on V::Vault::step { (result = 0 or result = 1) and self.l = 0 }\n"), "relation Det using v over (x: V::Vault::step, y: V::Vault::step) { true }", json!({}), "proved"),
-        ("results-refuted", Vault::Custom("post Step using v on V::Vault::step { (result = 0 or result = 1) and self.l = 0 }\n"), "relation Det using v over (x: V::Vault::step, y: V::Vault::step) { x.result = y.result }", json!({}), "refuted"),
+        (
+            "results-holds",
+            Vault::Custom(
+                "post Step using v on V::Vault::step { (result = 0 or result = 1) and self.l = 0 }\n",
+            ),
+            "relation Det using v over (x: V::Vault::step, y: V::Vault::step) { true }",
+            json!({}),
+            "proved",
+        ),
+        (
+            "results-refuted",
+            Vault::Custom(
+                "post Step using v on V::Vault::step { (result = 0 or result = 1) and self.l = 0 }\n",
+            ),
+            "relation Det using v over (x: V::Vault::step, y: V::Vault::step) { x.result = y.result }",
+            json!({}),
+            "refuted",
+        ),
         (
             "refuted",
             Vault::Custom(NONDETERMINISTIC),
@@ -315,8 +332,11 @@ fn hp1_package_analyze_matches_source_after_source_deletion() {
         ),
     ] {
         let ws = Workspace::new(&format!("hp1-package-{case}"));
-        let (unit, mut model, snapshots) = request_files_over_starts(vault, false, &STARTS, relation);
-        if case.starts_with("results-") { model = step_with_result_document(); }
+        let (unit, mut model, snapshots) =
+            request_files_over_starts(vault, false, &STARTS, relation);
+        if case.starts_with("results-") {
+            model = step_with_result_document();
+        }
         let path = request_over(
             &ws,
             &unit,
@@ -330,10 +350,19 @@ fn hp1_package_analyze_matches_source_after_source_deletion() {
         let request: Value = serde_json::from_slice(&std::fs::read(path).expect("request file"))
             .expect("request JSON");
         let (members, bytes) = package_selection(&ws, &request["request"]);
-        let tuple_outcomes = assert_tuple_evaluator_parity(&ws, &bytes, false, case == "results-holds");
-        let expected_tuple = if case == "undefined" { 2 }
-            else if expected == "refuted" { 1 } else { 0 };
-        assert!(tuple_outcomes[expected_tuple], "{case}: expected actual tuple outcome");
+        let tuple_outcomes =
+            assert_tuple_evaluator_parity(&ws, &bytes, false, case == "results-holds");
+        let expected_tuple = if case == "undefined" {
+            2
+        } else if expected == "refuted" {
+            1
+        } else {
+            0
+        };
+        assert!(
+            tuple_outcomes[expected_tuple],
+            "{case}: expected actual tuple outcome"
+        );
         forget_source(&ws);
         let package = analyze_package(&ws, "package.json", &members);
         assert_eq!(package.exit, source.exit, "{}", package.document());
@@ -519,7 +548,11 @@ fn ordered_handoff(
     ws: &Workspace,
     separate_models: bool,
 ) -> (Value, Vec<u8>, fsl_semantics::model::intake::PackageInput) {
-    ordered_handoff_with_body(ws, separate_models, "pre(x.self.h) = pre(x.self.h) and pre(y.self.h) = pre(y.self.h) and x.self.l = x.i and y.self.l = y.i")
+    ordered_handoff_with_body(
+        ws,
+        separate_models,
+        "pre(x.self.h) = pre(x.self.h) and pre(y.self.h) = pre(y.self.h) and x.self.l = x.i and y.self.l = y.i",
+    )
 }
 
 fn ordered_handoff_with_body(
@@ -527,7 +560,9 @@ fn ordered_handoff_with_body(
     separate_models: bool,
     body: &str,
 ) -> (Value, Vec<u8>, fsl_semantics::model::intake::PackageInput) {
-    let declarations = format!("post OtherStep using v on N::Vault::step {{ self.l = i }}\nrelation Ordered using v over (y: N::Vault::step, x: V::Vault::step) {{ {body} }}\ninvariant Sibling using v on V::Vault at current {{ true }}");
+    let declarations = format!(
+        "post OtherStep using v on N::Vault::step {{ self.l = i }}\nrelation Ordered using v over (y: N::Vault::step, x: V::Vault::step) {{ {body} }}\ninvariant Sibling using v on V::Vault at current {{ true }}"
+    );
     let (unit, model, other, snapshots, extra) = if separate_models {
         let (unit, model, other, snapshot) =
             hyper_world::two_model_request_files((0, 0), &declarations);
@@ -1085,10 +1120,12 @@ fn hp1_package_bad_order_evidence_refuses_but_legacy_absence_is_item_local() {
             fsl_package::V2ReadLimits::bounded(1 << 24),
         )
         .expect_err("malformed execution evidence refuses before evaluation");
-        assert!(refused
-            .pointer
-            .as_deref()
-            .is_some_and(|path| path.starts_with("/semantic_graph/nodes/")));
+        assert!(
+            refused
+                .pointer
+                .as_deref()
+                .is_some_and(|path| path.starts_with("/semantic_graph/nodes/"))
+        );
         ws.write(&format!("{HANDOFF}/checked-package.json"), &bytes);
         let run = analyze_package(&ws, &format!("malformed-{defect}.json"), &members);
         let document = run.document();
@@ -1384,10 +1421,12 @@ fn relation_emission_retains_exact_execution_clause_joins() {
         })
         .collect();
     assert_eq!(actual, expected, "exact sorted model-owned invariants");
-    assert!(foreign
-        .iter()
-        .chain(&constraints)
-        .all(|key| !actual.contains(key)));
+    assert!(
+        foreign
+            .iter()
+            .chain(&constraints)
+            .all(|key| !actual.contains(key))
+    );
     let emission = fsl_package::emit_checked(&source, fsl_package::EmitLimits::fixture())
         .expect("genuine source emits");
     let wire: Value = serde_json::from_slice(emission.package().bytes()).expect("emitted JSON");

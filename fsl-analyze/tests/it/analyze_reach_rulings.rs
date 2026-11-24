@@ -6,13 +6,13 @@
 //! the linked registry (FR-489). TC-2290 to TC-2294, TC-2296, TC-1272.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, below_three, bounded, counter_request, counter_snapshot, label, request_over,
-    staying_counter_request, Workspace, HANDOFF,
+    HANDOFF, Workspace, analyze, below_three, bounded, counter_request, counter_snapshot, label,
+    request_over, staying_counter_request,
 };
-use crate::counter::{document, unit_text, CONTRACT};
+use crate::counter::{CONTRACT, document, unit_text};
 
 /// The first value under `key` anywhere in `value`, depth first.
 fn find<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
@@ -319,8 +319,7 @@ fn counters_request_over(
     )
 }
 
-const AT_LEAST_ONE: &str =
-    "temporal AtLeastOne using t0 over (c: M::Counter) clock \"model-steps\" \
+const AT_LEAST_ONE: &str = "temporal AtLeastOne using t0 over (c: M::Counter) clock \"model-steps\" \
                             on origin { always holds(c.value >= 1) }\n";
 
 /// FR-621-AC-9 (FR-125): over the receiver-framed Counter, `a` at 1 is proved,

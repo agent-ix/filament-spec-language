@@ -5,10 +5,10 @@
 //! that replays and a zone certificate.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::analyze_cli_support::{analyze, label, request_over, Run, Workspace};
-use crate::analyze_family_cli::{rpc_snapshot, rpc_unit};
+use crate::analyze_cli_support::{Run, Workspace, analyze, label, request_over};
+use crate::analyze_family_support::{rpc_snapshot, rpc_unit};
 
 const CLAIMS: &str = "possible ReplyPossible using v over (c: M::Call) { c.phase = 2 }\n\
     possible LatePossible using v over (c: M::Call) { c.phase = 3 }\n\
@@ -378,7 +378,7 @@ fn zeno_only_unit() -> String {
          temporal NoLateReply using tt over (c: M::Call) clock \"model-time\" on origin \
          {{ always holds(not c.late) }}\n"
     );
-    let text = crate::analyze_family_cli::rpc_unit_with(4, ">= 0", ">=", &claims);
+    let text = crate::analyze_family_support::rpc_unit_with(4, ">= 0", ">=", &claims);
     // FR-244-AC-7 names the possible claim `Replied`; this fixture gives the
     // unit's `post Replied` clause another name so the two do not clash.
     let renamed = text.replace("post Replied using", "post ReplyEffect using");

@@ -6,13 +6,13 @@
 use std::collections::BTreeSet;
 
 use filament_exact::Cancel;
-use fsl_analyze::model_check::{check_protocol, ProtocolCheckRequest};
+use fsl_analyze::model_check::{ProtocolCheckRequest, check_protocol};
 use fsl_eval::simulation::protocol::{
     ProtocolState, ProtocolSystem, ProtocolTransition, Sc, StepKind, ThreadPath, WaitCause,
 };
 use fsl_eval::simulation::{Limits, SubjectSystem, TransitionSystem};
 use ix_trace_rs::trace;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use fsl_foundation::diagnostic::Code;
 use fsl_replay::{
@@ -21,9 +21,9 @@ use fsl_replay::{
 };
 
 use crate::fill::{
-    attempt, compiled, contracts, json_of, projections, protocol, reachable, sc_system, Reached,
+    Reached, attempt, compiled, contracts, json_of, projections, protocol, reachable, sc_system,
 };
-use crate::protocol_system::{touch, Case};
+use crate::protocol_system::{Case, touch};
 
 /// The protocol `P` with `members` and `run` over `ADR-027 §7`'s contracts,
 /// from `c.v = 0`.

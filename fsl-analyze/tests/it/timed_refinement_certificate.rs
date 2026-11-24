@@ -9,22 +9,22 @@
 
 use filament_exact::{Cancel, Integer};
 use fsl_analyze::zone_check::{
-    certificate_item, check_free_delay_refinement, TimedRefinementUndecided, TimedSafetyOutcome,
+    TimedRefinementUndecided, TimedSafetyOutcome, certificate_item, check_free_delay_refinement,
 };
 use fsl_replay::{
-    check_free_delay_zone_certificate, check_zone_certificate, CertificateCheckLimits,
-    CertificateLocus, CertificateMember, CertificateRejection, CertificateRule, IncompleteCause,
-    ModelCheckLimit, RefinementFailure, Taken, ZoneCertificate, ZoneCertificateRefusal,
-    ZoneCertificateRequest, ZoneCertificateVerdict,
+    CertificateCheckLimits, CertificateLocus, CertificateMember, CertificateRejection,
+    CertificateRule, IncompleteCause, ModelCheckLimit, RefinementFailure, Taken, ZoneCertificate,
+    ZoneCertificateRefusal, ZoneCertificateRequest, ZoneCertificateVerdict,
+    check_free_delay_zone_certificate, check_zone_certificate,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use ix_trace_rs::trace;
 
 use crate::timed_refinement::{
-    certificate_request, dead_undo, dead_undo_with_idle, free_delay_world, obligation, refinement,
-    req, safety, safety_request, treq, undo_world, unit, CONTRACTS,
+    CONTRACTS, certificate_request, dead_undo, dead_undo_with_idle, free_delay_world, obligation,
+    refinement, req, safety, safety_request, treq, undo_world, unit,
 };
-use crate::timed_world::{document, refining, refining_from, renamed_package, Refining, DENSE};
+use crate::timed_world::{DENSE, Refining, document, refining, refining_from, renamed_package};
 
 type Certificate = ZoneCertificate<ItemObligation<&'static str>>;
 type Checked = Result<ZoneCertificateVerdict, ZoneCertificateRefusal<ItemObligation<&'static str>>>;
@@ -215,10 +215,12 @@ fn the_treq_certificate_is_a_refinement_form_the_checker_accepts() {
     assert_eq!(&part.refinement_node, occurrence.node());
     assert_eq!(certificate.initials.len(), 1);
     assert_eq!(certificate.obligation, obligation(&world));
-    assert!(certificate
-        .nodes
-        .iter()
-        .all(|listed| listed.automaton_state < part.positions.len() && !listed.locked));
+    assert!(
+        certificate
+            .nodes
+            .iter()
+            .all(|listed| listed.automaton_state < part.positions.len() && !listed.locked)
+    );
     assert!(!certificate.edges.is_empty());
     assert_eq!(part.taken.len(), certificate.edges.len());
     for (index, taken) in part.taken.iter().enumerate() {

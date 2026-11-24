@@ -7,20 +7,20 @@
 
 use filament_exact::{LimitKind, ScalarLimits, Value};
 use fsl_eval::simulation::StateKey;
-use fsl_foundation::witness::ValuePathSubject;
 use fsl_foundation::SourceIdentity;
+use fsl_foundation::witness::ValuePathSubject;
 use fsl_replay::spine::{
-    run_clause, ClauseDisposition, ClauseRunReport, ClauseRunRequest, ClauseRunSelection,
-    ClauseRunSource, ClauseRunStage, DependencyInput, OverObject, SpineLimits, TemporalVerdict,
-    TraceInput,
+    ClauseDisposition, ClauseRunReport, ClauseRunRequest, ClauseRunSelection, ClauseRunSource,
+    ClauseRunStage, DependencyInput, OverObject, SpineLimits, TemporalVerdict, TraceInput,
+    run_clause,
 };
 use fsl_replay::{CounterexampleKind, ModelCheckLimit, TemporalCounterexample};
 use fsl_semantics::model::observation::ObservationLimits;
 use ix_trace_rs::trace;
 
-use crate::counter::{document, document_with_ranged_parameter, PACKAGE, UNLIMITED};
+use crate::counter::{PACKAGE, UNLIMITED, document, document_with_ranged_parameter};
 use crate::lasso_replay::found;
-use crate::liveness::{counter, Fixture};
+use crate::liveness::{Fixture, counter};
 
 /// The work-unit bound a model run stops its first expansion at.
 const STOPS_AT: u64 = 1;

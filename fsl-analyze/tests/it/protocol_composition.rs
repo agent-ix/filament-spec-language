@@ -6,13 +6,13 @@ use base64::Engine as _;
 use fsl_eval::model_subject::RoleBinding;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{
-    send_record_json, transition_json, ProtocolSystem, Sc, StepKind,
+    ProtocolSystem, Sc, StepKind, send_record_json, transition_json,
 };
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::analyze_cli_support::{analyze, label, litmus_request, order_protocol, Workspace};
+use crate::analyze_cli_support::{Workspace, analyze, label, litmus_request, order_protocol};
 
 /// The steps of the order protocol's run that follow `kinds` from the
 /// initial state, spelled as FSpec FR-433 spells a counterexample's steps:
@@ -506,12 +506,12 @@ fn undefined_receive_unit() -> String {
 /// The in-process `finite-replay` item over the Kernel-checked `body` and
 /// the trace document `trace`: the settled outcome items.
 fn kernel_replay_items(body: &str, identity: &str, trace: &Value) -> Vec<Value> {
-    use fsl_analyze::analyze::document::{settle_run, AnalyzeRun, ResolvedClaim, ResolvedItem};
+    use fsl_analyze::analyze::document::{AnalyzeRun, ResolvedClaim, ResolvedItem, settle_run};
     use fsl_analyze::analyze::{
         AnalyzeLimits, ClaimItem, Engines, ItemOptions, SourceProvision, SubjectBinding,
     };
-    use fsl_foundation::source::provenance::OccurrenceKey;
     use fsl_foundation::RequestIndex;
+    use fsl_foundation::source::provenance::OccurrenceKey;
     use fsl_route::request::ExtentClassification;
     use fsl_semantics::check::Capability;
     use fsl_semantics::model::observation::DocumentRef;
@@ -755,18 +755,24 @@ fn max_messages_bounds_each_channels_occupancy() {
     assert_eq!(label(&run.item(0)), "incomplete");
     assert_eq!(run.item(0)["record"]["cause"]["limit"], "max_messages");
     assert_eq!(run.item(0)["record"]["max_messages"]["value"], 1);
-    assert!(run.item(0)["record"]["max_messages"]["reached"]
-        .as_bool()
-        .unwrap_or(false));
+    assert!(
+        run.item(0)["record"]["max_messages"]["reached"]
+            .as_bool()
+            .unwrap_or(false)
+    );
     assert_eq!(label(&run.item(1)), "refuted");
     assert_eq!(run.item(1)["record"]["max_messages"]["value"], 2);
-    assert!(!run.item(1)["record"]["max_messages"]["reached"]
-        .as_bool()
-        .unwrap_or(true));
+    assert!(
+        !run.item(1)["record"]["max_messages"]["reached"]
+            .as_bool()
+            .unwrap_or(true)
+    );
     assert_eq!(run.item(2)["record"]["max_messages"]["value"], 4);
-    assert!(!run.item(2)["record"]["max_messages"]["reached"]
-        .as_bool()
-        .unwrap_or(true));
+    assert!(
+        !run.item(2)["record"]["max_messages"]["reached"]
+            .as_bool()
+            .unwrap_or(true)
+    );
 }
 
 /// FR-225-AC-6 (TC-2986): the message bound applies to each channel

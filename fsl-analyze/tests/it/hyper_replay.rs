@@ -20,8 +20,8 @@ use fsl_replay::{
 };
 use ix_trace_rs::trace;
 
-use crate::hyper::positions;
-use crate::hyper_projected::{aligned, IDLE, MID_OPERATION};
+use crate::hyper_support::positions;
+use crate::hyper_projected_support::{aligned, IDLE, MID_OPERATION};
 use crate::hyper_witness::{
     members, ExhaustedExistential, GUARDED_CLAUSE, KERNEL_DIV_FUNCTION, KERNEL_GUARDED,
     KERNEL_MOD_FUNCTION,

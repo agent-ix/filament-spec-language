@@ -5,19 +5,19 @@
 use filament_exact::Cancel;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_analyze::model_check::{
-    check_model_relation, ModelRelationCheckRequest, ModelRelationOutcome,
+    ModelRelationCheckRequest, ModelRelationOutcome, check_model_relation,
 };
 use fsl_eval::model_subject::ModelSubject;
+use fsl_eval::simulation::Limits;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
-use fsl_eval::simulation::Limits;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    replay_model_relation_tuple, HyperCounterexampleKind, ModelCheckLimit, ModelCheckLimits,
-    ModelRelationReplay, ModelTraceSettlement, ModelTraceValue,
+    HyperCounterexampleKind, ModelCheckLimit, ModelCheckLimits, ModelRelationReplay,
+    ModelTraceSettlement, ModelTraceValue, replay_model_relation_tuple,
 };
-use fsl_semantics::check::{check_hyper_clauses, CheckedHyper};
+use fsl_semantics::check::{CheckedHyper, check_hyper_clauses};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef, ObservationLimits};
@@ -26,8 +26,7 @@ use ix_trace_rs::trace;
 use crate::counter::UNLIMITED;
 use crate::hyper_world::{self, Vault};
 
-pub(crate) const DETERMINISTIC: &str =
-    "relation Det using v over (x: V::Vault::step, y: V::Vault::step) \
+pub(crate) const DETERMINISTIC: &str = "relation Det using v over (x: V::Vault::step, y: V::Vault::step) \
     { x.i = y.i and pre(x.self.h) = pre(y.self.h) implies x.self.l = y.self.l }";
 
 pub(crate) fn package_and_relation(

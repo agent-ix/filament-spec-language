@@ -1624,10 +1624,7 @@ fn each_sampled_witness_records_that_its_walk_reached_the_target() {
         short_walks(),
     ));
     for instance in &shared.items[1] {
-        assert_eq!(
-            instance.walks_stopped, 58,
-            "the premise"
-        );
+        assert_eq!(instance.walks_stopped, 58, "the premise");
     }
     let alone = run(world.request(AB, vec![world.item("ReachesTwo")], short_walks()));
     for (instance, single) in shared.items[0].iter().zip(&alone.items[0]) {
@@ -1734,7 +1731,10 @@ fn an_impossible_target_is_trapped_under_each_reduction() {
     assert_eq!(result.graph.end, RunEnd::Completed);
     let instance = &result.items[0][0];
     let StateGraphOutcome::Trapped { stem } = &instance.outcome else {
-        panic!("the symmetric impossible target is trapped: {:?}", instance.outcome);
+        panic!(
+            "the symmetric impossible target is trapped: {:?}",
+            instance.outcome
+        );
     };
     assert_eq!(stem.initial, 0);
     assert!(stem.steps.is_empty());
@@ -1757,7 +1757,10 @@ fn an_impossible_target_is_trapped_under_each_reduction() {
             Default::default(),
         )
         .expect("the trap replays over the concrete closure");
-    assert_eq!(replay.settlement, fsl_replay::GraphReplaySettlement::Reproduced);
+    assert_eq!(
+        replay.settlement,
+        fsl_replay::GraphReplaySettlement::Reproduced
+    );
 
     let job = job_world_with_claims(
         false,
@@ -1770,7 +1773,10 @@ fn an_impossible_target_is_trapped_under_each_reduction() {
     assert_eq!(result.graph.end, RunEnd::Completed);
     let instance = &result.items[0][0];
     let StateGraphOutcome::Trapped { stem } = &instance.outcome else {
-        panic!("the POR impossible target is trapped: {:?}", instance.outcome);
+        panic!(
+            "the POR impossible target is trapped: {:?}",
+            instance.outcome
+        );
     };
     assert_eq!(stem.initial, 0);
     assert!(stem.steps.is_empty());
@@ -1793,7 +1799,10 @@ fn an_impossible_target_is_trapped_under_each_reduction() {
             Default::default(),
         )
         .expect("the POR trap replays over the concrete closure");
-    assert_eq!(replay.settlement, fsl_replay::GraphReplaySettlement::Reproduced);
+    assert_eq!(
+        replay.settlement,
+        fsl_replay::GraphReplaySettlement::Reproduced
+    );
 }
 
 // ---------------------------------------------------------------- FR-168
@@ -2091,12 +2100,7 @@ fn an_undefined_target_refutes_in_place_of_a_witness() {
 fn an_undefined_operation_guard_is_reported_at_its_contract_site() {
     let guard = "pre Guard using v on Config::ConfigVersion::attemptUpdate { \
         quotient(2 - self.versionNumber) >= 1 }\n";
-    let world = config_kernel_world_over(
-        guard,
-        REACHES_TWO,
-        &["a", "b"],
-        &[vec![0, 0]],
-    );
+    let world = config_kernel_world_over(guard, REACHES_TWO, &["a", "b"], &[vec![0, 0]]);
     let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
     let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
         panic!("an undefined guard: {:?}", result.items[0][0].outcome);
@@ -2137,17 +2141,19 @@ fn an_undefined_terminal_predicate_is_reported_without_a_claim_predicate() {
         terminal Done using v on C when { 6 mod (3 - self.value) = 0 };\n\
         possible AtThree using v over (c: C::Counter) { c.value = 3 }\n";
     let world = World::new(model, body, &[&[("c", &[("value", 0)])]]);
-    let result = run(world.request(
-        &["c"],
-        vec![world.item("AtThree")],
-        no_samples(),
-    ));
+    let result = run(world.request(&["c"], vec![world.item("AtThree")], no_samples()));
     let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
-        panic!("undefined terminal predicate: {:?}", result.items[0][0].outcome);
+        panic!(
+            "undefined terminal predicate: {:?}",
+            result.items[0][0].outcome
+        );
     };
     assert_eq!(stem.steps.len(), 3);
     let path_states = positions(&world, &["c"], stem);
-    assert_eq!(world.value(path_states.last().expect("terminal state"), "c", "value"), 3);
+    assert_eq!(
+        world.value(path_states.last().expect("terminal state"), "c", "value"),
+        3
+    );
     assert_eq!(undefined.state_key, stem.steps[2].post_state);
     assert_eq!(undefined.predicate, None);
     assert!(undefined.locus.is_some());
@@ -2170,7 +2176,10 @@ fn an_undefined_selected_state_constraint_is_not_a_boundary() {
     request.reductions.constraint = Some("Half".to_owned());
     let result = run(request);
     let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
-        panic!("undefined state constraint: {:?}", result.items[0][0].outcome);
+        panic!(
+            "undefined state constraint: {:?}",
+            result.items[0][0].outcome
+        );
     };
     assert_eq!(versions(&world, stem), vec![(0, 0), (1, 0), (2, 0)]);
     assert_eq!(undefined.state_key, stem.steps[1].post_state);
@@ -2178,7 +2187,10 @@ fn an_undefined_selected_state_constraint_is_not_a_boundary() {
     assert!(undefined.locus.is_some());
     assert_eq!(undefined.transition, None);
     let at = node_of(&result, undefined.state_key.clone());
-    assert_eq!(result.graph.open.get(&at), Some(&OpenCause::UndecidedSuccessor));
+    assert_eq!(
+        result.graph.open.get(&at),
+        Some(&OpenCause::UndecidedSuccessor)
+    );
 }
 
 /// FR-168-AC-6: `ReachesTwo` with `witness_samples` 64 and with 0 both

@@ -1113,7 +1113,7 @@ fn every_independent_pair_of_ra_steps_commutes() {
         let reached = reachable(&system);
         assert_eq!(reached.len(), expected, "{body}");
         independent_pairs +=
-            crate::protocol_footprints::assert_independent_steps_commute(&system, &reached);
+            crate::protocol_footprint_support::assert_independent_steps_commute(&system, &reached);
     }
     assert!(independent_pairs > 0);
 }

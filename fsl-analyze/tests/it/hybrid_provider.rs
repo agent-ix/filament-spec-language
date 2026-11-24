@@ -8,8 +8,8 @@ use filament_exact::Cancel;
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_analyze::analyze::{
-    analyze, AnalyzeLimits, AnalyzeRequest, ClaimItem, Engines, HybridItem, ItemForm, ItemOptions,
-    NegotiatedItem, SourceProvision, SubjectBinding,
+    AnalyzeLimits, AnalyzeRequest, ClaimItem, Engines, HybridItem, ItemForm, ItemOptions,
+    NegotiatedItem, SourceProvision, SubjectBinding, analyze,
 };
 use fsl_analyze::provider::{self, HybridAnswer, HybridVerdict, UnsupportedConstruct};
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -20,10 +20,10 @@ use fsl_replay::{
     InconclusiveCause, SeparatingWitnessRecord, TermLocus, TerminalRecord, TerminalValue,
     UnavailabilityCause, Verdict, WitnessFailure,
 };
-use fsl_route::{request::ExtentClassification, routing::Disposition, Candidate};
+use fsl_route::{Candidate, request::ExtentClassification, routing::Disposition};
 use fsl_semantics::check::{Capability, ModeIndex, PackageDeclarations, VariableIndex};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
-use fsl_semantics::model::intake::{admit_unit, package_input, PackageInput};
+use fsl_semantics::model::intake::{PackageInput, admit_unit, package_input};
 use fsl_semantics::model::observation::DocumentProvision;
 use ix_trace_rs::trace;
 use serde_json::json;
@@ -247,9 +247,9 @@ fn a_hybrid_item_routed_to_an_unserved_backend_settles_tool_unavailable() {
 /// beside the layer-A engines, and the candidate that names it.
 fn fixture(
     answer: impl Fn(&fsl_analyze::provider::HybridSolveRequest<'_>) -> HybridAnswer
-        + Send
-        + Sync
-        + 'static,
+    + Send
+    + Sync
+    + 'static,
 ) -> (
     Engines,
     Candidate,
@@ -270,9 +270,9 @@ fn settle_on(
     world: &World,
     position: usize,
     answer: impl Fn(&fsl_analyze::provider::HybridSolveRequest<'_>) -> HybridAnswer
-        + Send
-        + Sync
-        + 'static,
+    + Send
+    + Sync
+    + 'static,
 ) -> [TerminalRecord; 2] {
     let (engines, candidate, _) = fixture(answer);
     let item = world.item_at(

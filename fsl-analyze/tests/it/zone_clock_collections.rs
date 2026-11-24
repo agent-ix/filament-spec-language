@@ -11,9 +11,9 @@ use fsl_replay::CounterexampleKind;
 use ix_trace_rs::trace;
 
 use crate::timed_world::{
-    document, ident, timers_document, wire_field, world_holding, World, DENSE,
+    DENSE, World, document, ident, timers_document, wire_field, world_holding,
 };
-use crate::zone_search::{claim, deadlock, deadlock_result, operations, violated, INFINITE};
+use crate::zone_search::{INFINITE, claim, deadlock, deadlock_result, operations, violated};
 
 /// `ts: Sequence<Timer>[0, max]` (`Timer { x: Clock; n: Phase }`) granted by
 /// `grow`, with the precondition `guard` and the further text `claim`.
@@ -76,7 +76,7 @@ fn a_set_or_bag_filter_carries_clocks_through_search_and_certificate() {
     use fsl_eval::simulation::model::{
         BehaviourLetters, BehaviourReading, ModelSystem, TimedBehaviour, TimedSystem,
     };
-    use fsl_eval::temporal::{evaluate_at, TemporalOutcome, TemporalPosition};
+    use fsl_eval::temporal::{TemporalOutcome, TemporalPosition, evaluate_at};
     use fsl_replay::{CertificateCheckLimits, ZoneCertificateVerdict};
 
     use crate::zone_search::{check, claim, proved};
@@ -215,7 +215,7 @@ fn bare_clocks(lower: u64, upper: Option<u64>, unique: bool) -> World {
 #[test]
 fn en6_settles_the_bare_clock_counts() {
     use fsl_analyze::zone_check::{
-        check_timed_model, ZoneCheckItem, ZoneCheckLimit, ZoneCheckRequest, ZoneStop, ZoneUndecided,
+        ZoneCheckItem, ZoneCheckLimit, ZoneCheckRequest, ZoneStop, ZoneUndecided, check_timed_model,
     };
     use fsl_eval::simulation::model::{ModelSystem, TimedSystem};
     use fsl_route::deadlock::{ItemObligation, ObligationKind};

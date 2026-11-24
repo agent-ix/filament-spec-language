@@ -2,10 +2,10 @@
 //! FR-895: replay-mode reading and obligation assessment of protocol recordings.
 
 use fsl_analyze::protocol_analysis::recording::{
-    assess_recording, RecordingFact, RecordingGlobalResult, RecordingVerdict,
+    RecordingFact, RecordingGlobalResult, RecordingVerdict, assess_recording,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::order_protocol;
 
@@ -193,10 +193,12 @@ fn a_closed_recording_assesses_observed_and_unobserved_obligations() {
         "{:#?}",
         assessed.obligations
     );
-    assert!(assessed
-        .obligations
-        .iter()
-        .all(|entry| entry.verdict == RecordingVerdict::Satisfied));
+    assert!(
+        assessed
+            .obligations
+            .iter()
+            .all(|entry| entry.verdict == RecordingVerdict::Satisfied)
+    );
 
     let mut cut = complete_observations();
     cut.as_array_mut().expect("array").truncate(2);
@@ -837,10 +839,12 @@ fn failed_attempt_then_successful_retry_has_one_effect_and_no_duplicate() {
         recovery("successful")
     ]));
 
-    assert!(!assessed
-        .facts
-        .iter()
-        .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. })));
+    assert!(
+        !assessed
+            .facts
+            .iter()
+            .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. }))
+    );
     let attempts: Vec<_> = assessed
         .facts
         .iter()
@@ -914,17 +918,21 @@ fn distinct_effect_occurrences_and_repeated_effect_keys_are_not_duplicates() {
         paid_effect_at("effect-1", "operation-1", 0),
         paid_effect_at("effect-2", "operation-2", 1)
     ]));
-    assert!(!distinct
-        .facts
-        .iter()
-        .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. })));
+    assert!(
+        !distinct
+            .facts
+            .iter()
+            .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. }))
+    );
 
     let repeated_effect = paid_effect("effect-replayed", "operation-replayed");
     let replayed = assess_paid(json!([repeated_effect.clone(), repeated_effect]));
-    assert!(!replayed
-        .facts
-        .iter()
-        .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. })));
+    assert!(
+        !replayed
+            .facts
+            .iter()
+            .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. }))
+    );
     assert_eq!(
         replayed
             .facts
@@ -958,10 +966,12 @@ fn duplicate_delivery_is_classified_against_the_channel_premise() {
     }));
 
     let refused = assess_duplicate_delivery("exactly-once-premise");
-    assert!(refused
-        .facts
-        .iter()
-        .any(|fact| matches!(fact, RecordingFact::DuplicateDelivery { .. })));
+    assert!(
+        refused
+            .facts
+            .iter()
+            .any(|fact| matches!(fact, RecordingFact::DuplicateDelivery { .. }))
+    );
     assert!(refused.obligations.iter().any(|entry| {
         entry.obligation.kind == "channel-premise"
             && entry.obligation.node.as_deref() == Some("Order")
@@ -1079,10 +1089,12 @@ fn an_unregistered_compensation_is_not_required_when_its_effect_was_not_observed
     closed["closure"]["premises"] = json!([{"kind":"execution", "node":"Pay::Done"}]);
     let assessed =
         assess_recording(&package, closed.to_string().as_bytes()).expect("readable paid recording");
-    assert!(!assessed
-        .obligations
-        .iter()
-        .any(|entry| entry.obligation.kind == "compensation"));
+    assert!(
+        !assessed
+            .obligations
+            .iter()
+            .any(|entry| entry.obligation.kind == "compensation")
+    );
 }
 
 /// Trace: FR-895-AC-2.

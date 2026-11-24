@@ -19,16 +19,16 @@ use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use fsl_analyze::model_check::ModelCheckRefusal;
 use fsl_foundation::diagnostic::Code;
 use fsl_replay::{
-    settle_model_check, CertificateRequest, DisagreementCause, IncompleteCause, InconclusiveCause,
-    ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord, ModelTraceRefusal,
-    ModelTraceSettlement, ReplayRefusal, ResultLabel, RunStats, TemporalCounterexample,
-    TerminalValue,
+    CertificateRequest, DisagreementCause, IncompleteCause, InconclusiveCause, ModelCheckItem,
+    ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord, ModelTraceRefusal, ModelTraceSettlement,
+    ReplayRefusal, ResultLabel, RunStats, TemporalCounterexample, TerminalValue,
+    settle_model_check,
 };
 use ix_trace_rs::trace;
 
-use crate::counter::{document_with_ranged_parameter, subject, Letters, UNLIMITED};
+use crate::counter::{Letters, UNLIMITED, document_with_ranged_parameter, subject};
 use crate::lasso_replay::{found, refusal, replay_with};
-use crate::liveness::{counter, fixture, is_zero, Fixture};
+use crate::liveness::{Fixture, counter, fixture, is_zero};
 use crate::strong_hint::{is_one, mutex};
 
 const WEAK_EACH: &str = "fair weak each M::Counter::setTo;";
@@ -350,10 +350,12 @@ fn a_loop_that_enables_nothing_starved_and_a_stutter_loop_are_fair() {
         "always eventually holds(c.value = 0)",
     );
     let payload = found(&stutter, is_zero);
-    assert!(payload
-        .lasso
-        .as_ref()
-        .is_some_and(|lasso| lasso.terminal_stutter));
+    assert!(
+        payload
+            .lasso
+            .as_ref()
+            .is_some_and(|lasso| lasso.terminal_stutter)
+    );
     let result = replay_with(&stutter, payload, is_zero).expect("reproduces");
     assert!(matches!(
         result.settlement,

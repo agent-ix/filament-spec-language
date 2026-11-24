@@ -11,21 +11,21 @@
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_analyze::analyze::{
-    analyze_items, derived_model_item, derived_zone_item, AnalyzeItem, AnalyzeRecord,
-    DerivedItemMismatch, Engines, ModelItem, TimedItem,
+    AnalyzeItem, AnalyzeRecord, DerivedItemMismatch, Engines, ModelItem, TimedItem, analyze_items,
+    derived_model_item, derived_zone_item,
 };
-use fsl_analyze::model_check::manifest as en1;
 use fsl_analyze::model_check::SubjectContext;
+use fsl_analyze::model_check::manifest as en1;
 use fsl_analyze::zone_check::manifest as en6;
 use fsl_analyze::zone_check::{ZoneCheckItem, ZoneCheckLimits, ZoneCheckRequest};
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::{PopulationUniverse, TimedSystem, DEFAULT_MAX_CLOCKS};
+use fsl_eval::simulation::model::{DEFAULT_MAX_CLOCKS, PopulationUniverse, TimedSystem};
+use fsl_foundation::RequestIndex;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
-use fsl_replay::node_occurrence;
 use fsl_replay::SubjectIdentity;
+use fsl_replay::node_occurrence;
 use fsl_replay::{
     CertificateCheckLimits, CertifiedItem, IncompleteCause, InconclusiveCause, ModelCheckLimit,
     ModelTraceSettlement, TerminalValue, ZoneCertificateRequest,
@@ -47,11 +47,11 @@ use ix_trace_rs::trace;
 use std::collections::BTreeSet;
 use std::num::NonZeroU64;
 
-use crate::counter::{clause_text, CONTRACT};
+use crate::counter::{CONTRACT, clause_text};
 use crate::dense_route::{ids, registry};
-use crate::model_settle::case;
-use crate::timed_world::{World, DENSE, PACKAGE};
-use crate::zone_search::{rpc, rpc_claim_without_protocol_profile, INFINITE};
+use crate::model_settle_support::case;
+use crate::timed_world::{DENSE, PACKAGE, World};
+use crate::zone_search::{INFINITE, rpc, rpc_claim_without_protocol_profile};
 
 /// The derived items, each with its obligation, that
 /// `ModelRequest::derived` writes, with EN-1 and EN-6 registered, after
@@ -139,25 +139,6 @@ pub(crate) fn items_of_kind<S: Clone + Eq>(
             let obligation = written.obligation(item.index()).expect("its obligation");
             (item.clone(), obligation.clone())
         })
-        .collect()
-}
-
-/// The subject of each derived item of kind `kind` that `written`
-/// derives, in derivation order among the written ones and then among the
-/// ones settled `unsupported` for want of an anchor.
-pub(crate) fn derived_subjects<S: Clone + Eq>(
-    written: &WrittenRequest<S>,
-    kind: ItemKind,
-) -> Vec<S> {
-    let unanchored = written
-        .unanchored()
-        .iter()
-        .filter(|item| item.kind == kind)
-        .map(|item| item.subject.clone());
-    items_of_kind(written, kind)
-        .into_iter()
-        .map(|(_, obligation)| obligation.subject)
-        .chain(unanchored)
         .collect()
 }
 
@@ -420,12 +401,14 @@ fn a_tick_subjects_derived_items_route_to_en6_alone() {
     // so its record routes to EN-6 alone too.
     let graph = world.package.graph();
     let occurrence = node_occurrence(&graph.temporal_clauses()[0]);
-    assert!(graph
-        .requirements()
-        .get(&occurrence)
-        .expect("the clause's record")
-        .requirements()
-        .timed());
+    assert!(
+        graph
+            .requirements()
+            .get(&occurrence)
+            .expect("the clause's record")
+            .requirements()
+            .timed()
+    );
     let records = items_from_requirements(graph.requirements(), &registry(), None);
     let clause = records
         .iter()
@@ -453,17 +436,19 @@ fn a_tick_subjects_derived_items_route_to_en6_alone() {
     let system = world.system();
     let timed = TimedSystem::new(&system, "M").expect("a timed subject");
     let reductions = Reductions::default();
-    let records = analyzed(vec![zone_run(
-        &world,
-        &written,
-        &timed,
-        &reductions,
-        DEFAULT_MAX_CLOCKS,
-        1,
-        ZoneCheckItem::DeadlockFreedom,
-        CertifiedItem::DeadlockFreedom,
-    )
-    .expect("the deadlock-freedom run")]);
+    let records = analyzed(vec![
+        zone_run(
+            &world,
+            &written,
+            &timed,
+            &reductions,
+            DEFAULT_MAX_CLOCKS,
+            1,
+            ZoneCheckItem::DeadlockFreedom,
+            CertifiedItem::DeadlockFreedom,
+        )
+        .expect("the deadlock-freedom run"),
+    ]);
     let (backend, value) = settled(&records[0]);
     assert_eq!(backend, en6::BACKEND_ID);
     assert!(matches!(value, TerminalValue::Proved { .. }), "{value:?}");
@@ -791,10 +776,13 @@ fn a_deadlock_verdict_is_joined_on_the_terminal_declaration() {
     assert!(matches!(value, TerminalValue::Refuted), "{value:?}");
 
     let mut stale = none.model_item();
-    stale.replay = Box::new(|payload| crate::model_settle::replay(&at_two, payload.clone()));
-    let reproduced =
-        crate::model_settle::replay(&at_two, crate::model_settle::counterexample(&none))
-            .expect("replays");
+    stale.replay =
+        Box::new(|payload| crate::model_settle_support::replay(&at_two, payload.clone()));
+    let reproduced = crate::model_settle_support::replay(
+        &at_two,
+        crate::model_settle_support::counterexample(&none),
+    )
+    .expect("replays");
     assert!(
         matches!(
             reproduced.settlement,
@@ -970,7 +958,7 @@ fn a_timed_deadlock_verdict_is_joined_on_the_run_and_check_packages() {
         "a package of another model holds no `model_root` at the timers item's anchor"
     );
     let records = analyzed(vec![
-        deadlock(&written_when, &when, &when_timed, &swap).expect("the reduced run")
+        deadlock(&written_when, &when, &when_timed, &swap).expect("the reduced run"),
     ]);
     let (backend, value) = settled(&records[0]);
     assert_eq!(backend, en6::BACKEND_ID);
@@ -995,8 +983,8 @@ fn a_timed_deadlock_verdict_is_joined_on_the_run_and_check_packages() {
 #[trace("FSpec-TC-431", "FSpec-FR-368-AC-22")]
 #[test]
 fn a_subject_reading_several_model_selections_has_no_derived_request_item() {
-    use crate::timed_refinement::{refinement, req, treq, CONTRACTS};
-    use crate::timed_world::{refining, DENSE};
+    use crate::timed_refinement::{CONTRACTS, refinement, req, treq};
+    use crate::timed_world::{DENSE, refining};
     let clause = "temporal DenseClause using inf over (c: M::Call) clock \"model-steps\" on \
          origin { always holds(not c.late) }\n";
     let world = refining(
@@ -1024,11 +1012,11 @@ fn a_subject_reading_several_model_selections_has_no_derived_request_item() {
         &root_claim(&world.package, PACKAGE)
     );
 
-    let abstract_identity = serde_json::from_slice::<serde_json::Value>(&req()).expect("JSON")
-        ["package"]["identity"]
-        .as_str()
-        .expect("an identity")
-        .to_owned();
+    let abstract_identity =
+        serde_json::from_slice::<serde_json::Value>(&req()).expect("JSON")["package"]["identity"]
+            .as_str()
+            .expect("an identity")
+            .to_owned();
     let mut both = world.concrete_request();
     let mut abstract_universe: PopulationUniverse = both.universes[0].clone();
     abstract_universe.population.package = abstract_identity;
@@ -1053,9 +1041,11 @@ fn a_subject_reading_several_model_selections_has_no_derived_request_item() {
             (ItemKind::TimeLockFreedom, several, code)
         ]
     );
-    assert!(unanchored.unanchored()[0]
-        .detail()
-        .contains("deadlock-freedom"));
+    assert!(
+        unanchored.unanchored()[0]
+            .detail()
+            .contains("deadlock-freedom")
+    );
 }
 
 /// FSpec FR-361-AC-17 (STD-560) and FR-368-AC-22's "or none" (TC-290 step

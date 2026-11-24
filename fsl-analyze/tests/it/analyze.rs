@@ -17,29 +17,29 @@
 use filament_exact::{Cancel, CancelCause, Undefined};
 use filament_semantic_value::catalog::Category;
 use fsl_analyze::analyze::{
-    analyze as analyze_request, analyze_items, model_item, Aggregate, AggregateGap, AnalyzeItem,
-    AnalyzeLimits, AnalyzeRequest, ClaimItem, DeadlineSupply, DispositionKind, Engine, Engines,
-    ItemForm, ItemOptions, NegotiatedItem, Payload, ProbabilisticItem, ProbabilisticLimits,
-    Settlement,
+    Aggregate, AggregateGap, AnalyzeItem, AnalyzeLimits, AnalyzeRequest, ClaimItem, DeadlineSupply,
+    DispositionKind, Engine, Engines, ItemForm, ItemOptions, NegotiatedItem, Payload,
+    ProbabilisticItem, ProbabilisticLimits, Settlement, analyze as analyze_request, analyze_items,
+    model_item,
 };
 use fsl_eval::simulation::Limits;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::{
-    settle_model_check, CertificateRule, Certification, CounterexampleKind, IncompleteCause,
-    InconclusiveCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
-    ModelTraceSettlement, ModelTraceValue, ProofBasis, RunStats, TemporalCounterexample,
-    TerminalValue, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
+    CertificateRule, Certification, CounterexampleKind, IncompleteCause, InconclusiveCause,
+    ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelTraceSettlement,
+    ModelTraceValue, ProofBasis, RunStats, TemporalCounterexample, TerminalValue,
+    UndefinedEvaluation, UndefinedLocus, UndefinedSite, settle_model_check,
 };
-use fsl_route::{request::ExtentClassification, routing::Disposition};
 use fsl_route::{Candidate, EvidenceKind, Mode, ProviderOrigin};
+use fsl_route::{request::ExtentClassification, routing::Disposition};
 use fsl_semantics::check::{Capability, DeclarationFamily};
 use ix_trace_rs::trace;
 
 use crate::closure_certificate::world;
-use crate::counter::{clause_text, CONTRACT, UNLIMITED};
+use crate::counter::{CONTRACT, UNLIMITED, clause_text};
 use crate::derived_request::{counter_body, derived_deadlock};
-use crate::model_settle::{case, kernel_case, replay};
+use crate::model_settle_support::{case, kernel_case, replay};
 
 fn index(at: usize) -> RequestIndex {
     RequestIndex::new(at)
@@ -303,11 +303,13 @@ fn a_state_budget_of_one_and_a_cancelled_handle_settle_incomplete() {
     };
     let record = only(analyze_items(
         &en1(),
-        vec![model_item(
-            index(0),
-            invariant.model_item(&world, limits, |_| panic!("nothing to replay")),
-        )
-        .expect("a clause run")],
+        vec![
+            model_item(
+                index(0),
+                invariant.model_item(&world, limits, |_| panic!("nothing to replay")),
+            )
+            .expect("a clause run"),
+        ],
         &Cancel::new(),
     ));
     assert_eq!(
@@ -323,13 +325,15 @@ fn a_state_budget_of_one_and_a_cancelled_handle_settle_incomplete() {
     cancel.cancel(CancelCause::Requested);
     let records = analyze_items(
         &en1(),
-        vec![model_item(
-            index(0),
-            invariant.model_item(&world, ModelCheckLimits::default(), |_| {
-                panic!("a cancelled item runs nothing")
-            }),
-        )
-        .expect("a clause run")],
+        vec![
+            model_item(
+                index(0),
+                invariant.model_item(&world, ModelCheckLimits::default(), |_| {
+                    panic!("a cancelled item runs nothing")
+                }),
+            )
+            .expect("a clause run"),
+        ],
         &cancel,
     );
     assert_eq!(
@@ -354,7 +358,7 @@ fn a_state_budget_of_one_and_a_cancelled_handle_settle_incomplete() {
 #[test]
 fn an_undefined_claim_evaluation_settles_refuted_with_the_undefined_cause() {
     let case = case(&counter_body(""), &[0]);
-    let mut counterexample = crate::model_settle::counterexample(&case);
+    let mut counterexample = crate::model_settle_support::counterexample(&case);
     let last = counterexample.prefix.len() as u64;
     let evaluation = UndefinedEvaluation {
         site: UndefinedSite {
@@ -385,7 +389,7 @@ fn an_undefined_claim_evaluation_settles_refuted_with_the_undefined_cause() {
         &case.request(),
         &Cancel::new(),
         |payload| {
-            let mut result = replay(&case, crate::model_settle::counterexample(&case))?;
+            let mut result = replay(&case, crate::model_settle_support::counterexample(&case))?;
             result.settlement = ModelTraceSettlement::Reproduced {
                 value: ModelTraceValue::Undefined(evaluation.clone()),
                 trace_position: payload.trace_position(),
@@ -398,7 +402,7 @@ fn an_undefined_claim_evaluation_settles_refuted_with_the_undefined_cause() {
     // EN-1 item whose run violated it and whose replay reproduced it.
     let mut item = case.model_item();
     item.replay = Box::new(|payload| {
-        let mut result = replay(&case, crate::model_settle::counterexample(&case))?;
+        let mut result = replay(&case, crate::model_settle_support::counterexample(&case))?;
         result.settlement = ModelTraceSettlement::Reproduced {
             value: ModelTraceValue::Undefined(evaluation.clone()),
             trace_position: payload.trace_position(),
@@ -460,7 +464,7 @@ fn an_undefined_step_evaluation_settles_refuted_with_its_successor_and_transitio
         clause_text("Bounded", "", "always holds(c.value <= 3)")
     );
     let case = kernel_case(&body, DIVIDE, &[0]);
-    let expected = crate::model_settle::counterexample(&case);
+    let expected = crate::model_settle_support::counterexample(&case);
     let CounterexampleKind::UndefinedEvaluation(evaluation) = &expected.kind else {
         panic!("the precondition is undefined at its successor: {expected:?}");
     };
@@ -633,8 +637,8 @@ fn run_one_observed_service_item(
     item: &NegotiatedItem,
     limits: &AnalyzeLimits,
 ) -> (Vec<fsl_replay::TerminalRecord>, usize) {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     let charges = Arc::new(AtomicUsize::new(0));
     let observed_charges = Arc::clone(&charges);
@@ -796,8 +800,8 @@ fn provider_entry_settles_an_incomplete_binding_per_item() {
 fn provider_entry_refuses_undeclared_population_before_running_items_in_input_order() {
     use crate::prob_world::{self, World};
     use fsl_replay::{ProofRefusalCause, TerminalValue};
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     let claim = "probabilistic Two using ev on M over (s: M::Server) under Steady on origin \
          with alpha 0.01, beta 0.01, indifference 0.01 \

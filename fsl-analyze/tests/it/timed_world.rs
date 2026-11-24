@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(
+    dead_code,
+    reason = "shared timed fixture support spans split integration test binaries"
+)]
 //! A timed fixture for EN-6: the domain package `test/timed`, whose object
 //! `Call` holds `phase: Int[0, 3]`, the Booleans `inflight`, `late` and
 //! `retried`, and the clock fields a test names, with the operations it
@@ -19,7 +23,7 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 pub(crate) const PACKAGE: &str = "test/timed";
 
@@ -630,11 +634,11 @@ pub(crate) fn refining_from(
     abstract_inflight: bool,
 ) -> Result<Refining, Vec<(String, String, String)>> {
     let packages = package_input([abstract_document, concrete_document]).unwrap();
-    let abstract_package = serde_json::from_slice::<Json>(abstract_document).expect("JSON")
-        ["package"]["identity"]
-        .as_str()
-        .expect("an identity")
-        .to_owned();
+    let abstract_package =
+        serde_json::from_slice::<Json>(abstract_document).expect("JSON")["package"]["identity"]
+            .as_str()
+            .expect("an identity")
+            .to_owned();
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
@@ -781,11 +785,11 @@ impl Refining {
         abstract_document: &[u8],
         values: &[bool],
     ) -> Self {
-        let abstract_package = serde_json::from_slice::<Json>(abstract_document).expect("JSON")
-            ["package"]["identity"]
-            .as_str()
-            .expect("an identity")
-            .to_owned();
+        let abstract_package =
+            serde_json::from_slice::<Json>(abstract_document).expect("JSON")["package"]["identity"]
+                .as_str()
+                .expect("an identity")
+                .to_owned();
         self.abstract_initials = values
             .iter()
             .enumerate()
@@ -813,11 +817,11 @@ impl Refining {
         abstract_document: &[u8],
         candidates: &[([bool; 3], Option<bool>)],
     ) -> Self {
-        let abstract_package = serde_json::from_slice::<Json>(abstract_document).expect("JSON")
-            ["package"]["identity"]
-            .as_str()
-            .expect("an identity")
-            .to_owned();
+        let abstract_package =
+            serde_json::from_slice::<Json>(abstract_document).expect("JSON")["package"]["identity"]
+                .as_str()
+                .expect("an identity")
+                .to_owned();
         self.abstract_initials = candidates
             .iter()
             .enumerate()

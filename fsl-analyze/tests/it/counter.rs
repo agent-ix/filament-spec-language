@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(dead_code, reason = "shared fixture support spans split integration test binaries")]
 //! FR-124-AC-1's `Counter` subject: the `test/counter` domain package
 //! (population `counters` of `Counter`, field `value: Int[0, 3]`, operation
 //! `inc` modifying `value`), a native unit that selects it as `M` with the
@@ -23,9 +24,9 @@ use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId, PackageDeclarat
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{
-    declared_type_universe_for, DocumentRef, ObservationLimits,
+    DocumentRef, ObservationLimits, declared_type_universe_for,
 };
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 pub(crate) const PACKAGE: &str = "test/counter";
 

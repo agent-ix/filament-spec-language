@@ -14,9 +14,9 @@ use fsl_replay::{
 use fsl_route::deadlock::ObligationKind;
 use ix_trace_rs::trace;
 
-use crate::timed_world::{document, world, World, DENSE};
+use crate::timed_world::{DENSE, World, document, world};
 use crate::zone_liveness::{decide, response, serve};
-use crate::zone_search::{check, claim, proved, rpc, time_lock_item, Certificate, INFINITE};
+use crate::zone_search::{Certificate, INFINITE, check, claim, proved, rpc, time_lock_item};
 
 fn verdict(world: &World, certificate: &Certificate) -> ZoneCertificateVerdict {
     check(world, certificate, CertificateCheckLimits::default()).expect("the check runs")

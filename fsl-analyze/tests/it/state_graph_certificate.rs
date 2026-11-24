@@ -16,22 +16,22 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{Cancel, CancelCause, ObjectReference};
-use fsl_eval::simulation::model::ModelSimState;
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::model::ModelSimState;
 use fsl_replay::{
-    check_state_graph, CertificateLocus, CertificateRejection, CertificateRule, IncompleteCause,
-    ModelCheckLimit, ModelCheckLimits, StateGraphCertificate, StateGraphCertificateRequest,
-    StateGraphOutcome, TemporalCertificateCheck,
+    CertificateLocus, CertificateRejection, CertificateRule, IncompleteCause, ModelCheckLimit,
+    ModelCheckLimits, StateGraphCertificate, StateGraphCertificateRequest, StateGraphOutcome,
+    TemporalCertificateCheck, check_state_graph,
 };
 use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
 use crate::graph_world::{
-    config_kernel_world, config_kernel_world_over, config_world, fork_kernel_world, fork_world,
-    game_world, job_world, World, DIVIDES, REACHES_TWO,
+    DIVIDES, REACHES_TWO, World, config_kernel_world, config_kernel_world_over, config_world,
+    fork_kernel_world, fork_world, game_world, job_world,
 };
-use crate::state_graph::{no_samples, reachable, run, system, AB};
+use crate::state_graph::{AB, no_samples, reachable, run, system};
 
 /// Check `certificate` for `claim`'s instance bound to `over` over `world`
 /// with universe `keys`, under `limits`.
@@ -411,7 +411,10 @@ fn malformed_state_graph_certificate_members_have_typed_loci() {
     let second = usize::try_from(descending.ranks[1].0).expect("rank index");
     assert_eq!(
         check_reaches(&descending),
-        rejected(CertificateRule::Malformed, certificate.closure[second].clone())
+        rejected(
+            CertificateRule::Malformed,
+            certificate.closure[second].clone()
+        )
     );
 
     let world = job_world(true, false);
@@ -447,7 +450,14 @@ fn certificates_reject_the_other_forms_list_and_accept_an_empty_one() {
     let mut wrong_counts = certificate.clone();
     wrong_counts.counts.push((0, 1, 0));
     assert_eq!(
-        check(&world, AB, "ReachesTwo", over.clone(), &wrong_counts, &ModelCheckLimits::default()),
+        check(
+            &world,
+            AB,
+            "ReachesTwo",
+            over.clone(),
+            &wrong_counts,
+            &ModelCheckLimits::default()
+        ),
         rejected(CertificateRule::Malformed, certificate.closure[0].clone())
     );
     let mut missing_count_entry = certificate.clone();
@@ -467,7 +477,14 @@ fn certificates_reject_the_other_forms_list_and_accept_an_empty_one() {
         })
     );
     assert_eq!(
-        check(&world, AB, "ReachesTwo", None, &certificate, &ModelCheckLimits::default()),
+        check(
+            &world,
+            AB,
+            "ReachesTwo",
+            None,
+            &certificate,
+            &ModelCheckLimits::default()
+        ),
         TemporalCertificateCheck::Accepted
     );
 

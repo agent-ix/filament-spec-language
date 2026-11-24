@@ -4,9 +4,9 @@
 //! function body it reaches while declared clauses stay `Linked`.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::analyze_cli_support::{counter_request, request_members, Workspace};
+use crate::analyze_cli_support::{Workspace, counter_request, request_members};
 
 /// FR-952-AC-1, FSpec FR-770-AC-1: a Linked compile writes `linked` on every
 /// function node.

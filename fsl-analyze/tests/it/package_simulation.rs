@@ -3,11 +3,11 @@
 
 use fsl_foundation::source::SourceLabel;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, bounded, counter_request_with, label, package_selection_named, request_members,
-    Workspace, HANDOFF,
+    HANDOFF, Workspace, analyze, bounded, counter_request_with, label, package_selection_named,
+    request_members,
 };
 
 #[trace("TC-1594", "FR-634-AC-1", "FR-850-AC-2", "FR-940-AC-6")]
@@ -128,10 +128,10 @@ fn assert_exploration_charge_parity(
 ) {
     use filament_exact::Meter;
     use fsl_eval::simulation::model::{
-        enumerate_model, sample_model_runs, ExpansionLimits, ModelCheckInput,
-        ModelSimulationRequest, ModelSystem, PackageModelInput, SampledRuns,
+        ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PackageModelInput,
+        SampledRuns, enumerate_model, sample_model_runs,
     };
-    use fsl_eval::simulation::{EnumerationBounds, BOUND_POSITIONS};
+    use fsl_eval::simulation::{BOUND_POSITIONS, EnumerationBounds};
     use fsl_package::{BarePackage, BareSupply, ReadEqualityRows, ReadIdentityRows};
 
     let compiled =
@@ -298,35 +298,49 @@ fn caller_simulation_max_steps_bounds_the_item_on_both_routes() {
     }
 
     // The item states the bound too: refused, whichever bound is larger.
-    let stated = json!([{"kind": "simulation", "simulation": {"mode": "enumerate", "max_steps": 5}}]);
+    let stated =
+        json!([{"kind": "simulation", "simulation": {"mode": "enumerate", "max_steps": 5}}]);
     let stated_path = counter_request_with(
         &Workspace::new("caller-simulation-max-steps-stated"),
         &bounded(),
         request_members(Some(stated)),
     );
-    let refused =
-        crate::analyze_cli_support::analyze_under(&stated_path, &[(Setting::SimulationMaxSteps, 2)]);
+    let refused = crate::analyze_cli_support::analyze_under(
+        &stated_path,
+        &[(Setting::SimulationMaxSteps, 2)],
+    );
     assert_eq!(refused.exit, 20, "{}", refused.document());
     let text = refused.document().to_string();
     assert!(text.contains("simulation.max_steps"), "{text}");
 
     // Unavailable elsewhere, malformed at the operand.
     let mut replay = fsl_command::command::CommandLimits::replay();
-    assert!(replay
-        .set(SettingName::Stage(Setting::SimulationMaxSteps), 2)
-        .is_err());
-    let mut monitor =
-        fsl_command::command::CommandLimits::monitor(fsl_command::command::MonitorPreparationLimits {
+    assert!(
+        replay
+            .set(SettingName::Stage(Setting::SimulationMaxSteps), 2)
+            .is_err()
+    );
+    let mut monitor = fsl_command::command::CommandLimits::monitor(
+        fsl_command::command::MonitorPreparationLimits {
             work: 1,
             storage: 1,
-        });
+        },
+    );
     monitor
         .set(SettingName::Stage(Setting::SimulationMaxSteps), 2)
         .expect("monitor accepts it beside routed items");
     assert!(monitor.require_no_routed_only().is_err());
-    for operand in ["simulation.max_steps=0", "simulation.max_steps=-1", "simulation.max_steps=x"] {
+    for operand in [
+        "simulation.max_steps=0",
+        "simulation.max_steps=-1",
+        "simulation.max_steps=x",
+    ] {
         let refusal = fsl_foundation::setting::parse_operands([operand]).unwrap_err();
-        assert_eq!(refusal.cause, fsl_foundation::UsageCause::NotAnInteger, "{operand}");
+        assert_eq!(
+            refusal.cause,
+            fsl_foundation::UsageCause::NotAnInteger,
+            "{operand}"
+        );
         assert_eq!(refusal.operand, operand);
     }
 }

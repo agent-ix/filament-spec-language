@@ -6,10 +6,10 @@
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::monitor::{MonitorOutcome, MonitorRefusal};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, below_three, bounded, counter_request, Fr290, Workspace,
+    Fr290, Workspace, analyze, below_three, bounded, counter_request,
 };
 
 fn last_stage(items: Value, body: &str, name: &str) -> Value {

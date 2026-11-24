@@ -49,7 +49,7 @@ use crate::litmus::{
     attempt, contracts, core, document, field, key, package, protocol, protocol_profiled_package,
     protocol_with, sb_run, sb_unit, unit_text_with, Documents, NO_BOTH_ZERO, PROTOCOL_PROFILE,
 };
-use crate::model_settle::{envelope_at, request};
+use crate::model_settle_support::{envelope_at, request};
 
 mod replay_boundary_cases;
 
@@ -474,7 +474,7 @@ impl Case {
         payload: TemporalCounterexample<ProtocolTransition>,
     ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
         let unit = unit_text_with(self.profiles, &self.body).into_bytes();
-        let (node, occurrence) = crate::model_settle::protocol_anchor(&self.checked, "SB");
+        let (node, occurrence) = crate::model_settle_support::protocol_anchor(&self.checked, "SB");
         replay_protocol_trace(
             request(
                 &self.checked,
@@ -3109,7 +3109,7 @@ fn every_independent_pair_of_tso_steps_commutes() {
             .system(&[select(parallel, MemoryModelName::Tso)], Tso::default())
             .expect("builds");
         let reached = reachable(&system);
-        let pairs = crate::protocol_footprints::commuting_pairs(&system, &reached);
+        let pairs = crate::protocol_footprint_support::commuting_pairs(&system, &reached);
         assert!(!pairs.is_empty(), "{body}");
         for (first, second) in pairs {
             if first != second {

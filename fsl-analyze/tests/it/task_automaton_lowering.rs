@@ -10,10 +10,10 @@ use fsl_eval::simulation::model::{
     TaskProductState, TaskProductSystem, TaskTransitionAction, TimedSystem,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::analyze_cli_support::{analyze, label, request_over, Run, Workspace};
-use crate::analyze_family_cli::{rpc_snapshot, rpc_unit};
+use crate::analyze_cli_support::{Run, Workspace, analyze, label, request_over};
+use crate::analyze_family_support::{rpc_snapshot, rpc_unit};
 
 /// One always-enabled operation per task, each releasing that task of `set`.
 fn sources(set: &str, tasks: &[&str]) -> String {
@@ -658,8 +658,7 @@ fn one_shot_miss_refutes_with_terminal_stutter_replay() {
     );
 }
 
-const BAD_SET: &str =
-    "taskset Bad { task command periodic 4 ms deadline 1 ms bcet 2 ms wcet 2 ms priority 1 lo; }\n\
+const BAD_SET: &str = "taskset Bad { task command periodic 4 ms deadline 1 ms bcet 2 ms wcet 2 ms priority 1 lo; }\n\
      schedulable BadFp on Bad under fixed_priority;\n";
 
 /// FR-249-AC-2: a periodic overrun (period 4, deadline 1, wcet 2) misses in
@@ -776,7 +775,7 @@ fn a_release_does_not_make_a_response_claim_release_backed() {
 #[test]
 fn an_en6_only_registry_keeps_unnamed_schedule_requests_bounded() {
     use fsl_analyze::analyze::document::{
-        resolve_items, ItemSelection, ResolvedItem, SubjectSelection,
+        ItemSelection, ResolvedItem, SubjectSelection, resolve_items,
     };
     use fsl_analyze::analyze::{AnalyzeLimits, Engines, SubjectBinding};
     use fsl_route::request::ExtentClassification;
@@ -802,9 +801,10 @@ fn an_en6_only_registry_keeps_unnamed_schedule_requests_bounded() {
         .registrations()
         .find(|descriptor| descriptor.id().as_str() == "en-6")
         .expect("EN-6 is registered");
-    assert!(en6
-        .advertises()
-        .any(|pair| pair == (Capability::Schedulability, fsl_route::Mode::Bounded)));
+    assert!(
+        en6.advertises()
+            .any(|pair| pair == (Capability::Schedulability, fsl_route::Mode::Bounded))
+    );
     let mut registry = fsl_route::Registry::new();
     registry
         .register(en6.clone())
@@ -940,7 +940,7 @@ fn an_unequal_budget_product_never_proves_and_stops_with_task_search_evidence() 
 /// is enabled until it fires, releasing the one-shot task `s` whose demand
 /// exceeds its deadline.
 fn run_once(name: &str, items: Value) -> Run {
-    use crate::timed_world::{document, unit_text, DENSE, PACKAGE};
+    use crate::timed_world::{DENSE, PACKAGE, document, unit_text};
     let body = format!(
         "{DENSE}\
          pre GoReady using v on M::Call::go {{ self.phase = 0 }}\n\
@@ -991,10 +991,12 @@ fn the_written_task_search_evidence_round_trips_through_the_planner_reader() {
             .as_array()
             .map_or(0, Vec::len)
     );
-    assert!(evidence
-        .frontier
-        .iter()
-        .any(|row| row.reason == "work-limit"));
+    assert!(
+        evidence
+            .frontier
+            .iter()
+            .any(|row| row.reason == "work-limit")
+    );
 }
 
 /// FSpec FR-331: a stop at a full job queue settles `incomplete` with

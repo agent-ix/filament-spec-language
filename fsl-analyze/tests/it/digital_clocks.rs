@@ -3,16 +3,16 @@
 //! §15.5's `Retx`, decided by the finite-horizon solver.
 
 use filament_exact::{Cancel, Integer, Rational};
-use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+use fsl_analyze::analyze::{Engines, analyze_items, exact_probabilistic_item};
 use fsl_analyze::exact_probabilistic::{
-    build_product, decide_bounded_event, witness_scheduler, ActionChoice, EntryChoice,
-    ExactProbLimits, FhResult, MonitorVerdict, ProbBuild, ProbProduct, ProductAction, ProductKind,
-    ProductRefusal, ProductRequest, SchedulerChoice, WitnessError, WitnessScope,
-};
-use fsl_analyze::exact_probabilistic::{
-    product_construction_counts, reset_product_construction_counts, ProductStop,
+    ActionChoice, EntryChoice, ExactProbLimits, FhResult, MonitorVerdict, ProbBuild, ProbProduct,
+    ProductAction, ProductKind, ProductRefusal, ProductRequest, SchedulerChoice, WitnessError,
+    WitnessScope, build_product, decide_bounded_event, witness_scheduler,
 };
 use fsl_analyze::exact_probabilistic::{DeadlinePhase, MonitorState};
+use fsl_analyze::exact_probabilistic::{
+    ProductStop, product_construction_counts, reset_product_construction_counts,
+};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_replay::{OutcomeItem, TerminalValue, UnavailabilityCause};
 use fsl_semantics::check::{
@@ -393,10 +393,12 @@ fn deadline_extrema_over_every_scheduler() {
         ratio(9999, 10000)
     );
     // The scheduler's delays are named unit delays, not an operation.
-    assert!(built
-        .edges
-        .iter()
-        .any(|edge| matches!(edge.choice, ProductAction::UnitDelay) && edge.action.is_none()));
+    assert!(
+        built
+            .edges
+            .iter()
+            .any(|edge| matches!(edge.choice, ProductAction::UnitDelay) && edge.action.is_none())
+    );
 }
 
 /// FR-204-AC-4 (TC-639 step 4): a `send` without guard or reset is a
@@ -710,7 +712,7 @@ fn free_delays_under_a_workload_are_decided_by_minimum_and_maximum() {
 fn exact_timed_claims_route_to_en5_and_statistical_ones_to_en4() {
     use filament_exact::{Origin, Role};
     use fsl_foundation::source::provenance::OccurrenceKey;
-    use fsl_route::request::{items_with_evidence, EvidenceSelection};
+    use fsl_route::request::{EvidenceSelection, items_with_evidence};
     use fsl_semantics::check::{RequirementMap, RequirementRecord};
 
     let world = retx(
@@ -930,7 +932,7 @@ fn tied_identities_sum_their_rewards_on_one_edge() {
 #[test]
 fn reach_and_expected_reward_label_the_digital_product() {
     use fsl_analyze::exact_probabilistic::{
-        decide_expected_reward, decide_reachability, ExtRational, UnboundedObjective,
+        ExtRational, UnboundedObjective, decide_expected_reward, decide_reachability,
     };
     let world = retx(
         GUARD,
@@ -1433,7 +1435,10 @@ fn time_locked_state_is_terminal() {
             })
         ) && built.outgoing(*state).is_empty()
     });
-    assert!(time_locked.is_some(), "a pending deadline state has no move");
+    assert!(
+        time_locked.is_some(),
+        "a pending deadline state has no move"
+    );
 }
 
 /// FR-203-AC-3 / FR-204-AC-3 (TC-639): an exponential delay requested as

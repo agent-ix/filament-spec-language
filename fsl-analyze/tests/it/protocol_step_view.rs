@@ -6,7 +6,7 @@ use fsl_analyze::protocol_analysis::protocol_step_view;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{StepKind, Unsupported};
 use fsl_foundation::MemoryModelName;
-use fsl_replay::protocol_analysis::{node_text, AssessedRoot, RealizabilityCounterexample};
+use fsl_replay::protocol_analysis::{AssessedRoot, RealizabilityCounterexample, node_text};
 use fsl_replay::{
     AbstractProtocolSystem, ProtocolStepView, ProtocolSteps, RefinementWitness,
     RefinementWitnessError, StateIndex, StepViewRefusal, UnsteppedConstruct,
@@ -15,8 +15,8 @@ use ix_trace_rs::trace;
 
 use crate::fill;
 use crate::protocol_projection::{admitted, clause, root as assessed_root};
-use crate::protocol_realizability::{refuted, worked, Fixture, CANCELLED, PICK};
-use crate::weak_memory::{load, select, store, Case};
+use crate::protocol_realizability::{CANCELLED, Fixture, PICK, refuted, worked};
+use crate::weak_memory_support::{Case, load, select, store};
 
 const LIMIT: usize = 4096;
 
@@ -87,10 +87,11 @@ fn the_view_labels_every_step_of_the_fsl_eval_system() {
     assert!(labelled(StepKind::Receive, "Got", "Order"));
     assert!(labelled(StepKind::Send, "PickIt", "Pick"));
     assert!(labelled(StepKind::Receive, "Cn2", "Cancelled"));
-    assert!(view
-        .steps
-        .iter()
-        .any(|step| step.kind == StepKind::Finish && step.node == Some(fixture.named("Done"))));
+    assert!(
+        view.steps
+            .iter()
+            .any(|step| step.kind == StepKind::Finish && step.node == Some(fixture.named("Done")))
+    );
     let subject = fixture.subject();
     let model = ModelSystem::new(subject.model.simulation.clone()).expect("the model admits");
     let system = AbstractProtocolSystem::new(model, &subject).expect("the system builds");

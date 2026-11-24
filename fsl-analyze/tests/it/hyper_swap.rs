@@ -29,8 +29,8 @@ use fsl_route::reductions::{Reductions, SymmetryDeclaration};
 use fsl_semantics::check::{FormulaNodeId, HyperForm};
 use ix_trace_rs::trace;
 
-use crate::hyper::{inputs, positions, refuted};
-use crate::hyper_projected::{aligned, IDLE};
+use crate::hyper_support::{inputs, positions, refuted};
+use crate::hyper_projected_support::{aligned, IDLE};
 use crate::hyper_world::{
     key, low_of, non_interference, Seams, Vault, World, EQUAL_INPUTS, KEY, STARTS,
 };

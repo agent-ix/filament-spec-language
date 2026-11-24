@@ -3,10 +3,10 @@
 //! source-checked package and its admitted handoff bytes.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, label, litmus_request, package_selection, Run, Workspace,
+    Run, Workspace, analyze, label, litmus_request, package_selection,
 };
 use crate::litmus::{sb_run, sb_unit};
 
@@ -199,20 +199,20 @@ fn package_protocol_graph_with_snapshot<M: crate::fill::Explored + Clone>(
     };
     let request: Value =
         serde_json::from_slice(&std::fs::read(path).expect("request")).expect("request JSON");
-    let capacities = request["request"]["items"][0]["temporal"]["subject"]["protocol"]
-        ["capacities"]
-        .as_object()
-        .into_iter()
-        .flat_map(|members| members.iter())
-        .map(|(name, value)| fsl_eval::model_subject::CapacityBinding {
-            name: name.clone(),
-            value: value
-                .as_str()
-                .expect("capacity text")
-                .parse()
-                .expect("natural capacity"),
-        })
-        .collect();
+    let capacities =
+        request["request"]["items"][0]["temporal"]["subject"]["protocol"]["capacities"]
+            .as_object()
+            .into_iter()
+            .flat_map(|members| members.iter())
+            .map(|(name, value)| fsl_eval::model_subject::CapacityBinding {
+                name: name.clone(),
+                value: value
+                    .as_str()
+                    .expect("capacity text")
+                    .parse()
+                    .expect("natural capacity"),
+            })
+            .collect();
     let source = ProtocolSubject {
         model: crate::fill::model_subject(compiled.checked(), &documents, vec![start], cells),
         protocol: "Flow".to_owned(),
@@ -432,10 +432,12 @@ fn package_workflow_roles_empty_universe_and_binding_refusal() {
     let path = workflow_roles_request(&ws, 2, "workflow", true, &controls, "closing");
     let graph = workflow_role_graph(&ws, &path);
     assert!(graph.iter().all(|state| live_workflow_roles(state) == 0));
-    assert!(graph
-        .iter()
-        .flat_map(|state| &state.steps)
-        .all(|(step, _)| step.actor().is_none()));
+    assert!(
+        graph
+            .iter()
+            .flat_map(|state| &state.steps)
+            .all(|(step, _)| step.actor().is_none())
+    );
     let item = workflow_role_parity(&ws, &path, "refuted");
     let blocked = item["counterexample"]["blocked"]
         .as_array()
@@ -471,15 +473,15 @@ fn package_workflow_roles_empty_universe_and_binding_refusal() {
 #[trace("TC-2958", "FR-940-AC-6", "FR-208-AC-2", "FR-850")]
 #[test]
 fn package_workflow_roles_replay_refuses_forged_actors() {
-    use fsl_analyze::model_check::{check_protocol, ProtocolCheckRequest};
+    use fsl_analyze::model_check::{ProtocolCheckRequest, check_protocol};
     use fsl_eval::model_subject::RoleBinding;
     use fsl_eval::simulation::model::ExpansionLimits;
     use fsl_eval::simulation::protocol::{ProtocolTransition, StepKind};
     use fsl_foundation::diagnostic::Code;
     use fsl_replay::{
-        replay_protocol_trace, replay_protocol_trace_from_package, HandoffSupply, ModelCheckItem,
-        ModelCheckLimits, ModelCheckOutcome, ModelTraceRefusal, ModelTraceSettlement,
-        ProtocolTraceSubject, ReplayLimits, ReplayRefusal,
+        HandoffSupply, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelTraceRefusal,
+        ModelTraceSettlement, ProtocolTraceSubject, ReplayLimits, ReplayRefusal,
+        replay_protocol_trace, replay_protocol_trace_from_package,
     };
 
     let controls = repeat_attempt("Work", "worked", "true").replace("by Machining", "by Worker");
@@ -610,16 +612,18 @@ fn package_workflow_roles_replay_refuses_forged_actors() {
     }
     let unit = std::fs::read(ws.path("program.fsl")).expect("source bytes");
     let model = std::fs::read(ws.path("model.json")).expect("model bytes");
-    let wire = crate::model_settle::request(
+    let wire = crate::model_settle_support::request(
         compiled.checked(),
         &[],
         &model,
         documents.snapshots.iter(),
         &unit,
     );
-    let (node, occurrence) = crate::model_settle::protocol_anchor(compiled.checked(), "Flow");
-    let envelope =
-        |payload| crate::model_settle::envelope_at(payload, node.clone(), occurrence.clone());
+    let (node, occurrence) =
+        crate::model_settle_support::protocol_anchor(compiled.checked(), "Flow");
+    let envelope = |payload| {
+        crate::model_settle_support::envelope_at(payload, node.clone(), occurrence.clone())
+    };
     let letters = crate::counter::Letters { atom: |_| None };
     let legitimate = replay_protocol_trace(
         wire.clone(),
@@ -2256,15 +2260,15 @@ fn package_symbolic_capacity_replay_readmits_the_recorded_binding() {
         else {
             panic!("one-slot queue deadlocks");
         };
-        let mut wire = crate::model_settle::request(
+        let mut wire = crate::model_settle_support::request(
             checked,
             &[],
             &std::fs::read(ws.path("model.json")).expect("model"),
             documents.snapshots.iter(),
             &std::fs::read(ws.path("program.fsl")).expect("source"),
         );
-        let (node, occurrence) = crate::model_settle::protocol_anchor(checked, "Flow");
-        let envelope = crate::model_settle::envelope_at(*counterexample, node, occurrence);
+        let (node, occurrence) = crate::model_settle_support::protocol_anchor(checked, "Flow");
+        let envelope = crate::model_settle_support::envelope_at(*counterexample, node, occurrence);
         let mut subject = fsl_replay::ProtocolTraceSubject {
             model: fsl_replay::ModelTraceSubject {
                 timed: None,
@@ -2899,11 +2903,13 @@ fn package_parallel_send_preserves_replay_and_refusal() {
     let path = channel_send_request(&ws, 1, "block", "exactly-once-premise", &run, "closing");
     let item = channel_send_parity(&ws, &path, "refuted");
     assert_eq!(item["replay"]["reproduced"], true);
-    assert!(item["counterexample"]["prefix"]
-        .as_array()
-        .expect("real deadlock trace")
-        .iter()
-        .any(|step| step["transition"]["step"] == "send"));
+    assert!(
+        item["counterexample"]["prefix"]
+            .as_array()
+            .expect("real deadlock trace")
+            .iter()
+            .any(|step| step["transition"]["step"] == "send")
+    );
 
     let ws = Workspace::new("package-parallel-send-replay-refusal");
     let path = channel_send_request(&ws, 1, "block", "exactly-once-premise", &run, "closing");
@@ -2944,7 +2950,7 @@ fn channel_related_premise(ws: &Workspace, related: bool) {
     let mut model: Value =
         serde_json::from_slice(&std::fs::read(ws.path("model.json")).expect("model document"))
             .expect("model JSON");
-    crate::related_by::add_owns_relationship(&mut model);
+    crate::related_by_support::add_owns_relationship(&mut model);
     std::fs::write(ws.path("model.json"), model.to_string()).expect("write the related model");
     let mut snapshot: Value = serde_json::from_slice(
         &std::fs::read(ws.path("snapshot-0.json")).expect("the initial snapshot"),

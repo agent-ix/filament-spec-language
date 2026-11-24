@@ -5,29 +5,29 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::zone_check::{
-    check_free_delay_refinement, check_timed_model, check_timed_refinement, TimedLivenessHalf,
-    TimedLivenessOutcome, TimedRefinementRequest, TimedRefinementStop, TimedRefinementUndecided,
-    TimedSafetyOutcome, ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckOutcome,
-    ZoneCheckRequest, ZoneStop, ZoneUndecided,
+    TimedLivenessHalf, TimedLivenessOutcome, TimedRefinementRequest, TimedRefinementStop,
+    TimedRefinementUndecided, TimedSafetyOutcome, ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits,
+    ZoneCheckOutcome, ZoneCheckRequest, ZoneStop, ZoneUndecided, check_free_delay_refinement,
+    check_timed_model, check_timed_refinement,
 };
-use fsl_eval::simulation::model::{ModelSystem, TimedSystem};
 use fsl_eval::simulation::Limits;
-use fsl_replay::{
-    open_systems, replay_free_delay_refinement_trace, replay_timed_refinement_trace,
-    RefinementFailure, RefinementTraceSettlement, TemporalCounterexample,
-};
+use fsl_eval::simulation::model::{ModelSystem, TimedSystem};
 use fsl_replay::{CertifiedItem, ZoneCertificateRequest};
+use fsl_replay::{
+    RefinementFailure, RefinementTraceSettlement, TemporalCounterexample, open_systems,
+    replay_free_delay_refinement_trace, replay_timed_refinement_trace,
+};
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::{ObligationReductions, Reductions};
 use fsl_semantics::check::CheckedRefinement;
 use ix_trace_rs::trace;
 
 use fsl_semantics::model::intake::meaning;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use crate::timed_world::{
-    document, ident, refining, refining_from, renamed_package, wire_field, wire_type, Refining,
-    DENSE, PACKAGE,
+    DENSE, PACKAGE, Refining, document, ident, refining, refining_from, renamed_package,
+    wire_field, wire_type,
 };
 
 /// FR-430-AC-1's untimed `Req`: the object `c` (here `Call`) with `sent`
@@ -193,8 +193,8 @@ fn s3_admits_a_timed_concrete_model_under_an_untimed_abstract_one() {
 fn the_timed_refinement_record_routes_to_en6_alone() {
     use fsl_analyze::zone_check::manifest as en6;
     use fsl_route::deadlock::ModelRefinementItem;
-    use fsl_route::request::items_from_requirements;
     use fsl_route::request::ItemKind;
+    use fsl_route::request::items_from_requirements;
 
     let world = unit("self.inflight").unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let graph = world.package.graph();
@@ -901,13 +901,10 @@ fn a_timed_refinement_counterexample_with_an_early_step_is_refused() {
         vec![free.abstract_initial.clone()],
     )
     .expect("the subjects open");
-    assert!(replay_timed_refinement_trace(
-        refinement,
-        &systems,
-        &counterexample,
-        &Limits::default()
-    )
-    .is_err());
+    assert!(
+        replay_timed_refinement_trace(refinement, &systems, &counterexample, &Limits::default())
+            .is_err()
+    );
 }
 
 /// FR-430-AC-1: a clock read in a step row is refused at the read.
@@ -1273,7 +1270,7 @@ fn an_undetermined_step_is_undecided_whatever_its_post_state() {
 /// through `timed_refinement_item` and FR-145's replay over FR-241's delays.
 pub(crate) fn analyzed(world: &Refining) -> fsl_analyze::analyze::AnalyzeRecord {
     use fsl_analyze::analyze::{
-        analyze_items, timed_refinement_item, Engines, TimedRefinementItem,
+        Engines, TimedRefinementItem, analyze_items, timed_refinement_item,
     };
     let [refinement] = world.package.graph().refinements() else {
         panic!("one refinement");

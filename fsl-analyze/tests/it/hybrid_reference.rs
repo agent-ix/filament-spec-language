@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 
 use fsl_analyze::analyze::{Engine, Engines};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::analyze_cli_support::{analyze_with_providers, Workspace};
+use crate::analyze_cli_support::{Workspace, analyze_with_providers};
 use crate::hybrid_requests::{
     braking, braking_pair, claim, find, first_item, hybrid_fixture, interval, rational,
 };
@@ -506,8 +506,10 @@ fn the_reference_crate_sits_in_layer_h() {
             assert!(allowed.contains(&name.as_str()), "layer H names {name}");
         }
     }
-    assert!(dependencies(&root.join("fsl-analyze/Cargo.toml"))
-        .contains(&"fsl-hybrid-reference".to_owned()));
+    assert!(
+        dependencies(&root.join("fsl-analyze/Cargo.toml"))
+            .contains(&"fsl-hybrid-reference".to_owned())
+    );
     for core in [
         "fsl-foundation",
         "fsl-cst",

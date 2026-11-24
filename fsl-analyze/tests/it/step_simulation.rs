@@ -7,7 +7,7 @@
 
 use filament_exact::Cancel;
 use fsl_analyze::step_simulation::{
-    settle_step_simulations, StepRecordResult, StepSimulationItem, StepSimulationRefusal,
+    StepRecordResult, StepSimulationItem, StepSimulationRefusal, settle_step_simulations,
 };
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::{
@@ -15,7 +15,7 @@ use fsl_replay::{
 };
 use ix_trace_rs::trace;
 
-use crate::refinement_fixture::{cas_refines_counter, World};
+use crate::refinement_fixture::{World, cas_refines_counter};
 use crate::refinement_proofs::{certificate, with_request};
 
 fn proved(certification: Certification) -> TerminalValue {
@@ -235,10 +235,12 @@ fn the_hypothesis_items_decide_the_half() {
                 result: fsl_replay::ItemLabel::Inconclusive,
             })
         );
-        assert!(settled
-            .records
-            .iter()
-            .all(|record| record.value() == &proved(Certification::Uncertified)));
+        assert!(
+            settled
+                .records
+                .iter()
+                .all(|record| record.value() == &proved(Certification::Uncertified))
+        );
 
         let settled = settle(
             request,

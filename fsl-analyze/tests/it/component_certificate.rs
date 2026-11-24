@@ -17,29 +17,29 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use filament_exact::{Cancel, CancelCause, Meter, ScalarLimits};
-use fsl_analyze::model_check::{check_model, ModelCheckRequest};
+use fsl_analyze::model_check::{ModelCheckRequest, check_model};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
-use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_replay::{
-    check_closure, check_components, settle_model_check, CertificateLocus, CertificateRejection,
-    CertificateRequest, CertificateRule, Certification, ClosureCertificate, ClosureRefusal,
-    Component, ComponentCertificate, ComponentWitness, Execution, IncompleteCause, ModelCheckItem,
-    ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ProductStateRef, ProofBasis,
-    ProofCertificate, ResultLabel, RunStats, SettlementBasis, SmtEncodingLimits,
-    TemporalCertificateCheck, TerminalValue,
+    CertificateLocus, CertificateRejection, CertificateRequest, CertificateRule, Certification,
+    ClosureCertificate, ClosureRefusal, Component, ComponentCertificate, ComponentWitness,
+    Execution, IncompleteCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
+    ModelCheckOutcome, ProductStateRef, ProofBasis, ProofCertificate, ResultLabel, RunStats,
+    SettlementBasis, SmtEncodingLimits, TemporalCertificateCheck, TerminalValue, check_closure,
+    check_components, settle_model_check,
 };
 use fsl_semantics::check::{FormulaNodeId, TemporalClauseNode};
 use ix_trace_rs::trace;
 use serde_json::json;
 
 use crate::counter::{UNLIMITED, ZERO};
-use crate::example_units::{config, decide, reaches_two, EACH};
+use crate::example_units::{EACH, config, decide, reaches_two};
 use crate::liveness::{counter, is_three};
 use crate::por_world::{
-    field, integer, level, number, object_type, operation, type_ref, writes, Atom, Fixture, Obj,
-    Temporal,
+    Atom, Fixture, Obj, Temporal, field, integer, level, number, object_type, operation, type_ref,
+    writes,
 };
 use crate::units::World;
 
@@ -936,15 +936,19 @@ fn a_guarded_each_activation_has_its_own_acceptance_set_in_the_certificate() {
         "c.versionNumber = 7",
     );
     let (never, _) = guarded_proof(&unmet);
-    assert!(never
-        .components
-        .iter()
-        .all(|component| component.witness == ComponentWitness::Trivial
-            || component.witness == MISSING));
-    assert!(never
-        .components
-        .iter()
-        .any(|component| component.witness == MISSING));
+    assert!(
+        never
+            .components
+            .iter()
+            .all(|component| component.witness == ComponentWitness::Trivial
+                || component.witness == MISSING)
+    );
+    assert!(
+        never
+            .components
+            .iter()
+            .any(|component| component.witness == MISSING)
+    );
     let accepts_never = with_production_letters(&unmet, |production| production.check(&never));
     assert_eq!(accepts_never, ACCEPTED);
 }
