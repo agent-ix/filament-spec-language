@@ -120,7 +120,6 @@ fn recursive_work_fuel_is_exact_at_the_last_required_charge() {
 }
 
 #[test]
-#[trace("FR-262-AC-2", "TC-735")]
 fn nested_value_type_clone_compare_hash_debug_and_drop_use_bounded_stack() {
     std::thread::Builder::new()
         .stack_size(512 * 1024)
@@ -149,7 +148,6 @@ fn nested_value_type_clone_compare_hash_debug_and_drop_use_bounded_stack() {
 }
 
 #[test]
-#[trace("FR-262-AC-2", "TC-735")]
 fn recursively_built_record_values_compare_clone_and_drop_at_real_depth() {
     std::thread::Builder::new().stack_size(512 * 1024).spawn(|| {
         let source = "record Link { head: Int[0,9]; tail: Option<Link>; } function chain using v(n: Int[0,100000]): Option<Link> pure decreases(n) { if n = 0 then none else Some(Link { head: 7, tail: chain(n - 1) }) }";
