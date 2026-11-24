@@ -97,7 +97,7 @@ enum InstanceMember {
 }
 
 impl InstanceMember {
-    const ALL: [Self; 3] = [Self::Source, Self::Target, Self::Positions];
+    const ALL: [Self; 2] = [Self::Source, Self::Target];
 
     #[ix_trace_rs::string_edge]
     fn read(name: &str) -> Option<Self> {
