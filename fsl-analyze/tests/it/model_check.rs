@@ -238,6 +238,8 @@ fn run_temporal_fixture_with_workers(
             },
             max_depth: None,
             limits,
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Reductions::default(),
         },
         &Cancel::new(),

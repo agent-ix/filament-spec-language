@@ -4102,6 +4102,8 @@ mod worker_determinism_tests {
                 item: ModelCheckItem::DeadlockFreedom,
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Reductions::default(),
             },
             &cancel,
