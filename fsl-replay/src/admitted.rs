@@ -642,6 +642,7 @@ impl From<ReplayRefusal> for AdmittedRefusal {
             | ReplayRefusal::SourceCount(_)
             | ReplayRefusal::PackageSources(_)
             | ReplayRefusal::PackageRead(_)
+            | ReplayRefusal::HostAllocationFailed(_)
             | ReplayRefusal::DependencySources { .. }
             | ReplayRefusal::DependencySelections(_)
             | ReplayRefusal::InvalidPackageName(_)

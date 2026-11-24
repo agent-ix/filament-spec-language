@@ -2616,10 +2616,22 @@ pub fn inspect_handoff_with_operand(
     directory: &Path,
     operand: &str,
 ) -> fsl_replay::OutcomeDocument {
+    inspect_handoff_result(
+        crate::checked_handoff::verify(directory),
+        directory,
+        operand,
+    )
+}
+
+fn inspect_handoff_result(
+    result: Result<(), crate::checked_handoff::Error>,
+    directory: &Path,
+    operand: &str,
+) -> fsl_replay::OutcomeDocument {
     use filament_semantic_value::catalog::Category;
     use fsl_replay::{Operation, OutcomeDiagnostic, OutcomeDocument, OutcomeLocus};
 
-    match crate::checked_handoff::verify(directory) {
+    match result {
         Ok(_) => OutcomeDocument::new(Operation::Inspect, None, Category::Success),
         Err(error) => {
             let (member, pointer) = inspect_handoff_position(directory, &error);
@@ -5651,21 +5663,23 @@ mod tests {
 
 #[cfg(test)]
 mod host_allocation_tests {
-    use super::inspect_handoff_category;
-    use crate::checked_handoff::Error;
+    use super::inspect_handoff_result;
+    use crate::checked_handoff::{self, Error};
     use filament_contract_model::{
-        CheckedPackageHostAllocationFailed, NativeJoinLocus, NativeJoinLocusSource,
-        PackageReadStage,
+        CheckedPackageDispatchResult, CheckedPackageHostAllocationFailed, NativeJoinLocus,
+        NativeJoinLocusSource, PackageReadStage,
     };
     use filament_semantic_value::catalog::Category;
     use ix_trace_rs::trace;
+    use std::path::Path;
 
-    /// FSpec FR-330-AC-17: a reader host allocation failure is an internal
-    /// tool failure, not a package refusal.
-    #[trace("FR-330-AC-17")]
+    /// FSpec FR-330-AC-17 and FSL FR-096-AC-24: an injected reader host
+    /// allocation failure reaches the inspect command as an internal tool
+    /// failure with stage and requested size.
+    #[trace("FSpec-FR-330-AC-17", "FR-096-AC-24")]
     #[test]
-    fn inspect_classifies_host_allocation_failure_as_internal() {
-        let error = Error::ReaderHostAllocationFailed(CheckedPackageHostAllocationFailed {
+    fn inspect_preserves_an_injected_package_reader_host_allocation_failure() {
+        let failure = CheckedPackageHostAllocationFailed {
             stage: PackageReadStage::Envelope,
             locus: NativeJoinLocus {
                 source: NativeJoinLocusSource::PackageRead(PackageReadStage::Envelope, 0),
@@ -5673,11 +5687,16 @@ mod host_allocation_tests {
             },
             requested: 32,
             consumed: 64,
-        });
+        };
+        let error =
+            checked_handoff::admit(CheckedPackageDispatchResult::HostAllocationFailed(failure))
+                .expect_err("injected reader failure must be surfaced");
+        let outcome = inspect_handoff_result(Err(error), Path::new("handoff"), "handoff");
 
-        assert_eq!(inspect_handoff_category(&error), Category::InternalFailure);
-        assert!(error.to_string().contains("Envelope"));
-        assert!(error.to_string().contains("32 bytes"));
-        assert_eq!(error.code_name(), "runtime_invariant");
+        assert_eq!(outcome.category(), Category::InternalFailure);
+        let diagnostic = &outcome.diagnostics()[0];
+        assert_eq!(diagnostic.code(), "runtime_invariant");
+        assert!(diagnostic.message().contains("Envelope"));
+        assert!(diagnostic.message().contains("32 bytes"));
     }
 }

@@ -930,7 +930,10 @@ fn unavailable(index: RequestIndex, name: &str, failure: &Unavailable) -> Box<Re
         ),
         Unavailable::HostAllocationFailed(failure) => TerminalRecord::disposition_failed(
             index,
-            CatalogCode::new(Code::RuntimeInvariant.as_str(), "host-allocation-failed"),
+            CatalogCode::new(
+                Code::RuntimeInvariant.as_str(),
+                "established-invariant-broken",
+            ),
         )
         .with_diagnostic_detail(serde_json::Map::from_iter([
             (

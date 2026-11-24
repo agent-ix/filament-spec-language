@@ -3758,6 +3758,7 @@ fn replay_stage(refusal: &ReplayRefusal) -> Option<OutcomeStage> {
         ReplayRefusal::RecompileWithProtocolResults { refusal, .. }
         | ReplayRefusal::RefinementInternals { refusal, .. } => Some(refusal.stage().into()),
         ReplayRefusal::Fault(_)
+        | ReplayRefusal::HostAllocationFailed(_)
         | ReplayRefusal::InvalidPackageName(_)
         | ReplayRefusal::ObservedTemporalRefusal(fsl_eval::temporal::TemporalRefusal::Fault(_))
         | ReplayRefusal::Admission(AdmissionFailure::Fault(_)) => None,

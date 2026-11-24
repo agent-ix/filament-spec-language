@@ -901,16 +901,8 @@ impl HandoffSupply<'_> {
         ),
         ReplayRefusal,
     > {
-        let malformed =
-            || ReplayRefusal::PackageRead(crate::execute::PackageReadRefusal::Malformed);
-        let admission_refusal = |refusal: fsl_package::PackageAdmissionRefusal| match refusal.limit
-        {
-            Some(limit) => ReplayRefusal::Recompile {
-                refusal: Box::new(crate::spine::CompileRefusal::Limit(*limit)),
-                pointer: refusal.pointer,
-            },
-            None => malformed(),
-        };
+        let admission_refusal =
+            |refusal: fsl_package::PackageAdmissionRefusal| admission_replay_refusal(refusal);
         let mut evidence =
             fsl_package::checked_package_evidence(documents, &std::collections::BTreeMap::new())
                 .map_err(admission_refusal)?;
@@ -956,6 +948,61 @@ impl HandoffSupply<'_> {
             fsl_package::admit_checked_package_with_evidence(bytes, &evidence, limits, budget)
                 .map_err(admission_refusal)?;
         Ok((package, dependencies))
+    }
+}
+
+fn admission_replay_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> ReplayRefusal {
+    if let Some(failure) = refusal.host_allocation_failure {
+        return ReplayRefusal::HostAllocationFailed(failure);
+    }
+    match refusal.limit {
+        Some(limit) => ReplayRefusal::Recompile {
+            refusal: Box::new(crate::spine::CompileRefusal::Limit(*limit)),
+            pointer: refusal.pointer,
+        },
+        None => ReplayRefusal::PackageRead(crate::execute::PackageReadRefusal::Malformed),
+    }
+}
+
+#[cfg(test)]
+mod host_allocation_admission_tests {
+    use super::admission_replay_refusal;
+    use filament_contract_model::{
+        CheckedPackageHostAllocationFailed, NativeJoinLocus, NativeJoinLocusSource,
+        PackageReadStage,
+    };
+    use fsl_foundation::diagnostic::Code;
+    use fsl_package::PackageAdmissionRefusal;
+    use ix_trace_rs::trace;
+
+    /// FR-096-AC-24: model-check package admission preserves an injected
+    /// reader host failure as internal and includes stage and requested size.
+    #[trace("FR-096-AC-24")]
+    #[test]
+    fn model_check_admission_does_not_turn_host_allocation_into_package_refusal() {
+        let failure = CheckedPackageHostAllocationFailed {
+            stage: PackageReadStage::Envelope,
+            locus: NativeJoinLocus {
+                source: NativeJoinLocusSource::PackageRead(PackageReadStage::Envelope, 0),
+                form: "package_bytes",
+            },
+            requested: 32,
+            consumed: 64,
+        };
+        let refusal = admission_replay_refusal(PackageAdmissionRefusal {
+            limit: None,
+            code: Code::RuntimeInvariant,
+            cause: None,
+            pointer: None,
+            identity: None,
+            host_allocation_failure: Some(failure),
+        });
+
+        assert_eq!(refusal.code(), Code::RuntimeInvariant);
+        assert_eq!(refusal.cause(), None);
+        assert_eq!(refusal.pointer(), None);
+        assert!(refusal.to_string().contains("Envelope"));
+        assert!(refusal.to_string().contains("32 bytes"));
     }
 }
 

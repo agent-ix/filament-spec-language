@@ -494,7 +494,7 @@ fn write_compiled(
 }
 
 /// The admitted package of a read, or the reader's refusal.
-fn admit(read: CheckedPackageDispatchResult) -> Result<Box<CheckedPackageV2>, Error> {
+pub(super) fn admit(read: CheckedPackageDispatchResult) -> Result<Box<CheckedPackageV2>, Error> {
     match read {
         CheckedPackageDispatchResult::AdmittedV2(package) => Ok(package),
         CheckedPackageDispatchResult::Refused(refusal) => {

@@ -198,6 +198,15 @@ pub enum ReplayRefusal {
     /// not allocate (`resource_exhausted`).
     #[error("the package bytes cannot be read: {0}")]
     PackageRead(PackageReadRefusal),
+    /// A package reader admitted storage that the host allocator could not
+    /// provide; the package was not judged.
+    #[error(
+        "host allocation failed during {:?}: requested {} bytes after {} bytes were admitted",
+        .0.stage,
+        .0.requested,
+        .0.consumed
+    )]
+    HostAllocationFailed(filament_contract_model::CheckedPackageHostAllocationFailed),
     /// FR-098: one dependency entry's source list is empty, repeats an owner,
     /// or names a definition document.
     #[error("invalid_package/invalid-value at /dependencies/{index}/sources: {reason}")]
@@ -659,6 +668,7 @@ impl ReplayRefusal {
             Self::PackageSources(_) => Code::InvalidPackage,
             Self::PackageRead(PackageReadRefusal::Malformed) => Code::InvalidPackage,
             Self::PackageRead(PackageReadRefusal::Allocation) => Code::ResourceExhausted,
+            Self::HostAllocationFailed(_) => Code::RuntimeInvariant,
             Self::DependencySources { .. } => Code::InvalidPackage,
             Self::InvalidPackageName(_) => Code::InvalidRequest,
             Self::Recompile { refusal, .. } => refusal.code(),
@@ -765,7 +775,7 @@ impl ReplayRefusal {
             Self::DomainPackages(refusal) => Some(refusal.cause.as_str()),
             Self::DependencySelections(_) => Some("invalid-value"),
             Self::PackageSources(_) => Some("invalid-value"),
-            Self::PackageRead(_) => None,
+            Self::PackageRead(_) | Self::HostAllocationFailed(_) => None,
             Self::DependencySources { .. } => Some("invalid-value"),
             Self::DependencyInput(refusal) => refusal.cause(),
             Self::UnknownFunction { .. }
@@ -858,6 +868,7 @@ impl ReplayRefusal {
             Self::Request(refusal) => refusal
                 .pointer()
                 .map(|pointer| Cow::Owned(pointer.to_owned())),
+            Self::HostAllocationFailed(_) => None,
             Self::Package(crate::ReplayPackageAdmissionRefusal::HostAllocationFailed(_))
             | Self::PackageWithIdentity {
                 refusal: crate::ReplayPackageAdmissionRefusal::HostAllocationFailed(_),

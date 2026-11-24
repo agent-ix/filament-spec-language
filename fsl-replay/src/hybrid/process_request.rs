@@ -614,9 +614,9 @@ mod host_allocation_tests {
     };
     use ix_trace_rs::trace;
 
-    /// FSpec FR-330-AC-17: hybrid package reads preserve host allocation as a
-    /// host error with the failed stage and requested size.
-    #[trace("FR-330-AC-17")]
+    /// FSpec FR-330-AC-17 and FSL FR-096-AC-24: hybrid package reads preserve
+    /// host allocation as a host error with stage and requested size.
+    #[trace("FSpec-FR-330-AC-17", "FR-096-AC-24")]
     #[test]
     fn hybrid_reader_host_allocation_is_not_a_package_refusal() {
         let failure = CheckedPackageHostAllocationFailed {
