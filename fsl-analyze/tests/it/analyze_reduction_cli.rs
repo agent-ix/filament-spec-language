@@ -5,11 +5,11 @@
 //! `counters` population annotated `symmetric`.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, clause, counter_request_with, counter_snapshot, label, package_selection,
-    request_members, Workspace, HANDOFF,
+    HANDOFF, Workspace, analyze, clause, counter_request_with, counter_snapshot, label,
+    package_selection, request_members,
 };
 use crate::counter::{document, symmetric_document};
 
@@ -159,12 +159,11 @@ fn a_constraint_never_proves_past_its_boundary() {
     assert_ne!(label(&item), "proved", "{item}");
 }
 
-/// Partial TC-581 coverage: a named Low selection cuts exploration at the
+/// TC-581: a named Low selection cuts exploration at the
 /// constraint boundary, records `constraint-reached`, and retains the
-/// selected constraint name in its request echo. A selection naming absent
-/// constraint Absent refuses before any state is expanded, and a constraint
-/// anchored at an operation refuses during source compilation.
-/// FR-158-AC-6 remains open for node-key request and refusal behavior.
+/// selected constraint's node key in its request echo. A request naming the
+/// invariant Wide by name refuses before any state is expanded, and a
+/// constraint anchored at an operation refuses during source compilation.
 #[trace("TC-581")]
 #[test]
 fn constraint_request_key_truth_and_invalid_selections_are_typed() {
@@ -173,14 +172,20 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
          invariant Wide using v on M::Counter at current {{ self.value <= 3 }}\n{}",
         clause("Claim", "", "always holds(c.value <= 3)")
     );
-    let ws = Workspace::new("state-constraint-wire-key");
+    let ws = Workspace::new("fr158-constraint-wire-key");
     let selection = request_members(Some(json!([
         {"claim": "Claim", "reductions": {"constraint": "Low"}}
     ])));
     let _ = counter_request_with(&ws, &body, selection.clone());
-    ws.write("start.json", &counter_snapshot(&[("a", 0), ("b", 0), ("c", 0)]));
+    ws.write(
+        "start.json",
+        &counter_snapshot(&[("a", 0), ("b", 0), ("c", 0)]),
+    );
     let (selected, package_bytes) = package_selection(&ws, &selection);
-    assert!(!package_bytes.is_empty(), "the compiled request has package bytes");
+    assert!(
+        !package_bytes.is_empty(),
+        "the compiled request has package bytes"
+    );
     let package_path = ws.write(
         "analyze-package.json",
         json!({"format": "native-analyze/1", "request": selected})
@@ -189,11 +194,16 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
     );
     let valid = analyze(&package_path).item(0);
     assert_eq!(label(&valid), "inconclusive", "{valid}");
-    assert_eq!(valid["record"]["cause"]["kind"], "constraint-reached", "{valid}");
+    assert_eq!(
+        valid["record"]["cause"]["kind"], "constraint-reached",
+        "{valid}"
+    );
     assert_eq!(valid["exploration"]["states"], "57", "{valid}");
     assert_eq!(valid["exploration"]["transitions"], "384", "{valid}");
-    assert_eq!(valid["request"]["reductions"]["constraint"], "Low", "{valid}");
-
+    assert!(
+        valid["request"]["reductions"]["constraint"].is_object(),
+        "{valid}"
+    );
     let run_invalid = |name: &str, constraint: Value| {
         let ws = Workspace::new(name);
         let path = counter_request_with(
@@ -203,14 +213,63 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
                 {"claim": "Claim", "reductions": {"constraint": constraint}}
             ]))),
         );
-        ws.write("start.json", &counter_snapshot(&[("a", 0), ("b", 0), ("c", 0)]));
+        ws.write(
+            "start.json",
+            &counter_snapshot(&[("a", 0), ("b", 0), ("c", 0)]),
+        );
         analyze(&path).item(0)
     };
     let item = run_invalid("state-constraint-invalid", json!("Absent"));
-    assert_eq!(item["record"]["diagnostic"]["code"], "invalid_runtime_input", "{item}");
-    assert_eq!(item["record"]["diagnostic"]["cause"], "invalid-value", "{item}");
-    assert_eq!(item["record"]["diagnostic"]["detail"]["name"], "Absent", "{item}");
-    assert!(item["exploration"].is_null(), "no state was expanded: {item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "invalid-value",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["name"], "Absent",
+        "{item}"
+    );
+    assert!(
+        item["exploration"].is_null(),
+        "no state was expanded: {item}"
+    );
+
+    let invalid_package = |name: &str, constraint: Value| {
+        let ws = Workspace::new(name);
+        let selection = request_members(Some(json!([
+            {"claim": "Claim", "reductions": {"constraint": constraint}}
+        ])));
+        let _ = counter_request_with(&ws, &body, selection.clone());
+        let (selected, _) = package_selection(&ws, &selection);
+        ws.write(
+            "analyze-package.json",
+            json!({"format": "native-analyze/1", "request": selected})
+                .to_string()
+                .as_bytes(),
+        )
+    };
+    {
+        let invalid = analyze(&invalid_package(
+            "state-constraint-invariant-name",
+            json!("Wide"),
+        ))
+        .item(0);
+        assert_eq!(
+            invalid["record"]["diagnostic"]["code"], "invalid_runtime_input",
+            "{invalid}"
+        );
+        assert_eq!(
+            invalid["record"]["diagnostic"]["cause"], "invalid-value",
+            "{invalid}"
+        );
+        assert!(
+            invalid["exploration"].is_null(),
+            "no state was expanded: {invalid}"
+        );
+    }
 
     let bad_ws = Workspace::new("state-constraint-operation-anchor");
     let bad = "constraint Bad using v on M::Counter::bump { true }\n";
@@ -236,11 +295,22 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
     let source_diagnostic = &diagnostic["diagnostics"][0];
     assert_eq!(source_diagnostic["code"], "invalid_syntax", "{diagnostic}");
     assert_eq!(source_diagnostic["locus"]["kind"], "region", "{diagnostic}");
-    assert!(source_diagnostic["locus"]["source"].is_object(), "{diagnostic}");
-    assert!(source_diagnostic["locus"]["start"].as_u64().is_some(), "{diagnostic}");
-    assert!(source_diagnostic["locus"]["end"].as_u64().is_some(), "{diagnostic}");
-    assert!(source_diagnostic["locus"]["end"].as_u64()
-        > source_diagnostic["locus"]["start"].as_u64(), "{diagnostic}");
+    assert!(
+        source_diagnostic["locus"]["source"].is_object(),
+        "{diagnostic}"
+    );
+    assert!(
+        source_diagnostic["locus"]["start"].as_u64().is_some(),
+        "{diagnostic}"
+    );
+    assert!(
+        source_diagnostic["locus"]["end"].as_u64().is_some(),
+        "{diagnostic}"
+    );
+    assert!(
+        source_diagnostic["locus"]["end"].as_u64() > source_diagnostic["locus"]["start"].as_u64(),
+        "{diagnostic}"
+    );
 }
 
 /// FR-621 "The record's `backend` member": a malformed reduction selection

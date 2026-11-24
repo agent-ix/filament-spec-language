@@ -356,6 +356,9 @@ pub struct TemporalItem {
     pub smt_encoding: Option<fsl_replay::SmtEncodingLimits>,
     /// The reductions the caller selected.
     pub reductions: fsl_route::reductions::Reductions,
+    /// The checked node key of the selected state constraint. The request
+    /// echo writes this key on the wire while model checking reads its name.
+    pub constraint_node_key: Option<filament_exact::NodeKey>,
     /// The most live clocks one timed state holds (FSpec FR-415); the
     /// published default when absent.
     pub max_clocks: Option<std::num::NonZeroU64>,
@@ -410,6 +413,7 @@ impl Default for TemporalItem {
             max_candidates: super::clause_item::DEFAULT_MAX_CANDIDATES,
             smt_encoding: None,
             reductions: fsl_route::reductions::Reductions::default(),
+            constraint_node_key: None,
             max_clocks: None,
             pending_reductions: None,
             witness_samples: None,

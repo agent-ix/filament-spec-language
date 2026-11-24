@@ -8,20 +8,31 @@
 //! through FR-107 in ascending reference-key order under a fresh meter, as
 //! an invariant is (FR-120 "Invariants").
 
-use super::contracts::{invariant_observations, verdict, Verdict};
+use super::contracts::{Verdict, invariant_observations, verdict};
 use super::walk::{exhausted, stop, walk_of};
-use super::{ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
+use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::simulation::reduction::ConstraintValue;
 
 impl ModelSystem<'_> {
+    /// The checked state constraint named `name`, identified by its node
+    /// key (FR-158). Invariants, preconditions and postconditions are not
+    /// valid constraint selections.
+    pub fn constraint_node(&self, name: &str) -> Option<filament_exact::NodeKey> {
+        self.input
+            .state_clauses
+            .iter()
+            .find(|clause| clause.name == name && !clause.invariant && clause.operation.is_none())
+            .map(|clause| clause.identity.clone())
+    }
+
     /// Whether the package declares a checked `at current` state clause
     /// named `name`, which a request may name as its state constraint.
     pub fn has_constraint(&self, name: &str) -> bool {
-        self.clauses
-            .invariants
+        self.input
+            .state_clauses
             .iter()
-            .any(|clause| clause.name == name)
+            .any(|clause| clause.name == name && !clause.invariant && clause.operation.is_none())
     }
 
     /// FR-158 "Truth at a state": `Holds` when every evaluation is true;

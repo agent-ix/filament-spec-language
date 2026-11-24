@@ -2319,6 +2319,16 @@ fn admit_reductions<'a>(
         return Ok(());
     };
     form.reductions = super::reduction_item::admit(&selection, &system, &binding.universes)?;
+    form.constraint_node_key = form
+        .reductions
+        .constraint
+        .as_deref()
+        .and_then(|name| system.constraint_node(name));
+    if form.reductions.constraint.is_some() && form.constraint_node_key.is_none() {
+        return Err(super::reduction_item::ReductionIssue::Malformed(
+            "the admitted state constraint has no checked node key".to_owned(),
+        ));
+    }
     Ok(())
 }
 
@@ -3582,7 +3592,10 @@ impl ClaimItem {
             if !temporal.reductions.is_empty() {
                 item.insert(
                     "reductions".to_owned(),
-                    super::reduction_item::wire(&temporal.reductions),
+                    super::reduction_item::wire(
+                        &temporal.reductions,
+                        temporal.constraint_node_key.as_ref(),
+                    )?,
                 );
             }
             if let Some(stutter) = temporal.stutter_closure {
@@ -4170,7 +4183,7 @@ fn negotiate_items(
             let record = match refused {
                 super::reduction_item::ReductionIssue::UnknownConstraint(name) => {
                     let mut detail = Map::new();
-                    detail.insert("name".to_owned(), json!(name));
+                    detail.insert("name".to_owned(), name);
                     TerminalRecord::disposition_invalid_request(
                         item.request_index,
                         CatalogCode::new("invalid_runtime_input", "invalid-value"),
