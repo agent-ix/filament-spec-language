@@ -1254,6 +1254,7 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
     Ok(CheckerGraph {
         initial: root,
         states,
+        scheduler_actions: Default::default(),
     })
 }
 

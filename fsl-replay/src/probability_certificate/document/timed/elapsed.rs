@@ -320,6 +320,7 @@ pub(super) fn replay(
     };
     let Some((kept, mass)) = price_paths(
         &graph,
+        &BTreeMap::new(),
         &payoff,
         &sequences,
         limits.max_rational_bits,
