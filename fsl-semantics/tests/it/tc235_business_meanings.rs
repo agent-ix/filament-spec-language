@@ -7,7 +7,9 @@ use fsl_forms::build_unit;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::{IntakeLimits, SourceIdentity};
 use fsl_semantics::check::PackageDeclarations;
-use fsl_semantics::model::accounting::{ChargePoint, Meter, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{
+    ModelNormalizationLimits, NormalizationChargePoint, NormalizationMeter,
+};
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, ProcessStepKind,
 };
@@ -486,10 +488,10 @@ fn scalar_original_has_no_effective_entry_or_extra_charge() {
         normalize_with_meter(&control, ModelNormalizationLimits::UNLIMITED);
     assert!(matches!(control_outcome, NormalizeOutcome::Completed(_)));
     for charge in [
-        ChargePoint::NormalizeFact,
-        ChargePoint::NormalizeDeclaration,
+        NormalizationChargePoint::NormalizeFact,
+        NormalizationChargePoint::NormalizeDeclaration,
     ] {
-        let count = |meter: &fsl_semantics::model::accounting::Meter| {
+        let count = |meter: &fsl_semantics::model::accounting::NormalizationMeter| {
             meter
                 .admitted_charges()
                 .iter()
@@ -684,12 +686,12 @@ fn assert_process_missing_event_refusal(document: &Value, reference: &str) {
 /// FR-506-AC-1: `normalize.record` is charged once per declared type, field,
 /// operation, parameter, result and frame entry, so a package's count is its
 /// intake records plus its parameters, results and frame entries.
-fn assert_record_charge_count(meter: &Meter, expected: usize) {
+fn assert_record_charge_count(meter: &NormalizationMeter, expected: usize) {
     assert_eq!(
         meter
             .admitted_charges()
             .iter()
-            .filter(|charge| **charge == ChargePoint::NormalizeRecord)
+            .filter(|charge| **charge == NormalizationChargePoint::NormalizeRecord)
             .count(),
         expected,
         "TC-235 normalize.record charge count",
@@ -975,7 +977,7 @@ fn tc235_m01_literal_k2_is_admitted_as_declared() {
         meter
             .admitted_charges()
             .iter()
-            .filter(|charge| **charge == ChargePoint::NormalizeRecord)
+            .filter(|charge| **charge == NormalizationChargePoint::NormalizeRecord)
             .count(),
         21,
         "M01 charges normalize.record once per original declaration",

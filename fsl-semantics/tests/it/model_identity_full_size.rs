@@ -9,7 +9,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use filament_checked::key::DeclarationKey;
-use fsl_semantics::model::accounting::{LimitKind, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{ModelNormalizationLimits, NormalizationLimitKind};
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, ObjectTypeRecord,
 };
@@ -78,9 +78,9 @@ fn child() {
                 let elapsed = started.elapsed();
                 (
                     elapsed,
-                    meter.consumed(LimitKind::EffectiveDeclarations),
-                    meter.consumed(LimitKind::DerivationFacts),
-                    meter.consumed(LimitKind::WorkUnits),
+                    meter.consumed(NormalizationLimitKind::EffectiveDeclarations),
+                    meter.consumed(NormalizationLimitKind::DerivationFacts),
+                    meter.consumed(NormalizationLimitKind::WorkUnits),
                     outcome,
                 )
             })

@@ -17,7 +17,7 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::{Code, IntakeLimits};
 use fsl_semantics::check::AssemblyCause;
-use fsl_semantics::model::accounting::{Meter, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
 use fsl_semantics::model::admitted::{AdmittedPackage, DeclarationKind};
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, EnumRecord, ValueTypeRef, VariantRecord,
@@ -288,7 +288,7 @@ fn a_variant_type_is_admitted_as_one_enum_and_one_variant_per_case() {
     // The admitted package finds each case under its owner and name.
     let admitted_package = AdmittedPackage::admit(
         package.clone(),
-        &mut Meter::new(ModelNormalizationLimits::default()),
+        &mut NormalizationMeter::new(ModelNormalizationLimits::default()),
     )
     .expect("the variant types admit for linking");
     for name in ["Gold", "Standard"] {

@@ -106,7 +106,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use super::check::{DispatchOperation, PackageDeclarations};
 use super::ir::{DispatchCandidate, DispatchTable};
 use super::lowering::{AdmittedModel, ModelClause};
-use crate::model::accounting::Meter;
+use crate::model::accounting::NormalizationMeter;
 use crate::model::dispatch::{
     link_dispatch_counted, DispatchLinkOutcome, FamilySteps, GeneralizationClosure,
     LinkCheckOutcome,
@@ -977,7 +977,7 @@ pub fn checked_dispatch_operation(
     clauses: &OperationClauses,
     source: fsl_foundation::source::provenance::RawSourceRef,
     package_name: String,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
     identity: fsl_foundation::IdentityLimits,
 ) -> Result<PackageDeclarations, DispatchBridgeRefusal> {
     let mut declarations =
@@ -995,7 +995,7 @@ pub(crate) fn checked_dispatch_core(
     clauses: &OperationClauses,
     source: fsl_foundation::source::provenance::RawSourceRef,
     package_name: String,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
     identity: fsl_foundation::IdentityLimits,
 ) -> Result<PackageDeclarations, DispatchBridgeRefusal> {
     let mut steps = FamilySteps::new(&root.key, meter.limits().family_steps);

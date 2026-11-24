@@ -12,7 +12,7 @@ use fsl_semantics::check::{
     CheckCause, CheckRefusal, ModelConformanceFailure, PackageDeclarations, RefinementObligation,
 };
 use fsl_semantics::model::accounting::{
-    ChargePoint, LimitKind, ModelNormalizationLimits, NormalizationIncomplete,
+    NormalizationChargePoint, NormalizationLimitKind, ModelNormalizationLimits, NormalizationIncomplete,
 };
 use fsl_semantics::model::intake::{admit_unit, package_input, UnitIntakeCause};
 use fsl_semantics::model::normalize::ModelRefusalCause;
@@ -216,7 +216,7 @@ fn admit_n(unit: &str, packages: &fsl_semantics::model::intake::PackageInput) ->
         ModelNormalizationLimits::UNLIMITED,
     )
     .expect("the package admits")
-    .consumed(LimitKind::WorkUnits)
+    .consumed(NormalizationLimitKind::WorkUnits)
 }
 
 /// The unit over `document` and `body`, with the stage allowed `extra`
@@ -244,7 +244,7 @@ fn run_unit(
         })
         .expect("kept clauses parse");
     assert_eq!(
-        selected.consumed(LimitKind::WorkUnits),
+        selected.consumed(NormalizationLimitKind::WorkUnits),
         n,
         "the admission operation's own work"
     );
@@ -330,11 +330,11 @@ fn assert_complete_at_total_and_exact_denial_one_less(
     assert_eq!(
         denial(&refusals),
         NormalizationIncomplete {
-            limit_kind: LimitKind::WorkUnits,
+            limit_kind: NormalizationLimitKind::WorkUnits,
             limit: n + total - 1,
             consumed: n + total - 1,
             next_charge: 1,
-            charge_point: ChargePoint::ConformanceAxis,
+            charge_point: NormalizationChargePoint::ConformanceAxis,
         }
     );
 }
@@ -1374,11 +1374,11 @@ fn c07_second_selection_denial_withholds_first_failures() {
     assert_eq!(
         incomplete,
         NormalizationIncomplete {
-            limit_kind: LimitKind::WorkUnits,
+            limit_kind: NormalizationLimitKind::WorkUnits,
             limit: full.n + total - 1,
             consumed: full.n + total - 1,
             next_charge: 1,
-            charge_point: ChargePoint::ConformanceAxis,
+            charge_point: NormalizationChargePoint::ConformanceAxis,
         }
     );
 }

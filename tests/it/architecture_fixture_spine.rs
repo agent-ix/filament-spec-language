@@ -22,7 +22,7 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
 use fsl_foundation::SourceIdentity;
 use fsl_replay::DependencyInput;
-use fsl_semantics::model::accounting::{Meter, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
 use fsl_semantics::model::domain_package::{DomainPackageRecord, PortDirection};
 use fsl_semantics::model::index::ModelIndex;
 use fsl_semantics::model::intake::lift_document;
@@ -223,7 +223,7 @@ fn architecture_fixture_binds_references_through_spine_i2() {
         (1, Some(1))
     );
     let selected_domain = selected_package.clone();
-    let mut meter = Meter::new(ModelNormalizationLimits::default());
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::default());
     let systems = classify(&selected_domain, &mut meter).expect("selected systems classify");
     assert_eq!(
         check_connection(

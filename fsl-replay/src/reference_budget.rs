@@ -15,7 +15,7 @@ enum ResultOwner<'a> {
 /// Physical reservations are tracked separately and introduce no policy cap.
 pub struct NormalizationReferenceBudget<'a> {
     owner: ResultOwner<'a>,
-    point: fsl_semantics::model::accounting::ChargePoint,
+    point: fsl_semantics::model::accounting::NormalizationChargePoint,
     selected: Option<&'a fsl_semantics::model::intake::NormalizedModel>,
     previous: Option<&'a fsl_semantics::model::intake::NormalizedModel>,
     pub(crate) stopped: Option<fsl_semantics::model::accounting::NormalizationIncomplete>,
@@ -26,7 +26,7 @@ impl<'a> NormalizationReferenceBudget<'a> {
     pub(crate) fn physical() -> Self {
         Self {
             owner: ResultOwner::Physical,
-            point: fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+            point: fsl_semantics::model::accounting::NormalizationChargePoint::ReferenceResult,
             selected: None,
             previous: None,
             stopped: None,
@@ -36,7 +36,7 @@ impl<'a> NormalizationReferenceBudget<'a> {
     /// Charge the original source-unit model-admission meter at `point`.
     pub fn source(
         owner: &'a fsl_semantics::model::intake::SelectedModels,
-        point: fsl_semantics::model::accounting::ChargePoint,
+        point: fsl_semantics::model::accounting::NormalizationChargePoint,
     ) -> Self {
         Self {
             owner: ResultOwner::Source(owner),
@@ -51,7 +51,7 @@ impl<'a> NormalizationReferenceBudget<'a> {
     pub fn snapshot(owner: &'a fsl_package::ReferenceCatalog<'a>) -> Self {
         Self {
             owner: ResultOwner::Snapshot(owner),
-            point: fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+            point: fsl_semantics::model::accounting::NormalizationChargePoint::ReferenceResult,
             selected: None,
             previous: None,
             stopped: None,

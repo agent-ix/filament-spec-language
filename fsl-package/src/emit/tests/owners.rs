@@ -10,7 +10,7 @@ use filament_semantic_value::declaration::ObjectTypeDeclaration;
 use fsl_semantics::check::{
     checked_dispatch_operation, AdmittedModel, DispatchRoot, OperationClauses,
 };
-use fsl_semantics::model::accounting::{Meter, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
 use fsl_semantics::model::dispatch::GeneralizationClosure;
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, Multiplicity, NativeValueType,
@@ -328,7 +328,7 @@ fn acme_dispatch_package(root: &str) -> CheckedPackage {
         None,
         Expression::boolean(true),
     );
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     let mut declarations = checked_dispatch_operation(
         &view,
         fsl_semantics::check::model_type_environment("fixture", &view).unwrap(),

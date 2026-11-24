@@ -135,7 +135,7 @@ impl CatalogBudget for SnapshotCatalogBudget<'_> {
             NativeJoinChargeKind::Work => self
                 .0
                 .charge_reference_work(
-                    fsl_semantics::model::accounting::ChargePoint::ReferenceCatalog,
+                    fsl_semantics::model::accounting::NormalizationChargePoint::ReferenceCatalog,
                     u64::try_from(amount).map_err(|_| ReferenceCatalogError::Allocation)?,
                 )
                 .map_err(ReferenceCatalogError::Normalization),
@@ -390,7 +390,7 @@ impl<'a> ReferenceCatalog<'a> {
                 .saturating_add(model.exact_field_rows().len());
             model
                 .charge_reference_work(
-                    fsl_semantics::model::accounting::ChargePoint::ReferenceCatalog,
+                    fsl_semantics::model::accounting::NormalizationChargePoint::ReferenceCatalog,
                     u64::try_from(rows).map_err(|_| ReferenceCatalogError::Allocation)?,
                 )
                 .map_err(ReferenceCatalogError::Normalization)?;
@@ -665,7 +665,7 @@ impl<'a> ReferenceCatalog<'a> {
                 return Ok(None);
             };
             owner.charge_reference_work(
-                fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+                fsl_semantics::model::accounting::NormalizationChargePoint::ReferenceResult,
                 1,
             )?;
             if StateModel::reference_identity_equal_with_work(
@@ -673,7 +673,7 @@ impl<'a> ReferenceCatalog<'a> {
                 reference.object_type(),
                 &mut |units| {
                     owner.charge_reference_work(
-                        fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+                        fsl_semantics::model::accounting::NormalizationChargePoint::ReferenceResult,
                         units,
                     )
                 },

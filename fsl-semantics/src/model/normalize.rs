@@ -101,7 +101,8 @@ use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::model::accounting::{
-    Charge, ChargePoint, LimitKind, Meter, ModelNormalizationLimits, NormalizationIncomplete,
+    Charge, ModelNormalizationLimits, NormalizationChargePoint, NormalizationIncomplete,
+    NormalizationLimitKind, NormalizationMeter,
 };
 use crate::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, Multiplicity, NativeValueType,
@@ -932,11 +933,11 @@ fn cycle_walk(
             && u64::try_from(followed.len()).unwrap_or(u64::MAX) > max_steps
         {
             return Err(Denial::Incomplete(NormalizationIncomplete {
-                limit_kind: LimitKind::AncestorSteps,
+                limit_kind: NormalizationLimitKind::AncestorSteps,
                 limit: max_steps,
                 consumed: max_steps,
                 next_charge: 1,
-                charge_point: ChargePoint::ModelAncestorEdge,
+                charge_point: NormalizationChargePoint::ModelAncestorEdge,
             }));
         }
         let mut new_path = frame.path.clone();
@@ -2962,7 +2963,7 @@ impl<'t> Lineage<'t> {
 /// further, and the first denied charge stops normalization.
 fn build(
     domain_package: &DomainPackage,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
 ) -> Result<(ViewBody, RecordIndex), Denial> {
     #[cfg(test)]
     BUILD_CALLS.with(|calls| calls.set(calls.get() + 1));
@@ -2977,10 +2978,10 @@ fn build(
     let declared_record_count = domain_package
         .declared_record_count
         .unwrap_or(domain_package.records.len());
-    let retained_records = meter.consumed(LimitKind::DeclarationRecords);
+    let retained_records = meter.consumed(NormalizationLimitKind::DeclarationRecords);
     for position in 0..declared_record_count {
-        meter.charge(Charge::new(ChargePoint::NormalizeRecord).size(
-            LimitKind::DeclarationRecords,
+        meter.charge(Charge::new(NormalizationChargePoint::NormalizeRecord).size(
+            NormalizationLimitKind::DeclarationRecords,
             retained_records.saturating_add(length_amount(position + 1)),
         ))?;
     }
@@ -3102,11 +3103,11 @@ fn build(
                 edges_followed = edges_followed.saturating_add(1);
                 if edges_followed > limits.ancestor_steps {
                     return Err(Denial::Incomplete(NormalizationIncomplete {
-                        limit_kind: LimitKind::AncestorSteps,
+                        limit_kind: NormalizationLimitKind::AncestorSteps,
                         limit: limits.ancestor_steps,
                         consumed: limits.ancestor_steps,
                         next_charge: 1,
-                        charge_point: ChargePoint::ModelAncestorEdge,
+                        charge_point: NormalizationChargePoint::ModelAncestorEdge,
                     }));
                 }
                 charges.fact()?;
@@ -3306,7 +3307,7 @@ fn build(
         // count is the complete `m` used by redefinition accounting.
         let m = store.member_count(owner);
         charges.charge(
-            Charge::new(ChargePoint::NormalizeRedefinitionCheck)
+            Charge::new(NormalizationChargePoint::NormalizeRedefinitionCheck)
                 .work(m.saturating_add(length_amount(r))),
         )?;
     }
@@ -3351,7 +3352,8 @@ fn build(
         .conflict_charges
         .sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
     for (_, _, work) in accounting.conflict_charges.iter() {
-        charges.charge(Charge::new(ChargePoint::NormalizeConflictCheck).work(*work))?;
+        charges
+            .charge(Charge::new(NormalizationChargePoint::NormalizeConflictCheck).work(*work))?;
     }
     for (type_key, plan) in plans {
         resolve_redefinitions(type_key, plan, &mut store, &mut accounting);
@@ -4314,17 +4316,17 @@ impl From<ModelRefusal> for Denial {
 /// its high-water charges size: `normalize.fact`'s `derivation_facts` and
 /// `normalize.declaration`'s `effective_declarations`.
 struct Charges<'m> {
-    meter: &'m mut Meter,
+    meter: &'m mut NormalizationMeter,
     facts: u64,
     declarations: u64,
 }
 
 impl<'m> Charges<'m> {
-    fn new(meter: &'m mut Meter) -> Self {
+    fn new(meter: &'m mut NormalizationMeter) -> Self {
         // A meter shared across selections already holds the earlier
         // selections' facts and declarations.
-        let facts = meter.consumed(LimitKind::DerivationFacts);
-        let declarations = meter.consumed(LimitKind::EffectiveDeclarations);
+        let facts = meter.consumed(NormalizationLimitKind::DerivationFacts);
+        let declarations = meter.consumed(NormalizationLimitKind::EffectiveDeclarations);
         Self {
             meter,
             facts,
@@ -4340,7 +4342,8 @@ impl<'m> Charges<'m> {
     fn fact(&mut self) -> Result<(), NormalizationIncomplete> {
         let next = self.facts.saturating_add(1);
         self.charge(
-            Charge::new(ChargePoint::NormalizeFact).size(LimitKind::DerivationFacts, next),
+            Charge::new(NormalizationChargePoint::NormalizeFact)
+                .size(NormalizationLimitKind::DerivationFacts, next),
         )?;
         self.facts = next;
         Ok(())
@@ -4349,15 +4352,18 @@ impl<'m> Charges<'m> {
     /// One `normalize.cycle-check` over an ancestor path of `path_len`
     /// steps (`work_units += L`, `value-accounting.md:491`).
     fn cycle_check(&mut self, path_len: usize) -> Result<(), NormalizationIncomplete> {
-        self.charge(Charge::new(ChargePoint::NormalizeCycleCheck).work(length_amount(path_len)))
+        self.charge(
+            Charge::new(NormalizationChargePoint::NormalizeCycleCheck)
+                .work(length_amount(path_len)),
+        )
     }
 
     /// One `normalize.declaration`: one more effective declaration.
     fn declaration(&mut self) -> Result<(), NormalizationIncomplete> {
         let next = self.declarations.saturating_add(1);
         self.charge(
-            Charge::new(ChargePoint::NormalizeDeclaration)
-                .size(LimitKind::EffectiveDeclarations, next),
+            Charge::new(NormalizationChargePoint::NormalizeDeclaration)
+                .size(NormalizationLimitKind::EffectiveDeclarations, next),
         )?;
         self.declarations = next;
         Ok(())
@@ -4418,7 +4424,7 @@ pub fn normalize_shared(
 pub fn normalize_with_meter(
     domain_package: &DomainPackage,
     limits: ModelNormalizationLimits,
-) -> (NormalizeOutcome, Meter) {
+) -> (NormalizeOutcome, NormalizationMeter) {
     let (body, meter) = normalize_body(domain_package, limits, &Cancel::new());
     (
         into_outcome(body, || Arc::new(domain_package.clone())),
@@ -4432,8 +4438,8 @@ fn normalize_body(
     domain_package: &DomainPackage,
     limits: ModelNormalizationLimits,
     cancel: &Cancel,
-) -> (Result<(ViewBody, RecordIndex), Denial>, Meter) {
-    let mut meter = Meter::new(limits).with_cancel(cancel.clone());
+) -> (Result<(ViewBody, RecordIndex), Denial>, NormalizationMeter) {
+    let mut meter = NormalizationMeter::new(limits).with_cancel(cancel.clone());
     let body = build(domain_package, &mut meter);
     (body, meter)
 }
@@ -4464,7 +4470,10 @@ fn completed_view(
 /// Normalize `domain_package` on the caller's `meter`, which keeps every
 /// charge it already holds: the one model-admission meter shared by all of a
 /// unit's selections.
-pub(crate) fn normalize_on(domain_package: &DomainPackage, meter: &mut Meter) -> NormalizeOutcome {
+pub(crate) fn normalize_on(
+    domain_package: &DomainPackage,
+    meter: &mut NormalizationMeter,
+) -> NormalizeOutcome {
     into_outcome(build(domain_package, meter), || {
         Arc::new(domain_package.clone())
     })
@@ -5301,8 +5310,14 @@ mod tests {
         };
         let (small, small_steps) = incomplete_with_steps(&wide(100), declarations);
         let (large, large_steps) = incomplete_with_steps(&wide(1_000), declarations);
-        assert_eq!(small.limit_kind, LimitKind::EffectiveDeclarations);
-        assert_eq!(small.charge_point, ChargePoint::NormalizeDeclaration);
+        assert_eq!(
+            small.limit_kind,
+            NormalizationLimitKind::EffectiveDeclarations
+        );
+        assert_eq!(
+            small.charge_point,
+            NormalizationChargePoint::NormalizeDeclaration
+        );
         assert_eq!(small, large);
         // One edge step (B to A) and the n inherited members are admitted
         // under unlimited facts; the member hashes are what the limit
@@ -5320,8 +5335,8 @@ mod tests {
         };
         let (small, small_steps) = incomplete_with_steps(&wide(100), facts(100));
         let (large, large_steps) = incomplete_with_steps(&wide(1_000), facts(1_000));
-        assert_eq!(small.limit_kind, LimitKind::DerivationFacts);
-        assert_eq!(large.limit_kind, LimitKind::DerivationFacts);
+        assert_eq!(small.limit_kind, NormalizationLimitKind::DerivationFacts);
+        assert_eq!(large.limit_kind, NormalizationLimitKind::DerivationFacts);
         assert_eq!((small_steps, large_steps), (4, 4));
 
         // A lattice of two types per level, each generalizing both types of
@@ -5352,7 +5367,7 @@ mod tests {
                 ..ModelNormalizationLimits::UNLIMITED
             },
         );
-        assert_eq!(tight.limit_kind, LimitKind::DerivationFacts);
+        assert_eq!(tight.limit_kind, NormalizationLimitKind::DerivationFacts);
         assert!(steps <= 103, "{steps} steps");
     }
 
@@ -5438,8 +5453,14 @@ mod tests {
         };
         match normalize(&chain, short) {
             NormalizeOutcome::Incomplete(incomplete) => {
-                assert_eq!(incomplete.limit_kind, LimitKind::DeclarationRecords);
-                assert_eq!(incomplete.charge_point, ChargePoint::NormalizeRecord);
+                assert_eq!(
+                    incomplete.limit_kind,
+                    NormalizationLimitKind::DeclarationRecords
+                );
+                assert_eq!(
+                    incomplete.charge_point,
+                    NormalizationChargePoint::NormalizeRecord
+                );
                 assert_eq!((incomplete.limit, incomplete.next_charge), (10, 11));
             }
             other => panic!("expected Incomplete(DeclarationRecords), got {other:?}"),
@@ -5453,11 +5474,11 @@ mod tests {
                 assert_eq!(
                     incomplete,
                     NormalizationIncomplete {
-                        limit_kind: LimitKind::AncestorSteps,
+                        limit_kind: NormalizationLimitKind::AncestorSteps,
                         limit: 5,
                         consumed: 5,
                         next_charge: 1,
-                        charge_point: ChargePoint::ModelAncestorEdge,
+                        charge_point: NormalizationChargePoint::ModelAncestorEdge,
                     }
                 );
             }

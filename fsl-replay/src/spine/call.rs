@@ -1324,7 +1324,7 @@ pub(crate) fn with_admitted_call<T>(
     };
     let mut reference_joins = super::run_value::NormalizationReferenceBudget::source(
         models.selected_models(),
-        fsl_semantics::model::accounting::ChargePoint::ReferenceCatalog,
+        fsl_semantics::model::accounting::NormalizationChargePoint::ReferenceCatalog,
     );
     let catalog_result = if call.canonical_values && call.snapshot.is_some() {
         Some(fsl_package::ReferenceCatalog::from_checked_call(
@@ -1379,7 +1379,7 @@ pub(crate) fn with_admitted_call<T>(
         let mut admission = match &reference_catalog {
             Some(_) => super::run_value::NormalizationReferenceBudget::source(
                 models.selected_models(),
-                fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+                fsl_semantics::model::accounting::NormalizationChargePoint::ReferenceResult,
             ),
             None => super::run_value::NormalizationReferenceBudget::physical(),
         };

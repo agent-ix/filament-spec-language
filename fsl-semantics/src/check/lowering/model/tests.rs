@@ -22,7 +22,7 @@ use crate::check::checked_dispatch::{checked_dispatch_operation, DispatchRoot, O
 use crate::check::family::fixtures::{empty_scope, fixture_source};
 use crate::check::family::{OccurrenceMap, OccurrenceRole};
 use crate::check::{CheckedGraph, PackageDeclarations};
-use crate::model::accounting::{Meter, ModelNormalizationLimits};
+use crate::model::accounting::{NormalizationMeter, ModelNormalizationLimits};
 use crate::model::dispatch::GeneralizationClosure;
 use crate::model::domain_package::{
     FieldMemberRecord, Multiplicity, NativeValueType, ObjectTypeRecord, OperationEffect,
@@ -382,7 +382,7 @@ fn dispatch(acme: &Acme, root: &str) -> PackageDeclarations {
 
 /// [`dispatch`] over `clauses` in place of [`clauses`].
 fn dispatch_with(acme: &Acme, root: &str, clauses: &OperationClauses) -> PackageDeclarations {
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     let mut declarations = checked_dispatch_operation(
         &acme.view,
         crate::check::model_type_environment("fixture", &acme.view).unwrap(),

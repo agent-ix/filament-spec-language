@@ -34,7 +34,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::model::accounting::{Charge, ChargePoint, Meter, NormalizationIncomplete};
+use crate::model::accounting::{
+    Charge, NormalizationChargePoint, NormalizationIncomplete, NormalizationMeter,
+};
 use crate::model::conformance::multiplicity_conforms;
 use crate::model::domain_package::{
     AllocationRecord, ComponentRecord, DomainPackage, DomainPackageRecord, EndpointRecord,
@@ -177,8 +179,8 @@ fn dangling(cause: ModelRefusalCause, missing: &str, item: &str) -> ModelRefusal
     }
 }
 
-fn charge_kind(meter: &mut Meter) -> Result<(), NormalizationIncomplete> {
-    meter.charge(Charge::new(ChargePoint::SystemsKind))
+fn charge_kind(meter: &mut NormalizationMeter) -> Result<(), NormalizationIncomplete> {
+    meter.charge(Charge::new(NormalizationChargePoint::SystemsKind))
 }
 
 /// Runs `filament.model.systems.kind-mapping/v1` over every interface, then
@@ -190,7 +192,7 @@ fn charge_kind(meter: &mut Meter) -> Result<(), NormalizationIncomplete> {
 /// stopping at the first.
 pub fn classify(
     domain_package: &DomainPackage,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
 ) -> Result<SystemsClassification, NormalizationIncomplete> {
     let mut components: Vec<&ComponentRecord> = Vec::new();
     let mut endpoints: Vec<&EndpointRecord> = Vec::new();
@@ -512,7 +514,7 @@ pub fn check_connection(
     index: &ModelIndex,
     classification: &SystemsClassification,
     relationship_key: &DeclarationKey,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
 ) -> ConnectionCheckOutcome {
     if classification.actual_kind(relationship_key) != Kind::Connection {
         return ConnectionCheckOutcome::Refused(ModelRefusal {
@@ -561,7 +563,9 @@ pub fn check_connection(
     let mut failures = Vec::new();
 
     // Condition 1: port-direction.
-    if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::SystemsConnectionCondition)) {
+    if let Err(incomplete) = meter.charge(Charge::new(
+        NormalizationChargePoint::SystemsConnectionCondition,
+    )) {
         return ConnectionCheckOutcome::Incomplete(incomplete);
     }
     let (flow_source, flow_target, direction_ok) = match relationship.direction {
@@ -614,7 +618,9 @@ pub fn check_connection(
 
     // Condition 2: flow-source interface type conforms to flow-target
     // interface type (bidirectional: the two interface types are equal).
-    if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::SystemsConnectionCondition)) {
+    if let Err(incomplete) = meter.charge(Charge::new(
+        NormalizationChargePoint::SystemsConnectionCondition,
+    )) {
         return ConnectionCheckOutcome::Incomplete(incomplete);
     }
     let interface_ok = if matches!(
@@ -647,7 +653,9 @@ pub fn check_connection(
 
     // Condition 3: each relationship end's multiplicity conforms to its
     // port's multiplicity.
-    if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::SystemsConnectionCondition)) {
+    if let Err(incomplete) = meter.charge(Charge::new(
+        NormalizationChargePoint::SystemsConnectionCondition,
+    )) {
         return ConnectionCheckOutcome::Incomplete(incomplete);
     }
     for (end, port, label) in [
@@ -700,7 +708,7 @@ pub enum AllocationCheckOutcome {
 pub fn check_allocation(
     classification: &SystemsClassification,
     relationship_key: &DeclarationKey,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
 ) -> AllocationCheckOutcome {
     if classification.actual_kind(relationship_key) != Kind::Allocation {
         return AllocationCheckOutcome::Refused(ModelRefusal {
@@ -712,7 +720,8 @@ pub fn check_allocation(
             ),
         });
     }
-    if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::SystemsAllocation)) {
+    if let Err(incomplete) = meter.charge(Charge::new(NormalizationChargePoint::SystemsAllocation))
+    {
         return AllocationCheckOutcome::Incomplete(incomplete);
     }
     let Some(allocation) = classification.allocations.get(relationship_key) else {

@@ -28,7 +28,7 @@ use fsl_foundation::selection::ProfileSelection;
 use fsl_foundation::IntakeLimits;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckCause, PackageDeclarations};
-use fsl_semantics::model::accounting::{ChargePoint, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{ModelNormalizationLimits, NormalizationChargePoint};
 use fsl_semantics::model::domain_package::{DomainPackage, DomainPackageRef};
 use fsl_semantics::model::intake::{admit_unit, package_input, read_domain_package};
 use fsl_semantics::model::normalize::{normalize_with_meter, EffectiveView, NormalizeOutcome};
@@ -201,7 +201,7 @@ fn model_package_with(
             meter
                 .admitted_charges()
                 .iter()
-                .filter(|charge| **charge == ChargePoint::NormalizeRecord)
+                .filter(|charge| **charge == NormalizationChargePoint::NormalizeRecord)
                 .count(),
             charges,
             "TC-235 normalize.record charge count"

@@ -5,7 +5,7 @@
 
 use filament_checked::key::DeclarationKey;
 use fsl_semantics::model::accounting::{
-    ChargePoint, LimitKind, ModelNormalizationLimits, NormalizationIncomplete,
+    NormalizationChargePoint, NormalizationLimitKind, ModelNormalizationLimits, NormalizationIncomplete,
 };
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, FieldMemberRecord, Multiplicity,
@@ -1300,10 +1300,10 @@ fn n06_conflict_under_a_tight_fact_budget_is_incomplete_not_a_phase4_refusal() {
     limits.derivation_facts = 10;
     match normalize(&fixture_n06_conflict(), limits) {
         NormalizeOutcome::Incomplete(incomplete) => {
-            assert_eq!(incomplete.limit_kind, LimitKind::DerivationFacts);
+            assert_eq!(incomplete.limit_kind, NormalizationLimitKind::DerivationFacts);
             assert_eq!(incomplete.limit, 10);
             assert_eq!(incomplete.consumed, 10);
-            assert_eq!(incomplete.charge_point, ChargePoint::NormalizeFact);
+            assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeFact);
         }
         other => panic!(
             "expected Incomplete at normalize.fact, not a phase-4 derivation-conflict refusal, got {other:?}"
@@ -1313,10 +1313,10 @@ fn n06_conflict_under_a_tight_fact_budget_is_incomplete_not_a_phase4_refusal() {
     limits.derivation_facts = 0;
     match normalize(&fixture_n06_conflict(), limits) {
         NormalizeOutcome::Incomplete(incomplete) => {
-            assert_eq!(incomplete.limit_kind, LimitKind::DerivationFacts);
+            assert_eq!(incomplete.limit_kind, NormalizationLimitKind::DerivationFacts);
             assert_eq!(incomplete.limit, 0);
             assert_eq!(incomplete.consumed, 0);
-            assert_eq!(incomplete.charge_point, ChargePoint::NormalizeFact);
+            assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeFact);
         }
         other => panic!(
             "expected Incomplete at normalize.fact, not a redefinition-target refusal, got {other:?}"
@@ -1935,11 +1935,11 @@ fn n08_every_normalize_record_charge_admits_before_intake_reports_both_refusals_
             assert_eq!(
                 incomplete,
                 NormalizationIncomplete {
-                    limit_kind: LimitKind::WorkUnits,
+                    limit_kind: NormalizationLimitKind::WorkUnits,
                     limit: 1,
                     consumed: 1,
                     next_charge: 1,
-                    charge_point: ChargePoint::NormalizeRecord,
+                    charge_point: NormalizationChargePoint::NormalizeRecord,
                 }
             );
         }
@@ -2179,7 +2179,7 @@ fn n01_charges_the_exact_ground_truth_sequence_in_order() {
         other => panic!("expected Completed, got {other:?}"),
     }
 
-    use ChargePoint::{NormalizeCycleCheck, NormalizeDeclaration, NormalizeFact, NormalizeRecord};
+    use NormalizationChargePoint::{NormalizeCycleCheck, NormalizeDeclaration, NormalizeFact, NormalizeRecord};
     let expected = vec![
         NormalizeRecord,
         NormalizeRecord,
@@ -2197,7 +2197,7 @@ fn n01_charges_the_exact_ground_truth_sequence_in_order() {
     ];
     assert_eq!(meter.admitted_charges().to_vec(), expected);
 
-    assert_eq!(meter.consumed(LimitKind::WorkUnits), 13);
+    assert_eq!(meter.consumed(NormalizationLimitKind::WorkUnits), 13);
 }
 
 /// A member's own inline `subsets` property adds no extra `normalize.record`
@@ -2224,7 +2224,7 @@ fn f1_a_members_own_subsets_property_charges_no_extra_normalize_record() {
         NormalizeOutcome::Completed(_) => {}
         other => panic!("expected Completed, got {other:?}"),
     }
-    use ChargePoint::{NormalizeDeclaration, NormalizeFact, NormalizeRecord};
+    use NormalizationChargePoint::{NormalizeDeclaration, NormalizeFact, NormalizeRecord};
     let expected = vec![
         NormalizeRecord,
         NormalizeRecord,
@@ -2246,7 +2246,7 @@ fn f1_a_members_own_subsets_property_charges_no_extra_normalize_record() {
     let record_charges = meter
         .admitted_charges()
         .iter()
-        .filter(|c| **c == ChargePoint::NormalizeRecord)
+        .filter(|c| **c == NormalizationChargePoint::NormalizeRecord)
         .count();
     assert_eq!(record_charges, domain_package.records.len());
     assert_eq!(record_charges, 4);
@@ -2270,15 +2270,15 @@ fn n02_charges_thirteen_facts_and_four_cycle_checks() {
     let admitted = meter.admitted_charges();
     let record_count = admitted
         .iter()
-        .filter(|point| **point == ChargePoint::NormalizeRecord)
+        .filter(|point| **point == NormalizationChargePoint::NormalizeRecord)
         .count();
     let fact_count = admitted
         .iter()
-        .filter(|point| **point == ChargePoint::NormalizeFact)
+        .filter(|point| **point == NormalizationChargePoint::NormalizeFact)
         .count();
     let cycle_check_count = admitted
         .iter()
-        .filter(|point| **point == ChargePoint::NormalizeCycleCheck)
+        .filter(|point| **point == NormalizationChargePoint::NormalizeCycleCheck)
         .count();
     assert_eq!(record_count, 5, "A, B, C, D and A/x, no Supertype record");
     assert_eq!(
@@ -2289,7 +2289,7 @@ fn n02_charges_thirteen_facts_and_four_cycle_checks() {
         cycle_check_count, 4,
         "one cycle-check per direct supertype edge"
     );
-    assert_eq!(meter.consumed(LimitKind::WorkUnits), 30);
+    assert_eq!(meter.consumed(NormalizationLimitKind::WorkUnits), 30);
 }
 
 /// TC-196 R01: a closing generalization cycle (`model.A` -> `model.B` ->
@@ -2500,7 +2500,7 @@ fn fixture_wide_ancestry_single_redefiner(n_parents: usize) -> DomainPackage {
 /// exactly `18`.
 ///
 /// Revert probe: reverting the `Σ (c − 1) × f(o)` charge back to a flat,
-/// unconditional `Charge::new(ChargePoint::NormalizeConflictCheck)` (no
+/// unconditional `Charge::new(NormalizationChargePoint::NormalizeConflictCheck)` (no
 /// `.work(...)` override, i.e. PR #167's own pre-fix shape) makes both
 /// assertions below fail -- the exact-bound one because `work_units = 62`
 /// then completes outright (a flat charge of 1 fits), and the total
@@ -2524,7 +2524,7 @@ fn n06_conflict_check_charges_exactly_sigma_c_minus_1_times_f_o() {
     assert_eq!(
         admitted
             .iter()
-            .filter(|point| **point == ChargePoint::NormalizeRedefinitionCheck)
+            .filter(|point| **point == NormalizationChargePoint::NormalizeRedefinitionCheck)
             .count(),
         3,
         "one normalize.redefinition-check per redefinition record in the \
@@ -2535,7 +2535,7 @@ fn n06_conflict_check_charges_exactly_sigma_c_minus_1_times_f_o() {
     assert_eq!(
         admitted
             .iter()
-            .filter(|point| **point == ChargePoint::NormalizeConflictCheck)
+            .filter(|point| **point == NormalizationChargePoint::NormalizeConflictCheck)
             .count(),
         1,
         "exactly one contested group (A.x, reachable at D) across the whole build"
@@ -2543,17 +2543,17 @@ fn n06_conflict_check_charges_exactly_sigma_c_minus_1_times_f_o() {
     // Includes the ten phase-4 redefine facts' own `normalize.fact` charges
     // (see `n06_redefine_facts_are_charged_as_normalize_fact_between_the_two_phase4_checks`
     // for their derivation).
-    assert_eq!(meter.consumed(LimitKind::WorkUnits), 78);
+    assert_eq!(meter.consumed(NormalizationLimitKind::WorkUnits), 78);
 
     let mut limits = ModelNormalizationLimits::UNLIMITED;
     limits.work_units = 51;
     match normalize(&domain_package, limits) {
         NormalizeOutcome::Incomplete(incomplete) => {
-            assert_eq!(incomplete.limit_kind, LimitKind::WorkUnits);
+            assert_eq!(incomplete.limit_kind, NormalizationLimitKind::WorkUnits);
             assert_eq!(incomplete.limit, 51);
             assert_eq!(incomplete.consumed, 51);
             assert_eq!(incomplete.next_charge, 14);
-            assert_eq!(incomplete.charge_point, ChargePoint::NormalizeConflictCheck);
+            assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeConflictCheck);
         }
         other => panic!("expected Incomplete at normalize.conflict-check, got {other:?}"),
     }
@@ -2601,30 +2601,30 @@ fn n06_a_single_redefiner_admits_no_conflict_check_charge() {
     assert_eq!(
         admitted
             .iter()
-            .filter(|point| **point == ChargePoint::NormalizeRedefinitionCheck)
+            .filter(|point| **point == NormalizationChargePoint::NormalizeRedefinitionCheck)
             .count(),
         1
     );
     assert_eq!(
         admitted
             .iter()
-            .filter(|point| **point == ChargePoint::NormalizeConflictCheck)
+            .filter(|point| **point == NormalizationChargePoint::NormalizeConflictCheck)
             .count(),
         0,
         "a single redefiner has nothing to dominate and admits no conflict-check charge"
     );
-    assert_eq!(meter.consumed(LimitKind::WorkUnits), 27);
+    assert_eq!(meter.consumed(NormalizationLimitKind::WorkUnits), 27);
 
     let mut limits = ModelNormalizationLimits::UNLIMITED;
     limits.work_units = 16;
     match normalize(&domain_package, limits) {
         NormalizeOutcome::Incomplete(incomplete) => {
-            assert_eq!(incomplete.limit_kind, LimitKind::WorkUnits);
+            assert_eq!(incomplete.limit_kind, NormalizationLimitKind::WorkUnits);
             assert_eq!(incomplete.consumed, 16);
             assert_eq!(incomplete.next_charge, 2);
             assert_eq!(
                 incomplete.charge_point,
-                ChargePoint::NormalizeRedefinitionCheck
+                NormalizationChargePoint::NormalizeRedefinitionCheck
             );
         }
         other => panic!("expected Incomplete at normalize.redefinition-check, got {other:?}"),
@@ -2835,7 +2835,7 @@ fn operation_redefinition_is_charged_like_a_field_redefinition() {
     assert_eq!(
         admitted
             .iter()
-            .filter(|point| **point == ChargePoint::NormalizeRedefinitionCheck)
+            .filter(|point| **point == NormalizationChargePoint::NormalizeRedefinitionCheck)
             .count(),
         1,
         "the operation redefinition record is charged before its facts"
@@ -2843,7 +2843,7 @@ fn operation_redefinition_is_charged_like_a_field_redefinition() {
     assert_eq!(
         admitted
             .iter()
-            .filter(|point| **point == ChargePoint::NormalizeConflictCheck)
+            .filter(|point| **point == NormalizationChargePoint::NormalizeConflictCheck)
             .count(),
         0,
         "one operation redefiner has no competing-target check"
@@ -2851,13 +2851,13 @@ fn operation_redefinition_is_charged_like_a_field_redefinition() {
     assert_eq!(
         admitted
             .iter()
-            .filter(|point| **point == ChargePoint::NormalizeFact)
+            .filter(|point| **point == NormalizationChargePoint::NormalizeFact)
             .count(),
         8,
         "four qualify, two inherit, and two redefine facts"
     );
     assert_eq!(
-        meter.consumed(LimitKind::WorkUnits),
+        meter.consumed(NormalizationLimitKind::WorkUnits),
         20,
         "4 records + 4 phase-2 facts + 1 cycle-check + 2 phase-3 facts \
          + 2 redefinition-check units + 2 phase-4 facts + 5 declarations = 20"
@@ -2961,11 +2961,11 @@ fn operation_redefinition_is_charged_like_a_field_redefinition() {
         let (limited, limited_meter) = normalize_with_meter(&domain_package, limits);
         match limited {
             NormalizeOutcome::Incomplete(incomplete) => {
-                assert_eq!(incomplete.limit_kind, LimitKind::DerivationFacts);
+                assert_eq!(incomplete.limit_kind, NormalizationLimitKind::DerivationFacts);
                 assert_eq!(incomplete.consumed, fact_limit);
                 assert_eq!(incomplete.next_charge, fact_limit + 1);
-                assert_eq!(incomplete.charge_point, ChargePoint::NormalizeFact);
-                assert_eq!(limited_meter.consumed(LimitKind::WorkUnits), expected_work);
+                assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeFact);
+                assert_eq!(limited_meter.consumed(NormalizationLimitKind::WorkUnits), expected_work);
             }
             other => panic!("expected operation fact cap {fact_limit} to deny, got {other:?}"),
         }
@@ -2975,7 +2975,7 @@ fn operation_redefinition_is_charged_like_a_field_redefinition() {
     limits.work_units = 11;
     match normalize(&domain_package, limits) {
         NormalizeOutcome::Incomplete(incomplete) => {
-            assert_eq!(incomplete.limit_kind, LimitKind::WorkUnits);
+            assert_eq!(incomplete.limit_kind, NormalizationLimitKind::WorkUnits);
             assert_eq!(incomplete.consumed, 11);
             assert_eq!(
                 incomplete.next_charge, 2,
@@ -2983,7 +2983,7 @@ fn operation_redefinition_is_charged_like_a_field_redefinition() {
             );
             assert_eq!(
                 incomplete.charge_point,
-                ChargePoint::NormalizeRedefinitionCheck
+                NormalizationChargePoint::NormalizeRedefinitionCheck
             );
         }
         other => panic!("expected Incomplete at normalize.redefinition-check, got {other:?}"),
@@ -3069,7 +3069,7 @@ fn operation_redefinition_group_with_two_or_more_redefiners_is_charged_a_conflic
     assert_eq!(
         admitted
             .iter()
-            .filter(|point| **point == ChargePoint::NormalizeConflictCheck)
+            .filter(|point| **point == NormalizationChargePoint::NormalizeConflictCheck)
             .count(),
         1,
         "the contested operation-redefinition group is still charged once, \
@@ -3079,7 +3079,7 @@ fn operation_redefinition_group_with_two_or_more_redefiners_is_charged_a_conflic
          same-owner contention refuses redefinition-target"
     );
     assert_eq!(
-        meter.consumed(LimitKind::WorkUnits),
+        meter.consumed(NormalizationLimitKind::WorkUnits),
         28,
         "5 records + 5 phase-2 facts + 1 cycle-check + 2 phase-3 facts \
          + 7 redefinition-check work units (m+r = 3, then 4) + 4 \
@@ -3091,13 +3091,13 @@ fn operation_redefinition_group_with_two_or_more_redefiners_is_charged_a_conflic
     limits.work_units = 24;
     match normalize(&domain_package, limits) {
         NormalizeOutcome::Incomplete(incomplete) => {
-            assert_eq!(incomplete.limit_kind, LimitKind::WorkUnits);
+            assert_eq!(incomplete.limit_kind, NormalizationLimitKind::WorkUnits);
             assert_eq!(incomplete.consumed, 24);
             assert_eq!(
                 incomplete.next_charge, 4,
                 "(c-1) * (f(B)+f(B)) = 1 * (2+2) = 4"
             );
-            assert_eq!(incomplete.charge_point, ChargePoint::NormalizeConflictCheck);
+            assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeConflictCheck);
         }
         other => panic!("expected Incomplete at normalize.conflict-check, got {other:?}"),
     }
@@ -3304,7 +3304,7 @@ fn operation_redefinition_group_resolved_by_a_dominating_owner_completes() {
     assert_eq!(
         admitted
             .iter()
-            .filter(|point| **point == ChargePoint::NormalizeConflictCheck)
+            .filter(|point| **point == NormalizationChargePoint::NormalizeConflictCheck)
             .count(),
         1,
         "D's c=3 group (B.op2, C.op3, D.op4) is still charged once even though it resolves"
@@ -3314,7 +3314,7 @@ fn operation_redefinition_group_resolved_by_a_dominating_owner_completes() {
     // 8 records + 28 qualify/inherit/redefine facts + 4 cycle-check work
     // units + 11 redefinition-check work units + 14 conflict-check work
     // units + 13 declarations = 78. D's type has three facts: qualify and its two direct edges.
-    assert_eq!(meter.consumed(LimitKind::WorkUnits), 78);
+    assert_eq!(meter.consumed(NormalizationLimitKind::WorkUnits), 78);
 }
 
 /// `value-accounting.md:456` prices every contested `(effective type,
@@ -3415,7 +3415,7 @@ fn conflict_check_charges_interleave_field_and_operation_groups_by_target_key() 
     assert_eq!(
         admitted
             .iter()
-            .filter(|point| **point == ChargePoint::NormalizeConflictCheck)
+            .filter(|point| **point == NormalizationChargePoint::NormalizeConflictCheck)
             .count(),
         2,
         "one contested group for A.z (field) and one for A.a (operation) -- \
@@ -3431,13 +3431,13 @@ fn conflict_check_charges_interleave_field_and_operation_groups_by_target_key() 
     // redefinition-target refusal ends checking there (#173,
     // value-accounting.md:482): no normalize.declaration
     // charge ever runs, unlike before #173 resolved this contest.
-    assert_eq!(meter.consumed(LimitKind::WorkUnits), 98);
+    assert_eq!(meter.consumed(NormalizationLimitKind::WorkUnits), 98);
 
     let mut limits = ModelNormalizationLimits::UNLIMITED;
     limits.work_units = 82;
     match normalize(&domain_package, limits) {
         NormalizeOutcome::Incomplete(incomplete) => {
-            assert_eq!(incomplete.limit_kind, LimitKind::WorkUnits);
+            assert_eq!(incomplete.limit_kind, NormalizationLimitKind::WorkUnits);
             assert_eq!(incomplete.limit, 82);
             assert_eq!(incomplete.consumed, 82);
             assert_eq!(
@@ -3445,7 +3445,7 @@ fn conflict_check_charges_interleave_field_and_operation_groups_by_target_key() 
                 "model.A.a sorts before model.A.z, so the operation group's \
                  charge (12) is denied before the field group's (4)"
             );
-            assert_eq!(incomplete.charge_point, ChargePoint::NormalizeConflictCheck);
+            assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeConflictCheck);
         }
         other => panic!("expected Incomplete at normalize.conflict-check, got {other:?}"),
     }
@@ -3585,14 +3585,14 @@ fn n06_specialization_cycle_refusal_waits_for_every_phase3_charge_to_admit() {
         limits.work_units = work_units;
         match normalize(&domain_package, limits) {
             NormalizeOutcome::Incomplete(incomplete) => {
-                assert_eq!(incomplete.limit_kind, LimitKind::WorkUnits);
+                assert_eq!(incomplete.limit_kind, NormalizationLimitKind::WorkUnits);
                 assert_eq!(incomplete.limit, work_units);
                 assert!(
                     matches!(
                         incomplete.charge_point,
-                        ChargePoint::NormalizeRecord
-                            | ChargePoint::NormalizeFact
-                            | ChargePoint::NormalizeCycleCheck
+                        NormalizationChargePoint::NormalizeRecord
+                            | NormalizationChargePoint::NormalizeFact
+                            | NormalizationChargePoint::NormalizeCycleCheck
                     ),
                     "work_units={work_units} stopped at {:?}, a phase-4 charge point -- \
                      phase 3 must exhaust its own charges before phase 4 ever starts",
@@ -3610,11 +3610,11 @@ fn n06_specialization_cycle_refusal_waits_for_every_phase3_charge_to_admit() {
             assert_eq!(
                 incomplete,
                 NormalizationIncomplete {
-                    limit_kind: LimitKind::WorkUnits,
+                    limit_kind: NormalizationLimitKind::WorkUnits,
                     limit: 39,
                     consumed: 39,
                     next_charge: 1,
-                    charge_point: ChargePoint::NormalizeFact,
+                    charge_point: NormalizationChargePoint::NormalizeFact,
                 }
             );
         }
@@ -3714,11 +3714,11 @@ fn n06_conflict_refusal_waits_for_every_phase4_charge_to_admit() {
             assert_eq!(
                 incomplete,
                 NormalizationIncomplete {
-                    limit_kind: LimitKind::DerivationFacts,
+                    limit_kind: NormalizationLimitKind::DerivationFacts,
                     limit: 17,
                     consumed: 17,
                     next_charge: 18,
-                    charge_point: ChargePoint::NormalizeFact,
+                    charge_point: NormalizationChargePoint::NormalizeFact,
                 }
             );
         }
@@ -3735,11 +3735,11 @@ fn n06_conflict_refusal_waits_for_every_phase4_charge_to_admit() {
             assert_eq!(
                 incomplete,
                 NormalizationIncomplete {
-                    limit_kind: LimitKind::WorkUnits,
+                    limit_kind: NormalizationLimitKind::WorkUnits,
                     limit: 40,
                     consumed: 40,
                     next_charge: 1,
-                    charge_point: ChargePoint::NormalizeFact,
+                    charge_point: NormalizationChargePoint::NormalizeFact,
                 }
             );
         }
@@ -3755,11 +3755,11 @@ fn n06_conflict_refusal_waits_for_every_phase4_charge_to_admit() {
             assert_eq!(
                 incomplete,
                 NormalizationIncomplete {
-                    limit_kind: LimitKind::WorkUnits,
+                    limit_kind: NormalizationLimitKind::WorkUnits,
                     limit: 24,
                     consumed: 24,
                     next_charge: 1,
-                    charge_point: ChargePoint::NormalizeFact,
+                    charge_point: NormalizationChargePoint::NormalizeFact,
                 }
             );
         }
@@ -3779,11 +3779,11 @@ fn n06_conflict_refusal_waits_for_every_phase4_charge_to_admit() {
             assert_eq!(
                 incomplete,
                 NormalizationIncomplete {
-                    limit_kind: LimitKind::WorkUnits,
+                    limit_kind: NormalizationLimitKind::WorkUnits,
                     limit: 44,
                     consumed: 41,
                     next_charge: 4,
-                    charge_point: ChargePoint::NormalizeConflictCheck,
+                    charge_point: NormalizationChargePoint::NormalizeConflictCheck,
                 }
             );
         }
@@ -3867,11 +3867,11 @@ fn n06_unreachable_redefinition_target_also_waits_for_every_phase4_charge() {
             assert_eq!(
                 incomplete,
                 NormalizationIncomplete {
-                    limit_kind: LimitKind::WorkUnits,
+                    limit_kind: NormalizationLimitKind::WorkUnits,
                     limit: 30,
                     consumed: 30,
                     next_charge: 1,
-                    charge_point: ChargePoint::NormalizeFact,
+                    charge_point: NormalizationChargePoint::NormalizeFact,
                 }
             );
         }
@@ -3907,11 +3907,11 @@ fn n06_unreachable_redefinition_target_also_waits_for_every_phase4_charge() {
             assert_eq!(
                 incomplete,
                 NormalizationIncomplete {
-                    limit_kind: LimitKind::WorkUnits,
+                    limit_kind: NormalizationLimitKind::WorkUnits,
                     limit: 51,
                     consumed: 48,
                     next_charge: 4,
-                    charge_point: ChargePoint::NormalizeConflictCheck,
+                    charge_point: NormalizationChargePoint::NormalizeConflictCheck,
                 }
             );
         }
@@ -4290,11 +4290,11 @@ fn h2_a_closing_cycle_extension_is_capped_by_work_units_room_not_derivation_fact
     assert_eq!(
         normalize(&domain_package, limits),
         NormalizeOutcome::Incomplete(NormalizationIncomplete {
-            limit_kind: LimitKind::WorkUnits,
+            limit_kind: NormalizationLimitKind::WorkUnits,
             limit: 33,
             consumed: 32,
             next_charge: 2,
-            charge_point: ChargePoint::NormalizeCycleCheck,
+            charge_point: NormalizationChargePoint::NormalizeCycleCheck,
         }),
         "one normalize.cycle-check short of both closing cycles, with derivation_facts \
          left unconstrained (9 facts exist, budget is 9): must be Incomplete, not a \
@@ -4569,12 +4569,12 @@ fn n06_budget_sweep_from_zero_stops_in_spec_charge_order() {
         limits.work_units = work_units;
         match normalize(&domain_package, limits) {
             NormalizeOutcome::Incomplete(incomplete) => {
-                assert_eq!(incomplete.limit_kind, LimitKind::WorkUnits);
+                assert_eq!(incomplete.limit_kind, NormalizationLimitKind::WorkUnits);
                 assert_eq!(incomplete.limit, work_units);
                 assert_eq!(incomplete.consumed, work_units);
                 assert_eq!(
                     incomplete.charge_point,
-                    ChargePoint::NormalizeRecord,
+                    NormalizationChargePoint::NormalizeRecord,
                     "work_units={work_units} must still be stopped on a normalize.record \
                      charge (nine records exist)"
                 );
@@ -4588,12 +4588,12 @@ fn n06_budget_sweep_from_zero_stops_in_spec_charge_order() {
         limits.work_units = work_units;
         match normalize(&domain_package, limits) {
             NormalizeOutcome::Incomplete(incomplete) => {
-                assert_eq!(incomplete.limit_kind, LimitKind::WorkUnits);
+                assert_eq!(incomplete.limit_kind, NormalizationLimitKind::WorkUnits);
                 assert_eq!(incomplete.limit, work_units);
                 assert_eq!(incomplete.consumed, work_units);
                 assert_eq!(
                     incomplete.charge_point,
-                    ChargePoint::NormalizeFact,
+                    NormalizationChargePoint::NormalizeFact,
                     "work_units={work_units} must have admitted every normalize.record \
                      charge and be stopped on a normalize.fact charge"
                 );
@@ -4854,15 +4854,15 @@ fn a_subsetting_field_derives_one_phase_4_subset_fact() {
         panic!("the subsetting fixture completes");
     };
     let admitted = meter.admitted_charges();
-    let count = |point: ChargePoint| admitted.iter().filter(|p| **p == point).count();
+    let count = |point: NormalizationChargePoint| admitted.iter().filter(|p| **p == point).count();
     assert_eq!(
-        count(ChargePoint::NormalizeFact),
+        count(NormalizationChargePoint::NormalizeFact),
         7,
         "four qualify, two inherit and one subset fact"
     );
-    assert_eq!(count(ChargePoint::NormalizeRedefinitionCheck), 0);
-    assert_eq!(count(ChargePoint::NormalizeConflictCheck), 0);
-    assert_eq!(meter.consumed(LimitKind::WorkUnits), 17);
+    assert_eq!(count(NormalizationChargePoint::NormalizeRedefinitionCheck), 0);
+    assert_eq!(count(NormalizationChargePoint::NormalizeConflictCheck), 0);
+    assert_eq!(meter.consumed(NormalizationLimitKind::WorkUnits), 17);
 
     let b = type_owner(&view, "model.B");
     let subsetting = find_member(&view, &b, "model.B.y");
@@ -4883,8 +4883,8 @@ fn a_subsetting_field_derives_one_phase_4_subset_fact() {
     limits.derivation_facts = 6;
     match normalize(&domain_package, limits) {
         NormalizeOutcome::Incomplete(incomplete) => {
-            assert_eq!(incomplete.limit_kind, LimitKind::DerivationFacts);
-            assert_eq!(incomplete.charge_point, ChargePoint::NormalizeFact);
+            assert_eq!(incomplete.limit_kind, NormalizationLimitKind::DerivationFacts);
+            assert_eq!(incomplete.charge_point, NormalizationChargePoint::NormalizeFact);
             assert_eq!(incomplete.next_charge, 7);
         }
         other => panic!("expected the subset fact to be denied, got {other:?}"),
@@ -4914,7 +4914,7 @@ fn an_inherited_subsetting_field_derives_a_subset_fact_at_each_descendant() {
     let fact_charges = meter
         .admitted_charges()
         .iter()
-        .filter(|p| **p == ChargePoint::NormalizeFact)
+        .filter(|p| **p == NormalizationChargePoint::NormalizeFact)
         .count();
     assert_eq!(
         fact_charges, 12,
@@ -4970,7 +4970,7 @@ fn subset_and_redefine_facts_of_one_member_are_ordered_together() {
     let fact_charges = meter
         .admitted_charges()
         .iter()
-        .filter(|p| **p == ChargePoint::NormalizeFact)
+        .filter(|p| **p == NormalizationChargePoint::NormalizeFact)
         .count();
     assert_eq!(
         fact_charges, 11,

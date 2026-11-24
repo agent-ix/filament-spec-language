@@ -47,7 +47,9 @@ use std::sync::OnceLock;
 use filament_checked::key::DeclarationKey;
 use fsl_foundation::selection::ModelSelection;
 use fsl_foundation::{Code, Span};
-use fsl_semantics::model::accounting::{ChargePoint, LimitKind, Meter, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{
+    ModelNormalizationLimits, NormalizationChargePoint, NormalizationLimitKind, NormalizationMeter,
+};
 use fsl_semantics::model::domain_package::{DomainPackage, DomainPackageRef};
 use fsl_semantics::model::index::ModelIndex;
 use fsl_semantics::model::intake::{
@@ -587,8 +589,8 @@ fn multiplicity_one(lower: u64, upper: Option<u64>) -> serde_json::Value {
     })
 }
 
-fn default_meter() -> Meter {
-    Meter::new(ModelNormalizationLimits::default())
+fn default_meter() -> NormalizationMeter {
+    NormalizationMeter::new(ModelNormalizationLimits::default())
 }
 
 fn key(package: &str, identity: &str) -> DeclarationKey {
@@ -1168,7 +1170,7 @@ fn unit_intake_projection_work_scales_linearly_for_flat_record_fields() {
         .unwrap_or_else(|refusal| panic!("{count} record fields admit: {refusal:?}"));
         assert_eq!(selected.len(), 1);
         assert_eq!(selected.exact_field_rows().len(), count);
-        let consumed = selected.consumed(LimitKind::WorkUnits);
+        let consumed = selected.consumed(NormalizationLimitKind::WorkUnits);
         eprintln!("unit-intake-scale N={count} WorkUnits={consumed}");
         work_units.push(consumed);
     }
@@ -1195,7 +1197,7 @@ fn unit_intake_projection_charge_denial_returns_no_selected_models() {
     .expect("the one-field package reads");
     let (outcome, meter) = normalize_with_meter(&package, ModelNormalizationLimits::default());
     assert!(matches!(outcome, NormalizeOutcome::Completed(_)));
-    let normalization_work = meter.consumed(LimitKind::WorkUnits);
+    let normalization_work = meter.consumed(NormalizationLimitKind::WorkUnits);
     let limits = ModelNormalizationLimits {
         work_units: normalization_work,
         ..ModelNormalizationLimits::default()
@@ -1207,13 +1209,13 @@ fn unit_intake_projection_charge_denial_returns_no_selected_models() {
     let fsl_semantics::model::intake::UnitIntakeCause::Limit(incomplete) = refusal.cause else {
         panic!("expected a work limit denial, got {refusal:?}");
     };
-    assert_eq!(incomplete.limit_kind, LimitKind::WorkUnits);
+    assert_eq!(incomplete.limit_kind, NormalizationLimitKind::WorkUnits);
     assert_eq!(incomplete.limit, normalization_work);
     assert_eq!(incomplete.consumed, normalization_work);
     assert_eq!(incomplete.next_charge, 1);
     assert_eq!(
         incomplete.charge_point,
-        fsl_semantics::model::accounting::ChargePoint::NormalizeDeclaration
+        fsl_semantics::model::accounting::NormalizationChargePoint::NormalizeDeclaration
     );
 }
 
@@ -1775,7 +1777,7 @@ fn y10_a_systems_kind_comes_from_the_construct_meaning_not_the_kind_name() {
         meter
             .admitted_charges()
             .iter()
-            .filter(|point| **point == ChargePoint::SystemsKind)
+            .filter(|point| **point == NormalizationChargePoint::SystemsKind)
             .count(),
         3,
         "Flow, SysPump and PumpOut are charged; Probe has no systems kind"
@@ -1895,9 +1897,15 @@ fn charges_normalize_record_once_per_intake_declaration() {
     };
     match normalize(&domain_package, one_less) {
         NormalizeOutcome::Incomplete(incomplete) => {
-            assert_eq!(incomplete.limit_kind, LimitKind::DeclarationRecords);
+            assert_eq!(
+                incomplete.limit_kind,
+                NormalizationLimitKind::DeclarationRecords
+            );
             assert_eq!(incomplete.limit, 1);
-            assert_eq!(incomplete.charge_point, ChargePoint::NormalizeRecord);
+            assert_eq!(
+                incomplete.charge_point,
+                NormalizationChargePoint::NormalizeRecord
+            );
         }
         other => panic!("expected Incomplete at normalize.record, got {other:?}"),
     }

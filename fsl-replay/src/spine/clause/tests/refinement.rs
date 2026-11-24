@@ -940,11 +940,11 @@ fn a_cancelled_argument_refusal_is_refused_at_admit() {
 #[test]
 fn a_model_budget_denial_at_s3_is_incomplete_naming_the_limit() {
     let incomplete = fsl_semantics::model::accounting::NormalizationIncomplete {
-        limit_kind: fsl_semantics::model::accounting::LimitKind::WorkUnits,
+        limit_kind: fsl_semantics::model::accounting::NormalizationLimitKind::WorkUnits,
         limit: 7,
         consumed: 7,
         next_charge: 1,
-        charge_point: fsl_semantics::model::accounting::ChargePoint::NormalizeRecord,
+        charge_point: fsl_semantics::model::accounting::NormalizationChargePoint::NormalizeRecord,
     };
     let denial = incomplete.denial();
     let expected = ReachedLimit {

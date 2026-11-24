@@ -408,7 +408,7 @@ pub fn resolve_root_field_redefinition(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fsl_semantics::model::accounting::LimitKind;
+    use fsl_semantics::model::accounting::NormalizationLimitKind;
     use fsl_semantics::model::normalize::normalize_with_meter;
 
     #[test]
@@ -553,7 +553,7 @@ mod tests {
             "every source record, the operation's two included, is charged before the refusal"
         );
         assert_eq!(
-            meter.consumed(LimitKind::DeclarationRecords),
+            meter.consumed(NormalizationLimitKind::DeclarationRecords),
             5,
             "all five source records are charged before refusal"
         );

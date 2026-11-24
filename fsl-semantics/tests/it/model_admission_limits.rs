@@ -7,7 +7,7 @@
 //! The package is the `example/config-version` fixture of TC-458, with the
 //! members each test varies written into its JSON.
 
-use fsl_semantics::model::accounting::{LimitKind, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{ModelNormalizationLimits, NormalizationLimitKind};
 use fsl_semantics::model::intake::{admit_unit, UnitIntakeCause, UnitIntakeRefusal};
 use fsl_semantics::model::normalize::ModelRefusal;
 use fsl_semantics::model::refusal::ModelRefusalCause;
@@ -125,7 +125,10 @@ fn declaration_records_charge_each_type_field_operation_parameter_result_and_fra
         let refusal = run(&document, limited(bound)).expect_err("the records exceed the limit");
         match refusal.cause {
             UnitIntakeCause::Limit(incomplete) => {
-                assert_eq!(incomplete.limit_kind, LimitKind::DeclarationRecords);
+                assert_eq!(
+                    incomplete.limit_kind,
+                    NormalizationLimitKind::DeclarationRecords
+                );
                 assert_eq!(incomplete.limit, bound);
                 assert_eq!(incomplete.next_charge, bound + 1);
             }

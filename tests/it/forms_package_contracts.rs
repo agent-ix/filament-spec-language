@@ -7,7 +7,9 @@ mod source_package;
 use filament_checked::key::DeclarationKey;
 use filament_exact::Presence;
 use fsl_foundation::diagnostic::Code;
-use fsl_semantics::model::accounting::{LimitKind, Meter, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{
+    ModelNormalizationLimits, NormalizationLimitKind, NormalizationMeter,
+};
 use fsl_semantics::model::conformance::{
     self, ConformanceCheckOutcome, ConformanceOutcome, RedefinitionTargetOutcome,
 };
@@ -126,7 +128,7 @@ fn operation_conformance_reports_each_independent_axis_and_all_three_together() 
             DomainPackageRecord::OperationMember(child),
         ]);
         let index = ModelIndex::build(input);
-        let mut meter = Meter::new(ModelNormalizationLimits::default());
+        let mut meter = NormalizationMeter::new(ModelNormalizationLimits::default());
         let outcome = conformance::check_operation_redefinition(
             &index,
             &key("Child/update"),
@@ -259,7 +261,8 @@ fn chain_index(edges: usize) -> ModelIndex {
 #[test]
 fn conformance_ancestor_limit_denies_the_next_edge_then_accepts_the_exact_bound() {
     let index = chain_index(3);
-    let mut short = Meter::new(ModelNormalizationLimits::default().with_ancestor_steps(2));
+    let mut short =
+        NormalizationMeter::new(ModelNormalizationLimits::default().with_ancestor_steps(2));
     let ConformanceCheckOutcome::Incomplete(stop) = conformance::check_field_redefinition(
         &index,
         &key("T0/specific"),
@@ -268,9 +271,10 @@ fn conformance_ancestor_limit_denies_the_next_edge_then_accepts_the_exact_bound(
     ) else {
         panic!("three-edge conformance must not return a verdict with only two edges")
     };
-    assert_eq!(stop.limit_kind, LimitKind::AncestorSteps);
+    assert_eq!(stop.limit_kind, NormalizationLimitKind::AncestorSteps);
     assert_eq!((stop.limit, stop.consumed, stop.next_charge), (2, 2, 1));
-    let mut exact = Meter::new(ModelNormalizationLimits::default().with_ancestor_steps(3));
+    let mut exact =
+        NormalizationMeter::new(ModelNormalizationLimits::default().with_ancestor_steps(3));
     assert_eq!(
         conformance::check_field_redefinition(
             &index,
@@ -289,7 +293,7 @@ fn ten_thousand_conformance_edges_complete_on_a_small_stack() {
         .stack_size(512 * 1024)
         .spawn(|| {
             let index = chain_index(10_000);
-            let mut meter = Meter::new(ModelNormalizationLimits::default());
+            let mut meter = NormalizationMeter::new(ModelNormalizationLimits::default());
             assert_eq!(
                 conformance::check_field_redefinition(
                     &index,

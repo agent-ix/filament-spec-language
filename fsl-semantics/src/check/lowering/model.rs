@@ -685,13 +685,13 @@ impl AdmittedModel {
         &self,
         key: &DeclarationKey,
     ) -> Option<crate::model::systems::ConnectionCheckOutcome> {
-        use crate::model::accounting::Meter;
+        use crate::model::accounting::NormalizationMeter;
         use crate::model::systems::{check_connection, Kind};
         let systems = self.systems.as_ref()?;
         if systems.actual_kind(key) != Kind::Connection {
             return None;
         }
-        let mut meter = Meter::new(self.normalization_limits);
+        let mut meter = NormalizationMeter::new(self.normalization_limits);
         Some(check_connection(&self.index, systems, key, &mut meter))
     }
 
@@ -1171,7 +1171,7 @@ impl AdmittedModel {
             index: view.shared_model_index().clone(),
             systems: crate::model::systems::classify(
                 view.shared_model_index().package(),
-                &mut crate::model::accounting::Meter::new(*view.effective_limits()),
+                &mut crate::model::accounting::NormalizationMeter::new(*view.effective_limits()),
             )
             .ok(),
             normalization_limits: *view.effective_limits(),
@@ -1238,7 +1238,7 @@ impl AdmittedModel {
             )),
             systems: crate::model::systems::classify(
                 domain_package,
-                &mut crate::model::accounting::Meter::new(
+                &mut crate::model::accounting::NormalizationMeter::new(
                     crate::model::accounting::ModelNormalizationLimits::default(),
                 ),
             )

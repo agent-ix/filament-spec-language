@@ -6,7 +6,7 @@
 
 use filament_checked::key::DeclarationKey;
 use fsl_foundation::diagnostic::Code;
-use fsl_semantics::model::accounting::{Meter, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
 use fsl_semantics::model::admitted::{AdmittedPackage, DeclarationKind};
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, Multiplicity, ObjectTypeRecord,
@@ -143,7 +143,7 @@ fn a_resolved_end_retains_its_declared_role_and_multiplicity() {
             object_type("ix://test/orders/Order"),
             places("ix://test/orders/Customer", "ix://test/orders/Order"),
         ]),
-        &mut Meter::new(ModelNormalizationLimits::UNLIMITED),
+        &mut NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED),
     )
     .expect("a fully resolved relationship admits");
     let declaration = admitted
@@ -182,7 +182,7 @@ fn a_relationship_between_object_types_carries_no_systems_kind() {
             object_type("ix://test/orders/Order"),
             places("ix://test/orders/Customer", "ix://test/orders/Order"),
         ]),
-        &mut Meter::new(ModelNormalizationLimits::UNLIMITED),
+        &mut NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED),
     )
     .expect("a fully resolved relationship admits");
     let declaration = admitted
