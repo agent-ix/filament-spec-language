@@ -45,7 +45,8 @@ pub use long_run::{
     read_weighted_long_run_probability_certificate,
     weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
     write_weighted_long_run_probability_certificate, LongRunOptimization,
-    LongRunProbabilityComponent, LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
+    LongRunPolicyRow, LongRunProbabilityComponent, LongRunProbabilityDocument,
+    WeightedLongRunProbabilityDocument,
 };
 pub use refutation::SubsystemBoundKind;
 mod timed;

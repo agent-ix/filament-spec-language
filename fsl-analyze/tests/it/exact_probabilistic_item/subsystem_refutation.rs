@@ -1094,6 +1094,20 @@ fn scheduled_long_run(
                 value: rational(1),
                 gain: rational(1),
                 bias,
+                policy: Some({
+                    let mut rows = vec![
+                        fsl_replay::LongRunPolicyRow {
+                            state: down.clone(),
+                            choice: call(world, true),
+                        },
+                        fsl_replay::LongRunPolicyRow {
+                            state: up.clone(),
+                            choice: call_staying_up(world),
+                        },
+                    ];
+                    rows.sort_by(|a, b| a.state.cmp(&b.state));
+                    rows
+                }),
             },
         )
     } else {
@@ -1103,6 +1117,10 @@ fn scheduled_long_run(
                 value: rational(0),
                 gain: rational(0),
                 bias: vec![row(&down, rational(0))],
+                policy: Some(vec![fsl_replay::LongRunPolicyRow {
+                    state: down.clone(),
+                    choice: call(world, false),
+                }]),
             },
         )
     };
@@ -1347,6 +1365,10 @@ fn failing_witness(world: &World, name: &str) -> ProbabilisticCounterexample {
             value: zero.clone(),
             gain: zero.clone(),
             bias: vec![row(&down_key)],
+            policy: Some(vec![fsl_replay::LongRunPolicyRow {
+                state: down_key.clone(),
+                choice: fail_at_down.clone(),
+            }]),
         }],
         limits(),
         &Cancel::new(),

@@ -494,7 +494,7 @@ pub use probability_certificate::{
     ActivationPhase, ClaimBinding, DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput,
     DigitalTail,
     ExactProbabilityAcceptance, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
-    ExactProbabilityGraphError, ExactProbabilityValue, LongRunOptimization,
+    ExactProbabilityGraphError, ExactProbabilityValue, LongRunOptimization, LongRunPolicyRow,
     LongRunProbabilityComponent, LongRunProbabilityDocument, MeasurePayoffKind, MeasureProbabilityDocument, OnEachOutcome,
     ProbabilisticCounterexample, ProbabilisticSchedulerChoice, ProbabilityBoundSide,
     ProbabilityCertificateDocument, ProbabilityCertificateLocus, ProbabilityCertificatePart,

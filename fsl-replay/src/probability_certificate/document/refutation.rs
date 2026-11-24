@@ -936,3 +936,90 @@ pub(super) fn scheduled_choices(
     }
     Ok(Some(chosen))
 }
+
+/// The canonical schedule of every enabled action at every state the actions
+/// of the graph reach, in action order: what a policy row's choice names.
+/// States with no action (a terminal stutter) have no entry.
+pub(super) fn enabled_schedules(
+    system: &ModelSystem<'_>,
+    graph: &CheckerGraph,
+    reference: Option<&ObjectReference>,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+) -> Result<BTreeMap<ProbabilityProductKey, Vec<crate::Schedule>>, ProbabilityDocumentError> {
+    let identity = fsl_foundation::IdentityLimits::default();
+    let key_of = |state: &ModelSimState,
+                  meter: &mut filament_exact::Meter,
+                  storage: &mut u64|
+     -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
+        let mut admission =
+            ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
+        let encoded = (|| {
+            let bytes =
+                system.state_key_bytes_with_budget(state, identity, &mut admission, cancel)?;
+            ProbabilityProductKey::for_model_state_with_budget(
+                reference,
+                &bytes,
+                identity,
+                &mut admission,
+                cancel,
+            )
+        })();
+        encoded.map_err(|error| admission.refusal(error))
+    };
+    let initials = system.initial();
+    let [initial] = initials.as_slice() else {
+        return Err(ExactProbabilityGraphError::UnsupportedInitial.into());
+    };
+    let root = key_of(initial, meter, storage)?;
+    let mut schedules = BTreeMap::new();
+    let mut seen = BTreeSet::from([root.clone()]);
+    let mut pending = VecDeque::from([(root, initial.clone())]);
+    while let Some((key, state)) = pending.pop_front() {
+        super::super::reward::visit(cancel, meter)?;
+        let checked = graph
+            .states
+            .get(&key)
+            .ok_or(ProbabilityDocumentError::Malformed)?;
+        if checked.choices.is_empty() {
+            continue;
+        }
+        let actions = {
+            let mut admission =
+                ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
+            system
+                .actions_with_budget(&state, identity, &mut admission, cancel)
+                .map_err(|error| admission.expansion_refusal(error))?
+                .map_err(|_| {
+                    ProbabilityDocumentError::Build(Box::new(
+                        crate::ExactProbBuildIssue::UndecidedSuccessor,
+                    ))
+                })?
+        };
+        let mut row = Vec::with_capacity(actions.len());
+        for action in &actions {
+            super::super::reward::visit(cancel, meter)?;
+            row.push(
+                crate::Schedule::of(system, &action.identity)
+                    .map_err(|_| ProbabilityDocumentError::Unsupported)?,
+            );
+            for draw in &action.draws {
+                super::super::reward::visit(cancel, meter)?;
+                if draw.probability == rational(0) {
+                    continue;
+                }
+                let [(_, post)] = draw.successors.as_slice() else {
+                    return Err(ProbabilityDocumentError::Unsupported);
+                };
+                let next = key_of(post, meter, storage)?;
+                if seen.insert(next.clone()) {
+                    pending.push_back((next, post.clone()));
+                }
+            }
+        }
+        schedules.insert(key, row);
+    }
+    Ok(schedules)
+}

@@ -634,3 +634,175 @@ fn conflicting_identity_precedes_source_provision_and_compilation() {
         "matching identity must reach the missing provision control"
     );
 }
+
+fn every_claim(name: &str, predicate: &str, bound: &str) -> String {
+    format!("probabilistic {name} using inf on M over (s: M::Server) under every scheduler on origin {{ long_run_fraction holds({predicate}) {bound} }}\n")
+}
+
+/// `go` leaves the initial phase 0 for phase 1, where `stay` loops: phase 0 is
+/// transient, phase 1 the only end component.
+fn drift() -> World {
+    let package = "test/longrun-drift";
+    let claims = [
+        every_claim("Min", "s.phase = 1", ">= rational(1,2)"),
+        every_claim("Max", "s.phase = 0", "<= rational(1,2)"),
+    ]
+    .concat();
+    World::new(&Model {
+        package,
+        object: "Server",
+        population: "servers",
+        key: "s",
+        integers: vec![("Phase", 0, 1)],
+        fields: vec![("phase", format!("ix://{package}/Phase"))],
+        operations: vec![
+            Operation {
+                name: "go",
+                parameters: vec![],
+                modifies: vec!["phase"],
+                deletes: false,
+            },
+            Operation {
+                name: "stay",
+                parameters: vec![],
+                modifies: vec!["phase"],
+                deletes: false,
+            },
+        ],
+        body: format!(
+            "pre Start using v on M::Server::go {{ self.phase = 0 }}\n\
+             post Went using v on M::Server::go {{ self.phase = 1 }}\n\
+             pre Rest using v on M::Server::stay {{ self.phase = 1 }}\n\
+             post Stayed using v on M::Server::stay {{ self.phase = 1 }}\n{claims}"
+        ),
+        initial: serde_json::json!({"phase": {"integer": "0"}}),
+    })
+}
+
+fn rejection(
+    world: &World,
+    name: &str,
+    document: &serde_json::Value,
+) -> ExactProbabilityCertificateCheck {
+    let bytes = serde_json::to_vec(document).unwrap();
+    check(world, name, &bytes, &Cancel::new(), limits()).unwrap()
+}
+
+fn malformed_policy() -> ExactProbabilityCertificateCheck {
+    use fsl_replay::{
+        ProbabilityCertificateLocus, ProbabilityCertificateRejection, ProbabilityCertificateRule,
+    };
+    ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+        rule: ProbabilityCertificateRule::Malformed,
+        at: ProbabilityCertificateLocus::Member("policy"),
+    })
+}
+
+#[trace("FSpec-TC-362", "FSpec-FR-412-AC-26", "FSpec-FR-411-AC-18")]
+#[test]
+fn an_every_scheduler_long_run_proof_carries_per_component_policy_rows() {
+    let world = drift();
+    for (name, optimization) in [("Min", "minimum"), ("Max", "maximum")] {
+        let bytes = produce(&world, name);
+        let original: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(original["objective"]["optimization"], optimization);
+        assert_eq!(original["components"].as_array().unwrap().len(), 1);
+        let policy = original["components"][0]["policy"].as_array().unwrap();
+        assert_eq!(policy.len(), 1, "one row per state of the component");
+        assert!(matches!(
+            check(&world, name, &bytes, &Cancel::new(), limits()).unwrap(),
+            ExactProbabilityCertificateCheck::Accepted(_)
+        ));
+        let row = policy[0].clone();
+        // The policy removed, a row for a state outside the component, a
+        // duplicated row, and a choice that is no action of its state.
+        let mut removed = original.clone();
+        removed["components"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("policy");
+        assert_eq!(rejection(&world, name, &removed), malformed_policy());
+        let outside = original["values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value["state"].clone())
+            .find(|state| *state != row["state"])
+            .expect("the transient state");
+        let mut foreign = original.clone();
+        foreign["components"][0]["policy"] = serde_json::json!([
+            {"state": outside, "choice": row["choice"]},
+            row
+        ]);
+        let mut foreign_rows = foreign["components"][0]["policy"]
+            .as_array()
+            .unwrap()
+            .clone();
+        foreign_rows.sort_by(|a, b| a["state"].as_str().cmp(&b["state"].as_str()));
+        foreign["components"][0]["policy"] = serde_json::Value::Array(foreign_rows);
+        assert_eq!(rejection(&world, name, &foreign), malformed_policy());
+        let mut duplicated = original.clone();
+        duplicated["components"][0]["policy"] = serde_json::json!([row.clone(), row.clone()]);
+        assert_eq!(rejection(&world, name, &duplicated), malformed_policy());
+        let mut unnamed = original.clone();
+        unnamed["components"][0]["policy"][0]["choice"] = serde_json::json!(["terminal-stutter"]);
+        assert_eq!(rejection(&world, name, &unnamed), malformed_policy());
+    }
+}
+
+#[trace("FSpec-TC-362", "FSpec-FR-412-AC-26")]
+#[test]
+fn an_every_scheduler_long_run_proof_checks_the_gain_bias_inequalities_and_workload_has_no_policy()
+{
+    use fsl_replay::{
+        ProbabilityCertificateLocus, ProbabilityCertificateRejection, ProbabilityCertificateRule,
+    };
+    let world = availability_with_claims(
+        [
+            every_claim("EveryLower", "s.phase = 0", ">= rational(1800,1801)"),
+            every_claim("EveryUpper", "s.phase = 0", "<= rational(1800,1801)"),
+            claim("Lower", "s.phase = 0", ">= rational(1800,1801)"),
+        ]
+        .concat(),
+        "",
+    );
+    for name in ["EveryLower", "EveryUpper"] {
+        let bytes = produce(&world, name);
+        let original: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            original["components"][0]["policy"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(matches!(
+            check(&world, name, &bytes, &Cancel::new(), limits()).unwrap(),
+            ExactProbabilityCertificateCheck::Accepted(_)
+        ));
+        // One bias moved by 1/1000 fails its equality at that state.
+        let mut changed = original.clone();
+        changed["components"][0]["bias"][1]["value"] =
+            serde_json::json!({"numerator": "-2000001", "denominator": "1801000"});
+        assert!(
+            matches!(
+                rejection(&world, name, &changed),
+                ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::InequalityFails,
+                    at: ProbabilityCertificateLocus::ProductState(_),
+                })
+            ),
+            "{name}: a moved bias fails an equality at a state"
+        );
+    }
+    // Under a workload a policy is rejected, and without one the document is
+    // accepted.
+    let bytes = produce(&world, "Lower");
+    assert!(matches!(
+        check(&world, "Lower", &bytes, &Cancel::new(), limits()).unwrap(),
+        ExactProbabilityCertificateCheck::Accepted(_)
+    ));
+    let mut workload: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    workload["components"][0]["policy"] = serde_json::json!([]);
+    assert_eq!(rejection(&world, "Lower", &workload), malformed_policy());
+}

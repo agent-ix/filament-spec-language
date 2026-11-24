@@ -133,6 +133,7 @@ pub(super) fn run(
                 product: &product,
                 predicate: &predicate,
                 binding: reference,
+                claim_binding: binding.clone(),
                 limits: &limits,
                 document_limits,
                 subject,
@@ -191,7 +192,7 @@ pub(super) fn run(
         Ok(certificate) => certificate,
         Err(error) => return document_failure(error, subject),
     };
-    let components = match components(&product, reference, &solution, &mut candidate) {
+    let components = match components(&product, reference, &solution, None, &mut candidate) {
         Ok(components) => components,
         Err(error) => return document_failure(error, subject),
     };
@@ -326,6 +327,7 @@ struct EveryScheduler<'a> {
     product: &'a ProbProduct,
     predicate: &'a [bool],
     binding: Option<&'a ObjectReference>,
+    claim_binding: Option<fsl_replay::ClaimBinding>,
     limits: &'a crate::exact_probabilistic::ExactProbLimits,
     document_limits: ProbabilityDocumentLimits,
     subject: SubjectLimits<'a>,
@@ -354,6 +356,7 @@ fn every_scheduler(
         product,
         predicate,
         binding,
+        claim_binding,
         limits,
         document_limits,
         subject,
@@ -370,14 +373,18 @@ fn every_scheduler(
         UnboundedError::MissingReward => not_yet(),
         other => unbounded_failure(other, limits, subject),
     };
-    let (values, policy) = if claim.fairness.is_empty() {
+    let (values, policy, solution) = if claim.fairness.is_empty() {
         match decide_long_run_mdp(product, predicate, None, objective, limits) {
-            Ok(solution) => (solution.values, solution.policy),
+            Ok(solution) => (
+                solution.values.clone(),
+                solution.policy.clone(),
+                Some(solution),
+            ),
             Err(error) => return stopped(error),
         }
     } else {
         match decide_fair_long_run_mdp(product, predicate, None, bound, limits) {
-            Ok(solution) => (solution.values, Some(solution.deterministic)),
+            Ok(solution) => (solution.values, Some(solution.deterministic), None),
             Err(FairProductError::Product(error)) => return stopped(error),
             Err(_) => return not_yet(),
         }
@@ -396,8 +403,50 @@ fn every_scheduler(
         Bound::AtMost(threshold) => value <= threshold,
     };
     if holds {
-        // The holds side is FR-412-AC-26's per-component policy certificate.
-        return not_yet();
+        // FR-412-AC-26: the per-component policy certificate. Under a fairness
+        // set the holds side needs FR-1041's progress ranking, which no
+        // long-run member carries, so it stays unsupported.
+        let (Some(solution), Some(policy)) = (solution, policy) else {
+            return not_yet();
+        };
+        let certificate =
+            match super::candidate::values(product, binding, &solution.values, candidate) {
+                Ok(certificate) => certificate,
+                Err(error) => return document_failure(error, subject),
+            };
+        let components = match components(
+            product,
+            binding,
+            &solution,
+            Some((system, &policy)),
+            candidate,
+        ) {
+            Ok(components) => components,
+            Err(error) => return document_failure(error, subject),
+        };
+        let bytes = long_run_probability_certificate_document(
+            system,
+            claims,
+            item,
+            certificate.values.clone(),
+            components,
+            document_limits,
+            cancel,
+        )
+        .and_then(|document| {
+            write_long_run_probability_certificate(&document, document_limits, cancel)
+        });
+        let checked = bytes.and_then(|bytes| {
+            check_probability_certificate_document(
+                system,
+                claims,
+                item,
+                &bytes,
+                document_limits,
+                cancel,
+            )
+        });
+        return checked_report(checked, certificate, claim_binding, None, subject);
     }
     let Some(policy) = policy else {
         return broken();
@@ -490,7 +539,13 @@ fn every_scheduler(
     }
     evidence.components = kept_components;
     evidence.gain_bias = kept_gain_bias;
-    let components = match components(product, binding, &evidence, candidate) {
+    let components = match components(
+        product,
+        binding,
+        &evidence,
+        Some((system, &policy)),
+        candidate,
+    ) {
         Ok(components) => components,
         Err(error) => return document_failure(error, subject),
     };
@@ -633,8 +688,12 @@ fn components(
     product: &ProbProduct,
     binding: Option<&ObjectReference>,
     solution: &LongRunResult,
+    // Under every scheduler: the system and the policy each component's rows
+    // name the actions of.
+    policy: Option<(&ModelSystem<'_>, &[Option<usize>])>,
     budget: &mut CandidateBudget<'_>,
 ) -> Result<Vec<LongRunProbabilityComponent>, ProbabilityDocumentError> {
+    use crate::exact_probabilistic::{policy_action, ProductAction};
     if solution.components.len() != solution.gain_bias.len() {
         return Err(ProbabilityDocumentError::Malformed);
     }
@@ -697,10 +756,46 @@ fn components(
                 _ => return Err(ProbabilityDocumentError::Malformed),
             };
         }
+        let policy = match policy {
+            None => None,
+            Some((system, selected)) => {
+                let mut rows = Vec::with_capacity(component.states.len());
+                for state in &component.states {
+                    let choice = match policy_action(product, *state, selected) {
+                        Some(ProductAction::Identity(identity)) => {
+                            fsl_replay::ProductAction::Identity(
+                                fsl_replay::Schedule::of(system, &identity)
+                                    .map_err(|_| ProbabilityDocumentError::Unsupported)?,
+                            )
+                        }
+                        Some(ProductAction::TerminalStutter) | None => {
+                            fsl_replay::ProductAction::TerminalStutter
+                        }
+                        Some(_) => return Err(ProbabilityDocumentError::Unsupported),
+                    };
+                    let model = product
+                        .states
+                        .get(state.index())
+                        .ok_or(ProbabilityDocumentError::Malformed)?;
+                    rows.push(fsl_replay::LongRunPolicyRow {
+                        state: budget.key(binding, &model.model)?,
+                        choice,
+                    });
+                }
+                sort(
+                    &mut rows,
+                    |row| &row.state,
+                    &mut budget.meter,
+                    budget.cancel,
+                )?;
+                Some(rows)
+            }
+        };
         components.push(LongRunProbabilityComponent {
             value: component.rho.clone(),
             gain: evidence.gain.clone(),
             bias,
+            policy,
         });
     }
     sort(
