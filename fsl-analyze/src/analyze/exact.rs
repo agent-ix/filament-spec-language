@@ -2852,6 +2852,9 @@ fn replay_produced_witness(
         let Some(state) = product.states.get(state.index()) else {
             return broken();
         };
+        if matches!(&entry, ProductAction::TerminalStutter) {
+            continue;
+        }
         let key = match key_of(state) {
             Ok(key) => key,
             Err(error) => return document_failure(error, subject),

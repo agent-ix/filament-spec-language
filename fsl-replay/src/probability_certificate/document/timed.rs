@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
 use num_traits::Zero;
-use serde_json::{Value as JsonValue, json};
+use serde_json::{json, Value as JsonValue};
 
 mod elapsed;
 
@@ -411,7 +411,7 @@ fn check_mean_time_values(
             ProbabilityObjective::Workload
             | ProbabilityObjective::WorkloadMinimum
             | ProbabilityObjective::WorkloadMaximum => {
-                return Err(ProbabilityDocumentError::Unsupported);
+                return Err(ProbabilityDocumentError::Unsupported)
             }
         }
         .unwrap_or_else(zero);
@@ -471,7 +471,7 @@ fn check_mean_time_values(
             ProbabilityObjective::Workload
             | ProbabilityObjective::WorkloadMinimum
             | ProbabilityObjective::WorkloadMaximum => {
-                return Err(ProbabilityDocumentError::Unsupported);
+                return Err(ProbabilityDocumentError::Unsupported)
             }
         };
         for (choice_index, choice) in state.choices.iter().enumerate() {
@@ -1047,10 +1047,10 @@ fn mean_target(
     match readings.as_slice() {
         [fsl_eval::simulation::model::PredicateReading::True] => Ok(true),
         [fsl_eval::simulation::model::PredicateReading::False] => Ok(false),
-        [
-            fsl_eval::simulation::model::PredicateReading::Undefined { .. }
-            | fsl_eval::simulation::model::PredicateReading::Refused(_),
-        ] => Err(ProbabilityDocumentError::Unsupported),
+        [fsl_eval::simulation::model::PredicateReading::Undefined { .. }
+        | fsl_eval::simulation::model::PredicateReading::Refused(_)] => {
+            Err(ProbabilityDocumentError::Unsupported)
+        }
         _ => Err(ProbabilityDocumentError::Unsupported),
     }
 }
@@ -4358,7 +4358,11 @@ impl Payoff<'_> {
             Self::Deadline { failing, .. } => verdict == !*failing,
             Self::Elapsed { violating, .. } => violating.contains(key),
         };
-        if counted { one() } else { zero() }
+        if counted {
+            one()
+        } else {
+            zero()
+        }
     }
 
     fn activation(&self, key: &ProbabilityProductKey) -> Rational {
@@ -4407,7 +4411,7 @@ fn price_paths(
             Ok(())
         }
     };
-    let covers = |choice: &Vec<ProbabilityEdge>, target: &ProbabilityProductKey| {
+    let covers = |choice: &[ProbabilityEdge], target: &ProbabilityProductKey| {
         choice
             .iter()
             .any(|edge| &edge.target == target && edge.probability > zero())
@@ -4465,6 +4469,80 @@ fn price_paths(
         memo.insert(key, value.clone());
         Ok(value)
     }
+    #[allow(clippy::too_many_arguments)]
+    fn witness_path_mass<'a>(
+        graph: &'a CheckerGraph,
+        used: &BTreeMap<ProbabilityProductKey, BTreeSet<ProbabilityProductKey>>,
+        payoff: &Payoff<'_>,
+        key: &'a ProbabilityProductKey,
+        chosen: &mut BTreeMap<ProbabilityProductKey, usize>,
+        memo: &mut BTreeMap<&'a ProbabilityProductKey, Rational>,
+        on_path: &mut BTreeSet<&'a ProbabilityProductKey>,
+        cancel: &Cancel,
+        check_bits: &dyn Fn(&Rational) -> Result<(), Error>,
+        covers: &dyn Fn(&[ProbabilityEdge], &ProbabilityProductKey) -> bool,
+    ) -> Result<Option<Rational>, Error> {
+        if let Some(value) = memo.get(key) {
+            return Ok(Some(value.clone()));
+        }
+        poll(cancel).map_err(|_| Error::Graph(ExactProbabilityGraphError::LimitReached))?;
+        let state = graph.states.get(key).ok_or(Error::Refused)?;
+        if let Some(verdict) = state.terminal {
+            let value = payoff.weight(key, verdict);
+            memo.insert(key, value.clone());
+            return Ok(Some(value));
+        }
+        if !on_path.insert(key) {
+            return Ok(None);
+        }
+        let Some(targets) = used.get(key) else {
+            on_path.remove(key);
+            memo.insert(key, zero());
+            return Ok(Some(zero()));
+        };
+        let mut child_values = BTreeMap::new();
+        for target in targets {
+            let Some(value) = witness_path_mass(
+                graph,
+                used,
+                payoff,
+                target,
+                chosen,
+                memo,
+                on_path,
+                cancel,
+                check_bits,
+                covers,
+            )? else {
+                on_path.remove(key);
+                return Ok(None);
+            };
+            child_values.insert(target, value);
+        }
+        let mut best: Option<(usize, Rational)> = None;
+        for (index, choice) in state.choices.iter().enumerate() {
+            if !targets.iter().all(|target| covers(choice, target)) {
+                continue;
+            }
+            let mut total = zero();
+            for edge in choice.iter().filter(|edge| edge.probability > zero()) {
+                if let Some(value) = child_values.get(&edge.target) {
+                    total = total.add(&edge.probability.mul(value));
+                    check_bits(&total)?;
+                }
+            }
+            if best.as_ref().is_none_or(|(_, value)| total > *value) {
+                best = Some((index, total));
+            }
+        }
+        on_path.remove(key);
+        let Some((index, value)) = best else {
+            return Ok(None);
+        };
+        chosen.insert(key.clone(), index);
+        memo.insert(key, value.clone());
+        Ok(Some(value))
+    }
     // The choices and the mass a set of paths selects. `None` when a path is
     // not a distinct walk to the forbidden decided state (a Parity case).
     let solve = |paths: &[usize]| -> Result<
@@ -4484,43 +4562,49 @@ fn price_paths(
                 if state.terminal.is_some() {
                     return Err(Error::Refused);
                 }
-                used.entry(at.clone()).or_default().insert(step.clone());
+                used.entry(at.clone())
+                    .or_default()
+                    .insert(step.clone());
                 sequence.push(step.clone());
                 at = step.clone();
             }
             let end = graph.states.get(&at).ok_or(Error::Refused)?;
             if sequence.is_empty() || !payoff.ends(&at, end.terminal) {
-                eprintln!(
-                    "timed witness debug: path endpoint {at:?} terminal {:?} len {}",
-                    end.terminal,
-                    sequence.len()
-                );
                 return Ok(None);
             }
             if !seen.insert(sequence) {
                 return Ok(None);
             }
         }
-        // One choice per visited state: the one the paths cover most (the first
-        // on a tie).
         let mut chosen: BTreeMap<ProbabilityProductKey, usize> = BTreeMap::new();
-        for (key, targets) in &used {
-            let state = graph.states.get(key).ok_or(Error::Refused)?;
-            let mut best: Option<(usize, usize)> = None;
-            let mut coverage = Vec::with_capacity(state.choices.len());
-            for (position, choice) in state.choices.iter().enumerate() {
-                let covered = targets
-                    .iter()
-                    .filter(|target| covers(choice, target))
-                    .count();
-                coverage.push(covered);
-                if best.is_none_or(|(_, most)| covered > most) {
-                    best = Some((position, covered));
-                }
+        if matches!(payoff, Payoff::Deadline { .. }) {
+            let Some(path_mass) = witness_path_mass(
+                graph,
+                &used,
+                payoff,
+                &graph.initial,
+                &mut chosen,
+                &mut BTreeMap::new(),
+                &mut BTreeSet::new(),
+                cancel,
+                &limit_bits,
+                &covers,
+            )? else {
+                return Ok(None);
+            };
+            if !payoff.refutes(&path_mass, &zero()) {
+                return Ok(None);
             }
-            let (index, covered) = best.ok_or(Error::Refused)?;
-            eprintln!("timed witness debug: targets={} choices={} coverage={coverage:?}, selected {index} covers {covered}", targets.len(), state.choices.len());
-            chosen.insert(key.clone(), index);
+        } else {
+            for (key, targets) in &used {
+                let state = graph.states.get(key).ok_or(Error::Refused)?;
+                let index = state
+                    .choices
+                    .iter()
+                    .position(|choice| targets.iter().all(|target| covers(choice, target)))
+                    .ok_or(Error::Refused)?;
+                chosen.insert(key.clone(), index);
+            }
         }
         let priced = |weight: &dyn Fn(&ProbabilityProductKey, bool) -> Rational| {
             mass_of(
@@ -4547,9 +4631,7 @@ fn price_paths(
         let Some((chosen, mass, activation)) = solve(&kept)? else {
             return Ok(None);
         };
-        eprintln!("timed witness debug: mass {mass:?}, activation {activation:?}");
         if !payoff.refutes(&mass, &activation) {
-            eprintln!("timed witness debug: bound not refuted");
             return Ok(None);
         }
         let before = kept.len();
@@ -4567,7 +4649,6 @@ fn price_paths(
             })
         });
         if kept.is_empty() {
-            eprintln!("timed witness debug: no paths reproduced");
             return Ok(None);
         }
         if kept.len() == before {
