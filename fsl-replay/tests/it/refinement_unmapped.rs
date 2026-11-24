@@ -1062,13 +1062,26 @@ fn an_inherited_operation_row_lifts_its_receiver_against_its_target_subtype() {
                 .to_owned()
         };
         assert_eq!(
-            step_target_type("Slot::take"),
+            step_target_type("Slot::put"),
             "ix://example/ring-queue-spec/FastQueue"
         );
         assert_eq!(
-            step_target_type("Slot::take2"),
+            step_target_type("Slot::put2"),
             "ix://example/ring-queue-spec/SlowQueue"
         );
+        for operation in ["Slot::put", "Slot::put2"] {
+            let step = refinement["body"]["steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|step| {
+                    step["source_class"]
+                        .as_str()
+                        .is_some_and(|source| source.ends_with(operation))
+                })
+                .unwrap();
+            assert_eq!(step["target"]["arguments"].as_array().unwrap().len(), 1);
+        }
 
         let read = fsl_package::read_evaluation_emission(
             world.package(),
@@ -1127,7 +1140,7 @@ fn an_inherited_operation_row_lifts_its_receiver_against_its_target_subtype() {
             .expect("the state maps through package readback")
             .visible
         };
-        for (operation, subtype) in [("Slot/take", "FastQueue"), ("Slot/take2", "SlowQueue")] {
+        for (operation, subtype) in [("Slot/put", "FastQueue"), ("Slot/put2", "SlowQueue")] {
             let identity =
                 operation_identity_text(&key(RING, operation)).expect("an identity text");
             let (transition, reached) = concrete
@@ -1161,6 +1174,13 @@ fn an_inherited_operation_row_lifts_its_receiver_against_its_target_subtype() {
                 panic!("{operation} takes an abstract step");
             };
             assert_eq!(taken.len(), 1);
+            let [source_argument] = transition.arguments() else {
+                panic!("{operation} has one source argument");
+            };
+            let [abstract_argument] = taken[0].arguments() else {
+                panic!("{operation} has one lifted abstract argument");
+            };
+            assert_eq!(abstract_argument, source_argument);
             let receiver: serde_json::Value =
                 serde_json::from_str(taken[0].receiver().expect("a receiver")).expect("JSON");
             assert_eq!(
@@ -1191,10 +1211,10 @@ fn subtype_refinement(objects: [&str; 2], targets: [&str; 2]) -> String {
          population Q::slows from R::rings;\n\
          {first}\n{second}\n\
          object Q::SlowQueue from R::Ring {{ {slow_items} }}\n\
-         step R::Slot::put -> stutter;\n\
-         step R::Slot::put2 -> stutter;\n\
-         step R::Slot::take -> {put}::deq(self.ring);\n\
-         step R::Slot::take2 -> {put2}::deq(self.ring);\n\
+         step R::Slot::put -> {put}::enq(self.ring, x);\n\
+         step R::Slot::put2 -> {put2}::enq(self.ring, x);\n\
+         step R::Slot::take -> stutter;\n\
+         step R::Slot::take2 -> stutter;\n\
          }}"
     )
 }

@@ -362,21 +362,30 @@ impl<'a> PackageRefinement<'a> {
                 } => {
                     let abstract_operation = operation(package, input, local(target)?)?;
                     let target_type = object_key(package, local(target_type)?)?;
-                    if arguments.iter().any(|argument| {
-                        matches!(
-                            argument,
-                            filament_contract_model::RefinementStepArgument::Open(_)
-                        )
-                    }) {
-                        return Err(unsupported("open step arguments"));
-                    }
-                    if !concrete.parameters.is_empty() || !abstract_operation.parameters.is_empty()
+                    if concrete.parameters.len() != abstract_operation.parameters.len()
+                        || arguments.len() != abstract_operation.parameters.len()
                     {
-                        return Err(unsupported("mapping operation parameters"));
-                    }
-                    if !arguments.is_empty() {
                         return Err(unsupported("step argument arity"));
                     }
+                    let arguments = arguments
+                        .iter()
+                        .map(|argument| {
+                            let filament_contract_model::RefinementStepArgument::Term(term) =
+                                argument
+                            else {
+                                return Err(unsupported("open step arguments"));
+                            };
+                            Ok(Expression {
+                                world,
+                                projection: package.project_refinement_step_argument(
+                                    term,
+                                    receiver,
+                                    step_region,
+                                    world,
+                                )?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, PackageRefinementRefusal>>()?;
                     Target::Operation {
                         key: abstract_operation.key.clone(),
                         target_type,
@@ -388,7 +397,7 @@ impl<'a> PackageRefinement<'a> {
                                 world,
                             )?,
                         },
-                        arguments: Vec::new(),
+                        arguments,
                         binds_result: concrete.result.is_some()
                             && abstract_operation.result.is_some(),
                     }
