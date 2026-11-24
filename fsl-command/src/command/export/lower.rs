@@ -61,6 +61,7 @@ enum Kind {
         hi: Option<String>,
     },
     Bool,
+    Float64,
     Enum {
         id: String,
         name: String,
@@ -163,6 +164,7 @@ fn kind_of(type_ref: &str, values: &BTreeMap<String, Kind>) -> Lower<Kind> {
     match type_ref {
         "ix://filament/native/Integer" => Ok(Kind::Int { lo: None, hi: None }),
         "ix://filament/native/Boolean" => Ok(Kind::Bool),
+        "ix://filament/native/Float64" => Ok(Kind::Float64),
         other => values.get(other).cloned().map_or_else(
             || {
                 refuse(
@@ -380,12 +382,14 @@ enum Op {
     Implies,
     EqBool,
     NeBool,
+    EqFloat,
 }
 
 #[derive(Clone, PartialEq)]
 enum E {
     Int(String),
     Bool(bool),
+    Float64Bits(String),
     Enum {
         owner: String,
         case: String,
@@ -398,6 +402,7 @@ enum E {
         primed: bool,
     },
     Neg(Box<E>),
+    FloatNeg(Box<E>),
     Not(Box<E>),
     Bin(Op, Box<E>, Box<E>),
     Conj(Vec<E>),
@@ -457,6 +462,7 @@ impl Lowerer<'_> {
         let value = &term["value"];
         let value = match str_of(term, "value_kind") {
             Some("integer") => value.as_str().map(|text| E::Int(text.to_owned())),
+            Some("float64_bits") => value.as_str().map(|bits| E::Float64Bits(bits.to_owned())),
             Some("boolean") => value
                 .as_bool()
                 .or_else(|| value.as_str().map(|text| text == "true"))
@@ -575,6 +581,7 @@ impl Lowerer<'_> {
             "filament.op.boolean.implies" => Some(Op::Implies),
             "filament.op.boolean.eq" => Some(Op::EqBool),
             "filament.op.boolean.ne" => Some(Op::NeBool),
+            "filament.op.ieee.numeric_equal" => Some(Op::EqFloat),
             _ => None,
         };
         if let Some(op) = op {
@@ -609,6 +616,13 @@ impl Lowerer<'_> {
                 };
                 Ok(Low {
                     value: wrap(Box::new(inner.value)),
+                    defined: inner.defined,
+                })
+            }
+            "filament.op.ieee.float64.negate" => {
+                let inner = self.argument(construct, body, 0, primed)?;
+                Ok(Low {
+                    value: E::FloatNeg(Box::new(inner.value)),
                     defined: inner.defined,
                 })
             }
@@ -800,6 +814,44 @@ fn int_text(value: &str) -> String {
     }
 }
 
+/// FR-812's lossless binary64 representation. Finite values retain their
+/// sign, integer significand and power-of-two exponent; NaNs retain all bits.
+fn float64_value(bits: &str, target: Target) -> String {
+    let Some(value) = u64::from_str_radix(bits, 16).ok() else {
+        return "[tag |-> \"nan\", bits |-> \"0000000000000000\"]".to_owned();
+    };
+    let (sign, lean_sign) = if value >> 63 == 0 {
+        ("positive", "false")
+    } else {
+        ("negative", "true")
+    };
+    let exponent = (value >> 52) & 0x7ff;
+    let fraction = value & ((1_u64 << 52) - 1);
+    if exponent == 0x7ff && fraction != 0 {
+        return match target {
+            Target::Tla => format!("[tag |-> \"nan\", bits |-> \"{bits}\"]"),
+            Target::Lean => format!("F.nan \"{bits}\""),
+        };
+    }
+    if exponent == 0x7ff {
+        return match target {
+            Target::Tla => format!("[tag |-> \"inf\", sign |-> \"{sign}\"]"),
+            Target::Lean => format!("F.inf {lean_sign}"),
+        };
+    }
+    let (significand, power) = if exponent == 0 {
+        (fraction, -1074_i32)
+    } else {
+        ((1_u64 << 52) | fraction, exponent as i32 - 1075)
+    };
+    match target {
+        Target::Tla => format!(
+            "[tag |-> \"finite\", sign |-> \"{sign}\", significand |-> {significand}, exponent |-> {power}]"
+        ),
+        Target::Lean => format!("F.finite {lean_sign} {significand} {power}"),
+    }
+}
+
 impl Show<'_> {
     fn exprs(&self, items: &[E]) -> Lower<Vec<String>> {
         items.iter().map(|item| self.expr(item)).collect()
@@ -809,6 +861,7 @@ impl Show<'_> {
         let tla = self.target == Target::Tla;
         Ok(match e {
             E::Int(value) => int_text(value),
+            E::Float64Bits(bits) => float64_value(bits, self.target),
             E::Bool(true) => if tla { "TRUE" } else { "True" }.to_owned(),
             E::Bool(false) => if tla { "FALSE" } else { "False" }.to_owned(),
             E::Enum { owner, case } => {
@@ -848,11 +901,12 @@ impl Show<'_> {
                     );
                     match field.kind {
                         Kind::Bool => format!("({read} = true)"),
-                        Kind::Int { .. } | Kind::Enum { .. } => read,
+                        Kind::Int { .. } | Kind::Float64 | Kind::Enum { .. } => read,
                     }
                 }
             }
             E::Neg(inner) => format!("(-{})", self.expr(inner)?),
+            E::FloatNeg(inner) => format!("F_float64_neg({})", self.expr(inner)?),
             E::Not(inner) => {
                 if tla {
                     format!("~{}", self.expr(inner)?)
@@ -862,6 +916,9 @@ impl Show<'_> {
             }
             E::Bin(op, left, right) => {
                 let (left, right) = (self.expr(left)?, self.expr(right)?);
+                if *op == Op::EqFloat {
+                    return Ok(format!("F_float64_eq({left}, {right})"));
+                }
                 match (op, tla) {
                     (Op::NeBool, true) => format!("~({left} <=> {right})"),
                     (Op::NeInt, false) => format!("(Ne {left} {right})"),
@@ -887,6 +944,7 @@ impl Show<'_> {
                             (Op::EqBool, true) => "<=>",
                             (Op::EqBool, false) => "<->",
                             (Op::NeBool, _) => "<=>",
+                            (Op::EqFloat, _) => "=",
                         };
                         format!("({left} {symbol} {right})")
                     }
@@ -1080,6 +1138,7 @@ fn range_conditions(path: &str, kind: &Kind, target: Target) -> Vec<String> {
             }
             out
         }
+        Kind::Float64 => vec![format!("{path} \\in F_float64_values")],
     }
 }
 
@@ -1100,6 +1159,7 @@ fn tla_domain(kind: &Kind) -> String {
             hi: Some(hi),
         } => format!("{}..{}", int_text(lo), int_text(hi)),
         Kind::Int { .. } => "Int".to_owned(),
+        Kind::Float64 => "F_float64_values".to_owned(),
     }
 }
 
@@ -1188,6 +1248,19 @@ pub(super) fn lower(
     let names: BTreeSet<&str> = objects.iter().map(|object| object.name.as_str()).collect();
     if names.len() != objects.len() {
         return refuse("model/object_type", "two exported types share one name");
+    }
+    if target == Target::Lean
+        && objects.iter().any(|object| {
+            object
+                .fields
+                .iter()
+                .any(|field| matches!(field.kind, Kind::Float64))
+        })
+    {
+        return refuse(
+            "model/type",
+            "Float64 fields are only mapped for the TLA+ target",
+        );
     }
     let mut lowerer = Lowerer {
         graph,
@@ -1374,6 +1447,7 @@ pub(super) fn lower(
 enum Lit {
     Int(String),
     Bool(bool),
+    Float64Bits(String),
     Enum { owner: String, case: String },
 }
 
@@ -1384,6 +1458,7 @@ impl Lit {
             (Self::Bool(true), Target::Tla) => "TRUE".to_owned(),
             (Self::Bool(false), Target::Tla) => "FALSE".to_owned(),
             (Self::Bool(value), Target::Lean) => value.to_string(),
+            (Self::Float64Bits(bits), target) => float64_value(bits, target),
             (Self::Enum { owner, case }, Target::Tla) => {
                 format!("\"{}\"", enum_member_name(owner, case))
             }
@@ -1414,6 +1489,10 @@ fn snapshot_rows(object: &Object, snapshot: &Value) -> Lower<Vec<(String, Vec<Li
                 let lit = match &field.kind {
                     Kind::Int { .. } => value["integer"].as_str().map(|n| Lit::Int(n.to_owned())),
                     Kind::Bool => value["boolean"].as_bool().map(Lit::Bool),
+                    Kind::Float64 => value["bits"]
+                        .as_str()
+                        .filter(|_| value["type"] == "float64")
+                        .map(|bits| Lit::Float64Bits(bits.to_owned())),
                     Kind::Enum { name, .. } => {
                         value["variant"]["case"].as_str().map(|case| Lit::Enum {
                             owner: name.clone(),
@@ -1499,6 +1578,56 @@ fn frame_fields<'a>(object: &'a Object, operation: &Operation) -> Vec<(&'a Field
 fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
     let target = Target::Tla;
     let objects = input.objects;
+    let has_float64 = objects.iter().any(|object| {
+        object
+            .fields
+            .iter()
+            .any(|field| matches!(field.kind, Kind::Float64))
+            || object.operations.iter().any(|operation| {
+                operation
+                    .params
+                    .iter()
+                    .any(|param| matches!(param.kind, Kind::Float64))
+            })
+    });
+    if has_float64 {
+        out.push(define(
+            input.first,
+            Some("F_float64_values".to_owned()),
+            "F_float64_values ==\n  [tag : {\"finite\"}, sign : {\"positive\", \"negative\"}, significand : 0..9007199254740991, exponent : -1074..971]\n  \\cup [tag : {\"inf\"}, sign : {\"positive\", \"negative\"}]\n  \\cup [tag : {\"nan\"}, bits : STRING]".to_owned(),
+            None,
+        ));
+        out.push(define(
+            input.first,
+            Some("F_float64_eq".to_owned()),
+            "F_float64_eq(a, b) ==\n  IF a.tag = \"nan\" \\/ b.tag = \"nan\" THEN FALSE\n  ELSE IF a.tag = \"finite\" /\\ b.tag = \"finite\" /\\ a.significand = 0 /\\ b.significand = 0 THEN TRUE\n  ELSE a = b".to_owned(),
+            None,
+        ));
+        let sign_cases = "0123456789abcdef"
+            .chars()
+            .enumerate()
+            .map(|(index, nibble)| format!("n = \"{nibble}\" -> \"{:x}\"", index ^ 8))
+            .collect::<Vec<_>>()
+            .join(" [] ");
+        out.push(define(
+            input.first,
+            Some("F_float64_flip_sign_nibble".to_owned()),
+            format!("F_float64_flip_sign_nibble(n) == CASE {sign_cases}"),
+            None,
+        ));
+        out.push(define(
+            input.first,
+            Some("F_float64_flip_nan_sign".to_owned()),
+            "F_float64_flip_nan_sign(bits) ==\n  F_float64_flip_sign_nibble(SubSeq(bits, 1, 1)) \\o SubSeq(bits, 2, Len(bits))".to_owned(),
+            None,
+        ));
+        out.push(define(
+            input.first,
+            Some("F_float64_neg".to_owned()),
+            "F_float64_neg(x) ==\n  IF x.tag = \"nan\"\n  THEN [x EXCEPT !.bits = F_float64_flip_nan_sign(@)]\n  ELSE [x EXCEPT !.sign = IF @ = \"positive\" THEN \"negative\" ELSE \"positive\"]".to_owned(),
+            None,
+        ));
+    }
     let variables: Vec<String> = objects
         .iter()
         .map(Object::variable)
@@ -1754,6 +1883,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                 let ty = match &field.kind {
                     Kind::Int { .. } => "Int".to_owned(),
                     Kind::Bool => "Bool".to_owned(),
+                    Kind::Float64 => "F".to_owned(),
                     Kind::Enum { name, .. } => enum_type_name(name),
                 };
                 format!("  {} : {ty}", object.field(field))
@@ -1773,6 +1903,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                 let value = match &field.kind {
                     Kind::Int { .. } => "0".to_owned(),
                     Kind::Bool => "false".to_owned(),
+                    Kind::Float64 => "F.finite false 0 0".to_owned(),
                     Kind::Enum { name, cases, .. } => cases.first().map_or_else(
                         || "".to_owned(),
                         |case| format!("{}.{}", enum_type_name(name), enum_member_name(name, case)),
@@ -1933,6 +2064,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
                         None => "List Nat".to_owned(),
                         Some(Kind::Bool) => "Bool".to_owned(),
                         Some(Kind::Int { .. }) => "Int".to_owned(),
+                        Some(Kind::Float64) => "F".to_owned(),
                         Some(Kind::Enum { name, .. }) => enum_type_name(name),
                     };
                     format!("({param} : {ty})")
