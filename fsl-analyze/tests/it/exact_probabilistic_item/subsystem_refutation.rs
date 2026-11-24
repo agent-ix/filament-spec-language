@@ -615,6 +615,57 @@ fn an_every_scheduler_eventually_without_random_is_refuted_by_event_avoidance() 
     certificate_rejected(&changed, CertificateRule::InequalityFails, &down);
 }
 
+/// An unwindowed `always` under a workload whose calls fail 1 time in 1,000
+/// has exact value 0: the path masses `(999/1000)^n` of a path-set search
+/// never close the gap, so the claim is refuted by the rejecting-union
+/// `lower` certificate over the cyclic chain instead, with no path.
+#[trace("TC-3162", "FR-202-AC-36")]
+#[test]
+fn a_rarely_failing_workload_always_is_refuted_by_its_rejecting_union() {
+    let world = World::new(&architecture(
+        true,
+        &format!(
+            "random Service::call(ok) ~ {{ true: 999, false: 1 }};\n\
+             workload Traffic on M {{ weight Service::call = 1; }}\n{}",
+            claim(
+                "StaysUp",
+                "Traffic",
+                "probability >= 0.99 [ always holds(s.up) ]"
+            ),
+        ),
+    ));
+    let (up, down) = keys(&world, "StaysUp");
+    let record = refuted(&world, "StaysUp");
+    decisive(&record);
+    let found = evidence(&record);
+    assert!(found.scheduler.is_empty());
+    assert!(found.paths.is_empty());
+    let doc = document(&found);
+    assert_eq!(doc["kind"], "lower");
+    assert_eq!(doc["objective"]["base"]["event"], "always");
+    let mut expected = vec![(up.clone(), q(1, 1), 1), (down.clone(), q(1, 1), 0)];
+    expected.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        doc["values"],
+        Value::Array(
+            expected
+                .iter()
+                .map(|(key, value, _)| json!({"state": encoded(key), "value": value}))
+                .collect()
+        )
+    );
+    assert_eq!(
+        doc["ranking"],
+        Value::Array(
+            expected
+                .iter()
+                .map(|(key, _, rank)| json!({"state": encoded(key), "rank": rank}))
+                .collect()
+        )
+    );
+    reproduced(replay(&world, &found));
+}
+
 /// FSpec FR-412-AC-24's chain: `s` reaches event `e` and the self-looping
 /// event-free `a` with probability 1/2 each.
 fn split(claims: &str) -> prob_world::Model {
