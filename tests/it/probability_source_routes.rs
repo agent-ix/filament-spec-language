@@ -52,8 +52,7 @@ fn original_probability_forms_compile_under_every_scheduler() {
         let file = corpus(&format!("{name}.native"));
         let output = command::compile_outcome(&write(directory.path(), &request(&file)))
             .unwrap_or_else(|error| panic!("{name}: {error}"));
-        let package: Value =
-            serde_json::from_slice(output.package_bytes()).expect("checked package JSON");
+        let package = crate::support::resolved_package(output.package_bytes());
         let nodes = package["semantic_graph"]["nodes"]
             .as_array()
             .expect("semantic graph");
