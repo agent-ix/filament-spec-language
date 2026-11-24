@@ -79,6 +79,8 @@ pub(crate) fn read_object(node: CheckedNode<'_>) -> Option<EffectiveId> {
         | NodeKind::Order(..)
         | NodeKind::IeeeToRational(..)
         | NodeKind::ConvertScalar(..)
+        | NodeKind::BytesLength(..)
+        | NodeKind::BytesConcat(..)
         | NodeKind::Equality(..)
         | NodeKind::IeeeNumericEquality(..)
         | NodeKind::Literal(_)

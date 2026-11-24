@@ -9,10 +9,21 @@
 //! the library and returns the typed outcome and its exit code. The driver
 //! repository can run the same cases through its CLI and compare; this crate
 //! holds the only copy of a case.
+//!
+#![cfg_attr(
+    not(feature = "test-support"),
+    doc = "```compile_fail\nuse fsl_conformance::run_parity_with_reference;\n```"
+)]
+#![cfg_attr(
+    feature = "test-support",
+    doc = "```\nuse fsl_conformance::{run_parity_with_reference, BackendEntry, ParityInputs, ParityLimits};\nuse fsl_eval::execution::SuppliedBackend;\nuse filament_exact::Cancel;\nfn control(reference: &dyn SuppliedBackend, backends: &[BackendEntry<'_>], inputs: &ParityInputs, limits: &ParityLimits, cancel: &Cancel) {\n    let _ = run_parity_with_reference(reference, backends, inputs, limits, cancel);\n}\n```"
+)]
 
 mod cases;
 mod fault_backend;
+mod deep_json;
 mod matrix;
+mod parity;
 mod run;
 
 pub use matrix::{
@@ -25,3 +36,9 @@ pub use run::{run_case, run_case_with, CaseError, CaseOutcome, CaseStage, Report
 
 pub use cases::{lifecycle_matrix, task_set_case};
 pub use fault_backend::FaultInjectingBackend;
+#[cfg(feature = "test-support")]
+pub use parity::{run_parity_with_reference, ParityClauseCase};
+pub use parity::{
+    run_parity, BackendEntry, BackendReport, Finding, FindingKind, ParityInputs, ParityLimits,
+    ParityMember, ParityRefusal, ParityReport, SourceFile, UnsupportedRecord, DEFAULT_PARITY_SEED,
+};

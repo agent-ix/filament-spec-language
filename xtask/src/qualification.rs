@@ -558,6 +558,17 @@ pub(crate) fn execute_with_parts(
     operands: &[OsString],
     matrix: Option<&[fsl_conformance::MatrixCell]>,
 ) -> Result<Execution> {
+    execute_with_parts_and_parity(fspec, operands, matrix, None)
+}
+
+/// Execute with an optional test-only parity runner. Production callers pass
+/// `None`; test-support substitution does not enter the command-line parser.
+pub(crate) fn execute_with_parts_and_parity(
+    fspec: &Path,
+    operands: &[OsString],
+    matrix: Option<&[fsl_conformance::MatrixCell]>,
+    parity_runner: Option<&dyn Fn(&Path) -> Result<crate::qualify::PartReport>>,
+) -> Result<Execution> {
     let PreparedCorpus {
         args,
         limits,
@@ -646,7 +657,12 @@ pub(crate) fn execute_with_parts(
         },
         failures: corpus_failures,
     }];
-    parts.extend(crate::qualify::lifecycle_and_parity_parts(matrix));
+    parts.push(crate::qualify::lifecycle_part(matrix));
+    parts.push(if let Some(runner) = parity_runner {
+        runner(&corpus_root)?
+    } else {
+        crate::qualify::parity_part(&corpus_root)?
+    });
     let qualified = parts.iter().all(crate::qualify::PartReport::passed);
     let report = Report {
         fsl_version: filament_spec_language::VERSION,

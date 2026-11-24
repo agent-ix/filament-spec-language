@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "xtask", "tools/arch-lint", "tools/fsl-probability-check", "tools/fsl-hybrid-test-provider", "fsl-walk-grow", "fsl-foundation", "fsl-cst", "fsl-command", "fsl-conformance", "fsl-replay", "fsl-source", "fsl-forms", "fsl-semantics", "fsl-package", "fsl-route", "fsl-eval", "fsl-analyze", "fsl-hybrid-reference", "fsl-inspect", "fsl-bench", "fsl-proptest-policy", "fsl-string-edge", "tests/fixtures/checked-closure-consumer", "tests/fixtures/hyper-query-consumer", "tests/fixtures/facade-contract-consumer", "tests/fixtures/smt-proof-consumer"]
+members = [".", "xtask", "tools/arch-lint", "tools/fsl-probability-check", "tools/fsl-hybrid-test-provider", "fsl-walk-grow", "fsl-foundation", "fsl-cst", "fsl-command", "fsl-conformance", "fsl-replay", "fsl-source", "fsl-forms", "fsl-semantics", "fsl-package", "fsl-route", "fsl-eval", "fsl-analyze", "fsl-hybrid-reference", "fsl-jit", "fsl-inspect", "fsl-bench", "fsl-proptest-policy", "fsl-string-edge", "tests/fixtures/checked-closure-consumer", "tests/fixtures/hyper-query-consumer", "tests/fixtures/facade-contract-consumer", "tests/fixtures/smt-proof-consumer"]
 resolver = "2"
 # A cargo-fuzz crate with its own workspace; fuzz/Cargo.toml says why.
 exclude = ["fuzz"]
@@ -22,10 +22,10 @@ filament-walk = { git = "https://github.com/agent-ix/filament-walk", tag = "v0.1
 # repository so IR, RT and CG depend on it without the FSL repo. Only
 # `fsl-semantics` requests `construct` in its manifest; Cargo unifies the
 # feature across the workspace build.
-filament-checked = { git = "https://github.com/agent-ix/filament-eval", rev = "b50cfacb80459d5f1fb3b8deeafc63222db69401" }
+filament-checked = { git = "https://github.com/agent-ix/filament-eval", rev = "ab921ef1ca541282eec5f3b31c029a957cd65f7b" }
 # ADR-011 §6.1 layer E: the shared evaluation-core interface (FR-262, FR-401),
 # its own repository so RT and CG depend on it without the FSL repo.
-filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "b50cfacb80459d5f1fb3b8deeafc63222db69401" }
+filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "ab921ef1ca541282eec5f3b31c029a957cd65f7b" }
 # IR-owned staged identity, operation-member, and model-enum witness joins.
 filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "4f0b908a5c8077458e4748509284704b9025493f" }
 # Observation's checked-value vocabulary aligned to the same exact/semantic-value revisions.

@@ -18,6 +18,7 @@ mod hyper_product_identity;
 mod hyper_smt_encoding_limits;
 mod matrix_shape;
 mod monitor_row;
+mod parity;
 mod plugin_invariance;
 mod prove_row;
 #[path = "../../../tests/support/published_fspec.rs"]

@@ -4315,6 +4315,24 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 let outer = self.pop_collection()?;
                 collections::flatten(node.value_type(), &outer, self.meter).map_err(lift)?
             }
+            NodeKind::BytesLength(_) => {
+                let Value::Bytes(bytes) = self.pop()? else {
+                    return Err(invariant("bytes-length-operand-expected"));
+                };
+                retain_scalar(Value::Integer(Integer::from(bytes.len())), self.meter)?
+            }
+            NodeKind::BytesConcat(_, _) => {
+                let Value::Bytes(right) = self.pop()? else {
+                    return Err(invariant("bytes-concat-right-operand-expected"));
+                };
+                let Value::Bytes(mut left) = self.pop()? else {
+                    return Err(invariant("bytes-concat-left-operand-expected"));
+                };
+                left.try_reserve(right.len())
+                    .map_err(|_| invariant("bytes-concat-allocation-failed"))?;
+                left.extend_from_slice(&right);
+                Value::Bytes(left)
+            }
             NodeKind::Size(_) => {
                 let operand = self.pop()?;
                 if let Value::Collection(collection) = &operand {
@@ -6098,6 +6116,20 @@ mod carried_sum;
 #[cfg(test)]
 mod invariants;
 mod text_conversion;
+
+/// Convert an admitted text value using the same bounded, metered adapter as
+/// checked expression evaluation.
+///
+/// Backends that execute checked `ConvertText` nodes use this adapter for the
+/// canonical parser, domain checks, accounting charges, and loss result.
+pub fn convert_text_value(
+    types: &TypeEnvironment,
+    target: &ValueType,
+    source: &Value,
+    meter: &mut Meter,
+) -> Result<(Value, Option<ValueLoss>), Stop> {
+    text_conversion::convert(types, &UnitScope::new(types.units()), target, source, meter)
+}
 
 pub(super) mod node_source;
 pub(super) mod reader_source;

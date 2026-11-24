@@ -21,7 +21,7 @@ use fsl_foundation::diagnostic::Code;
 use fsl_package::{EnumScope, SourceEnumCatalog, SourceEnumCatalogError};
 use fsl_semantics::check::EnumBinding;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use serde_json::{Map, Value as Json, json};
+use serde_json::{json, Map, Value as Json};
 
 #[cfg(test)]
 mod accounting_tests;
@@ -31,9 +31,9 @@ mod canonical;
 mod references;
 pub(crate) use crate::NormalizationReferenceBudget;
 pub(crate) use references::{
-    SuppliedReferenceAdmission, catalog_error_cause, catalog_error_code, catalog_refusal,
-    reference_cancel_cause, reference_error_cause, reference_error_code, reference_error_pointer,
-    reference_refusal, take_normalization_refusal, write_run_value,
+    catalog_error_cause, catalog_error_code, catalog_refusal, reference_cancel_cause,
+    reference_error_cause, reference_error_code, reference_error_pointer, reference_refusal,
+    take_normalization_refusal, write_run_value, SuppliedReferenceAdmission,
 };
 
 /// One argument defect: the catalog code and cause FR-650's table names, and
@@ -47,6 +47,36 @@ pub struct ArgumentDefect {
     /// The JSON pointer inside the argument's `value`; empty for the value
     /// itself.
     pub path: String,
+}
+
+/// Why the shared FR-650 checked-value adapter could not decode an input.
+#[derive(Debug)]
+pub enum RunValueDecodeError {
+    /// The form is not a value of the declared type.
+    Defect(ArgumentDefect),
+    /// An invariant of the checked declaration environment was broken.
+    Fault(&'static str),
+    /// The owner adapter refused an identity-bearing value.
+    Refusal(Box<super::RunRefusal>),
+}
+
+/// Decode one FR-650 value form with the same declaration-aware adapter used
+/// by the checked runtime call path.
+pub fn decode_run_value(
+    form: &Json,
+    value_type: &ValueType,
+    types: &TypeEnvironment,
+    enums: &[EnumBinding],
+    own_package: &str,
+) -> Result<Value, RunValueDecodeError> {
+    Forms::new(types, enums)
+        .in_world(own_package, None)
+        .read(form, value_type)
+        .map_err(|stop| match stop {
+            ReadStop::Defect(defect) => RunValueDecodeError::Defect(defect),
+            ReadStop::Fault(invariant) => RunValueDecodeError::Fault(invariant),
+            ReadStop::Refusal(refusal) => RunValueDecodeError::Refusal(refusal),
+        })
 }
 
 /// Why a read stopped.

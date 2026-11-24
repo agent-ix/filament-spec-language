@@ -495,6 +495,7 @@ fn is_scalar_application(node: CheckedNode<'_>) -> bool {
         | NodeKind::ConvertDecimal(..)
         | NodeKind::Order(..)
         | NodeKind::IeeeToRational(..) => true,
+        NodeKind::BytesLength(_) => true,
         NodeKind::ConvertScalar(target, operand) => {
             let source = node.at(*operand).value_type();
             scalar_conversion_target(target, source).is_some_and(|target| {

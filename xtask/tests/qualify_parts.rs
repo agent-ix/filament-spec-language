@@ -14,7 +14,7 @@ fn fspec_dir() -> TempDir {
     xtask::published_fspec::directory("proposals/")
 }
 
-fn inputs() -> (TempDir, QualifyInputs) {
+fn inputs<'a>() -> (TempDir, QualifyInputs<'a>) {
     let fspec = fspec_dir();
     let fixtures = fspec
         .path()
@@ -24,8 +24,44 @@ fn inputs() -> (TempDir, QualifyInputs) {
         operands: vec!["--corpus".into(), fixtures.into_os_string()],
         #[cfg(feature = "test-support")]
         matrix: None,
+        #[cfg(feature = "test-support")]
+        parity: None,
+        #[cfg(not(feature = "test-support"))]
+        _marker: std::marker::PhantomData,
     };
     (fspec, inputs)
+}
+
+#[cfg(feature = "test-support")]
+fn decimal_parity_fixture() -> TempDir {
+    use std::fs;
+
+    let directory = tempfile::tempdir().expect("decimal parity fixture");
+    fs::write(
+        directory.path().join("unit.native"),
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction echo using v(x: Decimal[-100, 100; 0, 2; nearest-even]): Decimal[-100, 100; 0, 2; nearest-even] pure { x }\n",
+    )
+    .expect("decimal source");
+    fs::write(
+        directory.path().join("call.json"),
+        r#"{"function":"echo","arguments":[{"kind":"decimal","coefficient":"15","scale":1}]}"#,
+    )
+    .expect("decimal call");
+    let corpus = serde_json::json!({"vectors":[{
+        "id":"rounding-run",
+        "applicability":{"consumer_types":["runtime"]},
+        "subject":{"consumer_type":"runtime","operation":"run"},
+        "input":{"files":[
+            {"kind":"source","path":"unit.native"},
+            {"kind":"call","path":"call.json"}
+        ]}
+    }]});
+    fs::write(
+        directory.path().join("complete-v1.json"),
+        serde_json::to_vec(&corpus).expect("corpus document"),
+    )
+    .expect("corpus document");
+    directory
 }
 
 fn report(outcome: &xtask::Outcome) -> Value {
@@ -39,6 +75,309 @@ fn part<'a>(report: &'a Value, name: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("the report names the part {name}: {report}"))
 }
 
+#[cfg(feature = "test-support")]
+#[derive(Clone, Copy)]
+struct RoundingBackend;
+
+#[cfg(feature = "test-support")]
+struct RoundingPrepared<'p>(fsl_eval::execution::InterpreterPrepared<'p>);
+
+#[cfg(feature = "test-support")]
+impl fsl_eval::execution::ExecutionBackend for RoundingBackend {
+    type Prepared<'p> = RoundingPrepared<'p>;
+
+    fn prepare<'p>(
+        &self,
+        package: &'p fsl_package::CheckedPackage,
+        entries: &[fsl_eval::execution::EntrySelection],
+        limits: &fsl_eval::execution::PrepareLimits,
+        cancel: &filament_exact::Cancel,
+    ) -> Result<Self::Prepared<'p>, fsl_eval::execution::PrepareFailure> {
+        fsl_eval::execution::Interpreter
+            .prepare(package, entries, limits, cancel)
+            .map(RoundingPrepared)
+    }
+}
+
+#[cfg(feature = "test-support")]
+impl fsl_eval::execution::PreparedEntries for RoundingPrepared<'_> {
+    fn unsupported(
+        &self,
+    ) -> &[(
+        fsl_eval::execution::EntrySelection,
+        filament_eval::UnsupportedEntry,
+    )] {
+        fsl_eval::execution::PreparedEntries::unsupported(&self.0)
+    }
+
+    fn call(
+        &self,
+        entry: &fsl_eval::value::QualifiedName,
+        arguments: &[filament_exact::Value],
+        environment: &fsl_semantics::model::object_environment::ObjectEnvironment,
+        limits: &fsl_eval::execution::CallLimits,
+        run: &mut filament_semantic_value::supplied_stop::SuppliedRun,
+        cancel: &filament_exact::Cancel,
+    ) -> Result<filament_eval::Evaluation, filament_eval::CallFailure> {
+        let mut result = fsl_eval::execution::PreparedEntries::call(
+            &self.0,
+            entry,
+            arguments,
+            environment,
+            limits,
+            run,
+            cancel,
+        )?;
+        if let filament_eval::FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(
+            filament_exact::Value::Decimal(value),
+        )) = &result.outcome
+        {
+            result.outcome =
+                filament_eval::FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(
+                    filament_exact::Value::Decimal(round_to_integer(value)),
+                ));
+        }
+        Ok(result)
+    }
+
+    fn evaluate(
+        &self,
+        clause: &fsl_eval::value::QualifiedName,
+        input: &fsl_semantics::model::observation::AdmittedObservations,
+        accounting: &filament_exact::ScalarLimits,
+        cancel: &filament_exact::Cancel,
+    ) -> Result<filament_eval::Evaluation, filament_eval::CallFailure> {
+        fsl_eval::execution::PreparedEntries::evaluate(&self.0, clause, input, accounting, cancel)
+    }
+}
+
+#[cfg(feature = "test-support")]
+fn round_to_integer(value: &filament_exact::Decimal) -> filament_exact::Decimal {
+    use filament_exact::{Integer, NonZeroInteger};
+    let normalized = value.normalized();
+    let divisor = Integer::from(10_i64.pow(normalized.scale()));
+    let nonzero = NonZeroInteger::try_from(&divisor).expect("a decimal scale has a nonzero base");
+    let (mut quotient, remainder) = normalized.coefficient().div_rem_truncating(nonzero);
+    if remainder.abs().mul(&Integer::from(2_i64)) >= divisor {
+        let one = Integer::from(1_i64);
+        quotient = if normalized.coefficient().is_negative() {
+            quotient.sub(&one)
+        } else {
+            quotient.add(&one)
+        };
+    }
+    filament_exact::Decimal::new(quotient, 0)
+}
+
+/// FR-567-AC-1: all three parts pass with a linked backend that delegates to
+/// the interpreter.
+#[cfg(feature = "test-support")]
+#[trace("TC-1396", "FR-567-AC-1")]
+#[test]
+fn a_passing_run_names_the_three_parts_and_qualifies() {
+    use filament_eval::ExecutionBackendChoice;
+    use fsl_eval::execution::Interpreter;
+    let (_fspec, mut inputs) = inputs();
+    let interpreter = Interpreter;
+    let corpus = Path::new(&inputs.operands[1]);
+    inputs.parity = Some(xtask::qualify::ParityTestOverride {
+        reference: &interpreter,
+        backends: vec![(ExecutionBackendChoice::Jit, &interpreter, None)],
+        inputs: fsl_conformance::ParityInputs::new(corpus),
+        limits: fsl_conformance::ParityLimits::default(),
+    });
+    let outcome = qualify::run(&inputs).expect("the gate runs");
+    assert_eq!(outcome.code, 0, "{}", outcome.stdout);
+    let report = report(&outcome);
+    assert_eq!(report["verdict"], "qualified");
+    assert_eq!(report["qualification"], "complete-v1");
+    assert_eq!(part(&report, "corpus")["result"], "passed");
+    assert_eq!(part(&report, "lifecycle-matrix")["result"], "passed");
+    assert_eq!(part(&report, "parity")["result"], "passed");
+}
+
+/// The source-tree half of FR-567-AC-5: the report's FSL version is the
+/// `filament-spec-language` root package's own `CARGO_PKG_VERSION`, not xtask's,
+/// and it is the version the root manifest declares. The scratch-copy half
+/// (a copy whose version is `9.9.9` reports `9.9.9`) needs a rebuild of the
+/// copy and is not run here (docs/outcome-parity.md, Known gaps).
+#[cfg(feature = "test-support")]
+#[trace("TC-1396")]
+#[test]
+fn the_report_names_the_root_package_version() {
+    use filament_eval::ExecutionBackendChoice;
+    use fsl_eval::execution::Interpreter;
+    let (_fspec, mut inputs) = inputs();
+    let interpreter = Interpreter;
+    let corpus = Path::new(&inputs.operands[1]);
+    inputs.parity = Some(xtask::qualify::ParityTestOverride {
+        reference: &interpreter,
+        backends: vec![(ExecutionBackendChoice::Jit, &interpreter, None)],
+        inputs: fsl_conformance::ParityInputs::new(corpus),
+        limits: fsl_conformance::ParityLimits::default(),
+    });
+    let outcome = qualify::run(&inputs).expect("the gate runs");
+    let version = report(&outcome)["fsl_version"].clone();
+    assert_eq!(version, filament_spec_language::VERSION);
+    assert_ne!(
+        version,
+        env!("CARGO_PKG_VERSION"),
+        "xtask's own version is not the FSL version"
+    );
+    let manifest =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.toml"))
+            .expect("the root manifest");
+    assert!(
+        manifest.contains(&format!(
+            "version = \"{}\"",
+            filament_spec_language::VERSION
+        )),
+        "the root manifest declares the reported version"
+    );
+}
+
+/// FR-567-AC-2: with the matrix replaced by one whose `check`/`refusal` case
+/// expects exit 21, the run is `not-qualified`, names
+/// `lifecycle-matrix/check/refusal` and exits 1, although the corpus passes.
+#[cfg(feature = "test-support")]
+#[trace("TC-1396", "FR-567-AC-2")]
+#[test]
+fn a_failing_matrix_case_fails_the_gate_by_name() {
+    use fsl_conformance::{lifecycle_matrix, MatrixCell, OutcomeKind, Verb};
+    let cells: Vec<MatrixCell> = lifecycle_matrix()
+        .iter()
+        .map(|cell| match cell {
+            MatrixCell::Case(case)
+                if case.verb == Verb::Check && case.kind == OutcomeKind::Refusal =>
+            {
+                MatrixCell::Case(fsl_conformance::MatrixCase {
+                    expected_exit: 21,
+                    ..*case
+                })
+            }
+            other => *other,
+        })
+        .collect();
+    let (_fspec, mut gate) = inputs();
+    gate.matrix = Some(cells);
+    let interpreter = fsl_eval::execution::Interpreter;
+    let corpus = Path::new(&gate.operands[1]);
+    gate.parity = Some(xtask::qualify::ParityTestOverride {
+        reference: &interpreter,
+        backends: vec![(
+            filament_eval::ExecutionBackendChoice::Jit,
+            &interpreter,
+            None,
+        )],
+        inputs: fsl_conformance::ParityInputs::new(corpus),
+        limits: fsl_conformance::ParityLimits::default(),
+    });
+    let outcome = qualify::run(&gate).expect("the gate runs");
+    assert_eq!(outcome.code, 1, "{}", outcome.stdout);
+    let report = report(&outcome);
+    assert_eq!(report["verdict"], "not-qualified");
+    assert_eq!(part(&report, "corpus")["result"], "passed");
+    assert_eq!(
+        part(&report, "lifecycle-matrix")["failures"],
+        serde_json::json!(["lifecycle-matrix/check/refusal"])
+    );
+}
+
+/// FR-567-AC-3: the test-only substituted wrong backend names the parity
+/// backend and the finding in the final qualification report.
+#[cfg(feature = "test-support")]
+#[trace("TC-1396", "FR-567-AC-3")]
+#[test]
+fn a_wrong_jit_backend_fails_qualification_with_finding_detail() {
+    let (_fspec, mut inputs) = inputs();
+    let interpreter = fsl_eval::execution::Interpreter;
+    let backend = RoundingBackend;
+    let corpus = decimal_parity_fixture();
+    let mut parity_inputs = fsl_conformance::ParityInputs::new(corpus.path());
+    parity_inputs.count = 0;
+    inputs.parity = Some(xtask::qualify::ParityTestOverride {
+        reference: &interpreter,
+        backends: vec![(filament_eval::ExecutionBackendChoice::Jit, &backend, None)],
+        inputs: parity_inputs,
+        limits: fsl_conformance::ParityLimits::default(),
+    });
+    let outcome = qualify::run(&inputs).expect("the gate runs");
+    assert_eq!(outcome.code, 1, "{}", outcome.stdout);
+    let report = report(&outcome);
+    assert_eq!(report["verdict"], "not-qualified");
+    let failures = part(&report, "parity")["failures"]
+        .as_array()
+        .expect("the parity finding is retained");
+    assert!(
+        failures.iter().any(|failure| {
+            failure
+                .as_str()
+                .is_some_and(|text| text.contains("parity/jit") && text.contains("Difference"))
+        }),
+        "parity failures: {failures:#?}"
+    );
+}
+
+/// FR-567-AC-4: no linked backend makes parity a passing `no-backend` part.
+#[cfg(feature = "test-support")]
+#[trace("TC-1396", "FR-567-AC-4")]
+#[test]
+fn no_linked_backend_is_a_passing_no_backend_part() {
+    use fsl_eval::execution::Interpreter;
+    let (_fspec, mut inputs) = inputs();
+    let interpreter = Interpreter;
+    inputs.parity = Some(xtask::qualify::ParityTestOverride {
+        reference: &interpreter,
+        backends: Vec::new(),
+        inputs: fsl_conformance::ParityInputs::new("unused"),
+        limits: fsl_conformance::ParityLimits::default(),
+    });
+    let outcome = qualify::run(&inputs).expect("the gate runs");
+    assert_eq!(outcome.code, 0, "{}", outcome.stdout);
+    let report = report(&outcome);
+    assert_eq!(report["verdict"], "qualified");
+    assert_eq!(part(&report, "parity")["result"], "no-backend");
+}
+
+/// FR-567-AC-4: a faulting substituted reference makes the parity part fail
+/// with a typed `reference-fault` finding.
+#[cfg(feature = "test-support")]
+#[trace("TC-1396", "FR-567-AC-4")]
+#[test]
+fn reference_fault_fails_qualification_by_finding() {
+    use fsl_eval::execution::Interpreter;
+    let (_fspec, mut inputs) = inputs();
+    let fault = fsl_conformance::FaultInjectingBackend;
+    let interpreter = Interpreter;
+    let corpus = Path::new(&inputs.operands[1]);
+    let mut parity_inputs = fsl_conformance::ParityInputs::new(corpus);
+    parity_inputs.count = 1;
+    inputs.parity = Some(xtask::qualify::ParityTestOverride {
+        reference: &fault,
+        backends: vec![(
+            filament_eval::ExecutionBackendChoice::Jit,
+            &interpreter,
+            None,
+        )],
+        inputs: parity_inputs,
+        limits: fsl_conformance::ParityLimits::default(),
+    });
+    let outcome = qualify::run(&inputs).expect("the gate runs");
+    assert_eq!(outcome.code, 1, "{}", outcome.stdout);
+    let report = report(&outcome);
+    assert_eq!(report["verdict"], "not-qualified");
+    let failures = part(&report, "parity")["failures"]
+        .as_array()
+        .expect("parity findings are reported");
+    assert!(
+        failures.iter().any(|failure| {
+            failure
+                .as_str()
+                .is_some_and(|text| text.contains("parity/jit") && text.contains("ReferenceFault"))
+        }),
+        "parity failures: {failures:#?}"
+    );
+}
 fn digits_end(value: &str, from: usize) -> usize {
     value[from..]
         .find(|character: char| !character.is_ascii_digit())
@@ -228,54 +567,6 @@ fn every_staged_successor_location_names_its_traced_test() {
     );
 }
 
-/// The no-backend half of FR-567-AC-4 and the passing run of AC-1 without a
-/// linked backend: not tagged, because AC-1 needs a linked delegating backend
-/// and AC-4 a reference fault, and the FR-563 runner they need is not in this
-/// repository yet. Over the passing fixture corpus
-/// with every matrix case passing, the report names the three parts, the
-/// `parity` part `no-backend`, `complete-v1: qualified`, exit 0.
-#[trace("TC-1396")]
-#[test]
-fn a_passing_run_names_the_three_parts_and_qualifies() {
-    let (_fspec, inputs) = inputs();
-    let outcome = qualify::run(&inputs).expect("the gate runs");
-    assert_eq!(outcome.code, 0, "{}", outcome.stdout);
-    let report = report(&outcome);
-    assert_eq!(report["verdict"], "qualified");
-    assert_eq!(report["qualification"], "complete-v1");
-    assert_eq!(part(&report, "corpus")["result"], "passed");
-    assert_eq!(part(&report, "lifecycle-matrix")["result"], "passed");
-    assert_eq!(part(&report, "parity")["result"], "no-backend");
-}
-
-/// FR-567-AC-5's source-tree half (so this test carries no AC tag): the
-/// report's FSL version is the root package's `CARGO_PKG_VERSION`, not xtask's,
-/// and it is the version the root manifest declares. The criterion's
-/// scratch-copy half is asserted by the filtered subprocess test below.
-#[trace("TC-1396")]
-#[test]
-fn the_report_names_the_root_package_version() {
-    let (_fspec, inputs) = inputs();
-    let outcome = qualify::run(&inputs).expect("the gate runs");
-    let version = report(&outcome)["fsl_version"].clone();
-    assert_eq!(version, filament_spec_language::VERSION);
-    assert_ne!(
-        version,
-        env!("CARGO_PKG_VERSION"),
-        "xtask's own version is not the FSL version"
-    );
-    let manifest =
-        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.toml"))
-            .expect("the root manifest");
-    assert!(
-        manifest.contains(&format!(
-            "version = \"{}\"",
-            filament_spec_language::VERSION
-        )),
-        "the root manifest declares the reported version"
-    );
-}
-
 /// FR-567-AC-5: a scratch source tree rebuilt with a different root package
 /// version reports that build's version, not the version compiled into xtask.
 #[trace("TC-1396", "FR-567-AC-5")]
@@ -397,40 +688,5 @@ fn a_scratch_build_reports_its_changed_root_package_version() {
         "scratch-version test succeeds:\n{}\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-/// FR-567-AC-2: with the matrix replaced by one whose `check`/`refusal` case
-/// expects exit 21, the run is `not-qualified`, names
-/// `lifecycle-matrix/check/refusal` and exits 1, although the corpus passes.
-#[cfg(feature = "test-support")]
-#[trace("TC-1396", "FR-567-AC-2")]
-#[test]
-fn a_failing_matrix_case_fails_the_gate_by_name() {
-    use fsl_conformance::{lifecycle_matrix, MatrixCell, OutcomeKind, Verb};
-    let cells: Vec<MatrixCell> = lifecycle_matrix()
-        .iter()
-        .map(|cell| match cell {
-            MatrixCell::Case(case)
-                if case.verb == Verb::Check && case.kind == OutcomeKind::Refusal =>
-            {
-                MatrixCell::Case(fsl_conformance::MatrixCase {
-                    expected_exit: 21,
-                    ..*case
-                })
-            }
-            other => *other,
-        })
-        .collect();
-    let (_fspec, mut gate) = inputs();
-    gate.matrix = Some(cells);
-    let outcome = qualify::run(&gate).expect("the gate runs");
-    assert_eq!(outcome.code, 1, "{}", outcome.stdout);
-    let report = report(&outcome);
-    assert_eq!(report["verdict"], "not-qualified");
-    assert_eq!(part(&report, "corpus")["result"], "passed");
-    assert_eq!(
-        part(&report, "lifecycle-matrix")["failures"],
-        serde_json::json!(["lifecycle-matrix/check/refusal"])
     );
 }

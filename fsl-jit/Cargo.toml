@@ -1,0 +1,56 @@
+[package]
+name = "fsl-jit"
+version = "0.1.0"
+publish = false
+edition = "2021"
+rust-version = "1.98"
+license = "AGPL-3.0-or-later"
+description = "Partial Boolean and integer Cranelift backend adapted to the FSL execution seam."
+
+# Layer X, above the core (tools/arch-lint `QSL_ABOVE_CORE`): no core crate
+# depends on this one. Cranelift is pinned here and in Cargo.lock only
+# (ADR-035); the build is Rust-only, with no C or C++ toolchain.
+[dependencies]
+fsl-eval = { path = "../fsl-eval" }
+fsl-foundation = { path = "../fsl-foundation" }
+fsl-package = { path = "../fsl-package" }
+fsl-semantics = { path = "../fsl-semantics" }
+filament-checked = { workspace = true }
+filament-eval = { workspace = true }
+filament-exact = { workspace = true }
+filament-semantic-value = { workspace = true }
+cranelift-codegen = "0.137.1"
+cranelift-frontend = "0.137.1"
+cranelift-jit = "0.137.1"
+cranelift-module = "0.137.1"
+cranelift-native = "0.137.1"
+
+[features]
+# The FR-568 test hooks of `PreparedJit`; no shipped build has them.
+test-support = []
+
+[dev-dependencies]
+fsl-jit = { path = ".", features = ["test-support"] }
+fsl-conformance = { path = "../fsl-conformance", features = ["test-support"] }
+tempfile = "3.27.0"
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
+fsl-cst = { path = "../fsl-cst" }
+fsl-forms = { path = "../fsl-forms" }
+fsl-package = { path = "../fsl-package", features = ["test-support"] }
+fsl-semantics = { path = "../fsl-semantics", features = ["test-support"] }
+filament-checked = { workspace = true, features = ["test-support"] }
+filament-exact = { workspace = true, features = ["test-support"] }
+filament-semantic-value = { workspace = true, features = ["test-support"] }
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+
+[lints.rust]
+# The executable-memory boundary is isolated in `exec`; this crate denies
+# unsafe code everywhere else.
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "deny"
