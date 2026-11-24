@@ -76,6 +76,7 @@ every scheduler delivers within 2 ms with probability at least `9/10`:
 | FR-877-AC-2 | `quantile 0.5 of (M) <= 1 ms` settles `refuted`, the transform's minimum being `−1/2`; AC-1's item with its initial value set to `1/2` settles `inconclusive`, `CertificateRejected`, rule `InequalityFails`. | Test (TC-2494) |
 | FR-877-AC-3 | `quantile 0.5 of (M) >= 1 ms` settles `proved` with a `region` `upper` document of initial value `−1/2` that the checker accepts. | Test (TC-2494) |
 | FR-877-AC-4 | `quantile 0.9 of (M) >= 2 ms` settles `refuted` (sending at 1 ms gives `Pr(M < 2 ms) = 9/10`): the transform's maximum is exactly 0 and the tight actions reach the activated initial state, so an `upper` document of initial value 0 for it is rejected `InequalityFails` at the initial state, the first activated state its tight actions reach (FSpec FR-753-AC-5). | Test (TC-2494) |
+| FR-877-AC-5 | Over `Retx` with `M` = `elapsed from holds(not c.late) until holds(c.late) within 4 ms`, `quantile 0.5 of (M) <= 4 ms` under workload `One` (the scheduler-selected send delay and minimum `99/100` of FR-204-AC-5) settles `proved` with an accepted `timed-product/v1` exact certificate. | Test |
 
 ## Dependencies
 
