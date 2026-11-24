@@ -4502,7 +4502,7 @@ fn price_paths(
         };
         let mut child_values = BTreeMap::new();
         for target in targets {
-            let Some(value) = witness_path_mass(
+            let value = witness_path_mass(
                 graph,
                 used,
                 payoff,
@@ -4513,20 +4513,21 @@ fn price_paths(
                 cancel,
                 check_bits,
                 covers,
-            )? else {
-                on_path.remove(key);
-                return Ok(None);
-            };
+            )?;
             child_values.insert(target, value);
         }
+        let has_complete_choice = state
+            .choices
+            .iter()
+            .any(|choice| targets.iter().all(|target| covers(choice, target)));
         let mut best: Option<(usize, Rational)> = None;
         for (index, choice) in state.choices.iter().enumerate() {
-            if !targets.iter().all(|target| covers(choice, target)) {
+            if has_complete_choice && !targets.iter().all(|target| covers(choice, target)) {
                 continue;
             }
             let mut total = zero();
             for edge in choice.iter().filter(|edge| edge.probability > zero()) {
-                if let Some(value) = child_values.get(&edge.target) {
+                if let Some(Some(value)) = child_values.get(&edge.target) {
                     total = total.add(&edge.probability.mul(value));
                     check_bits(&total)?;
                 }
@@ -4598,7 +4599,11 @@ fn price_paths(
                 let index = state
                     .choices
                     .iter()
-                    .position(|choice| targets.iter().all(|target| covers(choice, target)))
+                    .enumerate()
+                    .max_by_key(|(_, choice)| {
+                        targets.iter().filter(|target| covers(choice, target)).count()
+                    })
+                    .map(|(index, _)| index)
                     .ok_or(Error::Refused)?;
                 chosen.insert(key.clone(), index);
             }
