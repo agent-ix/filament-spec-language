@@ -4870,7 +4870,7 @@ fn a_temporal_violation_carries_its_decisive_information() {
     assert_eq!(
         record
             .temporal()
-            .and_then(crate::spine::TemporalRecord::verdict)
+            .and_then(crate::spine::TemporalRecord::verdict),
         Some(outcome(&forall).clone())
     );
     let Some(crate::spine::TemporalRecord::Violated { counterexample, .. }) = record.temporal()
