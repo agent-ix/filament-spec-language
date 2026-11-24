@@ -1050,6 +1050,90 @@ fn timed_detour_refutation_replays_its_free_delay_scheduler() {
     assert_eq!(path_lengths, [1, 2]);
 }
 
+/// FR-202-AC-8: tampering with any part of a timed `FreeDelays` scheduler
+/// action refuses replay as invalid runtime input.
+#[trace("FR-202-AC-8")]
+#[test]
+fn timed_detour_scheduler_tampering_is_refused() {
+    use fsl_replay::{InconclusiveCause, TerminalValue};
+
+    let world = detour(&claim(
+        "Max",
+        "under All",
+        "<= 0.7",
+        "eventually[0 ms, 2 ms] holds(c.late)",
+    ));
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let claim = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Max")
+        .expect("the claim checks");
+    let tampered = |tamper: fn(&mut fsl_replay::ProbabilisticCounterexample)| {
+        let item = fsl_analyze::analyze::exact_probabilistic_item_witness_tampered(
+            fsl_foundation::RequestIndex::new(0),
+            fsl_analyze::exact_probabilistic::ProductRequest {
+                subject: ModelSubject {
+                    simulation: world.request(),
+                    proof_bounds: Vec::new(),
+                },
+                claim,
+                limits: ExactProbLimits::default(),
+            },
+            tamper,
+        );
+        analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+    };
+    let refusal = |record: fsl_analyze::analyze::AnalyzeRecord| {
+        assert_eq!(
+            record.terminal().expect("terminal result").value(),
+            &TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(
+                fsl_foundation::diagnostic::Code::InvalidRuntimeInput
+            )),
+            "tampered scheduler action must be refused: {record:#?}"
+        );
+        assert!(record.probabilistic_counterexample.is_none());
+    };
+    fn scheduler(
+        witness: &mut fsl_replay::ProbabilisticCounterexample,
+    ) -> &mut Vec<FreeDelayActionRow> {
+        witness
+            .scheduler
+            .iter_mut()
+            .find_map(|(_, choice)| match choice {
+                ProbabilisticSchedulerChoice::Deterministic(
+                    ReplayProductAction::FreeDelays(rows),
+                ) => Some(rows),
+                _ => None,
+            })
+            .expect("the fixture has a FreeDelays action")
+    }
+
+    refusal(tampered(|witness| scheduler(witness).swap(0, 1)));
+    refusal(tampered(|witness| {
+        scheduler(witness).remove(1);
+    }));
+    refusal(tampered(|witness| {
+        scheduler(witness)[0].free[0].1 = 4;
+    }));
+    refusal(tampered(|witness| {
+        let schedule = { scheduler(witness)[0].free[0].0.clone() };
+        let (_, choice) = witness
+            .scheduler
+            .iter_mut()
+            .find(|(_, choice)| {
+                matches!(choice, ProbabilisticSchedulerChoice::Deterministic(
+                    ReplayProductAction::FreeDelays(_)
+                ))
+            })
+            .expect("the fixture has a FreeDelays action");
+        *choice = ProbabilisticSchedulerChoice::Deterministic(
+            ReplayProductAction::WorkloadResolve { schedule, delay: 1 },
+        );
+    }));
+}
+
 /// TC-637: the `Detour` witness action's canonical body admits
 /// at the race state (`A` drawing 1 or 3, `B` in `[1, 3]`); with its rows
 /// swapped, with the row given `[3]` removed, with `B` delay 4, or as

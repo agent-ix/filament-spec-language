@@ -1296,6 +1296,7 @@ mod tests {
             CheckerGraph {
                 initial: key(0),
                 states,
+                scheduler_actions: Default::default(),
             },
             BTreeMap::from([
                 (key(0), s),
@@ -1367,6 +1368,7 @@ mod tests {
                     },
                 ),
             ]),
+            scheduler_actions: Default::default(),
         };
         let values = BTreeMap::from([(key(0), rational(1)), (key(1), rational(1))]);
         let action_sums = sums(&graph, &values, None, &mut cx).unwrap();

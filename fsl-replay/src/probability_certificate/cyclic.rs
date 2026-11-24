@@ -565,6 +565,7 @@ mod tests {
                     },
                 ),
             ]),
+            scheduler_actions: Default::default(),
         }
     }
 

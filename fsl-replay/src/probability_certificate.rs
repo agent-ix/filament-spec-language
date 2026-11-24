@@ -1644,6 +1644,9 @@ struct CheckerState {
 struct CheckerGraph {
     initial: ProbabilityProductKey,
     states: BTreeMap<ProbabilityProductKey, CheckerState>,
+    /// Canonical action aliases for choices at timed mixed given/free races.
+    /// Other checker graphs leave this empty.
+    scheduler_actions: BTreeMap<ProbabilityProductKey, Vec<Vec<crate::ProductAction>>>,
 }
 
 /// Which pass of [`bottom_components`] a charged step belongs to.
