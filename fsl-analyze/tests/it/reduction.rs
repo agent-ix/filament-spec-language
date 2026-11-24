@@ -811,6 +811,7 @@ fn undefined_absent_and_initially_false_constraints_and_bounds() {
 
 /// FR-158-AC-4's determinism clause: repeating the constrained run gives
 /// equal outcomes and equal boundary counts.
+#[trace("FR-158-AC-4")]
 #[test]
 fn a_constrained_run_is_deterministic() {
     let world = count(&[infinite("always holds(x.v <= 2)")]);
@@ -1184,6 +1185,7 @@ fn reduced_outcomes_settle_through_the_one_map() {
 /// `always holds(x.v <= 2)` with `Low` and `max_depth` 2 completes depth 2,
 /// reaching boundary states there, and settles `ConstraintReached`, not
 /// `BoundReached`.
+#[trace("FR-160-AC-2")]
 #[test]
 fn a_constraint_only_proof_is_exhaustive_and_constraint_reached_wins_over_the_horizon() {
     let world = count(&[
@@ -1212,12 +1214,12 @@ fn a_constraint_only_proof_is_exhaustive_and_constraint_reached_wins_over_the_ho
             ModelCheckLimits::default(),
         )
         .expect("checked");
-    assert!(
-        matches!(
-            settle(&world, &horizon).value,
-            TerminalValue::Inconclusive(InconclusiveCause::ConstraintReached { .. })
-        ),
-        "{horizon:?}"
+    assert_eq!(
+        settle(&world, &horizon).value,
+        TerminalValue::Inconclusive(InconclusiveCause::ConstraintReached {
+            boundary_states: 3,
+        }),
+        "the boundary states at depth two take precedence over the horizon"
     );
 }
 
@@ -1247,6 +1249,7 @@ fn a_symmetry_run_to_its_horizon_settles_bound_reached() {
 /// violated with `UndefinedEvaluation`, division by zero, where `a.v = 2`;
 /// its counterexample re-executes on the subject, two steps long, as the
 /// unreduced run's.
+#[trace("FR-160-AC-5")]
 #[test]
 fn an_undefined_evaluation_on_a_reduced_run_refutes_with_a_concrete_prefix() {
     let world = cycle(
@@ -1277,6 +1280,12 @@ fn an_undefined_evaluation_on_a_reduced_run_refutes_with_a_concrete_prefix() {
         let positions = world.positions(counterexample);
         assert_eq!(positions.last().map(|state| value(state, "a")), Some(2));
     }
+    let record = settle(&world, &reduced);
+    assert_eq!(record.value, TerminalValue::Refuted);
+    assert_eq!(record.label, ResultLabel::Refuted);
+    assert_eq!(record.basis, SettlementBasis::DecisiveCounterexample);
+    let settled_witness = record.counterexample.expect("refutation retains replayed witness");
+    assert_eq!(settled_witness, *violation(&unreduced));
 }
 
 /// FR-161's start and step rules on a prefix through moved keys: the
@@ -1316,7 +1325,7 @@ fn a_reduced_prefix_concretises_to_a_subject_path() {
 /// own request's selection, so a constrained item never stands for an
 /// unconstrained one. After `ReductionNotPreserving` the outcome records no
 /// exploration statistics.
-#[trace("TC-583", "FR-159-AC-4")]
+#[trace("TC-583", "FR-159-AC-4", "FR-158-AC-4")]
 #[test]
 fn reductions_but_the_constraint_enter_the_obligation_identity() {
     let world = cycle(true, &[[0, 0, 0]], &[infinite("always holds(x.v <= 2)")]);
