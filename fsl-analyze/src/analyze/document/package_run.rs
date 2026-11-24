@@ -3278,23 +3278,22 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 node: Some(declaration.clone()),
             })
         };
-        let input = self
-            .input
-            .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
-        let key = input
-            .package()
-            .node_key(declaration)
-            .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
-        let origin = filament_exact::Origin::new(filament_exact::Role::new("claim"), ordinal);
-        let clause = input
-            .state_clause(&key, &origin)
-            .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
-        let claim = OccurrenceKey::new(clause.identity.clone(), clause.claim.clone());
         // FR-376 / FSpec FR-825: the admitted row carries S3's classified
         // extent and contract facts. Resolve that exact claim occurrence;
-        // do not classify the source clause again.
-        let row = input
-            .package()
+        // do not classify the source clause again. Read it before the EN-1
+        // state-clause input: pre/post clauses have no EN-1 form, so looking
+        // them up there first turns the expected pending package record into
+        // an internal fault.
+        let pending_requirement_record = || {
+            PackageRunError::Pending(PendingPackageFamily {
+                request_index: Some(index),
+                family: PendingFamily::OperationContractRequirementRecord,
+                node: Some(declaration.clone()),
+                note: Some(format!("`{name}` (claim occurrence {ordinal})")),
+            })
+        };
+        let row = self
+            .package
             .requirement_items()
             .iter()
             .find(|row| {
@@ -3303,25 +3302,42 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                     && row.occurrence.role == filament_contract_model::CheckedOccurrenceRole::Claim
                     && row.occurrence.ordinal == ordinal
             })
-            .ok_or_else(|| {
-                PackageRunError::Pending(PendingPackageFamily {
-                    request_index: Some(index),
-                    family: PendingFamily::OperationContractRequirementRecord,
-                    node: Some(declaration.clone()),
-                    note: Some(format!("`{name}` (claim occurrence {ordinal})")),
-                })
-            })?;
-        let (record, extent) =
-            super::package_value::operation_contract_record(input.package(), row).ok_or_else(
-                || {
-                    PackageRunError::Pending(PendingPackageFamily {
-                        request_index: Some(index),
-                        family: PendingFamily::OperationContractRequirementRecord,
-                        node: Some(declaration.clone()),
-                        note: Some(format!("`{name}` (claim occurrence {ordinal})")),
-                    })
-                },
-            )?;
+            .ok_or_else(&pending_requirement_record)?;
+        let Some((record, extent)) =
+            super::package_value::operation_contract_record(self.package, row)
+        else {
+            return Err(pending_requirement_record());
+        };
+        if !record.invariant && self.explicit_items {
+            // Named pre/post clauses have a retained requirement row, but
+            // the package route has no operation-contract form for them.
+            return Err(pending_requirement_record());
+        }
+        let claim = if record.invariant {
+            let input = self
+                .input
+                .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
+            let key = self
+                .package
+                .node_key(declaration)
+                .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
+            let origin = filament_exact::Origin::new(filament_exact::Role::new("claim"), ordinal);
+            let Some(clause) = input.state_clause(&key, &origin) else {
+                return Err(pending_requirement_record());
+            };
+            OccurrenceKey::new(clause.identity.clone(), clause.claim.clone())
+        } else {
+            // Pre/post clauses have no EN-1 input. Their admitted requirement
+            // row still supplies the exact claim node and occurrence.
+            let key = self
+                .package
+                .node_key(&row.claim)
+                .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
+            OccurrenceKey::new(
+                key,
+                filament_exact::Origin::new(filament_exact::Role::new("claim"), ordinal),
+            )
+        };
         let extent = ExtentClassification::of(&extent);
         let own_subject = self.own_subject(index, selection)?;
         let kind = match selection.kind.as_deref() {
@@ -3354,12 +3370,13 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         if !self.explicit_items && kind == Capability::OperationContract && !model_subject {
             return Err(pending(PendingFamily::Declaration));
         }
+        // EN-1 can decide only invariants, so pre/post requirement rows
+        // cannot use the model-subject tie even when the request has one.
         let candidates = state_clause_tie(
             self.registry.candidates(kind, named.as_ref()),
             kind,
             named.as_ref(),
-            model_subject,
-            record.invariant,
+            model_subject && record.invariant,
         );
         let temporal = selection.temporal.clone().unwrap_or_default();
         let item = ClaimItem {
@@ -3400,12 +3417,11 @@ fn state_clause_tie(
     kind: Capability,
     named: Option<&BackendId>,
     model_subject: bool,
-    invariant: bool,
 ) -> CandidateOutcome {
     if named.is_some() || kind != Capability::OperationContract {
         return candidates;
     }
-    if !model_subject || !invariant {
+    if !model_subject {
         return fsl_route::tie::exclude_en1(candidates, kind, named, false);
     }
     let CandidateOutcome::Candidates(set) = &candidates else {
