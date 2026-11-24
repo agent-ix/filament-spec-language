@@ -33,6 +33,7 @@ pub(super) fn check_bounds(
             values: document.values.clone(),
         },
         cx,
+        false,
     )? {
         CertificateValues::Complete(values) => values,
         CertificateValues::Rejected(rejection) => {
