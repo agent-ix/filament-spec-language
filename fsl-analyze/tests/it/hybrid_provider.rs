@@ -16,8 +16,9 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex, SourceIdentity};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    DisagreementCause, ExpressionSite, HybridTraceDisagreement, InconclusiveCause, TermLocus,
-    TerminalRecord, TerminalValue, UnavailabilityCause,
+    CauseCodecError, DecidingElement, DisagreementCause, ExpressionSite, HybridTraceDisagreement,
+    InconclusiveCause, SeparatingWitnessRecord, TermLocus, TerminalRecord, TerminalValue,
+    UnavailabilityCause, Verdict, WitnessFailure,
 };
 use fsl_route::{request::ExtentClassification, routing::Disposition, Candidate};
 use fsl_semantics::check::{Capability, ModeIndex, PackageDeclarations, VariableIndex};
@@ -376,6 +377,140 @@ fn a_refuted_trace_that_does_not_reproduce_settles_replay_parity() {
                 TerminalValue::Inconclusive(InconclusiveCause::SolverInconclusive { .. })
             ),
             "{record:?}"
+        );
+    }
+}
+
+/// FR-269-AC-5 (TC-1221): hybrid disagreements use the shared cause codec,
+/// whose mode and variable names are resolved through the checked model;
+/// the prior disagreement arms retain their model-independent wire.
+#[test]
+#[trace("TC-1221", "FR-269-AC-5")]
+fn hybrid_disagreement_causes_round_trip_through_the_shared_codec() {
+    use filament_semantic_value::catalog::Category;
+    use fsl_foundation::witness::{
+        InvocationBinding, ObservationIdentity, RuntimeValuePath, ValuePathSubject,
+    };
+
+    let world = world();
+    let record = settle_on(&world, 1, entry_answer(refuted_entry(point_trace("1"))))
+        .into_iter()
+        .next()
+        .expect("the provider result settles one claim");
+    let TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(cause)) = record.value() else {
+        panic!("a non-reproducing provider trace is a hybrid disagreement: {record:?}");
+    };
+    assert!(matches!(
+        cause,
+        DisagreementCause::HybridTrace(HybridTraceDisagreement::NotReproduced { .. })
+    ));
+    assert_eq!(cause.proved(), None);
+    assert_eq!(cause.replayed(), None);
+
+    let checked_model = &world.package.graph().hybrid_models()[0];
+    let text = cause
+        .to_json(Some(checked_model))
+        .expect("a hybrid trace is encoded with its checked model");
+    let wire: serde_json::Value = serde_json::from_str(&text).expect("the cause wire is JSON");
+    assert_eq!(wire["cause"], "hybrid-trace", "{wire}");
+    assert_eq!(wire["disagreement"]["type"], "not-reproduced", "{wire}");
+    let counterexample = &wire["disagreement"]["counterexample"];
+    assert_eq!(counterexample["type"], "hybrid-counterexample", "{wire}");
+    assert_eq!(counterexample["trace"]["start"]["mode"], "Moving", "{wire}");
+    assert_eq!(
+        counterexample["trace"]["start"]["enclosure"],
+        json!({"a": {"lower": {"numerator":"2", "denominator":"1"},
+                      "upper": {"numerator":"2", "denominator":"1"}},
+              "v": {"lower": {"numerator":"20", "denominator":"1"},
+                      "upper": {"numerator":"20", "denominator":"1"}}}),
+        "the names resolve through the checked model: {wire}"
+    );
+    assert_eq!(
+        DisagreementCause::from_json(&text, &world.package, Some(checked_model))
+            .expect("the checked model resolves the hybrid wire"),
+        *cause
+    );
+    assert!(matches!(
+        cause.to_json(None),
+        Err(CauseCodecError::MissingHybridModel)
+    ));
+    assert!(matches!(
+        DisagreementCause::from_json(&text, &world.package, None),
+        Err(CauseCodecError::MissingHybridModel)
+    ));
+
+    let counterexample = match cause {
+        DisagreementCause::HybridTrace(disagreement) => disagreement.counterexample().clone(),
+        _ => unreachable!(),
+    };
+    let not_exact = DisagreementCause::HybridTrace(HybridTraceDisagreement::NotExact {
+        counterexample: Box::new(counterexample),
+    });
+    let not_exact_text = not_exact
+        .to_json(Some(checked_model))
+        .expect("not-exact has the same model-aware wire");
+    let not_exact_wire: serde_json::Value =
+        serde_json::from_str(&not_exact_text).expect("the not-exact wire is JSON");
+    assert_eq!(not_exact_wire["disagreement"]["type"], "not-exact");
+    assert_eq!(
+        DisagreementCause::from_json(&not_exact_text, &world.package, Some(checked_model))
+            .expect("not-exact decodes through the checked model"),
+        not_exact
+    );
+
+    let success = Verdict::from_category(Category::Success);
+    let violation = Verdict::from_category(Category::Violation);
+    let claim_site = &world.package.graph().hybrid_claim_sites()[1];
+    let witness = SeparatingWitnessRecord {
+        quantifier: Some(OccurrenceKey::new(
+            claim_site.identity.clone(),
+            claim_site.claim.clone(),
+        )),
+        deciding_comparison: None,
+        operands: None,
+        decision_path: None,
+        deciding_element: DecidingElement::Value(filament_exact::Value::Boolean(false)),
+        index: Some(0),
+        value_path: RuntimeValuePath {
+            observation: ObservationIdentity {
+                authority: "test".to_owned(),
+                identity: "invocation".to_owned(),
+            },
+            subject: ValuePathSubject::Invocation {
+                invocation: ObservationIdentity {
+                    authority: "test".to_owned(),
+                    identity: "invocation".to_owned(),
+                },
+                binding: InvocationBinding::Receiver,
+            },
+            steps: Vec::new(),
+        },
+        trace_position: None,
+    };
+    for existing in [
+        DisagreementCause::Verdicts {
+            proved: violation,
+            replayed: success,
+        },
+        DisagreementCause::NoValue {
+            proved: violation,
+            replayed: success,
+        },
+        DisagreementCause::Witness {
+            proved: violation,
+            replayed: violation,
+            given: Some(Box::new(witness.clone())),
+            derived: None,
+            failure: WitnessFailure::Mismatch,
+        },
+    ] {
+        let old_text = existing
+            .to_json(None)
+            .expect("existing disagreement arms remain encodable");
+        assert_eq!(
+            DisagreementCause::from_json(&old_text, &world.package, None)
+                .expect("existing disagreement arms remain decodable"),
+            existing
         );
     }
 }

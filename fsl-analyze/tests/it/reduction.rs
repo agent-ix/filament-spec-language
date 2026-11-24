@@ -269,6 +269,49 @@ fn run(
         .expect("checked")
 }
 
+/// POR has no symmetry closure to read. A nontrivial symmetry closure also
+/// stops as soon as its initial orbits exceed the budget.
+#[trace("TC-521", "FR-126-AC-26")]
+#[test]
+fn reductions_respect_max_states_during_initial_admission() {
+    use fsl_eval::simulation::model::generated_initial_states;
+
+    let world = cycle(
+        true,
+        &[[0, 0, 0], [0, 1, 1], [0, 2, 2], [1, 2, 2]],
+        &[infinite("always holds(x.v <= 2)")],
+    );
+    for reductions in [partial_order(), symmetry(&[&["b", "c"]])] {
+        let mut limits = ModelCheckLimits::default();
+        limits.limits.max_states = 1;
+        let before = generated_initial_states();
+        let outcome = world
+            .run(
+                Some(0),
+                vec![atom(|v| Some(v <= 2))],
+                reductions,
+                None,
+                limits,
+            )
+            .expect("the reductions admit");
+        assert!(
+            matches!(
+                outcome,
+                ModelCheckOutcome::Stopped {
+                    cause: IncompleteCause::ResourceExhausted,
+                    limit: Some(ReachedLimit {
+                        limit: ModelCheckLimit::MaxStates,
+                        value: 1
+                    }),
+                    ..
+                }
+            ),
+            "{outcome:?}"
+        );
+        assert_eq!(generated_initial_states() - before, 1);
+    }
+}
+
 /// Constraints and partial-order reduction already produce concrete paths:
 /// neither may rewrite the witness while settling it through subject replay.
 #[trace("FR-161-AC-4")]
@@ -1193,8 +1236,10 @@ impl TransitionSystem for Bare {
     type Key = String;
     type Finding = ();
 
-    fn initial(&self) -> Vec<u8> {
-        vec![0]
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        std::iter::once(Ok(0))
     }
 
     fn key(&self, state: &u8) -> String {

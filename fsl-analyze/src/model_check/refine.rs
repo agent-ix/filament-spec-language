@@ -48,14 +48,18 @@ use fsl_eval::fairness::{
 use fsl_eval::model_subject::{CapacityBinding, ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, check_model_bounds};
 use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTarget};
-use fsl_eval::simulation::{ExpansionLimit, ExpansionStop, TransitionSystem};
+use fsl_eval::simulation::{
+    ExpansionLimit, ExpansionStop, InitialStateRefusal, SubjectSystem, TransitionSystem,
+};
 use fsl_replay::{
     abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
-    check_protocol_state_relations, check_protocol_step, check_step, open_protocol_systems,
-    open_systems, AbstractClass, AbstractProtocolSystem, CandidateFairState, CandidateFairStep,
-    CandidateLivenessError, CertifiedEdge, CertifiedPosition, ConcreteStep, CounterexampleKind,
-    IncompleteCause, Lasso, LivenessHalf, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
-    ModelStep, ProtocolRelationError, ProtocolStateRelation, ProtocolSystemsRefusal, ReachedLimit,
+    check_protocol_state_relations, check_protocol_step, check_step,
+    open_protocol_systems_with_initial_limit, open_systems_with_initial_limit, AbstractClass,
+    AbstractProtocolSystem, CandidateFairState,
+    CandidateFairStep, CandidateLivenessError, CertifiedEdge, CertifiedPosition, ConcreteStep,
+    CounterexampleKind, IncompleteCause, Lasso, LivenessHalf, ModelCheckLimit, ModelCheckLimits,
+    ModelCheckOutcome, ModelStep, ProtocolRelationError, ProtocolStateRelation,
+    ProtocolSystemsRefusal, ReachedLimit,
     RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems, RunStats,
     SafetyOutcome, SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal,
     Taken, TemporalCounterexample, UndecidedCause, UndefinedEvaluation, Undetermined,
@@ -69,6 +73,7 @@ use super::fair_summary::{
     idempotent_has_fair_candidate_in, insert_relation_label, insert_walk_summary, neutral_label,
 };
 use super::fair_walk::{FairModel, fairness_constraints};
+use super::initial::{Refused, admit_initial};
 
 /// One refinement safety run (FR-142 Inputs).
 pub struct RefinementCheckRequest<'a> {
@@ -244,25 +249,28 @@ fn check_with(
     classes_of: ClassesOf,
 ) -> Result<RefinementOutcome, ModelCheckRefusal> {
     let refinement = request.refinement;
+    let max_states = request.limits.limits.max_states;
     let opened = match (
         refinement.abstract_side(),
         request.abstract_protocol_binding,
     ) {
-        (fsl_semantics::check::AbstractSide::Model, _) => open_systems(
+        (fsl_semantics::check::AbstractSide::Model, _) => open_systems_with_initial_limit(
             refinement,
             &request.concrete.simulation,
             request.abstract_package,
             request.abstract_initial.clone(),
+            max_states,
         )
         .map_err(ProtocolSystemsRefusal::Subject),
         (fsl_semantics::check::AbstractSide::Protocol { .. }, Some(binding)) => {
-            open_protocol_systems(
+            open_protocol_systems_with_initial_limit(
                 refinement,
                 &request.concrete.simulation,
                 request.abstract_package,
                 request.abstract_initial.clone(),
                 binding.over,
                 &binding.capacities,
+                Some(max_states),
             )
         }
         (fsl_semantics::check::AbstractSide::Protocol { .. }, None) => {
@@ -271,6 +279,28 @@ fn check_with(
     };
     let systems = match opened {
         Ok(systems) => systems,
+        Err(ProtocolSystemsRefusal::Subject(SubjectRefusal::InitialStateLimit(limit))) => {
+            return Ok(RefinementOutcome {
+                safety: SafetyOutcome::Stopped {
+                    cause: IncompleteCause::ResourceExhausted,
+                    limit: Some(ReachedLimit {
+                        limit: ModelCheckLimit::MaxStates,
+                        value: widen(limit),
+                    }),
+                    stats: RunStats::default(),
+                },
+                liveness: None,
+            });
+        }
+        Err(ProtocolSystemsRefusal::Subject(SubjectRefusal::InitialEncoding)) => {
+            return Ok(RefinementOutcome {
+                safety: SafetyOutcome::Fault {
+                    fault: InternalFault::new("refinement-check", "state-encodes"),
+                    stats: RunStats::default(),
+                },
+                liveness: None,
+            });
+        }
         // FSL FR-630: building the abstract initial states from the mapping
         // stopped on a budget, which settles the run V-7 naming it.
         Err(ProtocolSystemsRefusal::Subject(SubjectRefusal::Stopped(stop))) => {
@@ -332,13 +362,16 @@ fn check_with(
         horizon_cut: false,
         classes_of,
     };
-    let safety = if concrete.initial_states().is_empty() {
+    let mut initial = concrete
+        .initial_for_check(request.limits.limits.max_states)
+        .peekable();
+    let safety = if initial.peek().is_none() {
         SafetyOutcome::Undecided {
             cause: SafetyUndecided::NoInitialState,
             stats: run.stats(),
         }
     } else {
-        match run.explore() {
+        match run.explore(initial) {
             Ok(()) if run.horizon_cut => SafetyOutcome::BoundReached {
                 depth: widen(run.max_depth.unwrap_or(0)),
                 stats: run.stats(),
@@ -474,6 +507,15 @@ fn open_refusal(refusal: ProtocolSystemsRefusal) -> ModelCheckRefusal {
         ProtocolSystemsRefusal::UnboundCapacity(names) => ModelCheckRefusal::UnboundCapacity(names),
         ProtocolSystemsRefusal::Subject(SubjectRefusal::Stopped(_)) => {
             fault("the-abstract-initial-states-stop-before-they-refuse")
+        }
+        ProtocolSystemsRefusal::Subject(SubjectRefusal::InitialStateLimit(_)) => {
+            fault("mapped-initial-state-limit-stops-before-it-refuses")
+        }
+        ProtocolSystemsRefusal::Subject(SubjectRefusal::InitialEncoding) => {
+            ModelCheckRefusal::Fault(InternalFault::new("refinement-check", "state-encodes"))
+        }
+        ProtocolSystemsRefusal::Subject(SubjectRefusal::InitialConstruction(refusal)) => {
+            ModelCheckRefusal::Protocol(refusal)
         }
     }
 }
@@ -1897,24 +1939,38 @@ impl Run<'_, '_> {
     }
 
     /// The breadth-first safety phase.
-    fn explore(&mut self) -> Result<(), End> {
+    fn explore(
+        &mut self,
+        states: impl Iterator<Item = Result<ModelSimState, InitialStateRefusal>>,
+    ) -> Result<(), End> {
         self.poll()?;
-        let mut initial = Vec::new();
-        for (index, state) in self.concrete.initial_states().iter().enumerate() {
-            let (key, _) = Self::encoding(self.concrete.state_key(state))?;
-            initial.push((key, index, state));
-        }
-        let keys: Vec<Vec<u8>> = initial.iter().map(|(key, _, _)| key.clone()).collect();
+        let mut keys: Vec<Vec<u8>> = Vec::new();
         let mut at_key = BTreeMap::new();
-        // Equal keys coalesce into the first initial state that has the key.
-        initial.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
-        initial.dedup_by(|later, earlier| later.0 == earlier.0);
-        if initial.len() > self.limits.limits.max_states {
-            return Err(Self::stopped(
-                ModelCheckLimit::MaxStates,
-                widen(self.limits.limits.max_states),
-            ));
-        }
+        // Equal keys coalesce into the first initial state that has the key;
+        // the budget refuses before the remaining states are keyed.
+        let initial = admit_initial(states, self.limits.limits.max_states, |_, state| {
+            let (key, _) = Self::encoding(self.concrete.state_key(&state))?;
+            keys.push(key.clone());
+            Ok::<_, End>((key, state))
+        })
+        .map_err(|refused| match refused {
+            Refused::OverBudget | Refused::Construction(InitialStateRefusal::OverBudget(_)) => {
+                Self::stopped(
+                    ModelCheckLimit::MaxStates,
+                    widen(self.limits.limits.max_states),
+                )
+            }
+            Refused::Construction(InitialStateRefusal::Encoding(refusal)) => {
+                End::Refusal(ModelCheckRefusal::Encoding(refusal))
+            }
+            Refused::Construction(InitialStateRefusal::Expansion(stop)) => {
+                expansion_end(stop, &self.meter, self.max_candidates)
+            }
+            Refused::Construction(InitialStateRefusal::Construction(refusal)) => {
+                End::Refusal(ModelCheckRefusal::Protocol(refusal))
+            }
+            Refused::Keying(end) => end,
+        })?;
         for (key, index, state) in initial {
             let verdict = match self.abstract_protocol {
                 Some(protocol) => {
@@ -1926,6 +1982,7 @@ impl Run<'_, '_> {
                         index,
                         state.state(),
                     )
+                    .map_err(|refusal| ModelCheckRefusal::Protocol(refusal))?
                     .verdict
                 }
                 None => check_initial(

@@ -139,8 +139,10 @@ impl TransitionSystem for EdgeGraph {
     type Key = String;
     type Finding = String;
 
-    fn initial(&self) -> Vec<String> {
-        self.initial.clone()
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        self.initial.iter().cloned().map(Ok)
     }
 
     fn key(&self, state: &String) -> String {
@@ -212,8 +214,10 @@ impl TransitionSystem for EnvelopeGraph {
     type Key = Document;
     type Finding = ();
 
-    fn initial(&self) -> Vec<usize> {
-        vec![0]
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        std::iter::once(Ok(0))
     }
 
     fn key(&self, state: &usize) -> Document {
@@ -258,9 +262,11 @@ impl TransitionSystem for RecordingSystem {
     type Key = ();
     type Finding = ();
 
-    fn initial(&self) -> Vec<()> {
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
         self.calls.set(self.calls.get() + 1);
-        vec![()]
+        std::iter::once(Ok(()))
     }
 
     fn key(&self, _state: &()) {
@@ -286,8 +292,10 @@ impl TransitionSystem for BigIntKeyGraph {
     type Key = u64;
     type Finding = ();
 
-    fn initial(&self) -> Vec<()> {
-        vec![()]
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        std::iter::once(Ok(()))
     }
 
     fn key(&self, _state: &()) -> u64 {

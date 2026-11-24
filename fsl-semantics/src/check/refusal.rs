@@ -2861,6 +2861,7 @@ impl TryFrom<Setting> for CheckingLimitKind {
             | Setting::MonitorMaxWindowValues
             | Setting::MonitorRetainedPositions
             | Setting::MonitorRetainedIdentities
+            | Setting::MonitorMaxActivations
             | Setting::MonitorPreparationWorkUnits
             | Setting::MonitorPreparationStorage
             | Setting::InspectMaxViewEntries

@@ -20,11 +20,12 @@ use filament_exact::{
 };
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
-    ModelSystem, ModelWalkSettings, PredicateReading, WalkMemo, sample_model_walk_observed_keyed,
+    sample_model_walk_observed_keyed, ModelSimState, ModelSystem, ModelWalkSettings,
+    PredicateReading, WalkMemo,
 };
 use fsl_eval::simulation::{
     NotSimulated, ObservedSample, ObserverDecision, SampleExpansion, SampleObservation,
-    SampleProvenance, StateKey, StopReason, TransitionSystem,
+    SampleProvenance, StateKey, StopReason,
 };
 use fsl_foundation::selection::DefinitionRef;
 use fsl_replay::{
@@ -228,13 +229,14 @@ impl Phase<'_, '_> {
     pub(super) fn run(
         &self,
         instances: &[&InstanceView<'_>],
+        starts: &[ModelSimState],
     ) -> Result<Result<Sampled, Halt>, ModelCheckRefusal> {
         let samples = self.limits.witness_samples;
         let mut sampled = Sampled::default();
         if samples == 0 || instances.is_empty() {
             return Ok(Ok(sampled));
         }
-        let count = self.system.initial().len();
+        let count = starts.len();
         // The greatest trace index, with checked arithmetic, before any walk.
         if !trace_indices_fit(count, samples) {
             return Ok(Err(stopped(ModelCheckLimit::WitnessSamples, samples)));
@@ -256,7 +258,7 @@ impl Phase<'_, '_> {
                 .insert((view.item, view.instance), vec![None; count]);
             sampled.stopped.insert((view.item, view.instance), 0);
         }
-        for initial in 0..count {
+        for (initial, start) in starts.iter().enumerate() {
             let mut pending: Vec<usize> = (0..instances.len()).collect();
             let mut walk_index = 0;
             while walk_index < samples && !pending.is_empty() {
@@ -266,7 +268,7 @@ impl Phase<'_, '_> {
                 let asked: Vec<Target<'_>> = pending.iter().map(|index| targets[*index]).collect();
                 let walk = match self.walk(
                     &sampler,
-                    initial,
+                    start,
                     trace_index(initial, samples, walk_index)?,
                     &asked,
                     &pending,
@@ -329,7 +331,7 @@ impl Phase<'_, '_> {
     fn walk(
         &self,
         sampler: &DefinitionRef,
-        initial: usize,
+        initial: &ModelSimState,
         trace: u64,
         targets: &[Target<'_>],
         target_indices: &[usize],
@@ -490,7 +492,8 @@ mod tests {
     use filament_semantic_value::declaration::TypeEnvironment;
     use fsl_eval::simulation::model::ClauseOutcome;
     use fsl_eval::simulation::{
-        Expansion, ExpansionStop, SampleRequest, sample_request, sample_request_observed,
+        Expansion, ExpansionStop, SampleRequest, TransitionSystem, sample_request,
+        sample_request_observed,
     };
     use fsl_replay::{DEFAULT_WITNESS_SAMPLES, DEFAULT_WITNESS_SEED};
     use ix_trace_rs::trace;
@@ -522,8 +525,12 @@ mod tests {
         type Key = usize;
         type Finding = ();
 
-        fn initial(&self) -> Vec<Self::State> {
-            vec![0]
+        type InitialError = std::convert::Infallible;
+
+        fn initial_iter(
+            &self,
+        ) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+            std::iter::once(Ok(0))
         }
 
         fn key(&self, state: &Self::State) -> Self::Key {
@@ -550,8 +557,12 @@ mod tests {
         type Key = usize;
         type Finding = &'static str;
 
-        fn initial(&self) -> Vec<Self::State> {
-            vec![0]
+        type InitialError = std::convert::Infallible;
+
+        fn initial_iter(
+            &self,
+        ) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+            std::iter::once(Ok(0))
         }
 
         fn key(&self, state: &Self::State) -> Self::Key {

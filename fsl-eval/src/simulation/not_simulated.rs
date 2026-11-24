@@ -87,6 +87,9 @@ pub enum NotSimulated {
     /// `explore_request` never returns this.
     #[error("the system has no initial state to sample from")]
     EmptyInitial,
+    /// A protocol initial state could not settle.
+    #[error(transparent)]
+    ProtocolInitial(Box<crate::simulation::protocol::ProtocolRefusal>),
     /// A `TransitionSystem::Key` or `TransitionId` reached during the walk
     /// has no RFC 8785 encoding (FR-101-AC-11). Unlike the other variants,
     /// this can happen after some of the walk has already run: the engine
@@ -117,6 +120,9 @@ impl NotSimulated {
     pub fn catalog_code(&self) -> Option<CatalogCode> {
         match self {
             Self::RequiresBound(_) | Self::UnboundCapacity(_) => None,
+            Self::ProtocolInitial(refusal) => {
+                Some(CatalogCode::new(refusal.code().as_str(), refusal.cause()))
+            }
             Self::EmptyInitial
             | Self::KeyEncoding(EncodingRefusal::NoEncoding(_))
             | Self::GeneratorMismatch { .. } => {
@@ -146,6 +152,7 @@ impl NotSimulated {
             Self::RequiresBound(_)
             | Self::UnboundCapacity(_)
             | Self::EmptyInitial
+            | Self::ProtocolInitial(_)
             | Self::KeyEncoding(
                 EncodingRefusal::NoEncoding(_) | EncodingRefusal::Allocation { .. },
             )

@@ -150,7 +150,8 @@ impl<'s, S: SubjectSystem> Lift<'s, S> {
             Some(permuter.ok_or_else(|| fault("a-reduced-path-has-a-symmetry"))?)
         };
         let (wanted, _) = system.state_key(root)?;
-        for (index, initial) in system.initial().into_iter().enumerate() {
+        for (index, initial) in system.initial_iter().enumerate() {
+            let initial = initial.map_err(|error| ModelCheckRefusal::Protocol(error.into()))?;
             let (canonical, permutation) = match permuter {
                 Some(permuter) => permuter
                     .canonicalise(&initial, group)

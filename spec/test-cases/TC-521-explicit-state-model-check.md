@@ -15,7 +15,7 @@ granularities, bounded clauses `on origin` and `on each`, an invariant,
 deadlock detection, a mixed formula, every limit with its value, the second
 phase at `max_depth`, `max_automaton_states`, and determinism.
 
-Scope: FR-126-AC-1 to FR-126-AC-7, FR-126-AC-10, FR-126-AC-11, FR-126-AC-16 to FR-126-AC-19.
+Scope: FR-126-AC-1 to FR-126-AC-7, FR-126-AC-10, FR-126-AC-11, FR-126-AC-16 to FR-126-AC-19, FR-126-AC-26.
 
 ## Test Procedure
 
@@ -77,6 +77,22 @@ to 1,000,000 (TC-472's 1,000 would stop the example at its first expansion); the
     `DeadlockFreedom` over the example subject with `max_candidates` 1; repeat
     each with the settings operation's `accounting.work_units=1000000` and
     `expansion.max_candidates=1000000` settings.
+12. A thousand distinct initial states under `max_states` 1 through the shared
+    initial-set admission, counting generated roots and keyed states; assert
+    that the second root is not constructed. A 2^40-combination
+    clock-range set pulled three states deep; then two
+    initial states under `max_states` 0 through `check_model`,
+    `check_refinement` (three equal initial states) and the state-graph
+    explorer, counting the states keyed. Run a protocol check with four
+    distinct initial states and `max_states` 1 and count its root settlements.
+    Repeat with a duplicate of the first root before the second distinct root.
+    Place a typed construction failure on an admitted root and assert the
+    original variant and location, then place it at or after the crossing
+    root and assert `MaxStates` wins without constructing it. Run model checks with partial-order
+    reduction and nontrivial symmetry, and sampled state-graph requests with
+    and without symmetry, with distinct initial states past the limit. Run a
+    state-graph request with four initial states within the budget and one
+    sample per initial state. Count initial-state generation (FR-126-AC-26).
 
 Tag the tests `#[trace("TC-521", "FR-126-AC-n")]`.
 
@@ -141,3 +157,17 @@ Tag the tests `#[trace("TC-521", "FR-126-AC-n")]`.
   the example subject stops with `{MaxCandidates, 1}`. Each stop names
   `accounting.work_units` or `expansion.max_candidates`, and raised limits
   allow the corresponding run to complete without that stop.
+- Step 12: the shared admission refuses with `MaxStates` naming 1 after
+  constructing and keying only the first admitted root; it refuses before
+  constructing or keying the second distinct root. Pulling three states of
+  the 2^40-combination set builds exactly three. Each of the three runs
+  refuses with `MaxStates` naming 0 before constructing or keying any initial
+  root (all roots are keyed under the default budget). The protocol check
+  constructs one root before refusing the second distinct identity. An
+  earlier duplicate consumes no additional slot. A fault in an admitted
+  root keeps its variant and location. If the fault is at the crossing root,
+  the already-reached limit refusal wins and the failing root is never
+  constructed or settled. Reduced and sampled over-budget requests refuse
+  before constructing the crossing candidate and draw no samples. The
+  in-budget sampled request generates four states and retains the original
+  witness indices.
