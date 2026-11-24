@@ -49,7 +49,7 @@ is `B median <= A median * (1 + noise)`.
 | `checker/independent/5000` | 714.21, 542.58, 613.25, 191.35, 440.73 | 160.09, 144.07, 234.36, 954.25, 138.99 | 542.58 | 160.09 | 1.1035 | 0.2951 | 2.1035 | Pass |
 | `checker/object_chain/500` | 20.761, 26.121, 39.095, 25.355, 39.635 | 51.213, 9.2213, 19.371, 47.266, 54.226 | 26.121 | 47.266 | 1.8104 | 1.8095 | 2.8104 | Pass |
 | `checker/object_chain/1000` | 179.22, 42.516, 139.67, 121.41, 80.165 | 55.776, 117.90, 307.21, 231.80, 126.63 | 121.41 | 126.63 | 1.4140 | 1.0430 | 2.4140 | Pass |
-| `checker/object_chain/5000` | 700.86, 504.17, 783.36, 677.33, 606.60 | 371.16, 579.74, 581.20, 633.10, 433.30 | 677.33 | 579.74 | 1.4879 | 0.8559 | 2.4879 | Pass |
+| `checker/object_chain/5000` (default-budget refusal) | 700.86, 504.17, 783.36, 677.33, 606.60 | 371.16, 579.74, 581.20, 633.10, 433.30 | 677.33 | 579.74 | 1.4879 | 0.8559 | 2.4879 | Pass |
 | `checker/text_cluster/checked/3` | 0.089509, 0.43320, 0.26906, 0.12308, 0.10578 | 0.15362, 0.14866, 0.24691, 0.34296, 0.14583 | 0.12308 | 0.15362 | 1.6223 | 1.2481 | 2.6223 | Pass |
 | `checker/text_cluster/checked/4` | 0.13323, 0.24920, 0.94036, 0.34285, 0.38678 | 0.21764, 0.31052, 0.14334, 0.56541, 0.26135 | 0.34285 | 0.26135 | 1.1582 | 0.7623 | 2.1582 | Pass |
 | `checker/text_cluster/checked/5` | 0.49000, 2.5547, 3.5355, 3.0161, 0.33806 | 0.99856, 0.84155, 0.38897, 1.6363, 0.89276 | 2.5547 | 0.89276 | 1.4592 | 0.3495 | 2.4592 | Pass |
@@ -77,5 +77,7 @@ checked type-node Debug rows had identical output (SHA-256
 `54b9ead04779ec051a28dce1639ccfced12a3c664c16ac0361b035eda9651eed`). Both
 revisions checked every chain and independent input, checked text clusters
 3 through 8, refused the 9-record text cluster, admitted object chains 500
-and 1,000, and refused the default-budget 5,000-type chain. The utility was
-temporary and is not part of the change.
+and 1,000, and refused the default-budget 5,000-type chain. The
+`checker/object_chain/5000` timed row is that default-budget refusal; the
+separate unbudgeted 5,000-type admission benchmark was excluded. The utility
+was temporary and is not part of the change.
