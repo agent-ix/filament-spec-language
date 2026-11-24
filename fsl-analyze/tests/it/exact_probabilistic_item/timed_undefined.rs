@@ -385,7 +385,7 @@ fn timed_undefined_replays_every_hop_of_a_tied_race() {
          workload Tied on M {{ weight Call::aa_keep = 1; weight Call::zz_drop = 1; }}\n\
          probabilistic TiedUndefined using timed on M over (c: M::Call) under Tied on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
-             {{ probability >= 0.5 [ always[0 ms, 3 ms] holds(c.phase = 0) ] }}\n",
+             {{ probability >= 0.5 [ always(0 ms, 3 ms] holds(c.phase = 0) ] }}\n",
         crate::timed_world::DENSE,
     );
     let world = crate::timed_world::world(
