@@ -22,4 +22,29 @@ fn timed_eventually_with_closed_horizon_settles_at_ninety_nine_percent() {
         panic!("timed bounded claim settles with a checked proof: {record:#?}");
     };
     assert_eq!(value.value(), &ratio(99, 100));
+
+    let document = document(&record);
+    let terminal_timeout = document["values"]
+        .as_array()
+        .expect("certificate values")
+        .iter()
+        .any(|row| {
+            let encoded = row["state"].as_str().expect("encoded ProductKey");
+            let bytes = URL_SAFE_NO_PAD.decode(encoded).expect("base64 ProductKey");
+            let key: Value = serde_json::from_slice(&bytes).expect("canonical ProductKey");
+            let clocks = key[4][1][4].as_array().expect("digital clocks");
+            let x = clocks
+                .iter()
+                .find(|clock| clock[0][1] == "x")
+                .expect("clock x");
+            x[1] == "2" && key[4][1][5] == json!(["deadline", "4", "5"])
+        });
+    assert!(
+        terminal_timeout,
+        "producer's t=5 rejecting state retains x=2 ms"
+    );
+    assert!(matches!(
+        check(&world, "Eventually", &document),
+        Ok(ExactProbabilityCertificateCheck::Accepted(_))
+    ));
 }
