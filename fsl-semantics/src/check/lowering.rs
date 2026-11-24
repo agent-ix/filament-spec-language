@@ -4555,19 +4555,37 @@ impl<'a> Lowering<'a> {
     ) -> Result<LeafTerm, CheckRefusal> {
         let lowered_type = node.lowered_value_type();
         let control_range = if matches!(node.kind(), NodeKind::If { .. }) {
-            node.children()
+            let branch = node
+                .children()
                 .into_iter()
                 .skip(1)
-                .find_map(|child| match child.kind() {
-                    NodeKind::Coerce(_, interval) if child.value_type() == node.value_type() => {
-                        Some((child, interval))
+                .zip(arguments.iter().skip(1))
+                .find_map(|(child, argument)| match child.kind() {
+                    NodeKind::Coerce(operand, interval)
+                        if child.value_type() == node.value_type() =>
+                    {
+                        Some((child, *operand, interval, argument))
                     }
                     _ => None,
-                })
-                .map(|(child, interval)| {
-                    self.type_node(&ValueType::Int(interval.clone()), child.location())
-                })
-                .transpose()?
+                });
+            if let Some((child, operand, interval, argument)) = branch {
+                if super::ir::coerce_node_builds_narrow(child.at(operand), interval) {
+                    let MemberTerm::Leaf(leaf) = argument else {
+                        return Err(fault(node.location(), KeyFault::UnresolvedDraft));
+                    };
+                    Some(
+                        leaf.reference_target()
+                            .and_then(NodeRef::admitted)
+                            .and_then(|key| self.graph.node(key.clone()))
+                            .and_then(SemanticNode::semantic_type)
+                            .ok_or_else(|| fault(node.location(), KeyFault::UnresolvedDraft))?,
+                    )
+                } else {
+                    Some(self.type_node(&ValueType::Int(interval.clone()), child.location())?)
+                }
+            } else {
+                None
+            }
         } else {
             None
         };
