@@ -1334,7 +1334,7 @@ pub fn checked_dispatch_selected_operation(
     let crate::model::intake::SelectedModelsParts {
         entries,
         versions,
-        meter: mut meter,
+        mut meter,
         exact_declarations,
         exact_fields,
         tuple_declarations,
