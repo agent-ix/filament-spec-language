@@ -827,11 +827,27 @@ fn int_text(value: &str) -> String {
     }
 }
 
+fn float64_nan_bits_are_canonical(bits: &str) -> bool {
+    if bits.len() != 16
+        || !bits
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return false;
+    }
+    let Some(value) = u64::from_str_radix(bits, 16).ok() else {
+        return false;
+    };
+    let exponent = (value >> 52) & 0x7ff;
+    let fraction = value & ((1_u64 << 52) - 1);
+    exponent == 0x7ff && fraction != 0
+}
+
 /// FR-812's lossless binary64 representation. Finite values retain their
 /// sign, integer significand and power-of-two exponent; NaNs retain all bits.
 fn float64_value(bits: &str, target: Target) -> String {
     let Some(value) = u64::from_str_radix(bits, 16).ok() else {
-        return "[tag |-> \"nan\", bits |-> \"0000000000000000\"]".to_owned();
+        return "[tag |-> \"nan\", bits |-> \"7ff8000000000000\"]".to_owned();
     };
     let (sign, lean_sign) = if value >> 63 == 0 {
         ("positive", "false")
@@ -841,9 +857,15 @@ fn float64_value(bits: &str, target: Target) -> String {
     let exponent = (value >> 52) & 0x7ff;
     let fraction = value & ((1_u64 << 52) - 1);
     if exponent == 0x7ff && fraction != 0 {
+        if !float64_nan_bits_are_canonical(bits) {
+            return match target {
+                Target::Tla => "[tag |-> \"nan\", bits |-> \"7ff8000000000000\"]".to_owned(),
+                Target::Lean => "F.nan \"7ff8000000000000\"".to_owned(),
+            };
+        }
         return match target {
             Target::Tla => format!("[tag |-> \"nan\", bits |-> \"{bits}\"]"),
-            Target::Lean => format!("F.nan {lean_sign} {fraction}"),
+            Target::Lean => format!("F.nan \"{bits}\""),
         };
     }
     if exponent == 0x7ff {
@@ -1613,8 +1635,20 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
     if has_float64 {
         out.push(define(
             input.first,
+            Some("F_float64_hex_digits".to_owned()),
+            "F_float64_hex_digits == {\"0\", \"1\", \"2\", \"3\", \"4\", \"5\", \"6\", \"7\", \"8\", \"9\", \"a\", \"b\", \"c\", \"d\", \"e\", \"f\"}".to_owned(),
+            None,
+        ));
+        out.push(define(
+            input.first,
+            Some("F_float64_nan_bits".to_owned()),
+            "F_float64_nan_bits(bits) ==\n  Len(bits) = 16\n  /\\ \\A i \\in 1..16 : SubSeq(bits, i, i) \\in F_float64_hex_digits\n  /\\ SubSeq(bits, 2, 3) = \"ff\"\n  /\\ SubSeq(bits, 4, 4) \\in {\"8\", \"9\", \"a\", \"b\", \"c\", \"d\", \"e\", \"f\"}\n  /\\ (SubSeq(bits, 4, 4) \\in {\"9\", \"a\", \"b\", \"c\", \"d\", \"e\", \"f\"} \\/ \\E i \\in 5..16 : SubSeq(bits, i, i) # \"0\")".to_owned(),
+            None,
+        ));
+        out.push(define(
+            input.first,
             Some("F_float64_values".to_owned()),
-            "F_float64_values ==\n  [tag : {\"finite\"}, sign : {\"positive\", \"negative\"}, significand : {0}, exponent : {-1074}]\n  \\cup [tag : {\"finite\"}, sign : {\"positive\", \"negative\"}, significand : 1..4503599627370495, exponent : {-1074}]\n  \\cup [tag : {\"finite\"}, sign : {\"positive\", \"negative\"}, significand : 4503599627370496..9007199254740991, exponent : -1074..971]\n  \\cup [tag : {\"inf\"}, sign : {\"positive\", \"negative\"}]\n  \\cup [tag : {\"nan\"}, bits : STRING]".to_owned(),
+            "F_float64_values ==\n  [tag : {\"finite\"}, sign : {\"positive\", \"negative\"}, significand : {0}, exponent : {-1074}]\n  \\cup [tag : {\"finite\"}, sign : {\"positive\", \"negative\"}, significand : 1..4503599627370495, exponent : {-1074}]\n  \\cup [tag : {\"finite\"}, sign : {\"positive\", \"negative\"}, significand : 4503599627370496..9007199254740991, exponent : -1074..971]\n  \\cup [tag : {\"inf\"}, sign : {\"positive\", \"negative\"}]\n  \\cup { [tag |-> \"nan\", bits |-> bits] : bits \\in STRING /\\ F_float64_nan_bits(bits) }".to_owned(),
             None,
         ));
         out.push(define(
@@ -1887,25 +1921,50 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
         out.push(define(
             input.first,
             Some("F".to_owned()),
-            "inductive F where\n  | finite (negative : Bool) (significand : Nat) (exponent : Int)\n  | inf (negative : Bool)\n  | nan (negative : Bool) (payload : Nat)\n  deriving BEq, DecidableEq".to_owned(),
+            "inductive F where\n  | finite (negative : Bool) (significand : Nat) (exponent : Int)\n  | inf (negative : Bool)\n  | nan (bits : String)\n  deriving BEq, DecidableEq".to_owned(),
+            None,
+        ));
+        out.push(define(
+            input.first,
+            Some("F_float64_hex_lower".to_owned()),
+            "def F_float64_hex_lower (c : Char) : Prop := c ∈ \"0123456789abcdef\".toList"
+                .to_owned(),
+            None,
+        ));
+        out.push(define(
+            input.first,
+            Some("F_float64_nan_bits".to_owned()),
+            "def F_float64_nan_bits (bits : String) : Prop :=\n  match bits.toList with\n  | [sign, e1, e2, e3, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12] =>\n      F_float64_hex_lower sign /\\ e1 = 'f' /\\ e2 = 'f' /\\ e3 ∈ \"89abcdef\".toList /\\\n      F_float64_hex_lower f1 /\\ F_float64_hex_lower f2 /\\ F_float64_hex_lower f3 /\\ F_float64_hex_lower f4 /\\\n      F_float64_hex_lower f5 /\\ F_float64_hex_lower f6 /\\ F_float64_hex_lower f7 /\\ F_float64_hex_lower f8 /\\\n      F_float64_hex_lower f9 /\\ F_float64_hex_lower f10 /\\ F_float64_hex_lower f11 /\\ F_float64_hex_lower f12 /\\\n      (e3 ≠ '8' \\/ f1 ≠ '0' \\/ f2 ≠ '0' \\/ f3 ≠ '0' \\/ f4 ≠ '0' \\/ f5 ≠ '0' \\/ f6 ≠ '0' \\/ f7 ≠ '0' \\/ f8 ≠ '0' \\/ f9 ≠ '0' \\/ f10 ≠ '0' \\/ f11 ≠ '0' \\/ f12 ≠ '0')\n  | _ => False".to_owned(),
+            None,
+        ));
+        out.push(define(
+            input.first,
+            Some("F_float64_flip_sign_char".to_owned()),
+            "def F_float64_flip_sign_char (sign : Char) : Char :=\n  match sign with\n  | '0' => '8' | '1' => '9' | '2' => 'a' | '3' => 'b'\n  | '4' => 'c' | '5' => 'd' | '6' => 'e' | '7' => 'f'\n  | '8' => '0' | '9' => '1' | 'a' => '2' | 'b' => '3'\n  | 'c' => '4' | 'd' => '5' | 'e' => '6' | 'f' => '7'\n  | other => other".to_owned(),
+            None,
+        ));
+        out.push(define(
+            input.first,
+            Some("F_float64_neg_nan".to_owned()),
+            "def F_float64_neg_nan (bits : String) : String :=\n  match bits.toList with\n  | sign :: rest => String.ofList (F_float64_flip_sign_char sign :: rest)\n  | [] => bits".to_owned(),
             None,
         ));
         out.push(define(
             input.first,
             Some("F_float64_values".to_owned()),
-            "def F_float64_values (x : F) : Prop :=\n  match x with\n  | .finite _ significand exponent =>\n      (significand = 0 /\\ exponent = -1074) \\/\n      (1 <= significand /\\ significand < 4503599627370496 /\\ exponent = -1074) \\/\n      (4503599627370496 <= significand /\\ significand <= 9007199254740991 /\\ -1074 <= exponent /\\ exponent <= 971)\n  | .inf _ => True\n  | .nan _ payload => 1 <= payload /\\ payload < 4503599627370496".to_owned(),
+            "def F_float64_values (x : F) : Prop :=\n  match x with\n  | .finite _ significand exponent =>\n      (significand = 0 /\\ exponent = -1074) \\/\n      (1 <= significand /\\ significand < 4503599627370496 /\\ exponent = -1074) \\/\n      (4503599627370496 <= significand /\\ significand <= 9007199254740991 /\\ -1074 <= exponent /\\ exponent <= 971)\n  | .inf _ => True\n  | .nan bits => F_float64_nan_bits bits".to_owned(),
             None,
         ));
         out.push(define(
             input.first,
             Some("F_float64_eq".to_owned()),
-            "def F_float64_eq (a b : F) : Prop :=\n  match a, b with\n  | .nan _ _, _ | _, .nan _ _ => False\n  | .finite signA sigA expA, .finite signB sigB expB =>\n      if sigA = 0 /\\ sigB = 0 then True else signA = signB /\\ sigA = sigB /\\ expA = expB\n  | .inf signA, .inf signB => signA = signB\n  | _, _ => False".to_owned(),
+            "def F_float64_eq (a b : F) : Prop :=\n  match a, b with\n  | .nan _, _ | _, .nan _ => False\n  | .finite signA sigA expA, .finite signB sigB expB =>\n      if sigA = 0 /\\ sigB = 0 then True else signA = signB /\\ sigA = sigB /\\ expA = expB\n  | .inf signA, .inf signB => signA = signB\n  | _, _ => False".to_owned(),
             None,
         ));
         out.push(define(
             input.first,
             Some("F_float64_neg".to_owned()),
-            "def F_float64_neg (x : F) : F :=\n  match x with\n  | .finite negative significand exponent => .finite (!negative) significand exponent\n  | .inf negative => .inf (!negative)\n  | .nan negative payload => .nan (!negative) payload".to_owned(),
+            "def F_float64_neg (x : F) : F :=\n  match x with\n  | .finite negative significand exponent => .finite (!negative) significand exponent\n  | .inf negative => .inf (!negative)\n  | .nan bits => .nan (F_float64_neg_nan bits)".to_owned(),
             None,
         ));
     }
@@ -2494,5 +2553,30 @@ fn rename_param(e: E, from: &str, to: &str) -> E {
                 .collect(),
         ),
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod float64_nan_tests {
+    use super::float64_nan_bits_are_canonical;
+    use ix_trace_rs::trace;
+
+    #[test]
+    #[trace("FSpec-FR-812-AC-8")]
+    fn nan_bit_strings_are_exact_canonical_ieee_encodings() {
+        assert!(float64_nan_bits_are_canonical("7ff8000000000000"));
+        assert!(float64_nan_bits_are_canonical("fff8000000000001"));
+        for rejected in [
+            "7ff800000000000",  // short
+            "7FF8000000000000", // uppercase
+            "7ff0000000000000", // infinity, not NaN / zero fraction
+            "3ff0000000000000", // finite, not NaN
+            "7ff800000000000g", // non-hex character
+        ] {
+            assert!(
+                !float64_nan_bits_are_canonical(rejected),
+                "must reject {rejected}"
+            );
+        }
     }
 }

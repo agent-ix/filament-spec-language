@@ -460,6 +460,10 @@ fn a_float_model_field_exports_its_exact_bits() {
     );
     assert!(target.contains("4503599627370496..9007199254740991"));
     assert!(target.contains("1..4503599627370495, exponent : {-1074}"));
+    assert!(target.contains("F_float64_nan_bits(bits)"));
+    assert!(target.contains("Len(bits) = 16"));
+    assert!(target.contains("SubSeq(bits, 2, 3) = \"ff\""));
+    assert!(!target.contains("[tag : {\"nan\"}, bits : STRING]"));
     assert!(
         !target.contains("[num |->"),
         "no rational stands for the float field: {target}"
@@ -489,6 +493,14 @@ fn a_float_model_field_exports_its_exact_bits() {
         "Float64 domain: {target}"
     );
     assert!(
+        target.contains("def F_float64_nan_bits"),
+        "canonical NaN bit-pattern predicate: {target}"
+    );
+    assert!(
+        target.contains("F_float64_hex_lower f12"),
+        "all payload characters are lowercase hex: {target}"
+    );
+    assert!(
         target.contains("def F_float64_eq"),
         "Float64 equality: {target}"
     );
@@ -497,9 +509,10 @@ fn a_float_model_field_exports_its_exact_bits() {
         "Float64 negation: {target}"
     );
     assert!(
-        target.contains("F.nan false 2251799813685249"),
-        "exact NaN sign and payload: {target}"
+        target.contains("F.nan \"7ff8000000000001\""),
+        "exact AC-8 NaN bit-pattern string: {target}"
     );
+    assert!(target.contains("F_float64_neg_nan bits"));
 }
 
 #[test]
