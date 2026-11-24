@@ -16,6 +16,7 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use filament_semantic_value::catalog::CatalogCode;
+use fsl_analyze::analyze::{Engines, analyze_items, exact_probabilistic_item};
 use fsl_analyze::exact_probabilistic::{
     action_steps, build_product, decide_bounded_event, decide_fair_expected_reward,
     decide_fair_reachability, decide_reachability, free_delays_choice, produce_witness,
@@ -23,14 +24,12 @@ use fsl_analyze::exact_probabilistic::{
     FreeDelayRow, MonitorVerdict, ProbBuild, ProbProduct, ProbStateId, ProductAction, ProductKind,
     ProductRequest, SchedulerChoice, UnboundedObjective, WitnessError, WitnessScope,
 };
-use fsl_analyze::analyze::{Engines, analyze_items, exact_probabilistic_item};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::ScheduledIdentity;
 use fsl_replay::{
-    FreeDelayActionRow, FreeDelaysRace, FreeRacer, GivenRacer,
+    FreeDelayActionRow, FreeDelaysRace, FreeRacer, GivenRacer, ProbabilisticSchedulerChoice,
     ProductAction as ReplayProductAction, ProductActionRefusal, Schedule,
 };
-use fsl_replay::ProbabilisticSchedulerChoice;
 use fsl_semantics::check::Bound;
 use ix_trace_rs::trace;
 
@@ -323,6 +322,7 @@ fn later_guard_race() -> World {
 /// FR-204-AC-9 (TC-642 step 5): two rows, given `[1]` and `[3]`,
 /// each offering `B` the delays 1 to 3, make nine actions; the maximum `3/4`
 /// and the minimum `1/4` take the least attaining delay of each row.
+#[trace("TC-642", "FR-204-AC-8")]
 #[trace("TC-642", "FR-204-AC-9")]
 #[test]
 fn two_rows_take_the_least_attaining_delay_of_each() {
@@ -1097,6 +1097,19 @@ fn timed_detour_refutation_replays_its_free_delay_scheduler() {
                 }
                 _ => false,
             })
+    );
+    assert!(
+        replayed_witness
+            .evidence()
+            .scheduler
+            .iter()
+            .any(|(_, choice)| {
+                matches!(
+                    choice,
+                    ProbabilisticSchedulerChoice::Deterministic(ReplayProductAction::UnitDelay)
+                )
+            }),
+        "ordinary non-FreeDelays scheduler entries remain admissible"
     );
     let mut path_lengths: Vec<_> = replayed_witness
         .evidence()
