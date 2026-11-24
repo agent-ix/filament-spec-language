@@ -4549,6 +4549,9 @@ impl<'a> Lowering<'a> {
     /// negation, whose checked result has the operand's type node.
     fn lowering_type_ref(&mut self, node: CheckedNode<'_>) -> Result<NodeRef, CheckRefusal> {
         let value_type = node.lowered_value_type();
+        if let NodeKind::Pre(operand) = node.kind() {
+            return self.lowering_type_ref(node.at(*operand));
+        }
         if matches!(node.kind(), NodeKind::Attribute { .. }) {
             if let ValueType::Float(float) = &*value_type {
                 // Equality provenance retains the checked exact-mode source
