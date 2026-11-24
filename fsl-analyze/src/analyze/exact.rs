@@ -335,7 +335,6 @@ pub(super) fn statistical_on_each(
 }
 
 fn not_yet() -> EngineReport {
-    eprintln!("unsupported path: {}", std::backtrace::Backtrace::force_capture());
     EngineReport::Refused(Refusal::Unsupported(NOT_YET))
 }
 
@@ -2530,17 +2529,11 @@ fn settle_fair_interval(
             if let Some(tamper) = tamper {
                 tamper(&mut certificate);
             }
-            let document = probability_proof_document(system, claims, item, &certificate, limits, cancel)
-                .map_err(|error| {
-                    eprintln!("interval producer error: {error:?}");
-                    error
-                })?;
+            let document =
+                probability_proof_document(system, claims, item, &certificate, limits, cancel)?;
             certificate.values = document.document().values.clone();
-            let bytes = fsl_replay::write_value_bounds_proof_document(&document, side, limits, cancel)
-                .map_err(|error| {
-                    eprintln!("interval writer error: {error:?}");
-                    error
-                })?;
+            let bytes =
+                fsl_replay::write_value_bounds_proof_document(&document, side, limits, cancel)?;
             let check = fsl_replay::check_probability_certificate_document_as(
                 system,
                 claims,
@@ -2549,11 +2542,7 @@ fn settle_fair_interval(
                 interval_role(side, bound),
                 limits,
                 cancel,
-            )
-            .map_err(|error| {
-                eprintln!("interval checker error: {error:?}");
-                error
-            })?;
+            )?;
             Ok::<_, ProbabilityDocumentError>((certificate, check))
         })();
         sides.push((side, checked));
@@ -2606,7 +2595,6 @@ fn interval_failure(
     limits: &crate::exact_probabilistic::ExactProbLimits,
     subject: SubjectLimits<'_>,
 ) -> EngineReport {
-    eprintln!("interval document error: {error:?}");
     let scalar_stop = matches!(
         &error,
         ProbabilityDocumentError::Limit {
