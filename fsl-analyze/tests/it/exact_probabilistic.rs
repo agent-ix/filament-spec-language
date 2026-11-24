@@ -2268,10 +2268,7 @@ fn fair_eventual_value_bounds_are_independently_checked() {
     else {
         panic!("the fair value is enclosed by checked bounds: {record:#?}");
     };
-    let lower_value = match lower {
-        fsl_replay::ExactBound::Finite(value) => value.value(),
-        fsl_replay::ExactBound::Infinity => panic!("finite lower bound"),
-    };
+    let lower_value = lower.value();
     let upper_value = match upper {
         fsl_replay::ExactBound::Finite(value) => value.value(),
         fsl_replay::ExactBound::Infinity => panic!("finite upper bound"),
