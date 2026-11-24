@@ -148,7 +148,7 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
         let witness = record
             .probabilistic_counterexample
             .as_ref()
-            .expect("both thresholds reproduce the same undefined path");
+            .unwrap_or_else(|| panic!("{name} has no replayed undefined path"));
         assert_eq!(witness.mass(), &ratio(1, 2));
         let undefined = witness.undefined().expect("the undefined read is replayed");
         let product_key: Value =
