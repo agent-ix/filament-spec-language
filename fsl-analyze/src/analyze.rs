@@ -1010,6 +1010,9 @@ impl DocumentGraphs {
             Err(crate::provider::NotAdmitted::Refused(refusal)) => {
                 Err(AnalyzeRefusal::Package(refusal))
             }
+            Err(crate::provider::NotAdmitted::HostAllocationFailed(failure)) => {
+                Err(AnalyzeRefusal::HostAllocationFailed(failure))
+            }
             Err(crate::provider::NotAdmitted::Other(refusal)) => Err(AnalyzeRefusal::Emission(
                 GraphUnavailable::of_not_admitted(refusal),
             )),
@@ -1168,6 +1171,15 @@ pub enum AnalyzeRefusal {
     /// own code, cause and pointer, never an internal failure.
     #[error("the package the run compiled is not admitted: {}", .0.label())]
     Package(fsl_package::PackageAdmissionRefusal),
+    /// The host refused memory the package reader had admitted; this says
+    /// nothing about the package.
+    #[error(
+        "host allocation failed during {:?}: requested {} bytes after {} bytes were admitted",
+        .0.stage,
+        .0.requested,
+        .0.consumed
+    )]
+    HostAllocationFailed(filament_contract_model::CheckedPackageHostAllocationFailed),
     /// The package the run analyzes, or a dependency an item is analyzed
     /// over, has no admitted emission, so the result's node ids cannot be
     /// held (FSL FR-621 "Node ids in an item"): the run ends before any item
@@ -1359,6 +1371,17 @@ impl AnalyzeRefusal {
                 )
                 .with_diagnostics(vec![diagnostic])
             }
+            Self::HostAllocationFailed(_failure) => OutcomeDocument::new(
+                Operation::Analyze,
+                Some(OutcomeStage::S4),
+                Category::InternalFailure,
+            )
+            .with_diagnostics(vec![OutcomeDiagnostic::new(
+                None,
+                fsl_foundation::Code::RuntimeInvariant.as_str(),
+                None,
+                self.to_string(),
+            )]),
             Self::Emission(cause) => {
                 let code = cause.code();
                 OutcomeDocument::new(Operation::Analyze, None, code.category()).with_diagnostics(
@@ -5039,5 +5062,39 @@ mod proof_value_tests {
                 None
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod host_allocation_tests {
+    use super::AnalyzeRefusal;
+    use filament_contract_model::{
+        CheckedPackageHostAllocationFailed, NativeJoinLocus, NativeJoinLocusSource,
+        PackageReadStage,
+    };
+    use filament_semantic_value::catalog::Category;
+    use ix_trace_rs::trace;
+
+    /// FR-096-AC-24: package reader host allocation failures stay internal,
+    /// carry stage and requested size, and do not name a package location.
+    #[trace("FR-096-AC-24")]
+    #[test]
+    fn host_allocation_failure_is_an_internal_analyze_outcome() {
+        let refusal = AnalyzeRefusal::HostAllocationFailed(CheckedPackageHostAllocationFailed {
+            stage: PackageReadStage::Envelope,
+            locus: NativeJoinLocus {
+                source: NativeJoinLocusSource::PackageRead(PackageReadStage::Envelope, 0),
+                form: "package_bytes",
+            },
+            requested: 32,
+            consumed: 64,
+        });
+
+        assert_eq!(refusal.document().category(), Category::InternalFailure);
+        let diagnostic = &refusal.document().diagnostics()[0];
+        assert_eq!(diagnostic.code(), "runtime_invariant");
+        assert!(diagnostic.message().contains("Envelope"));
+        assert!(diagnostic.message().contains("32 bytes"));
+        assert_eq!(diagnostic.locus(), None);
     }
 }

@@ -1229,6 +1229,8 @@ pub(crate) enum NotAdmitted {
     /// The strict reader refused the package it was given back: the typed
     /// refusal, with the reader's code, cause and pointer.
     Refused(fsl_package::PackageAdmissionRefusal),
+    /// The strict reader's admitted allocation was refused by the host.
+    HostAllocationFailed(filament_contract_model::CheckedPackageHostAllocationFailed),
     /// The package did not emit, or the read failed for a reason that is no
     /// admission refusal: the emitter's own refusal when it named one.
     Other(Option<Box<fsl_package::EmitRefusal>>),
@@ -1284,7 +1286,10 @@ pub(crate) fn read_package_with_temporal_selections<'p>(
                     _ => None,
                 })
             },
-            NotAdmitted::Refused,
+            |typed| match typed.host_allocation_failure {
+                Some(failure) => NotAdmitted::HostAllocationFailed(failure),
+                None => NotAdmitted::Refused(typed),
+            },
         )
     })
 }

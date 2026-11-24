@@ -599,6 +599,11 @@ pub(crate) fn analyze_bound<'a>(
                 refusal,
             )));
         }
+        Err(crate::provider::NotAdmitted::HostAllocationFailed(failure)) => {
+            return Err(StageFailure::Refused(
+                super::AnalyzeRefusal::HostAllocationFailed(failure),
+            ));
+        }
         Err(crate::provider::NotAdmitted::Other(refusal)) => {
             own_refusal = refusal;
             None
@@ -637,6 +642,11 @@ pub(crate) fn analyze_bound<'a>(
                 return Err(StageFailure::Refused(super::AnalyzeRefusal::Package(
                     refusal,
                 )));
+            }
+            Err(crate::provider::NotAdmitted::HostAllocationFailed(failure)) => {
+                return Err(StageFailure::Refused(
+                    super::AnalyzeRefusal::HostAllocationFailed(failure),
+                ));
             }
             Err(crate::provider::NotAdmitted::Other(refusal)) => {
                 Err(super::GraphUnavailable::of_not_admitted(refusal))

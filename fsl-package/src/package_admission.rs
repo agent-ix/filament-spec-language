@@ -154,7 +154,6 @@ pub fn admit_checked_package_with_evidence(
         pointer,
         identity: None,
         host_allocation_failure: None,
-        host_allocation_failure: None,
     };
     match filament_contract_model::read_checked_package_with_budget(
         bytes,
@@ -228,7 +227,6 @@ pub fn checked_package_evidence(
                 pointer: None,
                 identity: Some(identity.clone()),
                 host_allocation_failure: None,
-                host_allocation_failure: None,
             });
         }
     }
@@ -241,7 +239,6 @@ pub fn checked_package_evidence(
                 cause: Some("conflicting-definition".to_owned()),
                 pointer: None,
                 identity: Some(identity.clone()),
-                host_allocation_failure: None,
                 host_allocation_failure: None,
             })?;
     }
@@ -412,10 +409,12 @@ fn identity_at(bytes: &[u8], pointer: &str) -> Option<String> {
 #[cfg(test)]
 mod host_allocation_tests {
     use super::*;
+    use ix_trace_rs::trace;
 
     /// A host allocation failure during the strict read says nothing about the
     /// package: it is the catalogued `resource_exhausted`/`allocation-failed`
     /// host failure, with its stage and charged size and no package locus.
+    #[trace("FR-096-AC-24")]
     #[test]
     fn a_host_allocation_failure_is_an_internal_failure_not_a_package_refusal() {
         let failure = filament_contract_model::CheckedPackageHostAllocationFailed {

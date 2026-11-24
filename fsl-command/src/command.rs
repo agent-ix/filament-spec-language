@@ -5501,6 +5501,7 @@ mod tests {
                         cause: Some("invalid-value".to_owned()),
                         pointer: Some("/claim_names/2".to_owned()),
                         identity: None,
+                        host_allocation_failure: None,
                     },
                 ),
             )),

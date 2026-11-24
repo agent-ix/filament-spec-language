@@ -426,6 +426,9 @@ impl CompositionFront for Context<'_> {
             Err(crate::provider::NotAdmitted::Refused(refusal)) => {
                 Err(Unavailable::Refused(refusal))
             }
+            Err(crate::provider::NotAdmitted::HostAllocationFailed(failure)) => {
+                Err(Unavailable::HostAllocationFailed(failure))
+            }
             Err(crate::provider::NotAdmitted::Other(refusal)) => Err(Unavailable::Emission(
                 GraphUnavailable::of_not_admitted(refusal),
             )),
@@ -891,6 +894,8 @@ fn premise_item<F: CompositionFront>(
 pub(super) enum Unavailable {
     /// The strict reader refused the package the run emitted for it.
     Refused(fsl_package::PackageAdmissionRefusal),
+    /// The host refused memory the reader had already admitted.
+    HostAllocationFailed(filament_contract_model::CheckedPackageHostAllocationFailed),
     /// The package emitted no complete admitted bytes, or they hold no
     /// readable graph.
     Emission(GraphUnavailable),
@@ -922,6 +927,10 @@ fn unavailable(index: RequestIndex, name: &str, failure: &Unavailable) -> Box<Re
             // cause, and `Code` names none of them, so a reader refusal keeps
             // its catalog cause.
             CatalogCode::new(refusal.code.as_str(), refusal.catalog_cause()),
+        ),
+        Unavailable::HostAllocationFailed(_failure) => TerminalRecord::disposition_failed(
+            index,
+            CatalogCode::new(Code::RuntimeInvariant.as_str(), "host-allocation-failed"),
         ),
         Unavailable::Emission(GraphUnavailable::EmitRefused(refusal)) => {
             TerminalRecord::disposition_declined(
@@ -1108,6 +1117,7 @@ mod tests {
             cause: cause.map(str::to_owned),
             pointer: None,
             identity: None,
+            host_allocation_failure: None,
         }
     }
 
