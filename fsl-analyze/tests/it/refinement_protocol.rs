@@ -861,8 +861,10 @@ fn required_weak_whole_fairness_does_not_imply_concrete_strong_each() {
         abstract_package: world.package(),
         abstract_initial: vec![world.abstract_initial()].into(),
     };
+    let refinement = world.refinement();
+    let systems_ref = &systems;
     let replay_assumption = move |candidate: &fsl_replay::ProtocolAssumptionWitness| {
-        replay_protocol_assumption_witness(world.refinement(), &systems, candidate)
+        replay_protocol_assumption_witness(refinement, systems_ref, candidate)
     };
     let settled = settle_refinement_safety_with_assumption_replay(
         &outcome.safety,
@@ -1328,8 +1330,10 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
         abstract_package: world.package(),
         abstract_initial: vec![world.abstract_initial()].into(),
     };
+    let refinement = world.refinement();
+    let systems_ref = &systems;
     let replay_assumption = move |witness: &fsl_replay::ProtocolAssumptionWitness| {
-        replay_protocol_assumption_witness(world.refinement(), &systems, witness)
+        replay_protocol_assumption_witness(refinement, systems_ref, witness)
     };
     let settled = settle_refinement_safety_with_assumption_replay(
         &outcome.safety,
