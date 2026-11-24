@@ -778,6 +778,39 @@ fn the_counter_refinement_checks_to_one_population_and_one_object_row() {
     );
 }
 
+/// FR-135-AC-12 (TC-540): the checked binding keeps the selected package's
+/// canonical identity when the source aliases are unrelated to those
+/// identities. `DomainPackageRef` exposes identity only; source package
+/// version is not retained on the checked refinement binding.
+#[trace("TC-540", "FR-135-AC-12")]
+#[test]
+fn refinement_bindings_use_canonical_package_identity_not_source_aliases() {
+    let (spec, cas) = counters();
+    let body = cas_refines_counter().replace(
+        "abstract Spec concrete Impl",
+        "abstract AbstractModel concrete ConcreteModel",
+    );
+    let graph = check_with(
+        "",
+        &[
+            ("AbstractModel", SPEC, &spec),
+            ("ConcreteModel", CAS, &cas),
+        ],
+        &body,
+    )
+    .unwrap_or_else(|refusals| {
+        panic!(
+            "renamed refinement aliases check: {:?}",
+            refusals.iter().map(|r| &r.refusal).collect::<Vec<_>>()
+        )
+    });
+    let refinement = only_refinement(&graph);
+    assert_eq!(refinement.abstract_model(), "AbstractModel");
+    assert_eq!(refinement.concrete_model(), "ConcreteModel");
+    assert_eq!(refinement.abstract_model_selection().identity, SPEC);
+    assert_eq!(refinement.concrete_model_selection().identity, CAS);
+}
+
 /// FR-136 and FSpec FR-375-AC-22: source provenance covers every authored
 /// step row, including `any`, before any proof eligibility filtering.
 #[trace("FR-375-AC-22")]
