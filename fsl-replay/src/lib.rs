@@ -331,6 +331,13 @@ pub use model_check::hyper_smt_outcome::{HyperSmtOutcome, HyperSmtResult, SmtMet
 pub use model_check::hyper_smt_query::{
     encode_hyper_query, HyperProductIdentity, HyperQuery, HyperQueryRequest,
 };
+/// The SMT replay API for HP-2 products, kept together as the replay module's
+/// narrow downstream surface (FR-315).
+pub mod replay {
+    pub use crate::{
+        encode_hyper_query, HyperProductIdentity, HyperQuery, HyperQueryRequest, SubjectIdentity,
+    };
+}
 pub use model_check::identity::{
     node_occurrence, ClauseIdentity, ClauseRootRefusal, HyperIdentity, StateGraphIdentity,
 };

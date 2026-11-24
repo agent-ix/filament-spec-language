@@ -10,6 +10,7 @@ mod fspec_pending;
 mod fspec_standard;
 mod fspec_state_core;
 mod fspec_vectors;
+mod hyper_product_identity;
 mod matrix_shape;
 mod monitor_row;
 mod plugin_invariance;
