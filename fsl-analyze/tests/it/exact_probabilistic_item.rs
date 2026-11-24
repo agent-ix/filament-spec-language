@@ -1564,6 +1564,47 @@ fn fair_cyclic_low_rational_budget_proves_with_value_bounds() {
     ));
 }
 
+/// FR-1042-AC-22: increasing the fair `lower` value to reverse
+/// `L <= T(L)` is rejected by the independent replay checker.
+#[trace("FR-1042-AC-22")]
+#[test]
+fn fair_cyclic_rejects_a_flipped_lower_bellman_direction() {
+    let claim = "probabilistic FairHalf using inf on M over (o: M::Once) \
+         under every scheduler fair strong Once::go on origin \
+         { probability >= 0.4 [ eventually holds(o.done) ] }";
+    let world = World::new(&prob_world::one_shot(claim));
+    let mut request = world.request("FairHalf", ModelCheckLimits::default());
+    request.limits.max_rational_bits = 1;
+    request.limits.precision_bits = 16;
+    request.limits.max_precision_bits = 16;
+    let call = std::cell::Cell::new(0_usize);
+    let touched = std::cell::RefCell::new(None);
+    let item = exact_probabilistic_item_tampered(
+        RequestIndex::new(0),
+        request,
+        |certificate| {
+            if call.get() == 0 {
+                let entry = interior_value(certificate);
+                entry.value = ratio(1, 1);
+                *touched.borrow_mut() = Some(entry.state.clone());
+            }
+            call.set(call.get() + 1);
+        },
+    );
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let key = touched.borrow().clone().expect("the lower value was changed");
+    assert_eq!(
+        record.terminal().expect("a terminal record").value(),
+        &TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+            rule: CertificateRule::InequalityFails,
+            at: CertificateLocus::ProbabilityProductState(key),
+        })
+    );
+    assert!(record.exact_probabilistic.is_none());
+    assert!(record.probabilistic_counterexample.is_none());
+}
+
 /// FR-1042-AC-6: the checker accepts the claim-side `lower` document and the
 /// `upper` counterpart, and refuses either one relabelled as the other side,
 /// since the `lower` document's ranking and the `upper` document's absence of
