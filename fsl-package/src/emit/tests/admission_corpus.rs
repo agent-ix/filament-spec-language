@@ -3326,6 +3326,12 @@ fn step_rows_carry_their_source_regions_by_ordinal() {
         for step in node["body"]["steps"].as_array().expect("steps") {
             if step["target"]["kind"] == "operation" {
                 let operation_key = &step["target"]["operation"];
+                let target_type = nodes(&written)
+                    .iter()
+                    .find(|candidate| candidate["node_id"] == step["target"]["target_type"])
+                    .expect("the step target names its serialized target object type");
+                assert_eq!(target_type["semantic_form"], "object_type");
+                assert_eq!(target_type["owner"]["identity"], "example/rows-abstract");
                 let operation_anchor = nodes(&written)
                     .iter()
                     .find(|candidate| candidate["node_id"] == *operation_key)

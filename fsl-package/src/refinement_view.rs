@@ -207,6 +207,29 @@ impl crate::BarePackage<'_> {
         region: &CheckedSourceRegion,
         world: &crate::BareWorld,
     ) -> Result<crate::ReaderProtocolProjection, RefinementRowRefusal> {
+        self.project_refinement_row_with_parameter(term, None, region, world, false)
+    }
+
+    /// Project one argument expression of an admitted refinement step,
+    /// allowing its checked source-operation parameter to bind.
+    pub fn project_refinement_step_argument(
+        &self,
+        term: &CheckedTerm,
+        receiver: &CheckedTerm,
+        region: &CheckedSourceRegion,
+        world: &crate::BareWorld,
+    ) -> Result<crate::ReaderProtocolProjection, RefinementRowRefusal> {
+        self.project_refinement_row_with_parameter(term, Some(receiver), region, world, true)
+    }
+
+    fn project_refinement_row_with_parameter(
+        &self,
+        term: &CheckedTerm,
+        receiver: Option<&CheckedTerm>,
+        region: &CheckedSourceRegion,
+        world: &crate::BareWorld,
+        allow_operation_parameter: bool,
+    ) -> Result<crate::ReaderProtocolProjection, RefinementRowRefusal> {
         use RefinementViewCode as Code;
         let unsupported = |code, fact| RefinementViewRefusal::new(code, fact);
         let CheckedTerm::Reference { target } = term else {
@@ -216,7 +239,7 @@ impl crate::BarePackage<'_> {
         let root = self
             .node_key(target)
             .ok_or_else(|| unsupported(Code::Expression, "mapping expression identity"))?;
-        let mut source = package
+        let sources: Vec<_> = package
             .source_map()
             .iter()
             .filter(|entry| entry.node_id == *target)
@@ -225,14 +248,24 @@ impl crate::BarePackage<'_> {
                 source.source == region.source
                     && source.start >= region.start
                     && source.end <= region.end
-            });
-        let site = source
-            .next()
-            .ok_or_else(|| unsupported(Code::RowSource, "mapping row source"))?;
-        if source.any(|other| other != site) {
+            })
+            .collect();
+        let site = match sources.as_slice() {
+            [] => return Err(unsupported(Code::RowSource, "mapping row source").into()),
+            [site] => *site,
+            sites if allow_operation_parameter => *sites
+                .iter()
+                .min_by_key(|site| site.end.saturating_sub(site.start))
+                .expect("a nonempty source region list"),
+            _ => {
+                return Err(unsupported(Code::RowSource, "ambiguous mapping row source").into());
+            }
+        };
+        if sources.len() > 1 && !allow_operation_parameter {
             return Err(unsupported(Code::RowSource, "ambiguous mapping row source").into());
         }
-        let mut binders = std::collections::BTreeSet::new();
+        let mut binders = Vec::new();
+        let mut seen_binders = std::collections::BTreeSet::new();
         let mut unsupported_parameter = false;
         let lookup = |id: &CheckedNodeId| {
             package
@@ -241,15 +274,30 @@ impl crate::BarePackage<'_> {
                 .iter()
                 .find(|node| node.node_id == *id)
         };
+        if let Some(receiver) = receiver {
+            crate::introduced_binders::reach_term(&lookup, receiver, None, &mut |node| {
+                if crate::reader_protocol_projection::parameter_name(&node.body) == Some("self")
+                    && seen_binders.insert(node.node_id.clone())
+                {
+                    binders.push(node.node_id.clone());
+                }
+            });
+        }
         crate::introduced_binders::reach_term(&lookup, term, None, &mut |node| {
-            let name = crate::reader_protocol_projection::parameter_name(&node.body);
-            if name != Some("self") {
+            let is_self =
+                crate::reader_protocol_projection::parameter_name(&node.body) == Some("self");
+            let is_allowed_parameter = allow_operation_parameter
+                && crate::reader_protocol_projection::parameter_name(&node.body)
+                    .is_some_and(|name| !name.is_empty() && name != "self");
+            if !is_self && !is_allowed_parameter {
                 unsupported_parameter = true;
                 return;
             }
-            binders.insert(node.node_id.clone());
+            if seen_binders.insert(node.node_id.clone()) {
+                binders.push(node.node_id.clone());
+            }
         });
-        if unsupported_parameter || binders.len() > 1 {
+        if unsupported_parameter || binders.len() > usize::from(receiver.is_some()) + 1 {
             return Err(unsupported(Code::Expression, "mapping operation parameters").into());
         }
         let binders = binders

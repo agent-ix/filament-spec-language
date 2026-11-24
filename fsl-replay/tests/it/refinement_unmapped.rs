@@ -6,13 +6,15 @@
 use filament_exact::Value;
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::catalog::UndefinedReason;
-use fsl_eval::simulation::model::operation_identity_text;
+use fsl_eval::simulation::model::{PackageModelInput, operation_identity_text};
 use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::ObjectKey;
 use fsl_replay::{
-    ConcreteStep, EvalFailure, HistoryValues, MappingFailure, MappingRowRef, RefinementPosition,
-    StepArgument, StepVerdict, Taken, Undetermined, check_step, map_state,
+    ConcreteStep, EvalFailure, HistoryValues, MappingFailure, MappingRowRef, PackageRefinement,
+    RefinementPosition, StepArgument, StepVerdict, Taken, Undetermined, check_step, map_state,
 };
+use fsl_semantics::library::LibraryName;
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::state::ModelState;
 use ix_trace_rs::trace;
 
@@ -958,6 +960,17 @@ fn subtype_world(refinement: &str) -> RingWorld {
     )
 }
 
+fn subtype_readback_world(refinement: &str) -> RingWorld {
+    RingWorld::with(
+        Variant {
+            subtypes: true,
+            package_readback: true,
+            ..Variant::default()
+        },
+        refinement,
+    )
+}
+
 /// FR-140-AC-18 (TC-1086): with `queues` admitting `Queue` and its subtype
 /// `FastQueue`, both rows naming `Ring`, the ring maps to the `FastQueue`
 /// object whichever row is written first, and swapping the rows changes no
@@ -999,78 +1012,182 @@ fn the_most_specific_admitted_row_maps_the_object_whatever_the_row_order() {
 
 /// FR-141-AC-16 (TC-546 step 11): `put -> FastQueue::enq(self.ring, x)` and
 /// `put2 -> SlowQueue::enq(self.ring, x)`, both the one abstract `enq`
-/// inherited from `Queue`, are each decided with the receiver lifted against
-/// the row's own target type, so each applies `enq` to its subtype's object
-/// and neither is a `Fault`.
-#[trace("TC-546", "FR-141-AC-16")]
+/// inherited from `Queue`, are each read from admitted package bytes and
+/// decided with the receiver lifted against that row's target type. Reversing
+/// the two object rows preserves both receivers and neither decision is a
+/// `Fault`.
+#[trace("TC-546", "FR-141-AC-16", "FSpec-FR-375-AC-39", "TC-2114")]
 #[test]
 fn an_inherited_operation_row_lifts_its_receiver_against_its_target_subtype() {
-    let queue = format!("object Q::Queue from R::Ring {{ {ITEMS_ROW} }}");
-    let fast = format!("object Q::FastQueue from R::Ring {{ {ITEMS_ROW} }}");
-    let world = subtype_world(&subtype_refinement(
-        [&queue, &fast],
-        ["Q::FastQueue", "Q::SlowQueue"],
-    ));
-    let concrete = world.concrete_system(UNLIMITED);
-    let abstracted = world.abstract_system(UNLIMITED);
-    let (pre, post) = (
-        ring_state(&concrete, 0, 0, [0, 0]),
-        ring_state(&concrete, 0, 1, [1, 0]),
-    );
-    let wanted = concrete.state_key_of(&post).expect("a key").0;
-    let mapped = |state: &ModelState| {
-        map_state(
-            world.refinement(),
-            &concrete,
-            &abstracted,
-            state,
-            &HistoryValues::default(),
-        )
-        .expect("the state maps")
-        .visible
-    };
-    for (operation, subtype) in [("Slot/put", "FastQueue"), ("Slot/put2", "SlowQueue")] {
-        let identity = operation_identity_text(&key(RING, operation)).expect("an identity text");
-        let (transition, reached) = concrete
-            .expand_state(&pre)
-            .expect("the state expands")
-            .successors
-            .into_iter()
-            .find(|(transition, reached)| {
-                transition.operation() == identity
-                    && concrete.state_key_of(reached.state()).expect("a key").0 == wanted
-            })
-            .unwrap_or_else(|| panic!("{operation} is enabled"));
-        let verdict = check_step(
-            world.refinement(),
-            &concrete,
-            &abstracted,
-            &RefinementPosition {
-                concrete: pre.clone(),
-                history: HistoryValues::default(),
-                abstract_states: vec![mapped(&pre)],
-                abstract_protocol_states: Vec::new(),
-            },
-            &ConcreteStep {
-                position: 1,
-                transition: Some(&transition),
-                post: &reached,
-            },
-        )
-        .verdict;
-        let StepVerdict::Passes { taken, .. } = verdict else {
-            panic!("{operation} passes: {verdict:?}");
+    let queue = "object Q::Queue from R::Ring {}";
+    let fast = "object Q::FastQueue from R::Ring {}";
+    for object_rows in [[queue, fast], [fast, queue]] {
+        let world = subtype_readback_world(&subtype_refinement(
+            object_rows,
+            ["Q::FastQueue", "Q::SlowQueue"],
+        ));
+        let emitted =
+            fsl_package::emit_checked(world.package(), fsl_package::EmitLimits::fixture())
+                .expect("the inherited subtype refinement emits");
+        let written: serde_json::Value =
+            serde_json::from_slice(emitted.package().bytes()).expect("emitted package JSON");
+        let nodes = written["semantic_graph"]["nodes"]
+            .as_array()
+            .expect("emitted semantic graph nodes");
+        let refinement = nodes
+            .iter()
+            .find(|node| node["semantic_form"] == "refinement")
+            .expect("the emitted refinement");
+        let step_target_type = |operation: &str| {
+            let step = refinement["body"]["steps"]
+                .as_array()
+                .expect("step rows")
+                .iter()
+                .find(|step| {
+                    step["source_class"]
+                        .as_str()
+                        .is_some_and(|source| source.ends_with(operation))
+                })
+                .unwrap_or_else(|| panic!("the emitted row for {operation}"));
+            assert_eq!(step["target"]["kind"], "operation");
+            let target_type = &step["target"]["target_type"];
+            let node = nodes
+                .iter()
+                .find(|node| node["node_id"] == *target_type)
+                .expect("target_type names an emitted node");
+            assert_eq!(node["semantic_form"], "object_type");
+            node["owner"]["node"]
+                .as_str()
+                .expect("target object type identity")
+                .to_owned()
         };
-        let Taken::Abstract(taken) = *taken else {
-            panic!("{operation} takes an abstract step");
-        };
-        assert_eq!(taken.len(), 1);
-        let receiver: serde_json::Value =
-            serde_json::from_str(taken[0].receiver().expect("a receiver")).expect("JSON");
         assert_eq!(
-            receiver["object_type"]["original"]["node"],
-            format!("ix://example/ring-queue-spec/{subtype}")
+            step_target_type("Slot::put"),
+            "ix://example/ring-queue-spec/FastQueue"
         );
+        assert_eq!(
+            step_target_type("Slot::put2"),
+            "ix://example/ring-queue-spec/SlowQueue"
+        );
+        for operation in ["Slot::put", "Slot::put2"] {
+            let step = refinement["body"]["steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|step| {
+                    step["source_class"]
+                        .as_str()
+                        .is_some_and(|source| source.ends_with(operation))
+                })
+                .unwrap();
+            assert_eq!(step["target"]["arguments"].as_array().unwrap().len(), 1);
+        }
+
+        let read = fsl_package::read_evaluation_emission(
+            world.package(),
+            &emitted,
+            LibraryName::new(emitted.package().name()).expect("the emitted library identity"),
+            world.packages(),
+            fsl_package::V2ReadLimits::fixture(),
+            fsl_package::EmitLimits::fixture(),
+            fsl_package::SourceWitnessSupplier::new(&emitted),
+        )
+        .expect("the emitted package reads back");
+        let admitted = read.admitted();
+        let mut budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+        let identities = emitted
+            .identity_rows(admitted, &mut budget)
+            .expect("the package identity rows read");
+        let equality = emitted
+            .equality_witness(admitted, &mut budget)
+            .expect("the package equality rows read");
+        let bare = fsl_package::BarePackage::new(admitted)
+            .with_supply(
+                fsl_package::BareSupply {
+                    identities: &identities,
+                    equality: Some(&equality),
+                },
+                &mut budget,
+            )
+            .expect("the emitted package identities join");
+        let input =
+            PackageModelInput::of(&bare, world.packages(), ModelNormalizationLimits::default())
+                .expect("the admitted package model input");
+        let refinement_node = admitted
+            .resolved_graph()
+            .nodes
+            .iter()
+            .find(|node| node.semantic_form.as_ref() == "refinement")
+            .expect("the admitted refinement node")
+            .node_id
+            .clone();
+        let view = fsl_package::AnalysisView::refinement(&bare, &refinement_node)
+            .expect("the admitted refinement view");
+        let refinement = PackageRefinement::read(view, &bare, &input)
+            .expect("the package refinement reads its target_type rows");
+
+        let concrete = world.concrete_system(UNLIMITED);
+        let abstracted = world.abstract_system(UNLIMITED);
+        let pre = concrete.initial_states()[0].state().clone();
+        let mapped = |state: &ModelState| {
+            map_state(
+                &refinement,
+                &concrete,
+                &abstracted,
+                state,
+                &HistoryValues::default(),
+            )
+            .expect("the state maps through package readback")
+            .visible
+        };
+        for (operation, subtype) in [("Slot/put", "FastQueue"), ("Slot/put2", "SlowQueue")] {
+            let identity =
+                operation_identity_text(&key(RING, operation)).expect("an identity text");
+            let (transition, reached) = concrete
+                .expand_state(&pre)
+                .expect("the state expands")
+                .successors
+                .into_iter()
+                .find(|(transition, _)| transition.operation() == identity)
+                .unwrap_or_else(|| panic!("{operation} is enabled"));
+            let verdict = check_step(
+                &refinement,
+                &concrete,
+                &abstracted,
+                &RefinementPosition {
+                    concrete: pre.clone(),
+                    history: HistoryValues::default(),
+                    abstract_states: vec![mapped(&pre)],
+                    abstract_protocol_states: Vec::new(),
+                },
+                &ConcreteStep {
+                    position: 1,
+                    transition: Some(&transition),
+                    post: &reached,
+                },
+            )
+            .verdict;
+            let StepVerdict::Passes { taken, .. } = verdict else {
+                panic!("{operation} passes: {verdict:?}");
+            };
+            let Taken::Abstract(taken) = *taken else {
+                panic!("{operation} takes an abstract step");
+            };
+            assert_eq!(taken.len(), 1);
+            let [source_argument] = transition.arguments() else {
+                panic!("{operation} has one source argument");
+            };
+            let [abstract_argument] = taken[0].arguments() else {
+                panic!("{operation} has one lifted abstract argument");
+            };
+            assert_eq!(abstract_argument, source_argument);
+            let receiver: serde_json::Value =
+                serde_json::from_str(taken[0].receiver().expect("a receiver")).expect("JSON");
+            assert_eq!(
+                receiver["object_type"]["original"]["node"],
+                format!("ix://example/ring-queue-spec/{subtype}")
+            );
+        }
     }
 }
 
@@ -1080,16 +1197,24 @@ fn an_inherited_operation_row_lifts_its_receiver_against_its_target_subtype() {
 fn subtype_refinement(objects: [&str; 2], targets: [&str; 2]) -> String {
     let [first, second] = objects;
     let [put, put2] = targets;
+    let slow_items = if first.contains("self.items") {
+        "items = self.items;"
+    } else if first.ends_with("{}") {
+        ""
+    } else {
+        ITEMS_ROW
+    };
     format!(
         "invariant Anything using v on R::Ring at current {{ true }}\n\
          refinement RingIsQueue using inf abstract Q concrete R {{\n\
          population Q::queues from R::rings;\n\
          population Q::slows from R::rings;\n\
          {first}\n{second}\n\
-         object Q::SlowQueue from R::Ring {{ {ITEMS_ROW} }}\n\
+         object Q::SlowQueue from R::Ring {{ {slow_items} }}\n\
          step R::Slot::put -> {put}::enq(self.ring, x);\n\
          step R::Slot::put2 -> {put2}::enq(self.ring, x);\n\
-         step R::Slot::take -> Q::FastQueue::deq(self.ring);\n\
+         step R::Slot::take -> stutter;\n\
+         step R::Slot::take2 -> stutter;\n\
          }}"
     )
 }
