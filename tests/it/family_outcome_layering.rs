@@ -269,7 +269,8 @@ fn workspace_dependencies() -> Vec<PackageDependencies> {
 /// the workspace crates in `[dependencies]`, never `fsl-cst`; production
 /// model intake reaches S1 through `fsl-forms::cst`'s non-re-exporting
 /// wrapper, and its `[dev-dependencies]` may name `fsl-cst` for tests that
-/// exercise S1 directly (FR-091-AC-20), and only
+/// exercise S1 directly (FR-091-AC-20) and `fsl-proptest-policy` for property
+/// tests (ADR-011 §7.1), and only
 /// `model::intake` names its FCD dependencies. `filament-exact` and
 /// `filament-semantic-value` are external git dependencies of their own
 /// repositories, so no workspace check reaches them; `fsl-foundation` may name `filament-exact`,
@@ -292,7 +293,8 @@ fn workspace_dependencies() -> Vec<PackageDependencies> {
 /// from source; `serde_json` moved here too, once its one shipped
 /// caller -- the deleted v2 function-package codec -- was deleted). The leaf
 /// `fsl-proptest-policy` (QSL-2054; it depends on `proptest` alone) may be a
-/// dev-dependency of `fsl-foundation`, `fsl-cst` and `fsl-eval`; `fsl-cst` also names
+/// dev-dependency of `fsl-foundation`, `fsl-cst`, `fsl-semantics` and `fsl-eval`
+/// for tests only (ADR-011 §7.1); `fsl-cst` also names
 /// itself there for its own `test-support` feature. Every other
 /// workspace crate, `fsl-source` and this crate included, is refused. Cargo already
 /// refuses a normal-dependency cycle back to this crate, but accepts a
@@ -355,7 +357,7 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
         (
             "fsl-semantics",
             &["fsl-forms", "fsl-foundation"][..],
-            &["fsl-cst"][..],
+            &["fsl-cst", "fsl-proptest-policy"][..],
         ),
         (
             "fsl-package",

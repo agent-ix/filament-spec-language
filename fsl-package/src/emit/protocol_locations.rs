@@ -575,12 +575,12 @@ mod tests {
     use fsl_semantics::check::{test_support::ZeroRewardEvaluator, PackageDeclarations};
     use ix_trace_rs::trace;
 
-    /// A query's source and predicate share a child location but belong to
-    /// distinct ordered operands of its actual retained root. Both terms
-    /// must keep their own application and occurrence in the admitted rows.
+    /// A count's retained collection has query and equality operands at
+    /// distinct checked locations; rows preserve each operand's own visit
+    /// location and application (FR-383-AC-35).
     #[trace("FR-383", "TC-1063")]
     #[test]
-    fn query_siblings_share_a_location_but_keep_their_actual_parent_operands() {
+    fn query_and_equality_keep_actual_parent_operands_and_checked_locations() {
         fn application_form(key: &NodeKey) -> String {
             match key.path().get(1) {
                 Some(PathSegment::Text(form)) => form.clone(),
@@ -675,15 +675,6 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
         operand_forms.sort_unstable();
         assert_eq!(operand_forms, vec!["binary".to_owned(), "query".to_owned()]);
         let positions = walk(capture.initializer.root());
-        let (shared, _) = applications
-            .iter()
-            .find(|(_, candidates)| {
-                operands
-                    .iter()
-                    .all(|operand| candidates.iter().any(|(key, _)| key == operand))
-            })
-            .expect("the checked graph retains both operands at a shared location");
-        assert_ne!(shared, &root, "the sibling operands are not at the root location");
         let located_operands = operands
             .iter()
             .map(|operand| {
@@ -695,13 +686,18 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
                 let [location] = locations.as_slice() else {
                     panic!("each retained operand has one actual location: {operand}");
                 };
-                assert_eq!(location, *shared, "the direct operands share one location");
                 let operation = application_form(operand);
-                let expected_kind = match operation.as_str() {
-                    "query" => "query",
-                    "binary" => "equality",
+                let (expected_path, expected_kind) = match operation.as_str() {
+                    "query" => (root.path(), "query"),
+                    "binary" => {
+                        let mut path = root.path();
+                        path.push(0);
+                        (path, "equality")
+                    }
                     _ => panic!("the retained operands are the query and its equality predicate"),
                 };
+                assert_eq!(location.origin, root.origin);
+                assert_eq!(location.path(), expected_path, "FR-383-AC-35 term location");
                 let visits = positions
                     .iter()
                     .filter(|(node, _)| {

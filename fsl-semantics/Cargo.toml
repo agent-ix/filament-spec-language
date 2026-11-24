@@ -74,7 +74,8 @@ filament-exact = { workspace = true, features = ["test-support"] }
 # dev-dependency enables it; the root crate's `no_shipped_dependency_enables_test_support`
 # refuses a normal or build dependency that does.
 filament-checked = { workspace = true, features = ["test-support"] }
-# QSL-2056: the interval-soundness property suite.
+# QSL-2056: the interval-soundness property suite. ADR-011 §7.1 permits this
+# test-only dependency edge under the dev-dependency allow-list.
 fsl-proptest-policy = { path = "../fsl-proptest-policy" }
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 
