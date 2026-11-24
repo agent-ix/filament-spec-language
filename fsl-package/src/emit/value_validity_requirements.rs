@@ -16,9 +16,9 @@ use fsl_semantics::check::{Capability, CheckedGraph, NodeTag, RequirementRecord}
 use fsl_semantics::family::ClaimExtent;
 
 use super::{
-    admitted_key, body_reference_targets, checked_literal_json, checked_occurrence,
-    claim_aggregate, claim_binding, claim_literal, encoding, node_id, push_scalar_type,
-    source_artifact, EmitRefusal, OmissionCause, OmittedNode, GRAPH_V2,
+    EmitRefusal, GRAPH_V2, OmissionCause, OmittedNode, admitted_key, body_reference_targets,
+    checked_literal_json, checked_occurrence, claim_aggregate, claim_binding, claim_literal,
+    encoding, node_id, push_scalar_type, source_artifact,
 };
 
 mod frames;
@@ -113,7 +113,7 @@ fn record_names_of(
         );
         names.push(source.result_bound().node());
         names.extend(source.conversion_context().map(|key| key.node().clone()));
-        match guards.as_deref_mut() {
+        match guards {
             Some(rows) => {
                 for guard in source.path_condition() {
                     terminal = Some(rows.intern(terminal, guard.occurrence().node()));
@@ -221,16 +221,28 @@ fn occurrence_role_wire(role: &CheckedOccurrenceRole) -> &'static str {
     }
 }
 
-fn operation_contract_key(
-    claim: &OccurrenceKey,
-    occurrence: &CheckedOccurrence,
-    result_bound: &NodeKey,
+struct OperationContractKey<'a> {
+    claim: &'a OccurrenceKey,
+    occurrence: &'a CheckedOccurrence,
+    result_bound: &'a NodeKey,
     invariant: bool,
-    operation: Option<&NodeKey>,
-    model_objects: &[NodeKey],
-    populations: &[fsl_semantics::check::CheckedOperationPopulation],
-    extent: &ClaimExtent,
-) -> Result<NodeKey, EmitRefusal> {
+    operation: Option<&'a NodeKey>,
+    model_objects: &'a [NodeKey],
+    populations: &'a [fsl_semantics::check::CheckedOperationPopulation],
+    extent: &'a ClaimExtent,
+}
+
+fn operation_contract_key(input: OperationContractKey<'_>) -> Result<NodeKey, EmitRefusal> {
+    let OperationContractKey {
+        claim,
+        occurrence,
+        result_bound,
+        invariant,
+        operation,
+        model_objects,
+        populations,
+        extent,
+    } = input;
     // `derived_node_key` writes the `claim`/`operation_contract` prefix.
     let mut operands = vec![
         PathSegment::Node(claim.node().clone()),
@@ -301,24 +313,44 @@ fn operation_contract_key(
     .map_err(encoding)
 }
 
-fn append_operation_contract(
-    ids: &StructuralIds,
-    graph: &CheckedGraph,
-    claim: &OccurrenceKey,
-    source: &RequirementRecord,
-    nodes: &mut Vec<CheckedSemanticNodeV2>,
-    source_map: &mut Vec<CheckedSourceMapEntry>,
-    region: &impl Fn(&OccurrenceKey) -> Option<fsl_foundation::source::provenance::SourceRegion>,
-    omitted: &Omitted,
-    written: &BTreeSet<CheckedNodeId>,
-    omissions: &mut Vec<OmittedNode>,
-    records: &mut OperationRecords,
-    ordinal: &mut u64,
-    types_written: &mut bool,
-    text_type: &CheckedNodeId,
-    integer: &CheckedNodeId,
-    boolean: &CheckedNodeId,
-) -> Result<(), EmitRefusal> {
+struct OperationContractAppend<'a> {
+    ids: &'a StructuralIds,
+    graph: &'a CheckedGraph,
+    claim: &'a OccurrenceKey,
+    source: &'a RequirementRecord,
+    nodes: &'a mut Vec<CheckedSemanticNodeV2>,
+    source_map: &'a mut Vec<CheckedSourceMapEntry>,
+    region: &'a dyn Fn(&OccurrenceKey) -> Option<fsl_foundation::source::provenance::SourceRegion>,
+    omitted: &'a Omitted,
+    written: &'a BTreeSet<CheckedNodeId>,
+    omissions: &'a mut Vec<OmittedNode>,
+    records: &'a mut OperationRecords,
+    ordinal: &'a mut u64,
+    types_written: &'a mut bool,
+    text_type: &'a CheckedNodeId,
+    integer: &'a CheckedNodeId,
+    boolean: &'a CheckedNodeId,
+}
+
+fn append_operation_contract(input: OperationContractAppend<'_>) -> Result<(), EmitRefusal> {
+    let OperationContractAppend {
+        ids,
+        graph,
+        claim,
+        source,
+        nodes,
+        source_map,
+        region,
+        omitted,
+        written,
+        omissions,
+        records,
+        ordinal,
+        types_written,
+        text_type,
+        integer,
+        boolean,
+    } = input;
     let checked_occurrence =
         checked_occurrence(claim.origin()).ok_or(EmitRefusal::RequirementNotEmitted {
             kind: source.requirements().kind().to_wire(),
@@ -331,16 +363,16 @@ fn append_operation_contract(
     let operation_key = references.operation;
     let model_object_keys = references.model_objects;
     let population_facts = references.populations;
-    let key = operation_contract_key(
+    let key = operation_contract_key(OperationContractKey {
         claim,
-        &checked_occurrence,
-        &source.result_bound().node(),
-        source.requirements().invariant_clause(),
-        operation_key.as_ref(),
-        &model_object_keys,
-        &population_facts,
-        source.requirements().extent(),
-    )?;
+        occurrence: &checked_occurrence,
+        result_bound: &source.result_bound().node(),
+        invariant: source.requirements().invariant_clause(),
+        operation: operation_key.as_ref(),
+        model_objects: &model_object_keys,
+        populations: &population_facts,
+        extent: source.requirements().extent(),
+    })?;
     let id = node_id(ids, key);
     let claim_key = claim.node();
     let claim_id = node_id(ids, claim_key);
@@ -601,24 +633,24 @@ pub(super) fn append(
             continue;
         }
         if source.requirements().kind() == Capability::OperationContract {
-            append_operation_contract(
+            append_operation_contract(OperationContractAppend {
                 ids,
                 graph,
                 claim,
                 source,
                 nodes,
                 source_map,
-                regions,
+                region: regions,
                 omitted,
-                &written,
-                &mut omissions,
-                &mut operation_records,
-                &mut operation_ordinal,
-                &mut operation_types_written,
-                &text,
-                &integer,
-                &boolean,
-            )?;
+                written: &written,
+                omissions: &mut omissions,
+                records: &mut operation_records,
+                ordinal: &mut operation_ordinal,
+                types_written: &mut operation_types_written,
+                text_type: &text,
+                integer: &integer,
+                boolean: &boolean,
+            })?;
             continue;
         }
         if source.requirements().kind() != Capability::ValueValidity {
@@ -764,7 +796,7 @@ pub(super) fn append(
             None => Vec::new(),
         };
         let body = claim_aggregate(vec![
-            claim_binding("owner", reference(&owner)),
+            claim_binding("owner", reference(owner)),
             claim_binding("application", reference(&application)),
             claim_binding("occurrence", count(&integer, occurrence_ordinal)?),
             claim_binding("result_bound", reference(&result_bound)),

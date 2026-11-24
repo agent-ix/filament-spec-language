@@ -5,7 +5,7 @@
 
 use super::admission_corpus::config_version_unit;
 use super::*;
-use crate::checked_v2::{read_checked_package_v2, CheckedTimedModel};
+use crate::checked_v2::{CheckedTimedModel, read_checked_package_v2};
 use crate::emit::timed_models_of;
 use filament_contract_model::CheckedPackageEvidence;
 use filament_semantic_value::checking::CheckMode;
@@ -631,17 +631,19 @@ fn clock_reference_fields_emit_and_read_back_as_data() {
     let wire = wire(&emission);
     assert!(!emission.equality_producer_identity_rows().is_empty());
     for row in emission.equality_producer_identity_rows() {
-        assert!(nodes(&wire)
-            .iter()
-            .any(|node| node["node_id"]
-                == serde_json::to_value(row.checked_node()).expect("node id")));
+        assert!(
+            nodes(&wire).iter().any(|node| node["node_id"]
+                == serde_json::to_value(row.checked_node()).expect("node id"))
+        );
         assert_eq!(row.source_map_entry().node_id, *row.checked_node());
-        assert!(wire["checked_term_data"]["equality_decisions"]
-            .as_array()
-            .expect("equality decisions")
-            .iter()
-            .any(|decision| decision["application"]
-                == serde_json::to_value(row.checked_node()).expect("application id")));
+        assert!(
+            wire["checked_term_data"]["equality_decisions"]
+                .as_array()
+                .expect("equality decisions")
+                .iter()
+                .any(|decision| decision["application"]
+                    == serde_json::to_value(row.checked_node()).expect("application id"))
+        );
     }
     clock_reference_field_readback(document, emission, &wire);
 }
@@ -687,9 +689,11 @@ fn clock_reference_field_package() -> (CheckedPackage, Vec<u8>) {
     let document = wire_bytes(&document).expect("JSON");
     let packages =
         fsl_semantics::model::intake::package_input([document.as_slice()]).expect("input");
-    let unit = clocked_unit("post Point using v on Config::ConfigVersion::attemptUpdate { self.r = ref(self.x) }\n\
+    let unit = clocked_unit(
+        "post Point using v on Config::ConfigVersion::attemptUpdate { self.r = ref(self.x) }\n\
         invariant Read using v on Config::ConfigVersion at current { present(self.optional) implies value(self.optional) = self.r }\n\
-        invariant Size using v on Config::ConfigVersion at current { size(self.refs) <= 3 }\n");
+        invariant Size using v on Config::ConfigVersion at current { size(self.refs) <= 3 }\n",
+    );
     let graph = assemble_with_models(unit.as_bytes(), &packages)
         .expect("assembles")
         .check(
@@ -748,7 +752,7 @@ fn a_rekeyed_clock_equality_still_requires_its_exact_producer_identity() {
 
 fn clock_reference_field_readback(document: Vec<u8>, emission: Emission, wire: &Value) {
     use filament_contract_model::{CheckedCollectionKind, CheckedMemberType};
-    let scalars: Vec<_> = nodes(&wire)
+    let scalars: Vec<_> = nodes(wire)
         .iter()
         .filter(|node| {
             node["node_tag"] == "scalar_type" && node["semantic_form"] == "clock_reference"
@@ -757,7 +761,7 @@ fn clock_reference_field_readback(document: Vec<u8>, emission: Emission, wire: &
     let [scalar] = scalars.as_slice() else {
         panic!("one clock_reference scalar: {scalars:?}")
     };
-    let refs: Vec<_> = nodes(&wire)
+    let refs: Vec<_> = nodes(wire)
         .iter()
         .filter(|node| node["body"]["operation"]["identity"] == "filament.op.clock_reference.ref")
         .collect();

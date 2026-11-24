@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-940's package normal form, without source expressions or recursive walks.
 
-use super::{malformed, pending, Nodes, FORMULA_VISITS};
+use super::{FORMULA_VISITS, Nodes, malformed, pending};
 use crate::BareClauseRefusal;
 use filament_contract_model::{CheckedNodeId, CheckedTerm};
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -419,11 +419,14 @@ fn expression(
                             .saturating_mul(std::mem::size_of::<Work<'_>>()),
                     )?;
                     if identity == "filament.op.control.let" {
-                        let [CheckedTerm::Binding {
-                            binder: Some(binder),
-                            value,
-                            ..
-                        }, body] = arguments.as_slice()
+                        let [
+                            CheckedTerm::Binding {
+                                binder: Some(binder),
+                                value,
+                                ..
+                            },
+                            body,
+                        ] = arguments.as_slice()
                         else {
                             return Err(malformed(claim));
                         };
@@ -697,6 +700,101 @@ pub(super) fn copy_group(
     )
 }
 
+fn copy_group_with_budget(
+    inputs: Inputs<'_, '_>,
+    formula: &[PackageFormulaNode],
+    atoms: &[(usize, filament_exact::NodeKey, usize)],
+    slots: &BTreeMap<CheckedNodeId, (usize, usize)>,
+    quantifiers: &[PackageHyperQuantifier],
+    claim: &OccurrenceKey,
+    budget: &mut Budget<'_>,
+) -> Result<(Vec<u8>, CopyGroup), BareClauseRefusal> {
+    budget.charge(
+        quantifiers.len(),
+        quantifiers.len().saturating_mul(
+            std::mem::size_of::<CopyGenerator>() + 4 * std::mem::size_of::<usize>(),
+        ),
+    )?;
+    let EncodedBody {
+        bytes: plain,
+        atoms: atom_bytes,
+        opaque,
+    } = body(&inputs, formula, atoms, slots, None, budget, claim)?;
+    if opaque {
+        return Ok((
+            plain,
+            CopyGroup {
+                classes: Vec::new(),
+                generators: Vec::new(),
+            },
+        ));
+    }
+    let mut classes: Vec<Vec<usize>> = Vec::new();
+    let mut generators = Vec::new();
+    for later in 0..quantifiers.len() {
+        budget.charge(
+            1 + quantifiers[later].variable.len(),
+            quantifiers[later].variable.len(),
+        )?;
+        let mut joined = false;
+        for class in &mut classes {
+            budget.charge(1, 0)?;
+            let Some(&earlier) = class.last() else {
+                return Err(malformed(claim));
+            };
+            if quantifiers[earlier].alias != quantifiers[later].alias {
+                continue;
+            }
+            let EncodedBody {
+                bytes: swapped,
+                atoms: swapped_atoms,
+                ..
+            } = body(
+                &inputs,
+                formula,
+                atoms,
+                slots,
+                Some((earlier, later)),
+                budget,
+                claim,
+            )?;
+            budget.charge(plain.len().min(swapped.len()), 0)?;
+            if swapped != plain {
+                continue;
+            }
+            let Some(atoms) = exchange(&atom_bytes, &swapped_atoms, budget)? else {
+                continue;
+            };
+            generators.push(CopyGenerator {
+                first: earlier,
+                second: later,
+                atoms,
+            });
+            class.push(later);
+            joined = true;
+            break;
+        }
+        if !joined {
+            classes.push(vec![later]);
+        }
+    }
+    Ok((
+        plain,
+        CopyGroup {
+            classes: classes
+                .into_iter()
+                .filter(|class| class.len() >= 2)
+                .map(|class| {
+                    class
+                        .into_iter()
+                        .map(|index| quantifiers[index].variable.clone())
+                        .collect()
+                })
+                .collect(),
+            generators,
+        },
+    ))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -803,100 +901,4 @@ mod tests {
         );
         assert_eq!((budget.work, budget.storage), (0, 0));
     }
-}
-
-fn copy_group_with_budget(
-    inputs: Inputs<'_, '_>,
-    formula: &[PackageFormulaNode],
-    atoms: &[(usize, filament_exact::NodeKey, usize)],
-    slots: &BTreeMap<CheckedNodeId, (usize, usize)>,
-    quantifiers: &[PackageHyperQuantifier],
-    claim: &OccurrenceKey,
-    budget: &mut Budget<'_>,
-) -> Result<(Vec<u8>, CopyGroup), BareClauseRefusal> {
-    budget.charge(
-        quantifiers.len(),
-        quantifiers.len().saturating_mul(
-            std::mem::size_of::<CopyGenerator>() + 4 * std::mem::size_of::<usize>(),
-        ),
-    )?;
-    let EncodedBody {
-        bytes: plain,
-        atoms: atom_bytes,
-        opaque,
-    } = body(&inputs, formula, atoms, slots, None, budget, claim)?;
-    if opaque {
-        return Ok((
-            plain,
-            CopyGroup {
-                classes: Vec::new(),
-                generators: Vec::new(),
-            },
-        ));
-    }
-    let mut classes: Vec<Vec<usize>> = Vec::new();
-    let mut generators = Vec::new();
-    for later in 0..quantifiers.len() {
-        budget.charge(
-            1 + quantifiers[later].variable.len(),
-            quantifiers[later].variable.len(),
-        )?;
-        let mut joined = false;
-        for class in &mut classes {
-            budget.charge(1, 0)?;
-            let Some(&earlier) = class.last() else {
-                return Err(malformed(claim));
-            };
-            if quantifiers[earlier].alias != quantifiers[later].alias {
-                continue;
-            }
-            let EncodedBody {
-                bytes: swapped,
-                atoms: swapped_atoms,
-                ..
-            } = body(
-                &inputs,
-                formula,
-                atoms,
-                slots,
-                Some((earlier, later)),
-                budget,
-                claim,
-            )?;
-            budget.charge(plain.len().min(swapped.len()), 0)?;
-            if swapped != plain {
-                continue;
-            }
-            let Some(atoms) = exchange(&atom_bytes, &swapped_atoms, budget)? else {
-                continue;
-            };
-            generators.push(CopyGenerator {
-                first: earlier,
-                second: later,
-                atoms,
-            });
-            class.push(later);
-            joined = true;
-            break;
-        }
-        if !joined {
-            classes.push(vec![later]);
-        }
-    }
-    Ok((
-        plain,
-        CopyGroup {
-            classes: classes
-                .into_iter()
-                .filter(|class| class.len() >= 2)
-                .map(|class| {
-                    class
-                        .into_iter()
-                        .map(|index| quantifiers[index].variable.clone())
-                        .collect()
-                })
-                .collect(),
-            generators,
-        },
-    ))
 }
