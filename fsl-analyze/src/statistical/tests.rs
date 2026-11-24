@@ -2700,7 +2700,7 @@ impl ClaimSampler for BelowThree {
 #[trace("TC-627", "FR-192-AC-6")]
 #[test]
 fn an_at_least_quantile_claims_estimate_is_its_strict_probability() {
-    let (event, bound) = reduce_quantile(ratio(1, 2), QuantileComparison::AtLeast, int(3));
+    let (event, _) = reduce_quantile(ratio(1, 2), QuantileComparison::AtLeast, int(3));
     // `m = 2`: `α' = 21/100`, `ι = 1/5` give `N = ⌈ln(100/21) / (2/25)⌉ = 20`.
     let confidence =
         Confidence::new(ratio(21, 50), ratio(21, 50), ratio(1, 5)).expect("confidence");

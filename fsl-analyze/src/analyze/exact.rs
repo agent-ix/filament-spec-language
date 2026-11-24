@@ -3337,166 +3337,6 @@ pub fn exact_probabilistic_item_witness_tampered<'a>(
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use fsl_replay::{ProbabilityCertificateRejection, TerminalValue};
-    use ix_trace_rs::trace;
-
-    #[trace("TC-1197", "FR-201-AC-6", "FR-203-AC-3")]
-    #[test]
-    fn threshold_rejection_retains_its_rule_and_complete_product_key() {
-        let key = ProbabilityProductKey::for_model_state(
-            None,
-            include_bytes!(
-                "../../../tools/fsl-probability-check/tests/fixtures/link.model-key-0.json"
-            ),
-        )
-        .expect("the key encodes");
-        let (terminal, evidence, counterexample) = ExactReport::Rejected {
-            rule: CertificateRule::ThresholdMissed,
-            at: CertificateLocus::ProbabilityProductState(key.clone()),
-        }
-        .settle(RequestIndex::new(0), BackendId::new("en-5"));
-        assert_eq!(
-            terminal.value(),
-            &TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
-                rule: CertificateRule::ThresholdMissed,
-                at: CertificateLocus::ProbabilityProductState(key),
-            })
-        );
-        assert!(evidence.is_none());
-        assert!(counterexample.is_none());
-    }
-    #[trace("FR-203-AC-11")]
-    #[test]
-    fn an_engine_proved_assertion_without_checker_acceptance_fails_invariant() {
-        let check = ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
-            rule: ProbabilityCertificateRule::InequalityFails,
-            at: ProbabilityCertificateLocus::Member("values"),
-        });
-        let (terminal, evidence, counterexample) = ExactReport::Proved {
-            check,
-            extremum: None,
-            binding: None,
-            evidence: None,
-        }
-        .settle(RequestIndex::new(0), BackendId::new("en-5"));
-        assert_eq!(terminal.value(), &TerminalValue::Failed);
-        assert_eq!(terminal.diagnostic(), Some(BROKEN));
-        assert!(terminal.exact_certificate_document().is_none());
-        assert!(evidence.is_none() && counterexample.is_none());
-    }
-
-    fn is_fault(report: &EngineReport) -> bool {
-        matches!(report, EngineReport::Refused(Refusal::Failed(code)) if *code == BROKEN)
-    }
-
-    fn is_not_yet(report: &EngineReport) -> bool {
-        matches!(report, EngineReport::Refused(Refusal::Unsupported(code)) if *code == NOT_YET)
-    }
-
-    /// The witness classifier maps an absent value to the broken-invariant
-    /// report. This unit test covers the helper directly, not a claim route.
-    #[test]
-    fn require_witness_rejects_none_as_a_broken_invariant() {
-        let report = match require_witness::<()>(None) {
-            Ok(()) => panic!("a missing witness cannot be accepted"),
-            Err(report) => report,
-        };
-        assert!(is_fault(&report));
-        assert!(!is_not_yet(&report));
-    }
-
-    /// QSL-2850 FR-281 "Engine refusals": a swallowed identity, binding or
-    /// schedule error settles as its own outcome (a stopped expansion or a
-    /// cancel is a limit, a graph the claim was never bound to is a fault),
-    /// never as `not-yet-implemented`.
-    #[trace("TC-763", "FR-281-AC-11")]
-    #[test]
-    fn swallowed_exact_errors_settle_as_their_own_outcome() {
-        let meter = fsl_replay::AccountingLimits::default().0;
-        let subject = SubjectLimits {
-            expansion: fsl_eval::simulation::model::ExpansionLimits { max_candidates: 1 },
-            meter: &meter,
-        };
-        let limits = crate::exact_probabilistic::ExactProbLimits::default();
-        let stop = fsl_eval::simulation::ExpansionStop {
-            cause: filament_semantic_value::catalog::CatalogCode::new(
-                "resource_exhausted",
-                "insufficient-next-charge",
-            ),
-            limit: Some(fsl_eval::simulation::ExpansionLimit::MaxCandidates),
-        };
-        let stopped = document_failure(
-            schedule_failure(fsl_replay::ProductActionError::Stopped(stop)),
-            subject,
-        );
-        assert!(
-            matches!(&stopped, EngineReport::Exact(report) if matches!(**report, ExactReport::Settled(_))),
-            "a stopped expansion keeps its budget"
-        );
-        for unwritable in [
-            fsl_replay::ProductActionError::Schedule,
-            fsl_replay::ProductActionError::Canonical,
-        ] {
-            assert!(is_fault(&document_failure(
-                schedule_failure(unwritable),
-                subject
-            )));
-        }
-        assert!(is_fault(&graph_failure(
-            ExactProbabilityGraphError::ClaimNotBound,
-            &limits,
-            subject
-        )));
-        let cancelled = graph_failure(
-            ExactProbabilityGraphError::Cancelled(filament_exact::CancelCause::Requested),
-            &limits,
-            subject,
-        );
-        assert!(!is_not_yet(&cancelled) && !is_fault(&cancelled));
-        assert!(matches!(
-            graph_failure(ExactProbabilityGraphError::RequiresBound, &limits, subject),
-            EngineReport::Refused(Refusal::RequiresBound)
-        ));
-        assert!(is_fault(&document_failure(
-            ProbabilityDocumentError::UndefinedPredicate(
-                fsl_eval::temporal::UndefinedCause::Kernel(
-                    filament_exact::Undefined::DivisionByZero
-                )
-            ),
-            subject
-        )));
-    }
-
-    #[trace("FR-203-AC-11")]
-    #[test]
-    fn an_inequality_rejection_settles_inconclusive_at_the_same_complete_key() {
-        let key = ProbabilityProductKey::for_model_state(
-            None,
-            include_bytes!(
-                "../../../tools/fsl-probability-check/tests/fixtures/link.model-key-0.json"
-            ),
-        )
-        .unwrap();
-        let (terminal, evidence, counterexample) = ExactReport::Rejected {
-            rule: CertificateRule::InequalityFails,
-            at: CertificateLocus::ProbabilityProductState(key.clone()),
-        }
-        .settle(RequestIndex::new(0), BackendId::new("en-5"));
-        assert_eq!(
-            terminal.value(),
-            &TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
-                rule: CertificateRule::InequalityFails,
-                at: CertificateLocus::ProbabilityProductState(key),
-            })
-        );
-        assert!(terminal.exact_certificate_document().is_none());
-        assert!(evidence.is_none() && counterexample.is_none());
-    }
-}
-
 /// FR-923: refute a timed deadline claim with a path set over the timed
 /// product, which the checker's own replay of the same product must reproduce.
 ///
@@ -3881,5 +3721,164 @@ fn timed_step_failure(
         TimedStepFailure::Stopped(_) => settled(&ExactProbBuildIssue::UndecidedSuccessor, subject),
         TimedStepFailure::Key(error) => document_failure(error, subject),
         TimedStepFailure::Fault => broken(),
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fsl_replay::{ProbabilityCertificateRejection, TerminalValue};
+    use ix_trace_rs::trace;
+
+    #[trace("TC-1197", "FR-201-AC-6", "FR-203-AC-3")]
+    #[test]
+    fn threshold_rejection_retains_its_rule_and_complete_product_key() {
+        let key = ProbabilityProductKey::for_model_state(
+            None,
+            include_bytes!(
+                "../../../tools/fsl-probability-check/tests/fixtures/link.model-key-0.json"
+            ),
+        )
+        .expect("the key encodes");
+        let (terminal, evidence, counterexample) = ExactReport::Rejected {
+            rule: CertificateRule::ThresholdMissed,
+            at: CertificateLocus::ProbabilityProductState(key.clone()),
+        }
+        .settle(RequestIndex::new(0), BackendId::new("en-5"));
+        assert_eq!(
+            terminal.value(),
+            &TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+                rule: CertificateRule::ThresholdMissed,
+                at: CertificateLocus::ProbabilityProductState(key),
+            })
+        );
+        assert!(evidence.is_none());
+        assert!(counterexample.is_none());
+    }
+    #[trace("FR-203-AC-11")]
+    #[test]
+    fn an_engine_proved_assertion_without_checker_acceptance_fails_invariant() {
+        let check = ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+            rule: ProbabilityCertificateRule::InequalityFails,
+            at: ProbabilityCertificateLocus::Member("values"),
+        });
+        let (terminal, evidence, counterexample) = ExactReport::Proved {
+            check,
+            extremum: None,
+            binding: None,
+            evidence: None,
+        }
+        .settle(RequestIndex::new(0), BackendId::new("en-5"));
+        assert_eq!(terminal.value(), &TerminalValue::Failed);
+        assert_eq!(terminal.diagnostic(), Some(BROKEN));
+        assert!(terminal.exact_certificate_document().is_none());
+        assert!(evidence.is_none() && counterexample.is_none());
+    }
+
+    fn is_fault(report: &EngineReport) -> bool {
+        matches!(report, EngineReport::Refused(Refusal::Failed(code)) if *code == BROKEN)
+    }
+
+    fn is_not_yet(report: &EngineReport) -> bool {
+        matches!(report, EngineReport::Refused(Refusal::Unsupported(code)) if *code == NOT_YET)
+    }
+
+    /// The witness classifier maps an absent value to the broken-invariant
+    /// report. This unit test covers the helper directly, not a claim route.
+    #[test]
+    fn require_witness_rejects_none_as_a_broken_invariant() {
+        let report = match require_witness::<()>(None) {
+            Ok(()) => panic!("a missing witness cannot be accepted"),
+            Err(report) => report,
+        };
+        assert!(is_fault(&report));
+        assert!(!is_not_yet(&report));
+    }
+
+    /// QSL-2850 FR-281 "Engine refusals": a swallowed identity, binding or
+    /// schedule error settles as its own outcome (a stopped expansion or a
+    /// cancel is a limit, a graph the claim was never bound to is a fault),
+    /// never as `not-yet-implemented`.
+    #[trace("TC-763", "FR-281-AC-11")]
+    #[test]
+    fn swallowed_exact_errors_settle_as_their_own_outcome() {
+        let meter = fsl_replay::AccountingLimits::default().0;
+        let subject = SubjectLimits {
+            expansion: fsl_eval::simulation::model::ExpansionLimits { max_candidates: 1 },
+            meter: &meter,
+        };
+        let limits = crate::exact_probabilistic::ExactProbLimits::default();
+        let stop = fsl_eval::simulation::ExpansionStop {
+            cause: filament_semantic_value::catalog::CatalogCode::new(
+                "resource_exhausted",
+                "insufficient-next-charge",
+            ),
+            limit: Some(fsl_eval::simulation::ExpansionLimit::MaxCandidates),
+        };
+        let stopped = document_failure(
+            schedule_failure(fsl_replay::ProductActionError::Stopped(stop)),
+            subject,
+        );
+        assert!(
+            matches!(&stopped, EngineReport::Exact(report) if matches!(**report, ExactReport::Settled(_))),
+            "a stopped expansion keeps its budget"
+        );
+        for unwritable in [
+            fsl_replay::ProductActionError::Schedule,
+            fsl_replay::ProductActionError::Canonical,
+        ] {
+            assert!(is_fault(&document_failure(
+                schedule_failure(unwritable),
+                subject
+            )));
+        }
+        assert!(is_fault(&graph_failure(
+            ExactProbabilityGraphError::ClaimNotBound,
+            &limits,
+            subject
+        )));
+        let cancelled = graph_failure(
+            ExactProbabilityGraphError::Cancelled(filament_exact::CancelCause::Requested),
+            &limits,
+            subject,
+        );
+        assert!(!is_not_yet(&cancelled) && !is_fault(&cancelled));
+        assert!(matches!(
+            graph_failure(ExactProbabilityGraphError::RequiresBound, &limits, subject),
+            EngineReport::Refused(Refusal::RequiresBound)
+        ));
+        assert!(is_fault(&document_failure(
+            ProbabilityDocumentError::UndefinedPredicate(
+                fsl_eval::temporal::UndefinedCause::Kernel(
+                    filament_exact::Undefined::DivisionByZero
+                )
+            ),
+            subject
+        )));
+    }
+
+    #[trace("FR-203-AC-11")]
+    #[test]
+    fn an_inequality_rejection_settles_inconclusive_at_the_same_complete_key() {
+        let key = ProbabilityProductKey::for_model_state(
+            None,
+            include_bytes!(
+                "../../../tools/fsl-probability-check/tests/fixtures/link.model-key-0.json"
+            ),
+        )
+        .unwrap();
+        let (terminal, evidence, counterexample) = ExactReport::Rejected {
+            rule: CertificateRule::InequalityFails,
+            at: CertificateLocus::ProbabilityProductState(key.clone()),
+        }
+        .settle(RequestIndex::new(0), BackendId::new("en-5"));
+        assert_eq!(
+            terminal.value(),
+            &TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+                rule: CertificateRule::InequalityFails,
+                at: CertificateLocus::ProbabilityProductState(key),
+            })
+        );
+        assert!(terminal.exact_certificate_document().is_none());
+        assert!(evidence.is_none() && counterexample.is_none());
     }
 }

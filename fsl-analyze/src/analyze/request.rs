@@ -2086,7 +2086,8 @@ mod caller_limit_tests {
     fn each_exact_prob_setting_changes_only_its_bound() {
         use crate::exact_probabilistic::ExactProbLimits;
         let base = ExactProbLimits::default();
-        let rows: [(Setting, fn(&ExactProbLimits) -> u64); 9] = [
+        type ExactLimitReader = fn(&ExactProbLimits) -> u64;
+        let rows: [(Setting, ExactLimitReader); 9] = [
             (Setting::ExactProbMaxStates, |l| {
                 l.model.limits.max_states as u64
             }),
@@ -2135,7 +2136,8 @@ mod caller_limit_tests {
     fn each_statistical_setting_changes_only_its_bound() {
         use fsl_replay::statistical::{StatisticalLimits, TimedSampling};
         let base = StatisticalLimits::default();
-        let rows: [(Setting, fn(&StatisticalLimits) -> u64); 3] = [
+        type StatisticalLimitReader = fn(&StatisticalLimits) -> u64;
+        let rows: [(Setting, StatisticalLimitReader); 3] = [
             (Setting::StatisticalMaxSamples, |l| l.max_samples),
             (Setting::StatisticalMaxDraws, |l| l.max_draws),
             (Setting::StatisticalMaxCycleSteps, |l| l.max_cycle_steps),
