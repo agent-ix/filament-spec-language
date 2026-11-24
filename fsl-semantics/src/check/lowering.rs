@@ -4560,10 +4560,14 @@ impl<'a> Lowering<'a> {
                 .skip(1)
                 .find_map(|child| match child.kind() {
                     NodeKind::Coerce(_, interval) if child.value_type() == node.value_type() => {
-                        self.graph.integer_interval_node(interval)
+                        Some((child, interval))
                     }
                     _ => None,
                 })
+                .map(|(child, interval)| {
+                    self.type_node(&ValueType::Int(interval.clone()), child.location())
+                })
+                .transpose()?
         } else {
             None
         };
