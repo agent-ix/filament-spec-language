@@ -1047,6 +1047,47 @@ fn a_component_state_may_leave_for_a_better_component_and_a_pinned_value_is_reje
     let _ = go;
 }
 
+/// Under `minimum` a component state may leave for a WORSE component: phase 0
+/// (value 1 inside its own component) can go to phase 1 (value 0), so the true
+/// minimum from phase 0 is 0 and a pinned v(0) = 1 must be rejected.
+#[trace("FSpec-TC-362", "FSpec-FR-412-AC-26", "FSpec-FR-411-AC-18")]
+#[test]
+fn under_minimum_a_component_state_may_leave_for_a_worse_component_and_a_pinned_value_is_rejected()
+{
+    let world = automaton(
+        "test/longrun-leave-worse",
+        2,
+        &[("idle0", 0, 0), ("go", 0, 1), ("park", 1, 1)],
+        every_claim("MinW", "s.phase = 0", ">= rational(1,2)"),
+    );
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let zero_state = system.initial()[0].clone();
+    let (one_state, _) = apply(&world, &zero_state, "go");
+    let (_, stay0) = apply(&world, &zero_state, "idle0");
+    let (_, stay) = apply(&world, &one_state, "park");
+    let key = |state| product_key(&world, "MinW", state);
+    let pinned = forged(
+        &world,
+        "MinW",
+        vec![
+            (key(&zero_state), ratio(1, 1)),
+            (key(&one_state), ratio(0, 1)),
+        ],
+        vec![
+            Claimed {
+                rho: ratio(1, 1),
+                rows: vec![(key(&zero_state), ratio(0, 1), stay0)],
+            },
+            Claimed {
+                rho: ratio(0, 1),
+                rows: vec![(key(&one_state), ratio(0, 1), stay)],
+            },
+        ],
+    );
+    assert!(failed_at(&pinned), "{pinned:?}");
+    assert!(refuted_by_analysis(&world, "MinW"));
+}
+
 /// FR-412-AC-26's component `C` of two states `u`, `v`: `u` has actions `a`
 /// (to `v`) and `b` (to `u`), `v` returns to `u` by `c`. The maximum fraction
 /// of `v` is 1/2, by `a`.
