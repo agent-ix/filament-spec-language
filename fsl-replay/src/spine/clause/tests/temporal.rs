@@ -4871,8 +4871,7 @@ fn a_temporal_violation_carries_its_decisive_information() {
         record
             .temporal()
             .and_then(crate::spine::TemporalRecord::verdict)
-            .cloned(),
-        Some(outcome(&forall))
+        Some(outcome(&forall).clone())
     );
     let Some(crate::spine::TemporalRecord::Violated { counterexample, .. }) = record.temporal()
     else {
