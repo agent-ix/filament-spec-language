@@ -32,6 +32,9 @@ const UNLIMITED: ScalarLimits = ScalarLimits {
 /// in which the evaluator, not the checker, meets a zero divisor.
 const KERNEL: &str = "#kernel\n";
 
+/// Marks a declaration list to be written under the state-only facet.
+const STATE_ONLY: &str = "#state-only\n";
+
 #[derive(Debug, PartialEq)]
 enum Expected {
     Boolean(bool),
@@ -50,6 +53,12 @@ enum Expected {
     },
     Admitted,
     Undefined,
+    /// A refusal whose authored cell names no code.
+    RefusedAny,
+    Quantity {
+        magnitude: String,
+        losses: Vec<DecimalLoss>,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -1229,7 +1238,543 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
     Some(vec![unit_program(&source, expected)])
 }
 
+fn case(declarations: impl Into<String>, expected: Expected) -> SourceCase {
+    SourceCase {
+        declarations: declarations.into(),
+        expected,
+    }
+}
+
+const TEMPERATURES: &str = "dimension Temp;\nunit K : Temp = rational(1, 1);\n\
+    unit degC : Temp = rational(1, 1) * K + rational(5463, 20);\n\
+    unit degF : Temp = rational(5, 9) * K + rational(45967, 180);\n";
+
+/// Roles of F34's comparison table at one width.
+fn role_bits(width: u32, role: &str) -> u64 {
+    let (sign, exponent, quiet) = if width == 32 {
+        (1_u64 << 31, 0xff_u64 << 23, 1_u64 << 22)
+    } else {
+        (1_u64 << 63, 0x7ff_u64 << 52, 1_u64 << 51)
+    };
+    let one = if width == 32 {
+        0x3f80_0000
+    } else {
+        0x3ff0_0000_0000_0000
+    };
+    match role {
+        "p0" => 0,
+        "n0" => sign,
+        "one" => one,
+        "pinf" => exponent,
+        "qnan" => exponent | quiet,
+        "snan" => exponent | 1,
+        other => panic!("authored role {other}"),
+    }
+}
+
+fn truth_words(text: &str) -> Vec<bool> {
+    text.split([',', ' '])
+        .filter_map(|word| match word {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Vectors that need only a different rendering of source.
+fn later_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
+    let tokens = quoted(vector.inputs);
+    let cases = match vector.id {
+        "D11" => {
+            let types = decimal_types(vector.inputs);
+            let groups: Vec<Vec<(Integer, u32)>> = vector.inputs.split(';').map(pairs).collect();
+            // The authored result: `100` in `[0,9999]` and `0.001` in
+            // `Decimal[-9,9;0,2;exact]` refuse, every other value is a member.
+            let refused = [(1, 0), (2, 0)];
+            let mut cases = Vec::new();
+            for (group, ty) in groups.iter().zip(types) {
+                let group_index = cases_group(&cases, vector.inputs, group);
+                for (index, operand) in group.iter().enumerate() {
+                    let declarations =
+                        format!("function f using v(): {ty} pure {{ {} }}", decimal(operand));
+                    let expected = if refused.contains(&(group_index, index)) {
+                        Expected::RefusedAny
+                    } else {
+                        Expected::Decimal {
+                            value: DecimalRepresentation::new(operand.0.clone(), operand.1)
+                                .normalized(),
+                            losses: Vec::new(),
+                        }
+                    };
+                    cases.push(case(declarations, expected));
+                }
+            }
+            cases
+        }
+        "D24" => {
+            let (first, _) = vector
+                .expected
+                .split_once("incomplete")
+                .expect("limit rows");
+            let result = first.split_once("result `(").expect("authored result").1;
+            let (coefficient, scale) = pairs(&format!("({result}"))
+                .into_iter()
+                .next()
+                .expect("authored result");
+            let loss = first
+                .split_once("{ exact_numerator: ")
+                .expect("authored loss")
+                .1;
+            let field = |name: &str| -> Integer {
+                loss.split_once(name)
+                    .map_or(loss, |(_, tail)| tail)
+                    .split([',', '}'])
+                    .next()
+                    .expect("field")
+                    .trim()
+                    .parse()
+                    .expect("authored integer")
+            };
+            let numerator: Integer = loss
+                .split(',')
+                .next()
+                .expect("numerator")
+                .trim()
+                .parse()
+                .expect("numerator");
+            let (denominator, rounded) =
+                (field("exact_denominator:"), field("rounded_coefficient:"));
+            let source = |mode: &str| {
+                format!(
+                    "function q using v(): Rational[0,2;1,3] pure {{ rational(2, 3) }}\n\
+                     function f using v(): Decimal[0,100;2,2;{mode}] pure {{ convert<Decimal[0,100;2,2;{mode}]>(q()) }}"
+                )
+            };
+            vec![
+                case(
+                    source("nearest-even"),
+                    Expected::Decimal {
+                        value: DecimalRepresentation::new(coefficient, scale).normalized(),
+                        losses: vec![DecimalLoss {
+                            numerator,
+                            denominator,
+                            coefficient: rounded,
+                            scale,
+                            mode: "nearest-even".to_owned(),
+                        }],
+                    },
+                ),
+                case(source("exact"), Expected::RefusedAny),
+            ]
+        }
+        "D25" => {
+            let expected: Vec<Expected> = {
+                let mut last = Expected::Admitted;
+                vector
+                    .expected
+                    .split(';')
+                    .map(|segment| {
+                        if segment.contains("code:") {
+                            last = refusal_expected(segment);
+                        } else if !segment.trim().starts_with("the same") {
+                            last = Expected::Admitted;
+                        }
+                        match &last {
+                            Expected::Refused { code, cause } => Expected::Refused {
+                                code: code.clone(),
+                                cause: cause.clone(),
+                            },
+                            _ => Expected::Admitted,
+                        }
+                    })
+                    .collect()
+            };
+            let (p, r) = (tokens[0], tokens[1]);
+            let (pp, rp) = (tokens[2], tokens[3]);
+            let narrow = format!("type R = {};", tokens[13]);
+            let units = format!("{p}\n{r}\n");
+            let bodies = [
+                format!("function e using v(): P pure {{ {} }}", tokens[4]),
+                format!("function e using v(): Boolean pure {{ {} }}", tokens[5]),
+                format!("function e using v({pp}): P pure {{ {} }}", tokens[6]),
+                format!("function e using v({pp}, {rp}): P pure {{ {} }}", tokens[7]),
+                format!("function e using v({pp}, {rp}): P pure {{ {} }}", tokens[8]),
+                format!("function e using v(): P pure {{ {} }}", tokens[10]),
+            ];
+            let mut cases: Vec<SourceCase> = bodies
+                .iter()
+                .zip(&expected)
+                .map(|(body, expected)| case(format!("{units}{body}"), clone_expected(expected)))
+                .collect();
+            cases.push(case(
+                format!(
+                    "{p}\n{narrow}\nfunction e using v({pp}, {rp}): P pure {{ {} }}",
+                    tokens[11]
+                ),
+                clone_expected(&expected[6]),
+            ));
+            cases
+        }
+        "U04" => {
+            let result = quoted(vector.expected)[0];
+            let (numerator, rest) = result.split_once('/').expect("authored ratio");
+            let (denominator, unit) = rest.split_once(' ').expect("authored unit");
+            tokens[..2]
+                .iter()
+                .map(|quantity| {
+                    case(
+                        format!(
+                            "{TEMPERATURES}function f using v(): Boolean pure {{ convert<Quantity<{unit}>>({quantity}) = rational({numerator}, {denominator}) {unit} }}"
+                        ),
+                        Expected::Boolean(true),
+                    )
+                })
+                .collect()
+        }
+        "U05" => {
+            let refusal = refusal_expected(vector.expected);
+            ["1 degC + 1 degC", "1 degC - 1 degC", "2 degC * 2 degC", "2 degC / 2 degC", "2 degC ^ 2"]
+                .into_iter()
+                .map(|expression| {
+                    case(
+                        format!(
+                            "{TEMPERATURES}function f using v(): Boolean pure {{ {expression} = {expression} }}"
+                        ),
+                        clone_expected(&refusal),
+                    )
+                })
+                .collect()
+        }
+        "U06" => vec![unit_program(
+            &format!("dimension L; unit m : L = 1; {}", tokens[1]),
+            refusal_pairs(vector.expected).remove(0),
+        )],
+        "U11e" => vec![unit_program(
+            &format!("dimension L; {}", tokens[0]),
+            refusal_pairs(vector.expected).remove(0),
+        )],
+        "U07" => {
+            let inch = tokens[0].replace(" in", " inch");
+            let rounded = decimal_expected(
+                vector
+                    .expected
+                    .split_once("`nearest-even`:")
+                    .expect("rounded row")
+                    .1,
+            );
+            let Expected::Decimal { value, losses } = rounded else {
+                unreachable!("decimal_expected returns a decimal")
+            };
+            let source = |mode: &str| {
+                format!(
+                    "dimension L;\nunit m : L = rational(1, 1);\nunit inch : L = rational(127, 5000) * m;\n\
+                     function f using v(): Quantity<m, Decimal[-100,100;2,2;{mode}]> pure {{ convert<Quantity<m, Decimal[-100,100;2,2;{mode}]>>({inch}) }}"
+                )
+            };
+            vec![
+                case(source("exact"), Expected::RefusedAny),
+                case(
+                    source("nearest-even"),
+                    Expected::Quantity {
+                        magnitude: format!("{}/{}", value.coefficient(), 10_u64.pow(value.scale())),
+                        losses,
+                    },
+                ),
+            ]
+        }
+        "U08" => {
+            let domain = tokens[tokens.len() - 1].trim_matches(['[', ']']);
+            tokens[..4]
+                .iter()
+                .enumerate()
+                .map(|(index, quantity)| {
+                    let amount = quantity.split(' ').next().expect("authored amount");
+                    case(
+                        format!(
+                            "dimension L;\nunit m : L = rational(1, 1);\n\
+                             function f using v(): Quantity<m, Decimal[{domain};0,0;exact]> pure {{ convert<Quantity<m, Decimal[{domain};0,0;exact]>>({quantity}) }}"
+                        ),
+                        if index < 2 {
+                            Expected::Quantity { magnitude: format!("{amount}/1"), losses: Vec::new() }
+                        } else {
+                            Expected::RefusedAny
+                        },
+                    )
+                })
+                .collect()
+        }
+        "DIV-16" => {
+            let results: Vec<Integer> = vector
+                .expected
+                .split("returns `")
+                .skip(1)
+                .map(|tail| {
+                    tail.split('`')
+                        .next()
+                        .expect("result")
+                        .parse()
+                        .expect("authored integer")
+                })
+                .collect();
+            let rows = [
+                (tokens[0], tokens[1], tokens[2], 0),
+                (tokens[3], tokens[4], tokens[5], 1),
+            ];
+            let mut cases = Vec::new();
+            for law in ["euclidean", "floor", "truncating"] {
+                for (domain, expression, binding, result) in rows {
+                    let (name, value) = binding.split_once(" = ").expect("authored binding");
+                    let body = expression.replace(name, &format!("({value})"));
+                    cases.push(case(
+                        format!(
+                            "{KERNEL}profile d = \"filament.value.integer-division.{law}/v1\";\n\
+                             function f using v(): {domain} pure {{ {body} }}"
+                        ),
+                        Expected::Integer(results[result].clone()),
+                    ));
+                }
+            }
+            cases
+        }
+        "DIV-17" => {
+            let code = tokens_after(vector.expected, "unsupported_construct");
+            let two = vector
+                .expected
+                .split_once("Euclidean `")
+                .expect("authored mod")
+                .1
+                .split('`')
+                .next()
+                .expect("value");
+            let bodies = [
+                "1 + 7 div 3 * 2 = 1 + ((7 div 3) * 2)".to_owned(),
+                "7 rem 3 = 7 - 3 * (7 div 3)".to_owned(),
+                format!("-7 mod 3 = {two}"),
+            ];
+            let mut cases = Vec::new();
+            for body in &bodies {
+                cases.push(case(
+                    format!(
+                        "profile d = \"filament.value.integer-division.truncating/v1\";\n\
+                         function f using v(): Boolean pure {{ {body} }}"
+                    ),
+                    Expected::Boolean(true),
+                ));
+                cases.push(case(
+                    format!("{STATE_ONLY}function f using v(): Boolean pure {{ {body} }}"),
+                    Expected::Refused {
+                        code: code.clone(),
+                        cause: None,
+                    },
+                ));
+            }
+            cases
+        }
+        "DIV-18" => {
+            let code = tokens_after(vector.expected, "unsupported_construct");
+            let mut cases: Vec<SourceCase> = ["div", "rem", "mod"]
+                .into_iter()
+                .map(|operator| {
+                    case(
+                        format!(
+                            "{STATE_ONLY}function f using v(): Boolean pure {{ (if true then 1 else (7 {operator} 3)) = 1 }}"
+                        ),
+                        Expected::Refused { code: code.clone(), cause: None },
+                    )
+                })
+                .collect();
+            cases.push(case(
+                format!(
+                    "{STATE_ONLY}function f using v(): Boolean pure {{ 7 / 3 = rational(7, 3) }}"
+                ),
+                Expected::RefusedAny,
+            ));
+            cases.push(case(
+                "function f using v(): Boolean pure { 7 / 3 = 7 / 3 }",
+                Expected::RefusedAny,
+            ));
+            cases.push(case(
+                "function g using v(): Rational[0,7;1,3] pure { 7 / 3 }\n\
+                 function f using v(): Boolean pure { g() = rational(7, 3) }",
+                Expected::Boolean(true),
+            ));
+            cases
+        }
+        "F05" => {
+            let ordered = [0xff80_0000_u64, 0xff7f_ffff, 0x7f7f_ffff, 0x7f80_0000];
+            let constant = |bits: u64| float_constant(32, bits);
+            let mut cases = Vec::new();
+            for (i, a) in ordered.iter().enumerate() {
+                cases.push(boolean_case(
+                    32,
+                    &format!("{IEEE}bitIdentical({}, {})", constant(*a), constant(*a)),
+                    true,
+                ));
+                for b in &ordered[i + 1..] {
+                    cases.push(boolean_case(
+                        32,
+                        &format!("{} < {}", constant(*a), constant(*b)),
+                        true,
+                    ));
+                    cases.push(boolean_case(
+                        32,
+                        &format!("{IEEE}totalOrder({}, {})", constant(*a), constant(*b)),
+                        true,
+                    ));
+                    cases.push(boolean_case(
+                        32,
+                        &format!("{IEEE}totalOrder({}, {})", constant(*b), constant(*a)),
+                        false,
+                    ));
+                    cases.push(boolean_case(
+                        32,
+                        &format!("{IEEE}bitIdentical({}, {})", constant(*a), constant(*b)),
+                        false,
+                    ));
+                }
+            }
+            cases
+        }
+        "F20" => {
+            let code = refusal_expected(vector.expected);
+            let (b32, b64) = (
+                float_constant(32, 0x3f80_0000),
+                float_constant(64, 0x3ff0_0000_0000_0000),
+            );
+            [
+                ("Boolean", format!("{IEEE}numericEqual({b32}, {b64})")),
+                ("Boolean", format!("{IEEE}totalOrder({b32}, {b64})")),
+                ("Boolean", format!("{IEEE}bitIdentical({b32}, {b64})")),
+                ("Float32[nearest-even]", format!("{b32} + {b64}")),
+                ("Float32[nearest-even]", format!("{b32} + 1")),
+                (
+                    "Decimal[0,10;0,0;exact]",
+                    format!("convert<Decimal[0,10;0,0;exact]>({b32})"),
+                ),
+                ("Int[0,1]", format!("convert<Int[0,1]>({b32})")),
+            ]
+            .into_iter()
+            .map(|(result, body)| function(result, &body, clone_expected(&code)))
+            .collect()
+        }
+        "T07" | "T09" | "T10" => {
+            let word = vector
+                .expected
+                .split_whitespace()
+                .find(|word| *word == "ill-typed")
+                .map(|word| word.replace('-', "_"));
+            let refusal = word.map_or_else(|| refusal_expected(vector.expected), |code| Expected::Refused { code, cause: None });
+            let compare = |declarations: &str, body: &str| {
+                case(
+                    format!("{declarations}\nfunction f using v(): Boolean pure {{ {body} }}"),
+                    clone_expected(&refusal),
+                )
+            };
+            match vector.id {
+                "T07" => vec![compare(
+                    "enum A { READY, DONE }\nenum B { READY, DONE }",
+                    "A::READY = B::READY",
+                )],
+                "T09" => vec![
+                    compare("enum A { READY, DONE }\nenum B { READY, DONE }", "A::READY = B::READY"),
+                    compare("enum A { READY, DONE }\nenum B { READY, FINISHED }", "A::READY = B::READY"),
+                    compare(
+                        "ordered enum A { READY, DONE }\nordered enum B { DONE, READY }",
+                        "A::READY = B::READY",
+                    ),
+                ],
+                _ => vec![compare(
+                    "function left using v(): Text[0,8;nfc] pure { Text(\"a\") }\n\
+                     function right using v(): Text[0,8;binary-utf8] pure { Text(\"a\") }",
+                    "left() = right()",
+                )],
+            }
+        }
+        "T08" => vec![
+            case(
+                "ordered enum A { READY, DONE }\nfunction f using v(): Boolean pure { A::READY < A::DONE }",
+                Expected::Boolean(true),
+            ),
+            case(
+                "enum A { READY, DONE }\nfunction f using v(): Boolean pure { A::READY < A::DONE }",
+                Expected::RefusedAny,
+            ),
+        ],
+        "F34" => {
+            let roles: Vec<&str> = tokens[..12].iter().step_by(2).copied().collect();
+            let comparisons = &tokens[12..];
+            let truths = truth_words(
+                vector
+                    .expected
+                    .split(" at both")
+                    .next()
+                    .expect("authored truths"),
+            );
+            assert_eq!(comparisons.len(), truths.len());
+            let mut cases = Vec::new();
+            for width in [64, 32] {
+                for (comparison, truth) in comparisons.iter().zip(&truths) {
+                    let mut body = (*comparison).to_owned();
+                    for role in &roles {
+                        body = body
+                            .split(' ')
+                            .map(|word| {
+                                if word == *role {
+                                    float_constant(width, role_bits(width, role))
+                                } else {
+                                    word.to_owned()
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                    }
+                    cases.push(boolean_case(width, &body, *truth));
+                }
+            }
+            cases
+        }
+        _ => return None,
+    };
+    Some(cases)
+}
+
+/// The `Expected` is not `Clone` (it holds loss records only in tests), so
+/// the few places that reuse one rebuild it.
+fn clone_expected(expected: &Expected) -> Expected {
+    match expected {
+        Expected::Refused { code, cause } => Expected::Refused {
+            code: code.clone(),
+            cause: cause.clone(),
+        },
+        Expected::Admitted => Expected::Admitted,
+        Expected::RefusedAny => Expected::RefusedAny,
+        other => panic!("only refusals and admissions are reused, got {other:?}"),
+    }
+}
+
+/// The first backticked word of `text` that begins with `prefix`.
+fn tokens_after(text: &str, prefix: &str) -> String {
+    quoted(text)
+        .into_iter()
+        .find(|token| token.starts_with(prefix))
+        .expect("authored code")
+        .to_owned()
+}
+
+/// D11's group number: groups are the `;`-separated clauses of the inputs.
+fn cases_group(_done: &[SourceCase], inputs: &str, group: &[(Integer, u32)]) -> usize {
+    inputs
+        .split(';')
+        .position(|clause| pairs(clause) == group)
+        .expect("authored group")
+}
+
 fn source_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
+    primary_cases(vector).or_else(|| later_cases(vector))
+}
+
+fn primary_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
     match vector.test_case {
         TestCase::Tc185 => decimal_cases(vector),
         TestCase::Tc186 => text_cases(vector),
@@ -1240,7 +1785,17 @@ fn source_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
 }
 
 fn observed(case: &SourceCase) -> Expected {
-    let source = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{}", case.declarations.trim_start_matches(KERNEL));
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"{}\";\n{}",
+        if case.declarations.starts_with(STATE_ONLY) {
+            "filament.state.core/v1"
+        } else {
+            "filament.value.complete/v1"
+        },
+        case.declarations
+            .trim_start_matches(KERNEL)
+            .trim_start_matches(STATE_ONLY)
+    );
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("qualification", "source"),
         "vector.native",
@@ -1312,31 +1867,36 @@ fn observed(case: &SourceCase) -> Expected {
     let FamilyOutcome::Evaluated(outcome) = evaluation.outcome else {
         panic!("value outcome: {:?}", evaluation.outcome);
     };
+    let decimal_losses: Vec<DecimalLoss> = evaluation
+        .losses
+        .iter()
+        .filter_map(|loss| {
+            let ValueLoss::Decimal(loss) = &loss.loss else {
+                return None;
+            };
+            Some(DecimalLoss {
+                numerator: loss.exact_numerator().clone(),
+                denominator: loss.exact_denominator(),
+                coefficient: loss.rounded_coefficient().clone(),
+                scale: loss.rounded_scale(),
+                mode: loss.mode().as_str().to_owned(),
+            })
+        })
+        .collect();
     match outcome {
         Outcome::Completed(Value::Boolean(value)) => Expected::Boolean(value),
         Outcome::Completed(Value::Integer(value)) => Expected::Integer(value),
         Outcome::Completed(Value::Decimal(value)) => {
-            let losses = evaluation
-                .losses
-                .iter()
-                .map(|loss| {
-                    let ValueLoss::Decimal(loss) = &loss.loss else {
-                        panic!("decimal loss, got {:?}", loss.loss);
-                    };
-                    DecimalLoss {
-                        numerator: loss.exact_numerator().clone(),
-                        denominator: loss.exact_denominator(),
-                        coefficient: loss.rounded_coefficient().clone(),
-                        scale: loss.rounded_scale(),
-                        mode: loss.mode().as_str().to_owned(),
-                    }
-                })
-                .collect();
+            let losses = decimal_losses;
             Expected::Decimal {
                 value: value.normalized().clone(),
                 losses,
             }
         }
+        Outcome::Completed(Value::Quantity(quantity)) => Expected::Quantity {
+            magnitude: quantity.magnitude().to_string(),
+            losses: decimal_losses,
+        },
         Outcome::Completed(Value::Float(value)) => {
             let mut flags: Vec<String> = evaluation
                 .losses
@@ -1397,6 +1957,7 @@ fn compare(vector: &QualificationVector) -> Result<usize, String> {
 
 fn agrees(expected: &Expected, actual: &Expected) -> bool {
     match (expected, actual) {
+        (Expected::RefusedAny, Expected::Refused { .. }) => true,
         (Expected::Refused { code, cause: None }, Expected::Refused { code: actual, .. }) => {
             code == actual
         }
@@ -1411,78 +1972,104 @@ fn vector(id: &str) -> &'static QualificationVector {
         .expect("published vector identity")
 }
 
-/// A published vector the source language cannot express today. `probe` is
-/// the closest FSL source and `code`/`cause` the typed refusal it meets now.
-/// `key` is the Linear ticket that owns the gap; an entry without one fails
-/// `unexpressible_vectors_carry_ticket_keys`.
+/// The Linear tickets that own the unexpressible groups (QSL-2052 groups
+/// V1 to V6). A recorded vector's key must be one of these.
+const GROUP_KEYS: [&str; 6] = [
+    "QSL-3057", "QSL-3058", "QSL-3059", "QSL-3060", "QSL-3061", "QSL-3062",
+];
+const V1: &str = "QSL-3057";
+const V2: &str = "QSL-3058";
+const V3: &str = "QSL-3059";
+const V4: &str = "QSL-3060";
+const V5: &str = "QSL-3061";
+
+/// A published vector the source language cannot express today, with the
+/// typed refusal its closest FSL source meets now (`refusal`), or none where
+/// the vector's input is not source text at all (accounting tuples, wire
+/// rows). `key` is the Linear ticket that owns the gap; an entry without one
+/// fails `unexpressible_vectors_carry_ticket_keys`.
 struct Unexpressible {
     id: &'static str,
-    probe: &'static str,
-    code: &'static str,
-    cause: Option<&'static str>,
+    refusal: Option<Refusal>,
     key: Option<&'static str>,
 }
 
-/// The authored text of D13 and D18 says their retained operands are not
-/// members of the result type, so no FSL source form exists; the probes
-/// write those operands anyway.
+struct Refusal {
+    probe: &'static str,
+    code: &'static str,
+    cause: Option<&'static str>,
+}
+
+const fn refused(
+    id: &'static str,
+    key: Option<&'static str>,
+    probe: &'static str,
+    code: &'static str,
+    cause: Option<&'static str>,
+) -> Unexpressible {
+    Unexpressible {
+        id,
+        refusal: Some(Refusal { probe, code, cause }),
+        key,
+    }
+}
+
+const fn not_source(id: &'static str, key: &'static str) -> Unexpressible {
+    Unexpressible {
+        id,
+        refusal: None,
+        key: Some(key),
+    }
+}
+
+const KERNEL_TRUNCATING: &str =
+    "#kernel\nprofile d = \"filament.value.integer-division.truncating/v1\";\n";
+
+/// D13 and D18's authored text says their retained operands are not members
+/// of the result type, so no FSL source form exists; the probes write those
+/// operands anyway. The `Int[..]` consumer-domain rows meet
+/// `integer_out_of_domain`, not the standard's division/modulo codes. The
+/// out-of-bounds `Text` literal rows meet `ill_typed` at check time.
 const UNEXPRESSIBLE: &[Unexpressible] = &[
-    Unexpressible {
-        id: "DIV-05",
-        probe: "#kernel\nprofile d = \"filament.value.integer-division.truncating/v1\";\nfunction f using v(): Int[-9223372036854775808, 9223372036854775807] pure { (-9223372036854775808) div (-1) }",
-        code: "integer_out_of_domain",
-        cause: Some("outside-domain"),
-        key: None,
-    },
-    Unexpressible {
-        id: "DIV-06",
-        probe: "#kernel\nprofile d = \"filament.value.integer-division.truncating/v1\";\nfunction f using v(): Int[-9223372036854775808, 9223372036854775807] pure { (-9223372036854775808) div (-1) }",
-        code: "integer_out_of_domain",
-        cause: Some("outside-domain"),
-        key: None,
-    },
-    Unexpressible {
-        id: "DIV-15",
-        probe: "#kernel\nprofile d = \"filament.value.integer-division.truncating/v1\";\nfunction f using v(): Int[1, 10] pure { 10 rem 5 }",
-        code: "integer_out_of_domain",
-        cause: Some("outside-domain"),
-        key: None,
-    },
-    Unexpressible {
-        id: "T04",
-        probe: "function f using v(): Text[1,1;binary-utf8] pure { Text(\"é\") }",
-        code: "ill_typed",
-        cause: Some("type-mismatch"),
-        key: None,
-    },
-    Unexpressible {
-        id: "T05",
-        probe: "function f using v(): Text[0,0;nfc] pure { Text(\"a\") }",
-        code: "ill_typed",
-        cause: Some("type-mismatch"),
-        key: None,
-    },
-    Unexpressible {
-        id: "T13",
-        probe: "function f using v(): Text[1,1;nfd] pure { Text(\"é\") }",
-        code: "ill_typed",
-        cause: Some("type-mismatch"),
-        key: None,
-    },
-    Unexpressible {
-        id: "D13",
-        probe: "function f using v(): Decimal[-9,9;0,0;toward-zero] pure { decimal(150, 2) * decimal(2, 0) }",
-        code: "ill_typed",
-        cause: Some("type-mismatch"),
-        key: None,
-    },
-    Unexpressible {
-        id: "D18",
-        probe: "function f using v(): Decimal[-1000,1000;0,1;nearest-even] pure { decimal(1234, 3) / decimal(2, 0) }",
-        code: "ill_typed",
-        cause: Some("type-mismatch"),
-        key: None,
-    },
+    refused("D13", Some(V1), "function f using v(): Decimal[-9,9;0,0;toward-zero] pure { decimal(150, 2) * decimal(2, 0) }", "ill_typed", Some("type-mismatch")),
+    refused("D18", Some(V1), "function f using v(): Decimal[-1000,1000;0,1;nearest-even] pure { decimal(1234, 3) / decimal(2, 0) }", "ill_typed", Some("type-mismatch")),
+    refused("DIV-05", Some(V2), "#kernel\nprofile d = \"filament.value.integer-division.truncating/v1\";\nfunction f using v(): Int[-9223372036854775808, 9223372036854775807] pure { (-9223372036854775808) div (-1) }", "integer_out_of_domain", Some("outside-domain")),
+    refused("DIV-06", Some(V2), "#kernel\nprofile d = \"filament.value.integer-division.truncating/v1\";\nfunction f using v(): Int[-9223372036854775808, 9223372036854775807] pure { (-9223372036854775808) div (-1) }", "integer_out_of_domain", Some("outside-domain")),
+    refused("DIV-12", Some(V2), "#kernel\nfunction f using v(): Int[0, 1] pure { -7 mod 3 }", "integer_out_of_domain", Some("outside-domain")),
+    refused("DIV-15", Some(V2), "#kernel\nprofile d = \"filament.value.integer-division.truncating/v1\";\nfunction f using v(): Int[1, 10] pure { 10 rem 5 }", "integer_out_of_domain", Some("outside-domain")),
+    refused("T04", Some(V3), "function f using v(): Text[1,1;binary-utf8] pure { Text(\"\u{e9}\") }", "ill_typed", Some("type-mismatch")),
+    refused("T05", Some(V3), "function f using v(): Text[0,0;nfc] pure { Text(\"a\") }", "ill_typed", Some("type-mismatch")),
+    refused("T13", Some(V3), "function f using v(): Text[1,1;nfd] pure { Text(\"\u{e9}\") }", "ill_typed", Some("type-mismatch")),
+    // No group ticket covers these two: negation is refused outside `exact`
+    // and a derived dimension is not the dimension its map normalizes to.
+    refused("F32", None, "function f using v(): Float32[nearest-even] pure { -float32(bits: 0x3f800000) }", "ill_typed", Some("type-mismatch")),
+    refused("U02", None, "dimension L;\ndimension T;\nunit m : L = rational(1, 1);\nunit s : T = rational(1, 1);\ndimension X = L * T / T;\nunit u : X = rational(1, 1);\nfunction f using v(): Boolean pure { convert<Quantity<m>>(1 u) = 1 m }", "ill_typed", Some("type-mismatch")),
+    // ScalarLimitsV1 accounting vectors (V4).
+    not_source("D09", V4), not_source("D14", V4), not_source("D15", V4), not_source("D16", V4),
+    not_source("D17", V4), not_source("D19", V4), not_source("D20", V4), not_source("D21", V4),
+    not_source("D22", V4), not_source("D23", V4), not_source("T11", V4), not_source("T14", V4),
+    not_source("T15", V4), not_source("T16", V4), not_source("U10", V4), not_source("U13", V4),
+    not_source("U14", V4), not_source("U15", V4), not_source("U16", V4), not_source("U17", V4),
+    not_source("U18", V4), not_source("U19", V4), not_source("U20", V4), not_source("U21", V4),
+    not_source("U22", V4), not_source("U23", V4), not_source("U24", V4), not_source("U25", V4),
+    not_source("U26", V4), not_source("U27", V4), not_source("U28", V4), not_source("U29", V4),
+    not_source("DIV-08", V4), not_source("DIV-10", V4), not_source("DIV-11", V4),
+    not_source("DIV-13", V4), not_source("F17", V4), not_source("F18", V4), not_source("F19", V4),
+    not_source("F21", V4), not_source("F22", V4), not_source("F24", V4), not_source("F25", V4),
+    not_source("F26", V4), not_source("F27", V4), not_source("F28", V4), not_source("F29", V4),
+    not_source("F30", V4), not_source("F31", V4), not_source("F33", V4),
+    // Multi-package, imported-model and wire rows (V5).
+    not_source("U11r", V5), not_source("U11s", V5), not_source("U11t", V5), not_source("U11u", V5),
+    not_source("U11y", V5), not_source("U11z1", V5), not_source("U11z2", V5),
+    not_source("U30", V5), not_source("U31", V5), not_source("U32", V5), not_source("U33", V5),
+    not_source("U34", V5), not_source("U35", V5), not_source("U36", V5), not_source("U37", V5),
+    not_source("U38", V5), not_source("U39", V5), not_source("U40", V5),
+    not_source("DIV-03", V5), not_source("DIV-07", V5), not_source("DIV-09", V5),
+    not_source("DIV-14", V5), not_source("T06", V5),
+    // A distinct dimension or unit node key needs a second package (V5).
+    not_source("U09", V5), not_source("U09b", V5),
+    // No group ticket covers compound-unit results (2 m * 3 s).
+    Unexpressible { id: "U12", refusal: None, key: None },
 ];
 
 fn unexpressible(id: &str) -> Option<&'static Unexpressible> {
@@ -1588,20 +2175,22 @@ fn refusing_vectors_match_codes() {
 #[trace("FSpec-TC-185")]
 #[test]
 fn recorded_refusals_still_occur() {
-    assert!(
-        !UNEXPRESSIBLE.is_empty(),
-        "an empty registry proves nothing"
-    );
-    for entry in UNEXPRESSIBLE {
+    let with_probe: Vec<&Unexpressible> = UNEXPRESSIBLE
+        .iter()
+        .filter(|entry| entry.refusal.is_some())
+        .collect();
+    assert!(!with_probe.is_empty(), "an empty registry proves nothing");
+    for entry in with_probe {
+        let refusal = entry.refusal.as_ref().expect("filtered");
         let actual = observed(&SourceCase {
-            declarations: entry.probe.to_owned(),
+            declarations: refusal.probe.to_owned(),
             expected: Expected::Boolean(true),
         });
         assert_eq!(
             actual,
             Expected::Refused {
-                code: entry.code.to_owned(),
-                cause: entry.cause.map(str::to_owned),
+                code: refusal.code.to_owned(),
+                cause: refusal.cause.map(str::to_owned),
             },
             "{}: the recorded refusal no longer occurs; if the vector became expressible, render it and remove the entry",
             entry.id
@@ -1620,6 +2209,11 @@ fn recorded_vectors_are_published_and_not_also_executed() {
             entry.id
         );
     }
+    let mut ids: Vec<&str> = UNEXPRESSIBLE.iter().map(|entry| entry.id).collect();
+    ids.sort_unstable();
+    let count = ids.len();
+    ids.dedup();
+    assert_eq!(ids.len(), count, "a vector is recorded once");
 }
 
 #[trace("FSpec-TC-185")]
@@ -1627,22 +2221,23 @@ fn recorded_vectors_are_published_and_not_also_executed() {
 fn unexpressible_vectors_carry_ticket_keys() {
     let unkeyed: Vec<&str> = UNEXPRESSIBLE
         .iter()
-        .filter(|entry| {
-            !entry.key.is_some_and(|key| {
-                key.split_once('-').is_some_and(|(team, number)| {
-                    !team.is_empty()
-                        && team.chars().all(|c| c.is_ascii_uppercase())
-                        && !number.is_empty()
-                        && number.chars().all(|c| c.is_ascii_digit())
-                })
-            })
-        })
+        .filter(|entry| entry.key.is_none())
         .map(|entry| entry.id)
         .collect();
     assert!(
         unkeyed.is_empty(),
         "unexpressible vectors without a ticket key: {}",
         unkeyed.join(", ")
+    );
+    let foreign: Vec<&str> = UNEXPRESSIBLE
+        .iter()
+        .filter(|entry| entry.key.is_some_and(|key| !GROUP_KEYS.contains(&key)))
+        .map(|entry| entry.id)
+        .collect();
+    assert!(
+        foreign.is_empty(),
+        "keys outside {GROUP_KEYS:?}: {}",
+        foreign.join(", ")
     );
 }
 
