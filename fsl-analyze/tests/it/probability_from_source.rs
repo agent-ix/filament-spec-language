@@ -1031,7 +1031,7 @@ fn probabilistic_on_each_product_preserves_multi_initial_keys() {
         &origin_target,
         UnboundedObjective::Max,
         &ExactProbLimits::default(),
-        &cancel,
+        &Cancel::new(),
     )
     .expect("the on-origin exact reachability value computes");
     let origin_initial = origin_product.initial[0].2.index();
