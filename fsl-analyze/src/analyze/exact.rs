@@ -1047,10 +1047,11 @@ fn run_timed_mean(
     let ProbForm::MeanTime { bound, .. } = &claim.form else {
         return not_yet();
     };
+    let fair = !claim.fairness.is_empty();
     if !matches!(
         claim.scheduler,
         ProbScheduler::Every | ProbScheduler::Workload(_)
-    ) || !claim.fairness.is_empty()
+    ) || (fair && !matches!(claim.scheduler, ProbScheduler::Every))
     {
         return not_yet();
     }
@@ -1248,7 +1249,18 @@ fn run_timed_mean(
         policy: None,
     };
     let checked = (|| {
-        let bytes = write_probability_certificate(&document, document_limits, cancel)?;
+        let bytes = if fair {
+            fsl_replay::write_timed_fair_probability_certificate(
+                &system,
+                source_package.graph().probabilistic_model().claims(),
+                &identity,
+                &document,
+                document_limits,
+                cancel,
+            )?
+        } else {
+            write_probability_certificate(&document, document_limits, cancel)?
+        };
         check_probability_certificate_document(
             &system,
             source_package.graph().probabilistic_model().claims(),

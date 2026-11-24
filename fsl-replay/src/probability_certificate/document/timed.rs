@@ -28,8 +28,16 @@ pub(super) fn check(
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
     let mut storage = 0;
-    let document =
-        read_document_profile(bytes, limits, cancel, &mut meter, false, None, &mut storage)?;
+    let mut fairness_records = Vec::new();
+    let document = read_document_profile(
+        bytes,
+        limits,
+        cancel,
+        &mut meter,
+        false,
+        Some(&mut fairness_records),
+        &mut storage,
+    )?;
     if &document.identity != item {
         return Err(ProbabilityDocumentError::IdentityMismatch);
     }
@@ -56,6 +64,23 @@ pub(super) fn check(
         return Err(ProbabilityDocumentError::Unsupported);
     }
     if objective.form == TimedProbabilityForm::ExpectedElapsed {
+        if fairness_records.is_empty() != claim.fairness.is_empty() {
+            return Err(ProbabilityDocumentError::ObjectiveMismatch);
+        }
+        if !fairness_records.is_empty() {
+            let expected =
+                super::fairness::checked(system, claim, limits, cancel, &mut meter, &mut storage)?;
+            if !super::fairness::same(
+                &expected,
+                &fairness_records,
+                limits,
+                cancel,
+                &mut meter,
+                &mut storage,
+            )? {
+                return Err(ProbabilityDocumentError::ObjectiveMismatch);
+            }
+        }
         return check_expected_elapsed(
             system,
             claim,
@@ -69,6 +94,9 @@ pub(super) fn check(
             &mut meter,
             &mut storage,
         );
+    }
+    if !fairness_records.is_empty() || !claim.fairness.is_empty() {
+        return Err(ProbabilityDocumentError::Unsupported);
     }
     if objective.form == TimedProbabilityForm::ElapsedQuantile {
         return elapsed::check(
@@ -224,7 +252,6 @@ fn check_expected_elapsed(
         return Err(ProbabilityDocumentError::Unsupported);
     };
     if !matches!(claim.scheduler, fsl_semantics::check::ProbScheduler::Every)
-        || !claim.fairness.is_empty()
         || document.cyclic_dtmc
         || document.event.is_some()
         || !document.failures.is_empty()
@@ -5625,11 +5652,7 @@ mod witness_pricing_tests {
     #[test]
     fn a_cyclic_selected_child_refuses_deadline_path_pricing() {
         let graph = graph(vec![
-            (
-                "I",
-                None,
-                vec![vec![edge("X", 1, 2), edge("F", 1, 2)]],
-            ),
+            ("I", None, vec![vec![edge("X", 1, 2), edge("F", 1, 2)]]),
             ("X", None, vec![vec![edge("I", 1, 1)]]),
             ("F", Some(true), vec![]),
         ]);
