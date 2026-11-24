@@ -1906,3 +1906,233 @@ fn probabilistic_on_each_out_of_profile_form_is_unsupported_with_no_cause() {
         assert!(item.get("certificate").is_none(), "{name}: {item}");
     }
 }
+
+/// `E`'s activation over `body`, as `name`, written `using profile` under
+/// `scheduler`.
+fn on_each_form(name: &str, profile: &str, scheduler: &str, body: &str) -> String {
+    format!(
+        "probabilistic {name} using {profile} on M under {scheduler} \
+         on each (k: M::Msg) when (not k.delivered) {{ {body} }}"
+    )
+}
+
+/// The `Link` unit whose sends no longer count attempts: a lost send
+/// returns the message to its own undelivered state, so every instance's
+/// phase graph is cyclic.
+fn cyclic_unit(claims: &str) -> String {
+    unit(claims)
+        .replace(
+            "self.attempts - pre(self.attempts) = 1 and self.delivered = (not lost)",
+            "self.attempts = pre(self.attempts) and self.delivered = (not lost)",
+        )
+        .replace(
+            "terminal Stop using v on M when { self.delivered or self.attempts = 2 };",
+            "",
+        )
+}
+
+/// FR-875's profile boundary: the item settles `unsupported` with
+/// `not-yet-implemented`, no `cause`, value, measurement or certificate, and
+/// does not name the activation or `no-instance` as its reason.
+fn settles_at_the_profile_boundary(case: &str, item: &Value) {
+    assert!(item.is_object(), "{case}: {item}");
+    assert_eq!(label(item), "unsupported", "{case}: {item}");
+    let text = item.to_string();
+    assert!(text.contains("not-yet-implemented"), "{case}: {item}");
+    assert!(!text.contains("no-instance"), "{case}: {item}");
+    assert!(item["record"].get("cause").is_none(), "{case}: {item}");
+    assert!(item["record"].get("basis").is_none(), "{case}: {item}");
+    assert!(item.get("certificate").is_none(), "{case}: {item}");
+    assert!(item.get("measurement").is_none(), "{case}: {item}");
+}
+
+/// Analyze `claim` under `source`'s unit text with one undelivered message,
+/// and with an empty `msgs` population, requesting `request`.
+fn on_each_both(case: &str, source: &str, request: Value) -> (Value, Value) {
+    let over = |start: Vec<u8>, suffix: &str| {
+        let ws = Workspace::new(&format!("on-each-{case}-{suffix}"));
+        let path = request_over(
+            &ws,
+            source,
+            LINK_MODEL,
+            &[start],
+            json!({"items": [request.clone()]}),
+        );
+        analyze(&path).document()["items"][0].clone()
+    };
+    (
+        over(link_start(&[("m", false)]), "one"),
+        over(link_start(&[]), "none"),
+    )
+}
+
+/// TC-3211: every on-each form outside the `on-each-reachability/v1`
+/// profile settles `unsupported` at the profile boundary over a nonempty
+/// instance set, and `inconclusive` with `no-instance` over an empty one.
+fn assert_profile_boundary(case: &str, source: &str, request: Value) {
+    let (one, none) = on_each_both(case, source, request);
+    settles_at_the_profile_boundary(case, &one);
+    assert_eq!(label(&none), "inconclusive", "{case}: {none}");
+    assert_eq!(
+        none["record"]["cause"]["kind"], "no-instance",
+        "{case}: {none}"
+    );
+}
+
+/// TC-3211 step 1: the admitted exact workload profile is the control.
+#[trace("TC-3211", "FR-875-AC-4")]
+#[test]
+fn on_each_profile_control_is_proved_with_its_ratio_certificate() {
+    let source = unit(&on_each_form(
+        "E",
+        "inf",
+        "Even",
+        "probability >= rational(9, 10) [ eventually holds(k.delivered) ]",
+    ));
+    let (one, none) = on_each_both("control", &source, json!({"claim": "E"}));
+    assert_eq!(label(&one), "proved", "{one}");
+    assert_eq!(one["certificate"]["kind"], "conditional", "{one}");
+    assert!(one["record"]["basis"]["entries"][0]["value"]
+        .to_string()
+        .contains("391"));
+    assert_eq!(label(&none), "inconclusive", "{none}");
+}
+
+/// FR-875-AC-4: every-scheduler and free-delay optima.
+#[trace("TC-3211", "FR-875-AC-4")]
+#[test]
+fn on_each_optima_settle_at_the_profile_boundary() {
+    let body = "probability >= rational(1, 2) [ eventually holds(k.delivered) ]";
+    assert_profile_boundary(
+        "every-scheduler",
+        &unit(&on_each_form("E", "inf", "every scheduler", body)),
+        json!({"claim": "E"}),
+    );
+    assert_profile_boundary(
+        "free-delay",
+        &timed_unit(&on_each_form("E", "inf", "Even", body)),
+        json!({"claim": "E", "probabilistic": {"evidence": "exact"}}),
+    );
+}
+
+/// FR-875-AC-5: statistical evidence, for a sampled form and for an
+/// exact-only form alike.
+#[trace("TC-3211", "FR-875-AC-5")]
+#[test]
+fn on_each_statistical_evidence_settles_at_the_profile_boundary() {
+    let statistical = json!({"claim": "E", "probabilistic": {
+        "evidence": "statistical", "method": {"type": "okamoto"},
+        "seed": "0", "max_witnesses": 0}});
+    for (case, body) in [
+        (
+            "statistical-bounded",
+            "probability >= 0.9 [ eventually[0,2] holds(k.delivered) ]",
+        ),
+        (
+            "statistical-unbounded",
+            "probability >= 0.9 [ eventually holds(k.delivered) ]",
+        ),
+    ] {
+        let claim = on_each_form("E", "ev", "Even", body).replace(
+            "when (not k.delivered)",
+            "when (not k.delivered) with alpha 0.01, beta 0.01, indifference 0.05",
+        );
+        let claim = if case == "statistical-unbounded" {
+            claim.replace("using ev", "using inf")
+        } else {
+            claim
+        };
+        assert_profile_boundary(case, &unit(&claim), statistical.clone());
+    }
+}
+
+/// FR-875-AC-6: a cyclic continuation graph.
+#[trace("TC-3211", "FR-875-AC-6")]
+#[test]
+fn on_each_cyclic_phase_graph_settles_at_the_profile_boundary() {
+    assert_profile_boundary(
+        "cyclic",
+        &cyclic_unit(&on_each_form(
+            "E",
+            "inf",
+            "Even",
+            "probability >= rational(1, 2) [ eventually holds(k.delivered) ]",
+        )),
+        json!({"claim": "E"}),
+    );
+}
+
+/// FR-875-AC-7: property forms other than unbounded eventuality.
+#[trace("TC-3211", "FR-875-AC-7")]
+#[test]
+fn on_each_other_forms_settle_at_the_profile_boundary() {
+    for (case, profile, body) in [
+        (
+            "always",
+            "ev",
+            "probability >= rational(1, 2) [ always[0,2] holds(k.attempts >= 0) ]",
+        ),
+        (
+            "until",
+            "inf",
+            "probability >= rational(1, 2) [ holds(k.attempts = 0) until holds(k.delivered) ]",
+        ),
+        (
+            "bounded-eventually",
+            "ev",
+            "probability >= rational(1, 2) [ eventually[0,2] holds(k.delivered) ]",
+        ),
+        (
+            "expected-reward",
+            "inf",
+            "expected accumulate cost until holds(k.delivered or k.attempts = 2) <= rational(2, 1)",
+        ),
+        (
+            "long-run-fraction",
+            "inf",
+            "long_run_fraction holds(k.delivered) >= rational(1, 2)",
+        ),
+        (
+            "measure",
+            "ev",
+            "mean of (fraction holds(k.delivered) over [0, 2]) >= rational(1, 5)",
+        ),
+        (
+            "quantile",
+            "ev",
+            "quantile 0.4 of (steps from holds(true) until holds(k.delivered) within 4) <= 3",
+        ),
+    ] {
+        assert_profile_boundary(
+            case,
+            &unit(&on_each_form("E", profile, "Even", body)),
+            json!({"claim": "E", "probabilistic": {"evidence": "exact"}}),
+        );
+    }
+}
+
+/// FR-875-AC-8: a timed subject's eventuality and an authored fairness set.
+#[trace("TC-3211", "FR-875-AC-8")]
+#[test]
+fn on_each_timed_and_fair_claims_settle_at_the_profile_boundary() {
+    assert_profile_boundary(
+        "timed",
+        &timed_unit(&on_each_form(
+            "E",
+            "t",
+            "Even",
+            "probability >= rational(1, 2) [ eventually[0 ms, 3 ms] holds(k.delivered) ]",
+        )),
+        json!({"claim": "E", "probabilistic": {"evidence": "exact"}}),
+    );
+    assert_profile_boundary(
+        "fairness",
+        &unit(&on_each_form(
+            "E",
+            "inf",
+            "every scheduler fair weak Msg::send_a",
+            "probability >= rational(1, 2) [ eventually holds(k.delivered) ]",
+        )),
+        json!({"claim": "E"}),
+    );
+}

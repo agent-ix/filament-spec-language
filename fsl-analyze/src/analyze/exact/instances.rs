@@ -10,9 +10,9 @@ use filament_exact::Cancel;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_replay::statistical::SubjectLimits;
 use fsl_replay::{
-    check_probability_certificate_document, on_each_outcome, replay_on_each_witness,
-    ExactProbBuildIssue, ExactProbabilityCertificate, OnEachOutcome, ProbabilisticCounterexample,
-    ProbabilityDocumentLimits,
+    check_probability_certificate_document, on_each_has_instance, on_each_outcome,
+    replay_on_each_witness, ExactProbBuildIssue, ExactProbabilityCertificate, OnEachOutcome,
+    ProbabilisticCounterexample, ProbabilityDocumentLimits,
 };
 
 use super::{
@@ -105,6 +105,40 @@ pub(super) fn run(
                 subject,
             )
         }
+    }
+}
+
+/// An `on each` claim requested with statistical evidence: `no-instance`
+/// over an empty instance set, and otherwise `unsupported` at FR-875's
+/// profile boundary, which admits only exact evidence. No sample is drawn.
+pub(in crate::analyze) fn statistical(
+    subject: fsl_eval::model_subject::ModelSubject<'_>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    cancel: &Cancel,
+) -> EngineReport {
+    let simulation = subject.simulation;
+    let probabilistic = simulation.input.probabilistic;
+    let meter = simulation.meter;
+    let limits = crate::exact_probabilistic::ExactProbLimits::default();
+    let subject_limits = SubjectLimits {
+        expansion: simulation.expansion,
+        meter: &meter,
+    };
+    let item = match fsl_replay::probabilistic_claim_identity(claim) {
+        Ok(item) => item,
+        Err(error) => return graph_failure(error, &limits, subject_limits),
+    };
+    let admitted = ModelSystem::new_with_cancel(simulation, cancel);
+    if let Some(cause) = cancel.tripped() {
+        return settled(&ExactProbBuildIssue::Cancelled(cause), subject_limits);
+    }
+    let Ok(system) = admitted else {
+        return broken();
+    };
+    match on_each_has_instance(&system, probabilistic.claims(), &item, cancel) {
+        Ok(false) => EngineReport::Exact(Box::new(ExactReport::NoInstance)),
+        Ok(true) => super::not_yet(),
+        Err(error) => failure(error, &limits, subject_limits),
     }
 }
 

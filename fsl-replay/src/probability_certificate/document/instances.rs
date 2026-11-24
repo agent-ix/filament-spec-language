@@ -661,6 +661,38 @@ pub enum OnEachOutcome {
     },
 }
 
+/// Whether the `on each` claim `item` has an instance over `system`: an
+/// initial state, an `over` instance when the claim has an `over` parameter,
+/// and an object of the activation's type (FR-875 "Instances").
+///
+/// This reads only the populations, before the claim's profile is admitted,
+/// so an empty instance set settles `no-instance` whatever the claim's form
+/// or evidence kind.
+///
+/// # Errors
+/// A claim whose activation is not `on each`, a population that has no
+/// universe or does not expand, or the supplied cancellation.
+pub fn on_each_has_instance(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    cancel: &Cancel,
+) -> Result<bool, ProbabilityDocumentError> {
+    let claim = bind_claim(claims, item, cancel)?;
+    let ClaimActivation::Each { value_type, .. } = &claim.activation else {
+        return Err(ProbabilityDocumentError::Unsupported);
+    };
+    if system.initial().is_empty() {
+        return Ok(false);
+    }
+    if let Some(over) = &claim.over {
+        if instances_of(system, &over.value_type)?.is_empty() {
+            return Ok(false);
+        }
+    }
+    Ok(!instances_of(system, value_type)?.is_empty())
+}
+
 /// Settle every instance of the `on each` claim `item` over `system`.
 /// `max_paths` bounds a refutation's path set (`exact_prob.max_witness_paths`).
 ///
@@ -675,11 +707,11 @@ pub fn on_each_outcome(
     max_paths: u64,
     cancel: &Cancel,
 ) -> Result<OnEachOutcome, ProbabilityDocumentError> {
-    let subject = subject(system, claims, item, cancel)?;
-    let found = roots(system, &subject, limits, cancel)?;
-    if found.is_empty() {
+    if !on_each_has_instance(system, claims, item, cancel)? {
         return Ok(OnEachOutcome::NoInstance);
     }
+    let subject = subject(system, claims, item, cancel)?;
+    let found = roots(system, &subject, limits, cancel)?;
     let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
     let mut arith = Arith {
         meter: &mut meter,
