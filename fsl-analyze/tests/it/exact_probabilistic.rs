@@ -158,6 +158,9 @@ fn exact_probability_manifest_and_statistical_refusal_settlement_are_exact() {
     use fsl_analyze::statistical::manifest as statistical_manifest;
     use fsl_foundation::bound::DomainKind;
     use fsl_route::{EvidenceKind, Mode, ProviderOrigin};
+    use fsl_replay::proof_result::{
+        StatisticalRequestRefusal, TerminalValue, UnavailabilityCause,
+    };
     use fsl_replay::statistical::{settle_statistical_refusal, StatisticalRefusal};
 
     let exact = manifest::descriptor(ProviderOrigin::Linked).unwrap();
@@ -170,14 +173,25 @@ fn exact_probability_manifest_and_statistical_refusal_settlement_are_exact() {
     assert_eq!(statistical_manifest::descriptor(ProviderOrigin::Linked).unwrap().evidence_kinds(), &BTreeSet::from([EvidenceKind::Statistical]));
 
     for (refusal, cause) in [
-        (StatisticalRefusal::EveryScheduler, "EveryScheduler"),
-        (StatisticalRefusal::ExactOnlyForm, "ExactOnlyForm"),
-        (StatisticalRefusal::MissingConfidence, "MissingConfidence"),
+        (
+            StatisticalRefusal::EveryScheduler,
+            StatisticalRequestRefusal::EveryScheduler,
+        ),
+        (
+            StatisticalRefusal::ExactOnlyForm,
+            StatisticalRequestRefusal::ExactOnlyForm,
+        ),
+        (
+            StatisticalRefusal::MissingConfidence,
+            StatisticalRequestRefusal::MissingConfidence,
+        ),
     ] {
         let settled = settle_statistical_refusal(&refusal).expect("request refusal settles");
-        let rendered = format!("{settled:?}");
-        assert!(rendered.contains("Unsupported"), "{rendered}");
-        assert!(rendered.contains(cause), "{cause}: {rendered}");
+        assert_eq!(
+            settled.value,
+            TerminalValue::Unsupported(UnavailabilityCause::StatisticalRequest(cause))
+        );
+        assert_eq!(settled.diagnostic, None);
     }
 }
 
