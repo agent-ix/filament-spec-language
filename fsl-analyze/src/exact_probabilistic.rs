@@ -117,7 +117,7 @@ pub(crate) use digital::ELAPSED_REWARD;
 pub(crate) use fair::bottom_components;
 pub use fair::{
     decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,
-    decide_fair_reachability, maximal_fair_end_components, ActionChoice, FairBoundedResult,
+    decide_fair_reachability, deterministic_policy_is_fair, maximal_fair_end_components, ActionChoice, FairBoundedResult,
     FairEndComponent, FairExpectedRewardResult, FairLongRunResult, FairProductError,
     FairRandomizedWitness, FairUnboundedResult, SchedulerChoice,
 };

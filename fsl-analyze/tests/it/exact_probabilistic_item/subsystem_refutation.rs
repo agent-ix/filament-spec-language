@@ -1264,3 +1264,212 @@ fn an_every_scheduler_long_run_refutation_is_replayed_over_the_chain_its_policy_
         &scheduled_long_run(&world, "Fails", Vec::new(), false),
     ));
 }
+
+fn toggling(declarations: &str) -> prob_world::Model {
+    prob_world::Model {
+        package: "test/toggling",
+        object: "Service",
+        population: "services",
+        key: "checkout",
+        integers: vec![],
+        fields: vec![("up", prob_world::BOOLEAN.into())],
+        operations: vec![
+            prob_world::Operation {
+                name: "fail",
+                parameters: vec![],
+                modifies: vec!["up"],
+                deletes: false,
+            },
+            prob_world::Operation {
+                name: "repair",
+                parameters: vec![],
+                modifies: vec!["up"],
+                deletes: false,
+            },
+        ],
+        body: format!(
+            "post Fails using v on M::Service::fail {{ self.up = false }}\n\
+             post Repairs using v on M::Service::repair {{ self.up = true }}\n{declarations}"
+        ),
+        initial: json!({"up": {"boolean": true}}),
+    }
+}
+
+/// The scheduled identity of operation `op` at `state` and the state it reaches.
+fn take(
+    world: &World,
+    state: &fsl_eval::simulation::model::ModelSimState,
+    op: &str,
+) -> (ProductAction, fsl_eval::simulation::model::ModelSimState) {
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let action = system
+        .actions(state)
+        .unwrap()
+        .unwrap()
+        .into_iter()
+        .find(|action| action.identity.operation.contains(op))
+        .expect("the operation is enabled");
+    let post = action.draws[0].successors[0].1.clone();
+    (
+        ProductAction::Identity(Schedule::of(&system, &action.identity).unwrap()),
+        post,
+    )
+}
+
+/// A scheduler witness that fails the service at once and forever: one
+/// component, the down state, of value 0.
+fn failing_witness(world: &World, name: &str) -> ProbabilisticCounterexample {
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim(name)).unwrap();
+    let claims = world.package.graph().probabilistic_model().claims();
+    let binding = claim_binding(&system, world.claim(name)).unwrap().unwrap();
+    let key = |state: &fsl_eval::simulation::model::ModelSimState| {
+        let raw = system.state_key(state).unwrap().0;
+        ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap()
+    };
+    let start = system.initial()[0].clone();
+    let (fail_at_start, down) = take(world, &start, "fail");
+    let (fail_at_down, _) = take(world, &down, "fail");
+    let (up_key, down_key) = (key(&start), key(&down));
+    let zero = Rational::new(Integer::from(0i64), Integer::from(1i64)).unwrap();
+    let row = |state: &ProbabilityProductKey| fsl_replay::ExactProbabilityValue {
+        state: state.clone(),
+        value: zero.clone(),
+    };
+    let mut values = vec![row(&up_key), row(&down_key)];
+    values.sort_by(|a, b| a.state.cmp(&b.state));
+    let document = fsl_replay::long_run_probability_certificate_document(
+        &system,
+        claims,
+        &item,
+        values,
+        vec![fsl_replay::LongRunProbabilityComponent {
+            value: zero.clone(),
+            gain: zero.clone(),
+            bias: vec![row(&down_key)],
+        }],
+        limits(),
+        &Cancel::new(),
+    )
+    .unwrap();
+    let subsystem = fsl_replay::ProbabilitySubsystemCertificate::from_long_run(
+        &document,
+        limits(),
+        &Cancel::new(),
+    )
+    .unwrap();
+    let mut scheduler = vec![
+        (
+            up_key.clone(),
+            ProbabilisticSchedulerChoice::Deterministic(fail_at_start),
+        ),
+        (
+            down_key,
+            ProbabilisticSchedulerChoice::Deterministic(fail_at_down),
+        ),
+    ];
+    scheduler.sort_by(|a, b| a.0.cmp(&b.0));
+    ProbabilisticCounterexample {
+        item,
+        binding: Some(binding.reference),
+        instance: None,
+        initial: start,
+        initial_key: up_key,
+        scheduler,
+        paths: Vec::new(),
+        subsystem: Some(Box::new(subsystem)),
+    }
+}
+
+#[trace("FSpec-TC-362", "FSpec-FR-412-AC-27", "FR-411-AC-18")]
+#[test]
+fn a_fairness_set_accepts_a_deterministic_witness_only_when_every_bottom_component_is_fair() {
+    let world = World::new(&toggling(&format!(
+        "{}{}",
+        claim(
+            "Free",
+            "every scheduler",
+            "long_run_fraction holds(s.up) >= rational(1,2)"
+        ),
+        claim(
+            "Weak",
+            "every scheduler fair weak Service::repair",
+            "long_run_fraction holds(s.up) >= rational(1,2)"
+        ),
+    )));
+    // No fairness set: failing forever is a legitimate scheduler, value 0.
+    reproduced(replay(&world, &failing_witness(&world, "Free")));
+    // Weakly fair `repair` is enabled at every state of the failing chain's
+    // bottom component and never taken: the induced chain is unfair, so the
+    // witness is rejected at the initial state.
+    let (up, _) = {
+        let system = ModelSystem::new(world.subject().simulation).unwrap();
+        let binding = claim_binding(&system, world.claim("Weak"))
+            .unwrap()
+            .unwrap();
+        let raw = system.state_key(&system.initial()[0]).unwrap().0;
+        (
+            ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap(),
+            (),
+        )
+    };
+    rejected(
+        replay(&world, &failing_witness(&world, "Weak")),
+        ProbabilityCertificateRule::InequalityFails,
+        &up,
+    );
+    // The fair infimum is not attained by a deterministic policy here, so the
+    // analyzer produces no witness and does not settle the claim refuted.
+    let record = settle(&world, "Weak", ModelCheckLimits::default());
+    assert_ne!(
+        record.terminal().map(|terminal| terminal.value()),
+        Some(&TerminalValue::Refuted)
+    );
+}
+
+#[trace("FSpec-TC-362", "FSpec-FR-412-AC-27", "FR-411-AC-18")]
+#[test]
+fn an_every_scheduler_long_run_claim_settles_refuted_with_its_scheduler_witness() {
+    let world = World::new(&architecture(
+        false,
+        &format!(
+            "{}{}",
+            claim(
+                "Fails",
+                "every scheduler",
+                "long_run_fraction holds(s.up) >= rational(1,2)"
+            ),
+            claim(
+                "FairFails",
+                "every scheduler fair weak Service::call",
+                "long_run_fraction holds(s.up) >= rational(1,2)"
+            ),
+        ),
+    ));
+    let (down, _) = keys(&world, "Fails");
+    for name in ["Fails", "FairFails"] {
+        let record = refuted(&world, name);
+        let found = evidence(&record);
+        assert_eq!(found.initial_key, down, "{name}");
+        // The scheduler keeps the service down, the document is the minimum
+        // over every scheduler and the replay reproduced it.
+        assert_eq!(
+            found.scheduler,
+            vec![(
+                down.clone(),
+                ProbabilisticSchedulerChoice::Deterministic(call(&world, false))
+            )],
+            "{name}"
+        );
+        let doc = document(&found);
+        assert_eq!(doc["kind"], "long-run", "{name}");
+        assert_eq!(doc["objective"]["optimization"], "minimum", "{name}");
+        assert_eq!(
+            doc["objective"]["fairness"].as_array().unwrap().len(),
+            usize::from(name == "FairFails"),
+            "{name}"
+        );
+        assert_eq!(doc["components"][0]["value"], q(0, 1), "{name}");
+        reproduced(replay(&world, &found));
+    }
+}

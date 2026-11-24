@@ -95,6 +95,10 @@ pub struct FairLongRunResult {
     pub policy: Option<Vec<Option<SchedulerChoice>>>,
     /// Fair randomized scheduler used to refute the bound, when one is needed.
     pub witness: Option<FairRandomizedWitness>,
+    /// The optimizer's deterministic stationary policy, one action index per
+    /// state with actions. It is a refutation witness only when its induced
+    /// chain is fair (FR-412 "Long-run certificate wire shape and witnesses").
+    pub deterministic: Vec<Option<usize>>,
     /// The checked fairness set recorded with the result.
     pub fairness: Vec<FairnessConstraint>,
 }
@@ -627,6 +631,7 @@ pub fn decide_fair_long_run_mdp(
         gain_bias: base.gain_bias,
         policy: witness.as_ref().map(|witness| witness.policy.clone()),
         witness,
+        deterministic: base.policy.clone().unwrap_or_default(),
         fairness: product.fairness.clone(),
     })
 }
@@ -1247,12 +1252,68 @@ fn validate_fair_witness(
     policy: &[Option<SchedulerChoice>],
     fairness: &[FairnessConstraint],
 ) -> Result<(), FairProductError> {
+    validate_fair_witness_within(product, graph, policy, fairness, None)
+}
+
+/// Whether the deterministic stationary `policy` induces only fair bottom
+/// components among the states reachable from `initial` (FR-412-AC-27).
+pub fn deterministic_policy_is_fair(
+    product: &ProbProduct,
+    policy: &[Option<usize>],
+    initial: ProbStateId,
+) -> Result<bool, FairProductError> {
+    let graph = Graph::new(product)?;
+    let mut reachable = vec![false; product.states.len()];
+    let mut pending = vec![initial.index()];
+    reachable[initial.index()] = true;
+    while let Some(state) = pending.pop() {
+        let Some(choices) = graph.choices.get(state) else {
+            return Err(FairProductError::InvalidForm);
+        };
+        let Some(index) = policy.get(state).copied().flatten() else {
+            continue;
+        };
+        let Some(choice) = choices.get(index) else {
+            return Err(FairProductError::InvalidForm);
+        };
+        for edge in &choice.edges {
+            let next = edge.to.index();
+            if !reachable[next] {
+                reachable[next] = true;
+                pending.push(next);
+            }
+        }
+    }
+    let chosen = policy
+        .iter()
+        .map(|index| index.map(|index| SchedulerChoice::Deterministic(ActionChoice(index))))
+        .collect::<Vec<_>>();
+    match validate_fair_witness_within(
+        product,
+        &graph,
+        &chosen,
+        &product.fairness,
+        Some(&reachable),
+    ) {
+        Ok(()) => Ok(true),
+        Err(FairProductError::UnfairWitness) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+fn validate_fair_witness_within(
+    product: &ProbProduct,
+    graph: &Graph<'_>,
+    policy: &[Option<SchedulerChoice>],
+    fairness: &[FairnessConstraint],
+    reachable: Option<&[bool]>,
+) -> Result<(), FairProductError> {
     let actions = fairness_actions(product, fairness)?;
     let mut adjacency = vec![Vec::new(); product.states.len()];
     let mut selected_by_state = vec![Vec::<usize>::new(); product.states.len()];
     for state in 0..product.states.len() {
         let choices = &graph.choices[state];
-        if choices.is_empty() {
+        if choices.is_empty() || reachable.is_some_and(|reachable| !reachable[state]) {
             continue;
         }
         let selected = policy
@@ -1270,6 +1331,9 @@ fn validate_fair_witness(
         adjacency[state].dedup();
     }
     for component in bottom_components(&adjacency) {
+        if reachable.is_some_and(|reachable| component.iter().any(|state| !reachable[*state])) {
+            continue;
+        }
         let members = component.iter().copied().collect::<BTreeSet<_>>();
         for constraint in &actions {
             let enabled = component

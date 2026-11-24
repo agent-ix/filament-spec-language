@@ -32,7 +32,8 @@ pub(super) fn replay(
     {
         return Err(ProbabilityWitnessError::Refused);
     }
-    if !claim.fairness.is_empty()
+    // Only the long-run profile reads a fairness set (FR-412-AC-27).
+    if (!claim.fairness.is_empty() && !long_run_claim)
         || !matches!(
             TimedSystem::new(system, &claim.subject.alias),
             Err(TimedSubjectRefusal::NoTimedModel { .. })

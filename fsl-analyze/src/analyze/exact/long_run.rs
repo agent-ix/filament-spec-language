@@ -28,11 +28,14 @@ pub(super) fn run(
         Some(fsl_semantics::check::Weighting::Delay) => return not_yet(),
         None => None,
     };
-    if !matches!(claim.scheduler, ProbScheduler::Workload(_))
-        || !claim.fairness.is_empty()
-        || fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
-            != Some(fsl_semantics::check::TemporalProfile::InfiniteTrace)
+    if fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
+        != Some(fsl_semantics::check::TemporalProfile::InfiniteTrace)
     {
+        return not_yet();
+    }
+    let every = matches!(claim.scheduler, ProbScheduler::Every);
+    if every && weight.is_some() {
+        // Per-action weights are not part of the MDP long-run profile yet.
         return not_yet();
     }
     let simulation = request.subject.simulation.clone();
@@ -93,7 +96,12 @@ pub(super) fn run(
             }
         }
     };
-    if product.kind != ProductKind::Dtmc
+    let kind = if every {
+        ProductKind::Mdp
+    } else {
+        ProductKind::Dtmc
+    };
+    if product.kind != kind
         || product.initial.len() != 1
         || product.states.iter().any(|state| {
             state.monitor.is_some() || state.accumulator.is_some() || state.pending.is_some()
@@ -113,6 +121,26 @@ pub(super) fn run(
         .collect::<Vec<_>>();
     if let Some(cause) = cancel.tripped() {
         return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
+    }
+    if every {
+        let reference = binding.as_ref().map(|b| &b.reference);
+        return every_scheduler(
+            EveryScheduler {
+                system: &system,
+                claim,
+                claims,
+                item: &item,
+                product: &product,
+                predicate: &predicate,
+                binding: reference,
+                limits: &limits,
+                document_limits,
+                subject,
+                cancel,
+            },
+            &mut candidate,
+            tamper_witness,
+        );
     }
     let solution = match decide_long_run_workload(
         &product,
@@ -287,6 +315,269 @@ pub(super) fn run(
         )
     });
     checked_report(checked, certificate, binding, None, subject)
+}
+
+/// What an every-scheduler long-run solve reads (FR-411 "Long-run fractions").
+struct EveryScheduler<'a> {
+    system: &'a ModelSystem<'a>,
+    claim: &'a fsl_semantics::check::CheckedProbabilisticClaim,
+    claims: &'a [fsl_semantics::check::CheckedProbabilisticClaim],
+    item: &'a fsl_package::ObligationIdentity,
+    product: &'a ProbProduct,
+    predicate: &'a [bool],
+    binding: Option<&'a ObjectReference>,
+    limits: &'a crate::exact_probabilistic::ExactProbLimits,
+    document_limits: ProbabilityDocumentLimits,
+    subject: SubjectLimits<'a>,
+    cancel: &'a Cancel,
+}
+
+/// Settle `long_run_fraction` over every scheduler (FR-411-AC-18). The
+/// extremum comes from `decide_long_run_mdp`, or under a fairness set from the
+/// fair-end-component solver. A violated bound is refuted by a deterministic
+/// stationary scheduler, written with the long-run evidence of the chain it
+/// induces and settled only after FR-202 replay reproduces it (FR-412-AC-27).
+fn every_scheduler(
+    request: EveryScheduler<'_>,
+    candidate: &mut CandidateBudget<'_>,
+    tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+) -> EngineReport {
+    use crate::exact_probabilistic::{
+        decide_fair_long_run_mdp, decide_long_run_mdp, deterministic_policy_is_fair, induced_chain,
+        policy_action, FairProductError, ProbStateId, ProductAction,
+    };
+    let EveryScheduler {
+        system,
+        claim,
+        claims,
+        item,
+        product,
+        predicate,
+        binding,
+        limits,
+        document_limits,
+        subject,
+        cancel,
+    } = request;
+    let ProbForm::LongRunFraction { bound, .. } = &claim.form else {
+        return not_yet();
+    };
+    let objective = match bound {
+        Bound::AtLeast(_) => UnboundedObjective::Min,
+        Bound::AtMost(_) => UnboundedObjective::Max,
+    };
+    let stopped = |error: UnboundedError| match error {
+        UnboundedError::MissingReward => not_yet(),
+        other => unbounded_failure(other, limits, subject),
+    };
+    let (values, policy) = if claim.fairness.is_empty() {
+        match decide_long_run_mdp(product, predicate, None, objective, limits) {
+            Ok(solution) => (solution.values, solution.policy),
+            Err(error) => return stopped(error),
+        }
+    } else {
+        match decide_fair_long_run_mdp(product, predicate, None, bound, limits) {
+            Ok(solution) => (solution.values, Some(solution.deterministic)),
+            Err(FairProductError::Product(error)) => return stopped(error),
+            Err(_) => return not_yet(),
+        }
+    };
+    if let Some(cause) = cancel.tripped() {
+        return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
+    }
+    let [(_, _, initial)] = product.initial.as_slice() else {
+        return not_yet();
+    };
+    let Some(ExtRational::Finite(value)) = values.get(initial.index()) else {
+        return broken();
+    };
+    let holds = match bound {
+        Bound::AtLeast(threshold) => value >= threshold,
+        Bound::AtMost(threshold) => value <= threshold,
+    };
+    if holds {
+        // The holds side is FR-412-AC-26's per-component policy certificate.
+        return not_yet();
+    }
+    let Some(policy) = policy else {
+        return broken();
+    };
+    if !claim.fairness.is_empty() {
+        // A deterministic witness counts only when its induced chain is fair;
+        // the fair extremum need not be attained by one (FR-411).
+        match deterministic_policy_is_fair(product, &policy, *initial) {
+            Ok(true) => {}
+            Ok(false) | Err(_) => return not_yet(),
+        }
+    }
+    let chain = induced_chain(product, &policy);
+    let solved =
+        match crate::exact_probabilistic::decide_long_run_workload(&chain, predicate, None, limits)
+        {
+            Ok(solved) => solved,
+            Err(error) => return stopped(error),
+        };
+    let Some(ExtRational::Finite(induced)) = solved.values.get(initial.index()) else {
+        return broken();
+    };
+    let refutes = match bound {
+        Bound::AtLeast(threshold) => induced < threshold,
+        Bound::AtMost(threshold) => induced > threshold,
+    };
+    if !refutes {
+        return not_yet();
+    }
+    // Only what the scheduler reaches belongs to the evidence.
+    let mut reached = vec![false; product.states.len()];
+    let mut pending = vec![*initial];
+    reached[initial.index()] = true;
+    while let Some(state) = pending.pop() {
+        for edge in chain.outgoing(state) {
+            if !edge.probability.is_zero() && !reached[edge.to.index()] {
+                reached[edge.to.index()] = true;
+                pending.push(edge.to);
+            }
+        }
+    }
+    let mut rows = Vec::new();
+    if let Err(error) = candidate.reserve(
+        reached
+            .iter()
+            .filter(|reached| **reached)
+            .count()
+            .saturating_mul(std::mem::size_of::<ExactProbabilityValue>()),
+    ) {
+        return document_failure(error, subject);
+    }
+    for (state, model) in product.states.iter().enumerate() {
+        if !reached[state] {
+            continue;
+        }
+        let Some(ExtRational::Finite(value)) = solved.values.get(state) else {
+            return broken();
+        };
+        if let Err(error) = candidate.reserve(rational_bytes(value)) {
+            return document_failure(error, subject);
+        }
+        match candidate.key(binding, &model.model) {
+            Ok(state) => rows.push(ExactProbabilityValue {
+                state,
+                value: value.clone(),
+            }),
+            Err(error) => return document_failure(error, subject),
+        }
+    }
+    if let Err(error) = sort(
+        &mut rows,
+        |row| &row.state,
+        &mut candidate.meter,
+        candidate.cancel,
+    ) {
+        return document_failure(error, subject);
+    }
+    let mut evidence = solved.clone();
+    let keep = |first: Option<&ProbStateId>| first.is_some_and(|state| reached[state.index()]);
+    let (mut kept_components, mut kept_gain_bias) = (Vec::new(), Vec::new());
+    for (component, gain_bias) in evidence
+        .components
+        .drain(..)
+        .zip(evidence.gain_bias.drain(..))
+    {
+        if keep(component.states.first()) {
+            kept_components.push(component);
+            kept_gain_bias.push(gain_bias);
+        }
+    }
+    evidence.components = kept_components;
+    evidence.gain_bias = kept_gain_bias;
+    let components = match components(product, binding, &evidence, candidate) {
+        Ok(components) => components,
+        Err(error) => return document_failure(error, subject),
+    };
+    let mut scheduler = Vec::new();
+    let mut spelled = Vec::new();
+    for state in product.ids() {
+        if !reached[state.index()] {
+            continue;
+        }
+        let Some(action) = policy_action(product, state, &policy) else {
+            continue;
+        };
+        let ProductAction::Identity(identity) = &action else {
+            if matches!(action, ProductAction::TerminalStutter) {
+                continue;
+            }
+            return not_yet();
+        };
+        let key = match candidate.key(binding, &product.states[state.index()].model) {
+            Ok(key) => key,
+            Err(error) => return document_failure(error, subject),
+        };
+        let Ok(schedule) = fsl_replay::Schedule::of(system, identity) else {
+            return not_yet();
+        };
+        spelled.push((
+            fsl_eval::simulation::StateKey::from_canonical_bytes(key.as_bytes().to_vec()),
+            identity.clone(),
+        ));
+        scheduler.push((
+            key,
+            fsl_replay::ProbabilisticSchedulerChoice::Deterministic(
+                fsl_replay::ProductAction::Identity(schedule),
+            ),
+        ));
+    }
+    scheduler.sort_by(|a, b| a.0.cmp(&b.0));
+    let subsystem = long_run_probability_certificate_document(
+        system,
+        claims,
+        item,
+        rows,
+        components,
+        document_limits,
+        cancel,
+    )
+    .and_then(|document| {
+        fsl_replay::ProbabilitySubsystemCertificate::from_long_run(
+            &document,
+            document_limits,
+            cancel,
+        )
+    });
+    let subsystem = match subsystem {
+        Ok(subsystem) => subsystem,
+        Err(error) => return document_failure(error, subject),
+    };
+    let initial_key = match candidate.key(binding, &product.states[initial.index()].model) {
+        Ok(key) => key,
+        Err(error) => return document_failure(error, subject),
+    };
+    let initials = system.initial();
+    let [first] = initials.as_slice() else {
+        return not_yet();
+    };
+    let mut witness = ProbabilisticCounterexample {
+        item: item.clone(),
+        binding: binding.cloned(),
+        instance: None,
+        initial: first.clone(),
+        initial_key,
+        scheduler,
+        paths: Vec::new(),
+        subsystem: Some(Box::new(subsystem)),
+    };
+    if let Some(tamper) = tamper_witness {
+        tamper(&mut witness);
+    }
+    finish_replay(
+        replay_witness(system, item, &witness, limits, cancel),
+        claim,
+        system,
+        &witness,
+        &spelled,
+        limits,
+        subject,
+    )
 }
 
 fn admit_weights(

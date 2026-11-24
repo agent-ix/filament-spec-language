@@ -80,6 +80,8 @@ pub struct LongRunProbabilityDocument {
     pub identity: ObligationIdentity,
     /// The scheduler optimisation the document is written for.
     pub optimization: LongRunOptimization,
+    /// The claim's fairness set, empty unless `optimization` is not `Workload`.
+    pub(crate) fairness: Vec<super::fairness::Record>,
     /// Exact reachable keys where the independently checked predicate holds.
     pub predicate_states: Vec<ProbabilityProductKey>,
     /// Exact long-run values on the whole original reachable graph.
@@ -110,7 +112,7 @@ struct WeightedObjective {
     weight: (Box<serde_json::value::RawValue>, String),
     unit: Box<serde_json::value::RawValue>,
     optimization: String,
-    fairness: Vec<Value>,
+    fairness: Vec<Box<serde_json::value::RawValue>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -119,7 +121,7 @@ struct Objective {
     profile: String,
     predicate_states: Vec<String>,
     optimization: String,
-    fairness: Vec<Value>,
+    fairness: Vec<Box<serde_json::value::RawValue>>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -241,7 +243,6 @@ fn read(bytes: &[u8], cx: &mut Context<'_>) -> Result<Decoded, ProbabilityDocume
     };
     if wire.kind != "long-run"
         || !matches!(wire.objective.profile.as_str(), PROFILE | WEIGHTED_PROFILE)
-        || !wire.objective.fairness.is_empty()
     {
         return Err(ProbabilityDocumentError::Unsupported);
     }
@@ -251,6 +252,19 @@ fn read(bytes: &[u8], cx: &mut Context<'_>) -> Result<Decoded, ProbabilityDocume
         "maximum" => LongRunOptimization::Maximum,
         _ => return Err(ProbabilityDocumentError::Unsupported),
     };
+    // A fairness set belongs to `every scheduler`, and to the unweighted form.
+    if !wire.objective.fairness.is_empty()
+        && (optimization == LongRunOptimization::Workload || weight.is_some())
+    {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    let fairness = super::fairness::read(
+        &wire.objective.fairness,
+        cx.limits,
+        cx.cancel,
+        &mut cx.meter,
+        &mut cx.storage,
+    )?;
     cx.rows(wire.values.len())?;
     cx.rows(wire.objective.predicate_states.len())?;
     cx.rows(wire.components.len())?;
@@ -306,6 +320,7 @@ fn read(bytes: &[u8], cx: &mut Context<'_>) -> Result<Decoded, ProbabilityDocume
         document: LongRunProbabilityDocument {
             identity,
             optimization,
+            fairness,
             predicate_states,
             values,
             components,
@@ -462,6 +477,10 @@ impl Encode for Events<'_> {
         writer.string(self.document.optimization.as_str())?;
         writer.name("fairness")?;
         writer.begin_array()?;
+        for record in &self.document.fairness {
+            self.text.poll()?;
+            record.encode_into(writer)?;
+        }
         writer.end_array()?;
         writer.end_object()?;
         writer.name("kind")?;
@@ -532,6 +551,9 @@ pub fn write_weighted_long_run_probability_certificate(
 struct Subject {
     graph: CheckerGraph,
     optimization: LongRunOptimization,
+    /// The claim's fairness set as canonical records, and as checked constraints.
+    fairness: Vec<super::fairness::Record>,
+    constraints: Vec<filament_semantic_value::fairness::FairnessConstraint>,
     reference: Option<ObjectReference>,
     bound: Bound,
     weight: Option<ProbabilityRewardObjective>,
@@ -677,9 +699,8 @@ fn subject(
     else {
         return Err(ProbabilityDocumentError::Unsupported);
     };
-    if !claim.fairness.is_empty()
-        || fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
-            != Some(fsl_semantics::check::TemporalProfile::InfiniteTrace)
+    if fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
+        != Some(fsl_semantics::check::TemporalProfile::InfiniteTrace)
         || !matches!(
             TimedSystem::new(system, &claim.subject.alias),
             Err(TimedSubjectRefusal::NoTimedModel { .. })
@@ -696,6 +717,19 @@ fn subject(
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let optimization = LongRunOptimization::of(&claim.scheduler, bound);
+    let fairness = if claim.fairness.is_empty() {
+        Vec::new()
+    } else {
+        super::fairness::records(
+            system,
+            claim,
+            cx.limits,
+            cx.cancel,
+            &mut cx.meter,
+            &mut cx.storage,
+            &super::fairness::Control::new(cx.cancel),
+        )?
+    };
     let limits = cx.limits;
     let cancel = cx.cancel;
     let identity = cx.identity;
@@ -943,6 +977,8 @@ fn subject(
     Ok(Subject {
         graph,
         optimization,
+        fairness,
+        constraints: claim.fairness.clone(),
         reference: reference.cloned(),
         bound: bound.clone(),
         weight: objective,
@@ -980,6 +1016,7 @@ pub fn long_run_probability_certificate_document(
     Ok(LongRunProbabilityDocument {
         identity: item.clone(),
         optimization: subject.optimization,
+        fairness: subject.fairness,
         predicate_states: target_keys(&graph),
         values,
         components,
@@ -1016,6 +1053,7 @@ pub fn weighted_long_run_probability_certificate_document(
         certificate: LongRunProbabilityDocument {
             identity: item.clone(),
             optimization: subject.optimization,
+            fairness: subject.fairness.clone(),
             predicate_states: target_keys(&subject.graph),
             values,
             components,
@@ -1135,8 +1173,10 @@ fn induced_graph(
     graph: CheckerGraph,
     reference: Option<&ObjectReference>,
     rows: &[(ProbabilityProductKey, crate::ProductAction)],
+    with_enabled: bool,
     cx: &mut Context<'_>,
-) -> Result<Option<CheckerGraph>, ProbabilityDocumentError> {
+) -> Result<Option<Induced>, ProbabilityDocumentError> {
+    let mut enabled = BTreeMap::new();
     let Some(chosen) = super::refutation::scheduled_choices(
         system,
         &graph,
@@ -1146,6 +1186,7 @@ fn induced_graph(
         cx.cancel,
         &mut cx.meter,
         &mut cx.storage,
+        with_enabled.then_some(&mut enabled),
     )?
     else {
         return Ok(None);
@@ -1186,10 +1227,132 @@ fn induced_graph(
         )?;
         states.insert(key, state);
     }
-    Ok(Some(CheckerGraph {
-        initial: graph.initial,
-        states,
+    Ok(Some(Induced {
+        graph: CheckerGraph {
+            initial: graph.initial,
+            states,
+        },
+        chosen,
+        enabled,
     }))
+}
+
+/// The chain a scheduler induces, with what it chose and what it left enabled.
+struct Induced {
+    graph: CheckerGraph,
+    /// The action index each reached choice state takes.
+    chosen: BTreeMap<ProbabilityProductKey, usize>,
+    /// Every enabled identity at each reached choice state, in action order;
+    /// filled only when a fairness set is checked.
+    enabled: BTreeMap<ProbabilityProductKey, Vec<fsl_eval::simulation::model::ScheduledIdentity>>,
+}
+
+/// Whether some bottom component of the induced chain is unfair for the set
+/// (FR-411): a weak constraint whose operation or identity is enabled at every
+/// state of the component, or a strong one enabled at some state, yet taken
+/// at none, is violated. The checker recomputes the components itself.
+fn has_unfair_bottom(
+    system: &ModelSystem<'_>,
+    induced: &Induced,
+    constraints: &[filament_semantic_value::fairness::FairnessConstraint],
+    cx: &mut Context<'_>,
+) -> Result<bool, ProbabilityDocumentError> {
+    use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
+    let graph = &induced.graph;
+    let keys = graph.states.keys().collect::<Vec<_>>();
+    let positions = keys
+        .iter()
+        .enumerate()
+        .map(|(index, key)| (*key, index))
+        .collect::<BTreeMap<_, _>>();
+    let mut edges = vec![Vec::new(); keys.len()];
+    let mut reverse = vec![Vec::new(); keys.len()];
+    for (index, key) in keys.iter().enumerate() {
+        cx.work(1)?;
+        let state = &graph.states[*key];
+        let Some(choice) = state.choices.first() else {
+            edges[index].push(index);
+            reverse[index].push(index);
+            continue;
+        };
+        for edge in choice {
+            cx.work(1)?;
+            if edge.probability > rational(0) {
+                let next = *positions
+                    .get(&edge.target)
+                    .ok_or(ProbabilityDocumentError::Malformed)?;
+                edges[index].push(next);
+                reverse[next].push(index);
+            }
+        }
+    }
+    let (_, components, bottom) =
+        super::super::bottom_components(&edges, &reverse, &mut |_| cx.work(1))?;
+    for (index, component) in components.iter().enumerate() {
+        if !bottom[index] {
+            continue;
+        }
+        for constraint in constraints {
+            cx.work(1)?;
+            let Some(text) = system.operation_text(
+                constraint.operation().declaring_type(),
+                constraint.operation().name(),
+            ) else {
+                // An operation the model does not declare is never enabled.
+                continue;
+            };
+            let identities = |state: usize| -> &[fsl_eval::simulation::model::ScheduledIdentity] {
+                induced
+                    .enabled
+                    .get(keys[state])
+                    .map_or(&[][..], Vec::as_slice)
+            };
+            let taken_identity = |state: usize| {
+                let index = induced.chosen.get(keys[state])?;
+                identities(state).get(*index)
+            };
+            // One obligation per operation, or per scheduled identity.
+            let mut obligations: Vec<Option<&fsl_eval::simulation::model::ScheduledIdentity>> =
+                Vec::new();
+            if constraint.granularity() == FairnessGranularity::Whole {
+                obligations.push(None);
+            } else {
+                for &state in component {
+                    for identity in identities(state) {
+                        cx.work(1)?;
+                        if identity.operation == text
+                            && !obligations.iter().any(|seen| *seen == Some(identity))
+                        {
+                            obligations.push(Some(identity));
+                        }
+                    }
+                }
+            }
+            for obligation in obligations {
+                let matches = |identity: &fsl_eval::simulation::model::ScheduledIdentity| {
+                    identity.operation == text && obligation.is_none_or(|wanted| identity == wanted)
+                };
+                let mut enabled_all = true;
+                let mut enabled_any = false;
+                let mut taken = false;
+                for &state in component {
+                    cx.work(1)?;
+                    let here = identities(state).iter().any(matches);
+                    enabled_all &= here;
+                    enabled_any |= here;
+                    taken |= taken_identity(state).is_some_and(matches);
+                }
+                let required = match constraint.kind() {
+                    FairnessKind::Weak => enabled_all,
+                    FairnessKind::Strong => enabled_any,
+                };
+                if required && !taken {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn check_scheduled(
@@ -1218,6 +1381,16 @@ fn check_scheduled(
     if decoded.weight != subject.weight || document.optimization != subject.optimization {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
+    if !super::fairness::same(
+        &subject.fairness,
+        &document.fairness,
+        cx.limits,
+        cx.cancel,
+        &mut cx.meter,
+        &mut cx.storage,
+    )? {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
     let workload = subject.optimization == LongRunOptimization::Workload;
     if workload && !scheduler.is_empty() {
         // A workload has no scheduler to rebuild a chain from.
@@ -1241,10 +1414,27 @@ fn check_scheduled(
     let graph = if workload {
         graph
     } else {
-        match induced_graph(system, graph, subject.reference.as_ref(), scheduler, cx)? {
-            Some(induced) => induced,
-            None => return Ok(LongRunRefutation::SchedulerRefused),
+        let fair = !subject.constraints.is_empty();
+        let Some(induced) = induced_graph(
+            system,
+            graph,
+            subject.reference.as_ref(),
+            scheduler,
+            fair,
+            cx,
+        )?
+        else {
+            return Ok(LongRunRefutation::SchedulerRefused);
+        };
+        // FR-412-AC-27: under a fairness set a deterministic witness counts
+        // only if every bottom component of its induced chain is fair.
+        if fair && has_unfair_bottom(system, &induced, &subject.constraints, cx)? {
+            return Ok(LongRunRefutation::Checked(rejected(
+                ProbabilityCertificateRule::InequalityFails,
+                induced.graph.initial.clone(),
+            )));
         }
+        induced.graph
     };
     check_graph(
         &graph,

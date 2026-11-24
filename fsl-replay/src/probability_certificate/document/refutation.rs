@@ -484,6 +484,7 @@ pub(in crate::probability_certificate) fn check(
             cancel,
             &mut meter,
             &mut storage,
+            None,
         )? {
             Some(choices) => choices,
             None => return Ok(SubsystemRefutationCheck::SchedulerRefused),
@@ -823,6 +824,9 @@ pub(super) fn scheduled_choices(
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
     storage: &mut u64,
+    mut enabled: Option<
+        &mut BTreeMap<ProbabilityProductKey, Vec<fsl_eval::simulation::model::ScheduledIdentity>>,
+    >,
 ) -> Result<Option<BTreeMap<ProbabilityProductKey, usize>>, ProbabilityDocumentError> {
     let identity = fsl_foundation::IdentityLimits::default();
     let mut wanted = BTreeMap::new();
@@ -890,6 +894,17 @@ pub(super) fn scheduled_choices(
                     ))
                 })?
         };
+        if let Some(enabled) = enabled.as_mut() {
+            // Every enabled identity at the state, in action order, so a
+            // fairness check can read what a scheduler left untaken.
+            enabled.insert(
+                key.clone(),
+                actions
+                    .iter()
+                    .map(|action| action.identity.clone())
+                    .collect(),
+            );
+        }
         let mut index = None;
         for (position, action) in actions.iter().enumerate() {
             super::super::reward::visit(cancel, meter)?;
