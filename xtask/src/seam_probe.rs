@@ -1229,12 +1229,9 @@ mod tests {
             "CheckCause::code"
         ));
         // The forms table is reported by `fsl-forms`' own probe build.
-        assert!(
-            PROBE_BUILDS
-                .iter()
-                .any(|(package, flags)| *package == "fsl-forms"
-                    && flags.contains("seam_probe_forms"))
-        );
+        assert!(PROBE_BUILDS
+            .iter()
+            .any(|(package, flags)| *package == "fsl-forms" && flags.contains("seam_probe_forms")));
     }
 
     /// FR-507-AC-6 (TC-1302): a `Capability` variant with no applicable-family
