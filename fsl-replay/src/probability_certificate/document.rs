@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-201's closed probability document profiles and strict JCS codec.
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 
 use super::*;
@@ -10,43 +10,42 @@ use crate::ExactProbLimits;
 
 pub(super) mod measure;
 pub use measure::{
-    conditional_measure_probability_certificate, measure_probability_certificate_document,
-    measure_probability_objective, measure_probability_product_key,
-    read_measure_probability_certificate, vacuous_measure_probability_certificate_document,
-    write_measure_probability_certificate, MeasurePayoffKind, MeasureProbabilityDocument,
+    MeasurePayoffKind, MeasureProbabilityDocument, conditional_measure_probability_certificate,
+    measure_probability_certificate_document, measure_probability_objective,
+    measure_probability_product_key, read_measure_probability_certificate,
+    vacuous_measure_probability_certificate_document, write_measure_probability_certificate,
 };
 mod fairness;
 pub(super) mod instances;
 #[cfg(feature = "test-support")]
 pub use fairness::BoundedFairProbabilityPhase;
-pub use instances::{on_each_has_instance, on_each_outcome, replay_on_each_witness, OnEachOutcome};
+pub use instances::{OnEachOutcome, on_each_has_instance, on_each_outcome, replay_on_each_witness};
 mod key;
 mod mdp;
 #[cfg(feature = "test-support")]
 pub use mdp::{
-    check_cyclic_mdp_probability_certificate_observing,
-    check_cyclic_mdp_probability_certificate_with_identity, CyclicMdpProbabilityPhase,
+    CyclicMdpProbabilityPhase, check_cyclic_mdp_probability_certificate_observing,
+    check_cyclic_mdp_probability_certificate_with_identity,
 };
 pub use mdp::{
-    cyclic_mdp_probability_certificate_document,
+    ProbabilityProofDocument, cyclic_mdp_probability_certificate_document,
     cyclic_mdp_reward_probability_certificate_document, probability_proof_document,
     read_probability_proof_document, write_probability_proof_document,
-    write_value_bounds_proof_document, ProbabilityProofDocument,
+    write_value_bounds_proof_document,
 };
 pub(super) mod long_run;
 pub(super) mod refutation;
+pub use long_run::{
+    LongRunOptimization, LongRunPolicyRow, LongRunProbabilityComponent, LongRunProbabilityDocument,
+    WeightedLongRunProbabilityDocument, long_run_probability_certificate_document,
+    read_long_run_probability_certificate, read_weighted_long_run_probability_certificate,
+    weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
+    write_weighted_long_run_probability_certificate,
+};
 #[cfg(feature = "test-support")]
 pub use long_run::{
-    check_long_run_probability_certificate_observing,
-    check_long_run_probability_certificate_with_identity, LongRunProbabilityPhase,
-};
-pub use long_run::{
-    long_run_probability_certificate_document, read_long_run_probability_certificate,
-    read_weighted_long_run_probability_certificate,
-    weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
-    write_weighted_long_run_probability_certificate, LongRunOptimization,
-    LongRunPolicyRow, LongRunProbabilityComponent, LongRunProbabilityDocument,
-    WeightedLongRunProbabilityDocument,
+    LongRunProbabilityPhase, check_long_run_probability_certificate_observing,
+    check_long_run_probability_certificate_with_identity,
 };
 pub use refutation::SubsystemBoundKind;
 mod timed;
@@ -2015,10 +2014,17 @@ fn check_document_bytes(
         ProfileDispatch::Measure => {
             let partial_lower = bound_side == Some(SubsystemBoundKind::Lower)
                 && offer.role == CertificateRole::Claim;
-            if bound_side.is_some() && !partial_lower {
-                return Err(ProbabilityDocumentError::Unsupported);
-            }
-            return measure::check(system, claims, item, bytes, partial_lower, limits, cancel);
+            return measure::check(
+                system,
+                claims,
+                item,
+                bytes,
+                partial_lower,
+                bound_side.filter(|_| !partial_lower),
+                offer.role,
+                limits,
+                cancel,
+            );
         }
         ProfileDispatch::Timed => {
             return timed::check(
@@ -2029,7 +2035,7 @@ fn check_document_bytes(
                 offer.relation(),
                 limits,
                 cancel,
-            )
+            );
         }
         ProfileDispatch::OnEach => {
             return instances::check(system, claims, item, bytes, limits, cancel)
@@ -2120,10 +2126,7 @@ fn check_document_bytes(
     } else {
         bounded_ranks.is_some()
     };
-    if bound_side.is_some()
-        && (!bound_base
-            || !fairness_records.is_empty())
-    {
+    if bound_side.is_some() && (!bound_base || !fairness_records.is_empty()) {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let relation = offer.relation();

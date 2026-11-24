@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use filament_checked::key::DeclarationKey;
-use filament_exact::Cancel;
+use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::analyze::{Engines, Settlement, analyze_items, exact_probabilistic_item};
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
@@ -339,20 +339,43 @@ fn fraction_mean_documents_are_accepted_by_the_separate_checker() {
             "workload Steady on M { weight Msg::send_a = 1; weight Msg::send_b = 0; }",
         );
     source.push_str("\nprobabilistic Likely using inf on M over (m: M::Msg) under Steady on origin { mean of (fraction holds(m.delivered) over [0,2]) >= rational(2,5) }\n");
-    let limits = ExactProbLimits::default();
+    let limits = ExactProbLimits {
+        max_rational_bits: 1,
+        precision_bits: 4,
+        max_precision_bits: 16,
+        ..ExactProbLimits::default()
+    };
     let (requests, settlement) = requests_with_mode(&source, SNAPSHOT, limits, DOMAIN, false);
-    assert!(
-        !requests.is_empty(),
-        "mean proof carries a document: {settlement:?}"
-    );
+    let [lower, upper] = requests.as_slice() else {
+        panic!("mean interval carries two documents: {settlement:?}");
+    };
     let Settlement::Terminal(record) = settlement else {
         panic!("mean interval settles terminal: {settlement:?}");
     };
-    assert!(matches!(
-        record.value(),
-        fsl_replay::TerminalValue::Proved { .. }
-    ));
-    for request in &requests {
+    let fsl_replay::TerminalValue::Proved {
+        basis:
+            fsl_replay::ProofBasis::ValueBounds {
+                lower: lower_end,
+                upper: fsl_replay::ExactBound::Finite(upper_end),
+                exploration: fsl_replay::BoundsExploration::Complete,
+                ..
+            },
+        certification: fsl_replay::Certification::Certified,
+    } = record.value()
+    else {
+        panic!(
+            "mean settles with a complete certified interval: {:?}",
+            record.value()
+        );
+    };
+    let expected = Rational::new(Integer::from(5_i64), Integer::from(12_i64)).unwrap();
+    assert!(lower_end.value() <= &expected && &expected <= upper_end.value());
+    assert!(
+        lower_end.value() >= &Rational::new(Integer::from(2_i64), Integer::from(5_i64)).unwrap()
+    );
+    assert_eq!(document(lower)["kind"], "lower");
+    assert_eq!(document(upper)["kind"], "upper");
+    for request in [lower, upper] {
         let (code, output) = run(request);
         assert_eq!(code, 0, "{output}");
         let altered = mutate(request, |doc| {

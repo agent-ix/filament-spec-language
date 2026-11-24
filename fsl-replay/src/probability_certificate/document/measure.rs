@@ -1954,7 +1954,11 @@ fn checked_values(
             at: ProbabilityCertificateLocus::Member(member),
         })
     };
-    let keys = document.values.iter().map(|row| &row.state).collect::<Vec<_>>();
+    let keys = document
+        .values
+        .iter()
+        .map(|row| &row.state)
+        .collect::<Vec<_>>();
     if (partial_floor.is_none() && document.values.len() != graph.states.len())
         || keys.iter().any(|key| !graph.states.contains_key(*key))
         || keys.windows(2).any(|pair| pair[0] >= pair[1])
@@ -2166,9 +2170,7 @@ mod partial_lower_tests {
             conditional: None,
         };
         let floor = document.objective.level.as_ref().unwrap().neg();
-        let mut meter = filament_exact::Meter::new(
-            limits().accounting,
-        );
+        let mut meter = filament_exact::Meter::new(limits().accounting);
         let result = checked_values(
             &document,
             &graph,
@@ -2178,11 +2180,11 @@ mod partial_lower_tests {
             Some(&floor),
         )
         .unwrap();
-        assert!(matches!(result, Ok(values) if values.get(&root) == Some(&document.values[0].value)));
+        assert!(
+            matches!(result, Ok(values) if values.get(&root) == Some(&document.values[0].value))
+        );
         document.values[0].value = Rational::from_integer(Integer::zero());
-        let mut meter = filament_exact::Meter::new(
-            limits().accounting,
-        );
+        let mut meter = filament_exact::Meter::new(limits().accounting);
         let result = checked_values(
             &document,
             &graph,
@@ -2192,7 +2194,10 @@ mod partial_lower_tests {
             Some(&floor),
         )
         .unwrap();
-        assert!(matches!(result, Err(ExactProbabilityCertificateCheck::Rejected(_))));
+        assert!(matches!(
+            result,
+            Err(ExactProbabilityCertificateCheck::Rejected(_))
+        ));
     }
 }
 fn action_sum(
@@ -2325,6 +2330,8 @@ pub(super) fn check(
     item: &ObligationIdentity,
     bytes: &[u8],
     partial_lower: bool,
+    bound_side: Option<super::SubsystemBoundKind>,
+    role: super::CertificateRole,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
@@ -2597,6 +2604,11 @@ pub(super) fn check(
         &mut storage,
         None,
     )?;
+    if let Some(side) = bound_side {
+        return check_value_bounds(
+            &document, &graph, &plan, side, role, bytes, limits, cancel, &mut meter,
+        );
+    }
     if graph.initials.len() != 1 {
         return Err(ProbabilityDocumentError::Unsupported);
     }
@@ -2689,6 +2701,201 @@ pub(super) fn check(
     Ok(acceptance(&document, value, side, bytes))
 }
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
+fn check_value_bounds(
+    document: &MeasureProbabilityDocument,
+    graph: &Graph,
+    plan: &Plan<'_>,
+    side: super::SubsystemBoundKind,
+    role: super::CertificateRole,
+    bytes: &[u8],
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    let malformed = |member| {
+        ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+            rule: ProbabilityCertificateRule::Malformed,
+            at: ProbabilityCertificateLocus::Member(member),
+        })
+    };
+    let fail = |key| {
+        ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+            rule: ProbabilityCertificateRule::InequalityFails,
+            at: ProbabilityCertificateLocus::ProductState(key),
+        })
+    };
+    if document.conditional.is_some() || document.values.len() != graph.states.len() {
+        return Ok(malformed("values"));
+    }
+    let value_keys = document
+        .values
+        .iter()
+        .map(|row| &row.state)
+        .collect::<Vec<_>>();
+    if value_keys.windows(2).any(|pair| pair[0] >= pair[1])
+        || value_keys
+            .iter()
+            .any(|key| !graph.states.contains_key(*key))
+    {
+        return Ok(malformed("values"));
+    }
+    match side {
+        super::SubsystemBoundKind::Lower => {
+            if document.ranking.len() != document.values.len()
+                || document
+                    .ranking
+                    .iter()
+                    .map(|row| &row.0)
+                    .ne(value_keys.iter().copied())
+            {
+                return Ok(malformed("ranking"));
+            }
+        }
+        super::SubsystemBoundKind::Upper if !document.ranking.is_empty() => {
+            return Ok(malformed("ranking"));
+        }
+        super::SubsystemBoundKind::Upper => {}
+    }
+    let values = document
+        .values
+        .iter()
+        .map(|row| (row.state.clone(), row.value.clone()))
+        .collect::<BTreeMap<_, _>>();
+    for row in &document.values {
+        check_value_bits(&row.value, limits.scalar_bits)?;
+        let state = graph
+            .states
+            .get(&row.state)
+            .ok_or(ProbabilityDocumentError::MalformedMember("values"))?;
+        if side == super::SubsystemBoundKind::Lower {
+            let rank = document
+                .ranking
+                .binary_search_by(|entry| entry.0.cmp(&row.state))
+                .ok()
+                .and_then(|index| document.ranking.get(index))
+                .map(|entry| entry.1);
+            if rank != Some(state.rank) {
+                return Ok(ExactProbabilityCertificateCheck::Rejected(
+                    ProbabilityCertificateRejection {
+                        rule: ProbabilityCertificateRule::RankBroken,
+                        at: ProbabilityCertificateLocus::ProductState(row.state.clone()),
+                    },
+                ));
+            }
+        }
+        let Some(terminal) = &state.terminal else {
+            if state.choices.is_empty() {
+                return Err(ProbabilityDocumentError::Malformed);
+            }
+            let mut action_sums = Vec::with_capacity(state.choices.len());
+            for choice in &state.choices {
+                action_sums.push(action_sum(choice, &values, meter, cancel)?);
+            }
+            let all = matches!(
+                (side, document.objective.optimization),
+                (
+                    super::SubsystemBoundKind::Lower,
+                    ProbabilityObjective::Minimum
+                ) | (
+                    super::SubsystemBoundKind::Upper,
+                    ProbabilityObjective::Maximum
+                ) | (
+                    super::SubsystemBoundKind::Lower,
+                    ProbabilityObjective::Workload
+                ) | (
+                    super::SubsystemBoundKind::Upper,
+                    ProbabilityObjective::Workload
+                )
+            );
+            let holds = action_sums
+                .iter()
+                .map(|sum| match side {
+                    super::SubsystemBoundKind::Lower => {
+                        ordered(Order::LessOrEqual, &row.value, sum, meter, cancel)
+                    }
+                    super::SubsystemBoundKind::Upper => {
+                        ordered(Order::LessOrEqual, sum, &row.value, meter, cancel)
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if if all {
+                holds.iter().any(|holds| !holds)
+            } else {
+                !holds.iter().any(|holds| *holds)
+            } {
+                return Ok(fail(row.state.clone()));
+            }
+            continue;
+        };
+        let contains_terminal = match side {
+            super::SubsystemBoundKind::Lower => {
+                ordered(Order::LessOrEqual, &row.value, terminal, meter, cancel)?
+            }
+            super::SubsystemBoundKind::Upper => {
+                ordered(Order::GreaterOrEqual, &row.value, terminal, meter, cancel)?
+            }
+        };
+        if !contains_terminal {
+            return Ok(fail(row.state.clone()));
+        }
+    }
+    let initial = values
+        .get(&graph.initial)
+        .ok_or(ProbabilityDocumentError::MalformedMember("values"))?;
+    if role == super::CertificateRole::Claim {
+        let meets = if document.payoff == MeasurePayoffKind::Shifted {
+            if plan.strict {
+                ordered(
+                    Order::LessOrEqual,
+                    initial,
+                    &super::rational(0),
+                    meter,
+                    cancel,
+                )?
+            } else {
+                ordered(
+                    Order::GreaterOrEqual,
+                    initial,
+                    &super::rational(0),
+                    meter,
+                    cancel,
+                )?
+            }
+        } else {
+            match &plan.bound {
+                Bound::AtLeast(threshold) => {
+                    ordered(Order::GreaterOrEqual, initial, threshold, meter, cancel)?
+                }
+                Bound::AtMost(threshold) => {
+                    ordered(Order::LessOrEqual, initial, threshold, meter, cancel)?
+                }
+            }
+        };
+        if !meets {
+            return Ok(ExactProbabilityCertificateCheck::Rejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::ThresholdMissed,
+                    at: ProbabilityCertificateLocus::ProductState(graph.initial.clone()),
+                },
+            ));
+        }
+    }
+    let accepted_side = if document.payoff == MeasurePayoffKind::Shifted {
+        if plan.strict {
+            ProbabilityBoundSide::AtLeast
+        } else {
+            ProbabilityBoundSide::AtMost
+        }
+    } else {
+        match plan.bound {
+            Bound::AtLeast(_) => ProbabilityBoundSide::AtLeast,
+            Bound::AtMost(_) => ProbabilityBoundSide::AtMost,
+        }
+    };
+    Ok(acceptance(document, initial.clone(), accepted_side, bytes))
+}
+
 fn plan_for_part<'a>(
     system: &ModelSystem<'_>,
     claim: &'a CheckedProbabilisticClaim,
