@@ -1426,6 +1426,7 @@ fn check_with_context(
             return Err(ProbabilityDocumentError::Unsupported);
         }
         if fair_cyclic {
+            let claim = bind_claim(claims, item, cancel)?;
             return super::fair_cyclic::check_bounds(
                 system, claim, &graph, &captured, &document, objective, &bound, side, offer,
                 limits, cancel, &mut cx,
