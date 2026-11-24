@@ -160,8 +160,8 @@ pub struct ModelCheckRecord<T: SubjectTransition = ModelTransition> {
     pub execution: Execution,
     /// The truth.
     pub truth: Truth,
-    /// The settlement method: [`EXPLICIT_STATE`].
-    pub method: &'static str,
+    /// The settlement method, optionally naming the selected state constraint.
+    pub method: String,
     /// The search horizon a V-5 record states.
     pub depth: Option<u64>,
     /// Each limit of the run with the value it used.
@@ -671,7 +671,7 @@ fn settle<T: SubjectTransition>(
         basis: row.basis,
         execution: row.execution,
         truth: row.truth,
-        method: EXPLICIT_STATE,
+        method: EXPLICIT_STATE.to_owned(),
         depth,
         limits: limits.used(),
         limit_reached: row.limit_reached,

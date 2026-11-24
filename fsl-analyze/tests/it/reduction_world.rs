@@ -453,6 +453,69 @@ impl World {
         )
     }
 
+    /// Runs and settles one clause through EN-1's analyze adapter with the
+    /// supplied constraint selection and depth horizon.
+    pub(crate) fn analyze_clause(
+        &self,
+        clause_index: usize,
+        atoms: Vec<Atom>,
+        reductions: Reductions,
+        max_depth: Option<usize>,
+    ) -> fsl_analyze::analyze::AnalyzeRecord {
+        let letters = Letters::new(self, clause_index, atoms);
+        let clause = &self.clauses[clause_index];
+        let request_item = ModelCheckItem::Clause {
+            clause,
+            letters: &letters,
+        };
+        let certificate_item = ModelCheckItem::Clause {
+            clause,
+            letters: &letters,
+        };
+        let request = ModelCheckRequest {
+            temporal_clock_selections: &[],
+            subject: self.subject(),
+            item: request_item,
+            max_depth,
+            limits: ModelCheckLimits::default(),
+            reductions,
+        };
+        let certificate = CertificateRequest {
+            temporal_clock_selections: &[],
+            subject: self.subject(),
+            item: certificate_item,
+            smt_encoding: fsl_replay::SmtEncodingLimits::default(),
+        };
+        let unit = self.replay_unit();
+        let trace_subject = self.trace_subject();
+        let identity = clause_identity(&self.package, clause_index);
+        let model_item = fsl_analyze::analyze::ModelItem {
+            request,
+            stutter_closure: false,
+            certificate,
+            replay: Box::new(|counterexample| {
+                replay_unit_result(
+                    &unit,
+                    &trace_subject,
+                    counterexample.clone(),
+                    Some(identity),
+                    &letters,
+                )
+            }),
+        };
+        let analyze_item =
+            fsl_analyze::analyze::model_item(fsl_foundation::RequestIndex::new(0), model_item)
+                .expect("the clause creates an analyze item");
+        let mut engines = fsl_analyze::analyze::Engines::default();
+        engines
+            .with(fsl_analyze::analyze::Engine::model_check().expect("EN-1 is registered"))
+            .expect("the engine id is unique");
+        let mut records =
+            fsl_analyze::analyze::analyze_items(&engines, vec![analyze_item], &Cancel::new());
+        assert_eq!(records.len(), 1);
+        records.remove(0)
+    }
+
     /// The model state at each position of `counterexample`, read by
     /// re-executing its steps from its initial state: each step's
     /// post-state is the successor of its transition identity whose

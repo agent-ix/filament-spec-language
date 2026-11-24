@@ -127,18 +127,34 @@ fn a_source_constraint_is_typed_and_selectable_by_name() {
             ModelCheckLimits::default(),
         )
         .expect("Low is accepted as the selected constraint");
-    assert!(matches!(outcome, ModelCheckOutcome::Reduction {
-        cause: ReductionCause::ConstraintReached { .. }, ..
-    }));
+    assert!(matches!(
+        outcome,
+        ModelCheckOutcome::Reduction {
+            cause: ReductionCause::ConstraintReached { .. },
+            ..
+        }
+    ));
 
     let low = graph.state_clause("Low").expect("Low remains checked");
     let wide = graph.state_clause("Wide").expect("Wide remains checked");
-    assert_eq!(low.parameters().iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["self"]);
+    assert_eq!(
+        low.parameters()
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        ["self"]
+    );
     let occurrence = |clause: &fsl_semantics::check::CheckedStateClause| {
         fsl_replay::OccurrenceKey::new(clause.identity(), clause.claim().clone())
     };
-    assert!(graph.requirements().get(&occurrence(wide)).is_some(), "Wide has a requirement record");
-    assert!(graph.requirements().get(&occurrence(low)).is_none(), "Low has no requirement record");
+    assert!(
+        graph.requirements().get(&occurrence(wide)).is_some(),
+        "Wide has a requirement record"
+    );
+    assert!(
+        graph.requirements().get(&occurrence(low)).is_none(),
+        "Low has no requirement record"
+    );
 
     let emitted = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
         .expect("S4 emits the checked unit");
@@ -148,25 +164,43 @@ fn a_source_constraint_is_typed_and_selectable_by_name() {
         .as_array()
         .expect("semantic nodes")
         .iter()
-        .filter(|node| node["node_tag"] == "state"
-            && node["semantic_form"] == "state_clause"
-            && node["body"]["operation"]["member"]["clause"] == "constraint")
+        .filter(|node| {
+            node["node_tag"] == "state"
+                && node["semantic_form"] == "state_clause"
+                && node["body"]["operation"]["member"]["clause"] == "constraint"
+        })
         .collect();
     let [low_node] = low_nodes.as_slice() else {
         panic!("S4 emits exactly one state clause node for Low: {low_nodes:?}");
     };
-    assert_eq!(low_node["body"]["operation"]["member"],
-        serde_json::json!({"kind": "state_clause", "clause": "constraint"}));
-    let arguments = low_node["body"]["arguments"].as_array().expect("state clause arguments");
-    assert_eq!(arguments[0]["members"].as_array().expect("self binding").len(), 1);
+    assert_eq!(
+        low_node["body"]["operation"]["member"],
+        serde_json::json!({"kind": "state_clause", "clause": "constraint"})
+    );
+    let arguments = low_node["body"]["arguments"]
+        .as_array()
+        .expect("state clause arguments");
+    assert_eq!(
+        arguments[0]["members"]
+            .as_array()
+            .expect("self binding")
+            .len(),
+        1
+    );
     let anchor_id = &arguments[1]["target"];
     let anchor = wire["semantic_graph"]["nodes"]
-        .as_array().expect("semantic nodes")
-        .iter().find(|node| &node["node_id"] == anchor_id)
+        .as_array()
+        .expect("semantic nodes")
+        .iter()
+        .find(|node| &node["node_id"] == anchor_id)
         .expect("the Counter anchor node is emitted");
     assert_eq!(anchor["semantic_form"], "object_type");
-    assert_eq!(anchor["declaration"]["qualified_name"].as_array()
-        .and_then(|name| name.last()), Some(&serde_json::json!("Counter")));
+    assert_eq!(
+        anchor["declaration"]["qualified_name"]
+            .as_array()
+            .and_then(|name| name.last()),
+        Some(&serde_json::json!("Counter"))
+    );
     let domain_bytes = crate::reduction_world::document(Shape {
         symmetric: false,
         max: 3,
@@ -178,7 +212,8 @@ fn a_source_constraint_is_typed_and_selectable_by_name() {
         emitted_bytes,
         &domain,
         fsl_package::V2ReadLimits::fixture(),
-    ).expect("FSL I2 reads the emitted package");
+    )
+    .expect("FSL I2 reads the emitted package");
 }
 
 fn keys(keys: &[&str]) -> Vec<String> {
@@ -283,7 +318,13 @@ fn emitting_constrained_and_por_witnesses_adds_no_transition_or_work_charge() {
     };
     for selection in [constraint("Low"), partial_order()] {
         let unrestricted = world
-            .run(Some(0), atoms(), selection.clone(), None, ModelCheckLimits::default())
+            .run(
+                Some(0),
+                atoms(),
+                selection.clone(),
+                None,
+                ModelCheckLimits::default(),
+            )
             .expect("the concrete reduction run refutes");
         let expected = violation(&unrestricted).clone();
         let ModelCheckOutcome::Violated { stats, .. } = &unrestricted else {
@@ -318,13 +359,18 @@ fn emitting_constrained_and_por_witnesses_adds_no_transition_or_work_charge() {
         );
         let one_work_short = with_budgets(transition_budget, minimum_work - 1)
             .expect("the work limit is a typed outcome");
-        assert!(matches!(one_work_short, ModelCheckOutcome::Stopped {
-            limit: Some(ReachedLimit {
-                limit: ModelCheckLimit::EvaluationMeter {
-                    counter: filament_exact::LimitKind::WorkUnits,
-                }, ..
-            }), ..
-        }));
+        assert!(matches!(
+            one_work_short,
+            ModelCheckOutcome::Stopped {
+                limit: Some(ReachedLimit {
+                    limit: ModelCheckLimit::EvaluationMeter {
+                        counter: filament_exact::LimitKind::WorkUnits,
+                    },
+                    ..
+                }),
+                ..
+            }
+        ));
     }
 }
 
@@ -1326,48 +1372,40 @@ fn reduced_outcomes_settle_through_the_one_map() {
     );
 }
 
-/// Partial FR-160-AC-2 engine coverage: over §7.3, `always holds(x.v <= 3)` with constraint `Wide`
-/// reaches no boundary state and settles `Proved{Exhaustive, Uncertified}`;
-/// `always holds(x.v <= 2)` with `Low` and `max_depth` 2 completes depth 2,
-/// reaching boundary states there, and settles `ConstraintReached`, not
-/// `BoundReached`. The terminal method exposed at this seam is generic
-/// `explicit-state` and does not name `Wide`, so the full AC remains open.
-#[trace("TC-584")]
+/// FR-160-AC-2 (TC-584): the `Wide` constraint proves the full finite subject
+/// and is named in the method; `Low` reaches boundary states at depth 2, so
+/// `ConstraintReached` takes precedence over `BoundReached`.
+#[trace("TC-584", "FR-160-AC-2")]
 #[test]
 fn a_constraint_only_proof_is_exhaustive_and_constraint_reached_wins_over_the_horizon() {
     let world = count(&[
         infinite("always holds(x.v <= 3)"),
         infinite("always holds(x.v <= 2)"),
     ]);
-    let outcome = run(
-        &world,
-        Some(0),
-        vec![atom(|v| Some(v <= 3))],
-        constraint("Wide"),
-    );
+    let wide = world.analyze_clause(0, vec![atom(|v| Some(v <= 3))], constraint("Wide"), None);
+    let wide = wide
+        .model_check
+        .expect("the analyze record has its model result");
     assert_eq!(
-        settle(&world, &outcome).value,
+        wide.value,
         TerminalValue::Proved {
             basis: ProofBasis::Exhaustive,
             certification: Certification::Uncertified,
         }
     );
-    let horizon = world
-        .run(
-            Some(1),
-            vec![atom(|v| Some(v <= 2))],
-            constraint("Low"),
-            Some(2),
-            ModelCheckLimits::default(),
-        )
-        .expect("checked");
+    assert_eq!(wide.method, "explicit-state (constraint: Wide)");
+
+    let low = world.analyze_clause(1, vec![atom(|v| Some(v <= 2))], constraint("Low"), Some(2));
+    let low = low
+        .model_check
+        .expect("the analyze record has its model result");
     assert_eq!(
-        settle(&world, &horizon).value,
-        TerminalValue::Inconclusive(InconclusiveCause::ConstraintReached {
-            boundary_states: 3,
-        }),
+        low.value,
+        TerminalValue::Inconclusive(InconclusiveCause::ConstraintReached { boundary_states: 3 }),
         "the boundary states at depth two take precedence over the horizon"
     );
+    assert_eq!(low.method, "explicit-state (constraint: Low)");
+    assert_eq!(low.exploration.expect("EN-1 reports exploration").depth, 2);
 }
 
 /// FR-160-AC-3's symmetry row: §7.1 under symmetry only with `max_depth` 1
@@ -1439,7 +1477,9 @@ fn an_undefined_evaluation_on_a_reduced_run_refutes_with_a_concrete_prefix() {
     assert_eq!(record.label, ResultLabel::Refuted);
     assert_eq!(record.basis, SettlementBasis::DecisiveCounterexample);
     assert_eq!(record.method, "explicit-state");
-    let settled_witness = record.counterexample.expect("refutation retains replayed witness");
+    let settled_witness = record
+        .counterexample
+        .expect("refutation retains replayed witness");
     assert_eq!(settled_witness, *violation(&unreduced));
 }
 
