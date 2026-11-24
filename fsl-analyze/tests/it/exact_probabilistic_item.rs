@@ -1553,6 +1553,12 @@ fn fair_cyclic_low_rational_budget_proves_with_value_bounds() {
     else {
         panic!("the fair interval must be independently certified: {record:#?}");
     };
+    let fsl_replay::ExactBound::Finite(lower) = lower else {
+        panic!("the fair lower interval endpoint is finite");
+    };
+    let fsl_replay::ExactBound::Finite(upper) = upper else {
+        panic!("the fair upper interval endpoint is finite");
+    };
     assert!(lower.value() >= &ratio(2, 5));
     assert!(upper.value() <= &ratio(1, 2));
     assert!(matches!(

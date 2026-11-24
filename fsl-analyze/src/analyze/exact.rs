@@ -401,20 +401,6 @@ fn rational_bits_limit(
     )
 }
 
-fn exact_values_exceed_rational_budget(values: &[ExtRational], max_bits: u64) -> bool {
-    values.iter().any(|value| match value {
-        ExtRational::Finite(value) => {
-            value
-                .numerator()
-                .magnitude_bits()
-                .saturating_add(value.denominator().magnitude_bits())
-                .saturating_add(1)
-                > max_bits
-        }
-        ExtRational::PlusInfinity => false,
-    })
-}
-
 /// How a failed claim-binding, claim-identity or checker-graph step settles: a
 /// cancel or a reached state or edge budget names itself; the forms the bounded
 /// graph does not build (a cycle, a multi-state draw, several initial states or
