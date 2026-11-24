@@ -45,7 +45,10 @@ fn a_solved_size_integer_assignment_uses_its_domain_index() {
     let [position] = positions.as_slice() else {
         panic!("one in-domain integer has one position: {positions:?}")
     };
-    assert_eq!(domain.nth(*position), Some(equal));
+    let Some(Value::Integer(actual)) = domain.nth(*position) else {
+        panic!("the selected position contains an integer")
+    };
+    assert_eq!(actual, Integer::from(1_234_567_i64));
 }
 
 /// `loseLidar`'s postcondition, with its speed bound `cap`.
