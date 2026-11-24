@@ -66,6 +66,55 @@ pub(crate) const fn is_replay_wire_stage_setting(setting: Setting) -> bool {
     ) && !setting.is_item_engine_setting()
 }
 
+/// Test oracle for the settings the replay wire omits, independent of the
+/// production eligibility predicate.
+#[cfg(test)]
+pub(crate) const REPLAY_WIRE_OMITTED_STAGE_LIMIT_NAMES: &[&str] = &[
+    "replay.input_bytes",
+    "format.output_bytes",
+    "monitor.max_window_values",
+    "monitor.retained_positions",
+    "monitor.retained_identities",
+    "monitor.preparation_work_units",
+    "monitor.preparation_storage",
+    "exact_prob.max_states",
+    "exact_prob.max_transitions",
+    "exact_prob.max_automaton_states",
+    "exact_prob.max_iterations",
+    "exact_prob.precision_bits",
+    "exact_prob.max_precision_bits",
+    "exact_prob.max_rational_bits",
+    "exact_prob.max_policy_iterations",
+    "statistical.max_samples",
+    "statistical.max_draws",
+    "statistical.max_cycle_steps",
+    "statistical.max_sample_steps",
+    "zone_check.max_symbolic_states",
+    "zone_check.max_symbolic_transitions",
+    "zone_check.max_automaton_states",
+    "zone_check.max_zone_bytes",
+    "certificate_check.max_certificate_edges",
+    "certificate_check.max_certificate_bytes",
+    "certificate_check.max_working_bytes",
+    "certificate_check.max_rank",
+    "schedule.max_demand_points",
+    "hybrid.max_solver_steps",
+    "hybrid.max_solver_time",
+    "smt_encoding.max_constants",
+    "smt_encoding.max_applications",
+    "smt_encoding.max_monitor_atoms",
+    "smt_encoding.max_monitor_states",
+    "smt_encoding.max_candidates",
+    "smt_encoding.max_script_bytes",
+    "smt.max_solver_steps",
+    "smt.max_solver_time",
+    "plan_search.max_states",
+    "plan_search.max_work",
+    "plan_search.max_certificate_entries",
+    "plan_search.max_check_work",
+    "plan_search.max_state_key_bytes",
+];
+
 /// The proving run's stage limits (ADR-013 O-26, FR-263): a map from setting
 /// name (FR-255) to the bound the proving run configured, so a request never
 /// silently substitutes FSL's own compiled-in defaults for the proving run's
@@ -1286,9 +1335,16 @@ mod tests {
     #[test]
     fn stage_limits_admit_only_settings_the_replay_wire_carries() {
         for setting in Setting::ALL {
+            let expected = !REPLAY_WIRE_OMITTED_STAGE_LIMIT_NAMES.contains(&setting.name());
             assert_eq!(
                 StageLimits::default().with_named(setting.name(), 1).is_ok(),
+                expected,
+                "{}",
+                setting.name()
+            );
+            assert_eq!(
                 is_replay_wire_stage_setting(*setting),
+                expected,
                 "{}",
                 setting.name()
             );

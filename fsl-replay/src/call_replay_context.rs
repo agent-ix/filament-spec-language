@@ -450,15 +450,20 @@ mod tests {
         assert_eq!(wire.stage_limits["s1.tokens"], 200_000);
         assert_eq!(wire.stage_limits["library.definitions"], 9000);
         assert_eq!(wire.accounting_limits.work_units, 5000);
+        assert!(!wire
+            .stage_limits
+            .contains_key("certificate_check.max_certificate_bytes"));
         for (setting, bound) in CallerLimits::default().bounds() {
             let name = setting.name();
             if !matches!(
                 name,
                 "s1.tokens" | "library.definitions" | "replay.input_bytes" | "format.output_bytes"
             ) {
-                // Replay never runs an analysis item engine, so a request
-                // omits its rows (FR-255 "Lifecycle caller-limit coverage").
-                let expected = (!setting.is_item_engine_setting()).then_some(&bound);
+                // Use the same literal oracle as the plugin request test,
+                // independent of the replay setting predicate.
+                let expected = (!crate::request::REPLAY_WIRE_OMITTED_STAGE_LIMIT_NAMES
+                    .contains(&name))
+                .then_some(&bound);
                 assert_eq!(wire.stage_limits.get(name), expected, "{name}");
             }
         }

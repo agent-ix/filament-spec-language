@@ -30,7 +30,7 @@ use filament_semantic_value::catalog::InternalFault;
 use fsl_foundation::bound::ProofBound;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::source::{Source, SourceLabel};
-use fsl_foundation::{BackendId, Code, RequestIndex, Setting, SettingLimits};
+use fsl_foundation::{BackendId, Code, RequestIndex, SettingLimits};
 use fsl_semantics::check::Capability;
 
 /// The occurrence role and ordinal of a function's declaration (ADR-013 O-09).
