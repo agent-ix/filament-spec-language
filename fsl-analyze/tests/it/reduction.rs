@@ -94,6 +94,44 @@ pub(crate) fn infinite(formula: &str) -> Clause<'_> {
     }
 }
 
+/// FR-158-AC-6: a source `constraint` is a Constraint state clause (distinct
+/// from the neighboring invariant) and the model checker can select it by
+/// name while checking a temporal clause.
+#[trace("TC-581", "FR-158-AC-6")]
+#[test]
+fn a_source_constraint_is_typed_and_selectable_by_name() {
+    let body = "constraint Low using v on M::Counter at current { self.v <= 1 }\n\
+                invariant Wide using v on M::Counter at current { self.v <= 3 }\n";
+    let world = World::new(
+        shape(false, 3),
+        body,
+        &[infinite("always holds(x.v <= 3)")],
+        &[start([0, 0, 0])],
+        &KEYS,
+    );
+    let graph = world.package.graph();
+    assert_eq!(
+        graph.state_clause("Low").expect("Low is checked").kind(),
+        fsl_forms::StateClauseKind::Constraint
+    );
+    assert_eq!(
+        graph.state_clause("Wide").expect("Wide is checked").kind(),
+        fsl_forms::StateClauseKind::Invariant
+    );
+    let outcome = world
+        .run(
+            Some(0),
+            vec![atom(|v| Some(v <= 3))],
+            constraint("Low"),
+            None,
+            ModelCheckLimits::default(),
+        )
+        .expect("Low is accepted as the selected constraint");
+    assert!(matches!(outcome, ModelCheckOutcome::Reduction {
+        cause: ReductionCause::ConstraintReached { .. }, ..
+    }));
+}
+
 fn keys(keys: &[&str]) -> Vec<String> {
     keys.iter().map(|key| (*key).to_owned()).collect()
 }

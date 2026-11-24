@@ -415,6 +415,19 @@ impl World {
         max_depth: Option<usize>,
         limits: ModelCheckLimits,
     ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
+        self.run_with_meter(clause, atoms, reductions, max_depth, limits, self.meter)
+    }
+
+    /// The run with a caller supplied scalar evaluation meter.
+    pub(crate) fn run_with_meter(
+        &self,
+        clause: Option<usize>,
+        atoms: Vec<Atom>,
+        reductions: Reductions,
+        max_depth: Option<usize>,
+        limits: ModelCheckLimits,
+        meter: ScalarLimits,
+    ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
         let letters = clause.map(|index| Letters::new(self, index, atoms));
         let item = match (clause, &letters) {
             (Some(index), Some(letters)) => ModelCheckItem::Clause {
@@ -426,7 +439,11 @@ impl World {
         check_model(
             ModelCheckRequest {
                 temporal_clock_selections: &[],
-                subject: self.subject(),
+                subject: {
+                    let mut subject = self.subject();
+                    subject.simulation.meter = meter;
+                    subject
+                },
                 item,
                 max_depth,
                 limits,
