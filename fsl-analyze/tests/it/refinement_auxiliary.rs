@@ -312,7 +312,7 @@ fn an_undefined_update_replays_and_a_changed_cause_disagrees() {
 /// `inconclusive`, `unsettled`, `Inconclusive(MappingUndetermined)`; the
 /// `inv` variant settles `refuted`, `decisive-counterexample`, after FR-145's
 /// replay reproduces it.
-#[trace("TC-549")]
+#[trace("TC-549", "FR-144-AC-3")]
 #[test]
 fn history_failures_settle_as_their_kind_says() {
     let unit = Unit::register();
@@ -385,7 +385,7 @@ fn the_product_key_holds_the_candidate_set() {
 /// product states that differ only in history are two positions. A
 /// certificate that lists the first variant twice, in place of the second,
 /// is rejected, as the one lacking a variant is not the relation EN-1 found.
-#[trace("TC-556")]
+#[trace("TC-556", "FR-149-AC-11")]
 #[test]
 fn a_certificate_position_carries_its_history() {
     let unit = Unit::register();
@@ -423,10 +423,22 @@ fn a_certificate_position_carries_its_history() {
         .expect("two positions differ only in history");
     let mut lacking = *certificate.clone();
     lacking.positions[second].history = lacking.positions[first].history.clone();
-    assert!(
-        matches!(check(&lacking), TemporalCertificateCheck::Rejected(_)),
-        "a certificate without the second variant is rejected"
-    );
+    let TemporalCertificateCheck::Rejected(rejection) = check(&lacking) else {
+        panic!("a certificate without the second variant is rejected");
+    };
+    assert_eq!(rejection.rule, fsl_replay::CertificateRule::PostDiffers);
+    let fsl_replay::CertificateLocus::SimulationStep {
+        position,
+        edge: Some(edge),
+        verdict: None,
+    } = &rejection.at
+    else {
+        panic!("history omission is located at a simulation edge: {:?}", rejection.at);
+    };
+    let position = usize::try_from(*position).expect("a position index fits usize");
+    let edge = usize::try_from(*edge).expect("an edge index fits usize");
+    assert!(position < certificate.positions.len());
+    assert!(edge < certificate.successors[position].len());
 }
 
 /// FR-630 "Request item", FR-144: with no abstract subject the hidden `side`

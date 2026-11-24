@@ -1435,7 +1435,7 @@ fn a_sampled_witness_never_hides_an_undefined_target() {
 /// sampled witness per instance, the exploration stops at `max_states`, and
 /// the outcome is `WitnessedUnchecked` with `Sampled` sources; with
 /// `witness_samples` 0 the same run decides nothing.
-#[trace("TC-614", "FR-168-AC-8")]
+#[trace("TC-614", "FR-166-AC-6", "FR-168-AC-8")]
 #[test]
 fn a_stopped_exploration_leaves_sampled_witnesses_unchecked() {
     let world = config_world(REACHES_TWO, &[(0, 0)]);

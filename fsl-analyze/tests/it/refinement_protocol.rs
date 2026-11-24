@@ -739,7 +739,7 @@ fn required_strong_each_fairness_implies_concrete_weak_whole() {
 /// FR-148-AC-9 (TC-553): a weak-whole specification assumption does not
 /// establish strong-each implementation fairness when `inc` is enabled only
 /// every other toggle state.
-#[trace("TC-553", "FR-148-AC-9")]
+#[trace("TC-553", "FR-148-AC-9", "FR-144-AC-9")]
 #[test]
 fn required_weak_whole_fairness_does_not_imply_concrete_strong_each() {
     let source = ac9_toggle_source("weak", "strong");
