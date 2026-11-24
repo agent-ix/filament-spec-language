@@ -260,11 +260,18 @@ impl<'c> Form<'c> {
                 .ok_or_else(shape)?;
             if let FormulaNode::Unary {
                 operator: UnaryTemporal::Eventually,
-                interval: Some(CheckedInterval::Timed(_)),
+                interval: Some(CheckedInterval::Timed(interval)),
                 operand,
             } = root
             {
-                if matches!(checked.nodes().get(operand.index()), Some(FormulaNode::Holds { .. })) {
+                if interval.lower().is_zero()
+                    && interval.lower_closed()
+                    && interval.upper_closed()
+                    && matches!(
+                        checked.nodes().get(operand.index()),
+                        Some(FormulaNode::Holds { .. })
+                    )
+                {
                     let predicate = formula.condition(operand.index()).ok_or_else(shape)?;
                     return Ok(Self::TimedTrace {
                         formula,
@@ -1616,7 +1623,11 @@ impl<'c> Builder<'_, '_, 'c> {
                 state.timed_history = Some(history);
                 Ok(Some(MonitorState::Deadline {
                     kind: DeadlineKind::Eventually,
-                    phase: DeadlinePhase::Pending,
+                    phase: if truths.first().copied().unwrap_or(false) {
+                        DeadlinePhase::Accept
+                    } else {
+                        DeadlinePhase::Pending
+                    },
                 }))
             }
             Form::Elapsed { .. } => {
@@ -1715,6 +1726,17 @@ impl<'c> Builder<'_, '_, 'c> {
                 _ => DeadlinePhase::Pending,
             };
             let horizon_units = self.bound_units(horizon)?;
+            if phase == DeadlinePhase::Pending
+                && time <= horizon_units
+                && reached.timed_history.as_ref().is_some_and(|history| {
+                    history.iter().any(|observation| {
+                        observation.time <= horizon_units
+                            && observation.values.first().copied().unwrap_or(false)
+                    })
+                })
+            {
+                phase = DeadlinePhase::Accept;
+            }
             if phase == DeadlinePhase::Pending && time > horizon_units {
                 let limit = Rational::from_integer(Integer::from(horizon_units));
                 let scale = Rational::from_integer(Integer::from(self.scale));

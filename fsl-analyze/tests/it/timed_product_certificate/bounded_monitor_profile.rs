@@ -179,3 +179,92 @@ fn timed_eventually_zero_delay_cycle_has_a_finite_repeated_key() {
     assert_eq!(proved_value(&record), ratio(0, 1));
     assert!(accepted(&world, "ZeroCycle", &document(&record)));
 }
+
+#[trace("FR-186-AC-7")]
+#[test]
+fn forged_always_value_cannot_merge_false_and_true_same_time_reads() {
+    let claims = "\
+        probabilistic Always using ev on M over (c: M::Call) under every scheduler on origin { probability <= 0.5 [ always[0 ms, 4 ms] holds(c.late) ] }\n";
+    let package_document = timed_world::document(&["x"], &[("toggle", &["late", "x"])]);
+    let body = format!(
+        "{}\
+         pre Toggle using v on M::Call::toggle {{ self.x <= 1 ms }}\n\
+         post Toggled using v on M::Call::toggle {{ self.late = true and self.x = 0 ms }}\n\
+         delay M::Call::toggle ~ discrete {{ 0 ms: 1, 1 ms: 1 }};\n\
+         time invariant ClockWindow when {{ true }} {{ self.x <= 4 ms }}\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    let world = timed_world::world(&package_document, super::PROFILES, &body);
+    let record = settle(&world, "Always");
+    assert_eq!(proved_value(&record), ratio(0, 1));
+
+    let mut forged = document(&record);
+    for row in forged["values"].as_array_mut().expect("certificate values") {
+        row["value"] = json!({ "numerator": "1", "denominator": "1" });
+    }
+    assert!(
+        !matches!(
+            check(&world, "Always", &forged),
+            Ok(ExactProbabilityCertificateCheck::Accepted(_))
+        ),
+        "replay preserves the initial false Always read despite a same-time true successor"
+    );
+}
+
+#[trace("FR-186-AC-7")]
+#[test]
+fn timed_eventually_latches_initial_hit_before_immediate_time_lock() {
+    let claims = "\
+        probabilistic InitialHit using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ eventually[0 ms, 4 ms] holds(c.late) ] }\n";
+    let package_document = timed_world::document(&["x"], &[("toggle", &["late", "x"])]);
+    let body = format!(
+        "{}\
+         pre Toggle using v on M::Call::toggle {{ false }}\n\
+         post Toggled using v on M::Call::toggle {{ self.late = true and self.x = 0 ms }}\n\
+         delay M::Call::toggle ~ discrete {{ 1 ms: 1 }};\n\
+         time invariant ClockWindow when {{ true }} {{ self.x <= 0 ms }}\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    let world = timed_world::world_holding(
+        &package_document,
+        super::PROFILES,
+        &body,
+        &json!({ "late": { "boolean": true } }),
+    );
+    let record = settle(&world, "InitialHit");
+    assert_eq!(proved_value(&record), ratio(1, 1));
+    assert!(accepted(&world, "InitialHit", &document(&record)));
+}
+
+#[trace("FR-186-AC-7")]
+#[test]
+fn timed_eventually_latches_in_window_hit_before_time_lock() {
+    let claims = "\
+        probabilistic TimedHit using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ eventually[0 ms, 4 ms] holds(c.late) ] }\n";
+    let package_document = timed_world::document(&["x"], &[("toggle", &["late", "x"])]);
+    let body = format!(
+        "{}\
+         pre Toggle using v on M::Call::toggle {{ not self.late }}\n\
+         post Toggled using v on M::Call::toggle {{ self.late = true and self.x = 1 ms }}\n\
+         delay M::Call::toggle ~ discrete {{ 1 ms: 1 }};\n\
+         time invariant ClockWindow when {{ self.late }} {{ self.x <= 1 ms }}\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    let world = timed_world::world(&package_document, super::PROFILES, &body);
+    let record = settle(&world, "TimedHit");
+    let terminal = record
+        .terminal()
+        .unwrap_or_else(|| panic!("the bounded claim has a terminal: {record:#?}"));
+    let TerminalValue::Proved {
+        basis: ProofBasis::ExactValue { value, .. },
+        ..
+    } = terminal.value()
+    else {
+        panic!("the t=1 lock settles with an exact proof: {record:#?}");
+    };
+    assert_eq!(value.value(), &ratio(1, 1));
+    assert!(accepted(&world, "TimedHit", &document(&record)));
+}

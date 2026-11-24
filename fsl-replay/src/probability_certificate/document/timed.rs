@@ -1346,32 +1346,134 @@ fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound
         return None;
     };
     let checked = formula.formula();
-    let predicates = checked
-        .nodes()
-        .iter()
-        .enumerate()
-        .filter_map(|(index, node)| {
-            matches!(node, fsl_semantics::check::FormulaNode::Holds { .. })
-                .then(|| formula.condition(index))
-                .flatten()
-        })
-        .collect::<Vec<_>>();
-    if predicates.len()
-        != checked
-            .nodes()
-            .iter()
-            .filter(|node| matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }))
-            .count()
+    use fsl_eval::probabilistic::{DeadlineKind, DeadlinePhase, TimedOperatorState};
+    use fsl_semantics::check::{CheckedInterval, FormulaNode, UnaryTemporal};
+
+    let root_index = checked.root().index();
+    let root = checked.nodes().get(root_index)?;
+    let horizon = time_units(timed_horizon, scale)?;
+    let condition = |index: usize| formula.condition(index);
+    let direct_holds = |index: usize| {
+        matches!(checked.nodes().get(index), Some(FormulaNode::Holds { .. }))
+            .then(|| condition(index))
+            .flatten()
+    };
+    let timed_operator =
+        |occurrence: usize, kind: DeadlineKind, interval: &fsl_foundation::bound::TimedInterval| {
+            let lower = time_units(interval.lower(), scale)?;
+            let upper = time_units(interval.upper()?, scale)?;
+            Some(TimedOperatorState {
+                occurrence: u64::try_from(occurrence).ok()?,
+                kind,
+                lower,
+                upper,
+                elapsed: 0,
+                phase: DeadlinePhase::Pending,
+            })
+        };
+
+    // Same-timestamp OR is valid only for the admitted direct Eventually
+    // letter: a hit at any observation at that timestamp satisfies it.
+    if let FormulaNode::Unary {
+        operator: UnaryTemporal::Eventually,
+        interval: Some(CheckedInterval::Timed(interval)),
+        operand,
+    } = root
     {
+        if interval.lower().is_zero()
+            && interval.lower_closed()
+            && interval.upper_closed()
+            && direct_holds(operand.index()).is_some()
+        {
+            return Some((
+                bound.clone(),
+                Watch::TimedTrace {
+                    formula,
+                    predicates: vec![condition(operand.index())?],
+                    horizon,
+                    scale,
+                },
+            ));
+        }
+    }
+
+    let (kind, interval, predicates) = match root {
+        FormulaNode::Unary {
+            operator: UnaryTemporal::Eventually,
+            interval: Some(CheckedInterval::Timed(outer)),
+            operand,
+        } if !matches!(
+            checked.nodes().get(operand.index()),
+            Some(FormulaNode::Holds { .. })
+        ) =>
+        {
+            let FormulaNode::Unary {
+                operator: UnaryTemporal::Always,
+                interval: Some(CheckedInterval::Timed(inner)),
+                operand: atom,
+            } = checked.nodes().get(operand.index())?
+            else {
+                return None;
+            };
+            if inner.lower() != inner.upper()?
+                || !outer.lower_closed()
+                || !outer.upper_closed()
+                || !inner.lower_closed()
+                || !inner.upper_closed()
+            {
+                return None;
+            }
+            let predicate = direct_holds(atom.index())?;
+            return Some((
+                bound.clone(),
+                Watch::Nested {
+                    root: timed_operator(root_index, DeadlineKind::Eventually, outer)?,
+                    nested: timed_operator(operand.index(), DeadlineKind::Always, inner)?,
+                    predicate,
+                    horizon,
+                },
+            ));
+        }
+        FormulaNode::Unary {
+            operator: UnaryTemporal::Eventually,
+            interval: Some(CheckedInterval::Timed(interval)),
+            operand,
+        } => (
+            DeadlineKind::Eventually,
+            interval,
+            vec![direct_holds(operand.index())?],
+        ),
+        FormulaNode::Unary {
+            operator: UnaryTemporal::Always,
+            interval: Some(CheckedInterval::Timed(interval)),
+            operand,
+        } => (
+            DeadlineKind::Always,
+            interval,
+            vec![direct_holds(operand.index())?],
+        ),
+        FormulaNode::Binary {
+            operator: fsl_semantics::check::BinaryTemporal::Until,
+            interval: Some(CheckedInterval::Timed(interval)),
+            left,
+            right,
+        } => (
+            DeadlineKind::Until,
+            interval,
+            vec![direct_holds(left.index())?, direct_holds(right.index())?],
+        ),
+        _ => return None,
+    };
+    if !interval.lower_closed() || !interval.upper_closed() {
         return None;
     }
+    let root = timed_operator(root_index, kind, interval)?;
     Some((
         bound.clone(),
-        Watch::TimedTrace {
-            formula,
+        Watch::Bounded {
+            root,
             predicates,
-            horizon: time_units(timed_horizon, scale)?,
-            scale,
+            horizon,
         },
     ))
 }
@@ -1637,7 +1739,9 @@ impl Watch<'_> {
                     }
                 }
                 push_timed_formula_observation(&mut history, elapsed, &truths);
-                let verdict = if elapsed > *horizon {
+                let verdict = if elapsed <= *horizon && truths.iter().any(|truth| *truth) {
+                    Some(true)
+                } else if elapsed > *horizon {
                     let selected = history
                         .iter()
                         .filter(|observation| observation.time <= *horizon)
