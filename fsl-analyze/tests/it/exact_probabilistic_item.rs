@@ -1556,7 +1556,7 @@ fn fair_cyclic_low_rational_budget_proves_with_value_bounds() {
     let fsl_replay::ExactBound::Finite(upper) = upper else {
         panic!("the fair upper interval endpoint is finite");
     };
-    assert!(lower >= &ratio(2, 5));
+    assert!(lower.value() >= &ratio(2, 5));
     assert!(upper.value() <= &ratio(1, 2));
     assert!(matches!(
         method,
