@@ -115,6 +115,14 @@ fn worker_settings_change_only_their_own_counts() {
         }
     );
     assert_eq!(limits.explore.max_states, 10_000_000);
+    let model_check_only = CallerLimits::from_operands(["model_check.workers=2"])
+        .expect("the model-check worker setting is accepted independently");
+    assert_eq!(model_check_only.workers.model_check, 2);
+    assert_eq!(model_check_only.explore.max_states, 10_000_000);
+    let explore_only = CallerLimits::from_operands(["explore.workers=2"])
+        .expect("the exploration worker setting is accepted independently");
+    assert_eq!(explore_only.workers.explore, 2);
+    assert_eq!(explore_only.explore.max_states, 10_000_000);
     assert!(limits
         .engines
         .bounds()
