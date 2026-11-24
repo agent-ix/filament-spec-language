@@ -5,8 +5,9 @@
 
 use filament_eval::FamilyOutcome;
 use filament_exact::{
-    ChargePoint, Decimal, DecimalRepresentation, Integer, LimitKind, Meter, Outcome, Quantity,
-    Rational, ScalarLimits, UnitDomain, Value,
+    admit_text, ChargePoint, Decimal, DecimalRepresentation, Incomplete, Integer, LimitKind, Meter,
+    Outcome, Quantity, Rational, Refusal, ScalarLimits, TextPayload, TextProfile, TextType,
+    UnitDomain, Value,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::loss::ValueLoss;
@@ -93,6 +94,8 @@ struct SourceCase {
     limits: ScalarLimits,
     /// Charge points for the expression node, excluding the wrapper call.
     expected_charges: Option<Vec<ChargePoint>>,
+    /// Literal source-call count expected by the row, independent of source spelling.
+    expected_function_call_charges: Option<usize>,
     check_mode: CheckMode,
 }
 
@@ -104,6 +107,7 @@ fn function(result: &str, body: &str, expected: Expected) -> SourceCase {
         quantity_parameter_arguments: Vec::new(),
         limits: UNLIMITED,
         expected_charges: None,
+        expected_function_call_charges: None,
         check_mode: CheckMode::Linked,
     }
 }
@@ -142,6 +146,7 @@ fn limited_function_with(
         quantity_parameter_arguments: Vec::new(),
         limits,
         expected_charges: Some(expected_charges.to_vec()),
+        expected_function_call_charges: Some(1),
         check_mode: CheckMode::Linked,
     }
 }
@@ -270,6 +275,7 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             quantity_parameter_arguments: Vec::new(),
             limits: UNLIMITED,
             expected_charges: None,
+            expected_function_call_charges: None,
             check_mode: CheckMode::Linked,
         }],
         "D02" | "D04" => {
@@ -325,6 +331,7 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 quantity_parameter_arguments: Vec::new(),
                 limits: UNLIMITED,
                 expected_charges: None,
+                expected_function_call_charges: None,
                 check_mode: CheckMode::Linked,
             })
             .collect(),
@@ -749,6 +756,7 @@ fn text_comparison(
         quantity_parameter_arguments: Vec::new(),
         limits: UNLIMITED,
         expected_charges: None,
+        expected_function_call_charges: None,
         check_mode: CheckMode::Linked,
     }
 }
@@ -796,6 +804,7 @@ fn text_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             quantity_parameter_arguments: Vec::new(),
             limits: UNLIMITED,
             expected_charges: None,
+            expected_function_call_charges: None,
             check_mode: CheckMode::Linked,
         }],
         "T06b" => {
@@ -877,6 +886,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 &full_points,
             );
             complete.declarations = declarations.clone();
+            complete.expected_function_call_charges = Some(3);
             let mut normalized_limit = limited_function(
                 "Boolean",
                 "true",
@@ -891,6 +901,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 &full_points[..4],
             );
             normalized_limit.declarations = declarations.clone();
+            normalized_limit.expected_function_call_charges = Some(3);
             let mut result_limit = limited_function(
                 "Boolean",
                 "true",
@@ -905,6 +916,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 &full_points[..5],
             );
             result_limit.declarations = declarations;
+            result_limit.expected_function_call_charges = Some(3);
             vec![complete, normalized_limit, result_limit]
         }
         "T14" => {
@@ -915,6 +927,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 );
                 let mut complete = function("Boolean", "true", Expected::Boolean(false));
                 complete.declarations = body.clone();
+                complete.expected_function_call_charges = Some(3);
                 complete.limits = limits(5, 3, 0, 2, 3, 1);
                 complete.expected_charges = Some(vec![
                     ChargePoint::TextInputBytes,
@@ -933,6 +946,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     },
                 );
                 denied.declarations = body.clone();
+                denied.expected_function_call_charges = Some(3);
                 denied.limits = limits(5, 3, 0, 2, 2, 1);
                 denied.expected_charges = Some(vec![
                     ChargePoint::TextInputBytes,
@@ -943,123 +957,31 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
             }
             cases
         }
-        "T16" => {
-            let nfd_input = format!("convert<Text[1, 1; nfd]>(Text(\"{decomposed}\"))");
-            let scalar_input = format!(
-                "convert<Text[1, 1; unicode-scalars]>(Text(\"{decomposed}\"))"
-            );
-            let binary_input = "convert<Text[1, 1; binary-utf8]>(Text(\"é\"))";
-            let nfd_points = [
-                ChargePoint::TextInputBytes,
-                ChargePoint::TextDecodeScalars,
-                ChargePoint::TextNormalizeInput,
-                ChargePoint::TextNormalizeOutput,
-                ChargePoint::TextNormalizeOutput,
-            ];
-            vec![
-                limited_function(
-                    "Text[1, 1; nfd]",
-                    &nfd_input,
-                    limits(3, 2, 2, 1, 5, 1),
-                    Expected::Refused {
-                        code: "text_length_out_of_domain".to_owned(),
-                        cause: Some("outside-domain".to_owned()),
-                    },
-                    &nfd_points,
-                ),
-                limited_function(
-                    "Text[1, 1; nfd]",
-                    &nfd_input,
-                    limits(3, 2, 1, 1, 5, 1),
-                    Expected::Incomplete {
-                        limit_kind: LimitKind::NormalizedScalars,
-                        limit: 1,
-                        consumed: 1,
-                        next_charge: Integer::from(2_i64),
-                        charge_point: ChargePoint::TextNormalizeOutput,
-                    },
-                    &nfd_points[..4],
-                ),
-                limited_function(
-                    "Text[1, 1; unicode-scalars]",
-                    &scalar_input,
-                    limits(3, 2, 0, 1, 2, 1),
-                    Expected::Refused {
-                        code: "text_length_out_of_domain".to_owned(),
-                        cause: Some("outside-domain".to_owned()),
-                    },
-                    &[
-                        ChargePoint::TextInputBytes,
-                        ChargePoint::TextDecodeScalars,
-                    ],
-                ),
-                limited_function(
-                    "Text[1, 1; unicode-scalars]",
-                    &scalar_input,
-                    limits(3, 1, 0, 1, 2, 1),
-                    Expected::Incomplete {
-                        limit_kind: LimitKind::TextScalars,
-                        limit: 1,
-                        consumed: 0,
-                        next_charge: Integer::from(2_i64),
-                        charge_point: ChargePoint::TextDecodeScalars,
-                    },
-                    &[ChargePoint::TextInputBytes],
-                ),
-                limited_function(
-                    "Text[1, 1; binary-utf8]",
-                    binary_input,
-                    limits(2, 0, 0, 1, 1, 1),
-                    Expected::Refused {
-                        code: "text_length_out_of_domain".to_owned(),
-                        cause: Some("outside-domain".to_owned()),
-                    },
-                    &[ChargePoint::TextInputBytes],
-                ),
-                limited_function(
-                    "Text[1, 1; binary-utf8]",
-                    binary_input,
-                    limits(1, 0, 0, 1, 1, 1),
-                    Expected::Incomplete {
-                        limit_kind: LimitKind::TextInputBytes,
-                        limit: 1,
-                        consumed: 0,
-                        next_charge: Integer::from(2_i64),
-                        charge_point: ChargePoint::TextInputBytes,
-                    },
-                    &[],
-                ),
-            ]
-            .into_iter()
-            .map(|mut case| {
-                case.check_mode = CheckMode::Kernel;
-                case
-            })
-            .collect()
-        }
         "T15" => vec![
             SourceCase {
                 declarations: "enum Status { READY, DONE }\nfunction f using v(): Boolean pure { Status::READY < Status::DONE }".to_owned(),
                 expected: Expected::Refused {
                     code: "ill_typed".to_owned(),
-                    cause: None,
+                    cause: Some("operator-ineligible".to_owned()),
                 },
                 arguments: Vec::new(),
                 quantity_parameter_arguments: Vec::new(),
                 limits: limits(0, 0, 0, 0, 0, 0),
                 expected_charges: Some(Vec::new()),
+                expected_function_call_charges: Some(0),
                 check_mode: CheckMode::Linked,
             },
             SourceCase {
                 declarations: "enum A { READY }\nenum B { READY }\nfunction f using v(): Boolean pure { A::READY = B::READY }".to_owned(),
                 expected: Expected::Refused {
                     code: "ill_typed".to_owned(),
-                    cause: None,
+                    cause: Some("type-mismatch".to_owned()),
                 },
                 arguments: Vec::new(),
                 quantity_parameter_arguments: Vec::new(),
                 limits: limits(0, 0, 0, 0, 0, 0),
                 expected_charges: Some(Vec::new()),
+                expected_function_call_charges: Some(0),
                 check_mode: CheckMode::Linked,
             },
         ],
@@ -1317,12 +1239,13 @@ fn float_extended_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>>
             declarations: format!("function f using v(): Boolean pure {{ {body} }}"),
             expected: Expected::Refused {
                 code: "ill_typed".to_owned(),
-                cause: None,
+                cause: Some("type-mismatch".to_owned()),
             },
             arguments: Vec::new(),
             quantity_parameter_arguments: Vec::new(),
             limits: limits(0, 0, 0, 0),
             expected_charges: Some(Vec::new()),
+            expected_function_call_charges: Some(0),
             check_mode: CheckMode::Linked,
         })
         .collect(),
@@ -1757,6 +1680,7 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
         quantity_parameter_arguments: Vec::new(),
         limits: UNLIMITED,
         expected_charges: None,
+        expected_function_call_charges: None,
         check_mode: CheckMode::Linked,
     }])
 }
@@ -1825,6 +1749,7 @@ fn accounting_unit_case(
         quantity_parameter_arguments: Vec::new(),
         limits,
         expected_charges: Some(charges.to_vec()),
+        expected_function_call_charges: Some(1),
         check_mode: CheckMode::Linked,
     }
 }
@@ -1923,12 +1848,13 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     ),
                     expected: Expected::Refused {
                         code: "ill_typed".to_owned(),
-                        cause: None,
+                        cause: Some("type-mismatch".to_owned()),
                     },
                     arguments: Vec::new(),
                     quantity_parameter_arguments: Vec::new(),
                     limits: unit_limits(0, 0, 0, 0, 0, 0, 0),
                     expected_charges: Some(Vec::new()),
+                    expected_function_call_charges: Some(0),
                     check_mode: CheckMode::Linked,
                 })
                 .collect()
@@ -2083,12 +2009,13 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     ),
                     expected: Expected::Refused {
                         code: "ill_typed".to_owned(),
-                        cause: None,
+                        cause: Some("type-mismatch".to_owned()),
                     },
                     arguments: Vec::new(),
                     quantity_parameter_arguments: Vec::new(),
                     limits: unit_limits(0, 0, 0, 0, 0, 0, 0),
                     expected_charges: Some(Vec::new()),
+                    expected_function_call_charges: Some(0),
                     check_mode: CheckMode::Linked,
                 });
             std::iter::once(result).chain(affine).collect()
@@ -2140,12 +2067,13 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 ),
                 expected: Expected::Refused {
                     code: "ill_typed".to_owned(),
-                    cause: None,
+                    cause: Some("type-mismatch".to_owned()),
                 },
                 arguments: Vec::new(),
                 quantity_parameter_arguments: Vec::new(),
                 limits: unit_limits(0, 0, 0, 0, 0, 0, 0),
                 expected_charges: Some(Vec::new()),
+                expected_function_call_charges: Some(0),
                 check_mode: CheckMode::Linked,
             },
             accounting_unit_case_with_quantity_parameter(
@@ -2269,12 +2197,13 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 ),
                 expected: Expected::Refused {
                     code: "ill_typed".to_owned(),
-                    cause: None,
+                    cause: Some("type-mismatch".to_owned()),
                 },
                 arguments: Vec::new(),
                 quantity_parameter_arguments: Vec::new(),
                 limits: unit_limits(0, 0, 0, 0, 0, 0, 0),
                 expected_charges: Some(Vec::new()),
+                expected_function_call_charges: Some(0),
                 check_mode: CheckMode::Linked,
             },
             SourceCase {
@@ -2283,12 +2212,13 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 ),
                 expected: Expected::Refused {
                     code: "ill_typed".to_owned(),
-                    cause: None,
+                    cause: Some("type-mismatch".to_owned()),
                 },
                 arguments: Vec::new(),
                 quantity_parameter_arguments: Vec::new(),
                 limits: unit_limits(0, 0, 0, 0, 0, 0, 0),
                 expected_charges: Some(Vec::new()),
+                expected_function_call_charges: Some(0),
                 check_mode: CheckMode::Linked,
             },
         ],
@@ -2595,7 +2525,10 @@ fn observed(case: &SourceCase) -> Observation {
     let package = CheckedPackage::link(checked);
     let mut limits = case.limits;
     if case.expected_charges.is_some() && limits.work_units != u64::MAX {
-        let source_function_calls = case.declarations.matches("function ").count() as u64;
+        let source_function_calls = case
+            .expected_function_call_charges
+            .expect("a metered source case declares its literal FunctionCall count")
+            as u64;
         limits.work_units = limits
             .work_units
             .checked_add(source_function_calls)
@@ -2762,25 +2695,12 @@ fn compare(vector: &QualificationVector) -> Result<usize, String> {
     let mut failures = Vec::new();
     for (index, case) in cases.iter().enumerate() {
         let actual = observed(case);
-        let matches = match (&case.expected, &actual.result) {
-            (Expected::Refused { code, cause: None }, Expected::Refused { code: actual, .. }) => {
-                code == actual
-            }
-            _ => case.expected == actual.result,
-        };
+        let matches = case.expected == actual.result;
         let charges_match = case
             .expected_charges
             .as_ref()
             .is_none_or(|expected| *expected == actual.node_charges);
-        let expected_function_call_charges = case.expected_charges.as_ref().map(|_| {
-            if matches!(case.expected, Expected::Refused { .. })
-                && case.expected_charges.as_ref().is_some_and(Vec::is_empty)
-            {
-                0
-            } else {
-                case.declarations.matches("function ").count()
-            }
-        });
+        let expected_function_call_charges = case.expected_function_call_charges;
         let function_calls_match = expected_function_call_charges
             .is_none_or(|expected| actual.function_call_charges == expected);
         if !matches || !charges_match || !function_calls_match {
@@ -2826,17 +2746,297 @@ source_vectors!("FSpec-TC-192"; div02=>"DIV-02", div04=>"DIV-04");
 source_vectors!("FSpec-TC-193"; f03=>"F03", f04=>"F04", f07=>"F07", f08=>"F08", f10=>"F10", f11=>"F11", f15=>"F15", f16=>"F16");
 
 macro_rules! accounting_source_vectors {
-    ($requirement:literal, $test_case:literal; $( $test:ident => $id:literal ),+ $(,)?) => {$ (
-        #[trace($requirement, $test_case, "FR-093-AC-56", "FR-397-AC-27", "FR-397-AC-28")]
+    ($owner:literal, $test_case:literal; $( $test:ident => $id:literal ),+ $(,)?) => {$ (
+        #[trace($owner, $test_case)]
         #[test]
-        fn $test() { compare(vector($id)).unwrap_or_else(|failure| panic!("{failure}")); }
+        fn $test() { compare_accounting(vector($id)).unwrap_or_else(|failure| panic!("{failure}")); }
     )+};
+}
+
+fn compare_accounting(vector: &QualificationVector) -> Result<usize, String> {
+    let cases = source_cases(vector).expect("accounting vector has a declared adapter");
+    assert!(!cases.is_empty(), "{} must have cases", vector.id);
+    let result_only = matches!(vector.id, "F23" | "F29");
+    for (index, case) in cases.iter().enumerate() {
+        if result_only {
+            assert!(
+                case.expected_charges.is_none(),
+                "{}[{index}] has no row budget",
+                vector.id
+            );
+            assert!(
+                case.expected_function_call_charges.is_none(),
+                "{}[{index}] has no call budget",
+                vector.id
+            );
+        } else {
+            assert!(
+                case.expected_charges.is_some(),
+                "{}[{index}] lacks literal node charges",
+                vector.id
+            );
+            assert!(
+                case.expected_function_call_charges.is_some(),
+                "{}[{index}] lacks a literal FunctionCall count",
+                vector.id
+            );
+        }
+    }
+    compare(vector)
+}
+
+#[derive(Clone, Copy)]
+struct T16ProfileRow {
+    profile: TextProfile,
+    input: &'static str,
+    retained: &'static str,
+    exact_length: u64,
+    refused_charges: &'static [ChargePoint],
+    success_charges: &'static [ChargePoint],
+    incomplete_limits: ScalarLimits,
+    incomplete: Incomplete,
+}
+
+#[trace("FSpec-FR-141-AC-4", "FSpec-FR-141-AC-6", "FSpec-TC-186")]
+#[test]
+fn t16_direct_text_type_admission_covers_each_profile_boundary() {
+    use ChargePoint::{
+        TextDecodeScalars, TextInputBytes, TextNormalizeInput, TextNormalizeOutput,
+        TextResultRetain,
+    };
+    use LimitKind::{NormalizedScalars, TextInputBytes as InputBytes, TextScalars};
+    use TextProfile::{BinaryUtf8, Nfc, Nfd, Nfkc, Nfkd, UnicodeScalars};
+
+    let rows = [
+        T16ProfileRow {
+            profile: UnicodeScalars,
+            input: "é",
+            retained: "é",
+            exact_length: 2,
+            refused_charges: &[TextInputBytes, TextDecodeScalars],
+            success_charges: &[TextInputBytes, TextDecodeScalars, TextResultRetain],
+            incomplete_limits: ScalarLimits {
+                text_scalars: 1,
+                ..UNLIMITED
+            },
+            incomplete: Incomplete {
+                limit_kind: TextScalars,
+                limit: 1,
+                consumed: 0,
+                next_charge: Integer::from(2_u64),
+                charge_point: TextDecodeScalars,
+            },
+        },
+        T16ProfileRow {
+            profile: Nfc,
+            input: "ab",
+            retained: "ab",
+            exact_length: 2,
+            refused_charges: &[
+                TextInputBytes,
+                TextDecodeScalars,
+                TextNormalizeInput,
+                TextNormalizeOutput,
+                TextNormalizeOutput,
+            ],
+            success_charges: &[
+                TextInputBytes,
+                TextDecodeScalars,
+                TextNormalizeInput,
+                TextNormalizeOutput,
+                TextNormalizeOutput,
+                TextResultRetain,
+            ],
+            incomplete_limits: ScalarLimits {
+                normalized_scalars: 1,
+                ..UNLIMITED
+            },
+            incomplete: Incomplete {
+                limit_kind: NormalizedScalars,
+                limit: 1,
+                consumed: 1,
+                next_charge: Integer::from(2_u64),
+                charge_point: TextNormalizeOutput,
+            },
+        },
+        T16ProfileRow {
+            profile: Nfd,
+            input: "é",
+            retained: "é",
+            exact_length: 2,
+            refused_charges: &[
+                TextInputBytes,
+                TextDecodeScalars,
+                TextNormalizeInput,
+                TextNormalizeOutput,
+                TextNormalizeOutput,
+            ],
+            success_charges: &[
+                TextInputBytes,
+                TextDecodeScalars,
+                TextNormalizeInput,
+                TextNormalizeOutput,
+                TextNormalizeOutput,
+                TextResultRetain,
+            ],
+            incomplete_limits: ScalarLimits {
+                normalized_scalars: 1,
+                ..UNLIMITED
+            },
+            incomplete: Incomplete {
+                limit_kind: NormalizedScalars,
+                limit: 1,
+                consumed: 1,
+                next_charge: Integer::from(2_u64),
+                charge_point: TextNormalizeOutput,
+            },
+        },
+        T16ProfileRow {
+            profile: Nfkc,
+            input: "ﬃ",
+            retained: "ffi",
+            exact_length: 3,
+            refused_charges: &[
+                TextInputBytes,
+                TextDecodeScalars,
+                TextNormalizeInput,
+                TextNormalizeOutput,
+                TextNormalizeOutput,
+                TextNormalizeOutput,
+            ],
+            success_charges: &[
+                TextInputBytes,
+                TextDecodeScalars,
+                TextNormalizeInput,
+                TextNormalizeOutput,
+                TextNormalizeOutput,
+                TextNormalizeOutput,
+                TextResultRetain,
+            ],
+            incomplete_limits: ScalarLimits {
+                normalized_scalars: 2,
+                ..UNLIMITED
+            },
+            incomplete: Incomplete {
+                limit_kind: NormalizedScalars,
+                limit: 2,
+                consumed: 2,
+                next_charge: Integer::from(3_u64),
+                charge_point: TextNormalizeOutput,
+            },
+        },
+        T16ProfileRow {
+            profile: Nfkd,
+            input: "é",
+            retained: "é",
+            exact_length: 2,
+            refused_charges: &[
+                TextInputBytes,
+                TextDecodeScalars,
+                TextNormalizeInput,
+                TextNormalizeOutput,
+                TextNormalizeOutput,
+            ],
+            success_charges: &[
+                TextInputBytes,
+                TextDecodeScalars,
+                TextNormalizeInput,
+                TextNormalizeOutput,
+                TextNormalizeOutput,
+                TextResultRetain,
+            ],
+            incomplete_limits: ScalarLimits {
+                normalized_scalars: 1,
+                ..UNLIMITED
+            },
+            incomplete: Incomplete {
+                limit_kind: NormalizedScalars,
+                limit: 1,
+                consumed: 1,
+                next_charge: Integer::from(2_u64),
+                charge_point: TextNormalizeOutput,
+            },
+        },
+        T16ProfileRow {
+            profile: BinaryUtf8,
+            input: "é",
+            retained: "é",
+            exact_length: 2,
+            refused_charges: &[TextInputBytes],
+            success_charges: &[TextInputBytes, TextResultRetain],
+            incomplete_limits: ScalarLimits {
+                text_input_bytes: 1,
+                ..UNLIMITED
+            },
+            incomplete: Incomplete {
+                limit_kind: InputBytes,
+                limit: 1,
+                consumed: 0,
+                next_charge: Integer::from(2_u64),
+                charge_point: TextInputBytes,
+            },
+        },
+    ];
+
+    for row in rows {
+        let payload = TextPayload::from_utf8(row.input.as_bytes()).expect("valid UTF-8 vector");
+        let refused_type = TextType::new(1, 1, row.profile).expect("valid bounded Text type");
+        let mut refused_meter = Meter::new(UNLIMITED);
+        assert!(
+            matches!(
+                admit_text(&payload, &refused_type, &mut refused_meter),
+                Outcome::Refused(Refusal::TextLengthOutOfDomain { .. })
+            ),
+            "{:?}",
+            row.profile
+        );
+        assert_eq!(
+            refused_meter
+                .admitted_charges()
+                .iter()
+                .map(|charge| charge.point)
+                .collect::<Vec<_>>(),
+            row.refused_charges,
+            "{:?}",
+            row.profile
+        );
+
+        let exact_type = TextType::new(row.exact_length, row.exact_length, row.profile)
+            .expect("exact-bound Text type");
+        let mut success_meter = Meter::new(UNLIMITED);
+        let Outcome::Completed(text) = admit_text(&payload, &exact_type, &mut success_meter) else {
+            panic!("exact-bound {:?} text is admitted", row.profile);
+        };
+        assert_eq!(text.length(), row.exact_length, "{:?}", row.profile);
+        assert_eq!(text.retained(), row.retained, "{:?}", row.profile);
+        assert_eq!(
+            success_meter
+                .admitted_charges()
+                .iter()
+                .map(|charge| charge.point)
+                .collect::<Vec<_>>(),
+            row.success_charges,
+            "{:?}",
+            row.profile
+        );
+
+        let mut incomplete_meter = Meter::new(row.incomplete_limits);
+        assert!(
+            matches!(
+                admit_text(&payload, &exact_type, &mut incomplete_meter),
+                Outcome::Incomplete(actual) if actual == row.incomplete
+            ),
+            "{:?}",
+            row.profile
+        );
+    }
 }
 
 accounting_source_vectors!("FSpec-FR-140-AC-6", "FSpec-TC-185"; d09_source_accounting=>"D09", d14_source_accounting=>"D14", d15_source_accounting=>"D15", d16_source_accounting=>"D16", d17_source_accounting=>"D17", d20_source_accounting=>"D20", d21_source_accounting=>"D21", d22_source_accounting=>"D22", d23_source_accounting=>"D23");
 #[derive(Debug, PartialEq, Eq)]
 enum MemberQualificationStatus {
     SourceExpressible,
+    DirectTextAdmission,
     NonQualification {
         ac: &'static str,
         reason: &'static str,
@@ -2844,7 +3044,9 @@ enum MemberQualificationStatus {
 }
 
 fn member_qualification_status(id: &str) -> MemberQualificationStatus {
-    if id == "D19" {
+    if id == "T16" {
+        MemberQualificationStatus::DirectTextAdmission
+    } else if id == "D19" {
         MemberQualificationStatus::NonQualification {
             ac: "FSpec-FR-140-AC-5",
             reason: "The pinned vector admits a Decimal boundary value whose nonzero coefficient at maximum scale cannot be formed as an FSL source value: the contextual literal is rejected as ill_typed/type-mismatch before evaluation, and passing the evaluator value through CheckedPackage::call is rejected as WrongValueKind.",
@@ -2853,8 +3055,6 @@ fn member_qualification_status(id: &str) -> MemberQualificationStatus {
         MemberQualificationStatus::SourceExpressible
     }
 }
-// T16 has no owning AC in QSL-3060's FR map (the mapped ACs cover D24 and
-// TC-193 IEEE rows); keep its text-profile conversion outside this runner.
 accounting_source_vectors!("FSpec-FR-141-AC-6", "FSpec-TC-186"; t11_source_accounting=>"T11", t14_source_accounting=>"T14");
 accounting_source_vectors!("FSpec-FR-141-AC-5", "FSpec-TC-186"; t15_source_accounting=>"T15");
 // DIV-12's `modulo_out_of_domain` mismatch is owned by QSL-3058 / FR-147-AC-9,
@@ -2876,9 +3076,6 @@ accounting_source_vectors!("FSpec-FR-142-AC-2", "FSpec-TC-187"; u14_source_accou
 /// have no ScalarLimitsV1 tuple in their pinned rows, so their source result
 /// is qualified without a synthetic budget tuple.
 #[trace(
-    "FR-093-AC-56",
-    "FR-397-AC-27",
-    "FR-397-AC-28",
     "FSpec-TC-185",
     "FSpec-TC-186",
     "FSpec-TC-187",
@@ -2889,10 +3086,10 @@ accounting_source_vectors!("FSpec-FR-142-AC-2", "FSpec-TC-187"; u14_source_accou
 fn qsl3060_members_have_explicit_source_qualification_status() {
     let members = [
         "D09", "D14", "D15", "D16", "D17", "D19", "D20", "D21", "D22", "D23", "T11", "T14", "T15",
-        "U10", "U13", "U14", "U15", "U16", "U17", "U18", "U19", "U20", "U21", "U22", "U23", "U24",
-        "U25", "U26", "U27", "U28", "U29", "DIV-08", "DIV-10", "DIV-11", "DIV-13", "F17", "F18",
-        "F19", "F20", "F21", "F22", "F23", "F24", "F25", "F26", "F27", "F28", "F29", "F30", "F31",
-        "F33",
+        "T16", "U10", "U13", "U14", "U15", "U16", "U17", "U18", "U19", "U20", "U21", "U22", "U23",
+        "U24", "U25", "U26", "U27", "U28", "U29", "DIV-08", "DIV-10", "DIV-11", "DIV-13", "F17",
+        "F18", "F19", "F20", "F21", "F22", "F23", "F24", "F25", "F26", "F27", "F28", "F29", "F30",
+        "F31", "F33",
     ];
     let tuple_members = [
         "D09", "D14", "D15", "D16", "D17", "D20", "D21", "D22", "D23", "T11", "T14", "T15", "U10",
@@ -2908,25 +3105,33 @@ fn qsl3060_members_have_explicit_source_qualification_status() {
                 assert!(reason.contains("WrongValueKind"));
                 assert!(source_cases(vector(id)).is_none());
             }
+            MemberQualificationStatus::DirectTextAdmission => {
+                assert_eq!(id, "T16");
+                assert!(source_cases(vector(id)).is_none());
+            }
             MemberQualificationStatus::SourceExpressible => {
                 let cases = source_cases(vector(id)).unwrap_or_else(|| {
                     panic!("{id} lacks a source adapter or non-qualification status")
                 });
                 if tuple_members.contains(&id) {
-                    assert!(
-                        cases
-                            .iter()
-                            .filter(|case| case.limits.work_units != u64::MAX)
-                            .all(|case| case.expected_charges.is_some()),
-                        "{id} has a ScalarLimitsV1 tuple but lacks literal node charges"
-                    );
+                    assert!(!cases.is_empty(), "{id} has tuple cases");
+                    for (index, case) in cases.iter().enumerate() {
+                        assert!(
+                            case.expected_charges.is_some(),
+                            "{id}[{index}] lacks literal node charges"
+                        );
+                        assert!(
+                            case.expected_function_call_charges.is_some(),
+                            "{id}[{index}] lacks literal FunctionCall count"
+                        );
+                    }
                 }
             }
         }
     }
 }
 
-#[trace("FSpec-TC-185", "FSpec-FR-140-AC-7", "FR-093-AC-56")]
+#[trace("FSpec-TC-185", "FR-093-AC-56")]
 #[test]
 fn source_runner_applies_node_budget_after_function_call() {
     let rational = |n, d| {
