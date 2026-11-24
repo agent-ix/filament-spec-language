@@ -314,6 +314,172 @@ fn clock_set_snapshot() -> BTreeMap<DocumentRef, Vec<u8>> {
     BTreeMap::from([(identity(), serde_json::to_vec(&document).expect("snapshot"))])
 }
 
+fn replace_encoded_field(node: &mut Json, name: &str, replacement: Json) -> bool {
+    match node {
+        Json::Object(members) => {
+            if members.get("name").and_then(Json::as_str) == Some(name) {
+                if let Some(value) = members.get_mut("value") {
+                    *value = replacement;
+                    return true;
+                }
+            }
+            members
+                .values_mut()
+                .any(|member| replace_encoded_field(member, name, replacement.clone()))
+        }
+        Json::Array(items) => items
+            .iter_mut()
+            .any(|item| replace_encoded_field(item, name, replacement.clone())),
+        _ => false,
+    }
+}
+
+struct RestoreBudget {
+    meter: Meter,
+    used: usize,
+}
+
+impl filament_exact::Reservation for RestoreBudget {
+    fn reserve(&mut self, bytes: usize) -> Result<(), filament_exact::ReservationDenied> {
+        self.used = self
+            .used
+            .checked_add(bytes)
+            .filter(|used| *used <= 4_000_000)
+            .ok_or(filament_exact::ReservationDenied)?;
+        Ok(())
+    }
+}
+
+impl filament_exact::IntegerDecimalBudget for RestoreBudget {
+    fn work(&mut self, units: u64) -> Result<(), filament_exact::ReservationDenied> {
+        self.meter
+            .charge(
+                filament_exact::Charge::new(filament_exact::ChargePoint::GraphEdge)
+                    .work(Integer::from(units)),
+            )
+            .map_err(|_| filament_exact::ReservationDenied)
+    }
+}
+
+impl fsl_eval::simulation::model::ModelKeyBudget for RestoreBudget {
+    fn integer(&mut self, value: &Integer) -> Result<(), filament_exact::ReservationDenied> {
+        self.meter
+            .charge(
+                filament_exact::Charge::new(filament_exact::ChargePoint::GraphResultRetain).size(
+                    filament_exact::LimitKind::IntegerBits,
+                    value.magnitude_bits(),
+                ),
+            )
+            .map_err(|_| filament_exact::ReservationDenied)
+    }
+}
+
+impl fsl_eval::simulation::model::ModelRestoreBudget for RestoreBudget {
+    fn meter(&mut self) -> &mut Meter {
+        &mut self.meter
+    }
+}
+
+#[trace("TC-3084", "FR-1040-AC-12")]
+#[test]
+fn clock_reference_values_restore_from_state_key_with_equality() {
+    use fsl_eval::simulation::model::{
+        ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PopulationUniverse,
+    };
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+
+    let checked = clock_set_fixture();
+    let package = CheckedPackage::link(checked.graph);
+    let snapshots = clock_set_snapshot();
+    let population = key(CLOCKS, "calls");
+    let system = ModelSystem::new(ModelSimulationRequest {
+        emit: EmitLimits::fixture(),
+        input: ModelCheckInput::source(&package),
+        packages: &checked.packages,
+        normalization: ModelNormalizationLimits::default(),
+        snapshots: &snapshots,
+        initial: vec![identity()],
+        universes: vec![PopulationUniverse {
+            population: population.clone(),
+            keys: vec!["c1".to_owned(), "c2".to_owned()],
+        }],
+        observation: ObservationLimits::default(),
+        expansion: ExpansionLimits {
+            max_candidates: 1_000,
+        },
+        meter: LIMITS,
+    })
+    .expect("the Source ModelSystem admits ordinary owners");
+    let original = &system.initial_states()[0];
+    let (initial_bytes, _) = system.state_key(original).expect("state key encodes");
+    let mut encoded: Json = serde_json::from_slice(&initial_bytes).expect("canonical state key");
+    let clock_set = json!({
+        "type": "set",
+        "elements": [
+            {"type": "clock_reference", "place_id": expected_place("c1", "x")},
+            {"type": "clock_reference", "place_id": expected_place("c2", "x")}
+        ]
+    });
+    assert!(replace_encoded_field(&mut encoded, "clock_set", clock_set));
+    let bytes = serde_json::to_vec(&encoded).expect("canonical seeded state key");
+    let mut budget = RestoreBudget {
+        meter: Meter::new(LIMITS),
+        used: 0,
+    };
+    let restored = system
+        .restore_state_key_with_budget(
+            &bytes,
+            fsl_foundation::IdentityLimits::default(),
+            &mut budget,
+            &filament_exact::Cancel::new(),
+        )
+        .expect("clock-reference state key restores");
+    let (restored_bytes, _) = system.state_key(&restored).expect("restored key encodes");
+    assert_eq!(restored_bytes, bytes);
+
+    let field = system
+        .fields_of(&key(CLOCKS, "Call"))
+        .expect("Call fields")
+        .iter()
+        .find(|field| field.name == "clock_set")
+        .expect("clock_set field")
+        .key
+        .clone();
+    let restored_value = &restored.state().populations[&population]["c1"].fields[&field];
+    let Value::Collection(restored_set) = restored_value else {
+        panic!("restored value is a typed ClockReference Set");
+    };
+    let restored_ids = restored_set
+        .elements()
+        .iter()
+        .map(|value| match value {
+            Value::ClockReference(reference) => reference.text().to_owned(),
+            _ => panic!("each restored Set member is a ClockReference"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        restored_ids,
+        [expected_place("c1", "x"), expected_place("c2", "x")]
+    );
+    for value in restored_set.elements() {
+        let Value::ClockReference(reference) = value else {
+            unreachable!("checked above")
+        };
+        let matches_candidate = system
+            .clock_reference_identities()
+            .expect("candidate identities")
+            .iter()
+            .any(|candidate| {
+                candidate.object().as_str() == reference.text()
+                    && candidate.universe() == reference.universe()
+            });
+        assert!(
+            matches_candidate,
+            "restored typed identity equals its model candidate"
+        );
+    }
+}
+
 /// An independent FR-230 grammar oracle. All five components contain only
 /// arrays and strings, so serde's compact JSON is already RFC 8785 canonical.
 fn expected_place(owner: &str, field: &str) -> String {
@@ -1641,8 +1807,18 @@ fn source_generates_clock_references_from_ordinary_admitted_owners() {
                 .expect("typed ClockReference comparison completes"),
         )
     };
-    assert!(matches!(compare(clock("c1", "x"), clock("c1", "x")), Value::Boolean(true)));
-    assert!(matches!(compare(clock("c1", "x"), clock("c1", "y")), Value::Boolean(false)));
+    assert!(matches!(
+        compare(clock("c1", "x"), clock("c1", "x")),
+        Value::Boolean(true)
+    ));
+    assert!(matches!(
+        compare(clock("c1", "x"), clock("c1", "y")),
+        Value::Boolean(false)
+    ));
+    assert!(matches!(
+        compare(clock("c1", "x"), clock("c2", "x")),
+        Value::Boolean(false)
+    ));
     let foreign = Value::ClockReference(
         filament_exact::ClockPlaceReference::new(
             crate::support::ids::universe_id(b"foreign-clock-reference-test"),
@@ -1650,7 +1826,10 @@ fn source_generates_clock_references_from_ordinary_admitted_owners() {
         )
         .expect("same place text in another universe"),
     );
-    assert!(matches!(compare(clock("c1", "x"), foreign), Value::Boolean(false)));
+    assert!(matches!(
+        compare(clock("c1", "x"), foreign),
+        Value::Boolean(false)
+    ));
 }
 
 /// FR-1040-AC-11: all four set aggregators consume ClockReference elements in
