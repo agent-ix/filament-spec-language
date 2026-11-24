@@ -846,6 +846,9 @@ struct Plan<'p> {
     slots: &'p [Slot],
     writable: &'p WritableFields,
     stop_after_first: bool,
+    /// Whether the checked postcondition targets prove that result values do
+    /// not affect either set of operation postconditions.
+    result_independent: bool,
     /// What the postconditions say about the receiver's fields, when the
     /// application is solved and narrowed rather than enumerated.
     narrowing: Option<&'p Narrowing>,
@@ -1288,10 +1291,12 @@ impl Run<'_, '_, '_> {
         let slots = self.slots();
         let writable = self.writable()?;
         let narrowing = self.narrowing()?;
+        let result_independent = narrowing.is_some() && self.operation_postconditions.is_empty();
         let plan = Plan {
             slots: &slots,
             writable: &writable,
             stop_after_first,
+            result_independent,
             narrowing: narrowing.as_ref(),
         };
         let mut deletions = Odometer::new(vec![2; deletable.len()]);
@@ -1465,6 +1470,7 @@ impl Run<'_, '_, '_> {
                 budget,
                 contract,
                 successors,
+                plan.result_independent,
             )?;
             if plan.stop_after_first && successors.len() > initial {
                 return Ok(true);
@@ -2122,6 +2128,7 @@ impl Run<'_, '_, '_> {
         budget: &mut Budget,
         contract: &mut Vec<ContractFinding>,
         successors: &mut Vec<Applied>,
+        result_independent: bool,
     ) -> Result<(), ExpansionStop> {
         let mut effect = self.effect_of(&candidate, delta)?;
         effect.written = written;
@@ -2149,6 +2156,7 @@ impl Run<'_, '_, '_> {
             .or_else(|| ordered.as_ref().map(|(_, order)| order.len() as u128))
             .unwrap_or(1);
         let mut evidence: Option<Evidence> = None;
+        let mut independent_verdict: Option<Conjunction> = None;
         for pick in 0..count {
             let result = match (&plain, &ordered) {
                 (Some(domain), None) => Some(domain.nth(pick).ok_or_else(|| stop(BROKEN))?),
@@ -2167,8 +2175,17 @@ impl Run<'_, '_, '_> {
             if self.application.declaration.result().is_some() {
                 budget.charge()?;
             }
-            let verdict =
-                self.post_conjunction(&mut evidence, &candidate, &effect, result.as_ref())?;
+            let verdict = match (&independent_verdict, result_independent) {
+                (Some(verdict), true) => verdict.clone(),
+                _ => {
+                    let verdict =
+                        self.post_conjunction(&mut evidence, &candidate, &effect, result.as_ref())?;
+                    if result_independent {
+                        independent_verdict = Some(verdict.clone());
+                    }
+                    verdict
+                }
+            };
             match verdict {
                 Conjunction::True => {
                     effect.result = result
