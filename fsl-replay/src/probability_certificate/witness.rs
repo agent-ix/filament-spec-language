@@ -609,12 +609,10 @@ fn replay_probabilistic_witness_impl(
             check_bits(threshold, limits.max_rational_bits)?
         }
     }
-    if !claim.fairness.is_empty()
-        || !matches!(
-            TimedSystem::new(system, &claim.subject.alias),
-            Err(TimedSubjectRefusal::NoTimedModel { .. })
-        )
-    {
+    if !matches!(
+        TimedSystem::new(system, &claim.subject.alias),
+        Err(TimedSubjectRefusal::NoTimedModel { .. })
+    ) {
         return Err(ExactProbabilityGraphError::UnsupportedClaimForm.into());
     }
     let binding = claim_binding(system, claim)?;
@@ -784,6 +782,23 @@ fn replay_probabilistic_witness_impl(
             }
         }
         scheduler.insert(key, entry);
+    }
+    if !claim.fairness.is_empty()
+        && !witness_is_fair(
+            system,
+            claim,
+            target,
+            reference,
+            &graph,
+            &model_states,
+            &scheduler,
+            &witness.initial_key,
+            limits,
+            cancel,
+        )?
+    {
+        // FR-202: an unfair witness settles `inconclusive`, `replay-parity`.
+        return Ok(ProbabilityWitnessReplay::Parity);
     }
     let mut transitions = 0usize;
     let mut mass = rational(0);
@@ -1024,6 +1039,204 @@ fn replay_probabilistic_witness_impl(
             undefined: None,
         },
     )))
+}
+
+/// One state of the chain a randomized witness induces on its evidence.
+struct FairNode {
+    /// Enabled scheduled identities with their operation text.
+    enabled: Vec<(crate::Schedule, String)>,
+    /// The identities the entry gives positive probability.
+    support: Vec<crate::Schedule>,
+    /// Successor nodes.
+    successors: Vec<usize>,
+    /// Whether a positive-probability step leaves the evidence's states.
+    escapes: bool,
+}
+
+/// FS-9 / FR-202: every bottom strongly connected component of the chain the
+/// witness scheduler induces on the evidence's states meets FR-406's
+/// fair-end-component condition. A reached state with no entry, or a
+/// scheduler outside the enabled identities, is not a fair witness.
+#[allow(clippy::too_many_arguments)]
+fn witness_is_fair(
+    system: &ModelSystem<'_>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    target: &ReachTarget,
+    reference: Option<&ObjectReference>,
+    graph: &CheckerGraph,
+    model_states: &BTreeMap<ProbabilityProductKey, ModelSimState>,
+    scheduler: &BTreeMap<&ProbabilityProductKey, &ProbabilisticSchedulerChoice>,
+    initial_key: &ProbabilityProductKey,
+    limits: &ExactProbLimits,
+    cancel: &Cancel,
+) -> Result<bool, ProbabilityWitnessError> {
+    use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
+    let is_leaf = |key: &ProbabilityProductKey| -> Result<bool, ProbabilityWitnessError> {
+        let terminal = graph
+            .states
+            .get(key)
+            .ok_or(ProbabilityWitnessError::Refused)?
+            .choices
+            .is_empty();
+        let state = model_states
+            .get(key)
+            .ok_or(ProbabilityWitnessError::Refused)?;
+        Ok(outcome(
+            system,
+            target,
+            reference,
+            state,
+            terminal,
+            cancel,
+            #[cfg(feature = "test-support")]
+            &mut |_| {},
+        )?
+        .is_some())
+    };
+    if is_leaf(initial_key)? {
+        return Ok(true);
+    }
+    let mut index: BTreeMap<ProbabilityProductKey, usize> = BTreeMap::new();
+    let mut nodes: Vec<FairNode> = Vec::new();
+    let mut queue = std::collections::VecDeque::new();
+    index.insert(initial_key.clone(), 0);
+    queue.push_back(initial_key.clone());
+    while let Some(key) = queue.pop_front() {
+        poll_cancel(cancel)?;
+        let Some(entry) = scheduler.get(&key) else {
+            return Ok(false);
+        };
+        let state = model_states
+            .get(&key)
+            .ok_or(ProbabilityWitnessError::Refused)?;
+        let actions = system
+            .actions_with_cancel(state, cancel)
+            .map_err(|stop| cancelled_expansion(stop, cancel))?
+            .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
+        let support: Vec<crate::Schedule> = match entry {
+            ProbabilisticSchedulerChoice::Deterministic(ProductAction::Identity(schedule)) => {
+                vec![schedule.clone()]
+            }
+            ProbabilisticSchedulerChoice::Randomized(distribution) => distribution
+                .iter()
+                .filter_map(|(action, _)| match action {
+                    ProductAction::Identity(schedule) => Some(schedule.clone()),
+                    _ => None,
+                })
+                .collect(),
+            ProbabilisticSchedulerChoice::Deterministic(_) => return Ok(false),
+        };
+        let mut node = FairNode {
+            enabled: Vec::new(),
+            support: support.clone(),
+            successors: Vec::new(),
+            escapes: false,
+        };
+        for action in actions {
+            poll_cancel(cancel)?;
+            let Ok(schedule) = crate::Schedule::of(system, &action.identity) else {
+                continue;
+            };
+            node.enabled
+                .push((schedule.clone(), action.identity.operation.clone()));
+            if !support.contains(&schedule) {
+                continue;
+            }
+            for draw in action.draws {
+                for (_, post) in draw.successors {
+                    let post_key = key_of(system, reference, &post, limits, cancel)?;
+                    if is_leaf(&post_key)? {
+                        node.escapes = true;
+                        continue;
+                    }
+                    let next = match index.get(&post_key) {
+                        Some(next) => *next,
+                        None => {
+                            let next = index.len();
+                            index.insert(post_key.clone(), next);
+                            queue.push_back(post_key);
+                            next
+                        }
+                    };
+                    if !node.successors.contains(&next) {
+                        node.successors.push(next);
+                    }
+                }
+            }
+        }
+        // Nodes are numbered in discovery order, which is queue order.
+        nodes.push(node);
+    }
+    let count = nodes.len();
+    let edges: Vec<Vec<usize>> = nodes.iter().map(|node| node.successors.clone()).collect();
+    let mut reverse = vec![Vec::new(); count];
+    for (from, successors) in edges.iter().enumerate() {
+        for to in successors {
+            reverse[*to].push(from);
+        }
+    }
+    let (_, components, closed) = bottom_components(&edges, &reverse, &mut |_| Ok(()))
+        .map_err(|_| ProbabilityWitnessError::Refused)?;
+    for (component, members) in components.iter().enumerate() {
+        poll_cancel(cancel)?;
+        if !closed[component] || members.iter().any(|member| nodes[*member].escapes) {
+            continue;
+        }
+        for constraint in &claim.fairness {
+            let text = system
+                .operation_text(
+                    constraint.operation().declaring_type(),
+                    constraint.operation().name(),
+                )
+                .ok_or(ProbabilityWitnessError::Refused)?;
+            let operation = |schedule: &(crate::Schedule, String)| schedule.1 == text;
+            let identities: Vec<Option<&crate::Schedule>> =
+                if constraint.granularity() == FairnessGranularity::Whole {
+                    vec![None]
+                } else {
+                    let mut seen: Vec<&crate::Schedule> = Vec::new();
+                    for member in members {
+                        for enabled in nodes[*member].enabled.iter().filter(|e| operation(e)) {
+                            if !seen.contains(&&enabled.0) {
+                                seen.push(&enabled.0);
+                            }
+                        }
+                    }
+                    seen.into_iter().map(Some).collect()
+                };
+            for identity in identities {
+                let matches = |schedule: &crate::Schedule, node: &FairNode| {
+                    node.enabled.iter().any(|enabled| {
+                        &enabled.0 == schedule
+                            && operation(enabled)
+                            && identity.is_none_or(|identity| identity == schedule)
+                    })
+                };
+                let enabled_at = |node: &FairNode| {
+                    node.enabled.iter().any(|enabled| {
+                        operation(enabled) && identity.is_none_or(|identity| identity == &enabled.0)
+                    })
+                };
+                let taken = members.iter().any(|member| {
+                    let node = &nodes[*member];
+                    node.support.iter().any(|schedule| matches(schedule, node))
+                });
+                if taken {
+                    continue;
+                }
+                let unfair = match constraint.kind() {
+                    FairnessKind::Weak => members.iter().all(|member| enabled_at(&nodes[*member])),
+                    FairnessKind::Strong => {
+                        members.iter().any(|member| enabled_at(&nodes[*member]))
+                    }
+                };
+                if unfair {
+                    return Ok(false);
+                }
+            }
+        }
+    }
+    Ok(true)
 }
 
 /// First decisive state under infinite stutter at a genuine terminal state.

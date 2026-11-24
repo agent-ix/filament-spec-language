@@ -391,9 +391,10 @@ fn bounded_monitor_failure(
     use fsl_eval::automaton::QualifiedBoundedError;
     match error {
         QualifiedBoundedError::Translation(_) => not_yet(),
-        QualifiedBoundedError::Automaton(error) => {
-            build_refusal(crate::exact_probabilistic::automaton_refusal(error), subject)
-        }
+        QualifiedBoundedError::Automaton(error) => build_refusal(
+            crate::exact_probabilistic::automaton_refusal(error),
+            subject,
+        ),
         QualifiedBoundedError::Key(_) => broken(),
     }
 }
@@ -401,7 +402,10 @@ fn bounded_monitor_failure(
 /// Dyadic refinement reached its maximum precision with the threshold still inside
 /// `[lower, upper]`.
 fn precision_budget(lower: Rational, upper: Rational, subject: SubjectLimits<'_>) -> EngineReport {
-    settled(&ExactProbBuildIssue::PrecisionBudget { lower, upper }, subject)
+    settled(
+        &ExactProbBuildIssue::PrecisionBudget { lower, upper },
+        subject,
+    )
 }
 
 fn settled(issue: &ExactProbBuildIssue, subject: SubjectLimits<'_>) -> EngineReport {
@@ -1155,7 +1159,17 @@ fn run(
     let bounded_fair = !claim.fairness.is_empty()
         && bounded_formula.is_some()
         && matches!(claim.scheduler, ProbScheduler::Every);
-    if !claim.fairness.is_empty() && !bounded_fair {
+    // FR-200: an unbounded eventual claim under every scheduler with a fairness set.
+    let fair_eventual = !claim.fairness.is_empty()
+        && matches!(claim.scheduler, ProbScheduler::Every)
+        && matches!(
+            claim.form,
+            ProbForm::Reach {
+                target: ReachTarget::Eventually(_),
+                ..
+            }
+        );
+    if !claim.fairness.is_empty() && !bounded_fair && !fair_eventual {
         return not_yet();
     }
     let document_limits = ProbabilityDocumentLimits::for_exact(&limits, meter);
@@ -1297,7 +1311,17 @@ fn run(
         .map(|labels| labels.first().copied().unwrap_or(false))
         .collect();
     let mut interval: Option<Interval> = None;
-    let (values, policy) = if bounded_formula.is_some() {
+    let mut fair_policy: Option<Vec<Option<crate::exact_probabilistic::SchedulerChoice>>> = None;
+    let (values, policy) = if fair_eventual {
+        let fair = match crate::exact_probabilistic::decide_fair_reachability(
+            &product, None, &target, objective, &limits,
+        ) {
+            Ok(fair) => fair,
+            Err(_) => return broken(),
+        };
+        fair_policy = Some(fair.policy);
+        (fair.values, Vec::new())
+    } else if bounded_formula.is_some() {
         let outcome = if bounded_fair {
             crate::exact_probabilistic::decide_fair_bounded_event(&product, bound, &limits)
                 .map(|result| result.outcome)
@@ -1422,12 +1446,40 @@ fn run(
         Err(error) => return graph_failure(error, &limits, subject),
     };
     let reference = binding.as_ref().map(|bound| &bound.reference);
+    if fair_eventual && holds {
+        // A fair-minimum certificate profile is QSL-2778 (FR-1041).
+        return not_yet();
+    }
     if !holds {
         if interval.is_some() {
             return rational_bits_limit(&limits, subject);
         }
         if bounded_fair {
             return not_yet();
+        }
+        if let Some(fair_policy) = fair_policy.as_deref() {
+            // FR-200, FR-413: an acyclic subject is refuted by a randomized fair
+            // witness; a cyclic one needs fair subsystem evidence (QSL-2778).
+            match fsl_replay::admit_acyclic_probabilistic_refutation_subject(
+                &system, &limits, cancel,
+            ) {
+                Ok(true) => {}
+                Ok(false) => return not_yet(),
+                Err(error) => return document_failure(error, subject),
+            }
+            return replay_fair_refutation(
+                &system,
+                claim,
+                &product,
+                fair_policy,
+                *start,
+                &target,
+                reference,
+                &limits,
+                cancel,
+                subject,
+                tamper_witness,
+            );
         }
         let mut own_budget = candidate::CandidateBudget::new(document_limits, cancel);
         let mut subsystem_refutation = || {
@@ -2604,12 +2656,121 @@ fn replay_refutation(
     )
 }
 
+/// Refute an unbounded eventual claim under every scheduler with a fairness
+/// set (FR-200, FR-413): a memoryless randomized fair witness over an acyclic
+/// subject, replayed independently, including the fairness check (FS-9).
+#[allow(clippy::too_many_arguments)]
+fn replay_fair_refutation(
+    system: &ModelSystem<'_>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    product: &ProbProduct,
+    policy: &[Option<crate::exact_probabilistic::SchedulerChoice>],
+    initial: crate::exact_probabilistic::ProbStateId,
+    target: &[bool],
+    binding: Option<&ObjectReference>,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    cancel: &Cancel,
+    subject: SubjectLimits<'_>,
+    tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+) -> EngineReport {
+    let one = Rational::from_integer(1_i64.into());
+    let ProbForm::Reach { bound, .. } = &claim.form else {
+        return not_yet();
+    };
+    let (accepting, past): (Vec<bool>, Rational) = match bound {
+        Bound::AtMost(threshold) => (target.to_vec(), threshold.clone()),
+        Bound::AtLeast(threshold) => (
+            product
+                .states
+                .iter()
+                .enumerate()
+                .map(|(index, _)| {
+                    !target.get(index).copied().unwrap_or(false)
+                        && product
+                            .edges
+                            .iter()
+                            .filter(|edge| edge.from.index() == index)
+                            .all(|edge| {
+                                matches!(
+                                    edge.choice,
+                                    crate::exact_probabilistic::ProductAction::TerminalStutter
+                                )
+                            })
+                })
+                .collect(),
+            one.sub(threshold),
+        ),
+    };
+    let mut producer_meter =
+        filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
+    let mut producer_storage = 0u64;
+    let mut producer_issue = None;
+    let mut control = |work: crate::exact_probabilistic::WitnessWork<'_>| {
+        let result = witness_payload_bytes(work, system, |_| {
+            Err(Box::new(ExactProbBuildIssue::BrokenInvariant))
+        })
+        .and_then(|bytes| {
+            witness_charge(
+                &mut producer_meter,
+                &mut producer_storage,
+                bytes,
+                limits,
+                cancel,
+            )
+        });
+        result.map_err(|issue| {
+            producer_issue = Some(issue);
+            crate::exact_probabilistic::WitnessError::InvalidState
+        })
+    };
+    let produced = crate::exact_probabilistic::produce_randomized_witness(
+        product,
+        policy,
+        initial,
+        &accepting,
+        &past,
+        limits,
+        &mut control,
+    );
+    if cancel.poll() {
+        if let Some(cause) = cancel.tripped() {
+            return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
+        }
+    }
+    if let Some(issue) = producer_issue {
+        return settled(&issue, subject);
+    }
+    let produced = match produced {
+        Ok(Some(witness)) => witness,
+        Ok(None) => return not_yet(),
+        Err(crate::exact_probabilistic::WitnessError::Limit { limit, value }) => {
+            return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
+        }
+        Err(_) => return broken(),
+    };
+    replay_produced_witness(
+        system,
+        claim,
+        product,
+        produced,
+        initial,
+        binding,
+        None,
+        limits,
+        cancel,
+        subject,
+        tamper,
+        producer_meter,
+        producer_storage,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn replay_produced_witness(
     system: &ModelSystem<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
     product: &ProbProduct,
-    produced: crate::exact_probabilistic::ProducedWitness,
+    produced: impl Into<crate::exact_probabilistic::ProducedRandomizedWitness>,
     initial: crate::exact_probabilistic::ProbStateId,
     binding: Option<&ObjectReference>,
     monitor: Option<&fsl_eval::automaton::QualifiedBoundedMonitor>,
@@ -2620,6 +2781,7 @@ fn replay_produced_witness(
     mut producer_meter: filament_exact::Meter,
     mut producer_storage: u64,
 ) -> EngineReport {
+    let produced = produced.into();
     use crate::exact_probabilistic::ProductAction;
     let measure = claim.bounded_measure();
     let item = match fsl_replay::probabilistic_claim_identity(claim) {
@@ -2653,14 +2815,12 @@ fn replay_produced_witness(
         Ok(key) => key,
         Err(error) => return document_failure(error, subject),
     };
-    let mut scheduler = Vec::new();
+    let mut scheduler: Vec<(
+        ProbabilityProductKey,
+        fsl_replay::ProbabilisticSchedulerChoice,
+    )> = Vec::new();
     let mut spelled_scheduler = Vec::new();
-    for (state, action) in produced.entries {
-        // Terminal stutter carries no scheduler decision. Evidence paths
-        // stop at first hits or independently checked nonreach leaves.
-        if matches!(&action, ProductAction::TerminalStutter) {
-            continue;
-        }
+    for (state, entry) in produced.entries {
         let Some(state) = product.states.get(state.index()) else {
             return broken();
         };
@@ -2668,17 +2828,44 @@ fn replay_produced_witness(
             Ok(key) => key,
             Err(error) => return document_failure(error, subject),
         };
-        if let ProductAction::Identity(identity) = &action {
-            spelled_scheduler.push((
-                fsl_eval::simulation::StateKey::from_canonical_bytes(key.as_bytes().to_vec()),
-                identity.clone(),
-            ));
+        let state_key =
+            fsl_eval::simulation::StateKey::from_canonical_bytes(key.as_bytes().to_vec());
+        match entry {
+            crate::exact_probabilistic::EntryChoice::Action(action) => {
+                // Terminal stutter carries no scheduler decision. Evidence paths
+                // stop at first hits or independently checked nonreach leaves.
+                if matches!(&action, ProductAction::TerminalStutter) {
+                    continue;
+                }
+                if let ProductAction::Identity(identity) = &action {
+                    spelled_scheduler.push((state_key, identity.clone()));
+                }
+                let action = match replay_choice(&action) {
+                    Ok(action) => action,
+                    Err(error) => return document_failure(error, subject),
+                };
+                scheduler.push((
+                    key,
+                    fsl_replay::ProbabilisticSchedulerChoice::Deterministic(action),
+                ));
+            }
+            crate::exact_probabilistic::EntryChoice::Randomized(alternatives) => {
+                let mut distribution = Vec::with_capacity(alternatives.len());
+                for (action, weight) in alternatives {
+                    if let ProductAction::Identity(identity) = &action {
+                        spelled_scheduler.push((state_key.clone(), identity.clone()));
+                    }
+                    match replay_choice(&action) {
+                        Ok(action) => distribution.push((action, weight)),
+                        Err(error) => return document_failure(error, subject),
+                    }
+                }
+                scheduler.push((
+                    key,
+                    fsl_replay::ProbabilisticSchedulerChoice::Randomized(distribution),
+                ));
+            }
         }
-        let action = match replay_choice(&action) {
-            Ok(action) => action,
-            Err(error) => return document_failure(error, subject),
-        };
-        scheduler.push((key, action));
     }
     scheduler.sort_by(|a, b| a.0.cmp(&b.0));
     let mut paths = Vec::new();
@@ -2925,15 +3112,7 @@ fn replay_produced_witness(
         instance: None,
         initial: first.clone(),
         initial_key,
-        scheduler: scheduler
-            .into_iter()
-            .map(|(key, action)| {
-                (
-                    key,
-                    fsl_replay::ProbabilisticSchedulerChoice::Deterministic(action),
-                )
-            })
-            .collect(),
+        scheduler,
         paths,
         subsystem: None,
     };
@@ -3458,8 +3637,8 @@ fn timed_step_for(
     TimedStepFailure,
 > {
     use fsl_eval::simulation::model::{TimedState, TimedSystem};
-    let valuation = fsl_replay::digital_key_clocks(system, claim, previous)
-        .ok_or(TimedStepFailure::Unbuilt)?;
+    let valuation =
+        fsl_replay::digital_key_clocks(system, claim, previous).ok_or(TimedStepFailure::Unbuilt)?;
     let timed = TimedSystem::new(system, claim.subject.alias.as_str())
         .map_err(TimedStepFailure::Subject)?;
     // A tie among the zero-time operations of one instant: the product never
