@@ -2641,7 +2641,10 @@ fn inspect_handoff_category(
 ) -> filament_semantic_value::catalog::Category {
     use filament_semantic_value::catalog::Category;
 
-    if matches!(error, crate::checked_handoff::Error::ReaderHostAllocationFailed(_)) {
+    if matches!(
+        error,
+        crate::checked_handoff::Error::ReaderHostAllocationFailed(_)
+    ) {
         Category::InternalFailure
     } else {
         Category::Refusal
