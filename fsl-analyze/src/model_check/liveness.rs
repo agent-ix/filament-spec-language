@@ -86,6 +86,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::Arc;
 
 use filament_exact::{Cancel, CancelCause, Charge, ChargePoint, Meter, ScalarLimits};
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
@@ -850,7 +851,7 @@ enum Property {
 }
 
 /// A product state's canonical property key.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 enum PropertyKey {
     After(usize),
     Undefined,
@@ -993,6 +994,12 @@ struct LassoSystem<'r, S: LiveSubject> {
     automaton: RefCell<PropertyAutomaton>,
     start: StateId,
     readings: RefCell<BTreeMap<(StateKey, bool), Reading>>,
+    /// Validated model-key values, reused while this product pass emits keys
+    /// for its different property states.
+    model_values: RefCell<BTreeMap<StateKey, Arc<canonical_api::CanonicalValue>>>,
+    /// Complete product keys reused for repeated model/property pairs in this
+    /// pass. The exact bytes remain the FR-101 identity.
+    product_keys: RefCell<BTreeMap<(StateKey, PropertyKey), Arc<[u8]>>>,
     /// Successful subject expansions, shared by product states that carry
     /// the same canonical model state. Each `LassoSystem` is one binding's
     /// exploration pass, so this cache never crosses a pass boundary.
@@ -1025,20 +1032,48 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
         &self,
         state: &LState<S::State>,
         identity: IdentityLimits,
-    ) -> Result<Vec<u8>, quire_canonical::Error> {
-        let model = ProductKey::<canonical_api::CanonicalValue, PropertyKey>::read_model_value(
-            state.model_key.as_bytes(),
-            identity.input_bytes,
-        )?;
+    ) -> Result<Arc<[u8]>, quire_canonical::Error> {
         let property = match &state.property {
             Property::After(state) => PropertyKey::After(state.index()),
             Property::Undefined { .. } => PropertyKey::Undefined,
         };
-        ProductKey::<canonical_api::CanonicalValue, _>::canonical_bytes_with_model_value(
-            &model,
-            property,
-            identity.input_bytes,
-        )
+        let key = (state.model_key.clone(), property);
+        let cached_key = self.product_keys.borrow().get(&key).cloned();
+        if let Some(cached_key) = cached_key {
+            check_product_key_limit(
+                state.model_key.as_bytes().len(),
+                property,
+                identity.input_bytes,
+            )?;
+            return Ok(cached_key);
+        }
+        let cached_model = self.model_values.borrow().get(&state.model_key).cloned();
+        let model = match cached_model {
+            Some(model) => model,
+            None => {
+                let model = Arc::new(
+                    ProductKey::<canonical_api::CanonicalValue, PropertyKey>::read_model_value(
+                        state.model_key.as_bytes(),
+                        identity.input_bytes,
+                    )?,
+                );
+                self.model_values
+                    .borrow_mut()
+                    .insert(state.model_key.clone(), Arc::clone(&model));
+                model
+            }
+        };
+        let bytes =
+            ProductKey::<canonical_api::CanonicalValue, _>::canonical_bytes_with_model_value(
+                &model,
+                property,
+                identity.input_bytes,
+            )?;
+        let cached_key: Arc<[u8]> = Arc::from(bytes);
+        self.product_keys
+            .borrow_mut()
+            .insert(key, Arc::clone(&cached_key));
+        Ok(cached_key)
     }
 
     /// Record why the run stops, keeping the first reason, and return the
@@ -1657,6 +1692,50 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
     }
 }
 
+/// Check that a cached product key fits this caller's output bound. Count the
+/// same writer chunks as the original ProductKey encoder so a cache hit
+/// reports the same first exceeded byte count.
+fn check_product_key_limit(
+    model_bytes: usize,
+    property: PropertyKey,
+    max_bytes: u64,
+) -> Result<(), quire_canonical::Error> {
+    let integer_bytes = match property {
+        PropertyKey::After(index) => {
+            Some(i128::try_from(index).unwrap_or(i128::MAX).to_string().len())
+        }
+        PropertyKey::Undefined => None,
+    };
+    let property_bytes = match property {
+        PropertyKey::After(_) => 7,
+        PropertyKey::Undefined => 11,
+    };
+    let mut produced = 0_u64;
+    for chunk in [
+        1,
+        model_bytes,
+        1,
+        1,
+        property_bytes,
+        integer_bytes.unwrap_or(0),
+        usize::from(integer_bytes.is_some()),
+        1,
+        1,
+    ] {
+        produced = produced.saturating_add(u64::try_from(chunk).unwrap_or(u64::MAX));
+        if produced > max_bytes {
+            return Err(quire_canonical::Error::Limit(
+                quire_canonical::LimitExceeded {
+                    kind: quire_canonical::LimitKind::CanonicalBytes,
+                    bound: max_bytes,
+                    required: produced,
+                },
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// FR-156: the ample sets of one binding's product, chosen at the model
 /// component of each product state.
 struct LassoAmple<'p, 'r, 'a> {
@@ -2161,6 +2240,8 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             automaton: RefCell::new(automaton),
             start,
             readings: RefCell::new(BTreeMap::new()),
+            model_values: RefCell::new(BTreeMap::new()),
+            product_keys: RefCell::new(BTreeMap::new()),
             expansions: RefCell::new(BTreeMap::new()),
             model_only_expansions: RefCell::new(BTreeMap::new()),
             captured: self.clause.capture_site(),
