@@ -927,13 +927,9 @@ fn outcome() -> &'static Outcome {
         .unwrap_or_else(|error| panic!("{error}"))
 }
 
-/// AC gap: QSL-3074. FR-350 has no acceptance criterion for the state-core
-/// runner or the ticket-key registry (AC-20 and AC-21 are about the
-/// finite-window `window` group only), so the tests below carry the
-/// requirement id `FR-350` and no AC id.
-///
-/// Provenance: QSL-2048. Every state-core case runs through the compiler.
-#[trace("FR-350")]
+/// Every state-core case runs through the compiler and is accounted for by
+/// the fixture runner and ticket-key registry.
+#[trace("FR-350-AC-22", "FR-350-AC-23")]
 #[test]
 fn conformance_fspec_state_core_source_cases() {
     let outcome = outcome();
@@ -953,9 +949,9 @@ fn conformance_fspec_state_core_source_cases() {
     );
 }
 
-/// AC gap: QSL-3074. Provenance: QSL-2048. The cases run equal the cases the
-/// fixtures list, once each, and equal the published package's shape.
-#[trace("FR-350")]
+/// The cases run equal the cases the fixtures list, once each, and equal the
+/// published package's shape.
+#[trace("FR-350-AC-22")]
 #[test]
 fn executed_and_reported_cases_equal_the_cases_in_the_fixtures() {
     let outcome = outcome();
@@ -1018,11 +1014,10 @@ fn altered(case: &Value) -> Value {
     case
 }
 
-/// AC gap: QSL-3074. Provenance: QSL-2048. For every file that has a case
-/// matching its fixture, each matching case, altered in the fields its runner
-/// reads, is reported as a mismatch. The reference file has no matching case
-/// and is covered by the next test.
-#[trace("FR-350")]
+/// For every file that has a case matching its fixture, each matching case,
+/// altered in the fields its runner reads, is reported as a mismatch. The
+/// reference file has no matching case and is covered by the next test.
+#[trace("FR-350-AC-22")]
 #[test]
 fn an_altered_expectation_is_a_mismatch_for_every_matched_case_of_each_file() {
     let outcome = outcome();
@@ -1059,11 +1054,10 @@ fn an_altered_expectation_is_a_mismatch_for_every_matched_case_of_each_file() {
     }
 }
 
-/// AC gap: QSL-3074. Provenance: QSL-2048. The reference file executes no
-/// case today. This is not an altered-expectation test: it asserts that every
-/// reference case is reported unsupported and pinned by the registry, so one
-/// that starts to execute, or to fail differently, fails the run.
-#[trace("FR-350")]
+/// The reference file executes no case. Every reference case is reported
+/// unsupported and pinned by the registry, so one that starts to execute or
+/// fails differently fails the run.
+#[trace("FR-350-AC-23")]
 #[test]
 fn every_reference_case_is_unsupported_and_pinned_by_the_registry() {
     let outcome = outcome();
@@ -1087,9 +1081,8 @@ fn every_reference_case_is_unsupported_and_pinned_by_the_registry() {
     assert_eq!(tally.keyed.len(), 10);
 }
 
-/// AC gap: QSL-3074. Provenance: QSL-2048. A missing standard fails with a
-/// message, and no run passes with zero cases.
-#[trace("FR-350")]
+/// A missing standard fails with a message, and no run passes with zero cases.
+#[trace("FR-350-AC-22")]
 #[test]
 fn a_missing_standard_fails_clearly_and_never_runs_zero_cases() {
     let missing = std::path::Path::new("/nonexistent/fspec-dir-for-the-self-test");

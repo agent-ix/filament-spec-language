@@ -61,9 +61,8 @@ fn run_case(workspace: &Path, mode: &str, fail_at: usize) -> Result<String, Erro
     )
 }
 
-// AC gap: QSL-3074 (no FR-350 AC names the state-core runner).
 #[cfg(unix)]
-#[ix_trace_rs::trace("FR-350")]
+#[ix_trace_rs::trace("FR-350-AC-21", "FR-350-AC-22")]
 #[test]
 fn both_source_fixture_runners_are_required_conformance_selections() {
     for (selection, summary) in [

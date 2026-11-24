@@ -222,12 +222,9 @@ mod tests {
         Settled::Mismatch(text.to_owned())
     }
 
-    // AC gap: QSL-3074. FR-350 has no AC for the key registry; the tests of
-    // this module carry the requirement id only.
-
-    /// Provenance: QSL-2048. A mismatch needs a ticket key, a fixed case
-    /// loses it, and an unsupported case needs one too.
-    #[trace("FR-350")]
+    /// A mismatch needs a ticket key, a fixed case loses it, and an
+    /// unsupported case needs one too.
+    #[trace("FR-350-AC-23")]
     #[test]
     fn a_mismatch_needs_a_ticket_key_and_a_fixed_case_loses_it() {
         static KEYED: &[Pending] = &[entry("A", "QSL-3027", "wrong"), entry("B", "QSL-3028", "x")];
@@ -257,9 +254,9 @@ mod tests {
         assert!(ALLOWED_TICKETS.contains(&"QSL-3035"));
     }
 
-    /// Provenance: QSL-2048. A key outside the allowed set, a malformed key
-    /// and a key naming no case each fail the run.
-    #[trace("FR-350")]
+    /// A key outside the allowed set, a malformed key and a key naming no
+    /// case each fail the run.
+    #[trace("FR-350-AC-23")]
     #[test]
     fn a_stray_malformed_or_foreign_key_fails_the_run() {
         static STRAY: &[Pending] = &[entry("Z", "bad", "p")];
@@ -273,9 +270,9 @@ mod tests {
             .any(|text| text.contains("not in the allowed set")));
     }
 
-    /// Provenance: QSL-2048. A keyed case that fails differently than its pin
-    /// fails the run, for a mismatch and for an unsupported reason alike.
-    #[trace("FR-350")]
+    /// A keyed case that fails differently than its pin fails the run, for a
+    /// mismatch and for an unsupported reason alike.
+    #[trace("FR-350-AC-23")]
     #[test]
     fn a_keyed_case_that_fails_differently_than_pinned_fails_the_run() {
         static KEYED: &[Pending] = &[entry("A", "QSL-3027", "expected X, actual Y")];
@@ -317,9 +314,9 @@ mod tests {
         assert_eq!(changed.failures.len(), 1);
     }
 
-    /// Provenance: QSL-2048. A runner error on a keyed case fails the run: an
-    /// error is never an answer a key can pin.
-    #[trace("FR-350")]
+    /// A runner error on a keyed case fails the run: an error is never an
+    /// answer a key can pin.
+    #[trace("FR-350-AC-23")]
     #[test]
     fn a_runner_error_on_a_keyed_case_fails_the_run() {
         static KEYED: &[Pending] = &[entry("A", "QSL-3027", "boom")];
@@ -333,9 +330,9 @@ mod tests {
         assert!(tally.keyed.is_empty());
     }
 
-    /// Provenance: QSL-2048. An entry with an unknown runner name, a
-    /// duplicate (runner, case) entry and an entry with no pin each fail.
-    #[trace("FR-350")]
+    /// An entry with an unknown runner name, a duplicate (runner, case) entry
+    /// and an entry with no pin each fail.
+    #[trace("FR-350-AC-23")]
     #[test]
     fn the_registry_rejects_unknown_runners_duplicates_and_empty_pins() {
         static UNKNOWN: &[Pending] = &[Pending {
