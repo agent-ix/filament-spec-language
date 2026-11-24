@@ -187,13 +187,33 @@ fn world(
     formulas: &[&str],
     start: &[(&str, Json)],
 ) -> World {
+    world_with_activation(
+        (object, variable),
+        document,
+        contracts,
+        profile,
+        "on origin",
+        formulas,
+        start,
+    )
+}
+
+fn world_with_activation(
+    (object, variable): (&str, &str),
+    document: &[u8],
+    contracts: &str,
+    profile: &str,
+    activation: &str,
+    formulas: &[&str],
+    start: &[(&str, Json)],
+) -> World {
     let packages = package_input([document]).unwrap();
     let clauses: String = formulas
         .iter()
         .enumerate()
         .map(|(index, formula)| {
             format!(
-                "temporal C{index} using t over ({variable}: M::{object}) clock \"model-steps\" on origin {{ {formula} }}\n"
+                "temporal C{index} using t over ({variable}: M::{object}) clock \"model-steps\" {activation} {{ {formula} }}\n"
             )
         })
         .collect();
@@ -518,6 +538,42 @@ const COUNTER_CONTRACT: &str = "pre CanInc using v on M::Counter::inc { self.val
 
 fn counter(profile: &str, formulas: &[&str]) -> World {
     counter_with(COUNTER_CONTRACT, profile, formulas)
+}
+
+fn counter_with_activation(
+    profile: &str,
+    activation: &str,
+    formulas: &[&str],
+    start: &[(&str, Json)],
+) -> World {
+    let document = document(
+        "Counter",
+        vec![field("Counter", "value", &ident("Level"), "required")],
+        vec![operation("Counter", "inc", &["value"])],
+    );
+    world_with_activation(
+        ("Counter", "c"),
+        &document,
+        COUNTER_CONTRACT,
+        profile,
+        activation,
+        formulas,
+        start,
+    )
+}
+
+#[test]
+fn inspect_ac33_script() {
+    let world = counter_with_activation(
+        BOUNDED,
+        "on each",
+        &["eventually[0,1] holds(c.value = 3)"],
+        &[("c", json!({"value": {"integer": "0"}}))],
+    );
+    let script = world
+        .query(0, SmtQueryKind::Unrolling { depth: 2 })
+        .expect("encodes");
+    println!("{script}");
 }
 
 fn counter_with(contracts: &str, profile: &str, formulas: &[&str]) -> World {
