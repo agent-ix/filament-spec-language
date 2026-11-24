@@ -28,9 +28,13 @@ pub(super) fn run(
         Some(fsl_semantics::check::Weighting::Delay) => return not_yet(),
         None => None,
     };
-    if fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
-        != Some(fsl_semantics::check::TemporalProfile::InfiniteTrace)
-    {
+    if !matches!(
+        fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity()),
+        Some(
+            fsl_semantics::check::TemporalProfile::InfiniteTrace
+                | fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+        )
+    ) {
         return not_yet();
     }
     let every = matches!(claim.scheduler, ProbScheduler::Every);

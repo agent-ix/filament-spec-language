@@ -788,12 +788,16 @@ fn subject(
     else {
         return Err(ProbabilityDocumentError::Unsupported);
     };
-    if fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
-        != Some(fsl_semantics::check::TemporalProfile::InfiniteTrace)
-        || !matches!(
-            TimedSystem::new(system, &claim.subject.alias),
-            Err(TimedSubjectRefusal::NoTimedModel { .. })
+    if !matches!(
+        fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity()),
+        Some(
+            fsl_semantics::check::TemporalProfile::InfiniteTrace
+                | fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
         )
+    ) || !matches!(
+        TimedSystem::new(system, &claim.subject.alias),
+        Err(TimedSubjectRefusal::NoTimedModel { .. })
+    )
     {
         return Err(ProbabilityDocumentError::Unsupported);
     }
