@@ -2998,7 +2998,7 @@ fn on_each_reset_process_preserves_conditioned_scheduler_extrema() {
     let scheduled = World::new(&model(
         true,
         each("Minimum", "every scheduler", ">=", "rational(1, 2)")
-            + &each("Maximum", "every scheduler", "<=", "rational(1, 1)"),
+            + &each("Maximum", "every scheduler", "<=", "rational(9, 10)"),
     ));
     let engines = Engines::fsl().expect("exact EN-5 is registered");
     let settle = |world: &World, name: &str| {
@@ -3013,6 +3013,19 @@ fn on_each_reset_process_preserves_conditioned_scheduler_extrema() {
     for (name, expected) in [("Minimum", ratio(1, 2)), ("Maximum", ratio(1, 1))] {
         let record = settle(&scheduled, name);
         let terminal = record.terminal().expect("the exact item settles");
+        if name == "Maximum" {
+            // FR-407-AC-18's qualitative gate rejects an endpoint threshold
+            // of 1. The proper upper-side claim is <= 9/10 and must refute;
+            // scheduler `a` attains 1 because its only activating branch
+            // sets success, while probability values cannot exceed 1.
+            assert_eq!(expected, ratio(1, 1));
+            assert!(
+                matches!(terminal.value(), TerminalValue::Refuted),
+                "the conditioned maximum exceeds 9/10: {:?}",
+                terminal.value()
+            );
+            continue;
+        }
         let TerminalValue::Proved {
             basis: ProofBasis::ExactValue { value, .. },
             ..
