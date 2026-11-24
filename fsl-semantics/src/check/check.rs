@@ -5506,6 +5506,11 @@ impl<'a> Typer<'a> {
         )))
     }
 
+    /// A collection-typed `PlaceReference` is the slot domain of its place and
+    /// is built only here; every other `PlaceReference` is a `ref(..)` that
+    /// [`Self::clock_ref`] types `Reference<Clock>`. Lowering tells them apart
+    /// by that type.
+    ///
     /// The clock collection `field` of the record element `operand` selects
     /// (FR-230-AC-67): `operand` is read from an object reference through
     /// fields and selectors, and the steps with `field` and its slot name a
@@ -5519,11 +5524,16 @@ impl<'a> Typer<'a> {
     ) -> Option<Node> {
         use super::lowering::PlaceStep;
         let mut names: Vec<Option<String>> = vec![None, Some(field.to_owned())];
-        let mut slot_nodes = Vec::new();
-        let operand_id = self.push(operand.clone());
-        let mut current = operand_id;
+        // The selector nodes, innermost first while walking; `None` is the
+        // operand itself, which is pushed only once the place is found.
+        let mut slot_nodes: Vec<Option<NodeId>> = Vec::new();
+        let mut current: Option<NodeId> = None;
         let (owner_id, object) = loop {
-            let (next, name) = match &self.body.get(current)?.kind {
+            let node = match current {
+                None => operand,
+                Some(id) => self.body.get(id)?,
+            };
+            let (next, name) = match &node.kind {
                 NodeKind::Index { collection, .. } => {
                     slot_nodes.push(current);
                     (*collection, None)
@@ -5539,9 +5549,9 @@ impl<'a> Typer<'a> {
                 _ => return None,
             };
             names.push(name);
-            current = next;
-            if let ValueType::Reference(object) = &self.body.get(current)?.value_type {
-                break (current, object.clone());
+            current = Some(next);
+            if let ValueType::Reference(object) = &self.body.get(next)?.value_type {
+                break (next, object.clone());
             }
         };
         names.reverse();
@@ -5572,6 +5582,11 @@ impl<'a> Typer<'a> {
         // The slot domain of the collection (FSpec FR-772): the selectors of
         // its live slots, `Set<Integer>` bounded by the collection's maximum.
         // Its slot terms are the selectors of the slot steps before the last.
+        let operand_id = self.push(operand.clone());
+        let slot_nodes = slot_nodes
+            .into_iter()
+            .map(|slot| slot.unwrap_or(operand_id))
+            .collect();
         let cardinality = shape.max.map(CardinalityBound::at_most);
         let value_type = ValueType::collection(CollectionType::new(
             CollectionKind::Set,

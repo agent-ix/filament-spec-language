@@ -3578,12 +3578,6 @@ struct ResetCut {
     require_spans: Vec<Span>,
 }
 
-/// FSpec FR-415-AC-21: a postcondition that requires `present(p)` of a
-/// guarded place it does not write has no successor from a state where `p`
-/// is absent; where the operation's precondition establishes `p` absent
-/// (every part of one of its guards requires `p` absent), that is decided
-/// here and refuses `invalid_timed_model`/`clock-presence-unwritten` at the
-/// requirement.
 /// FR-230 "Selection": each literal slot a reset names keeps its own
 /// presence obligation, `i < size(p)` of the collection it selects from,
 /// which a top-level conjunct of a precondition of the same operation must
@@ -3620,6 +3614,12 @@ fn selection_presence(
     Ok(())
 }
 
+/// FSpec FR-415-AC-21: a postcondition that requires `present(p)` of a
+/// guarded place it does not write has no successor from a state where `p`
+/// is absent; where the operation's precondition establishes `p` absent
+/// (every part of one of its guards requires `p` absent), that is decided
+/// here and refuses `invalid_timed_model`/`clock-presence-unwritten` at the
+/// requirement.
 fn unwritten_presence(
     resets: &[ResetsDraft],
     guards: &[(usize, Vec<PartDraft>)],

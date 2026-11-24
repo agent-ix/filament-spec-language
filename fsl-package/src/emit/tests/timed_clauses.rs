@@ -1654,6 +1654,7 @@ fn predicate_operation(wire: &Value, reference: &Value) -> String {
     "FSpec-FR-760-AC-3"
 )]
 #[test]
+#[ignore = "QSL-2891: contract-ir pin lands via FSL #3632"]
 fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
     let document = slot_presence_document();
     let emit = |body: &str| {
@@ -1808,6 +1809,7 @@ fn quantifier_parameter(wire: &Value) -> Value {
 #[trace("TC-2663", "FR-953-AC-1")]
 #[trace("FSpec-TC-1862", "FSpec-FR-772-AC-1")]
 #[test]
+#[ignore = "QSL-2891: contract-ir pin lands via FSL #3632"]
 fn a_presence_quantifier_is_emitted_over_its_slot_domain() {
     let document = slot_presence_document();
     let body = "pre HasElement using v on Config::ConfigVersion::attemptUpdate { \
@@ -1874,6 +1876,7 @@ fn a_presence_quantifier_is_emitted_over_its_slot_domain() {
 /// (`quantifier_domain_only`), and a path that embeds a `node_id` object.
 #[trace("FSpec-TC-1862", "FSpec-FR-772-AC-2")]
 #[test]
+#[ignore = "QSL-2891: contract-ir pin lands via FSL #3632"]
 fn a_malformed_slot_domain_is_refused_at_its_locus() {
     let document = slot_presence_document();
     let body = "pre HasElement using v on Config::ConfigVersion::attemptUpdate { \
