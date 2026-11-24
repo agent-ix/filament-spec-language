@@ -690,7 +690,7 @@ mod tp4 {
         TemporalCertificateCheck, TerminalValue,
     };
     use fsl_semantics::check::footprint::{FootprintRefusal, SymbolicLocation};
-    use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId};
+    use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId, TemporalProfile};
     use ix_trace_rs::trace;
 
     use super::{World, FORALL_EXISTS};
@@ -1382,6 +1382,69 @@ mod tp4 {
                 basis: ProofBasis::BoundedComplete { depth: 3 },
                 certification: fsl_replay::Certification::Uncertified,
             }
+        );
+    }
+
+    /// FR-127-AC-14 / FR-315-AC-30: a fault while rebuilding the base query
+    /// settles Failed through the public SMT handoff.
+    #[trace("TC-900", "FR-315-AC-30", "TC-1199", "FR-127-AC-14")]
+    #[test]
+    fn temporal_smt_faulting_rebuild_settles_failed() {
+        let world = infinite_world();
+        let original = world
+            .temporal_clause
+            .as_ref()
+            .expect("the TP-1 clause is checked");
+        let altered = original
+            .clone()
+            .with_profile_after_s3(TemporalProfile::EventPositionFalseExtension);
+        let request = CertificateRequest {
+            subject: world.subject(),
+            temporal_clock_selections: &[],
+            item: ModelCheckItem::Clause {
+                clause: &altered,
+                letters: &LETTERS,
+            },
+            smt_encoding: Default::default(),
+        };
+        let certificate = SmtProofCertificate::Inductive {
+            format: ProofFormat::Alethe,
+            base: RefutedQuery {
+                query: vec![],
+                proof: vec![],
+            },
+            step: RefutedQuery {
+                query: vec![],
+                proof: vec![],
+            },
+        };
+        let check = check_smt_proof(
+            &request,
+            &SmtProofBasis::Inductive { depth: 1 },
+            &certificate,
+            &CertificateCheckLimits::default(),
+            &Cancel::new(),
+        );
+        assert!(
+            matches!(
+                &check,
+                Ok(fsl_replay::SmtProofCheck::Fault(fault))
+                    if fault.stage() == "smt-encoding"
+                        && fault.invariant() == "a TP-1 or TP-3 item binds infinite-trace"
+            ),
+            "unexpected checker result: {check:?}"
+        );
+        assert_eq!(
+            settle_smt_proof(
+                &request,
+                &SmtProofOutcome {
+                    basis: SmtProofBasis::Inductive { depth: 1 },
+                    certificate: Some(certificate),
+                },
+                &CertificateCheckLimits::default(),
+                &Cancel::new(),
+            ),
+            TerminalValue::Failed
         );
     }
 
