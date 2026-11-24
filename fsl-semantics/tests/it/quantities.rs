@@ -1020,7 +1020,7 @@ fn a_normalized_derived_dimension_keeps_its_declared_conversion_boundary() {
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert!(
         matches!(
-            refusals[0].cause,
+            refusals[0].cause.as_ref(),
             fsl_semantics::check::CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
         ),
         "{refusals:?}"
