@@ -1721,12 +1721,23 @@ fn replay_lasso(
             .map(|(position, rows)| {
                 let next_position = (position + 1) % candidate_positions.len();
                 rows.iter()
-                    .map(|(pre_candidate, pre_state, transition, post_state, hops)| {
+                    .enumerate()
+                    .map(|(row_index, (pre_candidate, pre_state, transition, post_state, hops))| {
+                        let post_occurrence = rows
+                            .iter()
+                            .enumerate()
+                            .filter(|(prior_index, prior)| {
+                                prior.3 == *post_state
+                                    && (prior.0, *prior_index) <= (*pre_candidate, row_index)
+                            })
+                            .count()
+                            - 1;
                         let post_candidate = candidate_edge_target_ordinal(
                             &candidate_positions[position],
                             &candidate_positions[next_position],
                             *pre_candidate,
                             post_state,
+                            post_occurrence,
                         )
                         .map_err(|_| fault("candidate-replay-row-target-is-ordinal"))?;
                         let number = |transition: &ModelTransition| {

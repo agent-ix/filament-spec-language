@@ -69,20 +69,20 @@ pub enum CandidateLivenessError {
     Fairness(FairnessError),
 }
 
-/// Resolve a candidate row's destination ordinal from source and target
-/// position order. Duplicate keys retain their occurrence order, preserving
-/// distinct clock blocks while the checker independently recomputes states.
+/// Resolve a candidate row's destination ordinal from its occurrence among
+/// ordered relation rows with the same post-state. Duplicate keys retain
+/// destination order even when distinct source keys converge to them.
 pub fn candidate_edge_target_ordinal(
     source: &[CandidateFairState],
     target: &[CandidateFairState],
     pre_candidate: usize,
     post_state: &[u8],
+    post_occurrence: usize,
 ) -> Result<usize, CandidateLivenessError> {
-    let source_index = source
+    source
         .iter()
-        .position(|candidate| candidate.ordinal == pre_candidate)
+        .find(|candidate| candidate.ordinal == pre_candidate)
         .ok_or(CandidateLivenessError::InvalidGraph)?;
-    let source_candidate = &source[source_index];
     let matches: Vec<usize> = target
         .iter()
         .filter(|candidate| candidate.key == post_state)
@@ -91,15 +91,41 @@ pub fn candidate_edge_target_ordinal(
     if matches.len() == 1 {
         return Ok(matches[0]);
     }
-    let occurrence = source[..=source_index]
-        .iter()
-        .filter(|candidate| candidate.key == source_candidate.key)
-        .count()
-        .saturating_sub(1);
     matches
-        .get(occurrence)
+        .get(post_occurrence)
         .copied()
         .ok_or(CandidateLivenessError::InvalidGraph)
+}
+
+/// Resolve the destination block of a stutter row. Stuttering preserves a
+/// candidate's key, so its occurrence is counted among prior source rows
+/// with that same key that also survive at the target.
+pub fn candidate_stutter_target_ordinal(
+    source: &[CandidateFairState],
+    target: &[CandidateFairState],
+    pre_candidate: usize,
+    surviving_candidates: &[usize],
+) -> Result<usize, CandidateLivenessError> {
+    let source_index = source
+        .iter()
+        .position(|candidate| candidate.ordinal == pre_candidate)
+        .ok_or(CandidateLivenessError::InvalidGraph)?;
+    let source_candidate = &source[source_index];
+    let post_occurrence = source[..=source_index]
+        .iter()
+        .filter(|candidate| {
+            candidate.key == source_candidate.key
+                && surviving_candidates.contains(&candidate.ordinal)
+        })
+        .count()
+        .saturating_sub(1);
+    candidate_edge_target_ordinal(
+        source,
+        target,
+        pre_candidate,
+        &source_candidate.key,
+        post_occurrence,
+    )
 }
 
 /// Check whether a concrete lasso has a coherent fair hidden-candidate run.
@@ -352,8 +378,10 @@ pub fn abstract_classes(
 #[cfg(test)]
 mod candidate_tests {
     use super::{
-        candidate_lasso_has_fair_run, candidate_lasso_has_fair_run_with_recurring_edge,
-        CandidateFairHop, CandidateFairState, CandidateFairStep,
+        candidate_edge_target_ordinal, candidate_stutter_target_ordinal,
+        candidate_lasso_has_fair_run,
+        candidate_lasso_has_fair_run_with_recurring_edge, CandidateFairHop, CandidateFairState,
+        CandidateFairStep,
     };
     use filament_exact::Cancel;
     use fsl_eval::fairness::{Constraint, Identity};
@@ -529,6 +557,83 @@ mod candidate_tests {
             &Cancel::new(),
         )
         .expect("duplicate-key candidate graph is closed"));
+    }
+
+    #[trace("FSpec-FR-740-AC-5", "FR-899-AC-6")]
+    #[test]
+    fn converging_candidate_rows_keep_ordered_duplicate_post_blocks() {
+        let owed = Identity::new(21);
+        let source = vec![state(0, b"A", &[owed]), state(1, b"B", &[])];
+        let target = vec![
+            state(0, b"same", &[]),
+            state(1, b"same", &[]),
+            state(2, b"same", &[]),
+        ];
+        // Candidate A has two transition alternatives into equal-key post
+        // blocks; candidate B converges into the third block. The target
+        // ordinal follows relation row order, including row multiplicity.
+        let ordered = [(1, b"same".as_slice()), (0, b"same"), (0, b"same")];
+        let forward = ordered
+            .iter()
+            .enumerate()
+            .map(|(row_index, (pre_candidate, post_state))| {
+                let occurrence = ordered
+                    .iter()
+                    .enumerate()
+                    .filter(|(prior_index, (prior_candidate, prior_post))| {
+                        prior_post == post_state
+                            && (*prior_candidate, *prior_index) <= (*pre_candidate, row_index)
+                    })
+                    .count()
+                    - 1;
+                let post_candidate = candidate_edge_target_ordinal(
+                    &source,
+                    &target,
+                    *pre_candidate,
+                    post_state,
+                    occurrence,
+                )
+                .expect("row maps to its ordered duplicate target");
+                step(
+                    *pre_candidate,
+                    if *pre_candidate == 0 { b"A" } else { b"B" },
+                    None,
+                    post_candidate,
+                    post_state,
+                )
+            })
+            .collect();
+        let reverse = vec![
+            step(0, b"same", None, 0, b"A"),
+            step(1, b"same", None, 0, b"A"),
+            step(2, b"same", None, 1, b"B"),
+        ];
+        assert!(candidate_lasso_has_fair_run(
+            &[source, target],
+            &[forward, reverse],
+            &[Constraint::strong([owed])],
+            &Cancel::new(),
+        )
+        .expect("converging duplicate-key candidate graph is closed"));
+    }
+
+    #[trace("FSpec-FR-740-AC-5", "FR-899-AC-6")]
+    #[test]
+    fn stutter_rows_rank_duplicate_keys_across_mixed_candidate_keys() {
+        let source = vec![
+            state(0, b"A", &[]),
+            state(1, b"B", &[]),
+            state(2, b"A", &[]),
+        ];
+        let target = vec![state(0, b"A", &[]), state(1, b"A", &[])];
+        assert_eq!(
+            candidate_stutter_target_ordinal(&source, &target, 0, &[0, 2]),
+            Ok(0)
+        );
+        assert_eq!(
+            candidate_stutter_target_ordinal(&source, &target, 2, &[0, 2]),
+            Ok(1)
+        );
     }
 
     #[test]

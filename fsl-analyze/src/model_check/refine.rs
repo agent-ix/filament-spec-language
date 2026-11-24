@@ -3100,12 +3100,24 @@ impl Run<'_, '_> {
             let target = &positions[(index + 1) % positions.len()];
             steps.push(
                 rows.iter()
-                    .map(|row| {
+                    .enumerate()
+                    .map(|(row_index, row)| {
+                        let post_occurrence = rows
+                            .iter()
+                            .enumerate()
+                            .filter(|(prior_index, prior)| {
+                                prior.post_state == row.post_state
+                                    && (prior.pre_candidate, *prior_index)
+                                        <= (row.pre_candidate, row_index)
+                            })
+                            .count()
+                            - 1;
                         let post_candidate = candidate_edge_target_ordinal(
                             &positions[index],
                             target,
                             row.pre_candidate,
                             &row.post_state,
+                            post_occurrence,
                         )
                         .map_err(|_| fault("candidate-lasso-row-target-is-ordinal"))?;
                         Ok(CandidateFairStep {

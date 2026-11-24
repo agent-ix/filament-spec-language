@@ -35,7 +35,8 @@ use fsl_eval::simulation::ExpansionLimit;
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, PlaceConstraint};
 use fsl_replay::{
     abstract_classes, candidate_edge_target_ordinal, candidate_lasso_has_fair_run,
-    candidate_lasso_has_fair_run_with_recurring_edge, check_step, AbstractClass,
+    candidate_lasso_has_fair_run_with_recurring_edge, candidate_stutter_target_ordinal,
+    check_step, AbstractClass,
     CandidateFairState, CandidateFairStep, ConcreteStep, CounterexampleKind, Lasso,
     ModelCheckLimit, ReachedLimit, RefinementFailure, Taken, TemporalCounterexample, Undetermined,
 };
@@ -1161,12 +1162,24 @@ impl Product<'_, '_> {
                 let rows = match arc.taken.as_ref() {
                     Some(Taken::CandidateSteps(rows)) => rows
                         .iter()
-                        .map(|row| {
+                        .enumerate()
+                        .map(|(row_index, row)| {
+                            let post_occurrence = rows
+                                .iter()
+                                .enumerate()
+                                .filter(|(prior_index, prior)| {
+                                    prior.post_state == row.post_state
+                                        && (prior.pre_candidate, *prior_index)
+                                            <= (row.pre_candidate, row_index)
+                                })
+                                .count()
+                                - 1;
                             let post_candidate = candidate_edge_target_ordinal(
                                 &fair_positions[index],
                                 &fair_positions[next_index],
                                 row.pre_candidate,
                                 &row.post_state,
+                                post_occurrence,
                             )
                             .map_err(|_| {
                                 ZoneCheckRefusal::Fault("candidate-loop-row-target-is-ordinal")
@@ -1191,30 +1204,41 @@ impl Product<'_, '_> {
                             })
                         })
                         .collect::<Result<Vec<_>, ZoneCheckRefusal>>()?,
-                    Some(Taken::Stutter | Taken::Failing) | None => source
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, (key, _))| next.iter().any(|(held, _)| held == key))
-                        .map(|(pre_candidate, (key, _))| {
-                            let post_candidate = candidate_edge_target_ordinal(
-                                &fair_positions[index],
-                                &fair_positions[next_index],
-                                pre_candidate,
-                                key,
-                            )
-                            .map_err(|_| {
-                                ZoneCheckRefusal::Fault("candidate-loop-stutter-target-is-ordinal")
-                            })?;
-                            Ok(CandidateFairStep {
-                                pre_candidate,
-                                pre_state: key.clone(),
-                                transition: None,
-                                post_candidate,
-                                post_state: key.clone(),
-                                interior: Vec::new(),
+                    Some(Taken::Stutter | Taken::Failing) | None => {
+                        let stuttering: Vec<_> = source
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, (key, _))| next.iter().any(|(held, _)| held == key))
+                            .collect();
+                        let surviving_candidates: Vec<_> = stuttering
+                            .iter()
+                            .map(|(pre_candidate, _)| *pre_candidate)
+                            .collect();
+                        stuttering
+                            .into_iter()
+                            .map(|(pre_candidate, (key, _))| {
+                                let post_candidate = candidate_stutter_target_ordinal(
+                                    &fair_positions[index],
+                                    &fair_positions[next_index],
+                                    pre_candidate,
+                                    &surviving_candidates,
+                                )
+                                .map_err(|_| {
+                                    ZoneCheckRefusal::Fault(
+                                        "candidate-loop-stutter-target-is-ordinal",
+                                    )
+                                })?;
+                                Ok(CandidateFairStep {
+                                    pre_candidate,
+                                    pre_state: key.clone(),
+                                    transition: None,
+                                    post_candidate,
+                                    post_state: key.clone(),
+                                    interior: Vec::new(),
+                                })
                             })
-                        })
-                        .collect::<Result<Vec<_>, ZoneCheckRefusal>>()?,
+                            .collect::<Result<Vec<_>, ZoneCheckRefusal>>()?
+                    }
                     _ => return Err(ZoneCheckRefusal::Fault("candidate-loop-taken-shape")),
                 };
                 Ok(rows)
