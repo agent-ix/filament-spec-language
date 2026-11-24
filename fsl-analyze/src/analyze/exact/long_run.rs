@@ -127,6 +127,7 @@ pub(super) fn run(
                             tamper_witness,
                         )
                     }
+                    Ok((ProbBuild::Partial { .. }, _)) => return not_yet(),
                     Ok((ProbBuild::Built(_), _)) => return broken(),
                     Err(error) => return build_refusal(error, subject),
                 }
