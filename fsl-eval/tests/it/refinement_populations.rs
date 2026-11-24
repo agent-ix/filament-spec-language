@@ -26,8 +26,8 @@ use crate::ring_queue;
 mod evaluator_closure_cases;
 
 use ring_queue::{
-    all_rows, check_over, checked, checked_over, key, node, queue_spec, ranged, ring_is_queue,
-    Checked, QUEUE, RING,
+    all_rows, checked, checked_over, key, node, queue_spec, ranged, ring_is_queue, Checked, QUEUE,
+    RING,
 };
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -352,16 +352,23 @@ fn only_is_undefined_for_no_object_and_for_several() {
             (
                 UndefinedReason::OnlyNotOne,
                 vec![
-                    "found=2".to_owned(),
-                    format!("population={}", key(RING, "slots").node)
+                    "locus=[]".to_owned(),
+                    format!("population={}", key(RING, "slots").node),
+                    "row=TypeDeclaration { name: \"refinement row 718..766\" }".to_owned()
                 ]
             )
         );
         assert_eq!(
-            undefined(&world, &state, GHOST).0,
-            UndefinedReason::OnlyNotOne
+            undefined(&world, &state, GHOST),
+            (
+                UndefinedReason::OnlyNotOne,
+                vec![
+                    "locus=[]".to_owned(),
+                    format!("population={}", key(RING, "slots").node),
+                    "row=TypeDeclaration { name: \"refinement row 776..856\" }".to_owned()
+                ]
+            )
         );
-        assert_eq!(undefined(&world, &state, GHOST).1[0], "found=0");
     }
 }
 
@@ -377,8 +384,9 @@ fn only_over_a_population_with_no_matches_is_undefined() {
         (
             UndefinedReason::OnlyNotOne,
             vec![
-                "found=0".to_owned(),
-                format!("population={}", key(RING, "slots").node)
+                "locus=[]".to_owned(),
+                format!("population={}", key(RING, "slots").node),
+                "row=TypeDeclaration { name: \"refinement row 776..856\" }".to_owned()
             ]
         )
     );
@@ -464,20 +472,33 @@ fn a_sum_with_a_positive_summand_includes_zero_in_its_bound() {
     let universe = BTreeMap::from([(key(RING, "slots"), 2)]);
     assert_eq!(wide.refinement().admit_universes(&universe), Ok(()));
 
-    let narrow = check_over(&queue_with_total(2, 4), &ring_is_queue(&shifted_sum_rows()))
-        .err()
-        .expect("Int[2, 4] excludes the empty sum");
-    let [refusal] = &narrow[..] else {
+    let narrow = World::of(checked_over(
+        &queue_with_total(2, 4),
+        &ring_is_queue(&shifted_sum_rows()),
+    ));
+    let refusals = narrow
+        .refinement()
+        .admit_universes(&universe)
+        .expect_err("Int[2, 4] excludes the empty sum at subject admission");
+    let [refusal] = refusals.as_slice() else {
         panic!("one refusal");
     };
     assert_eq!(
-        (refusal.refusal.cause.code(), refusal.refusal.cause.cause()),
+        (refusal.cause.code(), refusal.cause.cause()),
         (Code::IllTyped, Some("type-mismatch"))
     );
-    assert_eq!(
-        refusal.at,
-        "sum(s in R::slots where s.ring = self: s.value + 1)"
-    );
+    match &refusal.cause {
+        fsl_semantics::check::RefinementCause::PopulationBound {
+            row,
+            population,
+            size,
+        } => {
+            assert_eq!(row, "Q::Queue.total");
+            assert_eq!(population, "R::slots");
+            assert_eq!(*size, 2);
+        }
+        cause => panic!("subject-admission population bound: {cause:?}"),
+    }
 
     // Both slots satisfy the condition: (0 + 1) + (1 + 1).
     let full = wide.state(1, 2, [0, 1]);

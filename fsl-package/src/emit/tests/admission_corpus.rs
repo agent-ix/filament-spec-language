@@ -3281,20 +3281,29 @@ fn population_and_object_rows_read_back() {
 /// owner and its ordinal, and a proof-eligible owner a `generated`
 /// occurrence per row (ordinal `i + 1` at row `i`'s region) beside the one
 /// at its declaration, whichever order the rows are written in.
-#[trace("FR-375-AC-22", "FR-322-AC-88", "FR-322-AC-128", "TC-310", "TC-233")]
+#[trace(
+    "FR-375-AC-22",
+    "FR-322-AC-88",
+    "FR-322-AC-128",
+    "FR-136-AC-13",
+    "TC-310",
+    "TC-233"
+)]
 #[test]
 fn step_rows_carry_their_source_regions_by_ordinal() {
     let operations = ["attemptUpdate", "rollback"];
     let update = "step C::ConfigVersion::attemptUpdate -> A::ConfigVersion::attemptUpdate(self);";
     let rollback = "step C::ConfigVersion::rollback -> stutter;";
-    for (rows, classes) in [
+    for (rows, classes, targets) in [
         (
             [update, rollback],
             ["ConfigVersion::attemptUpdate", "ConfigVersion::rollback"],
+            ["operation", "stutter"],
         ),
         (
             [rollback, update],
             ["ConfigVersion::rollback", "ConfigVersion::attemptUpdate"],
+            ["stutter", "operation"],
         ),
     ] {
         let (emitted, unit) = emit_rows(&format!("{MAPS}\n{}\n{}", rows[0], rows[1]), &operations);
@@ -3306,6 +3315,13 @@ fn step_rows_carry_their_source_regions_by_ordinal() {
             .map(|step| step["source_class"].as_str().expect("a class"))
             .collect();
         assert_eq!(written_classes, classes);
+        let written_targets: Vec<&str> = node["body"]["steps"]
+            .as_array()
+            .expect("steps")
+            .iter()
+            .map(|step| step["target"]["kind"].as_str().expect("a target kind"))
+            .collect();
+        assert_eq!(written_targets, targets);
         let written = wire(&emitted.emission);
         let sidecar = written["refinement_step_rows"]
             .as_array()

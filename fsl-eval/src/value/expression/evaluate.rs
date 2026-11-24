@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use super::causes::{
     ClockIdentityAllocation, ClockOriginUnavailable, HistoryUnresolved, ModelQueryRefusal,
-    NamedPopulationIncomplete, NavigationRefusal, ObjectFieldIllTyped, ProtocolClauseSnapshot,
-    UnsupportedConstruct,
+    NamedPopulationIncomplete, NavigationRefusal, ObjectFieldIllTyped, OnlyNotOneCause,
+    ProtocolClauseSnapshot, UnsupportedConstruct,
 };
 use super::protocol_slot::charges::{BinderCharges, ChargeRouting, Owner, Owners};
 use super::s6a::separation::{
@@ -5362,7 +5362,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         let spec = Self::iteration_spec(node)?;
         let state = match IterationState::start(&spec, source, identity, reduce, self.meter) {
             Ok(state) => state,
-            Err(collections::Halt::OnlyNotOne { found }) => {
+            Err(collections::Halt::OnlyNotOne { .. }) => {
                 self.iterations = self.iterations.saturating_sub(1);
                 let NodeKind::Query {
                     source: operand, ..
@@ -5371,9 +5371,16 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     return Err(invariant("iteration-node-invalid"));
                 };
                 return Err(Halt::Family(FamilyResult::Undefined(Box::new(
-                    StateModelUndefined::OnlyNotOne {
+                    OnlyNotOneCause {
                         population: population_of(node.at(*operand))?,
-                        found,
+                        locus: node.location().map_or_else(
+                            || "unknown".to_owned(),
+                            |location| format!("{:?}", location.path()),
+                        ),
+                        row: node.location().map_or_else(
+                            || "unknown".to_owned(),
+                            |location| format!("{:?}", location.origin),
+                        ),
                     },
                 ))));
             }

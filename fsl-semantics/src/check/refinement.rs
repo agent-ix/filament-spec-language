@@ -4281,10 +4281,11 @@ fn population_uses(
                 && collection.bound().is_none_or(|bound| bound.minimum() == 0)
         }
         (PopulationValue::Count | PopulationValue::Sum { .. }, ValueType::Integer) => true,
-        (PopulationValue::Count | PopulationValue::Sum { .. }, ValueType::Int(target)) => {
-            // `n` is at least 0, and a sum over no object is 0.
-            (target.lower().is_negative() || target.lower().is_zero())
-                && !target.upper().is_negative()
+        (PopulationValue::Count | PopulationValue::Sum { .. }, ValueType::Int(_)) => {
+            // The exact interval depends on the admitted universe size. A
+            // `where` may select no object, so sums include zero; defer all
+            // bounded-integer compatibility to subject admission.
+            true
         }
         _ => false,
     };
