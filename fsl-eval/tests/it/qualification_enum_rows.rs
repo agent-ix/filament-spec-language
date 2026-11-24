@@ -142,9 +142,9 @@ fn t08_ordering_uses_only_an_ordered_enum() {
 fn t10_text_profiles_remain_distinct_types() {
     let vector = published_vector("T10");
     assert!(vector.expected.contains("ill-typed"));
-    let body = "function nfc using v(): Text[0,8;nfc] pure { Text(\"é\") }\n\
+    let body = "function normalized using v(): Text[0,8;nfc] pure { Text(\"é\") }\n\
          function binary using v(): Text[0,8;binary-utf8] pure { Text(\"é\") }\n\
-         function compare using v(): Boolean pure { nfc() = binary() }";
+         function compare using v(): Boolean pure { normalized() = binary() }";
     assert_eq!(refusal_code(body), "ill_typed");
 }
 
