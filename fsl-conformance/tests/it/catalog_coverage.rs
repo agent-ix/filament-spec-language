@@ -42,6 +42,17 @@ macro_rules! sourced {
     };
 }
 
+macro_rules! original {
+    ($name:literal, $path:literal, $operations:expr, $forms:expr) => {
+        Case {
+            name: $name,
+            source: include_str!(concat!("../../../", $path)),
+            operations: $operations,
+            forms: $forms,
+        }
+    };
+}
+
 macro_rules! structural_equality {
     ($name:literal, $declarations:literal, $ty:literal) => {
         Case {
@@ -176,34 +187,36 @@ source_cases! {
     string_conversion => sourced!("string-conversion", &["filament.op.string.to_integer", "filament.op.string.to_decimal", "filament.op.string.to_rational", "filament.op.string.to_float64", "filament.op.string.to_float32"], &[]),
     quantity_conversion => sourced!("quantity-conversion", &["filament.op.quantity.convert", "filament.op.text.to_quantity", "filament.op.string.to_quantity"], &[]),
     quantity_scale_division => sourced!("quantity-scale-division", &["filament.op.quantity.scale_div"], &[]),
-    copied_braking => sourced!("braking", &["filament.op.rational.gt", "filament.op.rational.le", "filament.op.temporal.always", "filament.op.temporal.clause", "filament.op.temporal.holds"], &[("hybrid", "hybrid_mode"), ("hybrid", "hybrid_model"), ("hybrid", "hybrid_transition"), ("temporal", "formula"), ("temporal", "temporal_clause")]),
-    copied_attempt_result => sourced!("attempt-result", &["filament.op.protocol.control"], &[("protocol", "control"), ("protocol", "obligation"), ("protocol", "protocol_clause"), ("protocol", "role"), ("state", "frame"), ("state", "operation_anchor")]),
-    copied_r_exists_empty => sourced!("r-exists-empty", &["filament.op.collection.exists", "filament.op.collection.sequence", "filament.op.integer.gt"], &[("expression", "quantify")]),
-    copied_native_equality => sourced!("native-equality", &["filament.op.bytes.eq", "filament.op.json_object.eq", "filament.op.timestamp.eq", "filament.op.uuid.eq"], &[]),
-    copied_source_object_workload => sourced!("source-object-workload", &[], &[("probabilistic", "random_parameter"), ("probabilistic", "reward"), ("probabilistic", "workload")]),
-    copied_operators => sourced!("operators", &["filament.op.temporal.eventually", "filament.op.temporal.not", "filament.op.temporal.until"], &[]),
-    copied_quant_range_fact => sourced!("quant-range-fact", &["filament.op.collection.forall", "filament.op.integer.le"], &[]),
-    copied_r_bag_eq => sourced!("r-bag-eq", &["filament.op.collection.bag", "filament.op.structural.ne"], &[]),
-    copied_float_ordering => sourced!("float-ordering", &["filament.op.ieee.numeric_equal", "filament.op.ieee.total_order"], &[]),
-    copied_exchange => sourced!("exchange", &[], &[("protocol", "channel"), ("protocol", "queue")]),
-    copied_some => sourced!("some", &[], &[("value", "option_value")]),
-    copied_coll_set_ok => sourced!("coll-set-ok", &["filament.op.collection.set"], &[]),
-    copied_coll_oset_ok => sourced!("coll-oset-ok", &["filament.op.collection.ordered_set"], &[]),
-    copied_coll_removeone => sourced!("coll-removeone", &["filament.op.collection.remove_one"], &[]),
-    copied_fn_recursion_ok => sourced!("fn-recursion-ok", &[], &[("function", "recursive_function")]),
-    copied_coll_dropfirst => sourced!("coll-dropfirst", &["filament.op.collection.sequence.drop_first"], &[]),
-    copied_tup_ok => sourced!("tup-ok", &[], &[("value", "tuple_value")]),
-    copied_coll_filter_ok => sourced!("coll-filter-ok", &["filament.op.collection.filter"], &[]),
-    copied_rec_ok => sourced!("rec-ok", &[], &[("value", "record_value")]),
-    copied_conv_coll_ok => sourced!("conv-coll-ok", &["filament.op.collection.convert"], &[]),
-    copied_fn_predicate_ok => sourced!("fn-predicate-ok", &[], &[("function", "predicate")]),
-    copied_agg_sum_named => sourced!("agg-sum-named", &["filament.op.collection.sum.integer"], &[]),
-    copied_union_recursive_seq => sourced!("union-recursive-seq", &[], &[("value", "union_value")]),
-    copied_agg_count_ok => sourced!("agg-count-ok", &["filament.op.collection.count"], &[]),
-    copied_coll_reduce_named => sourced!("coll-reduce-named", &["filament.op.collection.reduce"], &[]),
-    copied_coll_fold_ok => sourced!("coll-fold-ok", &["filament.op.collection.fold"], &[]),
-    copied_to_rational => sourced!("to_rational", &["filament.op.ieee.to_rational"], &[]),
-    copied_coll_flatmap_typed => sourced!("coll-flatmap-typed", &["filament.op.collection.flat_map"], &[]),
+    copied_braking => original!("braking", "examples/hybrid-braking/braking.native", &["filament.op.rational.gt", "filament.op.rational.le", "filament.op.temporal.always", "filament.op.temporal.clause", "filament.op.temporal.holds"], &[("hybrid", "hybrid_mode"), ("hybrid", "hybrid_model"), ("hybrid", "hybrid_transition"), ("temporal", "formula"), ("temporal", "temporal_clause")]),
+    copied_attempt_result => original!("attempt-result", "tests/corpus/protocol/original/attempt-result.native", &["filament.op.protocol.control"], &[("protocol", "control"), ("protocol", "obligation"), ("protocol", "protocol_clause"), ("protocol", "role"), ("state", "frame"), ("state", "operation_anchor")]),
+    copied_r_exists_empty => original!("r-exists-empty", "tests/corpus/collections/r-exists-empty.native", &["filament.op.collection.exists", "filament.op.collection.sequence", "filament.op.integer.gt"], &[("expression", "quantify")]),
+    copied_native_equality => original!("native-equality", "fsl-conformance/cases/type-operators/native-equality-accepted.native", &["filament.op.bytes.eq", "filament.op.json_object.eq", "filament.op.timestamp.eq", "filament.op.uuid.eq"], &[]),
+    copied_source_object_workload => original!("source-object-workload", "tests/corpus/probability/staged/source-object-workload.native", &[], &[("probabilistic", "random_parameter"), ("probabilistic", "reward"), ("probabilistic", "workload")]),
+    copied_operators => original!("operators", "tests/corpus/temporal/operators.native", &["filament.op.temporal.eventually", "filament.op.temporal.not", "filament.op.temporal.until"], &[]),
+    copied_quant_range_fact => original!("quant-range-fact", "tests/corpus/collections/quant-range-fact.native", &["filament.op.collection.forall", "filament.op.integer.le"], &[]),
+    copied_r_bag_eq => original!("r-bag-eq", "tests/corpus/collections/r-bag-eq.native", &["filament.op.collection.bag", "filament.op.structural.ne"], &[]),
+    copied_float_ordering => original!("float-ordering", "fsl-conformance/cases/type-operators/float-ordering-accepted.native", &["filament.op.ieee.numeric_equal", "filament.op.ieee.total_order"], &[]),
+    copied_exchange => original!("exchange", "tests/corpus/protocol/exchange.native", &[], &[("protocol", "channel"), ("protocol", "queue")]),
+    copied_some => original!("some", "fsl-conformance/cases/some-accepted.native", &[], &[("value", "option_value")]),
+    copied_coll_set_ok => original!("coll-set-ok", "tests/corpus/collections/coll-set-ok.native", &["filament.op.collection.set"], &[]),
+    copied_coll_oset_ok => original!("coll-oset-ok", "tests/corpus/collections/coll-oset-ok.native", &["filament.op.collection.ordered_set"], &[]),
+    copied_coll_removeone => original!("coll-removeone", "tests/corpus/collections/coll-removeone.native", &["filament.op.collection.remove_one"], &[]),
+    copied_fn_recursion_ok => original!("fn-recursion-ok", "tests/corpus/collections/fn-recursion-ok.native", &[], &[("function", "recursive_function")]),
+    copied_coll_dropfirst => original!("coll-dropfirst", "tests/corpus/collections/coll-dropfirst.native", &["filament.op.collection.sequence.drop_first"], &[]),
+    copied_tup_ok => original!("tup-ok", "tests/corpus/values/tup-ok.native", &[], &[("value", "tuple_value")]),
+    copied_coll_filter_ok => original!("coll-filter-ok", "tests/corpus/collections/coll-filter-ok.native", &["filament.op.collection.filter"], &[]),
+    copied_rec_ok => original!("rec-ok", "tests/corpus/values/rec-ok.native", &[], &[("value", "record_value")]),
+    copied_conv_coll_ok => original!("conv-coll-ok", "tests/corpus/collections/conv-coll-ok.native", &["filament.op.collection.convert"], &[]),
+    copied_fn_predicate_ok => original!("fn-predicate-ok", "tests/corpus/collections/fn-predicate-ok.native", &[], &[("function", "predicate")]),
+    copied_agg_sum_named => original!("agg-sum-named", "tests/corpus/collections/agg-sum-named.native", &["filament.op.collection.sum.integer"], &[]),
+    copied_union_recursive_seq => original!("union-recursive-seq", "tests/corpus/collections/union-recursive-seq.native", &[], &[("value", "union_value")]),
+    copied_agg_count_ok => original!("agg-count-ok", "tests/corpus/collections/agg-count-ok.native", &["filament.op.collection.count"], &[]),
+    copied_coll_reduce_named => original!("coll-reduce-named", "tests/corpus/collections/coll-reduce-named.native", &["filament.op.collection.reduce"], &[]),
+    copied_coll_fold_ok => original!("coll-fold-ok", "tests/corpus/collections/coll-fold-ok.native", &["filament.op.collection.fold"], &[]),
+    copied_to_rational => original!("to_rational", "fsl-replay/tests/fixtures/ieee_float/to_rational.native", &["filament.op.ieee.to_rational"], &[]),
+    copied_coll_flatmap_typed => original!("coll-flatmap-typed", "tests/corpus/collections/coll-flatmap-typed.native", &["filament.op.collection.flat_map"], &[]),
+    object_contract => sourced!("object-contract", &["filament.op.state.clause", "filament.op.state.pre", "filament.op.model.deref"], &[("state", "state_clause"), ("expression", "pre_read"), ("expression", "deref")]),
+    temporal_operators => sourced!("temporal-operators", &["filament.op.temporal.and", "filament.op.temporal.or", "filament.op.temporal.historically", "filament.op.temporal.implies", "filament.op.temporal.once", "filament.op.temporal.release", "filament.op.temporal.since", "filament.op.temporal.triggered", "filament.op.temporal.true", "filament.op.temporal.false"], &[]),
     source_object => sourced!("source-object", &[], &[("model", "object_type"), ("composite_type", "reference")]),
 }
 
@@ -226,7 +239,24 @@ fn catalog_identities() -> BTreeSet<String> {
 
 /// Compiles and reads a source through the public front end and the strict
 /// reader; every refusal is returned, never raised.
-fn try_compile_and_read(name: &str, source: &str) -> Result<Value, String> {
+/// A refusal of a source on the way to an admitted package, with the stage
+/// that refused it.
+#[derive(Debug)]
+struct Refusal {
+    stage: &'static str,
+    detail: String,
+}
+
+impl Refusal {
+    fn new(stage: &'static str, detail: impl std::fmt::Debug) -> Self {
+        Self {
+            stage,
+            detail: format!("{detail:?}"),
+        }
+    }
+}
+
+fn try_compile_and_read(name: &str, source: &str) -> Result<Value, Refusal> {
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let identity = SourceIdentity::new("catalog-source", name);
@@ -239,11 +269,11 @@ fn try_compile_and_read(name: &str, source: &str) -> Result<Value, String> {
         limits.source,
         &cancel,
     )
-    .map_err(|error| format!("{name} parses: {error:?}"))?
+    .map_err(|error| Refusal::new("parse", error))?
     .into_value();
     let inputs = PackageInput::default();
     let models = spine::select(&parsed, &inputs, limits.model, &cancel)
-        .map_err(|error| format!("{name} selects its models: {error:?}"))?
+        .map_err(|error| Refusal::new("select", error))?
         .into_value();
     let checked = spine::check(
         &parsed,
@@ -253,7 +283,7 @@ fn try_compile_and_read(name: &str, source: &str) -> Result<Value, String> {
         limits,
         &cancel,
     )
-    .map_err(|error| format!("{name} checks through the public source path: {error:?}"))?
+    .map_err(|error| Refusal::new("check", error))?
     .into_value();
     let read = fsl_package::read_evaluation_package(
         checked.package(),
@@ -262,16 +292,17 @@ fn try_compile_and_read(name: &str, source: &str) -> Result<Value, String> {
         V2ReadLimits::bounded(16_777_216),
         EmitLimits::new(16_777_216),
     )
-    .map_err(|error| format!("{name} emitted package is admitted: {error:?}"))?;
+    .map_err(|error| Refusal::new("admit", error))?;
     if !read.emission().omitted().is_empty() {
-        return Err(format!("{name} has omitted source rows"));
+        return Err(Refusal::new("admit", "omitted source rows"));
     }
     serde_json::from_slice(read.emission().package().bytes())
-        .map_err(|error| format!("{name} admitted package JSON: {error}"))
+        .map_err(|error| Refusal::new("admit", error))
 }
 
 fn compile_and_read(case: &Case) -> Value {
-    try_compile_and_read(case.name, case.source).unwrap_or_else(|error| panic!("{error}"))
+    try_compile_and_read(case.name, case.source)
+        .unwrap_or_else(|refusal| panic!("{} is refused: {refusal:?}", case.name))
 }
 
 fn operation_identities(value: &Value, found: &mut BTreeSet<String>) {
@@ -380,32 +411,62 @@ fn assert_producers(case: &Case, catalog: &BTreeSet<String>, package: &Value) {
         .unwrap_or_else(|mismatch| panic!("source producer mismatch: {mismatch:?}"));
 }
 
-/// How a listed probe source is judged producible.
+/// How a listed entry's probe is judged.
 enum Detect {
     /// The emitted package applies this catalog operation.
     Operation(&'static str),
     /// The emitted package holds a node of this `tag/form`.
     Form(&'static str),
-    /// The emitted package carries at least one `operation_bodies` row.
-    OperationBodies,
     /// The source is admitted by the strict reader at all.
     Admitted,
+}
+
+/// What the probe source of an entry must do today.
+enum Expect {
+    /// The source is admitted and does not emit the item.
+    #[allow(dead_code)]
+    Admitted,
+    /// The source is refused at this stage with this cause. The refusal is
+    /// pinned: the test fails when the stage or cause changes, and when the
+    /// source is admitted and emits the item.
+    Refused {
+        /// `parse`, `select`, `check` or `admit`.
+        stage: &'static str,
+        /// A fragment of the refusal's debug text.
+        cause: &'static str,
+    },
+    /// The language has no syntax that could emit the item yet, so there is no
+    /// probe. Only `no_source_emits_a_listed_id` guards the entry: it fails
+    /// when any checked-in `.native` source emits the item.
+    NoSyntax(&'static str),
 }
 
 /// A checked-in source that must not yet produce what its entry names.
 struct Probe {
     source: &'static str,
     detect: Detect,
+    expect: Expect,
 }
 
 /// One thing the language cannot yet produce, with the open tickets that
 /// own it. Keys are ticket keys only; no hashes.
 struct Unproduced {
-    /// A catalog operation identity, or a short name of a feature.
+    /// A catalog operation identity, a node form `tag/form`, or one of
+    /// `FEATURES`.
     id: &'static str,
     keys: &'static [&'static str],
     probe: Probe,
 }
+
+/// The ids that name neither a catalog operation nor a node form.
+const FEATURES: &[&str] = &[
+    "source-declared-object-navigation",
+    "float-record-equality",
+    "float-tuple-equality",
+    "float-union-equality",
+    "float-option-equality",
+    "float-sequence-equality",
+];
 
 macro_rules! probe_source {
     ($name:literal) => {
@@ -431,862 +492,30 @@ macro_rules! float_composite_equality {
                     "): Boolean pure { a=b }\n",
                 ),
                 detect: Detect::Operation("filament.op.structural.eq"),
+                expect: Expect::Refused {
+                    stage: "admit",
+                    cause: "OperatorIneligible",
+                },
             },
         }
     };
 }
 
-/// The unproduced list. A catalog operation listed here needs no source
-/// case; an entry whose probe becomes producible fails
-/// `listed_entries_are_still_unproduced`; an entry without a key fails
-/// `listed_entries_carry_ticket_keys`.
+/// The unproduced list. A catalog operation or node form listed here needs no
+/// source case. Entries with `Expect::Refused` have a probe whose refusal is
+/// pinned; entries with `Expect::NoSyntax` have none (no syntax exists) and
+/// are guarded by the corpus sweep only.
 const UNPRODUCED: &[Unproduced] = &[
-    Unproduced {
-        id: "filament.op.bytes.concat",
-        keys: &["QSL-3043"],
-        probe: Probe {
-            source: probe_source!("bytes-inequality"),
-            detect: Detect::Operation("filament.op.bytes.concat"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.bytes.length",
-        keys: &["QSL-3043"],
-        probe: Probe {
-            source: probe_source!("bytes-inequality"),
-            detect: Detect::Operation("filament.op.bytes.length"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.collection.sum.carried_quantity",
-        keys: &["QSL-3044"],
-        probe: Probe {
-            source: probe_source!("probe-sum-decimal"),
-            detect: Detect::Operation("filament.op.collection.sum.carried_quantity"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.collection.sum.decimal",
-        keys: &["QSL-3044"],
-        probe: Probe {
-            source: probe_source!("probe-sum-decimal"),
-            detect: Detect::Operation("filament.op.collection.sum.decimal"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.collection.sum.rational",
-        keys: &["QSL-3044"],
-        probe: Probe {
-            source: probe_source!("probe-sum-decimal"),
-            detect: Detect::Operation("filament.op.collection.sum.rational"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.rational.narrow",
-        keys: &["QSL-3045"],
-        probe: Probe {
-            source: probe_source!("probe-rational-narrow"),
-            detect: Detect::Operation("filament.op.rational.narrow"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.clock_reference.eq",
-        keys: &["QSL-3046"],
-        probe: Probe {
-            source: probe_source!("braking"),
-            detect: Detect::Operation("filament.op.clock_reference.eq"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.clock_reference.ne",
-        keys: &["QSL-3046"],
-        probe: Probe {
-            source: probe_source!("braking"),
-            detect: Detect::Operation("filament.op.clock_reference.ne"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.clock_reference.ref",
-        keys: &["QSL-3046"],
-        probe: Probe {
-            source: probe_source!("braking"),
-            detect: Detect::Operation("filament.op.clock_reference.ref"),
-        },
-    },
-    Unproduced {
-        id: "scalar_type/clock_reference",
-        keys: &["QSL-3046"],
-        probe: Probe {
-            source: probe_source!("braking"),
-            detect: Detect::Form("scalar_type/clock_reference"),
-        },
-    },
-    Unproduced {
-        id: "bounded_domain/finite_trace_population",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Form("bounded_domain/finite_trace_population"),
-        },
-    },
-    Unproduced {
-        id: "bounded_domain/model_population",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Form("bounded_domain/model_population"),
-        },
-    },
-    Unproduced {
-        id: "expression/deref",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Form("expression/deref"),
-        },
-    },
-    Unproduced {
-        id: "expression/place_reference",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Form("expression/place_reference"),
-        },
-    },
-    Unproduced {
-        id: "expression/reachability",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Form("expression/reachability"),
-        },
-    },
-    Unproduced {
-        id: "expression/reference",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Form("expression/reference"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.model.all_instances",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Operation("filament.op.model.all_instances"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.model.deref",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Operation("filament.op.model.deref"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.model.lookup",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Operation("filament.op.model.lookup"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.model.navigate",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Operation("filament.op.model.navigate"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.model.reaches",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Operation("filament.op.model.reaches"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.option.slots",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Operation("filament.op.option.slots"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.reference.upcast",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Operation("filament.op.reference.upcast"),
-        },
-    },
-    Unproduced {
-        id: "relation/causal_relation",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Form("relation/causal_relation"),
-        },
-    },
-    Unproduced {
-        id: "relation/membership",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Form("relation/membership"),
-        },
-    },
-    Unproduced {
-        id: "relation/population",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Form("relation/population"),
-        },
-    },
-    Unproduced {
-        id: "relation/relationship",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Form("relation/relationship"),
-        },
-    },
-    Unproduced {
-        id: "expression/pre_read",
-        keys: &["QSL-3048"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Form("expression/pre_read"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.claim.clause",
-        keys: &["QSL-3048"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Operation("filament.op.claim.clause"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.refinement.history",
-        keys: &["QSL-3048"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Operation("filament.op.refinement.history"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.state.clause",
-        keys: &["QSL-3048"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Operation("filament.op.state.clause"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.state.pre",
-        keys: &["QSL-3048"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Operation("filament.op.state.pre"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.state.transition",
-        keys: &["QSL-3048"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Operation("filament.op.state.transition"),
-        },
-    },
-    Unproduced {
-        id: "relation/refinement",
-        keys: &["QSL-3048"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Form("relation/refinement"),
-        },
-    },
-    Unproduced {
-        id: "state/snapshot",
-        keys: &["QSL-3048"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Form("state/snapshot"),
-        },
-    },
-    Unproduced {
-        id: "state/state_clause",
-        keys: &["QSL-3048"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Form("state/state_clause"),
-        },
-    },
-    Unproduced {
-        id: "state/transition",
-        keys: &["QSL-3048"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Form("state/transition"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.temporal.aggregate",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Operation("filament.op.temporal.aggregate"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.temporal.and",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Operation("filament.op.temporal.and"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.temporal.fair",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Operation("filament.op.temporal.fair"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.temporal.false",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Operation("filament.op.temporal.false"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.temporal.historically",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Operation("filament.op.temporal.historically"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.temporal.implies",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Operation("filament.op.temporal.implies"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.temporal.once",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Operation("filament.op.temporal.once"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.temporal.or",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Operation("filament.op.temporal.or"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.temporal.release",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Operation("filament.op.temporal.release"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.temporal.since",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Operation("filament.op.temporal.since"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.temporal.triggered",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Operation("filament.op.temporal.triggered"),
-        },
-    },
-    Unproduced {
-        id: "filament.op.temporal.true",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Operation("filament.op.temporal.true"),
-        },
-    },
-    Unproduced {
-        id: "temporal/activation",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Form("temporal/activation"),
-        },
-    },
-    Unproduced {
-        id: "temporal/clock",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Form("temporal/clock"),
-        },
-    },
-    Unproduced {
-        id: "temporal/deadline",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Form("temporal/deadline"),
-        },
-    },
-    Unproduced {
-        id: "temporal/fairness",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Form("temporal/fairness"),
-        },
-    },
-    Unproduced {
-        id: "temporal/monitor_plan",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Form("temporal/monitor_plan"),
-        },
-    },
-    Unproduced {
-        id: "temporal/terminal",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Form("temporal/terminal"),
-        },
-    },
-    Unproduced {
-        id: "temporal/window",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: probe_source!("operators"),
-            detect: Detect::Form("temporal/window"),
-        },
-    },
-    Unproduced {
-        id: "timed_model/clock_constraint",
-        keys: &["QSL-3050"],
-        probe: Probe {
-            source: probe_source!("braking"),
-            detect: Detect::Form("timed_model/clock_constraint"),
-        },
-    },
-    Unproduced {
-        id: "timed_model/clock_guard",
-        keys: &["QSL-3050"],
-        probe: Probe {
-            source: probe_source!("braking"),
-            detect: Detect::Form("timed_model/clock_guard"),
-        },
-    },
-    Unproduced {
-        id: "timed_model/clock_place",
-        keys: &["QSL-3050"],
-        probe: Probe {
-            source: probe_source!("braking"),
-            detect: Detect::Form("timed_model/clock_place"),
-        },
-    },
-    Unproduced {
-        id: "timed_model/clock_reset",
-        keys: &["QSL-3050"],
-        probe: Probe {
-            source: probe_source!("braking"),
-            detect: Detect::Form("timed_model/clock_reset"),
-        },
-    },
-    Unproduced {
-        id: "timed_model/timed_model",
-        keys: &["QSL-3050"],
-        probe: Probe {
-            source: probe_source!("braking"),
-            detect: Detect::Form("timed_model/timed_model"),
-        },
-    },
-    Unproduced {
-        id: "timed_model/time_invariant",
-        keys: &["QSL-3050"],
-        probe: Probe {
-            source: probe_source!("braking"),
-            detect: Detect::Form("timed_model/time_invariant"),
-        },
-    },
-    Unproduced {
-        id: "timed_model/time_source",
-        keys: &["QSL-3050"],
-        probe: Probe {
-            source: probe_source!("braking"),
-            detect: Detect::Form("timed_model/time_source"),
-        },
-    },
-    Unproduced {
-        id: "timed_model/urgency",
-        keys: &["QSL-3050"],
-        probe: Probe {
-            source: probe_source!("braking"),
-            detect: Detect::Form("timed_model/urgency"),
-        },
-    },
-    Unproduced {
-        id: "claim/analysis_claim",
-        keys: &["QSL-3051"],
-        probe: Probe {
-            source: probe_source!("source-object-workload"),
-            detect: Detect::Form("claim/analysis_claim"),
-        },
-    },
-    Unproduced {
-        id: "claim/hyperproperty",
-        keys: &["QSL-3051"],
-        probe: Probe {
-            source: probe_source!("source-object-workload"),
-            detect: Detect::Form("claim/hyperproperty"),
-        },
-    },
-    Unproduced {
-        id: "claim/probabilistic_claim",
-        keys: &["QSL-3051"],
-        probe: Probe {
-            source: probe_source!("source-object-workload"),
-            detect: Detect::Form("claim/probabilistic_claim"),
-        },
-    },
-    Unproduced {
-        id: "claim/schedulability",
-        keys: &["QSL-3051"],
-        probe: Probe {
-            source: probe_source!("source-object-workload"),
-            detect: Detect::Form("claim/schedulability"),
-        },
-    },
-    Unproduced {
-        id: "claim/state_graph",
-        keys: &["QSL-3051"],
-        probe: Probe {
-            source: probe_source!("source-object-workload"),
-            detect: Detect::Form("claim/state_graph"),
-        },
-    },
-    Unproduced {
-        id: "claim/step_relation",
-        keys: &["QSL-3051"],
-        probe: Probe {
-            source: probe_source!("source-object-workload"),
-            detect: Detect::Form("claim/step_relation"),
-        },
-    },
-    Unproduced {
-        id: "claim/synthesis_request",
-        keys: &["QSL-3051"],
-        probe: Probe {
-            source: probe_source!("source-object-workload"),
-            detect: Detect::Form("claim/synthesis_request"),
-        },
-    },
-    Unproduced {
-        id: "claim/verification_claim",
-        keys: &["QSL-3051"],
-        probe: Probe {
-            source: probe_source!("source-object-workload"),
-            detect: Detect::Form("claim/verification_claim"),
-        },
-    },
-    Unproduced {
-        id: "correspondence/abstraction_relation",
-        keys: &["QSL-3052"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Form("correspondence/abstraction_relation"),
-        },
-    },
-    Unproduced {
-        id: "correspondence/binding_role",
-        keys: &["QSL-3052"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Form("correspondence/binding_role"),
-        },
-    },
-    Unproduced {
-        id: "correspondence/component_composition",
-        keys: &["QSL-3052"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Form("correspondence/component_composition"),
-        },
-    },
-    Unproduced {
-        id: "correspondence/implementation_guarantee",
-        keys: &["QSL-3052"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Form("correspondence/implementation_guarantee"),
-        },
-    },
-    Unproduced {
-        id: "correspondence/model_correspondence",
-        keys: &["QSL-3052"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Form("correspondence/model_correspondence"),
-        },
-    },
-    Unproduced {
-        id: "correspondence/profile_correspondence",
-        keys: &["QSL-3052"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Form("correspondence/profile_correspondence"),
-        },
-    },
-    Unproduced {
-        id: "correspondence/source_locus",
-        keys: &["QSL-3052"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::Form("correspondence/source_locus"),
-        },
-    },
-    Unproduced {
-        id: "model/event_type",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: probe_source!("source-object"),
-            detect: Detect::Form("model/event_type"),
-        },
-    },
-    Unproduced {
-        id: "model/model_import",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: probe_source!("source-object"),
-            detect: Detect::Form("model/model_import"),
-        },
-    },
-    Unproduced {
-        id: "model/model_root",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: probe_source!("source-object"),
-            detect: Detect::Form("model/model_root"),
-        },
-    },
-    Unproduced {
-        id: "model/namespace",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: probe_source!("source-object"),
-            detect: Detect::Form("model/namespace"),
-        },
-    },
-    Unproduced {
-        id: "model/persistence_interface",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: probe_source!("source-object"),
-            detect: Detect::Form("model/persistence_interface"),
-        },
-    },
-    Unproduced {
-        id: "model/process",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: probe_source!("source-object"),
-            detect: Detect::Form("model/process"),
-        },
-    },
-    Unproduced {
-        id: "model/record_value_type",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: probe_source!("source-object"),
-            detect: Detect::Form("model/record_value_type"),
-        },
-    },
-    Unproduced {
-        id: "model/state_machine",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: probe_source!("source-object"),
-            detect: Detect::Form("model/state_machine"),
-        },
-    },
-    Unproduced {
-        id: "model/systems_allocation",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: probe_source!("source-object"),
-            detect: Detect::Form("model/systems_allocation"),
-        },
-    },
-    Unproduced {
-        id: "model/systems_connection",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: probe_source!("source-object"),
-            detect: Detect::Form("model/systems_connection"),
-        },
-    },
-    Unproduced {
-        id: "model/systems_interface",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: probe_source!("source-object"),
-            detect: Detect::Form("model/systems_interface"),
-        },
-    },
-    Unproduced {
-        id: "model/systems_part",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: probe_source!("source-object"),
-            detect: Detect::Form("model/systems_part"),
-        },
-    },
-    Unproduced {
-        id: "model/systems_port",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: probe_source!("source-object"),
-            detect: Detect::Form("model/systems_port"),
-        },
-    },
-    Unproduced {
-        id: "model/tuple_value_type",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: probe_source!("source-object"),
-            detect: Detect::Form("model/tuple_value_type"),
-        },
-    },
-    Unproduced {
-        id: "model/value_type",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: probe_source!("source-object"),
-            detect: Detect::Form("model/value_type"),
-        },
-    },
-    Unproduced {
-        id: "model/variant_type",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: probe_source!("source-object"),
-            detect: Detect::Form("model/variant_type"),
-        },
-    },
-    Unproduced {
-        id: "composite_type/alias",
-        keys: &["QSL-3054"],
-        probe: Probe {
-            source: probe_source!("probe-map-contains"),
-            detect: Detect::Form("composite_type/alias"),
-        },
-    },
-    Unproduced {
-        id: "composite_type/map",
-        keys: &["QSL-3054"],
-        probe: Probe {
-            source: probe_source!("probe-map-contains"),
-            detect: Detect::Form("composite_type/map"),
-        },
-    },
-    Unproduced {
-        id: "scalar_type/bounded_quantity",
-        keys: &["QSL-3055"],
-        probe: Probe {
-            source: probe_source!("quantity-comparison"),
-            detect: Detect::Form("scalar_type/bounded_quantity"),
-        },
-    },
-    Unproduced {
-        id: "scalar_type/carried_quantity",
-        keys: &["QSL-3055"],
-        probe: Probe {
-            source: probe_source!("quantity-comparison"),
-            detect: Detect::Form("scalar_type/carried_quantity"),
-        },
-    },
-    Unproduced {
-        id: "scalar_type/dimension_equivalence",
-        keys: &["QSL-3055"],
-        probe: Probe {
-            source: probe_source!("quantity-comparison"),
-            detect: Detect::Form("scalar_type/dimension_equivalence"),
-        },
-    },
-    Unproduced {
-        id: "value/collection_value",
-        keys: &["QSL-3055"],
-        probe: Probe {
-            source: probe_source!("quantity-comparison"),
-            detect: Detect::Form("value/collection_value"),
-        },
-    },
-    Unproduced {
-        id: "extension/extension_form",
-        keys: &["QSL-3056"],
-        probe: Probe {
-            source: probe_source!("attempt-result"),
-            detect: Detect::Form("extension/extension_form"),
-        },
-    },
-    Unproduced {
-        id: "probabilistic/delay_distribution",
-        keys: &["QSL-3056"],
-        probe: Probe {
-            source: probe_source!("attempt-result"),
-            detect: Detect::Form("probabilistic/delay_distribution"),
-        },
-    },
-    Unproduced {
-        id: "protocol/compensation",
-        keys: &["QSL-3056"],
-        probe: Probe {
-            source: probe_source!("attempt-result"),
-            detect: Detect::Form("protocol/compensation"),
-        },
-    },
-    Unproduced {
-        id: "protocol/protocol_reference",
-        keys: &["QSL-3056"],
-        probe: Probe {
-            source: probe_source!("attempt-result"),
-            detect: Detect::Form("protocol/protocol_reference"),
-        },
-    },
     Unproduced {
         id: "filament.op.collection.index",
         keys: &["IR-1491"],
         probe: Probe {
             source: include_str!("../../cases/index-accepted.native"),
             detect: Detect::Operation("filament.op.collection.index"),
+            expect: Expect::Refused {
+                stage: "admit",
+                cause: "OperationMemberMismatch",
+            },
         },
     },
     Unproduced {
@@ -1295,14 +524,22 @@ const UNPRODUCED: &[Unproduced] = &[
         probe: Probe {
             source: probe_source!("probe-sequence-population-call"),
             detect: Detect::Operation("filament.op.collection.seq"),
+            expect: Expect::Refused {
+                stage: "check",
+                cause: "PopulationFormOutsideRefinement",
+            },
         },
     },
+    // `only` has no probe of its own: the population call `only(b in p : e)`
+    // needs a population, which no source can declare outside the QSL-1880
+    // gate. The `seq` probe above shares its refusal.
     Unproduced {
         id: "filament.op.collection.only",
         keys: &["IR-1492"],
         probe: Probe {
-            source: probe_source!("probe-sequence-population-call"),
+            source: "",
             detect: Detect::Operation("filament.op.collection.only"),
+            expect: Expect::NoSyntax("population calls need a population the source cannot declare"),
         },
     },
     Unproduced {
@@ -1311,30 +548,10 @@ const UNPRODUCED: &[Unproduced] = &[
         probe: Probe {
             source: include_str!("../../cases/type-operators/reference-equality-accepted.native"),
             detect: Detect::Operation("filament.op.reference.eq"),
-        },
-    },
-    Unproduced {
-        id: "operation-bodies",
-        keys: &["QSL-1899"],
-        probe: Probe {
-            source: probe_source!("probe-operation-body"),
-            detect: Detect::OperationBodies,
-        },
-    },
-    Unproduced {
-        id: "filament.op.model.reaches_field",
-        keys: &["QSL-1904"],
-        probe: Probe {
-            source: probe_source!("probe-reaches-field"),
-            detect: Detect::Operation("filament.op.model.reaches_field"),
-        },
-    },
-    Unproduced {
-        id: "source-declared-object-navigation",
-        keys: &["QSL-1880"],
-        probe: Probe {
-            source: probe_source!("probe-object-navigation"),
-            detect: Detect::Admitted,
+            expect: Expect::Refused {
+                stage: "admit",
+                cause: "OperatorIneligible",
+            },
         },
     },
     Unproduced {
@@ -1343,6 +560,10 @@ const UNPRODUCED: &[Unproduced] = &[
         probe: Probe {
             source: probe_source!("probe-reference-inequality"),
             detect: Detect::Operation("filament.op.reference.ne"),
+            expect: Expect::Refused {
+                stage: "admit",
+                cause: "OperatorIneligible",
+            },
         },
     },
     Unproduced {
@@ -1351,6 +572,34 @@ const UNPRODUCED: &[Unproduced] = &[
         probe: Probe {
             source: probe_source!("probe-operation-call"),
             detect: Detect::Operation("filament.op.model.dispatch_call"),
+            expect: Expect::Refused {
+                stage: "check",
+                cause: "OperatorIneligible",
+            },
+        },
+    },
+    Unproduced {
+        id: "source-declared-object-navigation",
+        keys: &["QSL-1880"],
+        probe: Probe {
+            source: probe_source!("probe-object-navigation"),
+            detect: Detect::Admitted,
+            expect: Expect::Refused {
+                stage: "admit",
+                cause: "InvalidSemanticGraph",
+            },
+        },
+    },
+    Unproduced {
+        id: "filament.op.model.reaches_field",
+        keys: &["QSL-1904"],
+        probe: Probe {
+            source: probe_source!("probe-reaches-field"),
+            detect: Detect::Operation("filament.op.model.reaches_field"),
+            expect: Expect::Refused {
+                stage: "admit",
+                cause: "OperatorIneligible",
+            },
         },
     },
     float_composite_equality!(
@@ -1378,6 +627,807 @@ const UNPRODUCED: &[Unproduced] = &[
         "type F = Float64[nearest-even];",
         "Sequence<F>[0,3]"
     ),
+    Unproduced {
+        id: "filament.op.bytes.concat",
+        keys: &["QSL-3043"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Operation("filament.op.bytes.concat"),
+            expect: Expect::NoSyntax("no lowering exists for bytes length or concatenation in fsl-semantics lowering"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.bytes.length",
+        keys: &["QSL-3043"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Operation("filament.op.bytes.length"),
+            expect: Expect::NoSyntax("no lowering exists for bytes length or concatenation in fsl-semantics lowering"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.collection.sum.carried_quantity",
+        keys: &["QSL-3044"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Operation("filament.op.collection.sum.carried_quantity"),
+            expect: Expect::NoSyntax("no carried-quantity sum syntax found"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.collection.sum.decimal",
+        keys: &["QSL-3044"],
+        probe: Probe {
+            source: include_str!("../../cases/catalog-source/probe-sum-decimal.native"),
+            detect: Detect::Operation("filament.op.collection.sum.decimal"),
+            expect: Expect::Refused { stage: "check", cause: "Unproved" },
+        },
+    },
+    Unproduced {
+        id: "filament.op.collection.sum.rational",
+        keys: &["QSL-3044"],
+        probe: Probe {
+            source: include_str!("../../cases/catalog-source/probe-sum-rational.native"),
+            detect: Detect::Operation("filament.op.collection.sum.rational"),
+            expect: Expect::Refused { stage: "check", cause: "Unproved" },
+        },
+    },
+    Unproduced {
+        id: "filament.op.rational.narrow",
+        keys: &["QSL-3045"],
+        probe: Probe {
+            source: include_str!("../../cases/catalog-source/probe-rational-narrow.native"),
+            detect: Detect::Operation("filament.op.rational.narrow"),
+            expect: Expect::Refused { stage: "check", cause: "TypeMismatch" },
+        },
+    },
+    Unproduced {
+        id: "filament.op.clock_reference.eq",
+        keys: &["QSL-3046"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Operation("filament.op.clock_reference.eq"),
+            expect: Expect::NoSyntax("no source syntax for clock-reference values or timed values found"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.clock_reference.ne",
+        keys: &["QSL-3046"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Operation("filament.op.clock_reference.ne"),
+            expect: Expect::NoSyntax("no source syntax for clock-reference values or timed values found"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.clock_reference.ref",
+        keys: &["QSL-3046"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Operation("filament.op.clock_reference.ref"),
+            expect: Expect::NoSyntax("no source syntax for clock-reference values or timed values found"),
+        },
+    },
+    Unproduced {
+        id: "scalar_type/clock_reference",
+        keys: &["QSL-3046"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("scalar_type/clock_reference"),
+            expect: Expect::NoSyntax("no source syntax for clock-reference values or timed values found"),
+        },
+    },
+    Unproduced {
+        id: "bounded_domain/finite_trace_population",
+        keys: &["QSL-3047"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("bounded_domain/finite_trace_population"),
+            expect: Expect::NoSyntax("population and reference constructs outside the QSL-1880 source-object gate have no source syntax"),
+        },
+    },
+    Unproduced {
+        id: "bounded_domain/model_population",
+        keys: &["QSL-3047"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("bounded_domain/model_population"),
+            expect: Expect::NoSyntax("population and reference constructs outside the QSL-1880 source-object gate have no source syntax"),
+        },
+    },
+    Unproduced {
+        id: "expression/place_reference",
+        keys: &["QSL-3047"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("expression/place_reference"),
+            expect: Expect::NoSyntax("population and reference constructs outside the QSL-1880 source-object gate have no source syntax"),
+        },
+    },
+    Unproduced {
+        id: "expression/reachability",
+        keys: &["QSL-3047"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("expression/reachability"),
+            expect: Expect::NoSyntax("population and reference constructs outside the QSL-1880 source-object gate have no source syntax"),
+        },
+    },
+    Unproduced {
+        id: "expression/reference",
+        keys: &["QSL-3047"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("expression/reference"),
+            expect: Expect::NoSyntax("population and reference constructs outside the QSL-1880 source-object gate have no source syntax"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.model.all_instances",
+        keys: &["QSL-3047"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Operation("filament.op.model.all_instances"),
+            expect: Expect::NoSyntax("population and reference constructs outside the QSL-1880 source-object gate have no source syntax"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.model.lookup",
+        keys: &["QSL-3047"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Operation("filament.op.model.lookup"),
+            expect: Expect::NoSyntax("population and reference constructs outside the QSL-1880 source-object gate have no source syntax"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.model.navigate",
+        keys: &["QSL-3047"],
+        probe: Probe {
+            source: include_str!("../../cases/catalog-source/probe-object-navigation.native"),
+            detect: Detect::Operation("filament.op.model.navigate"),
+            expect: Expect::Refused { stage: "admit", cause: "InvalidSemanticGraph" },
+        },
+    },
+    Unproduced {
+        id: "filament.op.model.reaches",
+        keys: &["QSL-3047"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Operation("filament.op.model.reaches"),
+            expect: Expect::NoSyntax("population and reference constructs outside the QSL-1880 source-object gate have no source syntax"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.option.slots",
+        keys: &["QSL-3047"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Operation("filament.op.option.slots"),
+            expect: Expect::NoSyntax("population and reference constructs outside the QSL-1880 source-object gate have no source syntax"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.reference.upcast",
+        keys: &["QSL-3047"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Operation("filament.op.reference.upcast"),
+            expect: Expect::NoSyntax("population and reference constructs outside the QSL-1880 source-object gate have no source syntax"),
+        },
+    },
+    Unproduced {
+        id: "relation/causal_relation",
+        keys: &["QSL-3047"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("relation/causal_relation"),
+            expect: Expect::NoSyntax("population and reference constructs outside the QSL-1880 source-object gate have no source syntax"),
+        },
+    },
+    Unproduced {
+        id: "relation/membership",
+        keys: &["QSL-3047"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("relation/membership"),
+            expect: Expect::NoSyntax("population and reference constructs outside the QSL-1880 source-object gate have no source syntax"),
+        },
+    },
+    Unproduced {
+        id: "relation/population",
+        keys: &["QSL-3047"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("relation/population"),
+            expect: Expect::NoSyntax("population and reference constructs outside the QSL-1880 source-object gate have no source syntax"),
+        },
+    },
+    Unproduced {
+        id: "relation/relationship",
+        keys: &["QSL-3047"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("relation/relationship"),
+            expect: Expect::NoSyntax("population and reference constructs outside the QSL-1880 source-object gate have no source syntax"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.claim.clause",
+        keys: &["QSL-3048"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Operation("filament.op.claim.clause"),
+            expect: Expect::NoSyntax("no source syntax found"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.refinement.history",
+        keys: &["QSL-3048"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Operation("filament.op.refinement.history"),
+            expect: Expect::NoSyntax("no source syntax found"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.state.transition",
+        keys: &["QSL-3048"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Operation("filament.op.state.transition"),
+            expect: Expect::NoSyntax("no source syntax found"),
+        },
+    },
+    Unproduced {
+        id: "relation/refinement",
+        keys: &["QSL-3048"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("relation/refinement"),
+            expect: Expect::NoSyntax("no source syntax found"),
+        },
+    },
+    Unproduced {
+        id: "state/snapshot",
+        keys: &["QSL-3048"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("state/snapshot"),
+            expect: Expect::NoSyntax("no source syntax found"),
+        },
+    },
+    Unproduced {
+        id: "state/transition",
+        keys: &["QSL-3048"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("state/transition"),
+            expect: Expect::NoSyntax("no source syntax found"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.temporal.aggregate",
+        keys: &["QSL-3049"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Operation("filament.op.temporal.aggregate"),
+            expect: Expect::NoSyntax("no source syntax found"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.temporal.fair",
+        keys: &["QSL-3049"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Operation("filament.op.temporal.fair"),
+            expect: Expect::NoSyntax("no source syntax found"),
+        },
+    },
+    Unproduced {
+        id: "temporal/activation",
+        keys: &["QSL-3049"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("temporal/activation"),
+            expect: Expect::NoSyntax("no source syntax found"),
+        },
+    },
+    Unproduced {
+        id: "temporal/clock",
+        keys: &["QSL-3049"],
+        probe: Probe {
+            source: include_str!("../../../tests/corpus/temporal/event-window.native"),
+            detect: Detect::Form("temporal/clock"),
+            expect: Expect::Refused { stage: "admit", cause: "MissingTemporalClockSelection" },
+        },
+    },
+    Unproduced {
+        id: "temporal/deadline",
+        keys: &["QSL-3049"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("temporal/deadline"),
+            expect: Expect::NoSyntax("no source syntax found"),
+        },
+    },
+    Unproduced {
+        id: "temporal/fairness",
+        keys: &["QSL-3049"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("temporal/fairness"),
+            expect: Expect::NoSyntax("no source syntax found"),
+        },
+    },
+    Unproduced {
+        id: "temporal/monitor_plan",
+        keys: &["QSL-3049"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("temporal/monitor_plan"),
+            expect: Expect::NoSyntax("no source syntax found"),
+        },
+    },
+    Unproduced {
+        id: "temporal/terminal",
+        keys: &["QSL-3049"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("temporal/terminal"),
+            expect: Expect::NoSyntax("no source syntax found"),
+        },
+    },
+    Unproduced {
+        id: "temporal/window",
+        keys: &["QSL-3049"],
+        probe: Probe {
+            source: include_str!("../../../tests/corpus/temporal/fixed-window.native"),
+            detect: Detect::Form("temporal/window"),
+            expect: Expect::Refused { stage: "admit", cause: "MissingTemporalClockSelection" },
+        },
+    },
+    Unproduced {
+        id: "timed_model/clock_constraint",
+        keys: &["QSL-3050"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("timed_model/clock_constraint"),
+            expect: Expect::NoSyntax("timed models come from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "timed_model/clock_guard",
+        keys: &["QSL-3050"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("timed_model/clock_guard"),
+            expect: Expect::NoSyntax("timed models come from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "timed_model/clock_place",
+        keys: &["QSL-3050"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("timed_model/clock_place"),
+            expect: Expect::NoSyntax("timed models come from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "timed_model/clock_reset",
+        keys: &["QSL-3050"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("timed_model/clock_reset"),
+            expect: Expect::NoSyntax("timed models come from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "timed_model/timed_model",
+        keys: &["QSL-3050"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("timed_model/timed_model"),
+            expect: Expect::NoSyntax("timed models come from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "timed_model/time_invariant",
+        keys: &["QSL-3050"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("timed_model/time_invariant"),
+            expect: Expect::NoSyntax("timed models come from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "timed_model/time_source",
+        keys: &["QSL-3050"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("timed_model/time_source"),
+            expect: Expect::NoSyntax("timed models come from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "timed_model/urgency",
+        keys: &["QSL-3050"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("timed_model/urgency"),
+            expect: Expect::NoSyntax("timed models come from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "claim/analysis_claim",
+        keys: &["QSL-3051"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("claim/analysis_claim"),
+            expect: Expect::NoSyntax("claims come from analysis-request documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "claim/hyperproperty",
+        keys: &["QSL-3051"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("claim/hyperproperty"),
+            expect: Expect::NoSyntax("claims come from analysis-request documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "claim/probabilistic_claim",
+        keys: &["QSL-3051"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("claim/probabilistic_claim"),
+            expect: Expect::NoSyntax("claims come from analysis-request documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "claim/schedulability",
+        keys: &["QSL-3051"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("claim/schedulability"),
+            expect: Expect::NoSyntax("claims come from analysis-request documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "claim/state_graph",
+        keys: &["QSL-3051"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("claim/state_graph"),
+            expect: Expect::NoSyntax("claims come from analysis-request documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "claim/step_relation",
+        keys: &["QSL-3051"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("claim/step_relation"),
+            expect: Expect::NoSyntax("claims come from analysis-request documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "claim/synthesis_request",
+        keys: &["QSL-3051"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("claim/synthesis_request"),
+            expect: Expect::NoSyntax("claims come from analysis-request documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "claim/verification_claim",
+        keys: &["QSL-3051"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("claim/verification_claim"),
+            expect: Expect::NoSyntax("claims come from analysis-request documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "correspondence/abstraction_relation",
+        keys: &["QSL-3052"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("correspondence/abstraction_relation"),
+            expect: Expect::NoSyntax("correspondence documents are not authored in FSL source"),
+        },
+    },
+    Unproduced {
+        id: "correspondence/binding_role",
+        keys: &["QSL-3052"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("correspondence/binding_role"),
+            expect: Expect::NoSyntax("correspondence documents are not authored in FSL source"),
+        },
+    },
+    Unproduced {
+        id: "correspondence/component_composition",
+        keys: &["QSL-3052"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("correspondence/component_composition"),
+            expect: Expect::NoSyntax("correspondence documents are not authored in FSL source"),
+        },
+    },
+    Unproduced {
+        id: "correspondence/implementation_guarantee",
+        keys: &["QSL-3052"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("correspondence/implementation_guarantee"),
+            expect: Expect::NoSyntax("correspondence documents are not authored in FSL source"),
+        },
+    },
+    Unproduced {
+        id: "correspondence/model_correspondence",
+        keys: &["QSL-3052"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("correspondence/model_correspondence"),
+            expect: Expect::NoSyntax("correspondence documents are not authored in FSL source"),
+        },
+    },
+    Unproduced {
+        id: "correspondence/profile_correspondence",
+        keys: &["QSL-3052"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("correspondence/profile_correspondence"),
+            expect: Expect::NoSyntax("correspondence documents are not authored in FSL source"),
+        },
+    },
+    Unproduced {
+        id: "correspondence/source_locus",
+        keys: &["QSL-3052"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("correspondence/source_locus"),
+            expect: Expect::NoSyntax("correspondence documents are not authored in FSL source"),
+        },
+    },
+    Unproduced {
+        id: "model/event_type",
+        keys: &["QSL-3053"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("model/event_type"),
+            expect: Expect::NoSyntax("model structure comes from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "model/model_import",
+        keys: &["QSL-3053"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("model/model_import"),
+            expect: Expect::NoSyntax("model structure comes from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "model/model_root",
+        keys: &["QSL-3053"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("model/model_root"),
+            expect: Expect::NoSyntax("model structure comes from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "model/namespace",
+        keys: &["QSL-3053"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("model/namespace"),
+            expect: Expect::NoSyntax("model structure comes from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "model/persistence_interface",
+        keys: &["QSL-3053"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("model/persistence_interface"),
+            expect: Expect::NoSyntax("model structure comes from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "model/process",
+        keys: &["QSL-3053"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("model/process"),
+            expect: Expect::NoSyntax("model structure comes from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "model/record_value_type",
+        keys: &["QSL-3053"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("model/record_value_type"),
+            expect: Expect::NoSyntax("model structure comes from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "model/state_machine",
+        keys: &["QSL-3053"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("model/state_machine"),
+            expect: Expect::NoSyntax("model structure comes from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "model/systems_allocation",
+        keys: &["QSL-3053"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("model/systems_allocation"),
+            expect: Expect::NoSyntax("model structure comes from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "model/systems_connection",
+        keys: &["QSL-3053"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("model/systems_connection"),
+            expect: Expect::NoSyntax("model structure comes from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "model/systems_interface",
+        keys: &["QSL-3053"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("model/systems_interface"),
+            expect: Expect::NoSyntax("model structure comes from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "model/systems_part",
+        keys: &["QSL-3053"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("model/systems_part"),
+            expect: Expect::NoSyntax("model structure comes from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "model/systems_port",
+        keys: &["QSL-3053"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("model/systems_port"),
+            expect: Expect::NoSyntax("model structure comes from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "model/tuple_value_type",
+        keys: &["QSL-3053"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("model/tuple_value_type"),
+            expect: Expect::NoSyntax("model structure comes from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "model/value_type",
+        keys: &["QSL-3053"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("model/value_type"),
+            expect: Expect::NoSyntax("model structure comes from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "model/variant_type",
+        keys: &["QSL-3053"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("model/variant_type"),
+            expect: Expect::NoSyntax("model structure comes from domain-package documents, not FSL source"),
+        },
+    },
+    Unproduced {
+        id: "composite_type/alias",
+        keys: &["QSL-3054"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("composite_type/alias"),
+            expect: Expect::NoSyntax("no alias form is emitted by any source"),
+        },
+    },
+    Unproduced {
+        id: "composite_type/map",
+        keys: &["QSL-3054"],
+        probe: Probe {
+            source: include_str!("../../cases/catalog-source/probe-map-contains.native"),
+            detect: Detect::Form("composite_type/map"),
+            expect: Expect::Refused { stage: "admit", cause: "InvalidDerivedShape" },
+        },
+    },
+    Unproduced {
+        id: "scalar_type/bounded_quantity",
+        keys: &["QSL-3055"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("scalar_type/bounded_quantity"),
+            expect: Expect::NoSyntax("no source syntax found (QSL-946, IR-1403)"),
+        },
+    },
+    Unproduced {
+        id: "scalar_type/carried_quantity",
+        keys: &["QSL-3055"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("scalar_type/carried_quantity"),
+            expect: Expect::NoSyntax("no source syntax found (QSL-946, IR-1403)"),
+        },
+    },
+    Unproduced {
+        id: "scalar_type/dimension_equivalence",
+        keys: &["QSL-3055"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("scalar_type/dimension_equivalence"),
+            expect: Expect::NoSyntax("no source syntax found (QSL-946, IR-1403)"),
+        },
+    },
+    Unproduced {
+        id: "value/collection_value",
+        keys: &["QSL-3055"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("value/collection_value"),
+            expect: Expect::NoSyntax("no source syntax found (QSL-946, IR-1403)"),
+        },
+    },
+    Unproduced {
+        id: "extension/extension_form",
+        keys: &["QSL-3056"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("extension/extension_form"),
+            expect: Expect::NoSyntax("no source syntax found"),
+        },
+    },
+    Unproduced {
+        id: "probabilistic/delay_distribution",
+        keys: &["QSL-3056"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("probabilistic/delay_distribution"),
+            expect: Expect::NoSyntax("no source syntax found"),
+        },
+    },
+    Unproduced {
+        id: "protocol/compensation",
+        keys: &["QSL-3056"],
+        probe: Probe {
+            source: include_str!("../../../tests/corpus/protocol/original/compensation.native"),
+            detect: Detect::Form("protocol/compensation"),
+            expect: Expect::Refused { stage: "select", cause: "MissingImport" },
+        },
+    },
+    Unproduced {
+        id: "protocol/protocol_reference",
+        keys: &["QSL-3056"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Form("protocol/protocol_reference"),
+            expect: Expect::NoSyntax("no source syntax found"),
+        },
+    },
 ];
 
 fn is_ticket_key(key: &str) -> bool {
@@ -1390,38 +1440,82 @@ fn is_ticket_key(key: &str) -> bool {
         && number.bytes().all(|byte| byte.is_ascii_digit())
 }
 
-fn probe_is_producible(probe: &Probe) -> bool {
-    let Ok(package) = try_compile_and_read("probe", probe.source) else {
-        return false;
-    };
-    match probe.detect {
-        Detect::Operation(identity) => emitted_operations(&package).contains(identity),
-        Detect::Form(form) => emitted_forms(&package).contains(form),
-        Detect::OperationBodies => package["operation_bodies"]
-            .as_array()
-            .is_some_and(|rows| !rows.is_empty()),
+/// Whether an emitted package holds what a probe's detector looks for.
+fn detected(detect: &Detect, package: &Value) -> bool {
+    match detect {
+        Detect::Operation(identity) => emitted_operations(package).contains(*identity),
+        Detect::Form(form) => emitted_forms(package).contains(*form),
         Detect::Admitted => true,
     }
 }
 
-/// Every operation each checked-in case emits, found by compiling it.
+/// `Ok` while the probe still behaves as its entry says; the error names how
+/// it changed.
+fn probe_verdict(entry: &Unproduced) -> Result<(), String> {
+    let probe = &entry.probe;
+    let outcome = try_compile_and_read(entry.id, probe.source);
+    match (&probe.expect, outcome) {
+        (Expect::NoSyntax(_), _) => Ok(()),
+        (Expect::Admitted, Ok(package)) if !detected(&probe.detect, &package) => Ok(()),
+        (Expect::Admitted, Ok(_)) => Err("the probe now emits the item".to_owned()),
+        (Expect::Admitted, Err(refusal)) => Err(format!("the probe is now refused: {refusal:?}")),
+        (Expect::Refused { .. }, Ok(package)) if detected(&probe.detect, &package) => {
+            Err("the probe is now admitted and emits the item".to_owned())
+        }
+        (Expect::Refused { .. }, Ok(_)) => {
+            Err("the pinned refusal is gone: the probe is now admitted".to_owned())
+        }
+        (Expect::Refused { stage, cause }, Err(refusal)) => {
+            if refusal.stage == *stage && refusal.detail.contains(cause) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "the refusal changed from {stage}/{cause} to {}/{}",
+                    refusal.stage, refusal.detail
+                ))
+            }
+        }
+    }
+}
+
+/// Every checked-in case compiled once and shared by the coverage tests.
+fn compiled_cases() -> &'static [(&'static Case, Value)] {
+    static COMPILED: std::sync::OnceLock<Vec<(&'static Case, Value)>> = std::sync::OnceLock::new();
+    COMPILED.get_or_init(|| {
+        CASES
+            .iter()
+            .map(|case| (case, compile_and_read(case)))
+            .collect()
+    })
+}
+
+/// Every operation each checked-in case emits.
 fn represented_operations() -> BTreeSet<String> {
-    CASES
+    compiled_cases()
         .iter()
-        .flat_map(|case| emitted_operations(&compile_and_read(case)))
+        .flat_map(|(_, package)| emitted_operations(package))
         .collect()
 }
 
-/// Every node form each checked-in case emits, found by compiling it.
+/// Every node form each checked-in case emits.
 fn represented_forms() -> BTreeSet<String> {
-    CASES
+    compiled_cases()
         .iter()
-        .flat_map(|case| emitted_forms(&compile_and_read(case)))
+        .flat_map(|(_, package)| emitted_forms(package))
         .collect()
 }
 
 fn listed_ids() -> BTreeSet<String> {
     UNPRODUCED.iter().map(|entry| entry.id.to_owned()).collect()
+}
+
+/// Every FR-322 node form as `tag/form`: the strict reader's closed
+/// vocabulary.
+fn node_forms() -> BTreeSet<String> {
+    filament_contract_model::CheckedNodeKind::all()
+        .into_iter()
+        .map(|kind| format!("{}/{}", kind.tag().as_wire(), kind.form_wire()))
+        .collect()
 }
 
 /// The catalog operations that no case emits and no list entry owns. This is
@@ -1437,16 +1531,55 @@ fn operations_without_source(catalog: &BTreeSet<String>) -> BTreeSet<String> {
         .collect()
 }
 
-/// The FR-322 node forms (the strict reader's closed vocabulary) that no case
-/// emits and no list entry owns.
+/// The FR-322 node forms that no case emits and no list entry owns.
 fn forms_without_source() -> BTreeSet<String> {
     let represented = represented_forms();
     let listed = listed_ids();
-    filament_contract_model::CheckedNodeKind::all()
+    node_forms()
         .into_iter()
-        .map(|kind| format!("{}/{}", kind.tag().as_wire(), kind.form_wire()))
         .filter(|form| !represented.contains(form) && !listed.contains(form))
         .collect()
+}
+
+/// Every `.native` source under the case, corpus and example directories that
+/// the strict reader admits, with its emitted package.
+fn corpus_packages() -> &'static [(String, Value)] {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path
+                .extension()
+                .is_some_and(|extension| extension == "native")
+            {
+                out.push(path);
+            }
+        }
+    }
+    static CORPUS: std::sync::OnceLock<Vec<(String, Value)>> = std::sync::OnceLock::new();
+    CORPUS.get_or_init(|| {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut files = Vec::new();
+        for dir in ["fsl-conformance/cases", "tests/corpus", "examples"] {
+            walk(&root.join(dir), &mut files);
+        }
+        files.sort();
+        files
+            .into_iter()
+            .filter_map(|file| {
+                let source = std::fs::read_to_string(&file).ok()?;
+                let name = file.strip_prefix(&root).ok()?.display().to_string();
+                let package = std::panic::catch_unwind(|| try_compile_and_read(&name, &source))
+                    .ok()?
+                    .ok()?;
+                Some((name, package))
+            })
+            .collect()
+    })
 }
 
 /// A wrong expected operation is rejected after compiling real source.
@@ -1486,21 +1619,16 @@ fn every_catalog_operation_has_a_source() {
     assert_catalog_has_sources(&catalog_identities());
 }
 
-/// The same, with every case compiled, admitted by the strict reader and
-/// holding exactly the operations and forms it declares.
+/// The same, with every case admitted by the strict reader and holding
+/// exactly the operations and forms it declares.
 #[test]
 #[trace("FR-350", "FSpec-FR-322")]
 fn every_catalog_operation_has_a_source_and_is_admitted() {
     let catalog = catalog_identities();
-    for case in CASES {
-        let package = compile_and_read(case);
-        assert_producers(case, &catalog, &package);
+    for (case, package) in compiled_cases() {
+        assert_producers(case, &catalog, package);
     }
-    let gaps = operations_without_source(&catalog);
-    assert!(
-        gaps.is_empty(),
-        "catalog operations without a source case or unproduced entry: {gaps:?}"
-    );
+    assert_catalog_has_sources(&catalog);
 }
 
 #[test]
@@ -1517,8 +1645,9 @@ fn every_node_form_has_a_source() {
 #[trace("FR-350", "FSpec-FR-322")]
 fn emitted_packages_are_admitted() {
     for case in CASES {
-        try_compile_and_read(case.name, case.source)
-            .unwrap_or_else(|error| panic!("the strict reader refuses a case: {error}"));
+        try_compile_and_read(case.name, case.source).unwrap_or_else(|refusal| {
+            panic!("the strict reader refuses {}: {refusal:?}", case.name)
+        });
     }
 }
 
@@ -1539,37 +1668,124 @@ fn a_fake_catalog_entry_makes_the_catalog_check_fail_naming_it() {
     );
 }
 
-/// A listed entry whose probe source is now emitted and admitted is no longer
-/// unproduced: the entry must leave the list and a case must take its place.
+/// Operation bodies are emitted from source, so QSL-1899 is not an unproduced
+/// entry.
 #[test]
 #[trace("FR-350", "FSpec-FR-322")]
-fn listed_entries_are_still_unproduced() {
-    let produced: Vec<_> = UNPRODUCED
+fn operation_bodies_are_emitted_from_source() {
+    let (_, package) = compiled_cases()
         .iter()
-        .filter(|entry| probe_is_producible(&entry.probe))
-        .map(|entry| entry.id)
-        .collect();
+        .find(|(case, _)| case.name == "object-contract")
+        .expect("the object-contract case exists");
     assert!(
-        produced.is_empty(),
-        "listed entries are now producible; remove them and add source cases: {produced:?}"
+        package["operation_bodies"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty()),
+        "the object-contract case emits an operation body row"
+    );
+    assert!(
+        UNPRODUCED
+            .iter()
+            .all(|entry| entry.id != "operation-bodies"),
+        "operation bodies are produced and not listed"
     );
 }
 
-/// No checked-in case emits a listed operation, so a listed operation that
-/// some other case now produces is reported rather than hidden.
+/// Each probe still behaves as its entry says: its pinned refusal is
+/// unchanged, and it does not emit the item. A change fails the entry by id.
 #[test]
 #[trace("FR-350", "FSpec-FR-322")]
-fn no_case_emits_a_listed_operation() {
-    let represented = represented_operations();
+fn listed_entries_are_still_unproduced() {
+    let changed: Vec<_> = UNPRODUCED
+        .iter()
+        .filter_map(|entry| probe_verdict(entry).err().map(|why| (entry.id, why)))
+        .collect();
+    assert!(
+        changed.is_empty(),
+        "listed entries whose probe changed; re-key, remove or add a case: {changed:#?}"
+    );
+}
+
+/// Pinned probes exist where the language has syntax; the rest are
+/// corpus-guard-only. The count is stated so that dropping a probe is a
+/// visible change.
+#[test]
+#[trace("FR-350")]
+fn entries_without_a_probe_say_why() {
+    for entry in UNPRODUCED {
+        match &entry.probe.expect {
+            Expect::NoSyntax(reason) => assert!(
+                !reason.is_empty() && entry.probe.source.is_empty(),
+                "{} needs a reason and no source",
+                entry.id
+            ),
+            _ => assert!(
+                !entry.probe.source.is_empty(),
+                "{} has a pinned probe without a source",
+                entry.id
+            ),
+        }
+    }
+}
+
+/// No checked-in case emits a listed operation or form.
+#[test]
+#[trace("FR-350", "FSpec-FR-322")]
+fn no_case_emits_a_listed_id() {
+    let operations = represented_operations();
+    let forms = represented_forms();
     let overlap: Vec<_> = UNPRODUCED
         .iter()
-        .filter(|entry| represented.contains(entry.id))
+        .filter(|entry| operations.contains(entry.id) || forms.contains(entry.id))
         .map(|entry| entry.id)
         .collect();
     assert!(
         overlap.is_empty(),
-        "listed operations that a case emits: {overlap:?}"
+        "listed ids that a case emits: {overlap:?}"
     );
+}
+
+/// The corpus-wide guard: no `.native` source under the case, corpus and
+/// example directories emits a listed operation or form, whether or not it is
+/// one of the cases.
+#[test]
+#[trace("FR-350", "FSpec-FR-322")]
+fn no_source_emits_a_listed_id() {
+    let hits: Vec<_> = corpus_packages()
+        .iter()
+        .flat_map(|(name, package)| {
+            let operations = emitted_operations(package);
+            let forms = emitted_forms(package);
+            UNPRODUCED
+                .iter()
+                .filter(move |entry| operations.contains(entry.id) || forms.contains(entry.id))
+                .map(move |entry| (entry.id, name.clone()))
+        })
+        .collect();
+    assert!(
+        hits.is_empty(),
+        "listed ids that checked-in sources now emit; remove them and add cases: {hits:#?}"
+    );
+    assert!(
+        corpus_packages().len() > 100,
+        "the corpus sweep admitted too few sources to guard anything"
+    );
+}
+
+/// A listed id names a catalog operation, a node form or a known feature.
+#[test]
+#[trace("FR-350", "FSpec-FR-322")]
+fn listed_ids_name_something_real() {
+    let catalog = catalog_identities();
+    let forms = node_forms();
+    let stale: Vec<_> = UNPRODUCED
+        .iter()
+        .map(|entry| entry.id)
+        .filter(|id| !catalog.contains(*id) && !forms.contains(*id) && !FEATURES.contains(id))
+        .collect();
+    assert!(stale.is_empty(), "listed ids that name nothing: {stale:?}");
+    let duplicated = UNPRODUCED.len() - listed_ids().len();
+    assert_eq!(duplicated, 0, "an id is listed twice");
 }
 
 #[test]
@@ -1597,7 +1813,7 @@ fn an_entry_without_a_key_or_with_a_hash_is_rejected() {
     assert!(!is_ticket_key("ir-1491"));
 }
 
-/// The five owners of the ticket are all listed with their keys.
+/// The named unproduced owners are all listed with their keys.
 #[test]
 #[trace("FR-350")]
 fn the_named_unproduced_owners_are_listed_with_their_keys() {
@@ -1610,7 +1826,7 @@ fn the_named_unproduced_owners_are_listed_with_their_keys() {
     };
     assert_eq!(keyed("filament.op.collection.index"), ["IR-1491"]);
     assert_eq!(keyed("filament.op.collection.seq"), ["IR-1492"]);
-    assert_eq!(keyed("operation-bodies"), ["QSL-1899"]);
+    assert_eq!(keyed("filament.op.collection.only"), ["IR-1492"]);
     assert_eq!(keyed("filament.op.model.reaches_field"), ["QSL-1904"]);
     assert_eq!(keyed("source-declared-object-navigation"), ["QSL-1880"]);
 }
@@ -1621,7 +1837,7 @@ fn the_named_unproduced_owners_are_listed_with_their_keys() {
 #[trace("FR-350")]
 fn listed_keys_are_among_the_filed_set() {
     const FILED: &[&str] = &[
-        "IR-1491", "IR-1492", "QSL-1899", "QSL-1904", "QSL-1880", "IR-1320", "STD-654",
+        "IR-1491", "IR-1492", "QSL-1880", "QSL-1904", "IR-1320", "STD-654",
     ];
     let outside: Vec<_> = UNPRODUCED
         .iter()
@@ -1637,21 +1853,5 @@ fn listed_keys_are_among_the_filed_set() {
     assert!(
         outside.is_empty(),
         "keys outside the filed set: {outside:?}"
-    );
-}
-
-/// No checked-in case emits a listed node form.
-#[test]
-#[trace("FR-350", "FSpec-FR-322")]
-fn no_case_emits_a_listed_form() {
-    let represented = represented_forms();
-    let overlap: Vec<_> = UNPRODUCED
-        .iter()
-        .filter(|entry| represented.contains(entry.id))
-        .map(|entry| entry.id)
-        .collect();
-    assert!(
-        overlap.is_empty(),
-        "listed forms that a case emits: {overlap:?}"
     );
 }

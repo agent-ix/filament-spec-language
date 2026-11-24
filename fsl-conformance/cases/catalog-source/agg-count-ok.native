@@ -1,4 +1,0 @@
-language "ix:native" edition "1-draft";
-profile v = "filament.value.complete/v1";
-type Total = Integer;
-function f using v(s: Sequence<Integer>[0,3]): Integer pure { count<Total>(x in s: x > 0) }
