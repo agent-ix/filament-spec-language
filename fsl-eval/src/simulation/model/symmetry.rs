@@ -253,12 +253,12 @@ impl ModelSystem<'_> {
             .iter()
             .map(|extent| {
                 let mut extent = extent.clone();
-                for (source, target) in &mut extent.instances {
-                    if let Some(renamed) = renaming.reference(source) {
-                        *source = renamed;
+                for instance in &mut extent.instances {
+                    if let Some(renamed) = renaming.reference(&instance.source) {
+                        instance.source = renamed;
                     }
-                    if let Some(renamed) = renaming.reference(target) {
-                        *target = renamed;
+                    if let Some(renamed) = renaming.reference(&instance.target) {
+                        instance.target = renamed;
                     }
                 }
                 extent

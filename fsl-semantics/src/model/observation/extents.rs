@@ -256,6 +256,23 @@ fn extent_refusal(
                 .with("relationship", relationship.node)
                 .with("instance", instance_index.to_string()),
         ),
+        ExtentRefusal::MissingPosition {
+            relationship, side, ..
+        } => refuse(
+            admission_record(Code::InvalidRuntimeInput, "invalid-value")
+                .with("relationship", relationship.node)
+                .with("end", end_name(side)),
+        ),
+        ExtentRefusal::UnexpectedPosition {
+            relationship, side, ..
+        }
+        | ExtentRefusal::DuplicatePosition {
+            relationship, side, ..
+        } => refuse(
+            admission_record(Code::InvalidRuntimeInput, "invalid-value")
+                .with("relationship", relationship.node)
+                .with("end", end_name(side)),
+        ),
         ExtentRefusal::Allocation(_) | ExtentRefusal::Capacity(_) => fault("extent-store-storage"),
     }
 }

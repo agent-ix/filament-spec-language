@@ -42,7 +42,7 @@ thiserror = "2.0.20"
 # share the same public syntax and evaluator types.
 tl-mltl = { git = "https://github.com/agent-ix/tl-mltl", rev = "06cda7776a3566ae90e223c3bc286c254618d39a", features = ["infinite-trace"] }
 tl-syntax = { git = "https://github.com/agent-ix/tl-syntax.git", rev = "9f7b1c868df605cb6e885291db95a948cd08829c", default-features = false, features = ["alloc", "serde"] }
-filament-mltl = { git = "https://github.com/agent-ix/filament-mltl", rev = "c04de7a6f084717cae2b642b6e58d8a4362b2973" }
+filament-mltl = { git = "https://github.com/agent-ix/filament-mltl", rev = "2243e1451e364a12762183538baac8f1f292ad2c" }
 
 [dev-dependencies]
 filament-observation = { workspace = true }

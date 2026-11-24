@@ -637,13 +637,30 @@ fn project_extents<S: ValueSink>(sink: &mut S, state: &ModelState) -> Result<(),
                     sink.scalar(Scalar::Boolean(extent.complete))?;
                     sink.name("instances")?;
                     sink.begin_array(ArrayOrder::CanonicalBytes)?;
-                    for (source, target) in &extent.instances {
+                    for instance in &extent.instances {
                         sink.visit()?;
                         sink.begin_object()?;
                         sink.name("source")?;
-                        project_reference(sink, source)?;
+                        project_reference(sink, &instance.source)?;
                         sink.name("target")?;
-                        project_reference(sink, target)?;
+                        project_reference(sink, &instance.target)?;
+                        if instance.positions.source.is_some()
+                            || instance.positions.target.is_some()
+                        {
+                            sink.name("positions")?;
+                            sink.begin_object()?;
+                            if let Some(position) = instance.positions.source {
+                                sink.name("source")?;
+                                let position = position.to_string();
+                                sink.scalar(Scalar::Text(&position))?;
+                            }
+                            if let Some(position) = instance.positions.target {
+                                sink.name("target")?;
+                                let position = position.to_string();
+                                sink.scalar(Scalar::Text(&position))?;
+                            }
+                            sink.end_object()?;
+                        }
                         sink.end_object()?;
                     }
                     sink.end_array()?;
