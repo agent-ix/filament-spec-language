@@ -2072,7 +2072,11 @@ fn parent_implication_witness_is_independent_of_the_fixture_runner() {
         run_clause(request).expect("a well-formed parent implication reports")
     };
 
-    let absent = run("absent-parent-implication", vec![object("root", 1, None)], "root");
+    let absent = run(
+        "absent-parent-implication",
+        vec![object("root", 1, None)],
+        "root",
+    );
     assert_eq!(
         absent.disposition.truth(),
         Some(true),
