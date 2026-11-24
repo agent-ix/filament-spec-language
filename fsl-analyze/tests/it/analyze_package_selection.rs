@@ -587,6 +587,37 @@ fn a_package_state_graph_claim_settles_as_its_source_claim() {
     assert_eq!(run.exit, source.exit);
 }
 
+/// FR-940-AC-4/5/11: payload-bearing source unions survive both analyze
+/// claim forms across the source and admitted package routes.
+#[trace("TC-2958", "TC-3034", "FR-940-AC-4", "FR-940-AC-5", "FR-940-AC-11")]
+#[test]
+fn payload_union_in_invariant_and_state_graph_claim_match_across_routes() {
+    let body = format!(
+        "{}union Reading {{ Raw(Integer), Wide(Int[0, 9]) }}\n\
+         invariant ReadingInvariant using v on M::Counter at current {{\
+           case Reading::Raw(self.value) {{ Raw(n): n <= 3; Wide(n): n <= 3; }}\
+         }}\n\
+         possible ReadingReach using v over (c: M::Counter) {{\
+           case Reading::Raw(c.value) {{ Raw(n): n = 3; Wide(n): n = 3; }}\
+         }}\n",
+        bounded()
+    );
+    let items = json!([{"claim": "ReadingInvariant"}, {"claim": "ReadingReach"}]);
+    let ws = Workspace::new("package-payload-union-claims");
+    let source = analyze(&counter_request(&ws, &body, items.clone()));
+    assert_eq!(source.exit, 0, "{}", source.document());
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.item(0));
+    assert_eq!(label(&source.item(1)), "proved", "{}", source.item(1));
+
+    let (members, _) = package_request(&ws, &body, items);
+    let package = analyze_members(&ws, "analyze-payload-union.json", &members);
+    assert_eq!(package.document()["items"], source.document()["items"]);
+    for index in 0..2 {
+        assert_ne!(label(&package.item(index)), "unsupported", "{}", package.item(index));
+    }
+    assert_eq!(package.exit, source.exit);
+}
+
 /// FR-940-AC-11 under `reductions.partial_order`: the four state-graph
 /// claims and a refuted and a proved temporal claim of the same unit settle
 /// over the package with the source route's whole item, reduced state counts,
