@@ -85,3 +85,11 @@ pub mod zone_check;
 
 #[cfg(test)]
 pub(crate) mod test_ids;
+
+#[cfg(test)]
+#[path = "../tests/it/counter.rs"]
+pub(crate) mod counter;
+
+#[cfg(test)]
+#[path = "../tests/it/units.rs"]
+pub(crate) mod units;

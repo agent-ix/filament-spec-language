@@ -179,6 +179,7 @@ fn statistical_gate_precedence_precedes_claim_reduction_and_sampling() {
     ] {
         let refusal = check_statistical(
             StatisticalRequest {
+                workers: 1,
                 subject: world.subject(),
                 claim: world.claim(name),
                 method: StatisticalMethod::Okamoto,
@@ -196,6 +197,7 @@ fn statistical_gate_precedence_precedes_claim_reduction_and_sampling() {
 
     let passed_gate = check_statistical(
         StatisticalRequest {
+            workers: 1,
             subject: workload.subject(),
             claim: workload.claim("P95"),
             method: StatisticalMethod::Okamoto,

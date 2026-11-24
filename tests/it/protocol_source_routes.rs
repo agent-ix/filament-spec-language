@@ -8,10 +8,7 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 fn saga() -> PathBuf {
-    let root = std::env::var_os("FSL_EXAMPLES_DIR")
-        .map(PathBuf::from)
-        .expect("FSL_EXAMPLES_DIR must point to the authoritative filament-examples checkout");
-    root.join("examples/parts-saga")
+    crate::examples::examples_root().join("examples/parts-saga")
 }
 
 fn corpus(file: &str) -> PathBuf {
@@ -620,10 +617,12 @@ fn original_compensation_has_an_accepting_template_and_zero_attempt_refusal() {
     let file = corpus("original/compensation.native");
     compile(directory.path(), &file);
     let source = std::fs::read_to_string(&file).unwrap();
+    let authored_attempts = "attempts 1 of Factory::WorkOrder";
+    assert!(source.contains(authored_attempts));
     let zero = directory.path().join("zero-attempts.native");
     std::fs::write(
         &zero,
-        source.replace("attempts 1 of Completion", "attempts 0 of Completion"),
+        source.replace(authored_attempts, "attempts 0 of Factory::WorkOrder"),
     )
     .unwrap();
     refusal(directory.path(), &zero, "ill_typed", "type-mismatch");

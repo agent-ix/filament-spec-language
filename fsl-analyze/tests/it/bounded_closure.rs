@@ -162,6 +162,7 @@ impl Bounded {
         let fixture = &self.fixture;
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &fixture.temporal_clock_selections,
                 subject: subject(
                     &fixture.package,
@@ -173,6 +174,8 @@ impl Bounded {
                 item: self.item(),
                 max_depth,
                 limits,
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),

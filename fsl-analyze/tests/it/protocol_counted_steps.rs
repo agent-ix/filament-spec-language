@@ -100,6 +100,7 @@ impl Case {
     ) -> ModelCheckOutcome<ProtocolTransition> {
         check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &self.temporal_clock_selections,
                 subject: self.subject(protocol),
                 item: ModelCheckItem::Clause {
@@ -208,6 +209,7 @@ impl Case {
         };
         ProtocolItem {
             request: ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &self.temporal_clock_selections,
                 subject: self.subject(protocol),
                 item: item(),
@@ -682,6 +684,7 @@ fn a_model_subject_counts_every_step() {
         let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(&case.checked);
         let outcome = check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &temporal_clock_selections,
                 subject: model_subject(
                     &case.checked,
@@ -695,6 +698,8 @@ fn a_model_subject_counts_every_step() {
                 },
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),

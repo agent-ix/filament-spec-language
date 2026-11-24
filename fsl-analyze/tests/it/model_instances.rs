@@ -304,6 +304,7 @@ impl World {
         let letters = Constant(holds);
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: self.subject(&package, universes),
                 item: ModelCheckItem::Clause {
@@ -312,6 +313,8 @@ impl World {
                 },
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
@@ -1078,6 +1081,7 @@ impl World {
         let letters = system.clause_letters(node).expect("an unguarded clause");
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: self.subject(&package, universes),
                 item: ModelCheckItem::Clause {
@@ -1086,6 +1090,8 @@ impl World {
                 },
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
@@ -1108,6 +1114,7 @@ impl World {
         let letters = system.clause_letters(node).expect("a clause");
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: self.subject(&package, universes),
                 item: ModelCheckItem::Clause {
@@ -1116,6 +1123,8 @@ impl World {
                 },
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
@@ -1484,11 +1493,14 @@ fn a_key_holding_no_object_of_the_type_reads_absent_key() {
         let run = |subject, clause, letters| {
             check_model(
                 ModelCheckRequest {
+                    workers: 1,
                     temporal_clock_selections: &[],
                     subject,
                     item: ModelCheckItem::Clause { clause, letters },
                     max_depth: None,
                     limits: ModelCheckLimits::default(),
+                    smt_encoding: Default::default(),
+                    smt_run: Default::default(),
                     reductions: Default::default(),
                 },
                 &Cancel::new(),
@@ -1784,6 +1796,7 @@ fn absent_key_guard_provenance_flows_through_let_aliases_and_helpers() {
         let letters = system.clause_letters(node).expect("an unguarded clause");
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 subject,
                 temporal_clock_selections: &[],
                 item: ModelCheckItem::Clause {
@@ -1792,6 +1805,8 @@ fn absent_key_guard_provenance_flows_through_let_aliases_and_helpers() {
                 },
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
@@ -1948,6 +1963,7 @@ fn a_refused_holds_evaluation_is_a_refusal_of_the_atom_and_of_the_check() {
 
     let checked = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: world.subject(&package, bounded()),
             item: ModelCheckItem::Clause {
@@ -1956,6 +1972,8 @@ fn a_refused_holds_evaluation_is_a_refusal_of_the_atom_and_of_the_check() {
             },
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),

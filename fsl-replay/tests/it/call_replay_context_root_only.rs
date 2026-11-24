@@ -76,8 +76,9 @@ fn a_consumer_runs_builds_and_settles_through_the_crate_root() {
     )
     .expect("the call runs");
     let package_name = result.package_name().clone();
+    let package_id = result.package_id();
     let (_, requirements, context) = result.into_parts();
-    assert_eq!(context.package_name(), &package_name);
+    assert_eq!(context.package_id(), package_id);
     assert_eq!(requirements.members().len(), 1);
     let plugin = BackendId::new("acme");
     let node = fixture_node(7);
@@ -97,6 +98,7 @@ fn a_consumer_runs_builds_and_settles_through_the_crate_root() {
     let member = &requirements.members()[0];
     let request: ReplayRequestWire = context
         .request(
+            package_id,
             member.request_index(),
             &bounds,
             &plugin,
@@ -114,7 +116,7 @@ fn a_consumer_runs_builds_and_settles_through_the_crate_root() {
 
     let index = RequestIndex::new(99);
     let built: Result<ReplayRequestWire, PluginReplayRefusal> =
-        context.request(index, &bounds, &plugin, assignments);
+        context.request(context.package_id(), index, &bounds, &plugin, assignments);
     let refusal = built.err().expect("no such item");
     assert_eq!(
         refusal,

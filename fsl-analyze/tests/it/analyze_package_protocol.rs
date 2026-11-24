@@ -521,6 +521,7 @@ fn package_workflow_roles_replay_refuses_forged_actors() {
     let outcome = check_protocol(
         ProtocolCheckRequest {
             subject,
+            workers: 1,
             temporal_clock_selections: &[],
             item: ModelCheckItem::DeadlockFreedom,
             max_depth: None,
@@ -2103,6 +2104,7 @@ fn capacity_outcome(
     fsl_analyze::model_check::check_protocol(
         fsl_analyze::model_check::ProtocolCheckRequest {
             subject,
+            workers: 1,
             temporal_clock_selections: &[],
             item: fsl_replay::ModelCheckItem::DeadlockFreedom,
             max_depth: None,

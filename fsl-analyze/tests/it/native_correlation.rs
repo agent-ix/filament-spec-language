@@ -682,6 +682,7 @@ fn weak_package_profile_refuses_correlation_outside_parallel_and_sc_override_exe
 fn witness(fixture: &Fixture) -> fsl_replay::TemporalCounterexample<ProtocolTransition> {
     let outcome = fsl_analyze::model_check::check_protocol(
         fsl_analyze::model_check::ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: fixture.subject(),
             item: fsl_replay::ModelCheckItem::DeadlockFreedom,

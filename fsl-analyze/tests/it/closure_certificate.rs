@@ -217,6 +217,7 @@ impl World {
     fn run_in(&self, package: &CheckedPackage, item: ModelCheckItem<'_>) -> ModelCheckOutcome {
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: subject(
                     package,
@@ -228,6 +229,8 @@ impl World {
                 item,
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
@@ -252,6 +255,7 @@ impl Invariant {
     ) -> fsl_analyze::analyze::ModelItem<'w> {
         fsl_analyze::analyze::ModelItem {
             request: ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: subject(
                     &self.package,
@@ -263,6 +267,8 @@ impl Invariant {
                 item: self.item(),
                 max_depth: None,
                 limits,
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             stutter_closure: false,
@@ -718,11 +724,14 @@ fn a_request_whose_clause_root_does_not_resolve_settles_failed() {
     }
     let refused = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: request.subject,
             item: foreign,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),
@@ -1044,6 +1053,7 @@ fn a_loop_proof_item_is_refused_over_a_model_subject() {
     ] {
         let refused = check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: subject(
                     &world.package,
@@ -1055,6 +1065,8 @@ fn a_loop_proof_item_is_refused_over_a_model_subject() {
                 item,
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),

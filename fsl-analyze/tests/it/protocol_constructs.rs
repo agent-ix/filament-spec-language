@@ -353,6 +353,7 @@ fn unknown_delivery_loop_stops_at_the_fr126_state_limit() {
 
     let outcome = check_protocol(
         ProtocolCheckRequest {
+            workers: 1,
             subject: case.subject("Pipeline"),
             temporal_clock_selections: &[],
             item: ModelCheckItem::DeadlockFreedom,

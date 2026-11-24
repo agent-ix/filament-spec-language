@@ -560,7 +560,7 @@ struct WireDocument {
     kind: String,
     values: Vec<WireValue>,
     ranking: Vec<WireRank>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     policy: Option<Vec<WirePolicy>>,
 }
 
@@ -2849,6 +2849,23 @@ mod tests {
         assert_eq!(read, original);
         assert_eq!(
             write_probability_certificate(&read, limits(), &Cancel::new()).unwrap(),
+            bytes
+        );
+    }
+
+    #[trace("FR-201-AC-9")]
+    #[test]
+    fn policy_omitted_document_roundtrips_without_noncanonical_refusal() {
+        let original = document();
+        let bytes = write_probability_certificate(&original, limits(), &Cancel::new()).unwrap();
+        let wire: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(wire.get("policy").is_none());
+
+        let decoded = read_probability_certificate(&bytes, limits(), &Cancel::new()).unwrap();
+
+        assert_eq!(decoded, original);
+        assert_eq!(
+            write_probability_certificate(&decoded, limits(), &Cancel::new()).unwrap(),
             bytes
         );
     }

@@ -705,11 +705,14 @@ fn the_race_freedom_item_over_a_model_subject_is_refused() {
     let subject = model_subject(&package, &documents, vec![start], &["c"], UNLIMITED);
     let refusal = fsl_analyze::model_check::check_model(
         fsl_analyze::model_check::ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: model_subject(&package, &documents, vec![second], &["c"], UNLIMITED),
             item: ModelCheckItem::RaceFreedom,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),
@@ -1811,6 +1814,7 @@ fn protocol_run<'c>(
     let race = matches!(item, ModelCheckItem::RaceFreedom);
     ProtocolItem {
         request: ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: case.temporal_clock_selections(),
             subject: case.subject(selection),
             item,

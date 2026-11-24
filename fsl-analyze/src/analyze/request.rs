@@ -885,6 +885,7 @@ fn probability_work<'a>(
                         claim,
                         method,
                         seed,
+                        workers: form.workers.map_or(1, |workers| workers.get() as usize),
                         sampler: sampler.clone(),
                         limits: statistical,
                         max_witnesses: form

@@ -30,6 +30,7 @@ const TEST_PACKAGE_NAME: &str = "root-integration-tests";
 
 mod command_harness;
 mod compile_command;
+pub(crate) mod examples;
 mod no_binary;
 mod parse_operation;
 #[cfg(feature = "checked-handoff")]
