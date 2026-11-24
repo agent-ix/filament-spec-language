@@ -7411,6 +7411,14 @@ impl PackageDeclarations {
                 _ => None,
             };
             occurrences.relocate(moved);
+            // Duplicate authored `related by` rows that canonicalize to the
+            // same emitted record share one source occurrence, just as the
+            // lowering's canonical record array does.
+            let canonical_related_sites: BTreeSet<_> = related_renames.values().cloned().collect();
+            occurrences.deduplicate_locations(|location| match &location.origin {
+                Origin::TypeDeclaration { name } => canonical_related_sites.contains(name),
+                _ => false,
+            });
             for checked in &mut checked_protocols {
                 for related in &mut checked.slots.related {
                     for end in &mut related.ends {

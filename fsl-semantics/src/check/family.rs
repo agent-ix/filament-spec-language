@@ -1925,6 +1925,37 @@ impl<S> OccurrenceMap<S> {
         }
     }
 
+    /// Collapse occurrences that lowering mapped to the same canonical
+    /// source location, then restore the contiguous repeat ordinals.
+    pub(crate) fn deduplicate_locations(&mut self, is_canonical_location: impl Fn(&S) -> bool)
+    where
+        S: Clone + Eq,
+    {
+        for roles in self.spans.values_mut() {
+            for spans in roles.values_mut() {
+                let original_len = spans.0.len();
+                let mut locations = Vec::new();
+                spans.0.retain(|(_, location)| {
+                    if !is_canonical_location(location) {
+                        return true;
+                    }
+                    if locations.contains(location) {
+                        false
+                    } else {
+                        locations.push(location.clone());
+                        true
+                    }
+                });
+                if spans.0.len() != original_len {
+                    for (ordinal, (held, _)) in spans.0.iter_mut().enumerate() {
+                        *held = u64::try_from(ordinal)
+                            .expect("an occurrence vector fits its u64 ordinal");
+                    }
+                }
+            }
+        }
+    }
+
     /// Renumber the `role` occurrences of each node of `nodes` into
     /// ascending order of `position` of their spans, keeping the recorded
     /// order among equal positions (FR-380: a population node's `Type`

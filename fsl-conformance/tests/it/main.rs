@@ -17,4 +17,5 @@ mod prove_row;
 #[path = "../../../tests/support/published_fspec.rs"]
 pub(crate) mod published_fspec;
 mod support;
+mod tso_certificate;
 mod type_decision_cases;
