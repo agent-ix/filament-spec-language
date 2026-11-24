@@ -14,7 +14,7 @@ use fsl_replay::{
 };
 
 pub(super) fn run(
-    request: ProductRequest<'_>,
+    mut request: ProductRequest<'_>,
     cancel: &Cancel,
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
@@ -58,11 +58,11 @@ pub(super) fn run(
     };
     let item = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(item) => item,
-        Err(_) => return not_yet(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let binding = match claim_binding(&system, claim) {
         Ok(binding) => binding,
-        Err(_) => return not_yet(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let io = ProbabilityDocumentIoLimits {
         bytes: limits.document.bytes,
@@ -81,18 +81,54 @@ pub(super) fn run(
     let product = {
         let identity = candidate.identity;
         let mut admission = candidate.admission();
+        let proof_bounds = std::mem::take(&mut request.subject.proof_bounds);
         match build_retaining_monitor_with_budget(request, identity, &mut admission, cancel) {
             Ok((ProbBuild::Built(product), _)) => product,
-            Ok((ProbBuild::Undefined(_), _)) => return not_yet(),
+            // The same route as every other exact form: an undefined read is a
+            // refutation by undefined path.
+            Ok((ProbBuild::Undefined(path), monitor)) => {
+                return undefined::run(
+                    simulation.clone(),
+                    claim,
+                    path,
+                    monitor,
+                    &limits,
+                    cancel,
+                    subject,
+                    tamper_witness,
+                )
+            }
             Err(BudgetedProductError::Product(error)) => return build_refusal(error, subject),
             Err(BudgetedProductError::Key(error)) => {
                 return document_failure(admission.refusal(error), subject)
             }
-            Err(BudgetedProductError::Undefined(cause)) => {
-                return document_failure(
-                    ProbabilityDocumentError::UndefinedPredicate(cause),
-                    subject,
-                )
+            Err(BudgetedProductError::Undefined(_)) => {
+                // The proof-only builder does not retain a failing path: explore
+                // again under the same limits, as the other exact forms do.
+                let undefined_request = ProductRequest {
+                    subject: fsl_eval::model_subject::ModelSubject {
+                        simulation: simulation.clone(),
+                        proof_bounds,
+                    },
+                    claim,
+                    limits,
+                };
+                match build_retaining_monitor(undefined_request, cancel) {
+                    Ok((ProbBuild::Undefined(path), monitor)) => {
+                        return undefined::run(
+                            simulation.clone(),
+                            claim,
+                            path,
+                            monitor,
+                            &limits,
+                            cancel,
+                            subject,
+                            tamper_witness,
+                        )
+                    }
+                    Ok((ProbBuild::Built(_), _)) => return broken(),
+                    Err(error) => return build_refusal(error, subject),
+                }
             }
         }
     };
@@ -171,7 +207,9 @@ pub(super) fn run(
         Err(UnboundedError::ZeroWeightComponent) => {
             return EngineReport::Refused(Refusal::Unsupported(ZERO_WEIGHT_COMPONENT))
         }
-        Err(UnboundedError::MissingReward) => return not_yet(),
+        // `MissingReward` included: `admit_weights` refused every non-numeric or
+        // negative reward above, so a solve that still names one is a disagreement
+        // between admission and the solver, the engine's own fault.
         Err(_) => return broken(),
     };
     if let Some(cause) = cancel.tripped() {
