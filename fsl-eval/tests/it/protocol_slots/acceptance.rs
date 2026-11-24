@@ -4586,14 +4586,14 @@ fn recursive_required_populations_follow_walk_order_before_dangling_checks() {
                         "peer": {"reference": {"population": model::id("otherSpare"), "key": "ghost"}}
                     }
                 }]},
-                {"population": model::id("otherSpare"), "complete": !incomplete.contains(&"otherSpare"), "objects": [{
-                    "key": "ghost", "type": model::id("Other"), "fields": {
-                        "marker": {"boolean": true}, "next": other_next
-                    }
-                }]},
                 {"population": model::id("otherNodes"), "complete": !incomplete.contains(&"otherNodes"), "objects": [{
                     "key": "child", "type": model::id("Other"), "fields": {
                         "marker": {"boolean": true}, "next": child_next
+                    }
+                }]},
+                {"population": model::id("otherSpare"), "complete": !incomplete.contains(&"otherSpare"), "objects": [{
+                    "key": "ghost", "type": model::id("Other"), "fields": {
+                        "marker": {"boolean": true}, "next": other_next
                     }
                 }]},
                 {"population": model::id("elsewhereNodes"), "complete": false, "objects": []}
