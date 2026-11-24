@@ -16,7 +16,7 @@
 pub mod certificate;
 pub mod replay;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, CancelCause, LimitKind, Rational};
 use filament_semantic_value::model_transition::ModelTransition;
