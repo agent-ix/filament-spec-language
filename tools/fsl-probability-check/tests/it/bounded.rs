@@ -227,25 +227,22 @@ fn requests_with_mode(
     };
     let system = fsl_eval::simulation::model::ModelSystem::new(simulation.clone()).unwrap();
     let binding = fsl_replay::claim_binding(&system, claim).unwrap();
-    if claim.over.is_some()
-        && matches!(
+    if let Some(over) = claim.over.as_ref() {
+        if matches!(
             claim.form,
             fsl_semantics::check::ProbForm::Probability { .. }
-        )
-    {
-        let binding = binding
-            .as_ref()
-            .expect("a probability claim names its over instance");
-        let context =
-            fsl_replay::probabilistic_formula_monitor_context(claim, Some(&binding.reference))
-                .unwrap();
-        assert_eq!(
-            context.binding[0].parameter,
-            *claim.over.as_ref().unwrap().node().unwrap()
-        );
-        assert!(
-            matches!(&context.binding[0].value, fsl_eval::automaton::ContextBindingValue::Instance(key) if key == &binding.instance.key)
-        );
+        ) {
+            let binding = binding
+                .as_ref()
+                .expect("a probability claim names its over instance");
+            let context =
+                fsl_replay::probabilistic_formula_monitor_context(claim, Some(&binding.reference))
+                    .unwrap();
+            assert_eq!(context.binding[0].parameter, *over.node().unwrap());
+            assert!(
+                matches!(&context.binding[0].value, fsl_eval::automaton::ContextBindingValue::Instance(key) if key == &binding.instance.key)
+            );
+        }
     }
     let engines = Engines::fsl().unwrap();
     let mut records = analyze_items(
