@@ -1,0 +1,41 @@
+{
+  "format": "filament.state.snapshot/v1",
+  "identity": {
+    "authority": "example",
+    "identity": "ix://example/parts/data/job-third-rework"
+  },
+  "model": {
+    "identity": "example/parts"
+  },
+  "observation": "current",
+  "anchor": {
+    "kind": "handler",
+    "name": "validate"
+  },
+  "populations": [
+    {
+      "population": "ix://example/parts/jobs",
+      "complete": true,
+      "objects": [
+        {
+          "key": "j1",
+          "type": "ix://example/parts/Job",
+          "fields": {
+            "part": {
+              "integer": "4711"
+            },
+            "status": {
+              "variant": {
+                "type": "ix://example/parts/PartStatus",
+                "case": "Rework"
+              }
+            },
+            "reworks": {
+              "integer": "3"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

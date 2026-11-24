@@ -35,6 +35,8 @@ mod parse_operation;
 #[cfg(feature = "checked-handoff")]
 mod probability_source_routes;
 #[cfg(feature = "checked-handoff")]
+mod protocol_saga_route;
+#[cfg(feature = "checked-handoff")]
 mod protocol_source_routes;
 mod refinement_source_routes;
 mod source_corpus;
