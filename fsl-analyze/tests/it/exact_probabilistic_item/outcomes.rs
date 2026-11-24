@@ -38,6 +38,35 @@ fn a_long_run_claim_that_reads_an_undefined_value_is_unbuilt_not_a_fault() {
     assert_eq!(diagnostic.as_deref(), Some(NOT_YET), "{value:?}");
 }
 
+/// Expected-reward claims enter the budgeted product builder too. The coin's
+/// delete draw reaches an undefined read before the reward's target, and EN-5
+/// has no expected-reward undefined-path producer.
+#[trace("TC-763", "FR-281-AC-11")]
+#[test]
+fn an_expected_reward_claim_that_reads_an_undefined_value_is_unbuilt() {
+    let claim =
+        "probabilistic RewardUndefined using inf on M over (c: M::Coin) under Even on origin \
+                { expected accumulate cost until holds(c.v = 1) <= 1 }";
+    let model = prob_world::coin(&format!("reward cost on Coin::drop = 1;\n{claim}"));
+    let world = World::new(&model);
+    let product = fsl_analyze::exact_probabilistic::build_product(
+        world.request("RewardUndefined", ModelCheckLimits::default()),
+        &Cancel::new(),
+    )
+    .expect("the product builder accepts the expected-reward claim");
+    assert!(
+        matches!(
+            &product,
+            fsl_analyze::exact_probabilistic::ProbBuild::Undefined(_)
+        ),
+        "the coin's delete draw must reach the undefined predicate path: {product:?}"
+    );
+    let record = settle(&world, "RewardUndefined", ModelCheckLimits::default());
+    let (value, diagnostic) = diagnostic_of(record);
+    assert_ne!(value, TerminalValue::Failed, "{diagnostic:?}");
+    assert_eq!(diagnostic.as_deref(), Some(NOT_YET), "{value:?}");
+}
+
 /// A cancel at any poll of a long-run run settles incomplete or with its
 /// verdict, never as an unbuilt form or a fault.
 #[trace("TC-763", "FR-281-AC-11")]

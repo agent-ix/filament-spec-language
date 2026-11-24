@@ -325,6 +325,12 @@ fn witness_absent() -> EngineReport {
     broken()
 }
 
+/// Require the witness a refuted bound implies. Keep every producer path on
+/// this classification so a missing witness cannot silently become unbuilt.
+fn require_witness<T>(witness: Option<T>) -> Result<T, EngineReport> {
+    witness.ok_or_else(witness_absent)
+}
+
 fn broken() -> EngineReport {
     EngineReport::Refused(Refusal::Failed(BROKEN))
 }
@@ -2627,12 +2633,15 @@ fn replay_refutation(
         return settled(&issue, subject);
     }
     let produced = match produced {
-        Ok(Some(witness)) => witness,
-        Ok(None) => return witness_absent(),
+        Ok(witness) => witness,
         Err(crate::exact_probabilistic::WitnessError::Limit { limit, value }) => {
             return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
         Err(_) => return broken(),
+    };
+    let produced = match require_witness(produced) {
+        Ok(witness) => witness,
+        Err(report) => return report,
     };
     replay_produced_witness(
         system,
@@ -2742,12 +2751,15 @@ fn replay_fair_refutation(
         return settled(&issue, subject);
     }
     let produced = match produced {
-        Ok(Some(witness)) => witness,
-        Ok(None) => return witness_absent(),
+        Ok(witness) => witness,
         Err(crate::exact_probabilistic::WitnessError::Limit { limit, value }) => {
             return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
         Err(_) => return broken(),
+    };
+    let produced = match require_witness(produced) {
+        Ok(witness) => witness,
+        Err(report) => return report,
     };
     replay_produced_witness(
         system,
@@ -3352,6 +3364,19 @@ mod tests {
         matches!(report, EngineReport::Refused(Refusal::Unsupported(code)) if *code == NOT_YET)
     }
 
+    /// FR-281-AC-11: a refuted value with no produced path set is an engine
+    /// inconsistency, and every witness-producing route uses this classifier.
+    #[trace("FR-281-AC-11")]
+    #[test]
+    fn a_missing_refutation_witness_is_a_broken_invariant() {
+        let report = match require_witness::<()>(None) {
+            Ok(()) => panic!("a missing witness cannot be accepted"),
+            Err(report) => report,
+        };
+        assert!(is_fault(&report));
+        assert!(!is_not_yet(&report));
+    }
+
     /// QSL-2850 FR-281 "Engine refusals": a swallowed identity, binding or
     /// schedule error settles as its own outcome (a stopped expansion or a
     /// cancel is a limit, a graph the claim was never bound to is a fault),
@@ -3489,12 +3514,15 @@ fn replay_timed_refutation(
     };
     let produced = match produce_witness(product, policy, scope, initial, &accepting, &past, limits)
     {
-        Ok(Some(produced)) => produced,
-        Ok(None) => return witness_absent(),
+        Ok(produced) => produced,
         Err(crate::exact_probabilistic::WitnessError::Limit { limit, value }) => {
             return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
         Err(_) => return broken(),
+    };
+    let produced = match require_witness(produced) {
+        Ok(produced) => produced,
+        Err(report) => return report,
     };
     replay_timed_paths(
         system, claim, product, produced, initial, binding, limits, cancel, subject, tamper,

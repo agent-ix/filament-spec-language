@@ -503,17 +503,21 @@ fn refute(
     if let Some(issue) = issue {
         return settled(&issue, subject);
     }
-    match produced {
-        Ok(Some(produced)) => replay_produced_witness(
-            system, claim, product, produced, initial, binding, None, limits, cancel, subject,
-            tamper, meter, storage,
-        ),
-        Ok(None) => witness_absent(),
+    let produced = match produced {
+        Ok(produced) => produced,
         Err(WitnessError::Limit { limit, value }) => {
-            settled(&ExactProbBuildIssue::Limit { limit, value }, subject)
+            return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
-        Err(_) => broken(),
-    }
+        Err(_) => return broken(),
+    };
+    let produced = match require_witness(produced) {
+        Ok(produced) => produced,
+        Err(report) => return report,
+    };
+    replay_produced_witness(
+        system, claim, product, produced, initial, binding, None, limits, cancel, subject, tamper,
+        meter, storage,
+    )
 }
 
 fn induction_failure(error: QualifiedFhError, cancel: &Cancel) -> ProbabilityDocumentError {

@@ -287,12 +287,15 @@ fn refute(request: Refutation<'_>) -> EngineReport {
         limits,
         &mut |_| Ok(()),
     ) {
-        Ok(Some(produced)) => produced,
-        Ok(None) => return witness_absent(),
+        Ok(produced) => produced,
         Err(WitnessError::Limit { limit, value }) => {
             return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
         Err(_) => return broken(),
+    };
+    let produced = match require_witness(produced) {
+        Ok(produced) => produced,
+        Err(report) => return report,
     };
     replay_timed_paths(
         system,
