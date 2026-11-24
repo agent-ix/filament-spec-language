@@ -190,7 +190,8 @@ pub(crate) fn observe_state(
     let mut completeness = BTreeMap::new();
     let mut sizes = BTreeMap::new();
     let mut listed = BTreeMap::new();
-    let mut universes = BTreeMap::new();
+    let mut universes: BTreeMap<filament_exact::EffectiveId, filament_exact::UniverseId> =
+        BTreeMap::new();
     for (population, members) in &state.populations {
         completeness.insert(population.node.clone(), true);
         sizes.insert(
