@@ -823,7 +823,7 @@ fn source_operation_precondition_is_selected_by_anchor_and_located_on_both_route
         pre rootCall using v on ConfigVersion::probe { self.size() > 0 }\n\
         pre sqrtPre using v on ConfigVersion::size { filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) <= filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) }\n";
     let parsed = fsl_cst::parse(
-        fsl_foundation::SourceIdentity::new("agent-ix", "I"),
+        fsl_foundation::SourceIdentity::new("agent-ix", "u"),
         "unit.native",
         text.as_bytes(),
         fsl_cst::Limits::default(),
@@ -1055,7 +1055,7 @@ fn source_operation_precondition_is_selected_by_anchor_and_located_on_both_route
             row["location"]["origin"]["name"]
                 .as_str()
                 .is_some_and(|name| {
-                    name.starts_with("ix://I/")
+                    name.starts_with("ix://u/")
                         && name.ends_with("/ConfigVersion/size.precondition")
                 })
         })
@@ -1070,7 +1070,7 @@ fn source_operation_precondition_is_selected_by_anchor_and_located_on_both_route
     let function_index = clause_rows[0]["location"]["origin"]["index"]
         .as_u64()
         .expect("source-owned body function index") as usize;
-    assert!(function_name.starts_with("ix://I/"), "{function_name}");
+    assert!(function_name.starts_with("ix://u/"), "{function_name}");
     for row in clause_rows {
         assert_eq!(row["location"]["origin"]["name"], function_name);
         assert_eq!(row["location"]["origin"]["index"], function_index);

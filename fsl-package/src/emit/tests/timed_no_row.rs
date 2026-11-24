@@ -292,12 +292,39 @@ fn the_reader_refuses_a_supplied_row_for_a_timed_clause_at_the_row() {
 /// FR-531-AC-52 (TC-1331): a temporal declaration that requires a clock
 /// binding cannot be admitted when the whole `temporal_bindings` channel is
 /// absent; the refusal names the declaration body.
+#[trace("TC-1331", "FR-531-AC-52")]
 #[test]
 fn a_required_temporal_binding_channel_cannot_be_omitted() {
-    let (_emission, mut package) = emitted(&unit(
-        "filament.temporal.event-position.false-extension/v1",
-        "",
-    ));
+    use filament_contract_model::ClockConfiguration;
+
+    // Use an event-position clause with a supported interval body and an
+    // actual selected clock, so this is a valid checked package whose
+    // binding channel is required by the reader.
+    let source = unit("filament.temporal.event-position.false-extension/v1", "")
+        .replace(BODY, "eventually[0,1] holds(true)");
+    let graph = checked(&source).expect("the clocked clause checks");
+    let [temporal] = graph.temporal_clauses() else {
+        panic!("one temporal clause");
+    };
+    let selection = TemporalClockSelection::new(
+        graph.source().clone(),
+        temporal.clause().span(),
+        ClockConfiguration::EventPosition {
+            sequence_authority: "ac52-order".into(),
+        },
+    );
+    let package = CheckedPackage::link(graph);
+    let emission = crate::emit::emit_checked_with_temporal_selections(
+        &package,
+        &[selection],
+        crate::EmitLimits::fixture(),
+    )
+    .expect("the selected event-position clock emits");
+    let mut package = wire(&emission);
+    assert_eq!(
+        package["temporal_bindings"][0]["clock"]["sequence_authority"],
+        "ac52-order"
+    );
     let clause = nodes(&package)
         .iter()
         .position(|node| {

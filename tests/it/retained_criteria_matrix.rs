@@ -88,6 +88,7 @@ fn every_retained_criterion_has_a_tagged_checked_package_successor_test() {
 /// trace-tagged binder in the computed FSL matrix. Removing the sole file
 /// carrying any one of these tags makes its status cease to be `tagged`, so
 /// this assertion fails on the matrix recomputed from that tree.
+#[trace("TC-1316", "FR-521-AC-2")]
 #[test]
 fn every_merged_successor_is_tagged_in_the_computed_matrix() {
     const SUCCESSORS: [&str; 14] = [
