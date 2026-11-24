@@ -11,7 +11,7 @@ review_set: base
 
 Reviewed the FR-355-AC-7..9 and TC-901 additions at frozen PR head `6f9e53257c430c644132d6e2d141609c5d895f83`, including the full FR-355 and its FR-056, FR-030, and FR-004 dependencies. The new criteria restate existing normative behavior and specify test procedures without cutting or deferring behavior; the computed coverage matrix does not yet show source-test coverage for these criteria.
 
-The owner-selected review set is base only. `spec/assurance/` contains MeasurementPlan and ArchitectureDescription artifacts, but no `type: AssuranceProfile` document or `review_policy` declaration applies, so no enforced review operation is required. The installed SpecReview template was fetched with `quoin write . --types SpecReview`.
+The lead selected the base checklist only after no selection reply, using the narrowest review set. `spec/assurance/` contains MeasurementPlan and ArchitectureDescription artifacts, but no `type: AssuranceProfile` document or `review_policy` declaration applies, so no enforced review operation is required. The installed SpecReview template was fetched with `quoin write . --types SpecReview`.
 
 ## Findings
 
