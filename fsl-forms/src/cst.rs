@@ -58,7 +58,7 @@ impl CompleteCause {
     /// A model reference has the wrong exported kind.
     pub const WrongExport: Self = Self("wrong-export");
     /// A model declaration is missing.
-    pub const MissingDeclaration: Self = Self("missing-declaration");
+    pub const MissingDeclaration: Self = Self("missing-name");
     /// A model identity has conflicting bindings.
     pub const ConflictingBinding: Self = Self("conflicting-binding");
     /// An established runtime invariant failed.
@@ -305,7 +305,7 @@ pub mod diagnostic {
             "wrong-model-selection" => LayerOne::WrongModelSelection,
             "malformed-declaration" => LayerOne::MalformedDeclaration,
             "wrong-export" => LayerOne::WrongExport,
-            "missing-declaration" => LayerOne::MissingDeclaration,
+            "missing-name" => LayerOne::MissingDeclaration,
             "conflicting-binding" => LayerOne::ConflictingBinding,
             "established-invariant-broken" => LayerOne::EstablishedInvariantBroken,
             _ => unreachable!("the forms seam admits only closed layer-1 causes"),
