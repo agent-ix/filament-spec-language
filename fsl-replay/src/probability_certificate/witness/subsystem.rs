@@ -72,7 +72,7 @@ pub(super) fn replay(
     };
     let rows = match deterministic_scheduler_rows(&witness.scheduler) {
         Err(ProbabilityWitnessError::Refused) if long_run_claim && !workload => {
-            return Err(policy_malformed())
+            return Err(policy_malformed());
         }
         other => other?,
     };
@@ -106,16 +106,17 @@ pub(super) fn replay(
         )
         .map_err(member)?
         {
-            long_run::LongRunRefutation::Checked(ExactProbabilityCertificateCheck::Accepted(_)) => {
-            }
-            long_run::LongRunRefutation::Checked(ExactProbabilityCertificateCheck::Rejected(
-                rejection,
-            )) => return Err(ProbabilityWitnessError::CertificateRejected(rejection)),
-            long_run::LongRunRefutation::Checked(
-                ExactProbabilityCertificateCheck::AcceptedVacuous(_),
-            ) => return Err(ProbabilityWitnessError::Refused),
+            long_run::LongRunRefutation::Checked(check) => match *check {
+                ExactProbabilityCertificateCheck::Accepted(_) => {}
+                ExactProbabilityCertificateCheck::Rejected(rejection) => {
+                    return Err(ProbabilityWitnessError::CertificateRejected(rejection));
+                }
+                ExactProbabilityCertificateCheck::AcceptedVacuous(_) => {
+                    return Err(ProbabilityWitnessError::Refused);
+                }
+            },
             long_run::LongRunRefutation::SchedulerRefused if workload => {
-                return Err(ProbabilityWitnessError::Refused)
+                return Err(ProbabilityWitnessError::Refused);
             }
             long_run::LongRunRefutation::SchedulerRefused => return Err(policy_malformed()),
         }
@@ -133,10 +134,10 @@ pub(super) fn replay(
         {
             refutation::SubsystemRefutationCheck::Accepted => {}
             refutation::SubsystemRefutationCheck::Rejected(rejection) => {
-                return Err(ProbabilityWitnessError::CertificateRejected(rejection))
+                return Err(ProbabilityWitnessError::CertificateRejected(rejection));
             }
             refutation::SubsystemRefutationCheck::SchedulerRefused => {
-                return Err(ProbabilityWitnessError::Refused)
+                return Err(ProbabilityWitnessError::Refused);
             }
         }
     }

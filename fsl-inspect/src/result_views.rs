@@ -8,7 +8,7 @@ use fsl_foundation::{
     source::provenance::{OccurrenceKey, SourceRegion},
 };
 
-use crate::{check_cancel, EntryBudget, InspectCause, InspectLimits, View};
+use crate::{EntryBudget, InspectCause, InspectLimits, View, check_cancel};
 
 /// An outcome document and source loci resolved from its producing values.
 #[derive(Clone, Debug)]
@@ -65,7 +65,7 @@ pub fn inspect_outcome<'a>(
                     None => {
                         return Err(StageFailure::Refused(InspectCause::SourceCorrespondence {
                             selector: alloc::format!("{}", key),
-                        }))
+                        }));
                     }
                 }
             }
@@ -402,9 +402,7 @@ mod tests {
             function seven using v(x: Int[0, 9], y: Int[0, 9]): Boolean pure { x < y }\n";
         let site = fsl_replay::call_site(
             fsl_foundation::SourceIdentity::new("tests", "inspect"),
-            String::from("fixture"),
-            "inspect.native",
-            source,
+            fsl_replay::CallSiteUnit::new(String::from("fixture"), "inspect.native", source),
             [],
             &fsl_replay::DependencyInput::default(),
             &fsl_replay::RequestClocks::default(),

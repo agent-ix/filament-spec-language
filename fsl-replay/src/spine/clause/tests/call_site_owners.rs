@@ -12,8 +12,8 @@ use super::frame::identifier;
 use super::*;
 use crate::spine::OperationName;
 use crate::{
-    call_site, CallSite, CallSiteRefusal, DeclineCode, FrameOperation, OperationSite,
-    ProofRefusalCause, QualifiedName, TerminalValue,
+    CallSite, CallSiteRefusal, DeclineCode, FrameOperation, OperationSite, ProofRefusalCause,
+    QualifiedName, TerminalValue, call_site,
 };
 
 const PACKAGE: &str = CONFIG_VERSION_PACKAGE_IDENTITY;
@@ -327,9 +327,11 @@ fn locate(
 ) -> Result<CallSite<OperationSite>, Box<CallSiteRefusal>> {
     call_site(
         source(),
-        "fixture".to_owned(),
-        "call-site-owners.native",
-        unit.as_bytes(),
+        crate::CallSiteUnit::new(
+            "fixture".to_owned(),
+            "call-site-owners.native",
+            unit.as_bytes(),
+        ),
         [document],
         &DependencyInput::default(),
         &crate::RequestClocks::default(),
@@ -623,9 +625,11 @@ fn a_field_of_a_process_or_state_machine_is_not_selectable() {
         };
         let refusal = call_site(
             source(),
-            "fixture".to_owned(),
-            "call-site-owners.native",
-            unit.as_bytes(),
+            crate::CallSiteUnit::new(
+                "fixture".to_owned(),
+                "call-site-owners.native",
+                unit.as_bytes(),
+            ),
             [document.as_slice()],
             &DependencyInput::default(),
             &crate::RequestClocks::default(),

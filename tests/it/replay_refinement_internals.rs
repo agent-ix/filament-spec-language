@@ -10,7 +10,7 @@ use fsl_replay::{
     StateEnvironment,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 const ROOT: &str = "test/refinement-root";
@@ -109,9 +109,7 @@ fn request(with_dependency: bool) -> ReplayRequestWire {
     let selection = QualifiedName::new(vec![Identifier::new("entry").unwrap()]).unwrap();
     let located = fsl_replay::call_site(
         source.clone(),
-        ROOT.into(),
-        "root.native",
-        program.as_bytes(),
+        fsl_replay::CallSiteUnit::new(ROOT.into(), "root.native", program.as_bytes()),
         documents.iter().map(Vec::as_slice),
         &dependencies,
         &fsl_replay::RequestClocks::default(),

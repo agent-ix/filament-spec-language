@@ -1531,9 +1531,7 @@ mod tests {
         let source = b"language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction f using v(): Boolean pure { true }\n";
         let located = crate::call_site(
             fsl_foundation::SourceIdentity::new("registry", "pkg-a"),
-            "fixture".to_owned(),
-            "unit.native",
-            source,
+            crate::CallSiteUnit::new("fixture", "unit.native", source),
             [],
             &crate::DependencyInput::default(),
             &crate::RequestClocks::default(),

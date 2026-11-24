@@ -156,14 +156,12 @@ mod code_generation {
     fn cf_cg_01_01_call_site_returns_the_selected_function_and_package() {
         let source = fsl_replay::SourceIdentity::new("consumer", "call-site");
         let selected = fsl_replay::QualifiedName::new(vec![
-            filament_exact::Identifier::new("f").expect("identifier")
+            filament_exact::Identifier::new("f").expect("identifier"),
         ])
         .expect("qualified name");
         let site = fsl_replay::call_site(
             source,
-            "consumer".into(),
-            "unit.native",
-            UNIT.as_bytes(),
+            fsl_replay::CallSiteUnit::new("consumer".into(), "unit.native", UNIT.as_bytes()),
             [],
             &fsl_replay::DependencyInput::default(),
             &fsl_replay::RequestClocks::default(),
@@ -193,9 +191,7 @@ mod code_generation {
         };
         let site = fsl_replay::call_site(
             fsl_replay::SourceIdentity::new("consumer", "imported-call-site"),
-            "consumer".into(),
-            "unit.native",
-            unit.as_bytes(),
+            fsl_replay::CallSiteUnit::new("consumer".into(), "unit.native", unit.as_bytes()),
             [],
             &dependencies,
             &fsl_replay::RequestClocks::default(),
@@ -216,9 +212,7 @@ mod code_generation {
         .expect("qualified function name");
         let function = fsl_replay::call_site(
             fsl_replay::SourceIdentity::new("consumer", "function-obligation"),
-            "consumer".into(),
-            "unit.native",
-            UNIT.as_bytes(),
+            fsl_replay::CallSiteUnit::new("consumer".into(), "unit.native", UNIT.as_bytes()),
             [],
             &fsl_replay::DependencyInput::default(),
             &fsl_replay::RequestClocks::default(),
@@ -236,9 +230,7 @@ mod code_generation {
         let unit = "language \"ix:native\" edition \"1-draft\";\nprofile m = \"filament.model.complete/v1\";\nmodel M = \"acme/orders\";\npost Touch using m on M::Widget::touch { true }\n";
         let site = fsl_replay::call_site(
             fsl_replay::SourceIdentity::new("consumer", "operation-call-site"),
-            "consumer".into(),
-            "unit.native",
-            unit.as_bytes(),
+            fsl_replay::CallSiteUnit::new("consumer".into(), "unit.native", unit.as_bytes()),
             [&model[..]],
             &fsl_replay::DependencyInput::default(),
             &fsl_replay::RequestClocks::default(),
@@ -262,14 +254,12 @@ schedulable CtlFp on Ctl under fixed_priority;\n\
 function f using v(x: Integer): Integer pure { x }\n";
         let source = fsl_replay::SourceIdentity::new("consumer", "closed-form-check");
         let function = fsl_replay::QualifiedName::new(vec![
-            filament_exact::Identifier::new("f").expect("function name")
+            filament_exact::Identifier::new("f").expect("function name"),
         ])
         .expect("qualified function name");
         let site = fsl_replay::call_site(
             source,
-            "consumer".into(),
-            "unit.native",
-            unit.as_bytes(),
+            fsl_replay::CallSiteUnit::new("consumer".into(), "unit.native", unit.as_bytes()),
             [],
             &fsl_replay::DependencyInput::default(),
             &fsl_replay::RequestClocks::default(),
@@ -348,7 +338,7 @@ function f using v(x: Integer): Integer pure { x }\n";
         let subject = fsl_replay::ScheduleSubject::new(
             fsl_replay::TaskSet::new(
                 fsl_replay::QualifiedName::new(vec![
-                    filament_exact::Identifier::new("Ctl").expect("task-set name")
+                    filament_exact::Identifier::new("Ctl").expect("task-set name"),
                 ])
                 .expect("qualified task-set name"),
                 vec![fsl_replay::Task {

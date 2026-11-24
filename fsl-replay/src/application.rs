@@ -1652,9 +1652,7 @@ mod tests {
                 .expect("function name");
         let site = crate::call_site(
             identity("unit"),
-            "fixture".to_owned(),
-            "unit.native",
-            source.as_bytes(),
+            crate::CallSiteUnit::new("fixture", "unit.native", source.as_bytes()),
             [],
             &DependencyInput::default(),
             &crate::RequestClocks::default(),

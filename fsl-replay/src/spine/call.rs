@@ -28,7 +28,7 @@ use filament_semantic_value::catalog::{CatalogCode, Category, InternalFault};
 use filament_semantic_value::declaration::EnvironmentFailure;
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_eval::execution::{
-    execute, ExecuteLimits, ExecuteRequest, ExecuteSelection, PrepareLimits, SuppliedBackends,
+    ExecuteLimits, ExecuteRequest, ExecuteSelection, PrepareLimits, SuppliedBackends, execute,
 };
 use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::diagnostic::{Code, Locus, RefusalRecord};
@@ -675,7 +675,7 @@ impl RunRefusal {
     /// the outcome diagnostic carry this same object.
     #[must_use]
     pub fn details(&self) -> Option<serde_json::Map<String, serde_json::Value>> {
-        use serde_json::{json, Value};
+        use serde_json::{Value, json};
         let object = |value: Value| match value {
             Value::Object(members) => Some(members),
             _ => None,
@@ -1393,10 +1393,12 @@ pub(crate) fn with_admitted_call<T>(
         };
         super::run_value::write_run_value(
             value,
-            package.graph().scope().types(),
-            package.graph().scope().enums(),
-            package.graph().scope().variant_types(),
-            None,
+            (
+                package.graph().scope().types(),
+                package.graph().scope().enums(),
+                package.graph().scope().variant_types(),
+                None,
+            ),
             references.as_ref(),
             &mut admission,
             cancel,
@@ -1809,8 +1811,8 @@ fn bind_snapshot_population_views<'a>(
     use fsl_semantics::model::dispatch::GeneralizationClosure;
     use fsl_semantics::model::domain_package::DomainPackageRecord;
     use fsl_semantics::model::population::{
-        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
-        PopulationDocument, PopulationMember,
+        AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, PopulationDocument,
+        PopulationMember, admit_binding,
     };
 
     let Some(members) = objects.population_members(named) else {

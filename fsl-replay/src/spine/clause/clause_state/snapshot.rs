@@ -17,19 +17,19 @@
 
 use filament_exact::Meter;
 use fsl_eval::temporal::{
-    descend_positions, push_object, read_object_letter, read_object_stop, ClauseStream,
-    DecisiveAtom, DescentSlice, ObservedRun, StreamStop, TapeEntry, TapeReading,
+    ClauseStream, DecisiveAtom, DescentSlice, ObservedRun, StreamStop, TapeEntry, TapeReading,
+    descend_positions, push_object, read_object_letter, read_object_stop,
 };
 use fsl_semantics::check::FormulaNode;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{
-    admit_trace_snapshot, AdmissionFailure, DocumentProvision, DocumentRef, Provisions,
+    AdmissionFailure, DocumentProvision, DocumentRef, Provisions, admit_trace_snapshot,
 };
 use std::collections::BTreeMap;
 
 use super::super::temporal::{
-    decisive_over, resolve_over, streamed_sample_report, with_decisive_by, OverMiss, SnapshotTape,
-    TraceInput,
+    OverMiss, SnapshotTape, TraceInput, decisive_over, resolve_over, streamed_sample_report,
+    with_decisive_by,
 };
 use super::super::{
     ClauseDisposition, ClauseRunReport, ClauseRunUsage, CompiledRun, ConsequentEventRefusal,
@@ -415,7 +415,7 @@ impl<'a> ClauseState<'a> {
                         ),
                     ),
                     meter,
-                )
+                );
             }
         };
         let result = match (&self.exhausted, &self.stream) {
@@ -470,7 +470,7 @@ impl<'a> ClauseState<'a> {
                 meter,
             );
             let mut decided = finish(disposition, meter);
-            decided.counterexample = counterexample.map(Into::into);
+            decided.counterexample = counterexample;
             decided.decisive = decisive;
             decided.refused_at = report.refused_at;
             report = decided;

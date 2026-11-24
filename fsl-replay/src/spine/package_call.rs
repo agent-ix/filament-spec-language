@@ -21,8 +21,8 @@ use fsl_package::{BarePackage, BareSelectionFailure};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::call::{
-    admit_wire_arguments, bind_arguments, convert_call_failure, convert_outcome_resolving,
-    is_identifier, Call, CallOutcome, CallValue, RunRefusal,
+    Call, CallOutcome, CallValue, RunRefusal, admit_wire_arguments, bind_arguments,
+    convert_call_failure, convert_outcome_resolving, is_identifier,
 };
 use super::run_value::{Forms, WriteStop};
 
@@ -141,8 +141,7 @@ pub fn run_package_with_snapshot_views(
         package,
         call,
         objects,
-        Some(views),
-        Some(joins),
+        (Some(views), Some(joins)),
         sources,
         cancel,
         &attribution,
@@ -157,8 +156,10 @@ fn run_package_resolving(
     package: &BarePackage<'_>,
     call: &Call,
     objects: &ObjectEnvironment,
-    views: Option<&[fsl_semantics::model::intake::NormalizedModel]>,
-    mut joins: Option<&mut filament_contract_model::NativeJoinBudget>,
+    (views, mut joins): (
+        Option<&[fsl_semantics::model::intake::NormalizedModel]>,
+        Option<&mut filament_contract_model::NativeJoinBudget>,
+    ),
     sources: &[fsl_foundation::Source],
     cancel: &Cancel,
     attribution: &std::cell::RefCell<Option<PackageSourceAttributionFailure>>,
@@ -284,10 +285,7 @@ fn run_package_resolving(
         };
         super::run_value::write_run_value(
             value,
-            world.types(),
-            &[],
-            &[],
-            Some(world.enum_members()),
+            (world.types(), &[], &[], Some(world.enum_members())),
             references.as_ref(),
             &mut admission,
             cancel,
@@ -306,7 +304,7 @@ fn run_package_resolving(
                     -> Result<filament_exact::ObjectReference, super::run_value::ReadStop>
         }),
     });
-    let enum_budget = std::cell::RefCell::new(joins.as_deref_mut());
+    let enum_budget = std::cell::RefCell::new(joins);
     let forms = Forms::from_admitted(world.types(), world.source_enums(), &enum_budget)
         .with_canonical_writer(&encode)
         .in_world(package.package().name(), object_world.as_ref());

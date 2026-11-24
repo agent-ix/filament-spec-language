@@ -547,9 +547,7 @@ pub fn invalid_snapshot_relationship_identity(
     let extents = extents?.as_array()?;
     extents.iter().enumerate().find_map(|(extent_index, extent)| {
         let relationship = extent.get("relationship")?.as_str()?;
-        if selection.declaration_identity_for(relationship).is_none() {
-            return None;
-        }
+        selection.declaration_identity_for(relationship)?;
         let instances = extent.get("instances")?.as_array()?;
         instances
             .iter()
@@ -1171,7 +1169,7 @@ fn parse_digest(value: &str, prefix: bool) -> Option<[u8; 32]> {
 }
 fn decode_hex(value: &str) -> Option<Vec<u8>> {
     if value.is_empty()
-        || value.len() % 2 != 0
+        || !value.len().is_multiple_of(2)
         || !value
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
@@ -1180,7 +1178,9 @@ fn decode_hex(value: &str) -> Option<Vec<u8>> {
     }
     value
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| Some((nibble(pair[0])? << 4) | nibble(pair[1])?))
         .collect()
 }

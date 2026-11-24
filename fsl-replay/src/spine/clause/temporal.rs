@@ -10,18 +10,18 @@ use std::collections::BTreeMap;
 use filament_exact::{Meter, Rational, Value, ValueType};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::temporal::{
-    evaluate_observed_decisive, DecisiveAtom, DecisiveSearch, DecisiveStop, FirstUndefined,
-    HoldsStop, ObservedPositions, PositionRefusal, ProgressedRefusal, TemporalOutcome,
-    TemporalPosition, TemporalRefusal, TemporalTrace, TimestampedTrace, UndefinedCause,
-    UndefinedEvaluation, WindowRefusal,
+    DecisiveAtom, DecisiveSearch, DecisiveStop, FirstUndefined, HoldsStop, ObservedPositions,
+    PositionRefusal, ProgressedRefusal, TemporalOutcome, TemporalPosition, TemporalRefusal,
+    TemporalTrace, TimestampedTrace, UndefinedCause, UndefinedEvaluation, WindowRefusal,
+    evaluate_observed_decisive,
 };
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::Source;
 use fsl_semantics::check::{CheckedGraph, FormulaNode, TemporalProfile};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{
-    admit_trace_snapshot, population_universe_for, AdmissionFailure, AdmissionRecord,
-    AdmissionUsage, DocumentProvision, DocumentRef, Provisions,
+    AdmissionFailure, AdmissionRecord, AdmissionUsage, DocumentProvision, DocumentRef, Provisions,
+    admit_trace_snapshot, population_universe_for,
 };
 
 use super::progress::{
@@ -31,19 +31,17 @@ use super::progress::{
 };
 use super::trace_refusal::{ClauseSite, TraceSite};
 use super::{
-    convert_call_failure, convert_outcome, ClauseDisposition, ClauseRunReport, ClauseRunUsage,
-    CompiledRun, ConsequentEventRefusal, ConsequentSourceEvents, RunRefusal,
-    TemporalIndeterminateReason, TemporalPositionRefusal, TemporalTraceRefusal,
-    TemporalUndefinedCause, TemporalVerdict, TemporalWindowRefusal,
+    ClauseDisposition, ClauseRunReport, ClauseRunUsage, CompiledRun, ConsequentEventRefusal,
+    ConsequentSourceEvents, RunRefusal, TemporalIndeterminateReason, TemporalPositionRefusal,
+    TemporalTraceRefusal, TemporalUndefinedCause, TemporalVerdict, TemporalWindowRefusal,
+    convert_call_failure, convert_outcome,
 };
 use crate::proof_result::SettlementBasis;
 
 mod package_selection;
 mod package_window;
 mod source_render;
-pub use package_selection::{
-    run_package_snapshots, PackageSelectionNotRead, PackageSnapshotRequest,
-};
+pub use package_selection::{PackageSelectionNotRead, PackageSnapshotRequest, run_package_snapshots};
 pub use package_window::PackageAtomAttributionFailure;
 
 /// FR-330 Inputs: the observations a temporal clause is run over, each a
@@ -1712,7 +1710,7 @@ fn run_sampled(
     let listed = renamed.as_ref().unwrap_or(request.trace);
     let screened = match package_window::screen(clause, listed) {
         Ok(screened) => screened,
-        Err(disposition) => return early(disposition),
+        Err(disposition) => return early(*disposition),
     };
     let trace = screened.as_ref().map_or(listed, |screened| &screened.trace);
     if request.ledger.is_some() && !trace.carries_progress() {
@@ -1726,7 +1724,7 @@ fn run_sampled(
     let mut meter = Meter::new(request.accounting);
     let progressed = match package_window::progressed(clause, trace, &mut meter) {
         Ok(trace) => trace,
-        Err(disposition) => return early(disposition),
+        Err(disposition) => return early(*disposition),
     };
     let kept;
     let sampled_from = match (request.trace, screened.as_ref()) {
@@ -2112,6 +2110,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         finished.decisive = model.decisive;
         finished.counterexample = model
             .counterexample
+            .map(Box::new)
             .map(crate::ClauseRunCounterexample::Model);
         return finished;
     }
@@ -2871,8 +2870,7 @@ fn run_finite_window(
 ) -> WindowRun {
     let classes = atom_classes(run, node);
     let result: Result<WindowRun, std::convert::Infallible> = run_finite_window_core(
-        node.clause(),
-        &node.identity(),
+        (node.clause(), &node.identity()),
         (input, screened),
         &classes,
         admission,
@@ -2898,8 +2896,10 @@ fn run_finite_window(
 
 /// Shared canonical trace admission and late-data reporting for both routes.
 fn run_finite_window_core<E>(
-    clause: &fsl_semantics::check::CheckedTemporalClause,
-    key: &filament_exact::NodeKey,
+    (clause, key): (
+        &fsl_semantics::check::CheckedTemporalClause,
+        &filament_exact::NodeKey,
+    ),
     (input, screened): (&Timestamped<'_>, Option<&super::late_data::Screened>),
     classes: &[usize],
     admission: Option<&std::cell::RefCell<CarriedAdmission>>,
@@ -4167,9 +4167,7 @@ pub(crate) fn trace_refusal(refusal: TemporalRefusal) -> TemporalTraceRefusal {
 #[cfg(test)]
 mod package_admission_tests {
     use super::*;
-    use filament_eval::{
-        CallAdmissionFailure, CallAdmissionLocus, CallAdmissionRecord, CallFailure,
-    };
+    use filament_eval::{CallAdmissionFailure, CallAdmissionLocus, CallAdmissionRecord, CallFailure};
 
     /// The report retains checked-package attribution without claiming a
     /// source location in the native result before one is available.

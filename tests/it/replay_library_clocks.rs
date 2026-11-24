@@ -7,12 +7,12 @@ use crate::command_harness::compile_file;
 use fsl_foundation::SourceIdentity;
 use fsl_package::{ClockSelectionCause, EmitRefusal};
 use fsl_replay::{
-    call_site, replay, CompileRefusal, DependencyEntryWire, DependencyInput, QualifiedName,
-    ReplayLimits, ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource,
-    RequestTargetWire, StateEnvironment, SuppliedLibrary,
+    CompileRefusal, DependencyEntryWire, DependencyInput, QualifiedName, ReplayLimits,
+    ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource, RequestTargetWire,
+    StateEnvironment, SuppliedLibrary, call_site, replay,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -102,9 +102,7 @@ fn request(package: &Value, program: &str) -> ReplayRequestWire {
     .unwrap();
     let located = call_site(
         SourceIdentity::new(AUTHORITY, PROGRAM_ID),
-        name,
-        "unit.native",
-        PROGRAM.as_bytes(),
+        fsl_replay::CallSiteUnit::new(name, "unit.native", PROGRAM.as_bytes()),
         std::iter::empty::<&[u8]>(),
         &dependencies,
         &fsl_replay::RequestClocks::default(),

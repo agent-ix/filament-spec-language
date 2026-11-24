@@ -8,12 +8,12 @@
 
 use filament_exact::ScalarLimits;
 use fsl_replay::{
-    call_site, replay, CallSite, CanonicalAssignment, Code, DependencyEntryWire, DependencyInput,
-    EnvironmentLabels, EvaluatedValue, FunctionSite, Identifier, ImportedFunctionName,
-    ImportedFunctionSite, InputArmResult, InputSettlement, LibraryName, ObjectEnvironmentRef,
-    QualifiedName, ReplayLimits, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource,
-    RequestClocks, RequestTargetWire, SourceIdentity, StateEnvironment, SuppliedLibrary,
-    WitnessValue,
+    CallSite, CanonicalAssignment, Code, DependencyEntryWire, DependencyInput, EnvironmentLabels,
+    EvaluatedValue, FunctionSite, Identifier, ImportedFunctionName, ImportedFunctionSite,
+    InputArmResult, InputSettlement, LibraryName, ObjectEnvironmentRef, QualifiedName,
+    ReplayLimits, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource, RequestClocks,
+    RequestTargetWire, SourceIdentity, StateEnvironment, SuppliedLibrary, WitnessValue, call_site,
+    replay,
 };
 use ix_trace_rs::trace;
 use std::collections::BTreeMap;
@@ -95,9 +95,7 @@ fn imported_under(
 ) -> CallSite<ImportedFunctionSite> {
     call_site(
         SourceIdentity::new("a", "u"),
-        "fixture".to_owned(),
-        "unit.native",
-        unit.as_bytes(),
+        fsl_replay::CallSiteUnit::new("fixture".to_owned(), "unit.native", unit.as_bytes()),
         [],
         &DependencyInput::new(libraries).expect("a dependency input"),
         clocks,
@@ -113,9 +111,7 @@ fn imported_under(
 fn own(unit: &str, libraries: Vec<SuppliedLibrary>, name: &str) -> CallSite<FunctionSite> {
     call_site(
         SourceIdentity::new("a", "u"),
-        "fixture".to_owned(),
-        "unit.native",
-        unit.as_bytes(),
+        fsl_replay::CallSiteUnit::new("fixture".to_owned(), "unit.native", unit.as_bytes()),
         [],
         &DependencyInput::new(libraries).expect("a dependency input"),
         &RequestClocks::default(),
@@ -490,7 +486,9 @@ fn an_owner_carrying_request_checks_the_environment_against_the_owner() {
     let library = library(
         "test/units",
         "units",
-        &format!("{BIG}record R {{ a: Boolean; }}\nfunction pick using v(r: R): Boolean pure {{ true }}\n"),
+        &format!(
+            "{BIG}record R {{ a: Boolean; }}\nfunction pick using v(r: R): Boolean pure {{ true }}\n"
+        ),
     );
     let mut wire = request(&unit, &[library], owned(&big, "pick"), &located, &[3]);
     wire.object_environment = environment();

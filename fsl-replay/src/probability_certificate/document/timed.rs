@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
 use num_traits::Zero;
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 
 mod elapsed;
 
@@ -411,7 +411,7 @@ fn check_mean_time_values(
             ProbabilityObjective::Workload
             | ProbabilityObjective::WorkloadMinimum
             | ProbabilityObjective::WorkloadMaximum => {
-                return Err(ProbabilityDocumentError::Unsupported)
+                return Err(ProbabilityDocumentError::Unsupported);
             }
         }
         .unwrap_or_else(zero);
@@ -471,7 +471,7 @@ fn check_mean_time_values(
             ProbabilityObjective::Workload
             | ProbabilityObjective::WorkloadMinimum
             | ProbabilityObjective::WorkloadMaximum => {
-                return Err(ProbabilityDocumentError::Unsupported)
+                return Err(ProbabilityDocumentError::Unsupported);
             }
         };
         for (choice_index, choice) in state.choices.iter().enumerate() {
@@ -1047,10 +1047,10 @@ fn mean_target(
     match readings.as_slice() {
         [fsl_eval::simulation::model::PredicateReading::True] => Ok(true),
         [fsl_eval::simulation::model::PredicateReading::False] => Ok(false),
-        [fsl_eval::simulation::model::PredicateReading::Undefined { .. }
-        | fsl_eval::simulation::model::PredicateReading::Refused(_)] => {
-            Err(ProbabilityDocumentError::Unsupported)
-        }
+        [
+            fsl_eval::simulation::model::PredicateReading::Undefined { .. }
+            | fsl_eval::simulation::model::PredicateReading::Refused(_),
+        ] => Err(ProbabilityDocumentError::Unsupported),
         _ => Err(ProbabilityDocumentError::Unsupported),
     }
 }
@@ -4358,11 +4358,7 @@ impl Payoff<'_> {
             Self::Deadline { failing, .. } => verdict == !*failing,
             Self::Elapsed { violating, .. } => violating.contains(key),
         };
-        if counted {
-            one()
-        } else {
-            zero()
-        }
+        if counted { one() } else { zero() }
     }
 
     fn activation(&self, key: &ProbabilityProductKey) -> Rational {
@@ -4471,10 +4467,8 @@ fn price_paths(
     }
     // The choices and the mass a set of paths selects. `None` when a path is
     // not a distinct walk to the forbidden decided state (a Parity case).
-    let solve = |paths: &[usize]| -> Result<
-        Option<(BTreeMap<ProbabilityProductKey, usize>, Rational, Rational)>,
-        Error,
-    > {
+    type PathSolution = Option<(BTreeMap<ProbabilityProductKey, usize>, Rational, Rational)>;
+    let solve = |paths: &[usize]| -> Result<PathSolution, Error> {
         let mut used: BTreeMap<ProbabilityProductKey, BTreeSet<ProbabilityProductKey>> =
             BTreeMap::new();
         let mut seen = BTreeSet::new();
@@ -4488,9 +4482,7 @@ fn price_paths(
                 if state.terminal.is_some() {
                     return Err(Error::Refused);
                 }
-                used.entry(at.clone())
-                    .or_default()
-                    .insert(step.clone());
+                used.entry(at.clone()).or_default().insert(step.clone());
                 sequence.push(step.clone());
                 at = step.clone();
             }

@@ -158,8 +158,8 @@ pub use call_requirements::{
 };
 pub use call_site::{
     call_site, locate_in_checked, CallSite, CallSiteRefusal, CallSiteSelection, ClauseName,
-    ClauseSite, FieldName, FieldSite, FunctionSite, ImportedFunctionName, ImportedFunctionSite,
-    OperationSite, PopulationName, PopulationSite, ValueParitySite,
+    CallSiteUnit, ClauseSite, FieldName, FieldSite, FunctionSite, ImportedFunctionName,
+    ImportedFunctionSite, OperationSite, PopulationName, PopulationSite, ValueParitySite,
 };
 pub use certificate::closed_form::check::{
     check_closed_form, CertificateRefusal, ClaimTriple, ClosedFormResult,
@@ -539,9 +539,7 @@ pub use proof_result::{
 // select by. They are defined in `spine` because the spine compile reads
 // them; re-exported at the root so CG names them without naming `spine`,
 // which it may not (ADR-011 §3 FB-05, T-12 rule (a)).
-pub use spine::{
-    DependencyInput, DependencyInputRefusal, OperationName, SourceHolder, SuppliedLibrary,
-};
+pub use spine::{DependencyInput, DependencyInputRefusal, OperationName, SourceHolder, SuppliedLibrary};
 // FR-121, FR-640: the clock selections `call_site` compiles under.
 pub use spine::{InvalidClock, RequestClocks};
 // The O-07 occurrence key and O-12 source region these envelopes carry
@@ -798,9 +796,11 @@ mod redaction_tests {
         // A separately, validly constructed witness from the trimmed block
         // still returns the marker through its typed accessor.
         let valid_witness = Witness::parse(format!("<<<assertion|h|c|{marker}=1>>>")).unwrap();
-        assert!(valid_witness
-            .concrete_values()
-            .iter()
-            .any(|(name, _)| name == marker));
+        assert!(
+            valid_witness
+                .concrete_values()
+                .iter()
+                .any(|(name, _)| name == marker)
+        );
     }
 }

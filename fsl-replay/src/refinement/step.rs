@@ -22,8 +22,8 @@ use filament_exact::{ObjectReference, Value};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
-    operation_identity_text, AbstractApplication, Judgement, ModelFinding, ModelSimState,
-    ModelSystem, Rejection, ResolvedStep, RowReading,
+    AbstractApplication, Judgement, ModelFinding, ModelSimState, ModelSystem, Rejection,
+    ResolvedStep, RowReading, operation_identity_text,
 };
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop};
 use fsl_semantics::check::StepClass;
@@ -37,10 +37,10 @@ use crate::refinement::failure::{
     CandidateStep, ProtocolTrace, RefinementFailure, StepRejection, StepResult, StepVerdict, Taken,
     Undetermined,
 };
-use crate::refinement::history::{advance, has_update, initial_history, HistoryValues};
+use crate::refinement::history::{HistoryValues, advance, has_update, initial_history};
 use crate::refinement::map::{
-    lift_value, map_state, object_of, EvalFailure, Lifting, MappedState, MappingFailure,
-    MappingRowRef, MappingUndetermined, StepArgument,
+    EvalFailure, Lifting, MappedState, MappingFailure, MappingRowRef, MappingUndetermined,
+    StepArgument, lift_value, map_state, object_of,
 };
 use crate::refinement::protocol_system::{AbstractProtocolSystem, ProtocolCandidate};
 
@@ -145,14 +145,13 @@ pub fn check_initial(
     let history = initial_history(refinement, concrete_system, concrete_initial);
     let mapped = match map_state(
         refinement,
-        concrete_system,
-        abstract_system,
+        (concrete_system, abstract_system),
         concrete_initial,
         &history,
     ) {
         Ok(mapped) => mapped,
         Err(failure) => {
-            return mapping_verdict(|| state_key(concrete_system, concrete_initial), 0, failure)
+            return mapping_verdict(|| state_key(concrete_system, concrete_initial), 0, failure);
         }
     };
     let Ok((mapped_key, _)) = abstract_system.state_key_of(&mapped.visible) else {
@@ -261,7 +260,7 @@ pub fn check_protocol_initial(
                 return StepResult {
                     verdict: fault("mapped-state-encodes"),
                     abstract_successors: 0,
-                }
+                };
             }
         };
     let mut roots = Vec::new();
@@ -289,7 +288,7 @@ pub fn check_protocol_initial(
             return StepResult {
                 verdict,
                 abstract_successors: 0,
-            }
+            };
         }
     };
     if candidates.is_empty() {
@@ -408,7 +407,7 @@ pub fn check_protocol_step(
             return StepResult {
                 verdict: fault("a-model-operation-row-yields-model-transitions"),
                 abstract_successors: model_result.abstract_successors,
-            }
+            };
         }
     };
     let visible_key =
@@ -418,7 +417,7 @@ pub fn check_protocol_step(
                 return StepResult {
                     verdict: fault("mapped-state-encodes"),
                     abstract_successors: model_result.abstract_successors,
-                }
+                };
             }
         };
     let mut matching = Vec::new();
@@ -430,7 +429,7 @@ pub fn check_protocol_step(
                 return StepResult {
                     verdict: fault("protocol-expansion"),
                     abstract_successors: count,
-                }
+                };
             }
         };
         count = count.saturating_add(u64::try_from(expansion.successors.len()).unwrap_or(u64::MAX));
@@ -467,7 +466,7 @@ pub fn check_protocol_step(
                         return StepResult {
                             verdict: *verdict,
                             abstract_successors: count,
-                        }
+                        };
                     }
                 }
             }
@@ -479,7 +478,7 @@ pub fn check_protocol_step(
             return StepResult {
                 verdict: *verdict,
                 abstract_successors: count,
-            }
+            };
         }
     };
     count = count.saturating_add(closure_count);
@@ -538,7 +537,7 @@ fn check_protocol_any_step(
             return StepResult {
                 verdict: fault("a-mapped-post-state-exists"),
                 abstract_successors: count,
-            }
+            };
         }
     };
     let visible = visible_part(refinement, mapped);
@@ -564,7 +563,7 @@ fn check_protocol_any_step(
                     return StepResult {
                         verdict: *verdict,
                         abstract_successors: count,
-                    }
+                    };
                 }
             }
         }
@@ -578,7 +577,7 @@ fn check_protocol_any_step(
             return StepResult {
                 verdict: fault("any-row-is-decided-before-protocol-matching"),
                 abstract_successors: count,
-            }
+            };
         }
     }
     let internal: std::collections::BTreeSet<&str> = refinement
@@ -593,7 +592,7 @@ fn check_protocol_any_step(
                 return StepResult {
                     verdict: fault("protocol-expansion"),
                     abstract_successors: count,
-                }
+                };
             }
         };
         count = count.saturating_add(u64::try_from(expansion.successors.len()).unwrap_or(u64::MAX));
@@ -630,7 +629,7 @@ fn check_protocol_any_step(
                         return StepResult {
                             verdict: *verdict,
                             abstract_successors: count,
-                        }
+                        };
                     }
                 }
             }
@@ -642,7 +641,7 @@ fn check_protocol_any_step(
             return StepResult {
                 verdict: *verdict,
                 abstract_successors: count,
-            }
+            };
         }
     };
     count = count.saturating_add(closure_count);
@@ -756,7 +755,7 @@ fn check_protocol_node_step(
             return StepResult {
                 verdict,
                 abstract_successors: count,
-            }
+            };
         }
     };
     if let Some(verdict) = soft.first() {
@@ -795,7 +794,7 @@ fn check_protocol_node_step(
                 return StepResult {
                     verdict: fault("protocol-expansion"),
                     abstract_successors: count,
-                }
+                };
             }
         };
         count = count.saturating_add(u64::try_from(expansion.successors.len()).unwrap_or(u64::MAX));
@@ -836,7 +835,7 @@ fn check_protocol_node_step(
                         return StepResult {
                             verdict: *verdict,
                             abstract_successors: count,
-                        }
+                        };
                     }
                 }
             }
@@ -848,7 +847,7 @@ fn check_protocol_node_step(
             return StepResult {
                 verdict: *verdict,
                 abstract_successors: count,
-            }
+            };
         }
     };
     count = count.saturating_add(closure_count);
@@ -1276,7 +1275,7 @@ fn decide_step(
                 || state_key(concrete_system, step.post.state()),
                 step.position,
                 failure,
-            )
+            );
         }
     };
     for failure in advanced.outcomes.into_failures() {
@@ -1812,10 +1811,10 @@ pub fn check_protocol_state_relations(
                 return Err(ProtocolRelationError::Fault(InternalFault::new(
                     "refinement-relation",
                     "a-terminal-state-is-terminal",
-                )))
+                )));
             }
             TerminalClass::Undefined { .. } | TerminalClass::Undecided { .. } => {
-                return Ok(ProtocolStateRelation::Undetermined { expanded })
+                return Ok(ProtocolStateRelation::Undetermined { expanded });
             }
         };
         let all_abstract_intended =
@@ -2010,14 +2009,14 @@ fn evaluate_arguments(
 
 fn evaluate_node_arguments(
     refinement: &dyn RefinementRead,
-    concrete_system: &ModelSystem<'_>,
-    abstract_system: &ModelSystem<'_>,
+    systems: (&ModelSystem<'_>, &ModelSystem<'_>),
     pre: &RefinementPosition,
     step: &ConcreteStep<'_>,
     row: &dyn StepMapping,
     resolved: &ResolvedStep,
     declared: &[filament_exact::ValueType],
 ) -> Result<NodeArgumentValues, StepVerdict> {
+    let (concrete_system, abstract_system) = systems;
     let StepClass::Operation(concrete_operation) = row.class() else {
         return Err(fault("a-protocol-node-row-is-a-concrete-operation-row"));
     };
@@ -2376,12 +2375,14 @@ mod tests {
     #[test]
     fn an_undetermined_row_is_kept_and_any_other_verdict_ends_the_check() {
         let mut soft = Soft::default();
-        assert!(soft
-            .record(StepVerdict::Undetermined(Undetermined::UndecidedSuccessor))
-            .is_ok());
-        assert!(soft
-            .record(fails(RefinementFailure::NoAbstractMatch { position: 1 }))
-            .is_err());
+        assert!(
+            soft.record(StepVerdict::Undetermined(Undetermined::UndecidedSuccessor))
+                .is_ok()
+        );
+        assert!(
+            soft.record(fails(RefinementFailure::NoAbstractMatch { position: 1 }))
+                .is_err()
+        );
         assert!(matches!(
             soft.first(),
             Some(StepVerdict::Undetermined(Undetermined::UndecidedSuccessor))
@@ -2409,9 +2410,10 @@ mod tests {
             ),
         });
         let mut soft = Soft::default();
-        assert!(soft
-            .record(StepVerdict::Undetermined(Undetermined::UndecidedSuccessor))
-            .is_ok());
+        assert!(
+            soft.record(StepVerdict::Undetermined(Undetermined::UndecidedSuccessor))
+                .is_ok()
+        );
         assert!(soft.record(undefined).is_ok());
         assert!(matches!(soft.first(), Some(StepVerdict::Undefined(_))));
     }

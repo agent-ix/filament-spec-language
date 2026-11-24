@@ -4,15 +4,15 @@
 //! A replay reads its clock configurations from the proving package, so a
 //! `clocks` member is refused at stage `request`, naming it.
 
-use crate::command_harness::{compile_file, run_file, Output};
+use crate::command_harness::{Output, compile_file, run_file};
 use fsl_foundation::SourceIdentity;
 use fsl_replay::{
-    call_site, replay, DependencyEntryWire, DependencyInput, QualifiedName, ReplayLimits,
-    ReplayPackage, ReplayRequestWire, ReplaySource, RequestTargetWire, StateEnvironment,
-    SuppliedLibrary,
+    DependencyEntryWire, DependencyInput, QualifiedName, ReplayLimits, ReplayPackage,
+    ReplayRequestWire, ReplaySource, RequestTargetWire, StateEnvironment, SuppliedLibrary,
+    call_site, replay,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -178,9 +178,11 @@ impl Fixture {
         .unwrap();
         call_site(
             SourceIdentity::new(AUTHORITY, PROGRAM_ID),
-            self.package["name"].as_str().unwrap().to_owned(),
-            "unit.native",
-            self.program.as_bytes(),
+            fsl_replay::CallSiteUnit::new(
+                self.package["name"].as_str().unwrap().to_owned(),
+                "unit.native",
+                self.program.as_bytes(),
+            ),
             std::iter::empty::<&[u8]>(),
             &dependencies,
             &fsl_replay::RequestClocks::default(),
@@ -496,7 +498,10 @@ fn replay_with_limits_applies_the_callers_settings() {
         .unwrap();
     let error = fsl_command::command::replay_with_limits(&path, RunLimits::default(), &reader)
         .expect_err("a one-byte reader bound refuses the request");
-    assert_eq!(error.cause.to_string(), "invalid replay request: input bytes limit exceeded: required 4207, bound 1 at \"/package\"");
+    assert_eq!(
+        error.cause.to_string(),
+        "invalid replay request: input bytes limit exceeded: required 4207, bound 1 at \"/package\""
+    );
 
     let mut accounting = CommandLimits::replay();
     accounting
