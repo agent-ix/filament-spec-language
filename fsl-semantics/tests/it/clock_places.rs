@@ -4666,11 +4666,11 @@ fn native_target_constraint_refusals_name_the_keyword() {
 #[test]
 fn a_model_unit_emits_a_clock_reference_definition() {
     let source = "language \"ix:native\" edition \"1-draft\"; domain \"acme/rpc\"; object Call { x: Clock; r: Reference<Clock>; }";
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_forms::cst::parse(
         fsl_foundation::SourceIdentity::new("test", "clock-reference"),
         "model.fsl",
         source.as_bytes(),
-        fsl_cst::Limits::default(),
+        fsl_forms::cst::Limits::default(),
     )
     .expect("source parses");
     let compiled = fsl_semantics::model::intake::compile_model_unit(

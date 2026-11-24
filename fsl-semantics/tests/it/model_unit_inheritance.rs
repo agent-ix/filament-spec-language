@@ -31,12 +31,12 @@ object Child extends Base {
 population children: Child;
 ";
 
-fn compile(model: &str) -> Result<PackageInput, Vec<fsl_cst::CompleteDiagnostic>> {
-    let parsed = fsl_cst::parse(
+fn compile(model: &str) -> Result<PackageInput, Vec<fsl_forms::cst::CompleteDiagnostic>> {
+    let parsed = fsl_forms::cst::parse(
         fsl_foundation::SourceIdentity::new("test", "inheritance-model"),
         "model.fsl",
         model.as_bytes(),
-        fsl_cst::Limits::default(),
+        fsl_forms::cst::Limits::default(),
     )
     .expect("source metadata admitted");
     fsl_semantics::model::intake::compile_model_unit_with_causes(
@@ -48,11 +48,11 @@ fn compile(model: &str) -> Result<PackageInput, Vec<fsl_cst::CompleteDiagnostic>
 
 /// The causes `compile` refuses `model` with, and the text each is at.
 fn compile_refusals(model: &str) -> Vec<(&'static str, String)> {
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_forms::cst::parse(
         fsl_foundation::SourceIdentity::new("test", "inheritance-model"),
         "model.fsl",
         model.as_bytes(),
-        fsl_cst::Limits::default(),
+        fsl_forms::cst::Limits::default(),
     )
     .expect("source metadata admitted");
     let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
@@ -63,11 +63,10 @@ fn compile_refusals(model: &str) -> Vec<(&'static str, String)> {
     diagnostics
         .iter()
         .map(|diagnostic| {
-            let region = diagnostic.region.as_ref().expect("located refusal");
-            let span = parsed.source().render(region).expect("region renders");
+            let span = diagnostic.byte_span().expect("located refusal");
             (
-                diagnostic.cause.as_str(),
-                model[span.start.byte..span.end.byte].to_owned(),
+                diagnostic.cause().as_str(),
+                model[span.start..span.end].to_owned(),
             )
         })
         .collect()
@@ -485,11 +484,11 @@ fn an_object_extending_another_meaning_refuses_at_its_declaration() {
         let declaration = format!("object Child extends {parent} {{ }}");
         let source = MACHINES_AND_PROCESSES.replace("object Child extends Base { }", &declaration)
             + "record Row { n: Integer; }\n";
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_forms::cst::parse(
             fsl_foundation::SourceIdentity::new("test", "inheritance-model"),
             "model.fsl",
             source.as_bytes(),
-            fsl_cst::Limits::default(),
+            fsl_forms::cst::Limits::default(),
         )
         .expect("source metadata admitted");
         let diagnostics = fsl_semantics::model::intake::compile_model_unit_with_causes(
@@ -502,17 +501,14 @@ fn an_object_extending_another_meaning_refuses_at_its_declaration() {
         };
         assert_eq!(
             diagnostic.code,
-            fsl_cst::CompleteCode::InvalidModelBinding,
+            fsl_forms::cst::CompleteCode::InvalidModelBinding,
             "{parent}: {diagnostic:#?}"
         );
-        assert_eq!(diagnostic.cause.as_str(), "malformed-declaration");
-        let span = parsed
-            .source()
-            .render(diagnostic.region.as_ref().expect("source-located refusal"))
-            .expect("source span renders");
+        assert_eq!(diagnostic.cause().as_str(), "malformed-declaration");
+        let span = diagnostic.byte_span().expect("source-located refusal");
         let start = source.find(&declaration).expect("the authored declaration");
-        assert_eq!(span.start.byte, start, "{parent}: {diagnostic:#?}");
-        assert_eq!(span.end.byte, start + declaration.len());
+        assert_eq!(span.start, start, "{parent}: {diagnostic:#?}");
+        assert_eq!(span.end, start + declaration.len());
     }
 }
 
@@ -679,11 +675,11 @@ fn non_object_redefinitions_retain_the_shared_refusal_at_the_source_declaration(
         for diagnostic in diagnostics {
             assert_eq!(
                 diagnostic.code,
-                fsl_cst::CompleteCode::InvalidModelBinding,
+                fsl_forms::cst::CompleteCode::InvalidModelBinding,
                 "{diagnostic:#?}"
             );
             assert_eq!(
-                diagnostic.cause.as_str(),
+                diagnostic.cause().as_str(),
                 "malformed-declaration",
                 "{diagnostic:#?}"
             );
@@ -712,11 +708,11 @@ fn non_object_disallowed_members_preserve_the_exact_parser_diagnostic() {
         let source = format!(
             "language \"ix:native\" edition \"1-draft\";\ndomain \"example/shop\";\nobject Node identity (id) {{ id: Integer; }}\n{declaration}\n"
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_forms::cst::parse(
             fsl_foundation::SourceIdentity::new("test", "inheritance-model"),
             "model.fsl",
             source.as_bytes(),
-            fsl_cst::Limits::default(),
+            fsl_forms::cst::Limits::default(),
         )
         .expect("source metadata admits");
         assert!(!parsed.is_admissible());
@@ -730,8 +726,11 @@ fn non_object_disallowed_members_preserve_the_exact_parser_diagnostic() {
             panic!("one parser refusal: {compiler:#?}");
         };
         assert_eq!(diagnostic.phase, fsl_foundation::Phase::Parse);
-        assert_eq!(diagnostic.code, fsl_cst::CompleteCode::InvalidSyntax);
-        assert_eq!(diagnostic.cause, fsl_cst::CompleteCause::UnexpectedToken);
+        assert_eq!(diagnostic.code, fsl_forms::cst::CompleteCode::InvalidSyntax);
+        assert_eq!(
+            diagnostic.cause(),
+            fsl_forms::cst::CompleteCause::UnexpectedToken
+        );
         let span = diagnostic
             .byte_span()
             .expect("the offending token is source located");
