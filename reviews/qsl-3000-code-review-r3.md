@@ -74,3 +74,16 @@ Verified correct:
 | FND-008 | fixed | `charge_walk` charges every owner walk in frames::derive and rederive, and rewalk charges its visits. carry_rows takes a meter in monitor finish and emit_timed_models. |
 | FND-010 | fixed | An owner missing from function_index now visits as Use::Other instead of refusing. a_reward_body_sharing_an_application_with_a_function_still_emits would hit the old `ok_or(SourceMapInvariant)` and fail. A residual remains: reward and state-clause uses share the Other pool, paired by source path. |
 | FND-011 | accepted-no-change | The new clause-use test pins the invariant but passes without the renumbering. The coder shows that the checker numbers the function use first even when the clause is declared first, so the inverted order cannot be built with this checker. Acceptable as a low. |
+
+## New findings (disposition pass 3)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-014 | low | The rebuilt `count` case says the opposite of what it does. Its comments say "an Integer result" (2041-2042) and "the Integer type" (2075), and the variable is named `integer`, but `integer = boolean.clone()` keeps the Boolean type (2049). The inner comment explains why Boolean is kept, but the header and the variable name mislead. | fsl-package/src/emit/tests/timed_clauses.rs:2039-2075 |
+
+## Dispositions (round 3)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-012 | fixed | The binding's name is changed to "unbound", so no in-scope parameter carries it and `check_quantifier_slot_binder` finds no binder type. contract-ir 729a6641 operations.rs:6246-6251 then refuses `type-mismatch` at the quantifier's `body/arguments/1`. That is the reader's binder rule and locus, not the slot-term rule. |
+| FND-013 | fixed | The node is rebuilt as a real `filament.op.collection.count` application: `collection` operator, `type_argument` member, renamed identity path, and recomputed dependencies. The expectation is `operator-ineligible` at the count application's `/body/arguments/0`, as AC-2 requires. The reader runs `check_quantifier_domain_only_use` (operations.rs:3431) directly after the arity check and before the binder and result checks, so keeping the Boolean type does not change which rule fires. The forall operand-1 case stays as an extra. |

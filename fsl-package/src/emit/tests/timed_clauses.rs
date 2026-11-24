@@ -2038,7 +2038,7 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
     );
     // The slot domain as operand 0 of `count` (FSpec FR-772-AC-2): the
     // quantifier node is rebuilt as the `count` application the checker
-    // lowers (`collection` operator, a `type_argument` member, an Integer
+    // lowers (`collection` operator, a `type_argument` member, a Boolean
     // result, and the `count` identity path), so the reader reaches the
     // domain check.
     refused(
@@ -2046,7 +2046,7 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
             // The clock guard reads the node as its Boolean predicate, so the
             // rebuilt node keeps the quantifier's Boolean type and the `count`
             // member names it; the domain check precedes the result-type check.
-            let integer = boolean.clone();
+            let boolean_type = boolean.clone();
             let old = wire["semantic_graph"]["nodes"][quantifier]["node_id"].clone();
             let mut renamed = old.clone();
             for segment in renamed["path"].as_array_mut().expect("a path") {
@@ -2062,17 +2062,17 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
             node["body"]["operator"] = json!("collection");
             node["body"]["operation"]["identity"] = json!("filament.op.collection.count");
             node["body"]["operation"]["member"] =
-                json!({"declaration": integer.clone(), "kind": "type_argument"});
-            node["body"]["result_type"] = integer.clone();
+                json!({"declaration": boolean_type.clone(), "kind": "type_argument"});
+            node["body"]["result_type"] = boolean_type.clone();
             node["semantic_form"] = json!("collection");
-            node["semantic_type"] = integer;
+            node["semantic_type"] = boolean_type;
             let text = wire
                 .to_string()
                 .replace(&old.to_string(), &renamed.to_string());
             *wire = serde_json::from_str(&text).expect("JSON");
             let node = &wire["semantic_graph"]["nodes"][quantifier];
             // The dependencies are now exactly what the node names: its operands,
-            // the binding's value, and the Integer type.
+            // the binding's value, and the Boolean type.
             let mut named = vec![node["body"]["operation"]["member"]["declaration"].clone()];
             for argument in node["body"]["arguments"].as_array().expect("arguments") {
                 named.push(if argument["term"] == "binding" {
