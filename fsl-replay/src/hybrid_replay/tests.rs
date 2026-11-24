@@ -1804,7 +1804,7 @@ mod settlement {
         let declarations = format!(
             "{}\
              function limited using v(s: Rational[-100, 100; 1, 1]): Rational[-100, 100; 1, 1] pure {{ s }}\n\
-             function accept using v(s: Rational[-100, 100; 1, 1]): Boolean pure {{ s > rational(0, 1) }}\n\
+             function accept using v(r: Rational[-100, 100; 1, 1]): Boolean pure {{ r > rational(0, 1) }}\n\
              {}",
             braking(FLOW, "v = 0"),
             claims,
