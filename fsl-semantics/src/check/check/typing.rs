@@ -1810,13 +1810,22 @@ impl<'a> Typer<'a> {
                 );
             }
             ExprNode::Negate(operand) => {
-                // A negated `decimal(c, s)` literal takes its operand's
-                // decimal type from the expected one (FR-104-AC-16).
+                // Negated decimal and IEEE literals take their operand type
+                // from the expected result. IEEE rounding mode is contextual
+                // (FR-397-AC-24), including when negation is the outer node.
                 let operand = expression.at(*operand);
-                let operand_hint = hint.clone().filter(|each| {
-                    matches!(**each, ValueType::Decimal(_))
-                        && matches!(operand.node(), ExprNode::DecimalValue { .. })
-                });
+                let operand_hint =
+                    hint.clone()
+                        .filter(|each| match (each.as_ref(), operand.node()) {
+                            (ValueType::Decimal(_), ExprNode::DecimalValue { .. }) => true,
+                            (ValueType::Float(float), ExprNode::Float32(_)) => {
+                                float.width() == filament_exact::IeeeWidth::Binary32
+                            }
+                            (ValueType::Float(float), ExprNode::Float64(_)) => {
+                                float.width() == filament_exact::IeeeWidth::Binary64
+                            }
+                            _ => false,
+                        });
                 let goal = Goal::Infer(operand, operand_hint, location.child(0));
                 return Ok(Self::unary(Unary::Negate(hint), goal, location, frames));
             }

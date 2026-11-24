@@ -6,7 +6,7 @@ use fsl_replay::spine::DependencyInput;
 use ix_trace_rs::trace;
 
 #[test]
-#[trace("FR-495-AC-4")]
+#[trace("FR-495-AC-4", "FSpec-TC-192", "FSpec-FR-147-AC-11")]
 fn state_core_refuses_each_division_as_one_function_declaration() {
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("no selected model is needed");
@@ -81,8 +81,10 @@ fn state_core_refuses_each_division_as_one_function_declaration() {
     }
 }
 
+/// FSpec TC-192 DIV-17/18: all three state-clause bodies keep operator loci,
+/// including dead branches; the paired function test above keeps declaration loci.
 #[test]
-#[trace("FR-495-AC-4")]
+#[trace("FR-495-AC-4", "FSpec-TC-192", "FSpec-FR-147-AC-11")]
 fn state_core_locates_live_and_dead_division_in_each_state_clause() {
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("the object is declared in the unit");

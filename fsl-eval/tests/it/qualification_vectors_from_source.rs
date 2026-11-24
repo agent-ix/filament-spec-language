@@ -2693,6 +2693,13 @@ fn structural_function_call_charges(graph: &CheckedGraph, entry_index: usize) ->
     called_function_charges(graph, entry_index, &mut Vec::new())
 }
 
+/// The cross-package source adapter for DIV-17/18 lives in
+/// `tests/it/checked_package_state_core.rs`, where the front-end exposes the
+/// operator's source region for state-clause refusals.
+fn has_state_clause_adapter(vector: &QualificationVector) -> bool {
+    vector.test_case == TestCase::Tc192 && matches!(vector.id, "DIV-17" | "DIV-18")
+}
+
 /// T04, T05 and T13 take runtime payloads through value admission. They are
 /// not source-literal checks, which FR-056-AC-52 specifies separately.
 fn compare_text_admission(vector: &QualificationVector) -> Result<usize, String> {
@@ -3813,6 +3820,7 @@ fn every_published_vector_has_an_explicit_source_qualification_status() {
     for vector in QUALIFICATION_VECTORS {
         let identity = format!("{}:{}", vector.test_case.id(), vector.id);
         if source_cases(vector).is_some()
+            || has_state_clause_adapter(vector)
             || (vector.test_case == TestCase::Tc186 && matches!(vector.id, "T04" | "T05" | "T13"))
         {
             if vector.test_case == TestCase::Tc187
