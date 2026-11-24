@@ -2744,6 +2744,154 @@ fn exact_unbounded_keys_keep_none_and_budget_stops_have_no_product() {
     ), "typed budget refusal: {result:?}");
 }
 
+/// FR-196-AC-16 (TC-3060): the conditioned all-scheduler analysis must reset
+/// the nonactivating `a` successor to `s0`, admit the `stay` end component's
+/// reset action, and retain the conditioned extrema. Removing `stay` leaves
+/// the workload ratio at 3/5.
+#[trace("TC-3060", "FR-196-AC-16")]
+#[test]
+fn on_each_reset_process_preserves_conditioned_scheduler_extrema() {
+    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+    use fsl_foundation::RequestIndex;
+    use fsl_replay::{ModelCheckLimits, ProofBasis, TerminalValue};
+    use serde_json::Value as Json;
+
+    let model = |with_stay: bool, claims: String| {
+        let mut operations = vec![
+            prob_world::Operation {
+                name: "a",
+                parameters: vec![("route", "ix://test/conditional-reset/Route".into())],
+                modifies: vec!["phase", "activated", "success"],
+                deletes: false,
+            },
+            prob_world::Operation {
+                name: "b",
+                parameters: vec![],
+                modifies: vec!["phase", "activated", "success"],
+                deletes: false,
+            },
+            prob_world::Operation {
+                name: "finish",
+                parameters: vec![("won", prob_world::BOOLEAN.into())],
+                modifies: vec!["phase", "success"],
+                deletes: false,
+            },
+        ];
+        let stay = if with_stay {
+            operations.push(prob_world::Operation {
+                name: "stay",
+                parameters: vec![],
+                modifies: vec!["phase"],
+                deletes: false,
+            });
+            "pre Stay using v on M::T::stay { self.phase = 0 }\n\
+             post Stayed using v on M::T::stay { self.phase = 0 }\n"
+        } else {
+            ""
+        };
+        prob_world::Model {
+            package: "test/conditional-reset",
+            object: "T",
+            population: "ts",
+            key: "x",
+            integers: vec![("Phase", 0, 4), ("Route", 0, 1)],
+            fields: vec![
+                ("phase", "ix://test/conditional-reset/Phase".into()),
+                ("activated", prob_world::BOOLEAN.into()),
+                ("success", prob_world::BOOLEAN.into()),
+            ],
+            operations,
+            body: format!(
+                "pre A using v on M::T::a {{ self.phase = 0 }}\n\
+                 post ADone using v on M::T::a {{ self.phase = (if route = 0 then 1 else 2) and self.activated = (route = 0) and self.success = (route = 0) }}\n\
+                 pre B using v on M::T::b {{ self.phase = 0 }}\n\
+                 post BDone using v on M::T::b {{ self.phase = 3 and self.activated = true and self.success = false }}\n\
+                 pre Finish using v on M::T::finish {{ self.phase = 3 }}\n\
+                 post Finished using v on M::T::finish {{ self.phase = 4 and self.success = won }}\n\
+                 {stay}\
+                 random T::a(route) ~ {{ 0: 1, 1: 3 }};\n\
+                 random T::finish(won) ~ {{ true: 1, false: 1 }};\n\
+                 terminal Done using v on M when {{ self.phase = 2 or self.phase = 4 }};\n\
+                 workload Even on M {{ weight T::a = 1; weight T::b = 1; weight T::finish = 1; }}\n\
+                 {claims}"
+            ),
+            initial: serde_json::json!({
+                "phase": {"integer": "0"},
+                "activated": {"boolean": false},
+                "success": {"boolean": false},
+            }),
+        }
+    };
+    let each = |name: &str, scheduler: &str, comparison: &str, threshold: &str| {
+        format!(
+            "probabilistic {name} using inf on M under {scheduler} on each (x: M::T) when (x.activated) {{ probability {comparison} {threshold} [ eventually holds(x.success) ] }}\n"
+        )
+    };
+    let scheduled = World::new(&model(
+        true,
+        each("Minimum", "every scheduler", ">=", "rational(1, 2)")
+            + &each("Maximum", "every scheduler", "<=", "rational(1, 1)"),
+    ));
+    let engines = Engines::fsl().expect("exact EN-5 is registered");
+    let settle = |world: &World, name: &str| {
+        let item = exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request(name, ModelCheckLimits::default()),
+        );
+        let mut records = analyze_items(&engines, vec![item], &Cancel::new());
+        assert_eq!(records.len(), 1);
+        records.remove(0)
+    };
+    for (name, expected) in [("Minimum", ratio(1, 2)), ("Maximum", ratio(1, 1))] {
+        let record = settle(&scheduled, name);
+        let terminal = record.terminal().expect("the exact item settles");
+        let TerminalValue::Proved {
+            basis: ProofBasis::ExactValue { value, .. },
+            ..
+        } = terminal.value()
+        else {
+            panic!("{name} should retain its exact conditioned value: {:?}", terminal.value());
+        };
+        assert_eq!(value.value(), &expected, "{name}");
+        let certificate: Json = serde_json::from_slice(
+            terminal.exact_certificate_document().expect("checked reset certificate"),
+        )
+        .expect("canonical certificate JSON");
+        assert_eq!(certificate["conditional"]["mode"], "optimum");
+        let reset = &certificate["conditional"]["reset"];
+        assert!(reset["values"].is_array(), "reset process values: {reset}");
+        assert!(reset["ranking"].is_array(), "reset process ranks: {reset}");
+        assert!(reset["policy"].is_array(), "reset process policy: {reset}");
+        let states = reset["values"].as_array().expect("reset value rows");
+        assert_eq!(states.len(), 2, "s0 and the nonactivating a successor: {reset}");
+        assert!(states.iter().all(|row| row["value"] == serde_json::json!({
+            "numerator": "1",
+            "denominator": "2",
+        })), "both waiting states have conditioned value 1/2: {reset}");
+        let ranks = reset["ranking"].as_array().expect("reset rank rows");
+        let mut ranks = ranks.iter().map(|row| row["rank"].as_u64().expect("rank")).collect::<Vec<_>>();
+        ranks.sort_unstable();
+        assert_eq!(ranks, [1, 2], "the reset policy is proper: {reset}");
+        assert!(reset["policy"].to_string().contains("\"type\":\"reset\""),
+            "the policy uses the reset action from the nonactivating a successor: {reset}");
+    }
+
+    let workload = World::new(&model(
+        false,
+        each("Ratio", "Even", ">=", "rational(3, 5)"),
+    ));
+    let record = settle(&workload, "Ratio");
+    let terminal = record.terminal().expect("the workload item settles");
+    let TerminalValue::Proved {
+        basis: ProofBasis::ExactValue { value, .. },
+        ..
+    } = terminal.value()
+    else {
+        panic!("the workload ratio should prove: {:?}", terminal.value());
+    };
+    assert_eq!(value.value(), &ratio(3, 5));
+}
+
 /// Observe the real relation and full-target construction boundaries, rather
 /// than inferring admission from the final product's size.
 #[cfg(feature = "test-support")]
