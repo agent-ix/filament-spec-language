@@ -15,7 +15,7 @@ use filament_exact::{
 };
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_analyze::model_check::{retain_reduced, Ample, Atoms, Choice, ModelCheckRefusal, Por};
+use fsl_analyze::model_check::{retain_reduced, Ample, Atoms, Choice, Por};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem};
 use fsl_eval::simulation::{
@@ -1410,12 +1410,18 @@ fn a_read_free_pure_call_preserves_the_footprint_and_replayed_refutation() {
         EffectiveId::new(
             None,
             OriginalDeclarationKey::new(
-                original["package"].as_str().expect("the receiver's package"),
+                original["package"]
+                    .as_str()
+                    .expect("the receiver's package"),
                 original["node"].as_str().expect("the receiver's type"),
             ),
         ),
-        ObjectId::new(receiver["identity"].as_str().expect("the receiver's identity"))
-            .expect("the receiver's object id"),
+        ObjectId::new(
+            receiver["identity"]
+                .as_str()
+                .expect("the receiver's identity"),
+        )
+        .expect("the receiver's object id"),
     );
     let footprint = system.footprint(&spin).expect("the actual spin footprint");
     let field = Location::Field {
