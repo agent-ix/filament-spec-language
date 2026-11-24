@@ -611,9 +611,20 @@ fn payload_union_in_invariant_and_state_graph_claim_match_across_routes() {
 
     let (members, _) = package_request(&ws, &body, items);
     let package = analyze_members(&ws, "analyze-payload-union.json", &members);
-    assert_eq!(package.document()["items"], source.document()["items"]);
+    assert_eq!(
+        package.document()["items"],
+        source.document()["items"],
+        "package: {}; source: {}",
+        package.document(),
+        source.document()
+    );
     for index in 0..2 {
-        assert_ne!(label(&package.item(index)), "unsupported", "{}", package.item(index));
+        assert_ne!(
+            label(&package.item(index)),
+            "unsupported",
+            "{}",
+            package.item(index)
+        );
     }
     assert_eq!(package.exit, source.exit);
 }

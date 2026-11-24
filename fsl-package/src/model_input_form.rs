@@ -71,7 +71,11 @@ fn unread(package: &BarePackage<'_>, node: &CheckedSemanticNodeV2) -> Option<Unr
                 .is_some_and(|supply| supply.identities.holds_model_enum(&node.node_id));
             (!read).then_some(UnreadModelForm::Variant)
         }
-        CheckedNodeKind::CompositeType(CompositeTypeForm::Union) => Some(UnreadModelForm::Variant),
+        // Source union declarations and their ordered payloads are rebuilt
+        // from the admitted `source_unions` identity rows by `BareWorld`.
+        // The model-check input evaluator can therefore use their constructed
+        // values and case arms just like the source-checked graph does.
+        CheckedNodeKind::CompositeType(CompositeTypeForm::Union) => None,
         CheckedNodeKind::ScalarType(ScalarTypeForm::Enum) => {
             let read = package.source_enums.is_some()
                 && package
