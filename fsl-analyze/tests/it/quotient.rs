@@ -124,42 +124,98 @@ fn counter_group() -> SymmetryGroup {
     }
 }
 
+/// A symmetric initial set with six differently valued counters, kept under
+/// the same each-fairness clause as the quotient integration cases.
+fn canonical_each_world() -> World {
+    let starts = [
+        start([0, 1, 2]),
+        start([0, 2, 1]),
+        start([1, 0, 2]),
+        start([1, 2, 0]),
+        start([2, 0, 1]),
+        start([2, 1, 0]),
+    ];
+    World::new(
+        Shape {
+            symmetric: true,
+            max: 2,
+            link: false,
+        },
+        CYCLE,
+        &[Clause {
+            profile: INFINITE,
+            formula: PROOF,
+        }],
+        &starts,
+        &KEYS,
+    )
+}
+
+/// States reachable in the each-fairness subject, deduplicated by their
+/// canonical state key.
+fn reachable(system: &fsl_eval::simulation::model::ModelSystem<'_>) -> Vec<ModelSimState> {
+    let key = |state: &ModelSimState| system.state_key(state).expect("state encodes").0;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut states = Vec::new();
+    let mut queue = system.initial();
+    while let Some(state) = queue.pop() {
+        if !seen.insert(key(&state)) {
+            continue;
+        }
+        let expansion = system.successors(&state).expect("the state expands");
+        queue.extend(expansion.successors.into_iter().map(|(_, next)| next));
+        states.push(state);
+    }
+    states
+}
+
 /// FR-152-AC-2 / FR-623-AC-1: a key permutation of a state in the
 /// `each`-fairness subject has the same canonical quotient representative.
 #[trace("TC-570", "FR-152-AC-2", "FR-623-AC-1")]
 #[test]
 fn canonicalise_is_permutation_invariant_on_each_fairness_quotient() {
-    let world = configs(PROOF);
+    let world = canonical_each_world();
     let system = world.system();
     let group = counter_group();
-    let states = system.initial();
-    let state = states.first().expect("the subject has an initial state");
-    let permuted = system
-        .permute(
-            state,
-            &Permutation::of(
-                &counters(),
-                [("a", "b"), ("b", "c"), ("c", "a")]
-                    .into_iter()
-                    .map(|(from, to)| (from.to_owned(), to.to_owned())),
-            ),
-        )
-        .expect("permutation applies");
-    let canonical = system
-        .canonicalise(state, &group)
-        .expect("state canonicalises")
-        .0;
-    let canonical_permuted = system
-        .canonicalise(&permuted, &group)
-        .expect("permuted state canonicalises")
-        .0;
-    assert_eq!(
-        system.state_key(&canonical).expect("canonical key").0,
-        system
-            .state_key(&canonical_permuted)
-            .expect("permuted canonical key")
-            .0,
-    );
+    let shuffles = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    for state in reachable(&system) {
+        let canonical = system
+            .canonicalise(&state, &group)
+            .expect("state canonicalises")
+            .0;
+        let canonical_key = system.state_key(&canonical).expect("canonical key").0;
+        for shuffle in shuffles {
+            let permuted = system
+                .permute(
+                    &state,
+                    &Permutation::of(
+                        &counters(),
+                        KEYS.iter()
+                            .zip(shuffle)
+                            .map(|(from, to)| ((*from).to_owned(), KEYS[to].to_owned())),
+                    ),
+                )
+                .expect("permutation applies");
+            let canonical_permuted = system
+                .canonicalise(&permuted, &group)
+                .expect("permuted state canonicalises")
+                .0;
+            assert_eq!(
+                system
+                    .state_key(&canonical_permuted)
+                    .expect("permuted canonical key")
+                    .0,
+                canonical_key,
+            );
+        }
+    }
 }
 
 /// FR-152-AC-4 / FR-623-AC-1: quotient canonicalisation is idempotent on
@@ -167,10 +223,10 @@ fn canonicalise_is_permutation_invariant_on_each_fairness_quotient() {
 #[trace("TC-570", "FR-152-AC-4", "FR-623-AC-1")]
 #[test]
 fn canonicalise_is_idempotent_on_each_fairness_quotient() {
-    let world = configs(PROOF);
+    let world = canonical_each_world();
     let system = world.system();
     let group = counter_group();
-    for state in system.initial() {
+    for state in reachable(&system) {
         let once = system
             .canonicalise(&state, &group)
             .expect("state canonicalises")
