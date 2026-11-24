@@ -406,8 +406,13 @@ fn every_scheduler(
         // FR-412-AC-26: the per-component policy certificate. Under a fairness
         // set the holds side needs FR-1041's progress ranking, which no
         // long-run member carries, so it stays unsupported.
-        let (Some(solution), Some(policy)) = (solution, policy) else {
+        // Each component's rows are the policy of its own gain-bias pair, which
+        // may differ from the scheduler when the optimum leaves a component.
+        let Some(solution) = solution else {
             return not_yet();
+        };
+        let Some(policy) = solution.component_policy.clone() else {
+            return broken();
         };
         let certificate =
             match super::candidate::values(product, binding, &solution.values, candidate) {

@@ -5,6 +5,7 @@ use crate::prob_world::{self, Model, Operation, World};
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
 use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
     check_probability_certificate_document, read_long_run_probability_certificate,
@@ -805,4 +806,341 @@ fn an_every_scheduler_long_run_proof_checks_the_gain_bias_inequalities_and_workl
     let mut workload: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     workload["components"][0]["policy"] = serde_json::json!([]);
     assert_eq!(rejection(&world, "Lower", &workload), malformed_policy());
+}
+
+/// A one-object automaton over `phase` in `0..phases`: operation `name` moves
+/// phase `from` to phase `to`, deterministically. The model starts at phase 0.
+fn automaton(
+    package: &'static str,
+    phases: i64,
+    ops: &[(&'static str, i64, i64)],
+    claims: String,
+) -> World {
+    let mut body = String::new();
+    for (name, from, to) in ops {
+        body.push_str(&format!(
+            "pre Pre_{name} using v on M::Server::{name} {{ self.phase = {from} }}\n\
+             post Post_{name} using v on M::Server::{name} {{ self.phase = {to} }}\n"
+        ));
+    }
+    body.push_str(&claims);
+    World::new(&Model {
+        package,
+        object: "Server",
+        population: "servers",
+        key: "s",
+        integers: vec![("Phase", 0, phases - 1)],
+        fields: vec![("phase", format!("ix://{package}/Phase"))],
+        operations: ops
+            .iter()
+            .map(|(name, _, _)| Operation {
+                name,
+                parameters: vec![],
+                modifies: vec!["phase"],
+                deletes: false,
+            })
+            .collect(),
+        body,
+        initial: serde_json::json!({"phase": {"integer": "0"}}),
+    })
+}
+
+/// The state operation `op` reaches from `state`, with its scheduled action.
+fn apply(
+    world: &World,
+    state: &fsl_eval::simulation::model::ModelSimState,
+    op: &str,
+) -> (
+    fsl_eval::simulation::model::ModelSimState,
+    fsl_replay::ProductAction,
+) {
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let action = system
+        .actions(state)
+        .unwrap()
+        .unwrap()
+        .into_iter()
+        .find(|action| action.identity.operation.contains(op))
+        .unwrap_or_else(|| panic!("{op} is enabled"));
+    let post = action.draws[0].successors[0].1.clone();
+    (
+        post,
+        fsl_replay::ProductAction::Identity(
+            fsl_replay::Schedule::of(&system, &action.identity).unwrap(),
+        ),
+    )
+}
+
+fn product_key(
+    world: &World,
+    name: &str,
+    state: &fsl_eval::simulation::model::ModelSimState,
+) -> fsl_replay::ProbabilityProductKey {
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let binding = fsl_replay::claim_binding(&system, world.claim(name))
+        .unwrap()
+        .unwrap();
+    let raw = system.state_key(state).unwrap().0;
+    fsl_replay::ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap()
+}
+
+/// One claimed component: its states, value, bias per state and policy.
+struct Claimed {
+    rho: Rational,
+    rows: Vec<(
+        fsl_replay::ProbabilityProductKey,
+        Rational,
+        fsl_replay::ProductAction,
+    )>,
+}
+
+/// The document a producer that pinned component states would write, written
+/// as a forged proof for `name`, and its check.
+fn forged(
+    world: &World,
+    name: &str,
+    values: Vec<(fsl_replay::ProbabilityProductKey, Rational)>,
+    components: Vec<Claimed>,
+) -> ExactProbabilityCertificateCheck {
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim(name)).unwrap();
+    let claims = world.package.graph().probabilistic_model().claims();
+    let mut values = values
+        .into_iter()
+        .map(|(state, value)| fsl_replay::ExactProbabilityValue { state, value })
+        .collect::<Vec<_>>();
+    values.sort_by(|a, b| a.state.cmp(&b.state));
+    let mut components = components
+        .into_iter()
+        .map(|claimed| {
+            let mut rows = claimed.rows;
+            rows.sort_by(|a, b| a.0.cmp(&b.0));
+            fsl_replay::LongRunProbabilityComponent {
+                value: claimed.rho.clone(),
+                gain: claimed.rho,
+                bias: rows
+                    .iter()
+                    .map(|(state, bias, _)| fsl_replay::ExactProbabilityValue {
+                        state: state.clone(),
+                        value: bias.clone(),
+                    })
+                    .collect(),
+                policy: Some(
+                    rows.into_iter()
+                        .map(|(state, _, choice)| fsl_replay::LongRunPolicyRow { state, choice })
+                        .collect(),
+                ),
+            }
+        })
+        .collect::<Vec<_>>();
+    components.sort_by(|a, b| a.bias[0].state.cmp(&b.bias[0].state));
+    let document = fsl_replay::long_run_probability_certificate_document(
+        &system,
+        claims,
+        &item,
+        values,
+        components,
+        limits(),
+        &Cancel::new(),
+    )
+    .unwrap();
+    let bytes =
+        write_long_run_probability_certificate(&document, limits(), &Cancel::new()).unwrap();
+    check(world, name, &bytes, &Cancel::new(), limits()).unwrap()
+}
+
+fn failed_at(check: &ExactProbabilityCertificateCheck) -> bool {
+    use fsl_replay::{
+        ProbabilityCertificateLocus, ProbabilityCertificateRejection, ProbabilityCertificateRule,
+    };
+    matches!(
+        check,
+        ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+            rule: ProbabilityCertificateRule::InequalityFails,
+            at: ProbabilityCertificateLocus::ProductState(_),
+        })
+    )
+}
+
+fn refuted_by_analysis(world: &World, name: &str) -> bool {
+    let records = analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request(name, ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    );
+    records[0].terminal().map(|t| t.value()) == Some(&fsl_replay::TerminalValue::Refuted)
+}
+
+/// A component state may leave for a better component: phase 0 loops on
+/// `stay0` or leaves by `go` for phase 1, which loops on `stay`.
+#[trace("FSpec-TC-362", "FSpec-FR-412-AC-26", "FSpec-FR-411-AC-18")]
+#[test]
+fn a_component_state_may_leave_for_a_better_component_and_a_pinned_value_is_rejected() {
+    let claims = [
+        every_claim("Max", "s.phase = 1", "<= rational(1,2)"),
+        every_claim("Min", "s.phase = 1", ">= rational(1,2)"),
+    ]
+    .concat();
+    let world = automaton(
+        "test/longrun-leave",
+        2,
+        &[("idle0", 0, 0), ("go", 0, 1), ("park", 1, 1)],
+        claims,
+    );
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let zero_state = system.initial()[0].clone();
+    let (one_state, go) = apply(&world, &zero_state, "go");
+    let (_, stay0) = apply(&world, &zero_state, "idle0");
+    let (_, stay) = apply(&world, &one_state, "park");
+    let key = |name: &str, state| product_key(&world, name, state);
+    let zero = ratio(0, 1);
+    let one = ratio(1, 1);
+    // The true maximum is 1: phase 0 goes to phase 1. A certificate that pins
+    // phase 0 to its own component's value 0 would prove `<= 1/2`.
+    let pinned = forged(
+        &world,
+        "Max",
+        vec![
+            (key("Max", &zero_state), zero.clone()),
+            (key("Max", &one_state), one.clone()),
+        ],
+        vec![
+            Claimed {
+                rho: zero.clone(),
+                rows: vec![(key("Max", &zero_state), zero.clone(), stay0.clone())],
+            },
+            Claimed {
+                rho: one.clone(),
+                rows: vec![(key("Max", &one_state), zero.clone(), stay.clone())],
+            },
+        ],
+    );
+    assert!(failed_at(&pinned), "{pinned:?}");
+    // Likewise the true minimum is 0 (phase 0 stays), not 1: pinning phase 0
+    // to the better component's value is rejected under `minimum`.
+    let min_pinned = forged(
+        &world,
+        "Min",
+        vec![
+            (key("Min", &zero_state), one.clone()),
+            (key("Min", &one_state), one.clone()),
+        ],
+        vec![
+            Claimed {
+                rho: zero.clone(),
+                rows: vec![(key("Min", &zero_state), zero.clone(), stay0)],
+            },
+            Claimed {
+                rho: one.clone(),
+                rows: vec![(key("Min", &one_state), zero.clone(), stay)],
+            },
+        ],
+    );
+    assert!(failed_at(&min_pinned), "{min_pinned:?}");
+    // The analyzer solves the quotient: both claims are refuted, by the
+    // scheduler that goes and the one that stays.
+    assert!(refuted_by_analysis(&world, "Max"));
+    assert!(refuted_by_analysis(&world, "Min"));
+    let _ = go;
+}
+
+/// FR-412-AC-26's component `C` of two states `u`, `v`: `u` has actions `a`
+/// (to `v`) and `b` (to `u`), `v` returns to `u` by `c`. The maximum fraction
+/// of `v` is 1/2, by `a`.
+fn uv(claims: String) -> World {
+    automaton(
+        "test/longrun-uv",
+        2,
+        &[("toV", 0, 1), ("keepU", 0, 0), ("toU", 1, 0)],
+        claims,
+    )
+}
+
+#[trace("FSpec-TC-362", "FSpec-FR-412-AC-26")]
+#[test]
+fn equalities_under_the_policy_do_not_suffice_when_another_action_breaks_an_inequality() {
+    let world = uv([
+        every_claim("Holds", "s.phase = 1", "<= rational(1,2)"),
+        every_claim("Fails", "s.phase = 1", "<= rational(1,4)"),
+    ]
+    .concat());
+    // The analyzer's proof of the maximum 1/2 is accepted.
+    let bytes = produce(&world, "Holds");
+    assert!(matches!(
+        check(&world, "Holds", &bytes, &Cancel::new(), limits()).unwrap(),
+        ExactProbabilityCertificateCheck::Accepted(_)
+    ));
+    assert!(refuted_by_analysis(&world, "Fails"));
+    // Gain 0 with the policy `b` at `u` and `c` at `v` satisfies every equality
+    // (u: h = 0 + h, v: h = 1 + h(u)), yet action `a` at `u` breaks the
+    // inequality h(u) >= h(v): the pair is not the maximum, and a document
+    // claiming `<= 1/4` from it is rejected.
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let u = system.initial()[0].clone();
+    let (v, _) = apply(&world, &u, "toV");
+    let (_, b) = apply(&world, &u, "keepU");
+    let (_, c) = apply(&world, &v, "toU");
+    let key = |state| product_key(&world, "Fails", state);
+    let (ku, kv) = (key(&u), key(&v));
+    let (bias_u, bias_v) = if ku < kv {
+        (ratio(0, 1), ratio(1, 1))
+    } else {
+        (ratio(-1, 1), ratio(0, 1))
+    };
+    let broken = forged(
+        &world,
+        "Fails",
+        vec![(ku.clone(), ratio(0, 1)), (kv.clone(), ratio(0, 1))],
+        vec![Claimed {
+            rho: ratio(0, 1),
+            rows: vec![(ku, bias_u, b), (kv, bias_v, c)],
+        }],
+    );
+    assert!(failed_at(&broken), "{broken:?}");
+}
+
+/// FR-411-AC-18's `Pair`: an initial choice between a component `C1` (phases
+/// 1, 2; fraction 1/2) and `C2` (phases 3 to 6; fraction 3/4), one action per
+/// state in each. `>= 3/4` is refuted, `<= 3/4` proved.
+#[trace("FSpec-TC-362", "FSpec-FR-411-AC-18")]
+#[test]
+fn pair_settles_ge_three_quarters_refuted_and_le_three_quarters_proved() {
+    let claims = [
+        every_claim("Ge", "s.phase = 2 or s.phase >= 4", ">= rational(3,4)"),
+        every_claim("Le", "s.phase = 2 or s.phase >= 4", "<= rational(3,4)"),
+    ]
+    .concat();
+    let world = automaton(
+        "test/longrun-pair",
+        7,
+        &[
+            ("pick1", 0, 1),
+            ("pick2", 0, 3),
+            ("c1a", 1, 2),
+            ("c1b", 2, 1),
+            ("c2a", 3, 4),
+            ("c2b", 4, 5),
+            ("c2c", 5, 6),
+            ("c2d", 6, 3),
+        ],
+        claims,
+    );
+    let bytes = produce(&world, "Le");
+    let proof = read_long_run_probability_certificate(&bytes, limits(), &Cancel::new()).unwrap();
+    assert_eq!(proof.components.len(), 2);
+    let mut values = proof
+        .components
+        .iter()
+        .map(|component| component.value.clone())
+        .collect::<Vec<_>>();
+    values.sort();
+    assert_eq!(values, vec![ratio(1, 2), ratio(3, 4)]);
+    assert!(matches!(
+        check(&world, "Le", &bytes, &Cancel::new(), limits()).unwrap(),
+        ExactProbabilityCertificateCheck::Accepted(_)
+    ));
+    assert!(refuted_by_analysis(&world, "Ge"));
 }

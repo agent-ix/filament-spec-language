@@ -2148,15 +2148,74 @@ fn check_mdp(
             }
         }
     }
+    // A component's states share one value, which may be better than the
+    // component's own `rho` because a scheduler can leave it for another
+    // component: it is on the right side of `rho` and of every action that
+    // leaves the component, and equals one of them (staying or an exit).
+    for (mec, entry) in entry_of.iter().enumerate() {
+        let component = &document.components[entry.ok_or(ProbabilityDocumentError::Malformed)?];
+        let first = mecs[mec][0];
+        let shared = values[first];
+        let mut attained = *shared == component.value;
+        let on_side = |sum: &Rational| {
+            if minimum {
+                shared <= sum
+            } else {
+                shared >= sum
+            }
+        };
+        if !on_side(&component.value) {
+            return Ok(rejected(
+                ProbabilityCertificateRule::InequalityFails,
+                keys[first].clone(),
+            ));
+        }
+        for &state in &mecs[mec] {
+            cx.work(1)?;
+            if values[state] != shared {
+                return Ok(rejected(
+                    ProbabilityCertificateRule::InequalityFails,
+                    keys[state].clone(),
+                ));
+            }
+            for successors in &actions[state] {
+                if successors
+                    .iter()
+                    .all(|(next, _)| mec_of[*next] == Some(mec))
+                {
+                    continue;
+                }
+                let mut sum = rational(0);
+                for (next, probability) in successors {
+                    cx.work(1)?;
+                    let term = cx.arithmetic(filament_exact::RationalArithmetic::Multiply(
+                        probability,
+                        values[*next],
+                    ))?;
+                    sum = cx.arithmetic(filament_exact::RationalArithmetic::Add(&sum, &term))?;
+                }
+                if !on_side(&sum) {
+                    return Ok(rejected(
+                        ProbabilityCertificateRule::InequalityFails,
+                        keys[state].clone(),
+                    ));
+                }
+                attained |= *shared == sum;
+            }
+        }
+        if !attained {
+            return Ok(rejected(
+                ProbabilityCertificateRule::InequalityFails,
+                keys[first].clone(),
+            ));
+        }
+    }
     // The value of a state outside every component is its optimal value over
-    // the actions; inside one it is the component's.
+    // the actions.
     for (state, key) in keys.iter().enumerate() {
         cx.work(1)?;
         let expected = match mec_of[state] {
-            Some(mec) => document.components
-                [entry_of[mec].ok_or(ProbabilityDocumentError::Malformed)?]
-            .value
-            .clone(),
+            Some(_) => continue,
             None => {
                 let mut best: Option<Rational> = None;
                 for successors in &actions[state] {

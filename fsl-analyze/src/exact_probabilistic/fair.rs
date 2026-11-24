@@ -595,6 +595,7 @@ pub fn decide_fair_long_run_mdp(
         components,
         values: values.clone(),
         policy: Some(deterministic_policy.clone()),
+        component_policy: None,
         gain_bias,
     };
     let threshold = match bound {
