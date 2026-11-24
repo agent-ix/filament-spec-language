@@ -864,7 +864,8 @@ fn subject_refusal<O>(refusal: SubjectRefusal) -> ZoneCertificateRefusal<O> {
         SubjectRefusal::NoModels
         | SubjectRefusal::ProtocolSubject
         | SubjectRefusal::ProtocolAbstractSide
-        | SubjectRefusal::InitialEncoding => ZoneCertificateRefusal::UnsupportedItem,
+        | SubjectRefusal::InitialEncoding
+        | SubjectRefusal::InitialConstruction(_) => ZoneCertificateRefusal::UnsupportedItem,
     }
 }
 

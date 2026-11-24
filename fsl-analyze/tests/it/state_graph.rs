@@ -1490,7 +1490,7 @@ fn a_state_limit_below_the_initial_states_decides_nothing() {
         max_states(ModelCheckLimits::default(), 1),
     ));
     assert_eq!(result.graph.end, end);
-    assert_eq!(generated_initial_states() - before, 2);
+    assert_eq!(generated_initial_states() - before, 1);
     assert!(result.graph.nodes.is_empty());
     for instance in &result.items[0] {
         assert!(instance.sampled.is_empty());
@@ -1536,10 +1536,49 @@ fn state_graph_symmetry_closure_respects_max_states_before_sampling() {
     let before = generated_initial_states();
     let result = run(request);
     assert_eq!(result.graph.end, stopped_at(ModelCheckLimit::MaxStates, 1));
-    assert_eq!(generated_initial_states() - before, 2);
+    assert_eq!(generated_initial_states() - before, 1);
     assert!(result.items[0]
         .iter()
         .all(|instance| instance.sampled.is_empty()));
+}
+
+/// Two distinct concrete initial recipes related by the selected swap close
+/// the initial set; symmetry admission must not replace one recipe with the
+/// other's canonical representative before closure checks it.
+#[trace("TC-521", "FR-126-AC-26", "FR-151-AC-4")]
+#[test]
+fn state_graph_symmetry_closure_keeps_concrete_initial_roots() {
+    let keys = &["a", "b", "c"];
+    let world = crate::graph_world::symmetric_config_world_over(
+        "",
+        REACHES_TWO,
+        keys,
+        &[vec![0, 1, 2], vec![0, 2, 1]],
+    );
+    let mut request = world.request(keys, vec![world.item("ReachesTwo")], no_samples());
+    request.max_depth = Some(0);
+    request
+        .reductions
+        .symmetry
+        .push(fsl_route::reductions::SymmetryDeclaration {
+            population: filament_checked::key::DeclarationKey {
+                package: "test/config".to_owned(),
+                node: "ix://test/config/config_history".to_owned(),
+            },
+            classes: vec![vec!["b".to_owned(), "c".to_owned()]],
+        });
+
+    let result = run(request);
+    assert_eq!(
+        result.graph.initial().len(),
+        2,
+        "the graph keeps both concrete initial roots"
+    );
+    assert_eq!(result.graph.stats.nodes, 2, "both admitted roots are explored");
+    assert!(matches!(
+        result.items[0][0].outcome,
+        StateGraphOutcome::NoDecision { .. }
+    ));
 }
 
 /// Phase 0 and phase 1 reuse the same declaration-order initial states.

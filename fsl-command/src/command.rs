@@ -38,7 +38,9 @@ pub use limits::{
     CommandLimits, LimitedOperation, MonitorPreparationLimits, OperationMismatch, PreparationBound,
     PreparationRefusal, SettingUnavailable,
 };
-pub use monitor::{monitor, MonitorEvent, MonitorProviders, MonitorSummary};
+pub use monitor::{
+    monitor, monitor_with_target_preparer, MonitorEvent, MonitorProviders, MonitorSummary,
+};
 pub use output::NativeResult;
 pub use replay::replay_with_limits;
 pub use request_shape::{request_example, RequestExampleError};
@@ -1598,6 +1600,20 @@ impl RunError {
                     .with_details(Some(serde_json::Map::from_iter([(
                         "path".to_owned(),
                         serde_json::Value::String(path.clone()),
+                    )]))),
+                ])
+            }
+            RunCause::ClauseRequest { member, .. } if member == "/request/target" => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        None,
+                        self.cause.code().as_str(),
+                        None,
+                        self.outcome_message(),
+                    )
+                    .with_details(Some(serde_json::Map::from_iter([(
+                        "path".to_owned(),
+                        serde_json::Value::String(member.clone()),
                     )]))),
                 ])
             }

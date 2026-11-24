@@ -308,7 +308,7 @@ fn reductions_respect_max_states_during_initial_admission() {
             ),
             "{outcome:?}"
         );
-        assert_eq!(generated_initial_states() - before, 2);
+        assert_eq!(generated_initial_states() - before, 1);
     }
 }
 

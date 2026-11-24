@@ -19,7 +19,8 @@ use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::{
-    EncodingRefusal, ExpansionStop, Permutation, SymmetryClass, SymmetryGroup, TransitionSystem,
+    EncodingRefusal, ExpansionStop, InitialStateRefusal, Permutation, SubjectSystem, SymmetryClass,
+    SymmetryGroup, TransitionSystem,
 };
 use fsl_foundation::ReductionKind;
 use fsl_replay::{ModelCheckItem, ReductionCause, SymmetryBrokenCause, SymmetryRefusal};
@@ -242,7 +243,11 @@ pub fn closure(
     system: &ModelSystem<'_>,
     group: &SymmetryGroup,
 ) -> Result<Option<ReductionCause>, ClosureRefusal> {
-    closure_of(system, group, system.generated_initial().enumerate(), None)
+    closure_of(
+        system,
+        group,
+        system.generated_initial().enumerate().map(Ok),
+    )
 }
 
 /// Check closure over the concrete starts a state-graph run already admitted.
@@ -251,7 +256,7 @@ pub(super) fn closure_of_initial(
     group: &SymmetryGroup,
     initial: &[ModelSimState],
 ) -> Result<Option<ReductionCause>, ClosureRefusal> {
-    closure_of(system, group, initial.iter().enumerate(), None)
+    closure_of(system, group, initial.iter().enumerate().map(Ok))
 }
 
 /// Check closure without first generating an over-budget initial set.
@@ -263,41 +268,42 @@ pub fn closure_under_limit(
     closure_of(
         system,
         group,
-        system.generated_initial().enumerate(),
-        Some(max_states),
+        system
+            .initial_for_check_with_symmetry(max_states, group)
+            .enumerate()
+            .map(|(index, state)| {
+                state
+                    .map(|state| (index, state))
+                    .map_err(|refusal| match refusal {
+                        InitialStateRefusal::OverBudget(_) => ClosureRefusal::OverBudget,
+                        InitialStateRefusal::Encoding(refusal) => ClosureRefusal::Encoding(refusal),
+                        InitialStateRefusal::Expansion(stop) => ClosureRefusal::Stopped(stop),
+                        refusal @ InitialStateRefusal::Construction(_) => {
+                            ClosureRefusal::Initial(refusal)
+                        }
+                    })
+            }),
     )
 }
 
 fn closure_of<S: Borrow<ModelSimState>>(
     system: &ModelSystem<'_>,
     group: &SymmetryGroup,
-    initial: impl Iterator<Item = (usize, S)>,
-    max_states: Option<usize>,
+    initial: impl Iterator<Item = Result<(usize, S), ClosureRefusal>>,
 ) -> Result<Option<ReductionCause>, ClosureRefusal> {
     let generators = generators(group);
     if generators.is_empty() {
         return Ok(None);
     }
     let mut keys = BTreeSet::new();
-    let mut orbits = BTreeSet::new();
     let mut missing = BTreeMap::new();
-    for (index, state) in initial {
+    for initial in initial {
+        let (index, state) = initial?;
         let state = state.borrow();
         let (key, _) = system.state_key(state).map_err(ClosureRefusal::Encoding)?;
         missing.remove(&key);
         if !keys.insert(key) {
             continue;
-        }
-        if let Some(max_states) = max_states {
-            let (canonical, _) = system
-                .canonicalise(state, group)
-                .map_err(ClosureRefusal::Stopped)?;
-            let (key, _) = system
-                .state_key(&canonical)
-                .map_err(ClosureRefusal::Encoding)?;
-            if orbits.insert(key) && orbits.len() > max_states {
-                return Err(ClosureRefusal::OverBudget);
-            }
         }
         for (order, (_, generator)) in generators.iter().enumerate() {
             let image = system
@@ -333,6 +339,9 @@ pub enum ClosureRefusal {
     /// A state key has no canonical encoding.
     #[error(transparent)]
     Encoding(EncodingRefusal),
+    /// Initial recipe admission refused or exceeded its orbit budget.
+    #[error(transparent)]
+    Initial(InitialStateRefusal),
     /// A permuted set or bag has no canonical-key order.
     #[error("a permuted collection has no canonical-key order")]
     Unordered,

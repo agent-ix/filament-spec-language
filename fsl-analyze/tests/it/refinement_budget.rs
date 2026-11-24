@@ -443,5 +443,8 @@ fn refinement_refuses_at_max_states_before_keying_the_later_initial_states() {
         ),
         "{outcome:?}"
     );
-    assert_eq!(keyed, 1, "the later initial states are never keyed");
+    assert_eq!(
+        keyed, 0,
+        "the zero-budget crossing root is not constructed or keyed"
+    );
 }

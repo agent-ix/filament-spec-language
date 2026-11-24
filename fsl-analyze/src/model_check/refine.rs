@@ -514,6 +514,9 @@ fn open_refusal(refusal: ProtocolSystemsRefusal) -> ModelCheckRefusal {
         ProtocolSystemsRefusal::Subject(SubjectRefusal::InitialEncoding) => {
             ModelCheckRefusal::Fault(InternalFault::new("refinement-check", "state-encodes"))
         }
+        ProtocolSystemsRefusal::Subject(SubjectRefusal::InitialConstruction(refusal)) => {
+            ModelCheckRefusal::Protocol(refusal)
+        }
     }
 }
 

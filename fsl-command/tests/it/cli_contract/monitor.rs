@@ -9,6 +9,7 @@
 use filament_exact::{Cancel, CancelCause};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
+use std::io::BufRead;
 
 use super::{monitor, monitor_under, monitor_under_limits, Case, INVALID_UTF8};
 
@@ -288,12 +289,7 @@ fn whole_request_defects_refuse_before_the_stream() {
 /// a target requires caller activation capacity, and that setting is
 /// operation-unavailable when the request omits its target.
 #[test]
-#[trace(
-    "TC-721",
-    "FR-644-AC-16",
-    "FR-644-AC-17",
-    "FR-255-AC-24"
-)]
+#[trace("TC-721", "FR-644-AC-16", "FR-644-AC-17", "FR-255-AC-24")]
 fn target_validation_and_activation_setting_precede_the_stream() {
     let target = json!({
         "counter": "tick",
@@ -313,7 +309,15 @@ fn target_validation_and_activation_setting_precede_the_stream() {
     let refusal = stream.refused();
     assert_eq!(refusal.exit, 20, "{}", refusal.document);
     assert!(
-        refusal.document.to_string().contains("invalid MonitorTarget"),
+        refusal
+            .document
+            .to_string()
+            .contains("invalid MonitorTarget"),
+        "{}",
+        refusal.document
+    );
+    assert_eq!(
+        refusal.document["diagnostics"][0]["details"]["path"], "/request/target",
         "{}",
         refusal.document
     );
@@ -332,6 +336,10 @@ fn target_validation_and_activation_setting_precede_the_stream() {
         "{}",
         refusal.document
     );
+    assert_eq!(
+        refusal.document["diagnostics"][0]["details"]["path"],
+        "/request/target"
+    );
 
     let mut unavailable = fsl_command::command::CommandLimits::monitor(
         fsl_command::command::MonitorPreparationLimits {
@@ -345,6 +353,30 @@ fn target_validation_and_activation_setting_precede_the_stream() {
             8,
         )
         .expect("caller can set activation capacity");
+    let mut target_without_handoff = request();
+    target_without_handoff["request"]["target"] = json!({
+        "counter": "tick",
+        "unit": "step",
+        "width_bits": 16,
+        "uncertainty": {"kind": "rational", "numerator": "0", "denominator": "1"},
+        "max_event_rate": null,
+        "max_reading_gap": 1
+    });
+    let (_case, path) = case_with(SOURCE.as_bytes(), &target_without_handoff);
+    let stream = monitor_under_limits(&path, &input, &Cancel::new(), &unavailable);
+    let refusal = stream.refused();
+    assert_eq!(
+        refusal.document["diagnostics"][0]["details"]["path"],
+        "/request/target"
+    );
+    assert!(
+        refusal
+            .document
+            .to_string()
+            .contains("target-preparation handoff"),
+        "{}",
+        refusal.document
+    );
     let (_case, path) = load();
     let stream = monitor_under_limits(&path, &input, &Cancel::new(), &unavailable);
     let refusal = stream.refused();
@@ -357,6 +389,139 @@ fn target_validation_and_activation_setting_precede_the_stream() {
         "{}",
         refusal.document
     );
+}
+
+#[trace("TC-721", "FR-644-AC-16", "FR-644-AC-17", "FR-255-AC-24")]
+#[test]
+fn accepted_target_and_activation_bound_reach_driver_preparer() {
+    let mut input = request();
+    input["request"]["target"] = json!({
+        "counter": "tick",
+        "unit": "step",
+        "width_bits": 16,
+        "uncertainty": {"kind": "rational", "numerator": "0", "denominator": "1"},
+        "max_event_rate": null,
+        "max_reading_gap": 1
+    });
+    let (_case, path) = case_with(SOURCE.as_bytes(), &input);
+    let mut caller = fsl_command::command::CommandLimits::monitor(
+        fsl_command::command::MonitorPreparationLimits {
+            work: 17,
+            storage: 29,
+        },
+    );
+    caller
+        .set(
+            fsl_foundation::SettingName::Stage(fsl_foundation::Setting::MonitorMaxActivations),
+            8,
+        )
+        .expect("caller can set activation capacity");
+    let prepared = std::cell::RefCell::new(None);
+    let mut preparer = |_: &fsl_package::CheckedPackage,
+                        target: &fsl_replay::MonitorTarget,
+                        caller: &fsl_command::command::CommandLimits| {
+        let bounds = caller.preparation();
+        *prepared.borrow_mut() = Some((
+            target.counter.clone(),
+            target.max_activations,
+            bounds.work,
+            bounds.storage,
+        ));
+        Ok(())
+    };
+    let mut events = Vec::new();
+    let options = fsl_analyze::provider::ProviderOptions::default();
+    let summary = fsl_command::command::monitor_with_target_preparer(
+        &path,
+        std::io::Cursor::new(records(&[2], true)).split(b'\n'),
+        &mut |event| events.push(event.as_value().clone()),
+        fsl_command::command::MonitorProviders {
+            negotiate: &crate::negotiation::Fr290,
+            providers: Vec::new(),
+            options: &options,
+        },
+        fsl_command::command::RunLimits::default(),
+        &caller,
+        &Cancel::new(),
+        &mut preparer,
+    )
+    .expect("the driver handoff admits the target");
+    assert_eq!(summary.exit_code, 0);
+    assert!(!events.is_empty());
+    assert_eq!(
+        *prepared.borrow(),
+        Some(("tick".to_owned(), 8, 17, 29)),
+        "the driver receives target and caller preparation bounds"
+    );
+}
+
+#[trace("TC-721", "FR-644-AC-16", "FR-644-AC-17", "FR-255-AC-24")]
+#[test]
+fn timed_target_reaches_driver_preparer_before_timed_trace_refusal() {
+    let mut input = request();
+    input["request"]["trace"]["kind"] = json!("timed");
+    input["request"]["target"] = json!({
+        "counter": "tick",
+        "unit": "step",
+        "width_bits": 16,
+        "uncertainty": {"kind": "rational", "numerator": "0", "denominator": "1"},
+        "max_event_rate": null,
+        "max_reading_gap": 1
+    });
+    let (_case, path) = case_with(SOURCE.as_bytes(), &input);
+    let mut caller = fsl_command::command::CommandLimits::monitor(
+        fsl_command::command::MonitorPreparationLimits {
+            work: 17,
+            storage: 29,
+        },
+    );
+    caller
+        .set(
+            fsl_foundation::SettingName::Stage(fsl_foundation::Setting::MonitorMaxActivations),
+            8,
+        )
+        .expect("caller can set activation capacity");
+    let prepared = std::cell::Cell::new(false);
+    let mut preparer = |_: &fsl_package::CheckedPackage,
+                        target: &fsl_replay::MonitorTarget,
+                        caller: &fsl_command::command::CommandLimits| {
+        assert_eq!(target.counter, "tick");
+        assert_eq!(target.max_activations, 8);
+        assert_eq!(caller.preparation().work, 17);
+        prepared.set(true);
+        Ok(())
+    };
+    let pulled = std::cell::Cell::new(0);
+    let records = std::io::Cursor::new(records(&[2], true))
+        .split(b'\n')
+        .map(|line| {
+            pulled.set(pulled.get() + 1);
+            line
+        });
+    let options = fsl_analyze::provider::ProviderOptions::default();
+    let error = fsl_command::command::monitor_with_target_preparer(
+        &path,
+        records,
+        &mut |_| {},
+        fsl_command::command::MonitorProviders {
+            negotiate: &crate::negotiation::Fr290,
+            providers: Vec::new(),
+            options: &options,
+        },
+        fsl_command::command::RunLimits::default(),
+        &caller,
+        &Cancel::new(),
+        &mut preparer,
+    )
+    .expect_err("timed traces remain unsupported after target handoff");
+    assert!(
+        error
+            .to_string()
+            .contains("timed trace is read but not yet run"),
+        "{error}"
+    );
+    assert!(prepared.get(), "driver target preparation runs first");
+    assert_eq!(pulled.get(), 0, "the refusal precedes record reads");
 }
 
 /// FR-624 (SIGINT/SIGTERM end the stream as a cancelled run): a handle

@@ -17,7 +17,7 @@ use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem, Populatio
 use fsl_eval::simulation::protocol::{
     Capacities, CapacityRefusal, ResolvedMemory, UnboundCapacity,
 };
-use fsl_eval::simulation::ExpansionStop;
+use fsl_eval::simulation::{ExpansionStop, InitialStateRefusal, SubjectSystem};
 use fsl_semantics::check::AbstractSide;
 
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef, SelectedAnchor};
@@ -73,6 +73,8 @@ pub enum SubjectRefusal {
     InitialStateLimit(usize),
     /// A concrete initial state had no canonical encoding.
     InitialEncoding,
+    /// The concrete initial iterator returned its typed construction fault.
+    InitialConstruction(fsl_eval::simulation::protocol::ProtocolRefusal),
 }
 
 /// Why [`open_protocol_systems`] built no systems: a subject refusal, or a
@@ -357,16 +359,38 @@ fn mapped_initial(
     max_states: Option<usize>,
 ) -> Result<Vec<(ModelState, SelectedAnchor)>, SubjectRefusal> {
     let mut images = Vec::new();
+    let mut admitted_roots = std::collections::BTreeSet::new();
     // One budget for every concrete initial state: the total of assignments.
     let mut budget = u128::from(abstract_system.max_candidates());
-    let mut keys = std::collections::BTreeSet::new();
-    for initial in concrete.generated_initial() {
-        if let Some(limit) = max_states {
+    let initial_states: Box<
+        dyn Iterator<Item = Result<fsl_eval::simulation::model::ModelSimState, InitialStateRefusal>>
+            + '_,
+    > = match max_states {
+        Some(limit) => Box::new(concrete.initial_for_check(limit)),
+        None => Box::new(concrete.generated_initial().map(Ok)),
+    };
+    for initial in initial_states {
+        let initial = match initial {
+            Ok(initial) => initial,
+            Err(InitialStateRefusal::OverBudget(limit)) => {
+                return Err(SubjectRefusal::InitialStateLimit(limit));
+            }
+            Err(InitialStateRefusal::Encoding(_)) => {
+                return Err(SubjectRefusal::InitialEncoding);
+            }
+            Err(InitialStateRefusal::Expansion(stop)) => {
+                return Err(SubjectRefusal::Stopped(stop));
+            }
+            Err(InitialStateRefusal::Construction(fault)) => {
+                return Err(SubjectRefusal::InitialConstruction(fault));
+            }
+        };
+        if max_states.is_some() {
             let (key, _) = concrete
                 .state_key(&initial)
                 .map_err(|_| SubjectRefusal::InitialEncoding)?;
-            if keys.insert(key) && keys.len() > limit {
-                return Err(SubjectRefusal::InitialStateLimit(limit));
+            if !admitted_roots.insert(key) {
+                continue;
             }
         }
         let history = initial_history(refinement, concrete, initial.state());

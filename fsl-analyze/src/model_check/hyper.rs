@@ -389,6 +389,11 @@ fn admit_reductions(
                 return Ok(Err(stopped(cause, limit, None, &Totals::default())));
             }
             Err(reduce::ClosureRefusal::Encoding(refusal)) => return Err(refusal.into()),
+            Err(reduce::ClosureRefusal::Initial(_)) => {
+                return Err(fault(
+                    "model-initial-admission-has-no-protocol-construction-fault",
+                ));
+            }
             Err(reduce::ClosureRefusal::Unordered) => {
                 return Err(fault("a-permuted-collection-is-ordered"));
             }

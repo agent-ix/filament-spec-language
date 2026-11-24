@@ -1103,7 +1103,8 @@ fn timed_refinement_refusal(refusal: &TimedRefinementRefusal) -> Refusal {
         TimedRefinementRefusal::Subject(
             SubjectRefusal::Stopped(_)
             | SubjectRefusal::InitialStateLimit(_)
-            | SubjectRefusal::InitialEncoding,
+            | SubjectRefusal::InitialEncoding
+            | SubjectRefusal::InitialConstruction(_),
         ) => Refusal::Failed(BROKEN),
     }
 }

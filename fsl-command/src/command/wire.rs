@@ -1026,7 +1026,7 @@ struct MonitorTargetMembers {
     unit: String,
     width_bits: u32,
     uncertainty: fsl_package::number::ExactRational,
-    max_event_rate: Option<fsl_package::number::ExactRational>,
+    max_event_rate: serde_json::Value,
     max_reading_gap: u64,
 }
 
@@ -1036,12 +1036,22 @@ impl<'de> serde::Deserialize<'de> for MonitorTargetWire {
 
         let members = MonitorTargetMembers::deserialize(decoder)
             .map_err(|_| D::Error::custom("invalid MonitorTarget"))?;
+        let max_event_rate = if members.max_event_rate.is_null() {
+            None
+        } else {
+            Some(
+                serde_json::from_value::<fsl_package::number::ExactRational>(
+                    members.max_event_rate,
+                )
+                .map_err(|_| D::Error::custom("invalid MonitorTarget"))?,
+            )
+        };
         let zero = |value: fsl_package::number::ExactRational| value.numerator() == 0;
         let invalid = members.counter.is_empty()
             || members.unit.is_empty()
             || !(1..=64).contains(&members.width_bits)
             || members.uncertainty.numerator() < 0
-            || members.max_event_rate.is_some_and(|rate| zero(rate) || rate.numerator() < 0)
+            || max_event_rate.is_some_and(|rate| zero(rate) || rate.numerator() < 0)
             || members.max_reading_gap == 0
             || u128::from(members.max_reading_gap) >= (1_u128 << members.width_bits);
         if invalid {
@@ -1052,7 +1062,7 @@ impl<'de> serde::Deserialize<'de> for MonitorTargetWire {
             unit: members.unit,
             width_bits: members.width_bits,
             uncertainty: members.uncertainty,
-            max_event_rate: members.max_event_rate,
+            max_event_rate,
             max_reading_gap: members.max_reading_gap,
         })
     }
@@ -1116,10 +1126,14 @@ mod monitor_target_tests {
                 "\"max_reading_gap\":1",
                 "\"max_reading_gap\":1,\"extra\":true",
             ),
-            VALID.replace("\"counter\":\"ticks\",", "\"counter\":\"ticks\",\"counter\":\"again\","),
+            VALID.replace(
+                "\"counter\":\"ticks\",",
+                "\"counter\":\"ticks\",\"counter\":\"again\",",
+            ),
             VALID.replace(",\"unit\":\"ms\"", ""),
             VALID.replace("\"width_bits\":16", "\"width_bits\":\"wide\""),
             VALID.replace("\"max_reading_gap\":1", "\"max_reading_gap\":0"),
+            VALID.replace(",\"max_event_rate\":null", ""),
         ];
         for wire in invalid {
             let error = serde_json::from_str::<MonitorTargetWire>(&wire)

@@ -157,15 +157,17 @@ Tag the tests `#[trace("TC-521", "FR-126-AC-n")]`.
   the example subject stops with `{MaxCandidates, 1}`. Each stop names
   `accounting.work_units` or `expansion.max_candidates`, and raised limits
   allow the corresponding run to complete without that stop.
-- Step 12: the shared admission refuses with `MaxStates` naming 1 after exactly two
-  initial states were pulled and keyed, not a thousand; pulling three states of the
-  2^40-combination set builds exactly three; each of the three
-  runs refuses with `MaxStates` naming 0 after keying one initial state
-  (all of them are keyed under the default budget). The protocol check
-  constructs one root before refusing at the second distinct identity. An
+- Step 12: the shared admission refuses with `MaxStates` naming 1 after
+  constructing and keying only the first admitted root; it refuses before
+  constructing or keying the second distinct root. Pulling three states of
+  the 2^40-combination set builds exactly three. Each of the three runs
+  refuses with `MaxStates` naming 0 before constructing or keying any initial
+  root (all roots are keyed under the default budget). The protocol check
+  constructs one root before refusing the second distinct identity. An
   earlier duplicate consumes no additional slot. A fault in an admitted
-  root keeps its variant and location. With the lower limit the root that
-  would fault is never settled. The reduced and sampled over-budget
-  requests generate only through the crossing candidate and draw no
-  samples. The in-budget sampled request generates four states and retains
-  the original witness indices.
+  root keeps its variant and location. If the fault is at the crossing root,
+  the already-reached limit refusal wins and the failing root is never
+  constructed or settled. Reduced and sampled over-budget requests refuse
+  before constructing the crossing candidate and draw no samples. The
+  in-budget sampled request generates four states and retains the original
+  witness indices.
