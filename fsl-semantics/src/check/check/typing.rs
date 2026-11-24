@@ -1824,6 +1824,7 @@ impl<'a> Typer<'a> {
                             (ValueType::Float(float), ExprNode::Float64(_)) => {
                                 float.width() == filament_exact::IeeeWidth::Binary64
                             }
+                            (ValueType::Float(_), ExprNode::Negate(_)) => true,
                             _ => false,
                         });
                 let goal = Goal::Infer(operand, operand_hint, location.child(0));

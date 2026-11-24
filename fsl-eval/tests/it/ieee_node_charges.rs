@@ -340,14 +340,21 @@ fn source_float_negation_is_total_for_each_rounding_profile() {
             (64, 0x7ff0_0000_0000_0001, 0xfff0_0000_0000_0001),
         ] {
             let ty = format!("Float{width}[{mode}]");
-            let literal = format!("float{width}(bits: {source:#x})");
+            let literal = if width == 32 {
+                format!(
+                    "float32(bits: {:#010x})",
+                    u32::try_from(source).expect("binary32 source")
+                )
+            } else {
+                format!("float64(bits: {source:#018x})")
+            };
             let expression = format!("-{literal}");
             let outcome = run(
                 "",
                 &ty,
                 &expression,
                 Vec::new(),
-                limits(0, 100, 100, 100),
+                limits(100, 100, 100, 100),
                 (&ty, &literal),
             );
             let expected = if width == 32 {
@@ -364,7 +371,7 @@ fn source_float_negation_is_total_for_each_rounding_profile() {
                 &ty,
                 &expression,
                 Vec::new(),
-                limits(0, 100, 100, 100),
+                limits(100, 100, 100, 100),
                 (&ty, &literal),
             );
             let original = if width == 32 {
