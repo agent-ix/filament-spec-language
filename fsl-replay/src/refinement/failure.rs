@@ -194,6 +194,10 @@ pub enum Taken {
     /// Candidate-specific protocol paths, including internal closure steps.
     /// `candidates[n]` is the state reached by `transitions[n]`.
     ProtocolTraces(Vec<ProtocolTrace>),
+    /// A zone certificate edge on which `check_step` fails at every point of
+    /// the source zone and whose post-state is a time-locked entry node
+    /// (FR-244-AC-8); `check_step` itself never returns it.
+    Failing,
 }
 
 /// One abstract transition (or stutter) between hidden-field candidates.

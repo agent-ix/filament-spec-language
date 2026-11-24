@@ -1010,14 +1010,32 @@ pub(crate) fn dead_undo(dead: bool) -> Refining {
 /// the time invariant `when self.dead { x <= 0 }` when `invariant`: with
 /// `retried` and no invariant, `undo`'s post-state is time-divergent.
 pub(crate) fn undo_world(retried: bool, invariant: bool) -> Refining {
-    let model = document(
-        &["x"],
-        &[
-            ("send", &["inflight", "x"]),
-            ("enter", &["late", "x"]),
-            ("undo", &["inflight", "retried"]),
-        ],
-    );
+    undo_world_with(retried, invariant, false)
+}
+
+/// [`dead_undo`] with a further operation `idle`, enabled once `retried`
+/// holds and changing nothing, so the time-locked entry node `undo` reaches
+/// has an edge of its own: a step inside the locked region.
+pub(crate) fn dead_undo_with_idle() -> Refining {
+    undo_world_with(true, true, true)
+}
+
+fn undo_world_with(retried: bool, invariant: bool, idle: bool) -> Refining {
+    let mut operations: Vec<(&str, &[&str])> = vec![
+        ("send", &["inflight", "x"]),
+        ("enter", &["late", "x"]),
+        ("undo", &["inflight", "retried"]),
+    ];
+    if idle {
+        operations.push(("idle", &["retried"]));
+    }
+    let model = document(&["x"], &operations);
+    let idle_contracts = if idle {
+        "pre MIdle using v on M::Call::idle { self.retried }\n\
+         post MIdled using v on M::Call::idle { self.retried }\n"
+    } else {
+        ""
+    };
     let undone = if retried {
         "not self.inflight and self.retried"
     } else {
@@ -1035,7 +1053,7 @@ pub(crate) fn undo_world(retried: bool, invariant: bool) -> Refining {
          pre MEnter using v on M::Call::enter {{ self.inflight and not self.retried and self.x >= 1 ms }}\n\
          post MEntered using v on M::Call::enter {{ self.late and self.x = 0 ms }}\n\
          pre MUndo using v on M::Call::undo {{ self.late and self.inflight and not self.retried and self.x <= 0 ms }}\n\
-         post MUndone using v on M::Call::undo {{ {undone} }}\n{invariant}"
+         post MUndone using v on M::Call::undo {{ {undone} }}\n{idle_contracts}{invariant}"
     );
     let body = refinement("self.inflight")
         .replace("late = self.late", "late = false")
@@ -1044,6 +1062,14 @@ pub(crate) fn undo_world(retried: bool, invariant: bool) -> Refining {
             "step M::Call::send -> A::Call::send(self);",
             "step M::Call::send -> A::Call::send(self);\n\
              step M::Call::enter -> stutter;\nstep M::Call::undo -> stutter;",
+        )
+        .replace(
+            "step M::Call::undo -> stutter;",
+            if idle {
+                "step M::Call::undo -> stutter;\nstep M::Call::idle -> stutter;"
+            } else {
+                "step M::Call::undo -> stutter;"
+            },
         );
     refining(&req(), &model, &format!("{DENSE}{contracts}{body}"))
         .unwrap_or_else(|refusals| panic!("{refusals:?}"))

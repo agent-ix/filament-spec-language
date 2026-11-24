@@ -21,8 +21,8 @@ use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use ix_trace_rs::trace;
 
 use crate::timed_refinement::{
-    certificate_request, dead_undo, free_delay_world, obligation, refinement, req, safety,
-    safety_request, treq, undo_world, unit, CONTRACTS,
+    certificate_request, dead_undo, dead_undo_with_idle, free_delay_world, obligation, refinement,
+    req, safety, safety_request, treq, undo_world, unit, CONTRACTS,
 };
 use crate::timed_world::{document, refining, refining_from, renamed_package, Refining, DENSE};
 
@@ -241,11 +241,15 @@ fn the_treq_certificate_is_a_refinement_form_the_checker_accepts() {
 
 /// FR-244-AC-5 and FR-430-AC-8 (TC-699, TC-700): FR-430-AC-6's `Holds`
 /// certificate lists the post-state of `undo` as a `locked` node with the
-/// reserved index, entered by the failing `undo` edge, which takes nothing;
+/// reserved index, entered by the failing `undo` edge, which takes
+/// `Taken::Failing` (FR-244-AC-8; the byte and `candidate_blocks` clauses of
+/// that criterion are not covered here);
 /// FR-245 accepts it. With the `locked` mark removed from that node it is
 /// `Rejected` `StepFails` at the `undo` edge (FR-245-AC-8).
 #[trace("TC-699", "FR-244-AC-5")]
+#[trace("TC-699", "FR-244-AC-8")]
 #[trace("TC-700", "FR-245-AC-8")]
+#[trace("TC-700", "FR-245-AC-12")]
 #[trace("TC-1170", "FR-430-AC-8")]
 #[test]
 fn the_locked_undo_post_state_is_a_locked_entry_node() {
@@ -270,7 +274,8 @@ fn the_locked_undo_post_state_is_a_locked_entry_node() {
         panic!("one edge into the entry node: {into:?}");
     };
     assert_eq!(operation(&certificate, *undo), "undo");
-    assert_eq!(part.taken[*undo], None);
+    // FR-244-AC-8: the failing edge into the entry lists `Taken::Failing`.
+    assert_eq!(part.taken[*undo], Some(Taken::Failing));
     let source = certificate.edges[*undo].from;
     assert!(certificate.nodes[source].automaton_state < reserved);
     assert_eq!(
@@ -285,6 +290,73 @@ fn the_locked_undo_post_state_is_a_locked_entry_node() {
         verdict(&world, &unmarked),
         rejected(CertificateRule::StepFails, edge(*undo))
     );
+
+    // FR-245-AC-12 (TC-700 step 9): `None` or another value for the failing
+    // edge into the entry, `Taken::Failing` on an edge inside the locked
+    // region and on a passing edge are each `Rejected` `PostDiffers` at that
+    // edge.
+    let tamper = |at: usize, taken: Option<Taken>| {
+        let mut forged = certificate.clone();
+        forged.refinement.as_mut().expect("the part").taken[at] = taken;
+        verdict(&world, &forged)
+    };
+    for taken in [None, Some(Taken::Stutter)] {
+        assert_eq!(
+            tamper(*undo, taken.clone()),
+            rejected(CertificateRule::PostDiffers, edge(*undo)),
+            "{taken:?} on the failing edge"
+        );
+    }
+    let passing: Vec<usize> = (0..certificate.edges.len())
+        .filter(|&at| {
+            at != *undo && certificate.nodes[certificate.edges[at].from].automaton_state < reserved
+        })
+        .collect();
+    assert!(!passing.is_empty(), "a passing edge exists");
+    for at in passing {
+        assert_eq!(
+            tamper(at, Some(Taken::Failing)),
+            rejected(CertificateRule::PostDiffers, edge(at)),
+            "Taken::Failing on passing edge {at}"
+        );
+    }
+}
+
+/// FR-244-AC-8 and FR-245-AC-12 (TC-699, TC-700): over `dead_undo` with a
+/// further `idle` step the locked entry node has an edge of its own; the
+/// certificate lists it with `None`, and `Taken::Failing` there is `Rejected`
+/// `PostDiffers` at that edge.
+#[trace("TC-699", "FR-244-AC-8")]
+#[trace("TC-700", "FR-245-AC-12")]
+#[test]
+fn a_step_inside_the_locked_region_lists_no_taken() {
+    let world = dead_undo_with_idle();
+    let certificate = certified(&world);
+    let reserved = reserved(&certificate);
+    let inside: Vec<usize> = (0..certificate.edges.len())
+        .filter(|&at| certificate.nodes[certificate.edges[at].from].automaton_state == reserved)
+        .collect();
+    assert!(
+        !inside.is_empty(),
+        "an edge inside the locked region exists"
+    );
+    let part = certificate.refinement.as_ref().expect("the part");
+    for &at in &inside {
+        assert_eq!(part.taken[at], None, "inside edge {at}");
+    }
+    assert_eq!(
+        verdict(&world, &certificate),
+        ZoneCertificateVerdict::Accepted
+    );
+    for at in inside {
+        let mut forged = certificate.clone();
+        forged.refinement.as_mut().expect("the part").taken[at] = Some(Taken::Failing);
+        assert_eq!(
+            verdict(&world, &forged),
+            rejected(CertificateRule::PostDiffers, edge(at)),
+            "Taken::Failing at edge {at}"
+        );
+    }
 }
 
 /// FR-245-AC-8 and FR-430-AC-8 (TC-700): the `TReq` certificate with its

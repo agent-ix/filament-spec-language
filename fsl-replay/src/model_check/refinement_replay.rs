@@ -1817,7 +1817,7 @@ fn replay_lasso(
                 Taken::CandidateSteps(steps) => {
                     identities.extend(steps.iter().filter_map(|step| step.transition.clone()))
                 }
-                Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) => {}
+                Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => {}
             }
         }
         let classes = abstract_classes(&systems.abstract_system, &abstract_fairness, &identities)
@@ -1840,7 +1840,7 @@ fn replay_lasso(
     let divergent = loop_taken.iter().all(|taken| match taken {
         Taken::Stutter => true,
         Taken::CandidateSteps(steps) => steps.iter().all(|step| step.transition.is_none()),
-        Taken::Abstract(_) | Taken::Protocol(_) | Taken::ProtocolTraces(_) => false,
+        Taken::Abstract(_) | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => false,
     });
     Ok(match (payload.refinement.as_ref(), violated, divergent) {
         (Some(RefinementFailure::Divergence { .. }), true, true)
@@ -2322,7 +2322,7 @@ fn protocol_hidden_graph(
                         rows.push((pre.clone(), first, post, hops));
                     }
                 }
-                Taken::Abstract(_) | Taken::CandidateSteps(_) => {
+                Taken::Abstract(_) | Taken::CandidateSteps(_) | Taken::Failing => {
                     return Err(fault("a-protocol-loop-edge-takes-protocol-steps"));
                 }
             }

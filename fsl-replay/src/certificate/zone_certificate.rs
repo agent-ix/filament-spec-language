@@ -2443,7 +2443,7 @@ impl<O> Checker<'_, '_, O> {
                     rows.push((Some(step), Some(row.post_state.clone())));
                 }
             }
-            Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) => {}
+            Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => {}
         }
         // Split the zone by the truth pattern of the rows' guards.
         let mut patterns: Vec<(Zone, Vec<bool>)> = vec![(zone, Vec::new())];
@@ -2674,7 +2674,8 @@ impl<O> Checker<'_, '_, O> {
     /// A refinement form's judgement of edge `index` out of `node`, by
     /// `step`: out of a positioned node, `check_step` passes with the
     /// target's position and the edge's `taken` (`PostDiffers`), or fails
-    /// into a `locked` entry node (`StepFails`); out of the locked region,
+    /// into a `locked` entry node (`StepFails`), the edge listing
+    /// `Taken::Failing` (`PostDiffers` otherwise); out of the locked region,
     /// the edge stays in it with no `taken` (`PostDiffers`). The first
     /// rejection out of a node is kept for the node's turn.
     fn refine_edge(
@@ -2739,10 +2740,13 @@ impl<O> Checker<'_, '_, O> {
                     self.unsound(&failed)?;
                     if !entry {
                         Some(CertificateRule::StepFails)
-                    } else if taken.is_some() {
-                        Some(CertificateRule::PostDiffers)
-                    } else {
+                    } else if taken == Some(&Taken::Failing) {
                         None
+                    } else {
+                        // The failing edge into the entry lists
+                        // `Taken::Failing` (FR-245-AC-12): `None` or any
+                        // other `taken` differs.
+                        Some(CertificateRule::PostDiffers)
                     }
                 }
             }

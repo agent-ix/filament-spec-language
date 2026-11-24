@@ -936,14 +936,15 @@ impl Product<'_, '_> {
                         run.escape(&successor.state, &successor.zone, &scale, &lower, &upper)?;
                     if !escape.diverges {
                         // No behaviour: the post-state is a `locked` entry
-                        // node (FR-244), entered with no `taken`.
+                        // node entered by the failing edge, which takes
+                        // `Taken::Failing` (FR-244-AC-8).
                         self.store(
                             run,
                             successor.state,
                             LOCKED_ENTRY,
                             successor.zone,
                             None,
-                            Some((arrival, None)),
+                            Some((arrival, Some(Taken::Failing))),
                             None,
                             queue,
                         )?;

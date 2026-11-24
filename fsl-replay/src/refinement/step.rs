@@ -573,7 +573,7 @@ fn check_protocol_any_step(
         Vec::new()
     };
     match taken {
-        Taken::Abstract(_) | Taken::CandidateSteps(_) | Taken::Stutter => {}
+        Taken::Abstract(_) | Taken::CandidateSteps(_) | Taken::Stutter | Taken::Failing => {}
         Taken::Protocol(_) | Taken::ProtocolTraces(_) => {
             return StepResult {
                 verdict: fault("any-row-is-decided-before-protocol-matching"),
@@ -1707,7 +1707,7 @@ pub fn check_protocol_state_relations(
                     }
                 }
             }
-            Taken::Stutter | Taken::Abstract(_) | Taken::CandidateSteps(_) => {}
+            Taken::Stutter | Taken::Abstract(_) | Taken::CandidateSteps(_) | Taken::Failing => {}
         }
     }
     let mut stable_candidates = Vec::new();

@@ -294,7 +294,7 @@ fn arc_relation(
             classes,
         )
         .map_err(ZoneCheckRefusal::Fault),
-        Some(Taken::Stutter) | None => Ok(candidate_stutter_relation(source, target, classes)),
+        Some(Taken::Stutter | Taken::Failing) | None => Ok(candidate_stutter_relation(source, target, classes)),
         Some(Taken::Abstract(_)) => Err(ZoneCheckRefusal::Fault(
             "hidden-model-edge-retains-candidate-steps",
         )),

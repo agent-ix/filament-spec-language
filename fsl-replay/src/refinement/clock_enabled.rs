@@ -204,7 +204,7 @@ fn clock_step(
                 RowClockStep::Disagree => Ok(Err(())),
             }
         }
-        Taken::Protocol(_) | Taken::ProtocolTraces(_) => Ok(Err(())),
+        Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => Ok(Err(())),
     }
 }
 
