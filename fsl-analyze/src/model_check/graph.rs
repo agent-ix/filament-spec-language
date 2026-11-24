@@ -365,7 +365,8 @@ where
             };
         }
         if workers > 1 {
-            let mut batch = Vec::with_capacity(workers);
+            let batch_capacity = workers.min(queue.len().saturating_add(1));
+            let mut batch = Vec::with_capacity(batch_capacity);
             batch.push(graph.states[source.0].state.clone());
             batch.extend(
                 queue
@@ -470,4 +471,70 @@ where
         graph.states[source.0].expanded = true;
     };
     Ok(GraphExploration { graph, outcome })
+}
+
+#[cfg(test)]
+mod worker_capacity_tests {
+    use super::*;
+    use fsl_eval::simulation::Expansion;
+    use ix_trace_rs::trace;
+
+    struct OneState;
+
+    impl TransitionSystem for OneState {
+        type State = u8;
+        type TransitionId = u8;
+        type Key = u8;
+        type Finding = ();
+
+        fn initial(&self) -> Vec<Self::State> {
+            vec![0]
+        }
+
+        fn key(&self, state: &Self::State) -> Self::Key {
+            *state
+        }
+
+        fn successors(
+            &self,
+            _state: &Self::State,
+        ) -> Result<Expansion<Self::TransitionId, Self::State, Self::Finding>, ExpansionStop>
+        {
+            Ok(Expansion {
+                successors: Vec::new(),
+                findings: Vec::new(),
+            })
+        }
+    }
+
+    /// A valid maximal worker count is bounded by the available frontier.
+    #[trace("TC-1417", "FR-126-AC-20")]
+    #[test]
+    fn usize_max_workers_on_a_one_state_frontier_exhausts_without_panicking() {
+        let exploration = retain_reduced_with_key(
+            &OneState,
+            &SymmetryGroup::default(),
+            None,
+            RetainConfig {
+                limits: Limits::default(),
+                identity: IdentityLimits::default(),
+                max_depth: None,
+            },
+            usize::MAX,
+            |_, _, _| {},
+            || false,
+            |state| encode(state, IdentityLimits::default()),
+        )
+        .expect("the one-state graph has encodable identities");
+
+        assert_eq!(exploration.graph.states().len(), 1);
+        assert!(matches!(
+            exploration.outcome,
+            Outcome::Exhaustive(Stats {
+                states: 1,
+                transitions: 0,
+                depth: 0,
+            })
+        ));
+    }
 }
