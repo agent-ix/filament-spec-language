@@ -3606,7 +3606,7 @@ fn settle(
         }
         EngineReport::Refused(Refusal::UnsupportedWithDetail(code, mut detail)) => {
             // FSL FR-281 "Engine refusals": the record names the engine that
-            // decided the refusal, as the detail-less `Unsupported` does. An
+            // decided the refusal, as the detail-less `Unsupported` does.
             // An engine-set `backend` member (FSpec FR-272 names the provider that
             // excludes the construct) is kept; the record field names the engine.
             detail

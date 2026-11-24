@@ -3376,11 +3376,10 @@ mod tests {
         matches!(report, EngineReport::Refused(Refusal::Unsupported(code)) if *code == NOT_YET)
     }
 
-    /// FR-281-AC-11: a refuted value with no produced path set is an engine
-    /// inconsistency, and every witness-producing route uses this classifier.
-    #[trace("FR-281-AC-11")]
+    /// The witness classifier maps an absent value to the broken-invariant
+    /// report. This unit test covers the helper directly, not a claim route.
     #[test]
-    fn a_missing_refutation_witness_is_a_broken_invariant() {
+    fn require_witness_rejects_none_as_a_broken_invariant() {
         let report = match require_witness::<()>(None) {
             Ok(()) => panic!("a missing witness cannot be accepted"),
             Err(report) => report,

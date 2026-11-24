@@ -1226,23 +1226,15 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
                 form: Some(fsl_semantics::check::HyperForm::Other { .. }),
             },
         ) => Refusal::Unsupported(NOT_YET),
-        // Open question, behaviour unchanged by QSL-2850: FR-337's standing
-        // decision (QSL-1092) returns no verdict for a `holds` condition that
-        // reads a capture, and FR-174 states no verdict for a state constraint
-        // undefined at a component state. Whether each settles as an unbuilt
-        // form, a user-input refusal or a fault is not decided by the spec. A
-        // clause with no property form (`FormNotDecided { form: None }`) is the
-        // same kind of open case: the checker's classification never leaves a
-        // clause unformed on any route this crate has read, but no router
-        // invariant proves it, so it is not claimed as a fault.
+        // Characterization only: FR-337-AC-12 requires CaptureRead to produce
+        // no engine verdict. These assertions document the current mapping of
+        // that refusal, an undefined hyper constraint and missing form data;
+        // they do not claim those settlements are required by FR-281.
         ModelCheckRefusal::CaptureRead { .. }
         | ModelCheckRefusal::FormNotDecided { form: None }
         | ModelCheckRefusal::Hyper(
-            HyperRefusal::ConstraintUndefined { .. }
-            | HyperRefusal::FormNotDecided { form: None },
-        ) => {
-            Refusal::Unsupported(NOT_YET)
-        }
+            HyperRefusal::ConstraintUndefined { .. } | HyperRefusal::FormNotDecided { form: None },
+        ) => Refusal::Unsupported(NOT_YET),
         // A routing fault: hyper_route sends an HP-5 clause to
         // `check_single_existential` alone (so `check_hyper` never sees it), and
         // every other form check_hyper decides is refused only by a router fault; a refusal
@@ -1587,7 +1579,10 @@ mod tests {
             )),
             not_yet
         );
-        assert_eq!(unsupported(ModelCheckRefusal::FormNotDecided { form: None }), not_yet);
+        assert_eq!(
+            unsupported(ModelCheckRefusal::FormNotDecided { form: None }),
+            not_yet
+        );
         assert_eq!(
             unsupported(ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided {
                 form: None

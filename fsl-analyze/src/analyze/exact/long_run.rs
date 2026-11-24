@@ -83,20 +83,9 @@ pub(super) fn run(
         let mut admission = candidate.admission();
         match build_retaining_monitor_with_budget(request, identity, &mut admission, cancel) {
             Ok((ProbBuild::Built(product), _)) => product,
-            // The same route as every other exact form: an undefined read is a
-            // refutation by undefined path.
-            Ok((ProbBuild::Undefined(path), monitor)) => {
-                return undefined::run(
-                    simulation.clone(),
-                    claim,
-                    path,
-                    monitor,
-                    &limits,
-                    cancel,
-                    subject,
-                    tamper_witness,
-                )
-            }
+            // Long-run forms are outside the undefined witness producer's
+            // supported forms, so their undefined product is unbuilt.
+            Ok((ProbBuild::Undefined(_), _)) => return not_yet(),
             Err(BudgetedProductError::Product(error)) => return build_refusal(error, subject),
             Err(BudgetedProductError::Key(error)) => {
                 return document_failure(admission.refusal(error), subject)
