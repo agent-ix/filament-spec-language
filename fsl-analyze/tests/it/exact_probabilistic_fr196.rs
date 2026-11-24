@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Focused FR-196 acceptance coverage isolated from FR191's shared tests.
 
+use base64::Engine as _;
 use filament_exact::Cancel;
 use fsl_analyze::exact_probabilistic::{build_product, ProbBuild, ProductRefusal, ProductStop};
 use fsl_eval::simulation::model::ModelSystem;
-use fsl_replay::{ModelCheckLimit, ModelCheckLimits, ProbabilityDocumentLimits};
+use fsl_replay::{
+    ActivationPhase, ModelCheckLimit, ModelCheckLimits, ProbabilityDocumentIoLimits,
+    ProbabilityDocumentLimits, ProbabilityProductKey,
+};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 
 use crate::prob_world::{self, Model, Operation, World};
 
@@ -95,21 +100,75 @@ fn conditional_workload_has_literal_three_fifths_value() {
     };
     let document: Value = serde_json::from_slice(&document).expect("canonical JSON");
     assert_eq!(document["conditional"]["mode"], "ratio");
-    let values = |part: &str| {
-        document["conditional"][part]["values"]
+    let rows = |part: &str| {
+        let entries = document["conditional"][part]["values"]
             .as_array()
             .expect("exact value rows")
             .iter()
             .map(|row| {
                 (
-                    row["value"]["numerator"].as_str().expect("numerator"),
-                    row["value"]["denominator"].as_str().expect("denominator"),
+                    row["state"].as_str().expect("canonical state key"),
+                    (
+                        row["value"]["numerator"].as_str().expect("numerator"),
+                        row["value"]["denominator"].as_str().expect("denominator"),
+                    ),
                 )
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        let unique = entries
+            .iter()
+            .map(|(state, _)| *state)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            entries.len(),
+            unique.len(),
+            "{part} has no duplicate state rows"
+        );
+        entries.into_iter().collect::<BTreeMap<_, _>>()
     };
-    assert!(values("numerator").contains(&("3", "8")));
-    assert!(values("denominator").contains(&("5", "8")));
+    let numerator = rows("numerator");
+    let denominator = rows("denominator");
+    assert_eq!(
+        numerator.keys().collect::<Vec<_>>(),
+        denominator.keys().collect::<Vec<_>>(),
+        "the two exact parts name the same phase states"
+    );
+
+    let initial = system
+        .initial_states()
+        .first()
+        .expect("the model has its literal initial state");
+    let (initial_model, _) = system.state_key(initial).expect("initial model key");
+    let instance = system
+        .reference_model()
+        .object_reference(
+            &fsl_replay::DeclarationKey {
+                package: "test/fr196-conditional".to_owned(),
+                node: "ix://test/fr196-conditional/T".to_owned(),
+            },
+            "x",
+        )
+        .expect("the declared initial instance reference");
+    let io = ProbabilityDocumentIoLimits {
+        bytes: limits.bytes,
+        storage_bytes: limits.storage_bytes,
+    };
+    let expected_initial_waiting_key = ProbabilityProductKey::for_model_state(None, &initial_model)
+        .expect("literal initial model state key")
+        .with_activation(&instance, ActivationPhase::Waiting, io, &Cancel::new())
+        .expect("initial key in the on-each waiting phase");
+    let expected_state = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(expected_initial_waiting_key.as_bytes());
+    assert_eq!(
+        numerator.get(expected_state.as_str()).copied(),
+        Some(("3", "8")),
+        "the initial waiting state has numerator mass 3/8"
+    );
+    assert_eq!(
+        denominator.get(expected_state.as_str()).copied(),
+        Some(("5", "8")),
+        "the same initial waiting state has activation mass 5/8"
+    );
 }
 
 /// TC-631's unbounded exact-only event product carries genuine absent
