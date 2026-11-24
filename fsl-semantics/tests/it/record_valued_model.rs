@@ -775,3 +775,100 @@ fn a_changed_record_value_needs_the_declared_object_field_grant() {
     // An unchanged address needs no grant.
     assert_eq!(world.frame("stay", &before, &before), FrameVerdict::Holds);
 }
+
+// ---------------------------------------------------------------------------
+// FR-056-AC-34 (TC-992 step 1): native String and UUID are distinct leaves
+// ---------------------------------------------------------------------------
+
+/// The declared value type of `owner.field`, wherever the type environment
+/// keeps the owner: an object type's attributes or a record's fields.
+fn member_type(declarations: &PackageDeclarations, owner: &str, field: &str) -> ValueType {
+    let qualified = format!("Config::{owner}");
+    if let Some(object) = declarations
+        .types
+        .object_types()
+        .find(|declared| declared.name() == qualified)
+    {
+        return object
+            .attributes()
+            .iter()
+            .find(|attribute| attribute.name() == field)
+            .unwrap_or_else(|| panic!("{owner}.{field} is declared"))
+            .value_type()
+            .clone();
+    }
+    let composite = declarations
+        .types
+        .composites()
+        .find(|declared| declared.name() == qualified)
+        .unwrap_or_else(|| panic!("{owner} is declared"));
+    let filament_semantic_value::declaration::CompositeShape::Record(fields) = composite.shape()
+    else {
+        panic!("{owner} is a record: {:?}", composite.shape());
+    };
+    fields
+        .iter()
+        .find(|declared| declared.name() == field)
+        .unwrap_or_else(|| panic!("{owner}.{field} is declared"))
+        .value_type()
+        .clone()
+}
+
+/// FR-056-AC-34 (TC-992 step 1): over TC-235's K2 package, assembled without
+/// rewriting its source, `Money.currency` has the checked type `String`, and
+/// `Order.order_id`, `Fulfilment.correlation_id` (the identity slots) and the
+/// ordinary event field `OrderPlaced.order_id` have the checked type `UUID`.
+/// The two are distinct first-class leaves: neither is `Text` or a
+/// `Reference`, and the two types differ from each other. Changing the
+/// declared native name of one member changes its checked type, so the
+/// mapping is read from the declaration and not fixed.
+#[trace("TC-992", "FR-056-AC-34")]
+#[test]
+fn k2_string_and_uuid_members_map_to_distinct_value_leaves() {
+    let declarations = assembled(&base::k2());
+    let currency = member_type(&declarations, "Money", "currency");
+    let order = member_type(&declarations, "Order", "order_id");
+    let correlation = member_type(&declarations, "Fulfilment", "correlation_id");
+    let placed = member_type(&declarations, "OrderPlaced", "order_id");
+    assert_eq!(currency, ValueType::String);
+    for (name, found) in [
+        ("Order.order_id", &order),
+        ("Fulfilment.correlation_id", &correlation),
+        ("OrderPlaced.order_id", &placed),
+    ] {
+        assert_eq!(found, &ValueType::Uuid, "{name}");
+    }
+    assert_ne!(currency, order, "String and UUID are different leaves");
+    for leaf in [&currency, &order, &correlation, &placed] {
+        assert!(
+            !matches!(leaf, ValueType::Reference(_) | ValueType::Text(_)),
+            "a native leaf is never Text or Reference: {leaf:?}"
+        );
+    }
+
+    // The mapping follows the declaration: the same package with
+    // `Money.currency` declared UUID types it UUID, and `Order.order_id`
+    // declared String types it String.
+    let mut swapped = base::k2();
+    for (owner, field, native) in [
+        ("Money", "currency", "ix://filament/native/UUID"),
+        ("Order", "order_id", "ix://filament/native/String"),
+    ] {
+        let declared = type_mut(&mut swapped, owner)["fields"]
+            .as_array_mut()
+            .expect("fields")
+            .iter_mut()
+            .find(|each| each["name"] == field)
+            .expect("the field");
+        declared["typeRef"] = json!(native);
+    }
+    let declarations = assembled(&swapped);
+    assert_eq!(
+        member_type(&declarations, "Money", "currency"),
+        ValueType::Uuid
+    );
+    assert_eq!(
+        member_type(&declarations, "Order", "order_id"),
+        ValueType::String
+    );
+}

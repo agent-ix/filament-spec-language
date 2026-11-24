@@ -764,7 +764,7 @@ fn ep_supply<'a>(
 }
 
 #[test]
-#[trace("TC-1070", "FR-390-AC-23")]
+#[trace("TC-1070", "FR-390-AC-23", "FR-106-AC-64")]
 fn nested_population_closure_uses_object_fields_then_relationship_ends() {
     let (package, view) = fixture_ep();
     let peer = other_reference(&view, "ghost");
@@ -4448,7 +4448,8 @@ fn independent_universe_hex(universe: &filament_exact::UniverseId) -> String {
     "FR-390-AC-6",
     "FR-390-AC-20",
     "FR-390-AC-21",
-    "FR-106-AC-62"
+    "FR-106-AC-62",
+    "FR-106-AC-64"
 )]
 fn incomplete_sole_population_is_returned_with_its_population_locus() {
     let (package, view) = fixture_with_view();
@@ -4567,7 +4568,7 @@ fn a_seed_population_without_a_row_is_a_missing_required_artifact() {
 /// when an unrelated population is incomplete; completing that population
 /// does not change the call result or ordered charges.
 #[test]
-#[trace("TC-1071", "FR-390-AC-20")]
+#[trace("TC-1071", "FR-390-AC-20", "FR-106-AC-64")]
 fn unrelated_incomplete_population_does_not_change_a_successful_slot() {
     let (package, view) = fixture_ep();
     let peer = other_reference(&view, "ghost");

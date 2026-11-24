@@ -119,7 +119,29 @@ fn small_stack<T: Send + 'static>(run: impl FnOnce() -> T + Send + 'static) -> T
 #[trace("TC-735", "FR-262-AC-2")]
 #[test]
 fn a_100_000_long_list_keys_as_its_rfc_8785_text() {
-    small_stack(|| {
+    keys_as_its_rfc_8785_text(false);
+}
+
+/// TC-735 step 2 over the unbudgeted `ModelSystem::state_key`, the strict
+/// form of the same requirement. IGNORED because it fails today, for two
+/// reasons found in production code, neither changed here:
+/// 1. `Canonicalizer::write` and `Canonicalizer::object` in
+///    `fsl-eval/src/simulation/model/encode.rs` recurse once per record
+///    level, so a 100,000-deep value overflows the 512 KiB stack (the
+///    process aborts with SIGSEGV and takes the whole test binary with it).
+/// 2. `state_key` encodes under the fixed 16 MiB identity limit, and this
+///    key is 16,777,218 bytes, so on a larger stack it refuses
+///    `IdentityInputBytes` instead of returning the key.
+/// Remove the `ignore` when `state_key` is iterative and takes a bound.
+#[trace("TC-735", "FR-262-AC-2")]
+#[ignore = "ModelSystem::state_key recurses per record level (stack overflow at 512 KiB) and caps keys at 16 MiB"]
+#[test]
+fn a_100_000_long_list_keys_as_its_rfc_8785_text_through_the_unbudgeted_state_key() {
+    keys_as_its_rfc_8785_text(true);
+}
+
+fn keys_as_its_rfc_8785_text(unbudgeted: bool) {
+    small_stack(move || {
         let mut world =
             build_world_document(list_document(), "", false, false).expect("the unit checks");
         let counter = format!(
@@ -150,14 +172,18 @@ fn a_100_000_long_list_keys_as_its_rfc_8785_text() {
         assert_eq!(initial.len(), 1);
         // The default 16 MiB identity ceiling is below this key's size, so
         // the identity bound is raised for the one key.
-        let raw = system
-            .state_key_bytes_with_budget(
-                &initial[0],
-                fsl_foundation::IdentityLimits::default().with_input_bytes(1 << 30),
-                &mut RawKeyBudget::unlimited(),
-                &Cancel::new(),
-            )
-            .expect("the key encodes");
+        let raw = if unbudgeted {
+            system.state_key(&initial[0]).expect("the key encodes").0
+        } else {
+            system
+                .state_key_bytes_with_budget(
+                    &initial[0],
+                    fsl_foundation::IdentityLimits::default().with_input_bytes(1 << 30),
+                    &mut RawKeyBudget::unlimited(),
+                    &Cancel::new(),
+                )
+                .expect("the key encodes")
+        };
 
         // The envelope around the list, canonical by construction: members
         // sorted, no whitespace.
