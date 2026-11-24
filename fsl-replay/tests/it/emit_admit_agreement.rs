@@ -206,6 +206,93 @@ fn corrupted_package_is_refused() {
             .map(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned())
             .unwrap_or_default()
     );
+    // QSL-2947: a changed source-map region end is INTENTIONALLY admitted by the strict
+    // reader. contract-ir FR-038 (#1149) makes source-map rows retained package data: the
+    // reader checks their wire shape and joins but SHALL NOT claim a region is the exact
+    // span of the named syntax, because the package does not carry the source bytes; the
+    // emitter verifies regions (FSpec FR-203). The admitted package does retain the changed
+    // end, so `Debug` equality hides it: the retained ends are compared here. Positions are
+    // located by content, not by offset.
+    let ends_of = |package: &CheckedPackageV2| -> Vec<u64> {
+        package
+            .source_map()
+            .iter()
+            .flat_map(|entry| entry.regions.iter().map(|region| region.end))
+            .collect()
+    };
+    let original_ends = match read_checked_package(
+        &bytes,
+        CheckedPackageReadLimits::bounded(),
+        emitted.evidence(),
+    ) {
+        CheckedPackageDispatchResult::AdmittedV2(package) => ends_of(&package),
+        _ => panic!("the emitted package is admitted"),
+    };
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    let map_at = text
+        .find("\"source_map\"")
+        .expect("the emitted package carries a source map");
+    let mut admitted_with_changed_end = 0;
+    for (found, _) in text[map_at..].match_indices("\"end\":") {
+        let mut digit = map_at + found + "\"end\":".len();
+        if !bytes[digit].is_ascii_digit() {
+            continue;
+        }
+        while bytes[digit + 1].is_ascii_digit() {
+            digit += 1;
+        }
+        let mut corrupt = bytes.clone();
+        corrupt[digit] = if corrupt[digit] == b'9' {
+            b'8'
+        } else {
+            corrupt[digit] + 1
+        };
+        if let CheckedPackageDispatchResult::AdmittedV2(package) = read_checked_package(
+            &corrupt,
+            CheckedPackageReadLimits::bounded(),
+            emitted.evidence(),
+        ) {
+            assert_ne!(
+                ends_of(&package),
+                original_ends,
+                "an admitted source-map end change at byte {digit} is retained"
+            );
+            admitted_with_changed_end += 1;
+        }
+    }
+    assert!(
+        admitted_with_changed_end > 0,
+        "FR-038: a changed source-map region end is admitted and retained"
+    );
+    // A rule identity in `lock.definition_selections` is an opaque `DefinitionRef`
+    // (FR-110: `{authority, identity}` rows; no FR makes the strict reader check an
+    // identity against a registry), so a changed identity character is INTENTIONALLY
+    // admitted. FR gap: no requirement says whether the reader must refuse an unknown
+    // definition identity (QSL-3106).
+    let lock_at = text
+        .find("\"definition_selections\"")
+        .expect("the lock carries definition selections");
+    let rule = text[lock_at..]
+        .find("filament.rule.fr-")
+        .map(|found| lock_at + found + "filament.rule.fr-".len())
+        .expect("a rule definition is selected");
+    let mut corrupt = bytes.clone();
+    corrupt[rule] = if corrupt[rule] == b'9' {
+        b'8'
+    } else {
+        corrupt[rule] + 1
+    };
+    assert!(
+        matches!(
+            read_checked_package(
+                &corrupt,
+                CheckedPackageReadLimits::bounded(),
+                emitted.evidence()
+            ),
+            CheckedPackageDispatchResult::AdmittedV2(_)
+        ),
+        "a changed rule identity is an opaque DefinitionRef and is admitted"
+    );
     // Truncation is always refused.
     assert!(!matches!(
         read_checked_package(

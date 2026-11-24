@@ -3530,7 +3530,7 @@ fn bare_native_text_rational_and_decimal_model_members_are_admitted() {
 /// native's type and raises no `UnsupportedModelMember`.
 #[trace("TC-3031", "FR-056-AC-63")]
 #[test]
-#[ignore = "QSL-2961: core-data a92d60e6 (#364) is spec-only (FR-142-AC-17); semantic-ir code still refuses target on a value_type construct (SCHEMA_VIOLATION); needs the implementing core-data change"]
+#[ignore = "QSL-2961: re-run on main with core-data a92d60e6 (#364, FR-142-AC-17): still refused at admission: UnitIntakeRefusal InvalidModelBinding IntakeMalformedDeclaration TypeDefinition.target (/ir/types/0/target) on ix://test/rational-value-type/Ratio, agent-ix-semantic-ir SCHEMA_VIOLATION \"a value_type construct carries no target\"; the pinned semantic-ir validator code still rejects target on a value_type, so a92d60e6 is spec-only for FR-142-AC-17 and needs the implementing core-data change"]
 fn a_value_type_bound_to_a_data_native_by_target_is_that_native() {
     let package = "test/rational-value-type";
     for native in ["Boolean", "Integer", "String", "Float64", "Float32"] {
