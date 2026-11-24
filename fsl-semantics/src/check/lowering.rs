@@ -4555,34 +4555,30 @@ impl<'a> Lowering<'a> {
     ) -> Result<LeafTerm, CheckRefusal> {
         let lowered_type = node.lowered_value_type();
         let control_range = if matches!(node.kind(), NodeKind::If { .. }) {
-            let branch = node
-                .children()
-                .into_iter()
-                .skip(1)
-                .zip(arguments.iter().skip(1))
-                .find_map(|(child, argument)| match child.kind() {
-                    NodeKind::Coerce(operand, interval)
-                        if child.value_type() == node.value_type() =>
-                    {
-                        Some((child, *operand, interval, argument))
-                    }
-                    _ => None,
-                });
-            if let Some((child, operand, interval, argument)) = branch {
-                if super::ir::coerce_node_builds_narrow(child.at(operand), interval) {
-                    let MemberTerm::Leaf(leaf) = argument else {
-                        return Err(fault(node.location(), KeyFault::UnresolvedDraft));
-                    };
-                    Some(
-                        leaf.reference_target()
-                            .and_then(NodeRef::admitted)
-                            .and_then(|key| self.graph.node(key.clone()))
-                            .and_then(SemanticNode::semantic_type)
-                            .ok_or_else(|| fault(node.location(), KeyFault::UnresolvedDraft))?,
-                    )
-                } else {
-                    Some(self.type_node(&ValueType::Int(interval.clone()), child.location())?)
+            let children = node.children().into_iter().skip(1);
+            let mut first_matching_range = None;
+            let mut narrowed_result = None;
+            for (child, argument) in children.zip(arguments.iter().skip(1)) {
+                let NodeKind::Coerce(_, interval) = child.kind() else {
+                    continue;
+                };
+                if child.value_type() != node.value_type() {
+                    continue;
                 }
+
+                if first_matching_range.is_none() {
+                    first_matching_range = Some((child, interval));
+                }
+                if let Some(result_type) = self.narrow_application_result_type(argument) {
+                    narrowed_result = Some(result_type);
+                    break;
+                }
+            }
+
+            if let Some(result_type) = narrowed_result {
+                Some(result_type)
+            } else if let Some((child, interval)) = first_matching_range {
+                Some(self.type_node(&ValueType::Int(interval.clone()), child.location())?)
             } else {
                 None
             }
@@ -4621,6 +4617,23 @@ impl<'a> Lowering<'a> {
             self.type_ref(&lowered_type, node.location())?
         };
         self.typed_application(node.location(), result_type, operator, operation, arguments)
+    }
+
+    /// The result type of `argument` when it directly names an application
+    /// of `filament.op.numeric.narrow`.
+    fn narrow_application_result_type(&self, argument: &MemberTerm) -> Option<NodeKey> {
+        let MemberTerm::Leaf(leaf) = argument else {
+            return None;
+        };
+        let reference = leaf.reference_target()?;
+        let body = match reference {
+            NodeRef::Admitted(key) => self.graph.node(key.clone()).map(SemanticNode::body),
+            NodeRef::Pending(handle) => self.drafts.get(handle).map(|draft| &draft.content.body),
+        }?;
+        let application = body.application_term()?;
+        (application.operation.identity == "filament.op.numeric.narrow")
+            .then(|| application.result_type.admitted().cloned())
+            .flatten()
     }
 
     /// Key an application node typed at `result_type`, denoted by the
