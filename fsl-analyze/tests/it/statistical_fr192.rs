@@ -4,15 +4,15 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::statistical::{
-    BehaviourSampler, Bound, Comparison, Drawn, RegenerationWalk, Sample, SampleHalt,
-    SampledRequest, StatisticalClaim, TestSubject, WalkStep, Weight, check_sampled,
+    check_sampled, BehaviourSampler, Bound, Comparison, Drawn, RegenerationWalk, Sample,
+    SampleHalt, SampledRequest, StatisticalClaim, TestSubject, WalkStep, Weight,
 };
 use fsl_eval::simulation::StateKey;
-use fsl_foundation::{BackendId, RequestIndex, selection::DefinitionRef};
+use fsl_foundation::{selection::DefinitionRef, BackendId, RequestIndex};
 use fsl_replay::statistical::{
-    BoundComparison, ClaimForm, Confidence, Decision, StatisticalLimit, StatisticalLimits,
-    StatisticalMethod, StatisticalOutcome, StatisticalStop, UndecidedCause, VerdictBound,
-    verify_statistical_result_bound,
+    verify_statistical_result_bound, BoundComparison, ClaimForm, Confidence, Decision,
+    StatisticalLimit, StatisticalLimits, StatisticalMethod, StatisticalOutcome, StatisticalStop,
+    UndecidedCause, VerdictBound,
 };
 use fsl_replay::{UndefinedEvaluation, UndefinedLocus, UndefinedSite};
 use ix_trace_rs::trace;
