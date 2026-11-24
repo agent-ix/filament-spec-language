@@ -50,7 +50,7 @@ use crate::exact_probabilistic::{
     ExtRational, FairReachabilityOutcome, FhError, FhResult, ProbBuild, ProbProduct,
     ProductRefusal, ProductRequest, UnboundedError, UnboundedObjective, build_retaining_monitor,
     decide_always, decide_bounded_event, decide_expected_reward,
-    decide_fair_reachability_threshold, decide_reachability, decide_until, manifest as en5,
+    decide_fair_reachability_interval, decide_reachability, decide_until, manifest as en5,
     settle_product_refusal,
 };
 
@@ -1487,7 +1487,7 @@ fn run(
         let threshold = match bound {
             Bound::AtLeast(threshold) | Bound::AtMost(threshold) => threshold,
         };
-        let fair = match decide_fair_reachability_threshold(
+        let fair = match decide_fair_reachability_interval(
             &product, None, &target, objective, threshold, &limits,
         ) {
             Ok(fair) => fair,

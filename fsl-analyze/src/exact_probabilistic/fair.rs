@@ -374,7 +374,7 @@ pub fn decide_fair_reachability(
 
 /// Decide a fair reachability threshold with outward-rounded Bellman sweeps
 /// under the caller's rational and precision budgets.
-pub fn decide_fair_reachability_threshold(
+pub fn decide_fair_reachability_interval(
     product: &ProbProduct,
     from: Option<&[bool]>,
     target: &[bool],
