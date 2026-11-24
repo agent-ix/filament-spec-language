@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-330-AC-18 (TC-2295): a record-sample counterexample names each
-//! position by its index in the request trace. FR-641-AC-8 (TC-2299): a
-//! clause run over a `model` trace writes the limits it ran under.
+//! position by its index in the request trace. FR-641-AC-8 (TC-2299),
+//! FR-330-AC-16: a model-subject trace writes its effective limits.
 
 use crate::command_harness::run_file;
 use crate::support::config_version_spine::{spine, Case};
@@ -158,7 +158,13 @@ fn a_record_sample_counterexample_names_positions_by_index() {
 /// FR-641-AC-8: a `model` trace's effective candidate bound, default
 /// included, is the result's `limits` member; a sample trace writes none.
 #[test]
-#[trace("TC-2299", "FR-641-AC-8", "FSpec-TC-1701", "FSpec-FR-352-AC-19")]
+#[trace(
+    "TC-2299",
+    "FR-641-AC-8",
+    "FR-330-AC-16",
+    "FSpec-TC-1701",
+    "FSpec-FR-352-AC-19"
+)]
 fn a_model_trace_run_writes_its_limits() {
     let directory = tempfile::tempdir().unwrap();
     let default = result(&run_file(&write_model_request(directory.path(), None)));

@@ -165,17 +165,27 @@ impl Fixture {
         }
     }
 
-    /// The function call site of `entry`. `call_site` emits with no clock
-    /// selections, so the site is taken over the library without its clause:
-    /// the function's key does not depend on the library's clauses.
+    /// The function call site of `entry`, derived from the same library bytes
+    /// and dependency clock recorded in the compiled package.
     fn site(&self) -> fsl_replay::CallSite<fsl_replay::FunctionSite> {
         let dependencies = DependencyInput::new([SuppliedLibrary {
             identity: LIBRARY.to_owned(),
             source: SourceIdentity::new(AUTHORITY, LIBRARY_ID),
             path: "plant.native".to_owned(),
-            bytes: LIBRARY_HEAD.as_bytes().to_vec(),
+            bytes: self.library.as_bytes().to_vec(),
         }])
         .unwrap();
+        let clocks = fsl_replay::RequestClocks::for_replay(
+            (AUTHORITY.to_owned(), PROGRAM_ID.to_owned()),
+            BTreeMap::new(),
+            BTreeMap::from([(
+                "lib-ms".to_owned(),
+                filament_contract_model::ClockConfiguration::TimestampedEvent {
+                    timestamp_unit: "ms".into(),
+                },
+            )]),
+        )
+        .expect("the package's dependency clock is valid");
         call_site(
             SourceIdentity::new(AUTHORITY, PROGRAM_ID),
             fsl_replay::CallSiteUnit::new(
@@ -185,7 +195,7 @@ impl Fixture {
             ),
             std::iter::empty::<&[u8]>(),
             &dependencies,
-            &fsl_replay::RequestClocks::default(),
+            &clocks,
             &entry(),
         )
         .expect("the program's call site resolves")
@@ -322,7 +332,6 @@ fn a_replay_request_file_replays_as_the_in_process_request_does() {
 /// dependency clock selection removed refuses `missing-clock-selection`.
 #[test]
 #[trace("TC-2443", "FR-862-AC-2")]
-#[ignore = "QSL-2879: replay settles inconclusive with verdict disagreement (proved violation, replayed success), where the assertion expects reproduced-without-witness"]
 fn a_replay_request_file_replays_a_library_clock_from_the_package() {
     let fixture = Fixture::compile(
         PROGRAM,

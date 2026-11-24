@@ -229,14 +229,12 @@ fn a_plan_synthesis_node_names_the_object_type_and_the_lengths() {
     );
 }
 
-/// Historical grammar-typed oracle retained outside current acceptance claims.
-/// The candidate reference resolves to the `value`/`parameter`
-/// node of the declaration's own name, typed by the domain for a value
-/// synthesis and by the `ConfigVersion` node for a plan synthesis.
+/// FR-1036-AC-1/2: the candidate reference names the declaration's own
+/// parameter key. It is a structural binder key, not a graph row; for the
+/// plan form the admitted reader classifies it as a plan synthesis.
 #[test]
-#[trace("FR-1036")]
-#[ignore = "QSL-2879: candidate reference does not resolve to the typed parameter node; needs FR-1036-AC-2 ruling"]
-fn the_candidate_reference_resolves_to_its_typed_parameter_node() {
+#[trace("TC-3016", "FR-1036-AC-1", "FR-1036-AC-2")]
+fn the_candidate_reference_names_its_typed_parameter_key() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
     let document = std::fs::read(directory.path().join("spine-model.semantic-ir.json")).unwrap();
@@ -247,24 +245,44 @@ fn the_candidate_reference_resolves_to_its_typed_parameter_node() {
          synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
          satisfies {{ Reach = Reach }};\n"
     );
-    for (unit, packages, typed_by) in [
-        (pick("Pick * Pick = 49", ""), Default::default(), "domain"),
-        (plan, packages, "grammar"),
+    for (unit, packages, name, plan_synthesis) in [
+        (
+            pick("Pick * Pick = 49", ""),
+            Default::default(),
+            "Pick",
+            false,
+        ),
+        (plan, packages, "Reach", true),
     ] {
         let wire = package(&unit, &packages);
         let node = synthesis_nodes(&wire)[0];
-        let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
-        let candidate = nodes
-            .iter()
-            .find(|candidate| candidate["node_id"] == binding(node, "candidate")["value"]["target"])
-            .unwrap_or_else(|| panic!("the candidate resolves: {node}"));
-        assert_eq!(candidate["node_tag"], "value", "{candidate}");
-        assert_eq!(candidate["semantic_form"], "parameter", "{candidate}");
-        assert_eq!(
-            candidate["semantic_type"],
-            binding(node, typed_by)["value"]["target"],
-            "the candidate is typed by the {typed_by} node: {candidate}"
+        let candidate = &binding(node, "candidate")["value"]["target"];
+        let path = candidate["path"].as_array().expect("a candidate key path");
+        assert!(
+            path.contains(&json!("parameter")) && path.contains(&json!(name)),
+            "the candidate names its declaration's parameter: {candidate}"
         );
+        if plan_synthesis {
+            let bytes = serde_json::to_vec(&wire).unwrap();
+            let admitted = fsl_package::admit_checked_package(
+                &bytes,
+                &packages,
+                fsl_package::V2ReadLimits::bounded(
+                    fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT,
+                ),
+            )
+            .expect("the plan package admits");
+            let row = admitted
+                .claim_names()
+                .unwrap_or_default()
+                .iter()
+                .find(|row| row.name.as_ref() == name)
+                .expect("the claim name resolves");
+            assert!(
+                fsl_package::is_plan_synthesis(&admitted, &row.declaration),
+                "the candidate is read with the generated plan-record type"
+            );
+        }
     }
 }
 
