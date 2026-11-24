@@ -2088,7 +2088,7 @@ fn p5_min_max_aggregates_equal_the_reference_fold_in_any_order() {
                 for order in [case.items.clone(), reversed, rotated] {
                     let args = [Arg::Coll {
                         kind: case.kind,
-                        minimum: 0,
+                        minimum: 1,
                         items: order.clone(),
                     }];
                     proptest::prop_assert_eq!(
