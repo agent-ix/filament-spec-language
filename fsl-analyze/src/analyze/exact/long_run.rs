@@ -133,7 +133,14 @@ pub(super) fn run(
         }
     };
     // Undefined reads are replayed from their positive timed path before the
-    // defined delay-weighted profile is admitted below.
+    // defined timed long-run profile is admitted below.
+    if product
+        .states
+        .iter()
+        .any(|state| state.certificate_state.is_some())
+    {
+        return not_yet();
+    }
     if every && weight.is_some() {
         // Per-action weights are not part of the defined MDP long-run profile
         // yet; source-decided undefined reads have already replayed above.
