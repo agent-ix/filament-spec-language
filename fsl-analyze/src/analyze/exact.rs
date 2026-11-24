@@ -17,40 +17,39 @@ mod subsystem;
 mod undefined;
 
 use filament_exact::{Cancel, ObjectReference, Rational};
-use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::model::ModelSystem;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::statistical::SubjectLimits;
+use fsl_replay::{CertificateLocus, CertificateRule};
 use fsl_replay::{
-    check_probability_certificate_document, claim_binding, probability_proof_document,
-    write_probability_certificate, write_probability_proof_document, ExactBinding,
-    ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
+    ExactBinding, ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
     ExactProbabilityCertificateCheck, ExactProbabilityGraphError, ExactProbabilityValue, Extremum,
     ModelCheckLimit, ProbabilityBoundSide, ProbabilityCertificateDocument,
     ProbabilityDocumentError, ProbabilityDocumentLimits, ProbabilityObjective,
     ProbabilityProductKey, TerminalRecord, TimedProbabilityForm, TimedProbabilityObjective,
-    TimedProbabilityRoute,
+    TimedProbabilityRoute, check_probability_certificate_document, claim_binding,
+    probability_proof_document, write_probability_certificate, write_probability_proof_document,
 };
+use fsl_replay::{InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule};
 use fsl_replay::{
-    replay_probabilistic_witness, replay_probabilistic_witness_from_package,
     ProbabilisticCounterexample, ProbabilityWitnessError, ProbabilityWitnessPath,
     ProbabilityWitnessReplay, ProbabilityWitnessStep, ReproducedProbabilityWitness,
+    replay_probabilistic_witness, replay_probabilistic_witness_from_package,
 };
-use fsl_replay::{CertificateLocus, CertificateRule};
-use fsl_replay::{InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule};
 use fsl_route::Mode;
 use fsl_semantics::check::{
     Bound, Capability, DeclarationFamily, Event, ProbForm, ProbScheduler, ReachTarget,
 };
 
-use super::items::{admission, BROKEN, NOT_YET};
+use super::items::{BROKEN, NOT_YET, admission};
 use super::timed_item::subject_refusal;
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::exact_probabilistic::{
-    build_retaining_monitor, decide_always, decide_bounded_event, decide_expected_reward,
-    decide_reachability, decide_until, manifest as en5, settle_product_refusal, ExtRational,
-    FhError, FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest, UnboundedError,
-    UnboundedObjective,
+    ExtRational, FhError, FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest,
+    UnboundedError, UnboundedObjective, build_retaining_monitor, decide_always,
+    decide_bounded_event, decide_expected_reward, decide_reachability, decide_until,
+    manifest as en5, settle_product_refusal,
 };
 
 /// The certificate EN-5 produced and the core's checker accepted for a
@@ -1270,7 +1269,7 @@ fn run(
         .then(|| candidate::CandidateBudget::new(document_limits, cancel));
     let built = if let Some(budget) = candidate_budget.as_mut() {
         use crate::exact_probabilistic::{
-            build_retaining_monitor_with_budget, BudgetedProductError,
+            BudgetedProductError, build_retaining_monitor_with_budget,
         };
         let identity = budget.identity;
         let mut admission = budget.admission();
@@ -1318,7 +1317,7 @@ fn run(
                 cancel,
                 subject,
                 tamper_witness,
-            )
+            );
         }
     };
     if let Some(error) = reward_subject_undefined {
@@ -1360,7 +1359,7 @@ fn run(
         ) {
             Ok(fair) => fair,
             Err(crate::exact_probabilistic::FairProductError::Product(error)) => {
-                return unbounded_failure(error, &limits, subject)
+                return unbounded_failure(error, &limits, subject);
             }
             Err(_) => return broken(),
         };
@@ -2437,7 +2436,7 @@ fn replay_refutation(
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
-        produce_witness, FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope,
+        FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope, produce_witness,
     };
     let mut producer_meter =
         filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
@@ -3503,7 +3502,7 @@ fn replay_timed_refutation(
     subject: SubjectLimits<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
-    use crate::exact_probabilistic::{produce_witness, WitnessScope};
+    use crate::exact_probabilistic::{WitnessScope, produce_witness};
     use fsl_eval::probabilistic::{DeadlinePhase, MonitorState};
     let forbidden = match bound {
         Bound::AtMost(_) => DeadlinePhase::Accept,
@@ -3657,7 +3656,7 @@ fn replay_timed_paths(
                                 claim,
                                 &state,
                                 &previous_key,
-                                identity,
+                                Some(identity),
                                 &step.elapsed,
                                 wanted.as_ref(),
                             ) {
@@ -3676,6 +3675,25 @@ fn replay_timed_paths(
                         }
                     }
                 }
+                ProductAction::FreeDelays(_) => {
+                    // One product edge resolves all tied operations of an
+                    // instant, so its model state may be several transitions
+                    // beyond the source state's discrete value.
+                    let wanted = timed_key_discrete(&post_key);
+                    let (_, post, resume) = match timed_step_for(
+                        system,
+                        claim,
+                        &state,
+                        &previous_key,
+                        None,
+                        &step.elapsed,
+                        wanted.as_ref(),
+                    ) {
+                        Ok(found) => found,
+                        Err(failure) => return timed_step_failure(failure, cancel, subject),
+                    };
+                    (None, None, None, post, resume)
+                }
                 _ => (None, None, None, state.clone(), state.clone()),
             };
             let next_key = post_key.clone();
@@ -3693,13 +3711,32 @@ fn replay_timed_paths(
         }
         paths.push(ProbabilityWitnessPath { steps });
     }
+    let mut scheduler = Vec::with_capacity(produced.entries.len());
+    for (state, entry) in produced.entries {
+        let Some(state) = product.states.get(state.index()) else {
+            return broken();
+        };
+        let key = match key_of(state) {
+            Ok(key) => key,
+            Err(error) => return document_failure(error, subject),
+        };
+        let action = match canonical_action(system, product, &entry, &key_of) {
+            Ok(action) => action,
+            Err(error) => return document_failure(error, subject),
+        };
+        scheduler.push((
+            key,
+            fsl_replay::ProbabilisticSchedulerChoice::Deterministic(action),
+        ));
+    }
+    scheduler.sort_by(|left, right| left.0.cmp(&right.0));
     let mut witness = ProbabilisticCounterexample {
         item: item.clone(),
         binding: binding.cloned(),
         instance: None,
         initial: first.clone(),
         initial_key,
-        scheduler: Vec::new(),
+        scheduler,
         paths,
         subsystem: None,
     };
@@ -3743,7 +3780,7 @@ fn timed_step_for(
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
     state: &fsl_eval::simulation::model::ModelSimState,
     previous: &ProbabilityProductKey,
-    identity: &fsl_eval::simulation::model::ScheduledIdentity,
+    identity: Option<&fsl_eval::simulation::model::ScheduledIdentity>,
     elapsed: &Rational,
     wanted: Option<&serde_json::Value>,
 ) -> Result<
@@ -3781,9 +3818,10 @@ fn timed_step_for(
                 let steps = timed.steps(&at).map_err(TimedStepFailure::Stopped)?;
                 for (step, post) in steps {
                     let first = if level == 0 {
-                        if step.operation() != identity.operation
-                            || step.receiver() != &identity.receiver
-                        {
+                        if identity.is_some_and(|identity| {
+                            step.operation() != identity.operation
+                                || step.receiver() != &identity.receiver
+                        }) {
                             continue;
                         }
                         Some((step.transition().clone(), post.discrete().clone()))
