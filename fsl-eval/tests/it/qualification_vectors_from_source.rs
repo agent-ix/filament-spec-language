@@ -309,6 +309,45 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 })
                 .collect()
         }
+        "D13" | "D18" => {
+            let tokens = quoted(vector.inputs);
+            let result_types = tokens
+                .into_iter()
+                .filter(|token| token.starts_with("Decimal["))
+                .collect::<Vec<_>>();
+            assert!(!result_types.is_empty(), "{} has result types", vector.id);
+
+            let (operation, operator) = if vector.inputs.contains("multiply") {
+                ("multiply", "*")
+            } else if vector.inputs.contains("divide") {
+                ("divide", "/")
+            } else {
+                panic!("{} has no recognized decimal operation", vector.id);
+            };
+            let operands_text = vector
+                .inputs
+                .split_once(operation)
+                .expect("recognized operation phrase")
+                .1
+                .split_once(" into ")
+                .expect("operation operands end before result type")
+                .0;
+            let operands = pairs(operands_text);
+            assert_eq!(operands.len(), 2, "{} has exactly two operands", vector.id);
+            let expression = format!(
+                "{} {operator} {}",
+                decimal(&operands[0]),
+                decimal(&operands[1])
+            );
+            let refusal = || Expected::Refused {
+                code: "ill_typed".to_owned(),
+                cause: Some("type-mismatch".to_owned()),
+            };
+            result_types
+                .into_iter()
+                .map(|result_type| function(result_type, &expression, refusal()))
+                .collect()
+        }
         "D10" => quoted(vector.inputs)
             .into_iter()
             .map(|ty| SourceCase {
@@ -358,6 +397,29 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 .into_iter()
                 .map(|ty| function(ty, expression, decimal_expected(first_result)))
                 .collect()
+        }
+        "D28" => {
+            let tokens = quoted(vector.inputs);
+            assert_eq!(tokens.len(), 5);
+            let refusal = || Expected::Refused {
+                code: "ill_typed".to_owned(),
+                cause: Some("type-mismatch".to_owned()),
+            };
+            vec![
+                function(tokens[0], tokens[1], refusal()),
+                function(tokens[2], tokens[3], refusal()),
+                function(
+                    tokens[0],
+                    tokens[4],
+                    decimal_expected(
+                        self::vector("D26")
+                            .expected
+                            .split_once(';')
+                            .expect("D26 result before accounting variants")
+                            .0,
+                    ),
+                ),
+            ]
         }
         _ => return None,
     };
@@ -3601,6 +3663,34 @@ fn source_runner_applies_node_budget_after_function_call() {
     assert_eq!(actual.function_call_charges, 1);
 }
 
+#[trace("FSpec-FR-140-AC-8", "FSpec-TC-185")]
+#[test]
+fn d13_source_form_refuses_at_type_check() {
+    compare(vector("D13")).unwrap_or_else(|failure| panic!("D13: {failure}"));
+}
+
+#[trace("FSpec-FR-140-AC-8", "FSpec-TC-185")]
+#[test]
+fn d18_source_form_refuses_at_type_check() {
+    compare(vector("D18")).unwrap_or_else(|failure| panic!("D18: {failure}"));
+}
+
+#[trace("FSpec-FR-140-AC-8", "FSpec-TC-185")]
+#[test]
+fn d28_checks_both_source_refusals_and_the_admitted_counterpart() {
+    let cases = source_cases(vector("D28")).expect("D28 has a source adapter");
+    assert_eq!(cases.len(), 3);
+    for refusal in &cases[..2] {
+        assert!(matches!(
+            &refusal.expected,
+            Expected::Refused { code, cause }
+                if code == "ill_typed" && cause.as_deref() == Some("type-mismatch")
+        ));
+    }
+    assert!(matches!(&cases[2].expected, Expected::Decimal { .. }));
+    compare(vector("D28")).unwrap_or_else(|failure| panic!("D28: {failure}"));
+}
+
 #[trace("FSpec-TC-185")]
 #[test]
 fn an_altered_standard_expectation_reports_the_vector_identity() {
@@ -3631,9 +3721,6 @@ fn every_published_vector_has_an_explicit_source_qualification_status() {
             sampled.push(identity);
         } else {
             let reason = match (vector.test_case, vector.id) {
-                (TestCase::Tc185, "D13" | "D18") => {
-                    "published evaluator-boundary operands explicitly have no source form"
-                }
                 (TestCase::Tc186, "T06") => {
                     "invalid UTF-8 reader-boundary input, not a source value"
                 }
