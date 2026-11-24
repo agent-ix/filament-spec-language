@@ -186,13 +186,13 @@ struct FormResolution<'n, 'a, W: FormWork> {
     intervals: bool,
     malformed: &'a dyn Fn() -> BareClauseRefusal,
     atom_span: &'a mut (
-        dyn for<'p, 'entry> FnMut(
-                usize,
-                &'entry crate::checked_views::FormulaNodeUse<'p>,
-                &mut W,
-            ) -> Result<fsl_foundation::Span, W::Error>
-            + 'a,
-    ),
+                dyn for<'p, 'entry> FnMut(
+        usize,
+        &'entry crate::checked_views::FormulaNodeUse<'p>,
+        &mut W,
+    ) -> Result<fsl_foundation::Span, W::Error>
+                    + 'a
+            ),
     work: &'a mut W,
 }
 
