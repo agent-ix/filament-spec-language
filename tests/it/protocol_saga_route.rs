@@ -150,21 +150,21 @@ const SAGAS: &[(&str, Row)] = &[
     (
         "staged-saga-compensation",
         Row::Analyzed(&[
-            "unsupported:unsupported-requested-capability",
-            "unsupported:unsupported-requested-capability",
-            "unsupported:unsupported-requested-capability",
-            "unsupported:unsupported-requested-capability",
-            "unsupported:unsupported-requested-capability",
+            "unsupported:compensation",
+            "unsupported:compensation",
+            "unsupported:compensation",
+            "unsupported:compensation",
+            "unsupported:compensation",
             "unsupported:unbounded-extent",
         ]),
     ),
     (
         "timeouts-await",
         Row::Analyzed(&[
-            "unsupported:unsupported-requested-capability",
-            "unsupported:unsupported-requested-capability",
-            "unsupported:unsupported-requested-capability",
-            "unsupported:unsupported-requested-capability",
+            "unsupported:timed-await",
+            "unsupported:timed-await",
+            "unsupported:timed-await",
+            "unsupported:timed-await",
             "unsupported:unbounded-extent",
         ]),
     ),
@@ -299,7 +299,6 @@ fn analysis(directory: &Path, stem: &str) -> Result<Vec<String>, String> {
     let (protocol, roles) = protocol_and_roles(stem);
     let mut request = compile_request(stem);
     request["format"] = json!("native-analyze/1");
-    request["request"].as_object_mut().unwrap().remove("clocks");
     request["request"]["documents"] = json!([{"file": corpus().join("data/saga-start.json")}]);
     let binding = json!({"type":"model-binding","selection":"example/parts"});
     request["request"]["subject"] = json!({"protocol":{"protocol":protocol,
