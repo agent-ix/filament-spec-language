@@ -58,6 +58,8 @@ struct Table {
     touched: Vec<bool>,
     /// The rows the current owner's walk touched first, in visit order.
     first_touched: Vec<usize>,
+    /// The node position of every visit the walks make, in visit order.
+    visited: Vec<usize>,
 }
 
 impl Table {
@@ -214,6 +216,7 @@ impl<'a> Walk<'a> {
                         continue;
                     }
                     let visit = visits.entry(position).or_default();
+                    table.visited.push(position);
                     let occurrence = self.expression_ordinal(position, *visit);
                     *visit += 1;
                     let node = &self.nodes[position];
@@ -318,6 +321,138 @@ impl<'a> Walk<'a> {
     }
 }
 
+/// The function owners with a body in FR-322's package-wide walk order:
+/// declaration source position, then node id.
+fn owner_order(nodes: &[CheckedSemanticNodeV2], source_map: &[CheckedSourceMapEntry]) -> Vec<usize> {
+    let mut declared = BTreeMap::<&CheckedNodeId, (&CheckedSourceRef, u64, u64)>::new();
+    for entry in source_map {
+        if entry.role != CheckedOccurrenceRole::Declaration {
+            continue;
+        }
+        let Some(region) = entry.regions.first() else {
+            continue;
+        };
+        let start = (&region.source, region.start, region.end);
+        let known = declared.entry(&entry.node_id).or_insert(start);
+        if start < *known {
+            *known = start;
+        }
+    }
+    let mut walked: Vec<usize> = nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| {
+            node.node_tag.as_ref() == "function" && function_body_root(&node.body).is_some()
+        })
+        .map(|(position, _)| position)
+        .collect();
+    walked.sort_by(|&left, &right| {
+        declared
+            .get(&nodes[left].node_id)
+            .cmp(&declared.get(&nodes[right].node_id))
+            .then_with(|| nodes[left].node_id.cmp(&nodes[right].node_id))
+    });
+    walked
+}
+
+/// One visit of the package-wide owner walk (FSpec FR-322 "Expression
+/// occurrence ordinals"): the function owner whose walk made it, whether it
+/// is a visit of the owner's termination measure, and the visited node.
+pub(super) struct Visit {
+    pub(super) owner: usize,
+    pub(super) measure: bool,
+    pub(super) node: usize,
+}
+
+/// Every visit of the package-wide owner walk over `nodes`, in walk order: the
+/// function owners in FR-322's order, each owner's body and then its
+/// termination measure, with the guard-literal pruning of FSpec FR-825.
+pub(super) fn visits(
+    nodes: &[CheckedSemanticNodeV2],
+    source_map: &[CheckedSourceMapEntry],
+) -> Vec<Visit> {
+    let index: BTreeMap<&CheckedNodeId, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(position, node)| (&node.node_id, position))
+        .collect();
+    let walk = Walk {
+        nodes,
+        index: &index,
+    };
+    let mut table = Table::default();
+    let mut counters = HashMap::<usize, usize>::new();
+    let mut found = Vec::new();
+    for owner in owner_order(nodes, source_map) {
+        let Some(root) = function_body_root(&nodes[owner].body) else {
+            continue;
+        };
+        walk.owner(root, true, &mut counters, &mut table);
+        found.extend(table.visited.drain(..).map(|node| Visit {
+            owner,
+            measure: false,
+            node,
+        }));
+        if let Some(measure) = function_measure_root(&nodes[owner].body) {
+            walk.owner(measure, false, &mut counters, &mut table);
+            found.extend(table.visited.drain(..).map(|node| Visit {
+                owner,
+                measure: true,
+                node,
+            }));
+        }
+    }
+    found
+}
+
+/// The frames some record's chain holds, in the reader's canonical order, and
+/// each candidate row's id in that table.
+fn canonical(
+    nodes: &[CheckedSemanticNodeV2],
+    table: &Table,
+    mut touched_by: Vec<(usize, Vec<usize>)>,
+    terminals: &[usize],
+) -> Result<(Vec<PathConditionFrame>, Vec<usize>), EmitRefusal> {
+    // Keep the frames some record's chain holds, in canonical order.
+    let mut used = vec![false; table.rows.len()];
+    for &terminal in terminals {
+        let mut at = Some(terminal);
+        while let Some(frame) = at {
+            if std::mem::replace(&mut used[frame], true) {
+                break;
+            }
+            at = table.rows[frame].parent;
+        }
+    }
+    // The table is in the reader's canonical order: owner node id ascending,
+    // then the first visit within that owner of each frame no earlier owner
+    // touched (FSpec FR-825).
+    touched_by.sort_by(|left, right| nodes[left.0].node_id.cmp(&nodes[right.0].node_id));
+    let mut renumbered = vec![0_usize; table.rows.len()];
+    let mut placed = vec![false; table.rows.len()];
+    let mut rows = Vec::new();
+    for old in touched_by.into_iter().flat_map(|(_, touched)| touched) {
+        let frame = &table.rows[old];
+        if !used[old] {
+            continue;
+        }
+        if frame.parent.is_some_and(|parent| !placed[parent]) {
+            return Err(EmitRefusal::SourceMapInvariant);
+        }
+        placed[old] = true;
+        renumbered[old] = rows.len();
+        rows.push(PathConditionFrame {
+            parent: frame
+                .parent
+                .map(|parent| PathConditionFrameId(renumbered[parent])),
+            guard: nodes[frame.guard].node_id.clone(),
+            occurrence: frame.occurrence,
+            holds: frame.holds,
+        });
+    }
+    Ok((rows, renumbered))
+}
+
 /// The shared table of `graph`'s written value-validity records and each
 /// guarded record's terminal frame, derived from the emitted owner bodies in
 /// `nodes` and compared with the checker's own guard chain.
@@ -327,6 +462,7 @@ pub(super) fn derive(
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
     omitted: &Omitted,
+    renumbering: &super::ordinals::Renumbering,
 ) -> Result<Frames, EmitRefusal> {
     // Written owners holding a guarded record, in structural-key order.
     let mut owners = BTreeMap::<NodeKey, Vec<(&OccurrenceKey, &RequirementRecord)>>::new();
@@ -368,34 +504,7 @@ pub(super) fn derive(
     // (declaration source position, then node id), with each node's
     // expression-occurrence counter shared by all owners (FSpec FR-825): an
     // owner without a guarded record still takes the occurrences it reads.
-    let mut declared = BTreeMap::<&CheckedNodeId, (&CheckedSourceRef, u64, u64)>::new();
-    for entry in source_map {
-        if entry.role != CheckedOccurrenceRole::Declaration {
-            continue;
-        }
-        let Some(region) = entry.regions.first() else {
-            continue;
-        };
-        let start = (&region.source, region.start, region.end);
-        let known = declared.entry(&entry.node_id).or_insert(start);
-        if start < *known {
-            *known = start;
-        }
-    }
-    let mut walked: Vec<usize> = nodes
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| {
-            node.node_tag.as_ref() == "function" && function_body_root(&node.body).is_some()
-        })
-        .map(|(position, _)| position)
-        .collect();
-    walked.sort_by(|&left, &right| {
-        declared
-            .get(&nodes[left].node_id)
-            .cmp(&declared.get(&nodes[right].node_id))
-            .then_with(|| nodes[left].node_id.cmp(&nodes[right].node_id))
-    });
+    let walked = owner_order(nodes, source_map);
     let records_of: BTreeMap<CheckedNodeId, &Vec<(&OccurrenceKey, &RequirementRecord)>> = owners
         .iter()
         .map(|(owner, records)| (node_id(ids, owner), records))
@@ -409,7 +518,7 @@ pub(super) fn derive(
     let mut visits = HashMap::<usize, usize>::new();
     let mut terminals = Vec::<(&OccurrenceKey, &RequirementRecord, usize)>::new();
     // Each owner's first-touched frame rows, in its own visit order.
-    let mut touched_by = Vec::<(&CheckedNodeId, Vec<usize>)>::new();
+    let mut touched_by = Vec::<(usize, Vec<usize>)>::new();
     for position in walked {
         let owner_id = &nodes[position].node_id;
         let root =
@@ -419,7 +528,7 @@ pub(super) fn derive(
         if let Some(measure) = function_measure_root(&nodes[position].body) {
             walk.owner(measure, false, &mut visits, &mut table);
         }
-        touched_by.push((owner_id, std::mem::take(&mut table.first_touched)));
+        touched_by.push((position, std::mem::take(&mut table.first_touched)));
         let Some(records) = records_of.get(owner_id) else {
             continue;
         };
@@ -428,7 +537,10 @@ pub(super) fn derive(
                 .get(&node_id(ids, claim.node()))
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
             let terminal = derived
-                .get(&(application, claim.origin().ordinal()))
+                .get(&(
+                    application,
+                    renumbering.ordinal(claim.node(), claim.origin().ordinal()),
+                ))
                 .copied()
                 .flatten()
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -456,43 +568,8 @@ pub(super) fn derive(
             return Err(EmitRefusal::SourceMapInvariant);
         }
     }
-    // Keep the frames some record's chain holds, in canonical order.
-    let mut used = vec![false; table.rows.len()];
-    for &(_, _, terminal) in &terminals {
-        let mut at = Some(terminal);
-        while let Some(frame) = at {
-            if std::mem::replace(&mut used[frame], true) {
-                break;
-            }
-            at = table.rows[frame].parent;
-        }
-    }
-    // The table is in the reader's canonical order: owner node id ascending,
-    // then the first visit within that owner of each frame no earlier owner
-    // touched (FSpec FR-825).
-    touched_by.sort_by(|left, right| left.0.cmp(right.0));
-    let mut renumbered = vec![0_usize; table.rows.len()];
-    let mut placed = vec![false; table.rows.len()];
-    let mut rows = Vec::new();
-    for old in touched_by.into_iter().flat_map(|(_, touched)| touched) {
-        let frame = &table.rows[old];
-        if !used[old] {
-            continue;
-        }
-        if frame.parent.is_some_and(|parent| !placed[parent]) {
-            return Err(EmitRefusal::SourceMapInvariant);
-        }
-        placed[old] = true;
-        renumbered[old] = rows.len();
-        rows.push(PathConditionFrame {
-            parent: frame
-                .parent
-                .map(|parent| PathConditionFrameId(renumbered[parent])),
-            guard: nodes[frame.guard].node_id.clone(),
-            occurrence: frame.occurrence,
-            holds: frame.holds,
-        });
-    }
+    let terminal_ids: Vec<usize> = terminals.iter().map(|&(_, _, terminal)| terminal).collect();
+    let (rows, renumbered) = canonical(nodes, &table, touched_by, &terminal_ids)?;
     Ok(Frames {
         rows,
         terminals: terminals
@@ -500,4 +577,73 @@ pub(super) fn derive(
             .map(|(claim, _, terminal)| (claim.clone(), PathConditionFrameId(renumbered[terminal])))
             .collect(),
     })
+}
+
+/// A guarded value-validity record a writer carries over: the function whose
+/// body holds its application, the application, and the occurrence it names.
+pub(super) struct CarriedRecord<'a> {
+    pub(super) owner: &'a CheckedNodeId,
+    pub(super) application: &'a CheckedNodeId,
+    pub(super) occurrence: u64,
+}
+
+/// The canonical frame table of the final `nodes`, re-derived by the reader's
+/// walk (FSpec FR-825), and each record's terminal frame in it. A writer that
+/// rekeys functions changes the owner order and with it the table's order, so
+/// the carried table is derived again, never permuted.
+pub(super) fn rederive(
+    nodes: &[CheckedSemanticNodeV2],
+    source_map: &[CheckedSourceMapEntry],
+    records: &[CarriedRecord<'_>],
+) -> Result<(Vec<PathConditionFrame>, Vec<PathConditionFrameId>), EmitRefusal> {
+    let index: BTreeMap<&CheckedNodeId, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(position, node)| (&node.node_id, position))
+        .collect();
+    let walk = Walk {
+        nodes,
+        index: &index,
+    };
+    let mut wanted = HashMap::<usize, Vec<(usize, usize, u64)>>::new();
+    for (at, record) in records.iter().enumerate() {
+        let owner = *index
+            .get(record.owner)
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let application = *index
+            .get(record.application)
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        wanted
+            .entry(owner)
+            .or_default()
+            .push((at, application, record.occurrence));
+    }
+    let mut table = Table::default();
+    let mut visits = HashMap::<usize, usize>::new();
+    let mut terminals = vec![0_usize; records.len()];
+    let mut touched_by = Vec::<(usize, Vec<usize>)>::new();
+    for position in owner_order(nodes, source_map) {
+        let root =
+            function_body_root(&nodes[position].body).ok_or(EmitRefusal::SourceMapInvariant)?;
+        let derived = walk.owner(root, true, &mut visits, &mut table);
+        if let Some(measure) = function_measure_root(&nodes[position].body) {
+            walk.owner(measure, false, &mut visits, &mut table);
+        }
+        touched_by.push((position, std::mem::take(&mut table.first_touched)));
+        for &(at, application, occurrence) in wanted.get(&position).into_iter().flatten() {
+            terminals[at] = derived
+                .get(&(application, occurrence))
+                .copied()
+                .flatten()
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+        }
+    }
+    let (rows, renumbered) = canonical(nodes, &table, touched_by, &terminals)?;
+    Ok((
+        rows,
+        terminals
+            .into_iter()
+            .map(|terminal| PathConditionFrameId(renumbered[terminal]))
+            .collect(),
+    ))
 }

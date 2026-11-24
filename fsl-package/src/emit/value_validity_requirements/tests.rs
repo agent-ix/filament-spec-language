@@ -483,3 +483,40 @@ fn reordering_frames_remaps_every_record_citation() {
     assert!(super::reorder_frames(&[1, 0], &mut broken, &mut rows, &mut nodes, &mut source_map)
         .is_err());
 }
+
+/// FSpec FR-322 "Expression occurrence ordinals", FR-825-AC-11: two function
+/// owners holding the structurally equal `x + 1` share one application node.
+/// The owner walk gives the second owner's visit the second ordinal, so the
+/// two records name distinct occurrences of that node and the strict reader,
+/// which derives each record's path from the same walk, admits both.
+#[trace("FR-825-AC-11", "FR-322", "FR-062-AC-17")]
+#[test]
+fn records_of_a_shared_application_follow_the_owner_walk() {
+    let (_, _, admitted, records) = emitted_records(
+        "function alpha using v(x: Int[0, 9]): Integer pure { x + 1 }\n\
+         function beta using v(x: Int[0, 9]): Integer pure { x + 1 }\n",
+    );
+    assert_eq!(records.len(), 2, "one record per owner");
+    assert_eq!(
+        records[0].application, records[1].application,
+        "the equal bodies share one application node"
+    );
+    let mut occurrences: Vec<u64> = records.iter().map(|record| record.occurrence).collect();
+    occurrences.sort_unstable();
+    assert_eq!(occurrences, [0, 1], "each owner's visit takes the next ordinal");
+    let application = admitted
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| node.node_id == records[0].application)
+        .expect("the application node is written");
+    let expressions: Vec<u64> = application
+        .occurrences
+        .iter()
+        .filter(|occurrence| {
+            occurrence.role == filament_contract_model::CheckedOccurrenceRole::Expression
+        })
+        .map(|occurrence| occurrence.ordinal)
+        .collect();
+    assert_eq!(expressions, [0, 1]);
+}

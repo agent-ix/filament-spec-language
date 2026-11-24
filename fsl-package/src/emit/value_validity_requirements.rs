@@ -22,6 +22,7 @@ use super::{
 };
 
 mod frames;
+pub(super) mod ordinals;
 
 type Records = HashMap<OccurrenceKey, ValueValidityRecord>;
 type OperationRecords = HashMap<OccurrenceKey, OperationContractRecord>;
@@ -41,6 +42,9 @@ pub(super) struct Appended {
     pub(super) frames: Vec<PathConditionFrame>,
     /// Each with cause `NamesOmittedNode` naming its omitted owner.
     pub(super) omitted: Vec<OmittedNode>,
+    /// The expression-occurrence renumbering the records and rows follow
+    /// (FSpec FR-322).
+    pub(super) renumbering: ordinals::Renumbering,
 }
 
 /// What a requirement record names (FSpec FR-825), grouped by what its
@@ -527,10 +531,16 @@ pub(super) fn append(
             operation_records,
             frames: Vec::new(),
             omitted: omissions,
+            renumbering: ordinals::Renumbering::default(),
         });
     }
+    let renumbering = if has_value_validity {
+        ordinals::renumber(ids, graph, nodes, source_map, omitted)?
+    } else {
+        ordinals::Renumbering::default()
+    };
     let frames = if has_value_validity {
-        frames::derive(ids, graph, nodes, source_map, omitted)?
+        frames::derive(ids, graph, nodes, source_map, omitted, &renumbering)?
     } else {
         frames::Frames::default()
     };
@@ -605,7 +615,13 @@ pub(super) fn append(
         let result_bound = node_id(ids, source.result_bound().node());
         let conversion = source
             .conversion_context()
-            .map(|key| (node_id(ids, key.node()), key.origin().ordinal()));
+            .map(|key| {
+                (
+                    node_id(ids, key.node()),
+                    renumbering.ordinal(key.node(), key.origin().ordinal()),
+                )
+            });
+        let occurrence_ordinal = renumbering.ordinal(claim.node(), claim.origin().ordinal());
         let terminal = if owner_omitted {
             None
         } else {
@@ -627,14 +643,18 @@ pub(super) fn append(
         let mut operands = vec![
             PathSegment::Node(owner_key.clone()),
             PathSegment::Node(claim.node().clone()),
-            PathSegment::Text(claim.origin().ordinal().to_string()),
+            PathSegment::Text(occurrence_ordinal.to_string()),
             PathSegment::Text("bound".to_owned()),
             PathSegment::Node(source.result_bound().node()),
             PathSegment::Text("conversion".to_owned()),
         ];
         if let Some(context) = source.conversion_context() {
             operands.push(PathSegment::Node(context.node().clone()));
-            operands.push(PathSegment::Text(context.origin().ordinal().to_string()));
+            operands.push(PathSegment::Text(
+                renumbering
+                    .ordinal(context.node(), context.origin().ordinal())
+                    .to_string(),
+            ));
         }
         if let Some(terminal) = terminal {
             operands.push(PathSegment::Text("path_condition".to_owned()));
@@ -695,7 +715,7 @@ pub(super) fn append(
         let body = claim_aggregate(vec![
             claim_binding("owner", reference(&owner)),
             claim_binding("application", reference(&application)),
-            claim_binding("occurrence", count(&integer, claim.origin().ordinal())?),
+            claim_binding("occurrence", count(&integer, occurrence_ordinal)?),
             claim_binding("result_bound", reference(&result_bound)),
             claim_binding("conversion", conversion_term),
             claim_binding("path_condition", claim_aggregate(frame_terms)),
@@ -738,7 +758,7 @@ pub(super) fn append(
                     node: id,
                     owner: owner.clone(),
                     application,
-                    occurrence: claim.origin().ordinal(),
+                    occurrence: occurrence_ordinal,
                     result_bound,
                     conversion,
                     path_condition_frame: terminal,
@@ -756,6 +776,7 @@ pub(super) fn append(
         operation_records,
         frames: frames.rows,
         omitted: omissions,
+        renumbering,
     })
 }
 
@@ -767,6 +788,7 @@ pub(super) fn rows(
     operation_records: &OperationRecords,
     existing: &[RequirementItemRow],
     omitted: &Omitted,
+    renumbering: &ordinals::Renumbering,
 ) -> Result<Vec<RequirementItemRow>, EmitRefusal> {
     // Sidecar references remain document-held. Only the record body goes
     // through the containing node's operand-slot writer.
@@ -835,11 +857,14 @@ pub(super) fn rows(
                     kind: source.requirements().kind().to_wire(),
                     shape: "claim-node",
                 })?;
-        let occurrence =
+        let mut occurrence =
             checked_occurrence(claim.origin()).ok_or(EmitRefusal::RequirementNotEmitted {
                 kind: source.requirements().kind().to_wire(),
                 shape: "claim-occurrence",
             })?;
+        if occurrence.role == CheckedOccurrenceRole::Expression {
+            occurrence.ordinal = renumbering.ordinal(claim.node(), occurrence.ordinal);
+        }
         if let Some(row) = existing
             .get(&(claim_id.clone(), occurrence.clone()))
             .filter(|row| row.kind == kind)
@@ -1081,10 +1106,6 @@ pub(super) fn carry_rows(
             .map_err(|_| {
                 EmitRefusal::RequirementRowCarry("the writer's graph ids do not resolve")
             })?;
-    // Frames belong to the owner of the first record that cites them, in the
-    // base's own row order, and frames are in owner-key order (FSpec FR-825).
-    let frame_owners = frame_owners(&rows, &frames)?;
-    let permutation = frame_permutation(&graph, &frame_owners, &frames)?;
     let keyed = rows
         .into_iter()
         .map(|row| {
@@ -1095,73 +1116,70 @@ pub(super) fn carry_rows(
         })
         .collect::<Result<Vec<_>, EmitRefusal>>()?;
     let mut rows = package_order(keyed);
-    if let Some(new_ids) = permutation {
-        reorder_frames(&new_ids, &mut frames, &mut rows, nodes, source_map)?;
-    }
+    frames = rederived_frames(frames, &mut rows, nodes, source_map)?;
     renumber_records(&rows, nodes, source_map)?;
     Ok((rows, frames))
 }
 
-/// Each frame's owner: the owner of the first record, in row order, whose
-/// chain holds it.
-fn frame_owners(
-    rows: &[RequirementItemRow],
-    frames: &[PathConditionFrame],
-) -> Result<Vec<Option<CheckedNodeId>>, EmitRefusal> {
-    let mut owners = vec![None; frames.len()];
-    for record in rows.iter().filter_map(|row| match &row.record {
-        Some(WireRecord::ValueValidity(record)) => Some(record),
-        _ => None,
-    }) {
-        let mut at = record.path_condition_frame;
-        while let Some(frame) = at {
-            let slot = owners
-                .get_mut(frame.0)
-                .ok_or(EmitRefusal::RequirementRowCarry(
-                    "a carried record cites a frame the table does not hold",
-                ))?;
-            if slot.is_some() {
-                break;
+/// The frame table re-derived from the final `nodes` by the reader's walk
+/// (FSpec FR-825). A rekey changes the function owners' order, and the
+/// canonical table order with it, so each record's terminal frame is looked up
+/// again and the carried frames move to their ids in the new table.
+fn rederived_frames(
+    frames: Vec<PathConditionFrame>,
+    rows: &mut [RequirementItemRow],
+    nodes: &mut [CheckedSemanticNodeV2],
+    source_map: &mut [CheckedSourceMapEntry],
+) -> Result<Vec<PathConditionFrame>, EmitRefusal> {
+    let guarded: Vec<&ValueValidityRecord> = rows
+        .iter()
+        .filter_map(|row| match &row.record {
+            Some(WireRecord::ValueValidity(record)) if record.path_condition_frame.is_some() => {
+                Some(record)
             }
-            *slot = Some(record.owner.clone());
-            at = frames[frame.0].parent;
+            _ => None,
+        })
+        .collect();
+    if guarded.is_empty() {
+        return Ok(frames);
+    }
+    let carried: Vec<frames::CarriedRecord<'_>> = guarded
+        .iter()
+        .map(|record| frames::CarriedRecord {
+            owner: &record.owner,
+            application: &record.application,
+            occurrence: record.occurrence,
+        })
+        .collect();
+    let (table, terminals) = frames::rederive(nodes, source_map, &carried)?;
+    let refuse = |reason| EmitRefusal::RequirementRowCarry(reason);
+    let mut new_ids = vec![usize::MAX; frames.len()];
+    for (record, terminal) in guarded.iter().zip(&terminals) {
+        let mut old = record.path_condition_frame;
+        let mut new = Some(*terminal);
+        while let (Some(at), Some(to)) = (old, new) {
+            let slot = new_ids.get_mut(at.0).ok_or(refuse(
+                "a carried record cites a frame the table does not hold",
+            ))?;
+            if *slot != usize::MAX && *slot != to.0 {
+                return Err(refuse("a carried frame has two places in the derived table"));
+            }
+            *slot = to.0;
+            old = frames[at.0].parent;
+            new = table.get(to.0).and_then(|frame| frame.parent);
+        }
+        if old.is_some() != new.is_some() {
+            return Err(refuse("a carried frame chain differs from the derived one"));
         }
     }
-    Ok(owners)
-}
-
-/// The new id of each frame when the owners' final key order differs from the
-/// table's order, `None` when the table is already canonical.
-fn frame_permutation(
-    graph: &fsl_semantics::check::wire_id::WireGraph,
-    owners: &[Option<CheckedNodeId>],
-    frames: &[PathConditionFrame],
-) -> Result<Option<Vec<usize>>, EmitRefusal> {
-    let keys = owners
-        .iter()
-        .map(|owner| {
-            owner
-                .as_ref()
-                .map(|owner| {
-                    graph.key(owner).map_err(|_| {
-                        EmitRefusal::RequirementRowCarry(
-                            "a frame's owner is not a node of the graph",
-                        )
-                    })
-                })
-                .transpose()
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut order: Vec<usize> = (0..frames.len()).collect();
-    order.sort_by(|&left, &right| keys[left].cmp(&keys[right]).then(left.cmp(&right)));
-    if order.iter().enumerate().all(|(new, &old)| new == old) {
-        return Ok(None);
+    if table.len() != frames.len() || new_ids.contains(&usize::MAX) {
+        return Err(refuse("the carried frame table is not the derived one"));
     }
-    let mut new_ids = vec![0; frames.len()];
-    for (new, &old) in order.iter().enumerate() {
-        new_ids[old] = new;
+    let mut frames = frames;
+    if new_ids.iter().enumerate().any(|(old, &new)| old != new) {
+        reorder_frames(&new_ids, &mut frames, rows, nodes, source_map)?;
     }
-    Ok(Some(new_ids))
+    Ok(table)
 }
 
 /// Put the frames at their new ids and re-point every record's terminal frame,

@@ -8084,7 +8084,7 @@ fn emit_package_nodes(
         &nodes,
         &equality_producer_identity_rows,
     )?;
-    let checked_term_data = checked_term_data(
+    let mut checked_term_data = checked_term_data(
         graph,
         &emitted_node_ids,
         &producer_node_ids,
@@ -8095,6 +8095,13 @@ fn emit_package_nodes(
         &source_keys,
         &mut meter,
     )?;
+    if let Some(data) = &mut checked_term_data {
+        if value_validity.renumbering.renumbers() {
+            let mut row_ids = emitted_node_ids.clone();
+            row_ids.extend(producer_node_ids.iter().map(|(key, id)| (key.clone(), id.clone())));
+            value_validity.renumbering.relabel_term_data(&row_ids, data);
+        }
+    }
     let selected_operation_member_rows = selected_operation_member_rows
         .into_iter()
         .map(|(key, mut row)| {
@@ -8177,6 +8184,7 @@ fn emit_package_nodes(
         &value_validity.operation_records,
         &relation_rows,
         &omitted_causes,
+        &value_validity.renumbering,
     )?;
     meter.charge(&requirement_rows)?;
     let path_condition_frames =

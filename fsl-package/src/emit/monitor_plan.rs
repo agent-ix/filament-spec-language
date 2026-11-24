@@ -1745,6 +1745,22 @@ mod tests {
         }
     }
 
+    /// The guards from the outermost to frame `at`, as (guard, holds); a guard's occurrence is the walk's next one, so it follows the final owner order too.
+    fn frame_chain(
+        frames: &[filament_contract_model::PathConditionFrame],
+        at: Option<filament_contract_model::PathConditionFrameId>,
+    ) -> Vec<(CheckedNodeId, bool)> {
+        let mut chain = Vec::new();
+        let mut at = at;
+        while let Some(id) = at {
+            let frame = &frames[id.0];
+            chain.push((frame.guard.clone(), frame.holds));
+            at = frame.parent;
+        }
+        chain.reverse();
+        chain
+    }
+
     impl Rekeyed {
         /// Asserts that the final rows are the base rows with each rekeyed
         /// entry renamed in every id a row holds, that `renamed` records are
@@ -1807,6 +1823,20 @@ mod tests {
                 {
                     *id = rename(id);
                 }
+                // FSpec FR-825: the table is in the reader's canonical order, which
+                // follows the owners' final order, so a rekey may move a record to
+                // another frame id (its identity path cites the id). The record
+                // stands on the same guard chain at the new id.
+                assert_eq!(
+                    frame_chain(self.base.path_condition_frames(), before.path_condition_frame)
+                        .into_iter()
+                        .map(|(guard, holds)| (rename(&guard), holds))
+                        .collect::<Vec<_>>(),
+                    frame_chain(self.final_package.path_condition_frames(), after.path_condition_frame),
+                    "a rekey keeps each record's guard chain"
+                );
+                expected.path_condition_frame = after.path_condition_frame;
+                expected.node = after.node.clone();
                 assert_eq!(*after, expected);
                 let regions = self
                     .final_package
@@ -1820,17 +1850,25 @@ mod tests {
                 assert_eq!(regions, 1, "each record keeps its generated source-map entry");
             }
             assert_eq!(renamed_owners, renamed, "records of rekeyed entries name the new owner");
-            // The shared frames keep their parents, outcomes and occurrences,
-            // and each guard names its renamed node.
+            // The shared frames keep their guard chains and outcomes, each guard names its renamed node, and the table is
+            // re-derived in the final canonical order (FSpec FR-825).
             let frames_before = self.base.path_condition_frames();
             let frames_after = self.final_package.path_condition_frames();
             assert_eq!(frames_before.len(), frames_after.len());
-            for (before, after) in frames_before.iter().zip(frames_after) {
-                assert_eq!(after.parent, before.parent);
-                assert_eq!(after.guard, rename(&before.guard));
-                assert_eq!(after.occurrence, before.occurrence);
-                assert_eq!(after.holds, before.holds);
-            }
+            let mut chains_before = (0..frames_before.len())
+                .map(|at| {
+                    frame_chain(frames_before, Some(filament_contract_model::PathConditionFrameId(at)))
+                        .into_iter()
+                        .map(|(guard, holds)| (rename(&guard), holds))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            let mut chains_after = (0..frames_after.len())
+                .map(|at| frame_chain(frames_after, Some(filament_contract_model::PathConditionFrameId(at))))
+                .collect::<Vec<_>>();
+            chains_before.sort();
+            chains_after.sort();
+            assert_eq!(chains_before, chains_after);
             after
                 .iter()
                 .filter_map(crate::emit::value_validity_requirements::value_record)
