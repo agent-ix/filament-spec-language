@@ -40,3 +40,13 @@ Round 1 at `e6a26e6915161c151a51ab05d126d3bd3da1c242`. The focused run gave 57 p
 | FND-001 | fixed | replay.rs now reports `Some(at.index())` for a lasso whose first false activation is after the origin. The new test `an_on_each_lasso_replays_at_the_activation_where_the_clause_is_false` asserts `Some(1)`. Under the old code it would get `Some(0)`, because `ProtocolTransition` keeps the default `formula_lasso_trace_position` and only `TaskProductTransition` overrides it, so the test would fail. |
 | FND-002 | fixed | The doc comment now names the byte-least fair product state reached by send, duplicate and receive. |
 | FND-003 | fixed | The test now asserts `at.automaton_state` equals the minimum `automaton_state` among the certificate's states at the locus model state. This expected value comes from the certificate, not from the checker, so the assertion is exact and not circular. It would fail if the checker returned a larger automaton state. It is stricter than FR-338-AC-31, which takes the least among fair states, and it holds for this fixture. |
+
+Round 2 at `b9c1024f31a5ad7f4a315ee8da8111de14efdd0d`.
+
+| Finding | outcome | reason |
+| --- | --- | --- |
+| FND-004 | rejected | FR-128 explicitly distinguishes the FR-072 replay result's activation `trace_position` from the counterexample record's lasso-origin `trace_position`, and says the two are not compared. The replay result reports position 1 while the record retains position 0; these fields describe different things. |
+| FND-005 | fixed | FR-128 now says “When the first false activation is after the origin,” which matches the implementation for guarded `on each` clauses, including a false condition at the origin. |
+| Automaton-state note | strengthened | The test now asserts that the least fair model state reached by send, duplicate and receive has exactly one automaton state among all certificate states. Since the locus has that model state and FR-338 chooses its complete product-state minimum among fair vertices, this unique monitor state is also the fair-locus minimum; a non-fair monitor at that model state cannot silently supply the expected minimum. |
+
+At `b9c1024f31a5ad7f4a315ee8da8111de14efdd0d`, before the round-2 assertion change, the focused acceptance commands passed individually: `cargo test --locked -p fsl-analyze --test it analyze_tp3_package::an_echo_on_each_tp3_claim_settles_from_the_package_as_from_source` (1 passed, 0 failed, 0 ignored) and `cargo test --locked -p fsl-analyze --test it protocol_bounded_lasso::an_on_each_tp3_debt_after_the_origin_is_judged_by_the_fair_uncounted_loop` (1 passed, 0 failed, 0 ignored). The round-2 focused runs are recorded below after they pass.

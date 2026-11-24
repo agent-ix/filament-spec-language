@@ -1488,16 +1488,23 @@ fn an_on_each_tp3_debt_after_the_origin_is_judged_by_the_fair_uncounted_loop() {
         key(&received),
         "at the byte-least product state of a fair component"
     );
-    let least_monitor = certificate
+    let monitors_at_least_fair_model_state = certificate
         .states
         .iter()
         .filter(|state| state.model_state == at.model_state)
-        .map(|state| &state.automaton_state)
-        .min()
+        .map(|state| state.automaton_state.clone())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        monitors_at_least_fair_model_state.len(),
+        1,
+        "the least fair model state has one reachable monitor state in this fixture"
+    );
+    let only_monitor = monitors_at_least_fair_model_state
+        .first()
         .expect("the locus is a certified product state");
     assert_eq!(
-        &at.automaton_state, least_monitor,
-        "the least automaton state at that model state"
+        &at.automaton_state, only_monitor,
+        "the unique monitor state at the least fair model state"
     );
 
     let mut limits = ModelCheckLimits::default();
