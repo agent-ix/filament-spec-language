@@ -22,17 +22,15 @@ use fsl_foundation::{IntakeLimits, SourceIdentity};
 use fsl_semantics::check::{CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::domain_package::{DomainPackage, DomainPackageRef};
-use fsl_semantics::model::intake::{
-    admit, admit_unit, meaning, package_input, read_domain_package,
-};
-use fsl_semantics::model::normalize::{normalize_with_meter, NormalizeOutcome};
+use fsl_semantics::model::intake::{admit, admit_unit, package_input, read_domain_package};
+use fsl_semantics::model::normalize::{NormalizeOutcome, normalize_with_meter};
 use fsl_semantics::model::observation::{
-    admit_current_snapshot, admit_frame_invocation, population_universe_for, AdmissionFailure,
-    DocumentRef, FrameChange, FrameFacts, FrameVerdict, ObservationLimits, OperationFacts,
-    PathStep, Provisions,
+    AdmissionFailure, DocumentRef, FrameChange, FrameFacts, FrameVerdict, ObservationLimits,
+    OperationFacts, PathStep, Provisions, admit_current_snapshot, admit_frame_invocation,
+    population_universe_for,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 use crate::tc235_k2 as base;
@@ -44,7 +42,7 @@ use crate::tc235_k2 as base;
 #[allow(dead_code, reason = "this fixture uses part of the shared builders")]
 mod variants;
 
-use base::{id, PACKAGE};
+use base::{PACKAGE, id};
 
 const INTEGER: &str = "ix://filament/native/Integer";
 
@@ -54,6 +52,15 @@ fn record(name: &str, members: Value) -> Value {
 
 /// The record value types of TC-985's preconditions.
 fn record_types() -> Vec<Value> {
+    let mut postal_address = record(
+        "PostalAddress",
+        json!({
+            "supertypes": [id("Address")],
+            "fields": [base::field("PostalAddress", "zip", INTEGER)],
+        }),
+    );
+    postal_address["clauses"] =
+        json!([base::clause("PostalAddress", "PositiveZip", "self.zip > 0")]);
     vec![
         record(
             "Street",
@@ -63,13 +70,7 @@ fn record_types() -> Vec<Value> {
             "Address",
             json!({"fields": [variants::optional("Address", "street", &id("Street"))]}),
         ),
-        record(
-            "PostalAddress",
-            json!({
-                "supertypes": [id("Address")],
-                "fields": [base::field("PostalAddress", "zip", INTEGER)],
-            }),
-        ),
+        postal_address,
         record(
             "Node",
             json!({"fields": [variants::optional("Node", "next", &id("Node"))]}),
@@ -176,9 +177,10 @@ fn assembled(document: &Value) -> PackageDeclarations {
     let packages = package_input([bytes.as_slice()]).unwrap();
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"filament.value.complete/v1\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
          model Config = {PACKAGE:?};\n\
-         function keep using v(): Boolean pure {{ true }}\n"
+         function keep using v(): Boolean pure {{ true }}\n\
+         function previous using v(account: Reference<Config::Account>): Option<Config::Address> pure {{ deref(account).previous }}\n"
     );
     let parsed = fsl_cst::parse(
         SourceIdentity::new("test", "record-valued"),
@@ -230,6 +232,48 @@ fn object_field<'a>(
 #[test]
 fn the_type_environment_gives_record_fields_the_record_value_type() {
     let declarations = assembled(&document());
+    let package = read(&document()).expect("record-value package is admitted");
+    let mut record_exports: Vec<_> = package
+        .records
+        .iter()
+        .filter_map(|record| match record {
+            fsl_semantics::model::domain_package::DomainPackageRecord::RecordValueType(record) => {
+                Some(record.key.node.as_str().to_owned())
+            }
+            _ => None,
+        })
+        .collect();
+    record_exports.sort();
+    assert_eq!(
+        record_exports,
+        [id("Address"), id("Node"), id("PostalAddress"), id("Street"),],
+        "one record export is retained for each record type"
+    );
+    for field in [
+        "Street/name",
+        "Address/street",
+        "PostalAddress/zip",
+        "Node/next",
+    ] {
+        assert!(
+            package.records.iter().any(|record| matches!(
+                record,
+                fsl_semantics::model::domain_package::DomainPackageRecord::FieldMember(member)
+                    if member.key.node.as_str() == id(field)
+            )),
+            "the record's effective field export is retained: {field}"
+        );
+    }
+    assert!(
+        package.records.iter().any(|record| matches!(
+            record,
+            fsl_semantics::model::domain_package::DomainPackageRecord::Clause(clause)
+                if clause.key.node.as_str() == id("PostalAddress/PositiveZip")
+                    && clause.owner.node.as_str() == id("PostalAddress")
+                    && clause.text == "self.zip > 0"
+        )),
+        "the record invariant is retained as a clause export"
+    );
     let composite = |name: &str| {
         declarations
             .types
@@ -252,6 +296,26 @@ fn the_type_environment_gives_record_fields_the_record_value_type() {
     let optional = object_field(&declarations, "Account", "previous");
     assert_eq!(optional.value_type(), &address);
     assert_eq!(optional.presence(), filament_exact::Presence::Optional);
+
+    let graph = assembled(&document())
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+        .expect("the optional model field read checks");
+    let previous = graph
+        .function_identity("previous")
+        .expect("the optional model field reader");
+    let read = graph
+        .function_by_identity(previous)
+        .expect("the checked field reader")
+        .body;
+    assert_eq!(
+        read.value_type(),
+        &ValueType::option(address.clone()),
+        "reading Account.previous exposes Option<Address> while the raw declaration keeps presence separate"
+    );
 
     let history = object_field(&declarations, "Account", "history");
     let ValueType::Collection(collection) = history.value_type() else {

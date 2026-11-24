@@ -133,7 +133,6 @@ fn a_100_000_long_list_keys_as_its_rfc_8785_text() {
 ///    key is 16,777,218 bytes, so on a larger stack it refuses
 ///    `IdentityInputBytes` instead of returning the key.
 /// Remove the `ignore` when `state_key` is iterative and takes a bound.
-#[trace("TC-735", "FR-262-AC-2")]
 #[ignore = "ModelSystem::state_key recurses per record level (stack overflow at 512 KiB) and caps keys at 16 MiB"]
 #[test]
 fn a_100_000_long_list_keys_as_its_rfc_8785_text_through_the_unbudgeted_state_key() {

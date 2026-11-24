@@ -2,10 +2,11 @@
 //! QSL-2740 PR 2a: source navigation follows the model relationships listed
 //! by a native-run snapshot, with concrete workflow object keys.
 
-use crate::command_harness::{run_file, Output};
+use crate::command_harness::{Output, run_file};
 use crate::workflow_population_aggregates::{rename, source};
+use fsl_command::command::{self, RunError, RunLimits};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 pub(super) const PACKAGE: &str = "test/workflow-relationships";
@@ -256,6 +257,49 @@ pub(super) fn run_selected(
     )
     .unwrap();
     run_file(&path.join("request.json"))
+}
+
+pub(super) fn run_selected_typed(
+    function: &str,
+    input_key: &str,
+    relationships: Vec<Value>,
+    selection: Option<Value>,
+) -> Result<command::RunResult, Box<RunError>> {
+    let directory = tempfile::tempdir().unwrap();
+    let path: &Path = directory.path();
+    std::fs::write(
+        path.join("model.semantic-ir.json"),
+        workflow_model().to_string(),
+    )
+    .unwrap();
+    std::fs::write(path.join("workflow.native"), UNIT).unwrap();
+    std::fs::write(
+        path.join("snapshot.json"),
+        workflow_snapshot(relationships).to_string(),
+    )
+    .unwrap();
+    let mut call = json!({"function": function, "snapshot": "snapshot.json", "arguments": [
+        {"parameter": if function == "providerOrders" { "provider" } else { "order" },
+            "value": canonical_argument_reference(
+                if function == "providerOrders" { PROVIDER } else { ORDER },
+                input_key,
+            )}
+    ]});
+    if let Some(selection) = selection {
+        call["relationships"] = selection;
+    }
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0", "source": source("model.semantic-ir.json", "WorkflowModel")}],
+        "program": {"source": source("workflow.native", "WorkflowUnit")},
+        "call": call
+    }});
+    let request_path = path.join("request.json");
+    std::fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
+    command::run_with_limits(
+        &request_path,
+        RunLimits::default(),
+        &crate::negotiation::Fr290,
+    )
 }
 
 fn result(output: &Output) -> Value {

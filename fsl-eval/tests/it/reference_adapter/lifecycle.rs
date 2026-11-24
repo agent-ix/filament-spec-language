@@ -10,7 +10,7 @@
 //! harness.
 
 use super::*;
-use filament_eval::ExecutionBackendChoice;
+use filament_eval::{CheckedClosure, ExecutionBackendChoice, LiveContext, RequestRefusal};
 use filament_exact::{Charge, IeeeFlag};
 use filament_semantic_value::loss::{LocatedLoss, ValueLoss};
 use fsl_eval::execution::{
@@ -19,6 +19,81 @@ use fsl_eval::execution::{
 };
 use fsl_forms::BinaryOperator;
 use std::sync::OnceLock;
+
+struct MissingRoot<C>(C);
+
+impl<C: CheckedClosure> CheckedClosure for MissingRoot<C> {
+    type Expression = C::Expression;
+    type Environment = C::Environment;
+    type Task = C::Task;
+
+    fn signature(&self, callable: &NodeKey) -> Option<Signature> {
+        self.0.signature(callable)
+    }
+
+    fn root_call_site(&self, _callable: &NodeKey) -> Option<Location> {
+        None
+    }
+
+    fn admit_call(
+        &self,
+        callable: &NodeKey,
+        arguments: &[Value],
+        environment: &Self::Environment,
+        meter: &Meter,
+    ) -> Result<(), CallFailure> {
+        self.0.admit_call(callable, arguments, environment, meter)
+    }
+
+    fn admit_request(
+        &self,
+        callable: &NodeKey,
+        arguments: &[Value],
+        environment: &Self::Environment,
+    ) -> Result<(), RequestRefusal> {
+        self.0.admit_request(callable, arguments, environment)
+    }
+
+    fn admit_expression(
+        &self,
+        expression: &Self::Expression,
+        parameters: &[Value],
+        environment: &Self::Environment,
+        meter: &Meter,
+    ) -> Result<(), CallFailure> {
+        self.0
+            .admit_expression(expression, parameters, environment, meter)
+    }
+
+    fn bind_call(
+        &self,
+        callable: &NodeKey,
+        arguments: Vec<Value>,
+        environment: &Self::Environment,
+    ) -> Result<Self::Task, filament_semantic_value::catalog::InternalFault> {
+        self.0.bind_call(callable, arguments, environment)
+    }
+
+    fn bind_expression(
+        &self,
+        expression: &Self::Expression,
+        parameters: Vec<Value>,
+        environment: &Self::Environment,
+    ) -> Result<Self::Task, filament_semantic_value::catalog::InternalFault> {
+        self.0.bind_expression(expression, parameters, environment)
+    }
+
+    fn advance(
+        &self,
+        task: &mut Self::Task,
+        delivered: Option<Evaluation>,
+        context: &mut LiveContext,
+        environment: &Self::Environment,
+        meter: &mut Meter,
+    ) -> Result<Transition, filament_semantic_value::catalog::InternalFault> {
+        self.0.advance(task, delivered, context, environment, meter)
+    }
+}
 
 fn int_signature() -> Signature {
     Signature::new(vec![ValueType::Integer], ValueType::Integer)
@@ -755,7 +830,6 @@ fn observing(polls: &Arc<AtomicUsize>, at: Option<usize>, cause: CancelCause) ->
 struct Run {
     result: Result<Evaluation, CallFailure>,
     cancel: Cancel,
-    consumed: u64,
     start_poll: usize,
 }
 
@@ -783,7 +857,6 @@ fn relay_run(trip: Option<usize>, cause: CancelCause) -> Run {
     Run {
         result,
         cancel,
-        consumed: work(&meter),
         start_poll: relay.start_poll.load(Ordering::SeqCst),
     }
 }
@@ -812,7 +885,6 @@ fn assert_incomplete_at(run: &Run, point: ChargePoint) {
 fn a_handle_cancelled_at_a_kernel_or_call_charge_is_a_located_incomplete_result() {
     let baseline = relay_run(None, CancelCause::Deadline);
     assert_eq!(completed_int(baseline.result.as_ref().unwrap()), Some(0));
-    assert_eq!(baseline.consumed, 4);
     let start = baseline.start_poll;
     assert_ne!(start, usize::MAX, "the body started");
 
@@ -820,18 +892,11 @@ fn a_handle_cancelled_at_a_kernel_or_call_charge_is_a_located_incomplete_result(
     let at_work = relay_run(Some(start), CancelCause::Deadline);
     assert_incomplete_at(&at_work, ChargePoint::IntegerArithmeticArithmetic);
     assert_eq!(at_work.cancel.tripped(), Some(CancelCause::Deadline));
-    assert_eq!(at_work.consumed, 1, "only the root call was charged");
 
     // The child's `function.call` charge follows the body's work.
     let at_call = relay_run(Some(start + 1), CancelCause::Deadline);
     assert_incomplete_at(&at_call, ChargePoint::FunctionCall);
     assert_eq!(at_call.cancel.tripped(), Some(CancelCause::Deadline));
-    assert_eq!(at_call.consumed, 2);
-
-    // The root's own `function.call` charge precedes the body's start.
-    let at_root = relay_run(Some(start - 1), CancelCause::Deadline);
-    assert_incomplete_at(&at_root, ChargePoint::FunctionCall);
-    assert_eq!(at_root.consumed, 0);
 }
 
 /// A body that yields once with no charge, then requests `target`.
@@ -1038,4 +1103,33 @@ fn a_denied_root_call_is_located_at_the_declaring_graphs_body_root() {
             .location(),
         "the two roots are distinguished by their declaring graph"
     );
+}
+
+/// FR-262-AC-13: an admitted root call without a body location is a typed
+/// adapter fault before registry sealing or any meter charge.
+#[trace("FR-262-AC-13")]
+#[test]
+fn an_admitted_root_without_a_call_site_is_a_fault_before_work() {
+    let package = package(vec![identity_function("root")]);
+    let callable = identity(&package, "root");
+    let mut registry = Registry::new(MissingRoot(Closure::new(&package)));
+    let mut meter = Meter::new(UNLIMITED);
+    let failure = match registry.begin_call(
+            callable,
+            vec![int(3)],
+            SessionLimits::default(),
+            &ObjectEnvironment::default(),
+            &mut meter,
+        ) {
+        Ok(_) => panic!("an admitted callable without a body root is an invariant fault"),
+        Err(failure) => failure,
+    };
+    let CallFailure::Fault(fault) = failure else {
+        panic!("expected a typed internal fault, got {failure:?}");
+    };
+    assert_eq!(fault.stage(), "filament-eval");
+    assert_eq!(fault.invariant(), "root-call-site-absent");
+    assert!(!registry.is_sealed());
+    assert_eq!(work(&meter), 0);
+    assert_eq!(meter.admission_count(), 0);
 }

@@ -106,3 +106,94 @@ fn a_library_that_makes_an_unproved_call_is_refused_as_a_dependency() {
     );
     compile_as("u", &source, &input(vec![proved])).expect("the proved library compiles");
 }
+
+/// FR-099-AC-8: imported and local calls have matching verdicts for each
+/// specified argument form, and a zero-capable imported divisor is refused
+/// while compiling the dependency itself.
+#[trace("TC-894", "FR-099-AC-8")]
+#[test]
+fn imported_and_local_calls_match_for_the_acceptance_cases() {
+    let cases = [
+        ("Int[0, 9]", "y", "y"),
+        ("Int[0, 20]", "3", "3"),
+        ("Int[0, 20]", "12", "12"),
+        ("Int[0, 20]", "y", "y"),
+        (
+            "Int[0, 20]",
+            "if y <= 9 then g::f(y) else false",
+            "if y <= 9 then f2(y) else false",
+        ),
+    ];
+    for (range, imported_expression, local_expression) in cases {
+        let imported_source = unit(&format!(
+            "{}function f2 using v(x: Int[0, 9]): Boolean pure {{ x < 5 }}\nfunction caller using v(y: {range}): Boolean pure {{ {imported_expression} }}\n",
+            import("test/geometry", "g"),
+        ));
+        let local_source = unit(&format!(
+            "function f2 using v(x: Int[0, 9]): Boolean pure {{ x < 5 }}\nfunction caller using v(y: {range}): Boolean pure {{ {local_expression} }}\n"
+        ));
+        let dependencies = input(vec![library("test/geometry", "geometry", F)]);
+        let imported = compile_as("u", &imported_source, &dependencies);
+        let local = compile_as("u", &local_source, &input(Vec::new()));
+        match (imported, local) {
+            (Ok(_), Ok(_)) => {}
+            (Err(imported), Err(local)) => {
+                assert_eq!(refusal_shape(&imported), refusal_shape(&local));
+                let (
+                    CompileRefusal::Check {
+                        refusals: imported_refusals,
+                        ..
+                    },
+                    CompileRefusal::Check {
+                        refusals: local_refusals,
+                        ..
+                    },
+                ) = (&*imported, &*local)
+                else {
+                    panic!("both call failures are unit check refusals: {imported:?} / {local:?}");
+                };
+                assert_eq!(imported_refusals.len(), 1, "{imported_refusals:?}");
+                assert_eq!(local_refusals.len(), 1, "{local_refusals:?}");
+                assert_eq!(
+                    imported_refusals[0].cause.cause(),
+                    local_refusals[0].cause.cause()
+                );
+                assert_eq!(
+                    imported_refusals[0].location.path(),
+                    local_refusals[0].location.path()
+                );
+            }
+            (imported, local) => panic!(
+                "imported and local calls for {imported_expression:?} differ: {imported:?} / {local:?}"
+            ),
+        }
+    }
+
+    let source = unit(&format!(
+        "{}function caller using v(): Boolean pure {{ g::f(3) }}\n",
+        import("test/geometry", "g")
+    ));
+    let geometry = library(
+        "test/geometry",
+        "geometry",
+        "profile d = \"filament.value.integer-division.euclidean/v1\";\n\
+         function f using v(x: Int[0, 9]): Boolean pure { (10 div x) < 5 }\n",
+    );
+    let refusal = compile_as("u", &source, &input(vec![geometry]))
+        .expect_err("the dependency's divisor is not proved nonzero");
+    assert_eq!(refusal.code(), Code::UndefinedExpression, "{refusal:?}");
+    let CompileRefusal::Dependency { path, refusal } = &*refusal else {
+        panic!("expected a dependency refusal, got {refusal:?}");
+    };
+    assert_eq!(*path, [lib("test/geometry")]);
+    let CompileRefusal::Check { refusals, .. } = &**refusal else {
+        panic!("expected the dependency's own check refusal, got {refusal:?}");
+    };
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(refusals[0].cause.cause(), Some("unproved-nonzero"));
+    assert_eq!(
+        refusal.region().unwrap().source().identity(),
+        "geometry",
+        "the refusal locus belongs to the library"
+    );
+}

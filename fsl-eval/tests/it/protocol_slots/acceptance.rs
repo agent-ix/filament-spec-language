@@ -31,7 +31,7 @@ mod state_compensation;
     reason = "the shared TC-1070 model fixture is used by sibling integration tests"
 )]
 mod tc1070;
-use tc1070::{document, document_ep, model, SOURCE};
+use tc1070::{SOURCE, document, document_ep, model};
 
 #[test]
 fn ep_extension_is_admitted_by_the_shared_tc1070_fixture() {
@@ -764,7 +764,7 @@ fn ep_supply<'a>(
 }
 
 #[test]
-#[trace("TC-1070", "FR-390-AC-23", "FR-106-AC-64")]
+#[trace("TC-1070", "FR-390-AC-23")]
 fn nested_population_closure_uses_object_fields_then_relationship_ends() {
     let (package, view) = fixture_ep();
     let peer = other_reference(&view, "ghost");
@@ -1086,6 +1086,29 @@ fn observation_with_row<'a>(
     ObservationAdmission<fsl_package::AdmittedProtocolObservation<'a>>,
     ObjectReference,
 ) {
+    observation_with_document(
+        package,
+        evaluation_view,
+        view,
+        keys,
+        row,
+        &document(),
+        false,
+    )
+}
+
+fn observation_with_document<'a>(
+    package: &'a CheckedPackage,
+    evaluation_view: &fsl_package::AdmittedEvaluationView<'a>,
+    view: &fsl_semantics::model::normalize::EffectiveView,
+    keys: &[&str],
+    row: Option<bool>,
+    domain_document: &serde_json::Value,
+    unrelated_incomplete: bool,
+) -> (
+    ObservationAdmission<fsl_package::AdmittedProtocolObservation<'a>>,
+    ObjectReference,
+) {
     let key = filament_checked::key::DeclarationKey {
         package: model::PACKAGE.to_owned(),
         node: model::id("Node"),
@@ -1095,7 +1118,7 @@ fn observation_with_row<'a>(
         view.type_identities()[&key].clone(),
         ObjectId::new(keys[0]).unwrap(),
     );
-    let domain_bytes = serde_json::to_vec(&document()).unwrap();
+    let domain_bytes = serde_json::to_vec(domain_document).unwrap();
     let packages = fsl_semantics::model::intake::package_input([domain_bytes.as_slice()]).unwrap();
     let selected = DocumentRef {
         authority: "test".to_owned(),
@@ -1112,7 +1135,7 @@ fn observation_with_row<'a>(
             })
         })
         .collect();
-    let populations: Vec<_> = row
+    let mut populations: Vec<_> = row
         .map(|complete| {
             serde_json::json!({
                 "population": model::id("nodes"),
@@ -1122,6 +1145,13 @@ fn observation_with_row<'a>(
         })
         .into_iter()
         .collect();
+    if unrelated_incomplete {
+        populations.push(serde_json::json!({
+            "population": model::id("otherSpare"),
+            "complete": false,
+            "objects": [],
+        }));
+    }
     let snapshot = serde_json::json!({
         "format": "filament.state.snapshot/v1",
         "identity": {
@@ -4448,8 +4478,7 @@ fn independent_universe_hex(universe: &filament_exact::UniverseId) -> String {
     "FR-390-AC-6",
     "FR-390-AC-20",
     "FR-390-AC-21",
-    "FR-106-AC-62",
-    "FR-106-AC-64"
+    "FR-106-AC-62"
 )]
 fn incomplete_sole_population_is_returned_with_its_population_locus() {
     let (package, view) = fixture_with_view();
@@ -4502,7 +4531,7 @@ fn incomplete_sole_population_is_returned_with_its_population_locus() {
 /// but not complete it is `incomplete-scope`, both at that population before
 /// check 8; with the row complete, check 8 reports the ghost against it.
 #[test]
-#[trace("TC-1071", "FR-106-AC-65")]
+#[trace("TC-1071", "FR-106-AC-64", "FR-106-AC-65")]
 fn a_seed_population_without_a_row_is_a_missing_required_artifact() {
     let (package, view) = fixture_with_view();
     let evaluation_view = package.evaluation_view();
@@ -4568,7 +4597,7 @@ fn a_seed_population_without_a_row_is_a_missing_required_artifact() {
 /// when an unrelated population is incomplete; completing that population
 /// does not change the call result or ordered charges.
 #[test]
-#[trace("TC-1071", "FR-390-AC-20", "FR-106-AC-64")]
+#[trace("TC-1071", "FR-390-AC-20")]
 fn unrelated_incomplete_population_does_not_change_a_successful_slot() {
     let (package, view) = fixture_ep();
     let peer = other_reference(&view, "ghost");
