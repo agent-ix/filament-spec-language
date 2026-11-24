@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use super::causes::{
     ClockIdentityAllocation, ClockOriginUnavailable, HistoryUnresolved, ModelQueryRefusal,
-    NamedPopulationIncomplete, NavigationRefusal, ObjectFieldIllTyped, ProtocolClauseSnapshot,
-    UnsupportedConstruct,
+    NamedPopulationIncomplete, NavigationRefusal, ObjectFieldIllTyped, OnlyNotOneCause,
+    ProtocolClauseSnapshot, UnsupportedConstruct,
 };
 use super::protocol_slot::charges::{BinderCharges, ChargeRouting, Owner, Owners};
 use super::s6a::separation::{
@@ -68,7 +68,7 @@ use filament_semantic_value::declaration::{
     operand_value, CompositeShape, EqualityOperator, FieldDeclaration, FieldRef, TypeEnvironment,
 };
 use filament_semantic_value::enumeration::{compare_enum, EnumMemberIndex};
-use filament_semantic_value::location::ExpressionLocation as Location;
+use filament_semantic_value::location::{ExpressionLocation as Location, ExpressionOwner};
 use filament_semantic_value::loss::{LocatedLoss, ValueLoss};
 use filament_semantic_value::quantity::{
     compare_quantity, convert_quantity, evaluate_quantity_unit, ConvertedValue, QuantityOperation,
@@ -205,6 +205,47 @@ fn unresolved_unit() -> Halt {
         "S6a",
         "quantity-unit-unresolved-past-admission",
     ))
+}
+
+/// The expression-tree path of a node as a stable, human-readable locus.
+fn expression_locus(location: &Location) -> String {
+    let path = location.path();
+    if path.is_empty() {
+        "root".to_owned()
+    } else {
+        let suffix = path
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join("/");
+        format!("root/{suffix}")
+    }
+}
+
+/// The named expression owner enclosing a population row, without relying on
+/// the owner's debug representation as a diagnostic wire value.
+fn expression_owner_name(owner: &ExpressionOwner) -> String {
+    match owner {
+        ExpressionOwner::Body { function, .. } => format!("function {function}"),
+        ExpressionOwner::Measure { function, .. } => format!("measure {function}"),
+        ExpressionOwner::Expression => "expression".to_owned(),
+        ExpressionOwner::TypeDeclaration { name } => name.clone(),
+        ExpressionOwner::StateClause { clause, .. } => clause.clone(),
+        ExpressionOwner::ProtocolAttempt { protocol, attempt } => {
+            format!("protocol attempt {protocol}/{attempt}")
+        }
+        ExpressionOwner::ModelOperationClause {
+            operation,
+            kind,
+            position,
+        } => {
+            let kind = match kind {
+                filament_semantic_value::location::OperationClauseKind::Requires => "requires",
+                filament_semantic_value::location::OperationClauseKind::Ensures => "ensures",
+            };
+            format!("{operation} {kind} clause {position}")
+        }
+    }
 }
 
 impl From<Stop> for Halt {
@@ -874,6 +915,9 @@ pub(crate) struct Machine<'a, 'm, N> {
             fsl_semantics::model::clause_observation::Observation,
         >,
     >,
+    /// The declared refinement row whose value is being evaluated, when
+    /// supplied by the refinement mapping evaluator.
+    enclosing_row: Option<String>,
     /// Which family this `Machine` evaluates (SR-750 FND-011 round 2): set
     /// once, explicitly, by whichever constructor built it, rather than
     /// inferred from `reads.is_some()`. [`Self::new`] always builds
@@ -1087,6 +1131,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         self
     }
 
+    /// Attach the declared refinement row to evaluation-time diagnostics.
+    pub(crate) fn with_enclosing_row(mut self, row: &str) -> Self {
+        self.enclosing_row = Some(row.to_owned());
+        self
+    }
+
     /// Enforce the enclosing scheduler's aggregate count for this machine.
     pub(crate) fn with_live_context(mut self, context: LiveContext) -> Self {
         self.live_context = Some(context);
@@ -1198,6 +1248,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 .map(|graph| graph.clock_declaration_table().clone()),
             pre_objects,
             reads,
+            enclosing_row: None,
             family,
             meter,
             observed_applications: None,
@@ -5362,7 +5413,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         let spec = Self::iteration_spec(node)?;
         let state = match IterationState::start(&spec, source, identity, reduce, self.meter) {
             Ok(state) => state,
-            Err(collections::Halt::OnlyNotOne { found }) => {
+            Err(collections::Halt::OnlyNotOne { .. }) => {
                 self.iterations = self.iterations.saturating_sub(1);
                 let NodeKind::Query {
                     source: operand, ..
@@ -5371,9 +5422,36 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     return Err(invariant("iteration-node-invalid"));
                 };
                 return Err(Halt::Family(FamilyResult::Undefined(Box::new(
-                    StateModelUndefined::OnlyNotOne {
+                    OnlyNotOneCause {
                         population: population_of(node.at(*operand))?,
-                        found,
+                        locus: self.enclosing_row.as_ref().map_or_else(
+                            || {
+                                node.location().map_or_else(
+                                    || "unknown".to_owned(),
+                                    |location| {
+                                        format!(
+                                            "{}#{}",
+                                            expression_owner_name(&location.origin),
+                                            expression_locus(location)
+                                        )
+                                    },
+                                )
+                            },
+                            |row| {
+                                let path = node
+                                    .location()
+                                    .map_or_else(|| "unknown".to_owned(), expression_locus);
+                                format!("{row}#{path}")
+                            },
+                        ),
+                        row: self
+                            .enclosing_row
+                            .clone()
+                            .or_else(|| {
+                                node.location()
+                                    .map(|location| expression_owner_name(&location.origin))
+                            })
+                            .unwrap_or_else(|| "unknown".to_owned()),
                     },
                 ))));
             }

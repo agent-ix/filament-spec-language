@@ -391,6 +391,9 @@ pub struct CheckedRow {
     pub(crate) observations: Observations,
     /// The name each body slot was bound under, indexed by slot.
     pub(crate) slot_names: Vec<String>,
+    /// The refinement row this expression belongs to, as `Type.field` or
+    /// `step operation` (FR-139 diagnostic ownership).
+    pub(crate) name: String,
     /// The declaration site the body's locations name: the row
     /// expression, whose span tree [`Self::spans`] is (see [`row_site`]).
     pub(crate) site: String,
@@ -408,6 +411,7 @@ impl std::fmt::Debug for CheckedRow {
             .field("uses", &self.uses)
             .field("observations", &self.observations)
             .field("slot_names", &self.slot_names)
+            .field("name", &self.name)
             .finish_non_exhaustive()
     }
 }
@@ -438,6 +442,11 @@ impl CheckedRow {
     /// which a subject's admission checks (FR-139).
     pub fn population_uses(&self) -> &[PopulationUse] {
         &self.uses
+    }
+
+    /// The enclosing refinement row, as `Type.field` or `step operation`.
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -3476,6 +3485,7 @@ impl<'c, 'a> Checker<'c, 'a> {
                     uses,
                     observations,
                     slot_names,
+                    name: label,
                     site,
                     spans: expression.spans.clone(),
                 })
@@ -4281,10 +4291,11 @@ fn population_uses(
                 && collection.bound().is_none_or(|bound| bound.minimum() == 0)
         }
         (PopulationValue::Count | PopulationValue::Sum { .. }, ValueType::Integer) => true,
-        (PopulationValue::Count | PopulationValue::Sum { .. }, ValueType::Int(target)) => {
-            // `n` is at least 0, and a sum over no object is 0.
-            (target.lower().is_negative() || target.lower().is_zero())
-                && !target.upper().is_negative()
+        (PopulationValue::Count | PopulationValue::Sum { .. }, ValueType::Int(_)) => {
+            // The exact interval depends on the admitted universe size. A
+            // `where` may select no object, so sums include zero; defer all
+            // bounded-integer compatibility to subject admission.
+            true
         }
         _ => false,
     };

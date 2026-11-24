@@ -406,6 +406,7 @@ pub fn evaluate_refinement_row(
         meter,
         package.graph().dispatch_tables(),
     )
+    .with_enclosing_row(row.name())
     .run(row.body(), row.slots(), bindings)
 }
 

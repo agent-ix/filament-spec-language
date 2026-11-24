@@ -11,12 +11,41 @@
 use std::collections::BTreeMap;
 
 use filament_exact::ObjectReference;
-use filament_semantic_value::catalog::{render_identity, CatalogCode, CatalogCoded};
+use filament_semantic_value::catalog::{
+    render_identity, CatalogCode, CatalogCoded, UndefinedCoded, UndefinedReason, UndefinedRecord,
+    STATE_MODEL_CATALOG_PREFIX,
+};
 
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::call::WrongSnapshotCause;
 use fsl_semantics::model::normalize::{ModelRefusal, ModelRefusalCause};
 use fsl_semantics::model::observation::AdmissionRecord;
+
+/// FR-139-AC-7: the public `only` undefined payload identifies its source
+/// and enclosing row without exposing how many objects matched.
+#[derive(Debug)]
+pub(crate) struct OnlyNotOneCause {
+    pub(crate) population: String,
+    pub(crate) locus: String,
+    pub(crate) row: String,
+}
+
+impl UndefinedCoded for OnlyNotOneCause {
+    fn catalog_prefix(&self) -> Option<&'static str> {
+        Some(STATE_MODEL_CATALOG_PREFIX)
+    }
+
+    fn undefined_record(&self) -> UndefinedRecord {
+        UndefinedRecord {
+            reason: UndefinedReason::OnlyNotOne,
+            fields: BTreeMap::from([
+                ("population", self.population.clone()),
+                ("locus", self.locus.clone()),
+                ("row", self.row.clone()),
+            ]),
+        }
+    }
+}
 
 /// A missing authenticated origin is a supported, typed boundary, rather
 /// than permission to choose a population from object membership.
