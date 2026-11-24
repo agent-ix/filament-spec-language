@@ -1213,18 +1213,37 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         // An unobservable state settles by the stop's own cause, which is
         // the broken invariant for an internal failure.
         ModelCheckRefusal::StateUnobservable(stop) => Refusal::Failed(stop.cause),
-        // The forms and subjects EN-1 does not decide yet.
+        // The forms and subjects EN-1 does not decide yet: a liveness or
+        // refinement form, a protocol refinement or abstract side, a liveness
+        // clause over an `ra` `parallel`, and an undefined read on a closed tuple.
         ModelCheckRefusal::ProtocolRefinement
-        | ModelCheckRefusal::FormNotDecided { .. }
-        | ModelCheckRefusal::CaptureRead { .. }
+        | ModelCheckRefusal::FormNotDecided { form: Some(_) }
         | ModelCheckRefusal::WeakLiveness
         | ModelCheckRefusal::ProtocolAbstractSide
         | ModelCheckRefusal::Hyper(
-            HyperRefusal::FormNotDecided { .. }
-            | HyperRefusal::NotSingleExistential { .. }
-            | HyperRefusal::ClosedUndefined
-            | HyperRefusal::ConstraintUndefined { .. },
+            HyperRefusal::ClosedUndefined
+            | HyperRefusal::FormNotDecided {
+                form: Some(fsl_semantics::check::HyperForm::Other { .. }),
+            },
         ) => Refusal::Unsupported(NOT_YET),
+        // Open question, behaviour unchanged by QSL-2850: FR-337's standing
+        // decision (QSL-1092) returns no verdict for a `holds` condition that
+        // reads a capture, and FR-174 states no verdict for a state constraint
+        // undefined at a component state. Whether each settles as an unbuilt
+        // form, a user-input refusal or a fault is not decided by the spec.
+        ModelCheckRefusal::CaptureRead { .. }
+        | ModelCheckRefusal::Hyper(HyperRefusal::ConstraintUndefined { .. }) => {
+            Refusal::Unsupported(NOT_YET)
+        }
+        // A routing fault: a clause with no property form reaches no engine, an
+        // HP-5 clause is sent to `check_single_existential` alone (so it names
+        // its own form there), and an HP-1 clause is the relation engine's; a
+        // refusal naming any of them is a router that disagrees with the engine,
+        // the engine's own fault. (HP-4 `Other` is the unbuilt form above.)
+        ModelCheckRefusal::FormNotDecided { form: None }
+        | ModelCheckRefusal::Hyper(
+            HyperRefusal::FormNotDecided { .. } | HyperRefusal::NotSingleExistential { .. },
+        ) => Refusal::Failed(BROKEN),
         // Clauses and operations the engine cannot read: unsupported forms.
         ModelCheckRefusal::Translation(_) | ModelCheckRefusal::Footprint(_) => {
             Refusal::Unsupported(EXPRESSION_FORM)
@@ -1510,15 +1529,54 @@ mod tests {
             _ => None,
         };
         let not_yet = Some("unsupported_construct/not-yet-implemented".to_owned());
+        let broken = Some("runtime_invariant/established-invariant-broken".to_owned());
+        // QSL-2850: a routing fault is the engine's own (`failed`), never a form
+        // the spec defines and no engine builds.
+        for fault in [
+            ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided { form: None }),
+            ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided {
+                form: Some(fsl_semantics::check::HyperForm::StepRelation),
+            }),
+            ModelCheckRefusal::Hyper(HyperRefusal::NotSingleExistential { form: None }),
+            ModelCheckRefusal::FormNotDecided { form: None },
+        ] {
+            let shown = format!("{fault:?}");
+            assert_eq!(failed(fault), broken, "{shown}");
+        }
+        // The forms the spec defines and EN-1 does not build stay unbuilt.
+        for unbuilt in [
+            ModelCheckRefusal::ProtocolRefinement,
+            ModelCheckRefusal::WeakLiveness,
+            ModelCheckRefusal::ProtocolAbstractSide,
+            ModelCheckRefusal::FormNotDecided {
+                form: Some(filament_semantic_value::fairness::PropertyForm::Liveness),
+            },
+            ModelCheckRefusal::Hyper(HyperRefusal::ClosedUndefined),
+            ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided {
+                form: Some(fsl_semantics::check::HyperForm::Other {
+                    reason: fsl_semantics::check::HyperUnsupported::ExistentialBeforeUniversal,
+                }),
+            }),
+        ] {
+            let shown = format!("{unbuilt:?}");
+            assert_eq!(unsupported(unbuilt), not_yet, "{shown}");
+        }
+        // Open question (FR-337 standing decision QSL-1092; FR-174 states no
+        // verdict): the current outcome is pinned, not decided.
         assert_eq!(
-            unsupported(ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided {
-                form: None
-            })),
+            unsupported(ModelCheckRefusal::CaptureRead {
+                clause: "c".to_owned(),
+                capture: "x".to_owned()
+            }),
             not_yet
         );
         assert_eq!(
             unsupported(ModelCheckRefusal::Hyper(
-                HyperRefusal::NotSingleExistential { form: None }
+                HyperRefusal::ConstraintUndefined {
+                    cause: fsl_eval::temporal::UndefinedCause::Kernel(
+                        filament_exact::Undefined::DivisionByZero
+                    )
+                }
             )),
             not_yet
         );
