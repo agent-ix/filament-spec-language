@@ -2,13 +2,14 @@
 //! Interpreter kernels paired with plain-Rust reference implementations.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use fsl_bench::evaluator_cost::EVALUATOR_KERNEL_AXIS;
 use fsl_bench::kernel::{KernelCase, KernelKind, SIZES};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use std::hint::black_box;
 
 fn evaluator_kernel(c: &mut Criterion) {
     let objects = ObjectEnvironment::default();
-    let mut group = c.benchmark_group("evaluator/kernel");
+    let mut group = c.benchmark_group(EVALUATOR_KERNEL_AXIS);
     for kind in KernelKind::ALL {
         for size in SIZES {
             let case = KernelCase::new(kind, size);

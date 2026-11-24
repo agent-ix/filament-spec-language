@@ -10,14 +10,13 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use fsl_bench::check::{call_head, completed_with_five, linked_chain};
+use fsl_bench::evaluator_cost::{CALL_CHAIN_SIZES, EVALUATOR_CALL_CHAIN_AXIS};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
-const FRAMES: [usize; 4] = [1, 10, 100, 1_000];
-
 fn call_chain(c: &mut Criterion) {
-    let mut group = c.benchmark_group("evaluator/call_chain");
+    let mut group = c.benchmark_group(EVALUATOR_CALL_CHAIN_AXIS);
     let objects = ObjectEnvironment::default();
-    for frames in FRAMES {
+    for frames in CALL_CHAIN_SIZES {
         let package = linked_chain(frames);
         assert!(
             completed_with_five(&call_head(&package, &objects)),

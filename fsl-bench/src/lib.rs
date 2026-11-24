@@ -46,6 +46,7 @@ pub mod check;
 #[cfg(feature = "counters")]
 pub mod counters;
 pub mod deep_input;
+pub mod evaluator_cost;
 pub mod kernel;
 pub mod mc;
 pub mod model;
