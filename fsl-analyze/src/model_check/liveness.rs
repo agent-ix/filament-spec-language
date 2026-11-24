@@ -895,6 +895,7 @@ impl canonical_api::Encode for PropertyKey {
 #[derive(Clone)]
 struct LState<State> {
     model: State,
+    /// FR-101's exact key, computed when the model state's letter was read.
     model_key: StateKey,
     property: Property,
     depth: usize,
@@ -1055,10 +1056,13 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
 
     /// The subject's expansion of `state`, and what the memory bound left of
     /// it unexpanded, recording why when it stops.
-    fn expand(&self, state: &S::State) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
+    fn expand(
+        &self,
+        state: &S::State,
+        key: &StateKey,
+    ) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
         self.poll()?;
-        let key = self.state_key_of(state)?;
-        if let Some(expansion) = self.expansions.borrow().get(&key) {
+        if let Some(expansion) = self.expansions.borrow().get(key) {
             return Ok(expansion.clone());
         }
         let expansion = self
@@ -1069,7 +1073,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
             })?;
         self.expansions
             .borrow_mut()
-            .insert(key, expansion.clone());
+            .insert(key.clone(), expansion.clone());
         Ok(expansion)
     }
 
@@ -1098,7 +1102,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
             initial && self.captured == CaptureSite::Origin,
         );
         if let Some(known) = self.readings.borrow().get(&key) {
-            return Ok((state_key, known.clone()));
+            return Ok((key.0.clone(), known.clone()));
         }
         let state = self.system.atom_state(state);
         let state = state.as_ref();
@@ -1180,8 +1184,10 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
             }
         }
         let reading = reading.unwrap_or(Reading::Defined(letter));
-        self.readings.borrow_mut().insert(key, reading.clone());
-        Ok((state_key, reading))
+        self.readings
+            .borrow_mut()
+            .insert(key.clone(), reading.clone());
+        Ok((key.0, reading))
     }
 
     /// The property states a position reads into, from `before`; none when
@@ -1404,7 +1410,7 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                 Err(stop) => return Err(self.record(Halt::Expansion(stop))),
             }
         }
-        let (expansion, cut) = self.expand(&state.model)?;
+        let (expansion, cut) = self.expand(&state.model, &state.model_key)?;
         let mut findings: Vec<Self::Finding> = expansion
             .findings
             .into_iter()
