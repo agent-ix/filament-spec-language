@@ -8,7 +8,8 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    analyze, clause, counter_request_with, counter_snapshot, label, request_members, Workspace,
+    analyze, clause, counter_request_with, counter_snapshot, label, package_selection,
+    request_members, Workspace, HANDOFF,
 };
 use crate::counter::{document, symmetric_document};
 
@@ -156,6 +157,90 @@ fn a_constraint_never_proves_past_its_boundary() {
     ));
     let item = run.item(0);
     assert_ne!(label(&item), "proved", "{item}");
+}
+
+/// FR-158-AC-6: a named Low selection executes with true truth, its request
+/// echo identifies Low by its checked node key, and both invariant-name and
+/// node-key selections of Wide refuse before any state is expanded. A
+/// constraint anchored at an operation refuses during source compilation.
+#[trace("TC-581", "FR-158-AC-6")]
+#[test]
+fn constraint_request_key_truth_and_invalid_selections_are_typed() {
+    let body = format!(
+        "constraint Low using v on M::Counter at current {{ self.value <= 1 }}\n\
+         invariant Wide using v on M::Counter at current {{ self.value <= 3 }}\n{}",
+        clause("Claim", "", "always holds(c.value <= 3)")
+    );
+    let ws = Workspace::new("state-constraint-wire-key");
+    let selection = request_members(Some(json!([
+        {"claim": "Claim", "reductions": {"constraint": "Low"}}
+    ])));
+    let _ = counter_request_with(&ws, &body, selection.clone());
+    ws.write("start.json", &counter_snapshot(&[("a", 0), ("b", 0), ("c", 0)]));
+    let (selected, package_bytes) = package_selection(&ws, &selection);
+    let compiled = fsl_command::checked_handoff::compile(&ws.path(HANDOFF))
+        .expect("the Low and Wide unit compiles through S4");
+    let low_key = serde_json::to_value(
+        compiled.checked().graph().state_clause("Low").expect("Low").node(),
+    )
+    .expect("the node key has a wire form");
+    assert!(!package_bytes.is_empty(), "the compiled request has package bytes");
+    let package_path = ws.write(
+        "analyze-package.json",
+        json!({"format": "native-analyze/1", "request": selected})
+            .to_string()
+            .as_bytes(),
+    );
+    let valid = analyze(&package_path).item(0);
+    assert_eq!(valid["axes"]["truth"], "true", "{valid}");
+    assert_eq!(valid["request"]["reductions"]["constraint"], low_key, "{valid}");
+
+    let run_invalid = |name: &str, constraint: Value| {
+        let ws = Workspace::new(name);
+        let path = counter_request_with(
+            &ws,
+            &body,
+            request_members(Some(json!([
+                {"claim": "Claim", "reductions": {"constraint": constraint}}
+            ]))),
+        );
+        ws.write("start.json", &counter_snapshot(&[("a", 0), ("b", 0), ("c", 0)]));
+        analyze(&path).item(0)
+    };
+    for constraint in [
+        json!("Wide"),
+        serde_json::to_value(
+            compiled.checked().graph().state_clause("Wide").expect("Wide").node(),
+        )
+        .expect("Wide node key serializes"),
+    ] {
+        let item = run_invalid("state-constraint-invalid", constraint);
+        assert_eq!(item["record"]["diagnostic"]["code"], "invalid_runtime_input", "{item}");
+        assert_eq!(item["record"]["diagnostic"]["cause"], "invalid-value", "{item}");
+        assert_eq!(item["record"]["diagnostic"]["detail"]["name"], "Wide", "{item}");
+        assert!(item["exploration"].is_null(), "no state was expanded: {item}");
+    }
+
+    let bad_ws = Workspace::new("state-constraint-operation-anchor");
+    let bad = "constraint Bad using v on M::Counter::bump { true }\n";
+    let _ = counter_request_with(&bad_ws, bad, request_members(None));
+    let source_request = request_members(None);
+    let compile_request = json!({"format": "native-compile/1", "request": {
+        "models": source_request["models"], "program": source_request["program"],
+        "handoff": {"directory": HANDOFF, "package_name": "bad-constraint",
+            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}
+    }});
+    let compile_path = bad_ws.write("compile.json", compile_request.to_string().as_bytes());
+    let refusal = fsl_command::command::compile_outcome(&compile_path)
+        .expect_err("Bad cannot anchor a state constraint at an operation");
+    let diagnostic: Value = serde_json::from_slice(
+        &refusal
+            .outcome_document(fsl_replay::Operation::Package)
+            .to_bytes()
+            .expect("the typed refusal serializes"),
+    )
+    .expect("the refusal document is JSON");
+    assert_eq!(diagnostic["disposition"]["refusal"]["code"], "invalid_syntax");
 }
 
 /// FR-621 "The record's `backend` member": a malformed reduction selection

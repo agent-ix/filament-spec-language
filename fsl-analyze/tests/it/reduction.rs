@@ -14,7 +14,7 @@ mod completion_boundaries;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use filament_exact::Cancel;
+use filament_exact::{Cancel, ScalarLimits};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::fairness::PropertyForm;
@@ -130,6 +130,56 @@ fn a_source_constraint_is_typed_and_selectable_by_name() {
     assert!(matches!(outcome, ModelCheckOutcome::Reduction {
         cause: ReductionCause::ConstraintReached { .. }, ..
     }));
+
+    let low = graph.state_clause("Low").expect("Low remains checked");
+    let wide = graph.state_clause("Wide").expect("Wide remains checked");
+    assert_eq!(low.parameters().iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["self"]);
+    let occurrence = |clause: &fsl_semantics::check::CheckedStateClause| {
+        fsl_replay::OccurrenceKey::new(clause.identity(), clause.claim().clone())
+    };
+    assert!(graph.requirements().get(&occurrence(wide)).is_some(), "Wide has a requirement record");
+    assert!(graph.requirements().get(&occurrence(low)).is_none(), "Low has no requirement record");
+
+    let emitted = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .expect("S4 emits the checked unit");
+    let emitted_bytes = emitted.package().bytes();
+    let wire: serde_json::Value = serde_json::from_slice(emitted_bytes).expect("S4 JSON");
+    let low_key = serde_json::to_value(low.node()).expect("Low node key wire form");
+    let low_nodes: Vec<_> = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic nodes")
+        .iter()
+        .filter(|node| node["node_tag"] == "state"
+            && node["semantic_form"] == "state_clause"
+            && node["node_id"] == low_key)
+        .collect();
+    let [low_node] = low_nodes.as_slice() else {
+        panic!("S4 emits exactly one state clause node for Low: {low_nodes:?}");
+    };
+    assert_eq!(low_node["body"]["operation"]["member"],
+        serde_json::json!({"kind": "state_clause", "clause": "constraint"}));
+    let arguments = low_node["body"]["arguments"].as_array().expect("state clause arguments");
+    assert_eq!(arguments[0]["members"].as_array().expect("self binding").len(), 1);
+    let anchor_id = &arguments[1]["target"];
+    let anchor = wire["semantic_graph"]["nodes"]
+        .as_array().expect("semantic nodes")
+        .iter().find(|node| &node["node_id"] == anchor_id)
+        .expect("the Counter anchor node is emitted");
+    assert_eq!(anchor["semantic_form"], "object_type");
+    assert_eq!(anchor["declaration"]["qualified_name"].as_array()
+        .and_then(|name| name.last()), Some(&serde_json::json!("Counter")));
+    let domain_bytes = crate::reduction_world::document(Shape {
+        symmetric: false,
+        max: 3,
+        link: false,
+    });
+    let domain = fsl_semantics::model::intake::package_input([domain_bytes.as_slice()])
+        .expect("the model domain admits");
+    fsl_package::admit_checked_package(
+        emitted_bytes,
+        &domain,
+        fsl_package::V2ReadLimits::fixture(),
+    ).expect("FSL I2 reads the emitted package");
 }
 
 fn keys(keys: &[&str]) -> Vec<String> {
@@ -218,6 +268,64 @@ fn concrete_constraint_and_partial_order_refutations_keep_the_unreduced_witness(
         assert_eq!(record.value, TerminalValue::Refuted);
         assert_eq!(record.basis, SettlementBasis::DecisiveCounterexample);
         assert_eq!(record.counterexample.as_ref(), Some(expected));
+    }
+}
+
+/// FR-161-AC-5: AC-4's already-concrete POR and constraint counterexamples
+/// fit exactly inside their exploration transition and work budgets.
+#[trace("TC-586", "FR-161-AC-5")]
+#[test]
+fn emitting_constrained_and_por_witnesses_adds_no_transition_or_work_charge() {
+    let world = count(&[infinite("always holds(x.v <= 0)")]);
+    let atoms = || vec![atom(|v| Some(v <= 0))];
+    let meter = |work_units| ScalarLimits {
+        work_units,
+        ..crate::counter::UNLIMITED
+    };
+    for selection in [constraint("Low"), partial_order()] {
+        let unrestricted = world
+            .run(Some(0), atoms(), selection.clone(), None, ModelCheckLimits::default())
+            .expect("the concrete reduction run refutes");
+        let expected = violation(&unrestricted).clone();
+        let ModelCheckOutcome::Violated { stats, .. } = &unrestricted else {
+            unreachable!("a violation");
+        };
+        let transition_budget = usize::try_from(stats.product_edges).expect("small");
+        let with_budgets = |max_transitions, work_units| {
+            let mut limits = ModelCheckLimits::default();
+            limits.limits.max_transitions = max_transitions;
+            world.run_with_meter(
+                Some(0),
+                atoms(),
+                selection.clone(),
+                None,
+                limits,
+                meter(work_units),
+            )
+        };
+        let minimum_work = (0..=4096)
+            .find(|work_units| {
+                with_budgets(transition_budget, *work_units)
+                    .is_ok_and(|outcome| matches!(outcome, ModelCheckOutcome::Violated { .. }))
+            })
+            .expect("the run completes within its exploration budget");
+        let bounded = with_budgets(transition_budget, minimum_work)
+            .expect("the exact work and transition budgets admit the witness");
+        assert_eq!(violation(&bounded), &expected, "the witness is unchanged");
+        assert_eq!(
+            bounded.stats().product_edges,
+            u64::try_from(transition_budget).expect("small"),
+            "witness emission adds no transition edges"
+        );
+        let one_work_short = with_budgets(transition_budget, minimum_work - 1)
+            .expect("the work limit is a typed outcome");
+        assert!(matches!(one_work_short, ModelCheckOutcome::Stopped {
+            limit: Some(ReachedLimit {
+                limit: ModelCheckLimit::EvaluationMeter {
+                    counter: filament_exact::LimitKind::WorkUnits,
+                }, ..
+            }), ..
+        }));
     }
 }
 
