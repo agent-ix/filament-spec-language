@@ -573,7 +573,6 @@ enum ProfileDispatch {
     Measure,
     Exact,
     Timed,
-    FairTimed,
     LongRun,
     CyclicMdp,
     CyclicMdpReward,
@@ -623,19 +622,6 @@ fn profile_dispatch(
             }
             Some(quire_canonical::Node::String(CYCLIC_MDP_REWARD_PROFILE)) => {
                 ProfileDispatch::CyclicMdpReward
-            }
-            Some(quire_canonical::Node::String(BOUNDED_FAIR_PROFILE))
-                if matches!(
-                    parsed
-                        .root()
-                        .get("objective")
-                        .and_then(|node| node.get("timed"))
-                        .and_then(|node| node.get("form"))
-                        .map(|node| node.node()),
-                    Some(quire_canonical::Node::String("expected-elapsed"))
-                ) =>
-            {
-                ProfileDispatch::FairTimed
             }
             Some(quire_canonical::Node::String(BOUNDED_FAIR_PROFILE)) => {
                 ProfileDispatch::BoundedFair
@@ -945,6 +931,20 @@ fn read_document_profile(
     )?;
     let root = parsed.root();
     let objective = root.get("objective");
+    let timed_fair_profile = allow_fair
+        && matches!(
+            objective
+                .and_then(|node| node.get("profile"))
+                .map(|node| node.node()),
+            Some(quire_canonical::Node::String(TIMED_PROFILE))
+        )
+        && matches!(
+            objective
+                .and_then(|node| node.get("timed"))
+                .and_then(|node| node.get("form"))
+                .map(|node| node.node()),
+            Some(quire_canonical::Node::String("expected-elapsed"))
+        );
     let outside_profile = matches!(root.get("kind").map(|node| node.node()), Some(quire_canonical::Node::String(kind)) if kind != "exact" && kind != "upper")
         || matches!(objective.and_then(|node| node.get("profile")).map(|node| node.node()), Some(quire_canonical::Node::String(profile)) if if cyclic_mdp { !matches!(profile, CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE | CYCLIC_MDP_STATE_PROFILE) } else { !(allow_fair && matches!(profile, BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE)) && profile != PROFILE && profile != STATE_PROFILE && profile != REWARD_PROFILE && profile != CYCLIC_PROFILE && profile != CYCLIC_REWARD_PROFILE && profile != CYCLIC_STATE_PROFILE && profile != TIMED_PROFILE })
         || matches!(objective.and_then(|node| node.get("event")).map(|node| node.node()), Some(quire_canonical::Node::String(event)) if !matches!(event, "until" | "always"))
@@ -964,6 +964,7 @@ fn read_document_profile(
                                 BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
                             ))
                         ))
+                    && !timed_fair_profile
             }
             _ => false,
         };
@@ -1013,7 +1014,7 @@ fn read_document_profile(
         Some(quire_canonical::Node::String(
             BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
         ))
-    );
+    ) || timed_fair_profile;
     if fair_profile {
         let mut admission =
             ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
@@ -1057,6 +1058,7 @@ fn read_document_profile(
             .timed
             .as_ref()
             .is_some_and(|timed| timed.form == "elapsed-quantile");
+    let timed_fair_profile = timed_fair_profile && !wire.objective.fairness.is_empty();
     if (wire.kind != "exact" && !upper_kind)
         || if cyclic_mdp {
             !matches!(
@@ -1084,13 +1086,15 @@ fn read_document_profile(
                 wire.objective.profile.as_str(),
                 BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
             )
+            && !timed_fair_profile
     {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     if matches!(
         wire.objective.profile.as_str(),
         BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
-    ) {
+    ) || timed_fair_profile
+    {
         let destination = fairness.ok_or(ProbabilityDocumentError::Unsupported)?;
         *destination = fairness::read(&wire.objective.fairness, limits, cancel, meter, storage)?;
         if destination.is_empty() {
@@ -2162,17 +2166,6 @@ fn check_document_bytes(
             );
         }
         ProfileDispatch::Timed => {
-            return timed::check(
-                system,
-                claims,
-                item,
-                bytes,
-                offer.relation(),
-                limits,
-                cancel,
-            );
-        }
-        ProfileDispatch::FairTimed => {
             return timed::check(
                 system,
                 claims,

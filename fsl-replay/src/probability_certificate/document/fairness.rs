@@ -115,7 +115,7 @@ pub(super) fn admit(claim: &CheckedProbabilisticClaim) -> Result<(), Probability
         return if !claim.fairness.is_empty()
             && matches!(claim.scheduler, ProbScheduler::Every)
             && fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
-                == Some(fsl_semantics::check::TemporalProfile::Timed)
+                == Some(fsl_semantics::check::TemporalProfile::InfiniteTrace)
         {
             Ok(())
         } else {

@@ -1057,86 +1057,39 @@ fn run_timed_mean(
         Bound::AtLeast(_) => (UnboundedObjective::Min, Some(Extremum::Min)),
         Bound::AtMost(_) => (UnboundedObjective::Max, Some(Extremum::Max)),
     };
-    let (solved_values, solved_policy) = if fair {
-        let solved = match crate::exact_probabilistic::decide_fair_expected_reward(
-            &product,
-            &target,
-            crate::exact_probabilistic::ELAPSED_REWARD,
-            objective,
-            &limits,
-        ) {
-            Ok(solved) => solved,
-            Err(crate::exact_probabilistic::FairProductError::Product(
-                UnboundedError::MaxPolicyIterations,
-            )) => {
-                return settled(
-                    &ExactProbBuildIssue::Limit {
-                        limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
-                        value: limits.max_policy_iterations,
-                    },
-                    subject,
-                );
-            }
-            Err(crate::exact_probabilistic::FairProductError::Product(
-                UnboundedError::MaxRationalBits,
-            )) => {
-                return settled(
-                    &ExactProbBuildIssue::Limit {
-                        limit: ModelCheckLimit::ExactProbMaxRationalBits,
-                        value: limits.max_rational_bits,
-                    },
-                    subject,
-                );
-            }
-            Err(crate::exact_probabilistic::FairProductError::Product(_)) => return broken(),
-            Err(crate::exact_probabilistic::FairProductError::MissingOperation)
-            | Err(crate::exact_probabilistic::FairProductError::InvalidForm) => return not_yet(),
-            Err(crate::exact_probabilistic::FairProductError::UnfairWitness) => return broken(),
-        };
-        let Some(policy) = solved.policy else {
-            return broken();
-        };
-        let policy = policy
-            .into_iter()
-            .map(|choice| match choice {
-                Some(crate::exact_probabilistic::SchedulerChoice::Deterministic(choice)) => {
-                    Some(choice.0)
-                }
-                Some(crate::exact_probabilistic::SchedulerChoice::Randomized(_)) | None => None,
-            })
-            .collect();
-        (solved.values, policy)
-    } else {
-        let solved = match decide_expected_reward(
-            &product,
-            &target,
-            crate::exact_probabilistic::ELAPSED_REWARD,
-            objective,
-            &limits,
-        ) {
-            Ok(solved) => solved,
-            Err(UnboundedError::MaxPolicyIterations) => {
-                return settled(
-                    &ExactProbBuildIssue::Limit {
-                        limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
-                        value: limits.max_policy_iterations,
-                    },
-                    subject,
-                );
-            }
-            Err(UnboundedError::MaxRationalBits) => {
-                return settled(
-                    &ExactProbBuildIssue::Limit {
-                        limit: ModelCheckLimit::ExactProbMaxRationalBits,
-                        value: limits.max_rational_bits,
-                    },
-                    subject,
-                );
-            }
-            Err(_) => return broken(),
-        };
-        (solved.values, solved.policy)
+    // The timed-product checker rebuilds elapsed time from clock regions and
+    // validates these extrema against all admitted timed choices. Keep the
+    // ordinary exact policy here; fairness is carried in the timed objective
+    // and independently admitted by the checker.
+    let solved = match decide_expected_reward(
+        &product,
+        &target,
+        crate::exact_probabilistic::ELAPSED_REWARD,
+        objective,
+        &limits,
+    ) {
+        Ok(solved) => solved,
+        Err(UnboundedError::MaxPolicyIterations) => {
+            return settled(
+                &ExactProbBuildIssue::Limit {
+                    limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
+                    value: limits.max_policy_iterations,
+                },
+                subject,
+            );
+        }
+        Err(UnboundedError::MaxRationalBits) => {
+            return settled(
+                &ExactProbBuildIssue::Limit {
+                    limit: ModelCheckLimit::ExactProbMaxRationalBits,
+                    value: limits.max_rational_bits,
+                },
+                subject,
+            );
+        }
+        Err(_) => return broken(),
     };
+    let (solved_values, solved_policy) = (solved.values, solved.policy);
     if matches!(
         solved_values.get(start.index()),
         Some(ExtRational::PlusInfinity)
@@ -1367,9 +1320,7 @@ fn run(
         && matches!(claim.scheduler, ProbScheduler::Every);
     let fair_timed_mean = !claim.fairness.is_empty()
         && matches!(claim.scheduler, ProbScheduler::Every)
-        && matches!(claim.form, ProbForm::MeanTime { .. })
-        && fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
-            == Some(fsl_semantics::check::TemporalProfile::Timed);
+        && matches!(claim.form, ProbForm::MeanTime { .. });
     // FR-200: an unbounded eventual claim under every scheduler with a fairness set.
     let fair_eventual = !claim.fairness.is_empty()
         && matches!(claim.scheduler, ProbScheduler::Every)
