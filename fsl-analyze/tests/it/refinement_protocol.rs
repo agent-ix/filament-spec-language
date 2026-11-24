@@ -861,7 +861,7 @@ fn required_weak_whole_fairness_does_not_imply_concrete_strong_each() {
         abstract_package: world.package(),
         abstract_initial: vec![world.abstract_initial()].into(),
     };
-    let replay_assumption = |candidate: &fsl_replay::ProtocolAssumptionWitness| {
+    let replay_assumption = move |candidate: &fsl_replay::ProtocolAssumptionWitness| {
         replay_protocol_assumption_witness(world.refinement(), &systems, candidate)
     };
     let settled = settle_refinement_safety_with_assumption_replay(
@@ -878,8 +878,7 @@ fn required_weak_whole_fairness_does_not_imply_concrete_strong_each() {
         settled.value,
         TerminalValue::Inconclusive(
             fsl_replay::InconclusiveCause::ProtocolAssumptionNotEstablished(ref settled_witness)
-                if settled_witness.reason == fsl_replay::ProtocolAssumptionReason::Strengthened
-        )
+        ) if settled_witness.reason == fsl_replay::ProtocolAssumptionReason::Strengthened
     ));
 
     let mut stale_safety = outcome.safety.clone();
@@ -1329,7 +1328,7 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
         abstract_package: world.package(),
         abstract_initial: vec![world.abstract_initial()].into(),
     };
-    let replay_assumption = |witness| {
+    let replay_assumption = move |witness: &fsl_replay::ProtocolAssumptionWitness| {
         replay_protocol_assumption_witness(world.refinement(), &systems, witness)
     };
     let settled = settle_refinement_safety_with_assumption_replay(
@@ -1346,8 +1345,7 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
         settled.value,
         TerminalValue::Inconclusive(
             fsl_replay::InconclusiveCause::ProtocolAssumptionNotEstablished(ref settled_witness)
-                if settled_witness.reason == fsl_replay::ProtocolAssumptionReason::RelationUndetermined
-        )
+        ) if settled_witness.reason == fsl_replay::ProtocolAssumptionReason::RelationUndetermined
     ));
 
     let mut stale_safety = outcome.safety.clone();

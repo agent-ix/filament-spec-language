@@ -567,7 +567,12 @@ fn hp5_witnesses_settle_through_the_product_certificate_and_replay() {
     let ExistentialOutcome::Witnessed { lassos } = &mut loop_removed.outcome else {
         unreachable!("the engine outcome was witnessed")
     };
-    lassos[0].lasso.steps.pop().expect("one loop step");
+    lassos[0]
+        .lasso
+        .path
+        .steps
+        .pop()
+        .expect("one loop step");
     let refused = settle_instance(&world, &loop_removed, limits);
     assert!(matches!(
         refused.record.value,
