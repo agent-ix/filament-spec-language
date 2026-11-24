@@ -124,8 +124,8 @@ fn an_unbounded_fair_eventual_certificate_is_accepted() {
         matches!(&settlement, fsl_analyze::analyze::Settlement::Terminal(record)
             if matches!(record.value(), fsl_replay::TerminalValue::Proved {
                 basis: fsl_replay::ProofBasis::ExactValue { value, .. }, ..
-            } if value.value().numerator() == &filament_exact::Integer::from(1)
-                && value.value().denominator() == &filament_exact::Integer::from(2))),
+            } if value.value().numerator() == &filament_exact::Integer::from(1_i64)
+                && value.value().denominator() == &filament_exact::Integer::from(2_i64))),
         "AC-5 settles proved with exact value 1/2: {settlement:?}"
     );
     let doc = document(&request);
