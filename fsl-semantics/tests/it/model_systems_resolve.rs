@@ -11,7 +11,7 @@
 use filament_checked::key::DeclarationKey;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::model::accounting::{
-    ChargePoint, LimitKind, Meter, ModelNormalizationLimits, NormalizationIncomplete,
+    NormalizationChargePoint, NormalizationLimitKind, NormalizationMeter, ModelNormalizationLimits, NormalizationIncomplete,
 };
 use fsl_semantics::model::admitted::AdmittedPackage;
 use fsl_semantics::model::domain_package::{
@@ -112,11 +112,11 @@ struct World {
     admitted: AdmittedPackage,
     view: EffectiveView,
     selection: DomainPackageRef,
-    admission_charges: Vec<ChargePoint>,
+    admission_charges: Vec<NormalizationChargePoint>,
 }
 
 fn world_of(admitted_package: DomainPackage, viewed_package: &DomainPackage) -> World {
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     let selection = admitted_package.model_selection.clone();
     let admitted =
         AdmittedPackage::admit(admitted_package, &mut meter).expect("fixture Y is admitted");
@@ -144,8 +144,8 @@ fn resolve(
     required: Kind,
     name: &str,
     limits: ModelNormalizationLimits,
-) -> (Result<ResolvedSystemsElement, ResolveFailure>, Meter) {
-    let mut meter = Meter::new(limits);
+) -> (Result<ResolvedSystemsElement, ResolveFailure>, NormalizationMeter) {
+    let mut meter = NormalizationMeter::new(limits);
     let result = resolve_systems(
         &world.admitted,
         &world.view,
@@ -161,7 +161,7 @@ fn resolve_m(
     world: &World,
     required: Kind,
     name: &str,
-) -> (Result<ResolvedSystemsElement, ResolveFailure>, Meter) {
+) -> (Result<ResolvedSystemsElement, ResolveFailure>, NormalizationMeter) {
     let aliases = [ModelAlias {
         alias: "M",
         selection: &world.selection,
@@ -216,7 +216,7 @@ fn y01_each_systems_kind_resolves_with_declaration_key_and_effective_identity() 
     let world = world();
     assert_eq!(
         world.admission_charges,
-        vec![ChargePoint::SystemsKind; 8],
+        vec![NormalizationChargePoint::SystemsKind; 8],
         "kind mapping charges eight systems.kind"
     );
     let flow = world.view.type_identities()[&key("Flow")].clone();
@@ -264,12 +264,12 @@ fn y01_each_systems_kind_resolves_with_declaration_key_and_effective_identity() 
         );
         // The resolve charge, then the admission rule's own charges: three
         // connection conditions for a Connection, one for an Allocation.
-        let mut charges = vec![ChargePoint::SystemsResolve];
+        let mut charges = vec![NormalizationChargePoint::SystemsResolve];
         match kind {
             Kind::Connection => {
-                charges.extend([ChargePoint::SystemsConnectionCondition; 3]);
+                charges.extend([NormalizationChargePoint::SystemsConnectionCondition; 3]);
             }
-            Kind::Allocation => charges.push(ChargePoint::SystemsAllocation),
+            Kind::Allocation => charges.push(NormalizationChargePoint::SystemsAllocation),
             Kind::Part | Kind::Port | Kind::Interface | Kind::None => {}
         }
         assert_eq!(meter.admitted_charges(), charges, "{artifact}");
@@ -304,7 +304,7 @@ fn y01_a_construct_is_never_named_through_its_owner() {
         );
         assert_eq!(
             meter.admitted_charges(),
-            [ChargePoint::SystemsResolve; 2],
+            [NormalizationChargePoint::SystemsResolve; 2],
             "{name}"
         );
     }
@@ -328,7 +328,7 @@ fn an_unresolvable_name_refuses_without_ambient_lookup() {
             segment: 1,
         }
     );
-    assert_eq!(meter.admitted_charges(), [ChargePoint::SystemsResolve]);
+    assert_eq!(meter.admitted_charges(), [NormalizationChargePoint::SystemsResolve]);
 
     let (result, _) = resolve_m(&world, Kind::Part, "pump_out");
     assert_eq!(
@@ -438,7 +438,7 @@ fn a_name_resolving_to_another_kind_is_wrong_export() {
         let refusal = refused(result);
         assert_eq!(refusal.code, Code::InvalidModelBinding, "{name}");
         assert_eq!(refusal.cause, ModelRefusalCause::WrongExport, "{name}");
-        assert_eq!(meter.admitted_charges(), [ChargePoint::SystemsResolve]);
+        assert_eq!(meter.admitted_charges(), [NormalizationChargePoint::SystemsResolve]);
     }
 }
 
@@ -460,11 +460,11 @@ fn a_denied_systems_resolve_charge_is_incomplete() {
     assert_eq!(
         result,
         Err(ResolveFailure::Incomplete(NormalizationIncomplete {
-            limit_kind: LimitKind::WorkUnits,
+            limit_kind: NormalizationLimitKind::WorkUnits,
             limit: 0,
             consumed: 0,
             next_charge: 1,
-            charge_point: ChargePoint::SystemsResolve,
+            charge_point: NormalizationChargePoint::SystemsResolve,
         }))
     );
 }
@@ -517,7 +517,7 @@ fn y02_an_allocation_targeting_a_port_does_not_resolve() {
     assert_eq!(refusal.cause, ModelRefusalCause::WrongExport);
     assert_eq!(
         meter.admitted_charges(),
-        [ChargePoint::SystemsResolve, ChargePoint::SystemsAllocation]
+        [NormalizationChargePoint::SystemsResolve, NormalizationChargePoint::SystemsAllocation]
     );
 }
 
@@ -546,7 +546,7 @@ fn y03a_a_connection_against_port_direction_does_not_resolve() {
         meter
             .admitted_charges()
             .iter()
-            .filter(|point| **point == ChargePoint::SystemsConnectionCondition)
+            .filter(|point| **point == NormalizationChargePoint::SystemsConnectionCondition)
             .count(),
         3
     );

@@ -424,7 +424,7 @@ pub struct AdmissionMeter {
 }
 
 // A production `AdmissionMeter` owns no heap memory (see
-// `crate::model::accounting::Meter`'s identical assertion).
+// `crate::model::accounting::NormalizationMeter`'s identical assertion).
 #[cfg(not(feature = "test-support"))]
 const _: () = assert!(!std::mem::needs_drop::<AdmissionMeter>());
 
