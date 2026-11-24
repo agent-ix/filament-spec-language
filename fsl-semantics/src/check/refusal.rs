@@ -4172,6 +4172,8 @@ pub enum IdentityForm {
     OrderSensitiveTraversal,
     /// A conversion of a reference to a value of another type.
     ReferenceConversion,
+    /// A reference literal that names an object's key.
+    KeyedReferenceLiteral,
 }
 
 /// The kind of node an `identity-observing-form` refusal is at.
@@ -4183,6 +4185,8 @@ pub enum IdentityNode {
     Reduce,
     /// A `convert<T>(e)`.
     Convert,
+    /// A reference literal naming an object key.
+    ReferenceLiteral,
 }
 
 /// What an `identity-observing-form` refusal retains (FR-150): the refused

@@ -278,19 +278,27 @@ fn a_fold_over_references_into_an_annotated_population_refuses() {
     );
 }
 
-/// Partial FR-150-AC-8 coverage (TC-566): the concrete model's
-/// `config_history` annotation bars identity observation in a refinement
-/// field row. The model bytes are duplicated under a second package identity
-/// so the refinement has distinct abstract and concrete selections.
-#[trace("TC-566")]
+/// FR-150-AC-8 refuses identity observation in an operation precondition and
+/// in a refinement field row, naming the annotated concrete population.
+#[trace("TC-566", "FR-150-AC-8")]
 #[test]
 fn a_refinement_field_cannot_convert_a_symmetric_reference_to_text() {
+    let annotated_document = annotated(&document());
+    let literal = "Config::ConfigVersion#\"a\"";
+    let precondition = format!(
+        "pre Stable using v on Config::ConfigVersion::attemptUpdate {{ self = {literal} }}\n"
+    );
+    let payload = identity_refusal(&annotated_document, &precondition, literal);
+    assert_eq!(payload.node, IdentityNode::ReferenceLiteral);
+    assert_eq!(payload.form, IdentityForm::KeyedReferenceLiteral);
+    assert_eq!(payload.population.node, POPULATION);
+
     const ABSTRACT: &str = "example/config-version-abstract";
     let abstract_document = String::from_utf8(document())
         .expect("model document is UTF-8")
         .replace("example/config-version", ABSTRACT)
         .into_bytes();
-    let concrete_document = annotated(&document());
+    let concrete_document = annotated_document;
     let convert = "convert<String>(self.parent)";
     let body = format!(
         "refinement ConfigProjection using inf abstract Spec concrete Impl {{\n\
@@ -473,10 +481,22 @@ fn a_terminal_predicate_refuses_and_two_refusals_report_in_source_order() {
     assert!(starts[0] < starts[1], "source order: {starts:?}");
 }
 
-/// Partial FR-150-AC-7 coverage (TC-566): ordinary reference equality in a
-/// function body and order-independent population operators in a postcondition
-/// check. AC-7's chooser fold, text conversion, and bounded sequence conversion
-/// remain implementation gaps.
+/// Partial FR-150-AC-4 behavior: an invariant can quantify an annotated
+/// population and compare reference-valued fields without identity refusal.
+/// The AC's temporal atom uses two undeclared views and its `s` field is not
+/// represented by this fixture.
+#[trace("TC-566")]
+#[test]
+fn a_quantified_invariant_can_compare_reference_fields_of_an_annotated_population() {
+    let document = annotated(&document());
+    let body = "invariant ParentOrder using v on Config::ConfigVersion at current { \
+                forall(p in Config::config_history : p.parent = p.parent) }\n";
+    check(&document, body).expect("equality in a population quantifier is order independent");
+}
+
+/// Partial FR-150-AC-7 coverage (TC-566): function equality, bounded sequence
+/// conversion and order-independent population operators check; a chooser
+/// fold keeps FR-145's `operator-ineligible` refusal rather than FR-150's cause.
 #[trace("TC-566")]
 #[test]
 fn function_bodies_keep_their_rules_and_population_operators_check() {
@@ -485,6 +505,25 @@ fn function_bodies_keep_their_rules_and_population_operators_check() {
         "{FLAG}function same using v(p: Reference<Config::ConfigVersion>): Boolean pure {{ p = p }}\n"
     );
     check(&document, &functions).expect("function bodies use the unannotated rules");
+
+    let chooser = format!(
+        "{FLAG}function pick using v(s: Set<Reference<Config::ConfigVersion>>): \
+         Reference<Config::ConfigVersion> pure {{ \
+         fold<Config::ConfigVersion>(acc, p in s: p, identity: Config::ConfigVersion#\"a\") }}\n"
+    );
+    let refusals = check(&document, &chooser)
+        .expect_err("a function chooser fold is not in the commutative catalog");
+    assert_eq!(
+        causes(&refusals),
+        [(Code::IllTyped, Some("operator-ineligible"))]
+    );
+
+    let sequence = format!(
+        "{FLAG}function sequenceView using v(s: Set<Reference<Config::ConfigVersion>>): \
+         Sequence<Reference<Config::ConfigVersion>>[0, 8] pure {{ \
+         convert<Sequence<Reference<Config::ConfigVersion>>[0, 8]>(s) }}\n"
+    );
+    check(&document, &sequence).expect("a function sequence conversion checks");
 
     let post = format!(
         "{FLAG}post PopulationReads using v on Config::ConfigVersion::attemptUpdate {{\

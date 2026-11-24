@@ -6258,6 +6258,12 @@ impl<'a> Typer<'a> {
         form: IdentityForm,
         operand: &ValueType,
     ) -> Option<CheckRefusal> {
+        // FR-150 applies to checked clauses and refinement rows. Function
+        // bodies are type-checked with the same model scope, but their rules
+        // are deliberately unaffected by a population annotation (FR-150-AC-7).
+        if self.clause_kind == ClauseKind::Body {
+            return None;
+        }
         let population = self.scope.symmetric_population_in(operand)?.clone();
         Some(refuse(
             location,
