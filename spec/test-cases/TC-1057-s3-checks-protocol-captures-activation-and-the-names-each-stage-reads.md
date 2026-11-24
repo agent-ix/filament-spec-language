@@ -105,6 +105,7 @@ named read, retaining `name`, `stage`, `owner` and `read`.
 | 28 | `activate first (trigger: M::Hop) when { trigger.node.n = 1 }` | `ill_typed`/`operator-ineligible` at `trigger.node.n`, naming the trigger-guard stage: a read through a reference is a model-state read |
 | 29 | `recover (recovered: M::Hop) { deref(recovered.node).n = 1 }` | `ill_typed`/`operator-ineligible` at the `deref`, naming the recovery stage |
 | 30 | `activate first (trigger: M::Hop) when { not trigger.ready } { capture activated: Boolean = trigger.node.n = 1; }` | checks: an activation capture may read model state |
+| 31 | In the `Refunds` protocol capture of the base fixture, replace the initializer with the literal source `capture remainder: Boolean = 6 mod (1 - 1) >= 0;` | S3 refuses `undefined_expression`/`unproved-nonzero` at the `mod` operation in the capture initializer, retaining `capture` `remainder`, `stage` `protocol-capture`, and `owner` `Refunds`; no checked clause is returned |
 
 ## Expected Results
 
