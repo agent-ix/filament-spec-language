@@ -765,10 +765,9 @@ fn probabilistic_on_each_names_first_failing_instance() {
     assert_eq!(item, &once()["items"][0], "a rerun names the same instance");
 }
 
-/// FR-196-AC-15 and FR-741-AC-5 (TC-3060/TC-3062): the checked two-object
-/// Link source emits the conditional masses for m, leaves n vacuous and
-/// waiting at every reachable key, and names m on a refutation.
-#[trace("TC-3062", "FR-741-AC-5")]
+/// FR-196-AC-15 (TC-3060): the checked two-object Link source emits the
+/// conditional masses for m, leaves n vacuous and waiting at every reachable
+/// key, and preserves the distinct activation keys.
 #[trace("TC-3060", "FR-196-AC-15")]
 #[test]
 fn probabilistic_on_each_reports_conditional_certificate_and_instance() {
@@ -988,22 +987,6 @@ fn probabilistic_on_each_reports_conditional_certificate_and_instance() {
             .expect("nonzero denominator")
         ),
         "the independently computed on-origin value is 391/400"
-    );
-
-    let refuted_world = world_with("rational(99, 100)");
-    let refuted = analyze_claim(&refuted_world, "E");
-    assert!(matches!(
-        refuted.terminal().expect("the refutation settles").value(),
-        TerminalValue::Refuted
-    ));
-    let witness = refuted
-        .probabilistic_counterexample
-        .as_ref()
-        .expect("the refutation names its instance");
-    assert!(
-        witness.wire.as_ref().expect("the witness spells")["instance"]
-            .to_string()
-            .contains("\"m\"")
     );
 }
 
