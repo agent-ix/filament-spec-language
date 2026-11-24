@@ -34,3 +34,17 @@ Round 2 reviewed `1ac4da2a725290e8986f265eeb45bf73917e7d0d`. The PR requires ano
 | FND-002 | fixed | FR-255 names the dense solver, FR-203-AC-16 and FR-203 in the settings row. |
 | FND-003 | fixed | ADR-026 RT-4 now charges each recurrence iteration to max_demand_points. |
 | FND-004 | fixed | Pace cites AC-5, ScheduleLimits includes both recurrence types, and TC-638 step 6 describes the four-state, one-cell control. |
+
+Round 3 reviewed `bb649d2006b756bcbd7358a4fbd1474760ab5c86`. All previously open findings in this artifact are fixed.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The model reduction precheck streams closure or skips it for an empty group. The state graph admits bounded roots before sampling and reuses them for exploration. Both previously identified whole-set collectors are gone. SR-3639001 tracks the separate crossing-state and protocol-entry defects. |
+
+Round 4 reviewed `b05ca318826032f4fb39bf61918f9e3993f51c72` against `608e201178a28f96a0b4e738114ce7227cb66c7b`. PASS. The prior four findings remain closed, including the three low documentation findings.
+
+Round 5 reviewed `b0078a167be4aa35c8fce8d1ef8bfcbec4094c6e` against `dccaf11c3d00f51738761f26cb72ef3124415e02`. PASS. All four original findings are closed, including the three low documentation findings.
+
+Round 6 reviewed `2dc5f4817dfad4059ac12990eff97e0176311dba` against `16c724b092132cce8283860c9f67fd327f3db064`. PASS. All four original findings remain closed. FR-255 points to the rebased FR-203-AC-28.
+
+Round 7 reviewed `e77768d387d01eee1ed13483835e60b2ce249000` against `ca74568372bdda843b1808c6fee4e3c5c56a8ee7`. PASS. All prior findings, including the three low documentation findings, remain closed.
