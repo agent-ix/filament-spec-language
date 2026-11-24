@@ -400,6 +400,7 @@ fn enumerate_controlled(
         CheckerGraph {
             initial: root,
             states,
+            scheduler_actions: Default::default(),
         },
         ranks,
     ))

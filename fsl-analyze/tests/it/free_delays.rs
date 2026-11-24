@@ -16,6 +16,7 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use filament_semantic_value::catalog::CatalogCode;
+use fsl_analyze::analyze::{Engines, analyze_items, exact_probabilistic_item};
 use fsl_analyze::exact_probabilistic::{
     action_steps, build_product, decide_bounded_event, decide_fair_expected_reward,
     decide_fair_reachability, decide_reachability, free_delays_choice, produce_witness,
@@ -26,7 +27,7 @@ use fsl_analyze::exact_probabilistic::{
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::ScheduledIdentity;
 use fsl_replay::{
-    FreeDelayActionRow, FreeDelaysRace, FreeRacer, GivenRacer,
+    FreeDelayActionRow, FreeDelaysRace, FreeRacer, GivenRacer, ProbabilisticSchedulerChoice,
     ProductAction as ReplayProductAction, ProductActionRefusal, Schedule,
 };
 use fsl_semantics::check::Bound;
@@ -318,7 +319,7 @@ fn later_guard_race() -> World {
     )
 }
 
-/// FR-204-AC-8 and AC-9 (TC-642 step 5): two rows, given `[1]` and `[3]`,
+/// FR-204-AC-8 (TC-642 step 5): two rows, given `[1]` and `[3]`,
 /// each offering `B` the delays 1 to 3, make nine actions; the maximum `3/4`
 /// and the minimum `1/4` take the least attaining delay of each row.
 #[trace("TC-642", "FR-204-AC-8")]
@@ -357,6 +358,61 @@ fn two_rows_take_the_least_attaining_delay_of_each() {
         min_witness,
         [row(&[("A", 1)], &[("B", 2)]), row(&[("A", 3)], &[("B", 3)])]
     );
+}
+
+/// FR-204-AC-9: the `Race` producer's maximum and minimum scheduler entries
+/// retain the independently selected `B` delay for each given `A` row.
+#[trace("TC-642", "FR-204-AC-9")]
+#[test]
+fn timed_race_replays_the_maximum_and_minimum_free_delay_rows() {
+    let world = race(
+        "1 ms: 1, 3 ms: 1",
+        1,
+        "",
+        &["A", "B"],
+        &extrema_claims(5, "0.7", "0.3"),
+    );
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    for (name, expected_delays) in [("Max", [1, 1]), ("Min", [2, 3])] {
+        let claim = world
+            .package
+            .graph()
+            .probabilistic_model()
+            .claim(name)
+            .expect("the claim checks");
+        let item = exact_probabilistic_item(
+            fsl_foundation::RequestIndex::new(0),
+            fsl_analyze::exact_probabilistic::ProductRequest {
+                subject: ModelSubject {
+                    simulation: world.request(),
+                    proof_bounds: Vec::new(),
+                },
+                claim,
+                limits: ExactProbLimits::default(),
+            },
+        );
+        let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+        let evidence = record
+            .probabilistic_counterexample
+            .as_ref()
+            .unwrap_or_else(|| panic!("{name} witness replays: {record:#?}"));
+        assert!(evidence.evidence().scheduler.iter().any(|(_, choice)| {
+            matches!(
+                choice,
+                ProbabilisticSchedulerChoice::Deterministic(
+                    ReplayProductAction::FreeDelays(rows)
+                ) if rows.len() == 2
+                    && rows[0].given.len() == 1
+                    && rows[0].given[0].1 == 1
+                    && rows[0].free.len() == 1
+                    && rows[0].free[0].1 == expected_delays[0]
+                    && rows[1].given.len() == 1
+                    && rows[1].given[0].1 == 3
+                    && rows[1].free.len() == 1
+                    && rows[1].free[0].1 == expected_delays[1]
+            )
+        }), "{name} keeps both race-row scheduler choices");
+    }
 }
 
 /// FR-204-AC-10's `Detour`: `B` leads to `Half`, where `G` (sets `b`) and `L`
@@ -481,6 +537,11 @@ fn every_free_identity_is_in_each_row() {
         .flat_map(|b| (1..=3).map(move |c| row(&[("A", 2)], &[("B", b), ("C", c)])))
         .collect();
     assert_eq!(rows, [expected]);
+    assert!(rows[0].iter().all(|candidate| {
+        candidate.1.len() == 2
+            && candidate.1.iter().any(|(name, _)| name == "B")
+            && candidate.1.iter().any(|(name, _)| name == "C")
+    }));
     assert_eq!(actions(&rows), 9);
 
     let (maximum, max_witness) = decide(&world, &built, Bound::AtMost(ratio(1, 2)));
@@ -979,6 +1040,214 @@ fn detour_maximum_witness_is_a_two_path_set_of_merged_steps() {
     ));
 }
 
+/// FR-204-AC-10 and FR-202-AC-8: the checked timed refutation preserves the
+/// post-draw `FreeDelays` scheduler choice and replays its two merged paths.
+#[trace("TC-642", "FR-204-AC-10")]
+#[trace("FR-202-AC-8")]
+#[test]
+fn timed_detour_refutation_replays_its_free_delay_scheduler() {
+    let world = detour(&claim(
+        "Max",
+        "under All",
+        "<= 0.7",
+        "eventually[0 ms, 2 ms] holds(c.late)",
+    ));
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let max_claim = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Max")
+        .expect("the claim checks");
+    let item = exact_probabilistic_item(
+        fsl_foundation::RequestIndex::new(0),
+        fsl_analyze::exact_probabilistic::ProductRequest {
+            subject: ModelSubject {
+                simulation: world.request(),
+                proof_bounds: Vec::new(),
+            },
+            claim: max_claim,
+            limits: ExactProbLimits::default(),
+        },
+    );
+    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let replayed_witness = record
+        .probabilistic_counterexample
+        .as_ref()
+        .unwrap_or_else(|| panic!("expected replayed Detour witness: {record:#?}"));
+    assert_eq!(replayed_witness.mass(), &ratio(3, 4));
+    assert!(
+        replayed_witness
+            .evidence()
+            .scheduler
+            .iter()
+            .any(|(_, choice)| match choice {
+                ProbabilisticSchedulerChoice::Deterministic(ReplayProductAction::FreeDelays(
+                    rows,
+                )) => {
+                    rows.len() == 2
+                        && rows[0].given.len() == 1
+                        && rows[0].given[0].1 == 1
+                        && rows[0].free.len() == 1
+                        && rows[0].free[0].1 == 2
+                        && rows[1].given.len() == 1
+                        && rows[1].given[0].1 == 3
+                        && rows[1].free.len() == 1
+                        && rows[1].free[0].1 == 1
+                }
+                _ => false,
+            })
+    );
+    // This continuation key is deterministic and has no FreeDelays alias,
+    // so omitting its UnitDelay from the FreeDelays choice map is legitimate.
+    assert!(
+        replayed_witness
+            .evidence()
+            .scheduler
+            .iter()
+            .any(|(_, choice)| {
+                matches!(
+                    choice,
+                    ProbabilisticSchedulerChoice::Deterministic(ReplayProductAction::UnitDelay)
+                )
+            }),
+        "ordinary non-FreeDelays scheduler entries remain admissible"
+    );
+    let mut path_lengths: Vec<_> = replayed_witness
+        .evidence()
+        .paths
+        .iter()
+        .map(|path| path.steps.len())
+        .collect();
+    path_lengths.sort_unstable();
+    assert_eq!(path_lengths, [1, 2]);
+
+    let minimum_world = detour(&claim(
+        "Min",
+        "under All",
+        ">= 0.45",
+        "eventually[0 ms, 2 ms] holds(c.late)",
+    ));
+    let minimum_product = build(&minimum_world, "Min");
+    let FhResult::Exact { values, policy } = decide_bounded_event(
+        &minimum_product,
+        &Bound::AtLeast(ratio(9, 20)),
+        &ExactProbLimits::default(),
+    )
+    .expect("the digital product is acyclic")
+    else {
+        panic!("exact minimum value");
+    };
+    let initial = minimum_product.initial[0].2;
+    assert_eq!(values[initial.index()], ratio(3, 8));
+    assert_eq!(
+        witness(&minimum_world, &minimum_product, initial, &policy),
+        [row(&[("A", 1)], &[("B", 1)]), row(&[("A", 3)], &[("B", 2)])]
+    );
+}
+
+/// FR-202-AC-8: tampering with any part of a timed `FreeDelays` scheduler
+/// action refuses replay as invalid runtime input.
+#[trace("FR-202-AC-8")]
+#[test]
+fn timed_detour_scheduler_tampering_is_refused() {
+    use fsl_replay::{InconclusiveCause, TerminalValue};
+
+    let world = detour(&claim(
+        "Max",
+        "under All",
+        "<= 0.7",
+        "eventually[0 ms, 2 ms] holds(c.late)",
+    ));
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let claim = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Max")
+        .expect("the claim checks");
+    let tampered = |tamper: fn(&mut fsl_replay::ProbabilisticCounterexample)| {
+        let item = fsl_analyze::analyze::exact_probabilistic_item_witness_tampered(
+            fsl_foundation::RequestIndex::new(0),
+            fsl_analyze::exact_probabilistic::ProductRequest {
+                subject: ModelSubject {
+                    simulation: world.request(),
+                    proof_bounds: Vec::new(),
+                },
+                claim,
+                limits: ExactProbLimits::default(),
+            },
+            tamper,
+        );
+        analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+    };
+    let refusal = |record: fsl_analyze::analyze::AnalyzeRecord| {
+        assert_eq!(
+            record.terminal().expect("terminal result").value(),
+            &TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(
+                fsl_foundation::diagnostic::Code::InvalidRuntimeInput
+            )),
+            "tampered scheduler action must be refused: {record:#?}"
+        );
+        assert!(record.probabilistic_counterexample.is_none());
+    };
+    fn scheduler(
+        witness: &mut fsl_replay::ProbabilisticCounterexample,
+    ) -> &mut Vec<FreeDelayActionRow> {
+        witness
+            .scheduler
+            .iter_mut()
+            .find_map(|(_, choice)| match choice {
+                ProbabilisticSchedulerChoice::Deterministic(
+                    ReplayProductAction::FreeDelays(rows),
+                ) => Some(rows),
+                _ => None,
+            })
+            .expect("the fixture has a FreeDelays action")
+    }
+
+    refusal(tampered(|witness| scheduler(witness).swap(0, 1)));
+    refusal(tampered(|witness| {
+        scheduler(witness).remove(1);
+    }));
+    refusal(tampered(|witness| {
+        scheduler(witness)[0].free[0].1 = 4;
+    }));
+    refusal(tampered(|witness| {
+        let schedule = { scheduler(witness)[0].free[0].0.clone() };
+        let (_, choice) = witness
+            .scheduler
+            .iter_mut()
+            .find(|(_, choice)| {
+                matches!(choice, ProbabilisticSchedulerChoice::Deterministic(
+                    ReplayProductAction::FreeDelays(_)
+                ))
+            })
+            .expect("the fixture has a FreeDelays action");
+        *choice = ProbabilisticSchedulerChoice::Deterministic(
+            ReplayProductAction::WorkloadResolve { schedule, delay: 1 },
+        );
+    }));
+    refusal(tampered(|witness| {
+        let schedule = { scheduler(witness)[0].free[0].0.clone() };
+        let (_, choice) = witness
+            .scheduler
+            .iter_mut()
+            .find(|(_, choice)| {
+                !matches!(
+                    choice,
+                    ProbabilisticSchedulerChoice::Deterministic(
+                        ReplayProductAction::FreeDelays(_)
+                    )
+                )
+            })
+            .expect("a non-race scheduler state is present");
+        *choice = ProbabilisticSchedulerChoice::Deterministic(
+            ReplayProductAction::WorkloadResolve { schedule, delay: 1 },
+        );
+    }));
+}
+
 /// TC-637: the `Detour` witness action's canonical body admits
 /// at the race state (`A` drawing 1 or 3, `B` in `[1, 3]`); with its rows
 /// swapped, with the row given `[3]` removed, with `B` delay 4, or as
@@ -1088,6 +1357,79 @@ fn a_witness_row_naming_b_alone_refuses() {
         alone,
         ProductActionRefusal::FreeIdentities { row: 0 },
     );
+
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let claim = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Max")
+        .expect("the claim checks");
+    let item = exact_probabilistic_item(
+        fsl_foundation::RequestIndex::new(0),
+        fsl_analyze::exact_probabilistic::ProductRequest {
+            subject: ModelSubject {
+                simulation: world.request(),
+                proof_bounds: Vec::new(),
+            },
+            claim,
+            limits: ExactProbLimits::default(),
+        },
+    );
+    let admitted = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let evidence = admitted
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the maximum refutation replays");
+    assert_eq!(evidence.mass(), &ratio(1, 1));
+    let expected_body = ReplayProductAction::free_delays(&world.system(), &rows)
+        .expect("the expected FreeDelays action canonicalizes");
+    assert!(evidence.evidence().scheduler.iter().any(|(_, choice)| {
+        matches!(
+            choice,
+            ProbabilisticSchedulerChoice::Deterministic(action) if action == &expected_body
+        )
+    }));
+
+    let c = schedule(&world, &built, "C");
+    let item = fsl_analyze::analyze::exact_probabilistic_item_witness_tampered(
+        fsl_foundation::RequestIndex::new(0),
+        fsl_analyze::exact_probabilistic::ProductRequest {
+            subject: ModelSubject {
+                simulation: world.request(),
+                proof_bounds: Vec::new(),
+            },
+            claim,
+            limits: ExactProbLimits::default(),
+        },
+        move |witness| {
+            let Some((_, ProbabilisticSchedulerChoice::Deterministic(
+                ReplayProductAction::FreeDelays(rows),
+            ))) = witness
+                .scheduler
+                .iter_mut()
+                .find(|(_, choice)| matches!(
+                    choice,
+                    ProbabilisticSchedulerChoice::Deterministic(
+                        ReplayProductAction::FreeDelays(_)
+                    )
+                ))
+            else {
+                panic!("the witness has a FreeDelays scheduler entry");
+            };
+            rows[0].free.retain(|(identity, _)| identity != &c);
+        },
+    );
+    let refused = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    assert_eq!(
+        refused.terminal().expect("terminal result").value(),
+        &fsl_replay::TerminalValue::Inconclusive(
+            fsl_replay::InconclusiveCause::ReplayRefused(
+                fsl_foundation::diagnostic::Code::InvalidRuntimeInput
+            )
+        ),
+        "omitting C from the witness row must be refused: {refused:#?}"
+    );
 }
 
 /// FR-204-AC-12 (TC-642 step 8): over `Loop` the maximum's witness entry is
@@ -1149,6 +1491,8 @@ fn loop_witness_reaches_b_through_the_exit() {
         .expect("the exit admits"),
         *rows
     );
+    assert_eq!(rows[0].given[0].1, 2, "the end-component exit uses A at 2");
+    assert_eq!(rows[0].free[0].1, 2, "the end-component exit uses B at 2");
 }
 
 /// FR-196-AC-14 (TC-631 step 12): each of the four `FreeDelays` actions over

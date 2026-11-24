@@ -3531,7 +3531,7 @@ fn replay_timed_paths(
                                 claim,
                                 &state,
                                 &previous_key,
-                                identity,
+                                Some(identity),
                                 &step.elapsed,
                                 wanted.as_ref(),
                             ) {
@@ -3550,6 +3550,25 @@ fn replay_timed_paths(
                         }
                     }
                 }
+                ProductAction::FreeDelays(_) => {
+                    // One product edge resolves all tied operations of an
+                    // instant, so its model state may be several transitions
+                    // beyond the source state's discrete value.
+                    let wanted = timed_key_discrete(&post_key);
+                    let (_, post, resume) = match timed_step_for(
+                        system,
+                        claim,
+                        &state,
+                        &previous_key,
+                        None,
+                        &step.elapsed,
+                        wanted.as_ref(),
+                    ) {
+                        Ok(found) => found,
+                        Err(failure) => return timed_step_failure(failure, cancel, subject),
+                    };
+                    (None, None, None, post, resume)
+                }
                 _ => (None, None, None, state.clone(), state.clone()),
             };
             let next_key = post_key.clone();
@@ -3567,13 +3586,35 @@ fn replay_timed_paths(
         }
         paths.push(ProbabilityWitnessPath { steps });
     }
+    let mut scheduler = Vec::with_capacity(produced.entries.len());
+    for (state, entry) in produced.entries {
+        let Some(state) = product.states.get(state.index()) else {
+            return broken();
+        };
+        if matches!(&entry, ProductAction::TerminalStutter) {
+            continue;
+        }
+        let key = match key_of(state) {
+            Ok(key) => key,
+            Err(error) => return document_failure(error, subject),
+        };
+        let action = match canonical_action(system, product, &entry, &key_of) {
+            Ok(action) => action,
+            Err(error) => return document_failure(error, subject),
+        };
+        scheduler.push((
+            key,
+            fsl_replay::ProbabilisticSchedulerChoice::Deterministic(action),
+        ));
+    }
+    scheduler.sort_by(|left, right| left.0.cmp(&right.0));
     let mut witness = ProbabilisticCounterexample {
         item: item.clone(),
         binding: binding.cloned(),
         instance: None,
         initial: first.clone(),
         initial_key,
-        scheduler: Vec::new(),
+        scheduler,
         paths,
         subsystem: None,
     };
@@ -3617,7 +3658,7 @@ fn timed_step_for(
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
     state: &fsl_eval::simulation::model::ModelSimState,
     previous: &ProbabilityProductKey,
-    identity: &fsl_eval::simulation::model::ScheduledIdentity,
+    identity: Option<&fsl_eval::simulation::model::ScheduledIdentity>,
     elapsed: &Rational,
     wanted: Option<&serde_json::Value>,
 ) -> Result<
@@ -3655,8 +3696,10 @@ fn timed_step_for(
                 let steps = timed.steps(&at).map_err(TimedStepFailure::Stopped)?;
                 for (step, post) in steps {
                     let first = if level == 0 {
-                        if step.operation() != identity.operation
-                            || step.receiver() != &identity.receiver
+                        if identity.is_some_and(|identity| {
+                            step.operation() != identity.operation
+                                || step.receiver() != &identity.receiver
+                        })
                         {
                             continue;
                         }

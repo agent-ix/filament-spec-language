@@ -1026,6 +1026,7 @@ fn enumerate_region_mean_time(
         CheckerGraph {
             initial: first_key,
             states,
+            scheduler_actions: Default::default(),
         },
         costs,
     ))
@@ -1507,6 +1508,7 @@ fn enumerate_digital_deadline(
     let mut pending = VecDeque::from([first_key.clone()]);
     let mut reached = BTreeMap::from([(first_key.clone(), first)]);
     let mut states = BTreeMap::new();
+    let mut scheduler_actions = BTreeMap::new();
     let mut edges = 0_u64;
     while let Some(key) = pending.pop_front() {
         charge_work(meter, cancel, 1)?;
@@ -1637,7 +1639,7 @@ fn enumerate_digital_deadline(
                 limits,
                 cancel,
             };
-            let choices = digital_workload_choices(
+            let (choices, actions) = digital_workload_choices(
                 &run,
                 &current,
                 &enabled,
@@ -1646,6 +1648,9 @@ fn enumerate_digital_deadline(
                 &mut reached,
                 &mut pending,
             )?;
+            if actions.iter().any(|aliases| !aliases.is_empty()) {
+                scheduler_actions.insert(key.clone(), actions);
+            }
             edges = edges.saturating_add(
                 choices
                     .iter()
@@ -1866,6 +1871,7 @@ fn enumerate_digital_deadline(
     Ok(CheckerGraph {
         initial: first_key,
         states,
+        scheduler_actions,
     })
 }
 
@@ -2143,6 +2149,7 @@ fn enumerate_region_deadline(
     Ok(CheckerGraph {
         initial: first_key,
         states,
+        scheduler_actions: Default::default(),
     })
 }
 
@@ -3351,7 +3358,7 @@ fn digital_workload_choices(
     storage: &mut u64,
     reached: &mut BTreeMap<ProbabilityProductKey, RegionState>,
     pending: &mut VecDeque<ProbabilityProductKey>,
-) -> Result<Vec<Vec<ProbabilityEdge>>, ProbabilityDocumentError> {
+) -> Result<(Vec<Vec<ProbabilityEdge>>, Vec<Vec<crate::ProductAction>>), ProbabilityDocumentError> {
     let trajectory = run.trajectory(current)?;
     let windows = run.windows(&trajectory)?;
     let reach = u64::try_from(trajectory.states.len().saturating_sub(1))
@@ -3385,6 +3392,7 @@ fn digital_workload_choices(
         .filter(|window| window.given.is_none())
         .collect();
     let mut choices: Vec<Vec<ProbabilityEdge>> = Vec::new();
+    let mut scheduler_actions: Vec<Vec<crate::ProductAction>> = Vec::new();
     if racers.is_empty() {
         // The free identities enabled now.
         let free_now: Vec<&fsl_eval::simulation::model::Action> = enabled
@@ -3415,7 +3423,7 @@ fn digital_workload_choices(
                 }
             }
         }
-        choices.extend(digital_time_choices(
+        let time_choices = digital_time_choices(
             run.system,
             run.timed,
             run.watch,
@@ -3430,7 +3438,9 @@ fn digital_workload_choices(
             storage,
             reached,
             pending,
-        )?);
+        )?;
+        scheduler_actions.resize_with(time_choices.len(), Vec::new);
+        choices.extend(time_choices);
         // The workload resolves the free identity enabled now.
         let weighted = free_now
             .iter()
@@ -3465,8 +3475,9 @@ fn digital_workload_choices(
         }
         if !resolve.is_empty() {
             choices.push(resolve);
+            scheduler_actions.push(Vec::new());
         }
-        return Ok(choices);
+        return Ok((choices, scheduler_actions));
     }
     let racing: Vec<&fsl_eval::simulation::model::ScheduledIdentity> = racers
         .iter()
@@ -3524,7 +3535,8 @@ fn digital_workload_choices(
             charge_work(meter, run.cancel, 1)?;
         }
         choices.push(race);
-        return Ok(choices);
+        scheduler_actions.push(Vec::new());
+        return Ok((choices, scheduler_actions));
     }
     // FR-204 `FreeDelays`: the scheduler picks every free identity's delay in
     // its window after the given delay is drawn, so a row is one drawn vector
@@ -3534,6 +3546,7 @@ fn digital_workload_choices(
     // (`Σ_g P(g) opt_a Q(g, a)`); the options of a row that are the same
     // distribution are one option.
     let mut per_draw: Vec<Vec<Vec<ProbabilityEdge>>> = Vec::new();
+    let mut per_draw_rows: Vec<Vec<Vec<crate::FreeDelayRow>>> = Vec::new();
     for (draws, share) in &joint {
         let draw = draws
             .iter()
@@ -3542,6 +3555,7 @@ fn digital_workload_choices(
             .ok_or(ProbabilityDocumentError::Malformed)?;
         let mut assignment = vec![0_usize; free.len()];
         let mut options: Vec<Vec<ProbabilityEdge>> = Vec::new();
+        let mut option_rows: Vec<Vec<crate::FreeDelayRow>> = Vec::new();
         'assignments: loop {
             let chosen: Vec<u64> = free
                 .iter()
@@ -3565,8 +3579,23 @@ fn digital_workload_choices(
             let states = run.race_states(&trajectory, least, &tied, share)?;
             let mut option = Vec::new();
             run.choice_of(states, &mut option, reached, pending, storage)?;
-            if !options.iter().any(|seen| same_choice(seen, &option)) {
+            let row = crate::FreeDelayRow {
+                given: racing
+                    .iter()
+                    .zip(draws)
+                    .map(|(identity, delay)| ((*identity).clone(), *delay))
+                    .collect(),
+                free: free
+                    .iter()
+                    .zip(&chosen)
+                    .map(|(window, delay)| (window.identity.clone(), *delay))
+                    .collect(),
+            };
+            if let Some(index) = options.iter().position(|seen| same_choice(seen, &option)) {
+                option_rows[index].push(row);
+            } else {
                 options.push(option);
+                option_rows.push(vec![row]);
             }
             charge_work(meter, run.cancel, 1)?;
             let mut position = free.len();
@@ -3583,6 +3612,7 @@ fn digital_workload_choices(
             }
         }
         per_draw.push(options);
+        per_draw_rows.push(option_rows);
     }
     // The checker's graph states list their choices, so the scheduler's
     // choices are listed here: every function from a drawn delay to one of its
@@ -3628,10 +3658,28 @@ fn digital_workload_choices(
             });
         }
         choices.push(choice);
+        let mut rows = vec![Vec::new()];
+        for (options, position) in per_draw_rows.iter().zip(&picked) {
+            let mut next = Vec::new();
+            for prefix in rows {
+                for row in &options[*position] {
+                    let mut combined = prefix.clone();
+                    combined.push(row.clone());
+                    next.push(combined);
+                }
+            }
+            rows = next;
+        }
+        let actions = rows
+            .iter()
+            .map(|rows| crate::ProductAction::free_delays(run.system, rows))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| ProbabilityDocumentError::Malformed)?;
+        scheduler_actions.push(actions);
         let mut position = picked.len();
         loop {
             if position == 0 {
-                return Ok(choices);
+                return Ok((choices, scheduler_actions));
             }
             position -= 1;
             picked[position] += 1;
@@ -4244,6 +4292,7 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         ),
     }
     .map_err(from_document)?;
+    let scheduler = timed_scheduler_choices(&graph, witness)?;
     // A workload resolves a tie by its weights, so the digital graph holds
     // only the choices FR-204 leaves the scheduler and the witness selects
     // among those; the region graph mirrors only states with no choice.
@@ -4276,6 +4325,7 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         .collect();
     let Some((kept, mass)) = price_witness_paths(
         &graph,
+        &scheduler,
         failing,
         &threshold,
         &sequences,
@@ -4295,6 +4345,52 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
     )))
 }
 
+/// Resolve the witness's `FreeDelays` entries to choices in the independently
+/// enumerated product. The aliases retain scheduler rows that induce equal
+/// probability distributions.
+fn timed_scheduler_choices(
+    graph: &CheckerGraph,
+    witness: &super::super::ProbabilisticCounterexample,
+) -> Result<BTreeMap<ProbabilityProductKey, usize>, super::super::ProbabilityWitnessError> {
+    use super::super::{ProbabilisticSchedulerChoice, ProbabilityWitnessError as Error};
+    let mut chosen = BTreeMap::new();
+    let mut seen = BTreeSet::new();
+    for (key, scheduler_choice) in &witness.scheduler {
+        if !seen.insert(key) {
+            return Err(Error::Refused);
+        }
+        let Some(aliases) = graph.scheduler_actions.get(key) else {
+            match scheduler_choice {
+                ProbabilisticSchedulerChoice::Deterministic(
+                    crate::ProductAction::FreeDelays(_)
+                    | crate::ProductAction::WorkloadResolve { .. },
+                ) => return Err(Error::Refused),
+                _ => continue,
+            }
+        };
+        let ProbabilisticSchedulerChoice::Deterministic(action) = scheduler_choice else {
+            return Err(Error::Refused);
+        };
+        let index = aliases
+            .iter()
+            .position(|choices| choices.iter().any(|alias| alias == action))
+            .ok_or(Error::Refused)?;
+        if chosen.insert(key.clone(), index).is_some() {
+            return Err(Error::Refused);
+        }
+    }
+    for path in &witness.paths {
+        let mut at = graph.initial.clone();
+        for step in &path.steps {
+            if graph.scheduler_actions.contains_key(&at) && !chosen.contains_key(&at) {
+                return Err(Error::Refused);
+            }
+            at = step.post_key.clone();
+        }
+    }
+    Ok(chosen)
+}
+
 /// The paths of a witness that the checker graph validates, and their mass.
 ///
 /// `sequences` holds each witness path as the keys it visits after the initial
@@ -4308,6 +4404,7 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
 /// the forbidden decided state, or the final mass does not exceed `threshold`.
 fn price_witness_paths(
     graph: &CheckerGraph,
+    scheduler: &BTreeMap<ProbabilityProductKey, usize>,
     failing: bool,
     threshold: &Rational,
     sequences: &[Vec<ProbabilityProductKey>],
@@ -4316,6 +4413,7 @@ fn price_witness_paths(
 ) -> Result<Option<(Vec<usize>, Rational)>, super::super::ProbabilityWitnessError> {
     price_paths(
         graph,
+        scheduler,
         &Payoff::Deadline { failing, threshold },
         sequences,
         max_rational_bits,
@@ -4382,6 +4480,7 @@ impl Payoff<'_> {
 
 fn price_paths(
     graph: &CheckerGraph,
+    scheduler: &BTreeMap<ProbabilityProductKey, usize>,
     payoff: &Payoff<'_>,
     sequences: &[Vec<ProbabilityProductKey>],
     max_rational_bits: u64,
@@ -4404,7 +4503,7 @@ fn price_paths(
             Ok(())
         }
     };
-    let covers = |choice: &Vec<ProbabilityEdge>, target: &ProbabilityProductKey| {
+    let covers = |choice: &[ProbabilityEdge], target: &ProbabilityProductKey| {
         choice
             .iter()
             .any(|edge| &edge.target == target && edge.probability > zero())
@@ -4462,6 +4561,80 @@ fn price_paths(
         memo.insert(key, value.clone());
         Ok(value)
     }
+    #[allow(clippy::too_many_arguments)]
+    fn witness_path_scheduler(
+        graph: &CheckerGraph,
+        used: &BTreeMap<ProbabilityProductKey, BTreeSet<ProbabilityProductKey>>,
+        key: &ProbabilityProductKey,
+        chosen: &mut BTreeMap<ProbabilityProductKey, usize>,
+        memo: &mut BTreeMap<ProbabilityProductKey, bool>,
+        on_path: &mut BTreeSet<ProbabilityProductKey>,
+        cancel: &Cancel,
+        covers: &dyn Fn(&[ProbabilityEdge], &ProbabilityProductKey) -> bool,
+    ) -> Result<bool, Error> {
+        if let Some(viable) = memo.get(key) {
+            return Ok(*viable);
+        }
+        poll(cancel).map_err(|_| Error::Graph(ExactProbabilityGraphError::LimitReached))?;
+        let state = graph.states.get(key).ok_or(Error::Refused)?;
+        if state.terminal.is_some() {
+            memo.insert(key.clone(), true);
+            return Ok(true);
+        }
+        if !on_path.insert(key.clone()) {
+            return Ok(false);
+        }
+        let Some(targets) = used.get(key) else {
+            on_path.remove(key);
+            memo.insert(key.clone(), true);
+            return Ok(true);
+        };
+        let mut child_viability = BTreeMap::new();
+        for target in targets {
+            let viable =
+                witness_path_scheduler(graph, used, target, chosen, memo, on_path, cancel, covers)?;
+            child_viability.insert(target, viable);
+        }
+        let has_complete_choice = state
+            .choices
+            .iter()
+            .any(|choice| targets.iter().all(|target| covers(choice, target)));
+        let mut best: Option<(usize, usize)> = None;
+        for (index, choice) in state.choices.iter().enumerate() {
+            if chosen.get(key).is_some_and(|required| *required != index) {
+                continue;
+            }
+            let covered = targets
+                .iter()
+                .filter(|target| covers(choice, target))
+                .count();
+            if has_complete_choice && covered != targets.len() {
+                continue;
+            }
+            if best.is_none_or(|(_, most)| covered > most) {
+                best = Some((index, covered));
+            }
+        }
+        on_path.remove(key);
+        let Some((index, _)) = best else {
+            memo.insert(key.clone(), false);
+            return Ok(false);
+        };
+        for edge in state.choices[index]
+            .iter()
+            .filter(|edge| edge.probability > zero())
+        {
+            if child_viability.get(&edge.target) == Some(&false) {
+                // A cyclic child cannot be treated as zero mass: doing so
+                // could admit a finite witness path through a loop.
+                memo.insert(key.clone(), false);
+                return Ok(false);
+            }
+        }
+        chosen.insert(key.clone(), index);
+        memo.insert(key.clone(), true);
+        Ok(true)
+    }
     // The choices and the mass a set of paths selects. `None` when a path is
     // not a distinct walk to the forbidden decided state (a Parity case).
     type PathSolution = Option<(BTreeMap<ProbabilityProductKey, usize>, Rational, Rational)>;
@@ -4491,23 +4664,40 @@ fn price_paths(
                 return Ok(None);
             }
         }
-        // One choice per visited state: the one the paths cover most (the first
-        // on a tie).
-        let mut chosen: BTreeMap<ProbabilityProductKey, usize> = BTreeMap::new();
-        for (key, targets) in &used {
-            let state = graph.states.get(key).ok_or(Error::Refused)?;
-            let mut best: Option<(usize, usize)> = None;
-            for (position, choice) in state.choices.iter().enumerate() {
-                let covered = targets
-                    .iter()
-                    .filter(|target| covers(choice, target))
-                    .count();
-                if best.is_none_or(|(_, most)| covered > most) {
-                    best = Some((position, covered));
-                }
+        let mut chosen = scheduler.clone();
+        if matches!(payoff, Payoff::Deadline { .. }) {
+            if !witness_path_scheduler(
+                graph,
+                &used,
+                &graph.initial,
+                &mut chosen,
+                &mut BTreeMap::new(),
+                &mut BTreeSet::new(),
+                cancel,
+                &covers,
+            )? {
+                return Ok(None);
             }
-            let (index, _) = best.ok_or(Error::Refused)?;
-            chosen.insert(key.clone(), index);
+        } else {
+            for (key, targets) in &used {
+                let state = graph.states.get(key).ok_or(Error::Refused)?;
+                if let Some(index) = scheduler.get(key) {
+                    chosen.insert(key.clone(), *index);
+                    continue;
+                }
+                let mut best: Option<(usize, usize)> = None;
+                for (index, choice) in state.choices.iter().enumerate() {
+                    let covered = targets
+                        .iter()
+                        .filter(|target| covers(choice, target))
+                        .count();
+                    if best.is_none_or(|(_, most)| covered > most) {
+                        best = Some((index, covered));
+                    }
+                }
+                let (index, _) = best.ok_or(Error::Refused)?;
+                chosen.insert(key.clone(), index);
+            }
         }
         let priced = |weight: &dyn Fn(&ProbabilityProductKey, bool) -> Rational| {
             mass_of(
@@ -4658,6 +4848,7 @@ mod witness_pricing_tests {
                 .into_iter()
                 .map(|(name, terminal, choices)| (key(name), CheckerState { terminal, choices }))
                 .collect(),
+            scheduler_actions: Default::default(),
         }
     }
 
@@ -4681,7 +4872,15 @@ mod witness_pricing_tests {
             q: &q,
             strict,
         };
-        price_paths(graph, &payoff, sequences, 4096, &Cancel::new()).expect("the graph prices")
+        price_paths(
+            graph,
+            &BTreeMap::new(),
+            &payoff,
+            sequences,
+            4096,
+            &Cancel::new(),
+        )
+        .expect("the graph prices")
     }
 
     /// FR-877: a `>=` refutation is the non-strict `max >= 0`, so a counted
@@ -4750,8 +4949,16 @@ mod witness_pricing_tests {
         threshold: Rational,
         sequences: &[Vec<ProbabilityProductKey>],
     ) -> Option<(Vec<usize>, Rational)> {
-        price_witness_paths(graph, false, &threshold, sequences, 4096, &Cancel::new())
-            .expect("the graph prices")
+        price_witness_paths(
+            graph,
+            &BTreeMap::new(),
+            false,
+            &threshold,
+            sequences,
+            4096,
+            &Cancel::new(),
+        )
+        .expect("the graph prices")
     }
 
     /// The tie's two orderings: `A` fires the operation that retries at once, `B`
@@ -4783,6 +4990,26 @@ mod witness_pricing_tests {
         assert_eq!(
             price(&graph, part(3, 5), &[path(&["ACC"])]),
             Some((vec![0], part(1, 1)))
+        );
+    }
+
+    /// A selected positive-probability child that cycles back to the initial
+    /// state cannot be priced as zero mass and must refuse the path evidence.
+    #[test]
+    fn a_cyclic_selected_child_refuses_deadline_path_pricing() {
+        let graph = graph(vec![
+            (
+                "I",
+                None,
+                vec![vec![edge("X", 1, 2), edge("F", 1, 2)]],
+            ),
+            ("X", None, vec![vec![edge("I", 1, 1)]]),
+            ("F", Some(true), vec![]),
+        ]);
+
+        assert_eq!(
+            price(&graph, part(1, 4), &[path(&["X", "I", "F"])]),
+            None
         );
     }
 

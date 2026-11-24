@@ -1324,6 +1324,7 @@ fn induced_graph(
         graph: CheckerGraph {
             initial: graph.initial,
             states,
+            scheduler_actions: Default::default(),
         },
         chosen,
         enabled,

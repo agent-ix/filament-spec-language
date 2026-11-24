@@ -2867,6 +2867,7 @@ mod tests {
                     },
                 ),
             ]),
+            scheduler_actions: Default::default(),
         };
         let values = BTreeMap::from([(root, rational(1)), (target, rational(1))]);
         let check = |limits: ProbabilityDocumentLimits| {
