@@ -24,6 +24,9 @@ use serde_json::json;
 use crate::counter::UNLIMITED;
 use crate::model_world::{self, Domain, World};
 
+type NativePayloadObserver = Box<dyn FnMut(&PlanStep)>;
+type PopulationRows<'a> = &'a [(&'a str, &'a str, &'a [(&'a str, serde_json::Value)])];
+
 const FIXTURE: &str = "proposals/planning-v1/fixtures/counter/";
 
 /// The fixture unit's contracts on `inc` and `double`.
@@ -102,7 +105,7 @@ struct Counter<'w> {
     found: bool,
     native: Option<std::sync::Arc<[(filament_exact::EffectiveId, String)]>>,
     /// Observe an actual retained payload at the library adapter boundary.
-    on_native_payload: Option<Box<dyn FnMut(&PlanStep)>>,
+    on_native_payload: Option<NativePayloadObserver>,
 }
 
 impl<'w> Counter<'w> {
@@ -1286,7 +1289,7 @@ fn finite_argument_world(
     grammar: &'static str,
     population: &'static str,
     body: &str,
-    populations: &[(&str, &str, &[(&str, serde_json::Value)])],
+    populations: PopulationRows<'_>,
 ) -> World {
     let source = fsl_cst::diagnostic::read_source(
         fsl_foundation::SourceIdentity::new("test", "finite-arguments-model"),

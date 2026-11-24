@@ -30,6 +30,8 @@ use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
 use serde_json::{json, Value as Json};
 
+type Population<'a> = (&'a str, &'a str, &'a [(&'a str, Json)]);
+
 /// The infinite-trace profile.
 pub(crate) const INFINITE: &str = "filament.temporal.infinite-trace/v1";
 /// The bounded event-position false-extension profile.
@@ -244,7 +246,7 @@ impl World {
         domain: Domain,
         body: &str,
         profile: &str,
-        populations: &[(&str, &str, &[(&str, Json)])],
+        populations: &[Population<'_>],
     ) -> Self {
         let mut world = Self::new(domain, body, profile, &[], &[]);
         world.snapshots.clear();
@@ -431,10 +433,7 @@ impl World {
         self.snapshot_populations(&[(self.domain.population, self.domain.object, objects)])
     }
 
-    fn snapshot_populations(
-        &mut self,
-        populations: &[(&str, &str, &[(&str, Json)])],
-    ) -> DocumentRef {
+    fn snapshot_populations(&mut self, populations: &[Population<'_>]) -> DocumentRef {
         let populations: Vec<_> = populations.iter().map(|(population, object_type, objects)| {
             let objects: Vec<_> = objects.iter().map(|(key, fields)| json!({"key": key, "type": self.domain.node(object_type), "fields": fields})).collect();
             json!({"population": self.domain.node(population), "complete":true, "objects":objects})

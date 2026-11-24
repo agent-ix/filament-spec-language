@@ -302,9 +302,11 @@ fn hidden_timed_world_with(
          pre MPoll using v on M::Call::poll {{ not self.inflight }}\n\
          post MPolled using v on M::Call::poll {{ self.x = 0 ms }}\n"
     );
-    let wait = invariant
-        .then_some("time invariant Wait when { not self.inflight } { self.x <= 0 ms }\n")
-        .unwrap_or_default();
+    let wait = if invariant {
+        "time invariant Wait when { not self.inflight } { self.x <= 0 ms }\n"
+    } else {
+        ""
+    };
     let body = refinement("self.inflight").replace(
         "step M::Call::send -> A::Call::send(self);",
         &format!(

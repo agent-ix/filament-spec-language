@@ -634,7 +634,16 @@ fn p95_settles_proved_with_its_exact_value() {
 /// FR-203-AC-5 (TC-641): FR-196-AC-5's `Coin` refutation, a claim read
 /// undefined (`absent-key`) at a state of positive probability, settles
 /// `refuted` with its replayed undefined path, whatever the threshold.
-#[trace("TC-641", "FR-203-AC-5", "TC-3153", "FR-202-AC-5", "FR-202-AC-24", "FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7", "FSpec-FR-413-AC-11")]
+#[trace(
+    "TC-641",
+    "FR-203-AC-5",
+    "TC-3153",
+    "FR-202-AC-5",
+    "FR-202-AC-24",
+    "FSpec-FR-411-AC-12",
+    "FSpec-FR-413-AC-7",
+    "FSpec-FR-413-AC-11"
+)]
 #[test]
 fn an_undefined_evaluation_settles_refuted_whatever_the_threshold() {
     for threshold in ["0.5", "0.01"] {
@@ -686,7 +695,14 @@ fn undefined_evidence(world: &World, claim: &str) -> fsl_replay::ProbabilityUnde
     witness.clone()
 }
 
-#[trace("TC-3153", "FR-202-AC-5", "FR-202-AC-24", "FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7", "FSpec-FR-413-AC-11")]
+#[trace(
+    "TC-3153",
+    "FR-202-AC-5",
+    "FR-202-AC-24",
+    "FSpec-FR-411-AC-12",
+    "FSpec-FR-413-AC-7",
+    "FSpec-FR-413-AC-11"
+)]
 #[test]
 fn undefined_replay_checks_first_read_location_control_and_package_ownership() {
     use fsl_replay::{
@@ -767,7 +783,13 @@ fn undefined_replay_checks_first_read_location_control_and_package_ownership() {
     ));
 }
 
-#[trace("TC-3153", "FR-202-AC-25", "FR-202-AC-26", "FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7")]
+#[trace(
+    "TC-3153",
+    "FR-202-AC-25",
+    "FR-202-AC-26",
+    "FSpec-FR-411-AC-12",
+    "FSpec-FR-413-AC-7"
+)]
 #[test]
 fn undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices() {
     use fsl_eval::simulation::model::TransitionId;
@@ -1504,7 +1526,7 @@ fn a_value_bounds_document_is_accepted_only_for_the_side_it_certifies() {
     let world = World::new(&prob_world::no_fault(claim));
     let mut request = world.request("NoFault", ModelCheckLimits::default());
     request.limits.max_rational_bits = 1024;
-    let request_limits = request.limits.clone();
+    let request_limits = request.limits;
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
     let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
@@ -1663,7 +1685,7 @@ fn the_lower_document_ranks_by_remaining_horizon_and_a_changed_rank_is_broken() 
     let world = World::new(&prob_world::no_fault(INTERVAL_CLAIM));
     let mut request = world.request("NoFault", ModelCheckLimits::default());
     request.limits.max_rational_bits = 1024;
-    let request_limits = request.limits.clone();
+    let request_limits = request.limits;
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
     let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
@@ -1721,11 +1743,10 @@ fn the_lower_document_ranks_by_remaining_horizon_and_a_changed_rank_is_broken() 
 #[test]
 fn only_an_interval_documents_scalar_bound_widens_and_names_its_own_setting() {
     use fsl_replay::{ModelCheckLimit, ProbabilityDocumentLimits};
-    let limits = |rational: u64, precision: u32| {
-        let mut limits = fsl_replay::ExactProbLimits::default();
-        limits.max_rational_bits = rational;
-        limits.max_precision_bits = precision;
-        limits
+    let limits = |rational: u64, precision: u32| fsl_replay::ExactProbLimits {
+        max_rational_bits: rational,
+        max_precision_bits: precision,
+        ..Default::default()
     };
     for (rational, precision, widened, setting) in [
         (
@@ -1831,6 +1852,9 @@ fn a_refutation_settles_refuted_or_incomplete_at_every_storage_budget_and_cancel
             }
         });
         slot.set(cancel.clone()).expect("initialized once");
-        settled_or_stopped(&run(None, &cancel), &format!("cancel at poll {at} of {total}"));
+        settled_or_stopped(
+            &run(None, &cancel),
+            &format!("cancel at poll {at} of {total}"),
+        );
     }
 }

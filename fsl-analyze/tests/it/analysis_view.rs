@@ -226,8 +226,7 @@ fn value_record_views_and_native_charges_equal_the_source() {
         fsl_replay::value_check::ValueTarget::select_package(
             &bare,
             "Ready",
-            &bare
-                .function_body("Ready")
+            bare.function_body("Ready")
                 .unwrap()
                 .unwrap()
                 .occurrences

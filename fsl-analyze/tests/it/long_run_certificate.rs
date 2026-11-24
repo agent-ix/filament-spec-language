@@ -399,14 +399,26 @@ fn reachable_undefined_predicate_retains_its_family_cause() {
 #[trace("TC-1401", "FR-201-AC-30")]
 #[test]
 fn finite_profile_claims_issue_no_long_run_document() {
-    for source in [
-        "probabilistic Unsupported using ev on M over (s: M::Server) under Steady on origin { long_run_fraction holds(s.phase = 0) >= rational(1,2) }",
-    ] {
-        let world=World::new(&prob_world::service(source));
-        let records=analyze_items(&Engines::fsl().unwrap(),vec![exact_probabilistic_item(RequestIndex::new(0),world.request("Unsupported",ModelCheckLimits::default()))],&Cancel::new());
-        let fsl_analyze::analyze::Settlement::Disposed(disposed)=&records[0].settlement else {panic!("expected unsupported disposition: {:?}",records[0]);};
-        assert_eq!(disposed.kind,fsl_analyze::analyze::DispositionKind::Unsupported);
-        assert!(records[0].terminal().is_none());assert!(records[0].exact_probabilistic.is_none());
+    {
+        let source = "probabilistic Unsupported using ev on M over (s: M::Server) under Steady on origin { long_run_fraction holds(s.phase = 0) >= rational(1,2) }";
+        let world = World::new(&prob_world::service(source));
+        let records = analyze_items(
+            &Engines::fsl().unwrap(),
+            vec![exact_probabilistic_item(
+                RequestIndex::new(0),
+                world.request("Unsupported", ModelCheckLimits::default()),
+            )],
+            &Cancel::new(),
+        );
+        let fsl_analyze::analyze::Settlement::Disposed(disposed) = &records[0].settlement else {
+            panic!("expected unsupported disposition: {:?}", records[0]);
+        };
+        assert_eq!(
+            disposed.kind,
+            fsl_analyze::analyze::DispositionKind::Unsupported
+        );
+        assert!(records[0].terminal().is_none());
+        assert!(records[0].exact_probabilistic.is_none());
     }
 }
 
