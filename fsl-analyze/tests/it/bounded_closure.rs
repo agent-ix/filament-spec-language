@@ -162,6 +162,7 @@ impl Bounded {
         let fixture = &self.fixture;
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &fixture.temporal_clock_selections,
                 subject: subject(
                     &fixture.package,

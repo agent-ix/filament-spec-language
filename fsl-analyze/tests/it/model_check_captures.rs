@@ -56,6 +56,7 @@ fn run(world: &World, limits: ModelCheckLimits) -> Result<ModelCheckOutcome, Mod
     let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(&world.package);
     check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &temporal_clock_selections,
             subject: world.subject(&["c"], UNLIMITED),
             item: ModelCheckItem::Clause {
@@ -270,6 +271,7 @@ fn a_capture_initializer_joins_the_activation_footprint() {
     let letters = system.clause_letters(node).expect("the clause has letters");
     let outcome = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: world.subject(&["c"], UNLIMITED),
             item: ModelCheckItem::Clause {

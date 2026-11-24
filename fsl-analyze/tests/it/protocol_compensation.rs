@@ -1443,6 +1443,7 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
     stop_limits.limits.max_transitions = 1;
     let stopped = check_protocol(
         ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: case.subject("Pay"),
             item: ModelCheckItem::DeadlockFreedom,
@@ -1477,6 +1478,7 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
         limits.limits.max_transitions = 40_000;
         check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: case.subject("Pay"),
                 item: ModelCheckItem::DeadlockFreedom,
@@ -1839,6 +1841,7 @@ fn requires_bound(attempts: &str) -> Vec<(Vec<u32>, DomainKind)> {
     let case = Case::new(&body, &[0]);
     let refused = check_protocol(
         ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: case.subject("Pay"),
             item: ModelCheckItem::DeadlockFreedom,
@@ -1935,6 +1938,7 @@ fn an_attempt_type_is_bound_at_its_own_templates_node() {
     let case = Case::new(&body, &[0]);
     let refused = check_protocol(
         ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: case.subject("Pay"),
             item: ModelCheckItem::DeadlockFreedom,

@@ -274,6 +274,7 @@ pub(super) fn check(
         },
         RunRequest {
             max_depth: request.max_depth,
+            workers: request.workers,
             partial_order: request.reductions.partial_order,
             stutter_closure,
             limits: request.limits,
@@ -297,6 +298,7 @@ pub(super) fn check(
 /// [`ModelCheckRefusal`] as [`check`] returns it.
 #[derive(Clone, Copy)]
 pub(super) struct ProtocolLivenessOptions<'c> {
+    pub(super) workers: usize,
     pub(super) limits: fsl_replay::ModelCheckLimits,
     pub(super) ignore_memory_constraints: bool,
     pub(super) instance_bound: Option<InstanceBound>,
@@ -308,7 +310,7 @@ pub(super) struct ProtocolLivenessOptions<'c> {
     clippy::too_many_arguments,
     reason = "protocol liveness inputs plus the explicit clock selection table"
 )]
-pub(super) fn check_protocol<M: MemoryModel>(
+pub(super) fn check_protocol<M>(
     subject: &ProtocolSubject<'_>,
     system: &ProtocolSystem<'_, M>,
     memory_bound: Option<MemoryBound>,
@@ -317,7 +319,11 @@ pub(super) fn check_protocol<M: MemoryModel>(
     max_depth: Option<usize>,
     options: ProtocolLivenessOptions<'_>,
     cancel: &Cancel,
-) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
+) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal>
+where
+    M: MemoryModel + Sync,
+    M::Component: Send + Sync,
+{
     let ModelCheckItem::Clause { clause, letters } = item else {
         return Err(fault("a-liveness-item-is-a-clause"));
     };
@@ -400,6 +406,7 @@ pub(super) fn check_protocol<M: MemoryModel>(
         },
         RunRequest {
             max_depth,
+            workers: options.workers,
             partial_order: false,
             stutter_closure: false,
             limits: options.limits,
@@ -521,6 +528,16 @@ trait LiveSubject: SubjectSystem<TransitionId: Ord> + Sized {
         stutter_closure: bool,
     ) -> Result<Bounded<Tr<Self>, Self::State>, ExpansionStop>;
 
+    /// Expand raw model states concurrently; results are returned in the
+    /// supplied order and all lasso/automaton work remains on the coordinator.
+    fn expand_live_batch(
+        &self,
+        states: Vec<Self::State>,
+        enforce: bool,
+        stutter_closure: bool,
+        workers: usize,
+    ) -> Vec<Result<Bounded<Tr<Self>, Self::State>, ExpansionStop>>;
+
     /// How the state constraint `name` reads at `state` (FR-158).
     fn constraint_value(
         &self,
@@ -582,6 +599,8 @@ fn retained<'l, S: LiveSubject>(
             identity,
             max_depth: None,
         },
+        run.request.workers,
+        |product, states, workers| product.prefetch_expansions(states, workers),
         || run.cancel.poll() && run.cancel.cause().is_some(),
         |state| product.encoded_key(state, identity),
     )
@@ -611,6 +630,18 @@ impl<'a> LiveSubject for ModelSystem<'a> {
             self.successors(state)
         }
         .map(|expansion| (expansion, Cut::default()))
+    }
+
+    fn expand_live_batch(
+        &self,
+        states: Vec<ModelSimState>,
+        enforce: bool,
+        stutter_closure: bool,
+        workers: usize,
+    ) -> Vec<Result<Bounded<ModelTransition, ModelSimState>, ExpansionStop>> {
+        parallel_map(states, workers, |state| {
+            self.expand_live(state, enforce, stutter_closure)
+        })
     }
 
     fn permuter(&self) -> Option<PermuterOf<'_, Self>> {
@@ -660,7 +691,11 @@ impl<'a> LiveSubject for ModelSystem<'a> {
     }
 }
 
-impl<M: MemoryModel> LiveSubject for ProtocolSystem<'_, M> {
+impl<M> LiveSubject for ProtocolSystem<'_, M>
+where
+    M: MemoryModel + Sync,
+    M::Component: Send + Sync,
+{
     fn cut_steps(cut: &Cut) -> Vec<ProtocolTransition> {
         cut.steps.clone()
     }
@@ -680,6 +715,18 @@ impl<M: MemoryModel> LiveSubject for ProtocolSystem<'_, M> {
         _stutter_closure: bool,
     ) -> Result<Bounded<ProtocolTransition, Self::State>, ExpansionStop> {
         self.successors_bounded(state)
+    }
+
+    fn expand_live_batch(
+        &self,
+        states: Vec<Self::State>,
+        enforce: bool,
+        stutter_closure: bool,
+        workers: usize,
+    ) -> Vec<Result<Bounded<ProtocolTransition, Self::State>, ExpansionStop>> {
+        parallel_map(states, workers, |state| {
+            self.expand_live(state, enforce, stutter_closure)
+        })
     }
 
     fn permuter(&self) -> Option<PermuterOf<'_, Self>> {
@@ -729,6 +776,33 @@ struct Binding {
 
 fn widen(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn parallel_map<State, Output>(
+    states: Vec<State>,
+    workers: usize,
+    expand: impl Fn(&State) -> Output + Sync,
+) -> Vec<Output>
+where
+    State: Send,
+    Output: Send,
+{
+    if workers <= 1 || states.len() <= 1 {
+        return states.iter().map(expand).collect();
+    }
+    std::thread::scope(|scope| {
+        states
+            .into_iter()
+            .map(|state| {
+                let expand = &expand;
+                scope.spawn(move || expand(&state))
+            })
+            .map(|worker| match worker.join() {
+                Ok(output) => output,
+                Err(panic) => std::panic::resume_unwind(panic),
+            })
+            .collect()
+    })
 }
 
 fn stopped<T: SubjectTransition>(
@@ -819,6 +893,7 @@ impl Totals {
 /// What a run needs of the request beyond the subject and the item.
 struct RunRequest {
     max_depth: Option<usize>,
+    workers: usize,
     /// Whether partial-order reduction is selected (FR-156).
     partial_order: bool,
     /// Add an unfair self-loop at every model state (FR-380).
@@ -981,6 +1056,7 @@ struct LassoSystem<'r, S: LiveSubject> {
     automaton: RefCell<PropertyAutomaton>,
     start: StateId,
     readings: RefCell<BTreeMap<(StateKey, bool), Reading>>,
+    prefetched: RefCell<BTreeMap<RawExpansionKey, Result<Bounded<Tr<S>, S::State>, ExpansionStop>>>,
     /// Where the clause fixes its captures (FR-337).
     captured: CaptureSite,
     initial: Vec<LState<S::State>>,
@@ -1001,6 +1077,8 @@ struct LassoSystem<'r, S: LiveSubject> {
     found: Cell<Option<usize>>,
     halt: RefCell<Option<Halt>>,
 }
+
+type RawExpansionKey = (StateKey, usize);
 
 impl<S: LiveSubject> LassoSystem<'_, S> {
     fn encoded_key(
@@ -1054,12 +1132,52 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
 
     /// The subject's expansion of `state`, and what the memory bound left of
     /// it unexpanded, recording why when it stops.
-    fn expand(&self, state: &S::State) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
-        self.system
-            .expand_live(state, self.enforce, self.stutter_closure)
+    fn expand(&self, state: &LState<S::State>) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
+        let key = Self::raw_expansion_key(state);
+        self.prefetched
+            .borrow_mut()
+            .remove(&key)
+            .unwrap_or_else(|| self.expand_raw(&state.model))
             .inspect_err(|&stop| {
                 self.record(Halt::Expansion(stop));
             })
+    }
+
+    /// Expand a raw model state outside the product cache. The dead-root
+    /// second pass has no automaton state to key, but still commits its result
+    /// on the coordinator.
+    fn expand_raw(&self, state: &S::State) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
+        self.system
+            .expand_live(state, self.enforce, self.stutter_closure)
+    }
+
+    fn prefetch_expansions(&self, states: &[LState<S::State>], workers: usize) {
+        let mut jobs = Vec::new();
+        for state in states {
+            let key = Self::raw_expansion_key(state);
+            if !self.prefetched.borrow().contains_key(&key)
+                && !jobs.iter().any(|(known, _)| *known == key)
+            {
+                jobs.push((key, state.model.clone()));
+            }
+        }
+        if jobs.is_empty() {
+            return;
+        }
+        let (keys, states): (Vec<_>, Vec<_>) = jobs.into_iter().unzip();
+        let results =
+            self.system
+                .expand_live_batch(states, self.enforce, self.stutter_closure, workers);
+        let results: Vec<_> = keys.into_iter().zip(results).collect();
+        self.prefetched.borrow_mut().extend(results);
+    }
+
+    fn raw_expansion_key(state: &LState<S::State>) -> RawExpansionKey {
+        let property = match &state.property {
+            Property::After(at) => at.index(),
+            Property::Undefined { .. } => usize::MAX,
+        };
+        (state.model_key.clone(), property)
     }
 
     fn state_key_of(&self, state: &S::State) -> Result<StateKey, ExpansionStop> {
@@ -1393,7 +1511,7 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                 Err(stop) => return Err(self.record(Halt::Expansion(stop))),
             }
         }
-        let (expansion, cut) = self.expand(&state.model)?;
+        let (expansion, cut) = self.expand(state)?;
         let mut findings: Vec<Self::Finding> = expansion
             .findings
             .into_iter()
@@ -2051,6 +2169,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             automaton: RefCell::new(automaton),
             start,
             readings: RefCell::new(BTreeMap::new()),
+            prefetched: RefCell::new(BTreeMap::new()),
             captured: self.clause.capture_site(),
             initial: Vec::new(),
             dead: RefCell::new(Vec::new()),
@@ -2354,6 +2473,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             }
         }
         let mut found: Option<usize> = None;
+        let mut prefetched = BTreeMap::new();
         let stop = |phase: &mut DeadPhase<Tr<S>>| -> Result<(), ModelCheckRefusal> {
             phase.stopped = self.halt_ending(&run.product)?;
             Ok(())
@@ -2365,6 +2485,29 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             let Some(model) = nodes.get(index).map(|node| node.model.clone()) else {
                 return Err(fault("a-frontier-index-names-a-node"));
             };
+            if self.request.workers > 1 && !prefetched.contains_key(&index) {
+                let mut jobs = vec![(index, model.clone())];
+                jobs.extend(
+                    frontier
+                        .iter()
+                        .filter(|(next_depth, next)| {
+                            !bound.is_some_and(|bound| *next_depth >= bound)
+                                && !prefetched.contains_key(next)
+                        })
+                        .take(self.request.workers.saturating_sub(1))
+                        .filter_map(|(_, next)| {
+                            nodes.get(*next).map(|node| (*next, node.model.clone()))
+                        }),
+                );
+                let (indices, states): (Vec<_>, Vec<_>) = jobs.into_iter().unzip();
+                let expansions = run.product.system.expand_live_batch(
+                    states,
+                    run.product.enforce,
+                    run.product.stutter_closure,
+                    self.request.workers,
+                );
+                prefetched.extend(indices.into_iter().zip(expansions));
+            }
             if run.product.poll().is_err() {
                 stop(&mut phase)?;
                 return Ok(phase);
@@ -2411,9 +2554,13 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     Cut::default(),
                 )
             } else {
-                match run.product.expand(&model) {
+                match prefetched
+                    .remove(&index)
+                    .unwrap_or_else(|| run.product.expand_raw(&model))
+                {
                     Ok(expanded) => expanded,
-                    Err(_) => {
+                    Err(stop_cause) => {
+                        run.product.record(Halt::Expansion(stop_cause));
                         stop(&mut phase)?;
                         return Ok(phase);
                     }

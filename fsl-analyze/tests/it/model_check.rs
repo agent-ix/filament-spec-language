@@ -26,9 +26,11 @@ use fsl_foundation::bound::{DomainKey, DomainKind, FiniteBound, ProofBound};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
     CallerLimits, CounterexampleKind, IncompleteCause, ModelCheckItem, ModelCheckLimit,
-    ModelCheckLimits, ModelCheckOutcome, ReachedLimit, TemporalCounterexample, UndecidedCause,
-    UndefinedLocus, DEFAULT_MAX_AUTOMATON_STATES,
+    ModelCheckLimits, ModelCheckOutcome, ProofCertificate, ReachedLimit, TemporalCounterexample,
+    UndecidedCause, UndefinedLocus, DEFAULT_MAX_AUTOMATON_STATES,
 };
+use fsl_route::reductions::Reductions;
+use fsl_semantics::check::CheckedTemporalClause;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
@@ -67,6 +69,23 @@ fn kernel_world(terminal: &str, starts: &[&[(&str, i64)]]) -> World {
 
 fn world_with(document: Vec<u8>, body: &str, starts: &[&[(&str, i64)]]) -> World {
     world_in_mode(document, body, starts, CheckMode::Linked)
+}
+
+fn temporal_worker_world(formula: &str) -> (World, CheckedTemporalClause) {
+    let document = document(false);
+    let body = format!("{CONTRACT}{ANY}");
+    let (package, mut clauses) =
+        package_with_clauses(&document, &body, &[("WorkerClaim", "", formula)]);
+    let mut documents = Documents::new(document);
+    let initial = vec![documents.start("initial", &[("a", 0), ("b", 0), ("c", 0)])];
+    let world = World {
+        body,
+        package,
+        documents,
+        initial,
+    };
+    let clause = clauses.pop().expect("the worker claim is declared");
+    (world, clause)
 }
 
 /// [`world_with`] checked under `mode`: a unit whose divisor may be zero is
@@ -113,8 +132,33 @@ fn run_in(
     limits: ModelCheckLimits,
     meter: ScalarLimits,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
+    run_in_with_workers(
+        world,
+        package,
+        keys,
+        item,
+        max_depth,
+        limits,
+        meter,
+        1,
+        Reductions::default(),
+    )
+}
+
+fn run_in_with_workers(
+    world: &World,
+    package: &CheckedPackage,
+    keys: &[&str],
+    item: ModelCheckItem<'_>,
+    max_depth: Option<usize>,
+    limits: ModelCheckLimits,
+    meter: ScalarLimits,
+    workers: usize,
+    reductions: Reductions,
+) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
     check_model(
         ModelCheckRequest {
+            workers,
             temporal_clock_selections: &[],
             subject: subject(
                 package,
@@ -128,9 +172,75 @@ fn run_in(
             limits,
             smt_encoding: Default::default(),
             smt_run: Default::default(),
-            reductions: Default::default(),
+            reductions,
         },
         &Cancel::new(),
+    )
+}
+
+fn run_with_workers(
+    world: &World,
+    keys: &[&str],
+    item: ModelCheckItem<'_>,
+    max_depth: Option<usize>,
+    limits: ModelCheckLimits,
+    meter: ScalarLimits,
+    workers: usize,
+) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
+    run_with_workers_and_reductions(
+        world,
+        keys,
+        item,
+        max_depth,
+        limits,
+        meter,
+        workers,
+        Reductions::default(),
+    )
+}
+
+fn run_with_workers_and_reductions(
+    world: &World,
+    keys: &[&str],
+    item: ModelCheckItem<'_>,
+    max_depth: Option<usize>,
+    limits: ModelCheckLimits,
+    meter: ScalarLimits,
+    workers: usize,
+    reductions: Reductions,
+) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
+    run_in_with_workers(
+        world,
+        &world.package,
+        keys,
+        item,
+        max_depth,
+        limits,
+        meter,
+        workers,
+        reductions,
+    )
+}
+
+fn run_clause_with_workers(
+    world: &World,
+    clause: &CheckedTemporalClause,
+    atom: fn(i64) -> Option<bool>,
+    limits: ModelCheckLimits,
+    workers: usize,
+) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
+    let letters = Letters { atom };
+    run_with_workers(
+        world,
+        &["a", "b", "c"],
+        ModelCheckItem::Clause {
+            clause,
+            letters: &letters,
+        },
+        None,
+        limits,
+        UNLIMITED,
+        workers,
     )
 }
 
@@ -144,6 +254,176 @@ fn deadlock(world: &World) -> ModelCheckOutcome {
         UNLIMITED,
     )
     .expect("the subject is checked")
+}
+
+fn certificate_bytes(outcome: &ModelCheckOutcome) -> Vec<u8> {
+    let ModelCheckOutcome::Holds { certificate, .. } = outcome else {
+        panic!("expected a holding certificate, got {outcome:?}");
+    };
+    match certificate {
+        ProofCertificate::Closure(certificate) => {
+            serde_json::to_vec(certificate).expect("the closure certificate serializes")
+        }
+        ProofCertificate::Component(certificate) => certificate
+            .canonical_bytes()
+            .expect("the component certificate serializes"),
+    }
+}
+
+/// FR-126's ordered worker merge over a Counter subject with at least 50
+/// reachable product states: lasso paths, certificates and the state limit
+/// agree across every requested worker count.
+#[trace("TC-1417", "FR-126-AC-20")]
+#[test]
+fn workers_preserve_counter_lassos_certificates_and_state_limit() {
+    let (violated_world, violated_clause) =
+        temporal_worker_world("always eventually holds(c.value = 0)");
+    let mut violation = None;
+    for workers in [1, 2, 4, 64] {
+        let outcome = run_clause_with_workers(
+            &violated_world,
+            &violated_clause,
+            |value| Some(value == 0),
+            ModelCheckLimits::default(),
+            workers,
+        )
+        .expect("the worker request is admitted");
+        let counterexample = violated(&outcome).clone();
+        assert_eq!(
+            values(
+                &violated_world,
+                &["a", "b", "c"],
+                &counterexample,
+                "a",
+                "value"
+            ),
+            [0, 1, 2, 3]
+        );
+        assert_eq!(
+            counterexample.lasso.as_ref().map(|lasso| lasso.entry),
+            Some(3)
+        );
+        assert!(counterexample
+            .lasso
+            .as_ref()
+            .is_some_and(|lasso| lasso.terminal_stutter));
+        let stats = outcome.stats();
+        if let Some((expected, expected_stats)) = &violation {
+            assert_eq!(&counterexample, expected, "workers={workers}");
+            assert_eq!(stats, *expected_stats, "workers={workers}");
+        } else {
+            assert!(stats.product_states >= 50);
+            violation = Some((counterexample, stats));
+        }
+    }
+
+    let (held_world, held_clause) = temporal_worker_world("always holds(c.value <= 3)");
+    let mut certificate = None;
+    let mut held_stats = None;
+    for workers in [1, 2, 4, 64] {
+        let outcome = run_clause_with_workers(
+            &held_world,
+            &held_clause,
+            |value| Some(value <= 3),
+            ModelCheckLimits::default(),
+            workers,
+        )
+        .expect("the worker request is admitted");
+        let bytes = certificate_bytes(&outcome);
+        let stats = outcome.stats();
+        if let Some(expected) = &certificate {
+            assert_eq!(&bytes, expected, "workers={workers}");
+            assert_eq!(stats, held_stats.expect("the first run recorded its stats"));
+        } else {
+            assert!(stats.product_states >= 50);
+            certificate = Some(bytes);
+            held_stats = Some(stats);
+        }
+    }
+
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_states = 5;
+    let mut stopped = None;
+    for workers in [1, 2, 4, 64] {
+        let outcome = run_with_workers(
+            &held_world,
+            &["a", "b", "c"],
+            ModelCheckItem::Clause {
+                clause: &held_clause,
+                letters: &Letters {
+                    atom: |value| Some(value <= 3),
+                },
+            },
+            None,
+            limits,
+            UNLIMITED,
+            workers,
+        )
+        .expect("the bounded worker request is admitted");
+        let ModelCheckOutcome::Stopped {
+            cause,
+            limit,
+            stats,
+        } = outcome
+        else {
+            panic!("expected the five-state stop, got {outcome:?}");
+        };
+        assert_eq!(cause, IncompleteCause::ResourceExhausted);
+        assert_eq!(
+            limit,
+            Some(ReachedLimit {
+                limit: ModelCheckLimit::MaxStates,
+                value: 5,
+            })
+        );
+        if let Some((expected_stats, expected_cause, expected_limit)) = &stopped {
+            assert_eq!(&stats, expected_stats, "workers={workers}");
+            assert_eq!(&cause, expected_cause, "workers={workers}");
+            assert_eq!(&limit, expected_limit, "workers={workers}");
+        } else {
+            stopped = Some((stats, cause, limit));
+        }
+    }
+
+    let reduced_world = self::world("", &[&[("a", 0), ("b", 0), ("c", 0)]]);
+    let mut reductions = Reductions::default();
+    reductions.partial_order = true;
+    let mut expected_reduced = None;
+    for workers in [1, 2, 4, 64] {
+        let outcome = run_with_workers_and_reductions(
+            &reduced_world,
+            &["a", "b", "c"],
+            ModelCheckItem::DeadlockFreedom,
+            None,
+            ModelCheckLimits::default(),
+            UNLIMITED,
+            workers,
+            reductions.clone(),
+        )
+        .expect("the reduced worker request is admitted");
+        if let Some(expected) = &expected_reduced {
+            assert_eq!(&outcome, expected, "POR workers={workers}");
+        } else {
+            expected_reduced = Some(outcome);
+        }
+    }
+
+    let no_initial = self::world(ANY, &[]);
+    let refusal = run_with_workers(
+        &no_initial,
+        &["c"],
+        ModelCheckItem::DeadlockFreedom,
+        None,
+        ModelCheckLimits::default(),
+        UNLIMITED,
+        0,
+    )
+    .expect_err("zero workers are refused before the empty subject is checked");
+    assert!(matches!(refusal, ModelCheckRefusal::Workers));
+    assert_eq!(
+        refusal.to_string(),
+        "invalid_runtime_input/invalid-value: model-check workers must be nonzero"
+    );
 }
 
 fn system<'w>(world: &'w World, keys: &[&str]) -> ModelSystem<'w> {
@@ -682,7 +962,7 @@ fn a_violation_names_the_first_bound_instance_that_is_false() {
 /// function `q`, FR-495-AC-3) is violated with the prefix `0 -inc-> 1 -inc-> 2` and
 /// `kind: UndefinedEvaluation{where: position 2, cause: division-by-zero}`,
 /// at the clause's atom.
-#[trace("TC-537")]
+#[trace("TC-537", "FR-126-AC-9")]
 #[test]
 fn an_undefined_atom_refutes_at_the_first_position_it_is_undefined() {
     let world = kernel_world("", &[&[("c", 0)]]);
@@ -721,7 +1001,7 @@ fn an_undefined_atom_refutes_at_the_first_position_it_is_undefined() {
 /// at the declaration of `M`. ADR-018 UE-6: an undefined precondition
 /// guard refutes the item at the expanded state, naming the guarded
 /// transition, never reading the step as disabled.
-#[trace("TC-537")]
+#[trace("TC-537", "FR-126-AC-9")]
 #[test]
 fn an_undefined_model_side_expression_refutes_the_deadlock_item() {
     let world = kernel_world(
@@ -868,6 +1148,7 @@ fn limits_and_cancellation_stop_the_run_naming_what_stopped_it() {
     candidate_subject.simulation.expansion.max_candidates = 1;
     let candidate_stop = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: candidate_subject,
             item: ModelCheckItem::DeadlockFreedom,
@@ -890,6 +1171,7 @@ fn limits_and_cancellation_stop_the_run_naming_what_stopped_it() {
     cancel.cancel(CancelCause::Requested);
     let cancelled = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: subject(
                 &world.package,
@@ -977,6 +1259,7 @@ fn raising_the_reached_bound_lets_the_run_continue() {
         candidate_subject.simulation.expansion.max_candidates = max_candidates;
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: candidate_subject,
                 item: ModelCheckItem::DeadlockFreedom,
@@ -1069,6 +1352,7 @@ fn a_cancelled_handle_stops_a_tp1_clause_run_rather_than_refusing() {
     cancel.cancel(CancelCause::Requested);
     let outcome = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: subject(
                 &package,
@@ -1233,6 +1517,7 @@ fn zero_instances_report_no_instance_after_the_requires_bound_pre_check() {
     no_universe.simulation.universes = Vec::new();
     let refusal = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: no_universe,
             item: item(),
@@ -1363,6 +1648,7 @@ fn run_with(
     subject.proof_bounds = proof_bounds;
     check_model(
         ModelCheckRequest {
+            workers: 1,
             subject,
             temporal_clock_selections: &[],
             item: ModelCheckItem::DeadlockFreedom,

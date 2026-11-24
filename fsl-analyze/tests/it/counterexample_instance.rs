@@ -102,6 +102,7 @@ fn outcome_with(
     };
     check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: subject(&package, &documents, initial, &["a", "b"], UNLIMITED),
             item: ModelCheckItem::Clause {
