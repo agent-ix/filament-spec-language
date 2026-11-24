@@ -117,6 +117,103 @@ fn refused(world: &World, claim: &str) -> ProductRefusal {
     }
 }
 
+/// FR-195-AC-4: EN-4 refuses each exact-only class with its first applicable
+/// cause, while a confidence-bounded quantile claim passes negotiation.
+#[trace("TC-630", "FR-195-AC-4")]
+#[test]
+fn the_statistical_gate_returns_each_exact_only_cause() {
+    use fsl_analyze::statistical::require_statistical;
+    use fsl_replay::statistical::StatisticalRefusal;
+
+    let workload = World::new(&prob_world::link(
+        "probabilistic Cost using ev on M over (m: M::Msg) under Even on origin { expected accumulate cost until holds(m.delivered) <= rational(6, 5) }\n\
+         probabilistic Bounded using ev on M over (m: M::Msg) under Even on origin { probability >= 0.5 [ eventually[0, 2] holds(m.delivered) ] }\n\
+         probabilistic P95 using ev on M over (m: M::Msg) under Even on origin with alpha 0.01, beta 0.01, indifference 0.01 { quantile 0.95 of (accumulate cost from holds(m.attempts = 0) until holds(m.delivered) within 2) <= 3 }",
+    ));
+    let every = World::new(&prob_world::process(
+        "probabilistic FairTerminates using inf on M over (p: M::Proc) under every scheduler on origin { probability >= 0.99 [ eventually holds(p.done) ] }",
+    ));
+
+    assert_eq!(
+        require_statistical(every.claim("FairTerminates")),
+        Err(fsl_replay::statistical::StatisticalRefusal::EveryScheduler)
+    );
+    assert_eq!(
+        require_statistical(workload.claim("Cost")),
+        Err(StatisticalRefusal::ExactOnlyForm)
+    );
+    assert_eq!(
+        require_statistical(workload.claim("Bounded")),
+        Err(StatisticalRefusal::MissingConfidence)
+    );
+    assert_eq!(require_statistical(workload.claim("P95")), Ok(()));
+}
+
+/// FR-195-AC-5: EN-5 advertises only exact unbounded probabilistic evidence,
+/// and FR-192 maps each EN-4 gate refusal to unsupported with its cause.
+#[trace("TC-630", "FR-195-AC-5")]
+#[test]
+fn exact_probability_manifest_and_statistical_refusal_settlement_are_exact() {
+    use fsl_analyze::exact_probabilistic::manifest;
+    use fsl_analyze::statistical::manifest as statistical_manifest;
+    use fsl_foundation::bound::DomainKind;
+    use fsl_route::{EvidenceKind, Mode, ProviderOrigin};
+    use fsl_replay::statistical::{settle_statistical_refusal, StatisticalRefusal};
+
+    let exact = manifest::descriptor(ProviderOrigin::Linked).unwrap();
+    assert_eq!(exact.advertises().collect::<Vec<_>>(), [(
+        fsl_semantics::check::Capability::ProbabilisticSatisfaction,
+        Mode::Unbounded,
+    )]);
+    assert_eq!(exact.evidence_kinds(), &BTreeSet::from([EvidenceKind::Exact]));
+    assert_eq!(exact.domains(), Some(&BTreeSet::from([DomainKind::Population, DomainKind::Integer])));
+    assert_eq!(statistical_manifest::descriptor(ProviderOrigin::Linked).unwrap().evidence_kinds(), &BTreeSet::from([EvidenceKind::Statistical]));
+
+    for (refusal, cause) in [
+        (StatisticalRefusal::EveryScheduler, "EveryScheduler"),
+        (StatisticalRefusal::ExactOnlyForm, "ExactOnlyForm"),
+        (StatisticalRefusal::MissingConfidence, "MissingConfidence"),
+    ] {
+        let settled = settle_statistical_refusal(&refusal).expect("request refusal settles");
+        let rendered = format!("{settled:?}");
+        assert!(rendered.contains("Unsupported"), "{rendered}");
+        assert!(rendered.contains(cause), "{cause}: {rendered}");
+    }
+}
+
+/// FR-195-AC-6 (TC-1163): exact claims have a claim-occurrence-keyed
+/// probabilistic requirement with its exact evidence and full record shape.
+#[trace("TC-1163", "FR-195-AC-6")]
+#[test]
+fn exact_probabilistic_requirement_records_keep_occurrence_and_evidence() {
+    use fsl_foundation::bound::{DomainKey, DomainKind};
+    use fsl_semantics::check::Capability;
+    use fsl_semantics::check::RequirementRecord;
+    use fsl_semantics::family::{ClaimEvidence, ClaimExtent};
+    use std::collections::BTreeMap;
+
+    let world = World::new(&prob_world::process(
+        "probabilistic FairTerminates using inf on M over (p: M::Proc) under every scheduler on origin { probability >= 0.99 [ eventually holds(p.done) ] }",
+    ));
+    let claim = world.claim("FairTerminates");
+    let occurrence = claim.occurrence().expect("the package claim occurrence");
+    let boolean = crate::fixture_ids::node_key([99]);
+    let record = RequirementRecord::model_claim(
+        claim.requirements(occurrence.node().clone()),
+        boolean.clone(),
+    );
+    let requirements = record.requirements();
+    assert_eq!(requirements.kind(), Capability::ProbabilisticSatisfaction);
+    assert_eq!(requirements.evidence(), Some(ClaimEvidence::Exact));
+    assert_eq!(requirements.extent(), &ClaimExtent::from_domains(BTreeMap::from([(
+        DomainKey::Node { node: occurrence.node().clone(), path: Vec::new() },
+        DomainKind::InfiniteTrace,
+    )])));
+    assert_eq!(record.result_bound().node(), boolean);
+    assert!(record.conversion_context().is_none());
+    assert!(record.path_condition().is_empty());
+}
+
 /// The probabilities of `edges`, summed.
 fn total(edges: &[ProbEdge]) -> Rational {
     edges
@@ -2619,6 +2716,32 @@ fn a_budget_equal_to_the_product_size_completes() {
             ..
         }))
     ));
+}
+
+/// FR-196-AC-9: an unbounded exact claim retains real None monitor and
+/// accumulator members in its key; exhausting the state budget returns a
+/// typed stop and does not manufacture a partial product.
+#[trace("TC-631", "FR-196-AC-9")]
+#[test]
+fn exact_unbounded_keys_keep_none_and_budget_stops_have_no_product() {
+    let world = World::new(&prob_world::no_fault(NO_FAULT));
+    let product = built(&world, "NoFault");
+    let initial = &product.states[start(&product).index()];
+    assert_eq!(initial.monitor, None);
+    assert_eq!(initial.accumulator, None);
+
+    let limits = ModelCheckLimits {
+        limits: Limits { max_states: 1, ..ModelCheckLimits::default().limits },
+        ..ModelCheckLimits::default()
+    };
+    let result = build_product(world.request("NoFault", limits), &Cancel::new());
+    assert!(matches!(
+        result,
+        Err(ProductRefusal::Stopped(ProductStop::Limit {
+            limit: ModelCheckLimit::ExactProbMaxStates,
+            value: 1,
+        }))
+    ), "typed budget refusal: {result:?}");
 }
 
 /// Observe the real relation and full-target construction boundaries, rather
