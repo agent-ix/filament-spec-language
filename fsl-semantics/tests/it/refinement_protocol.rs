@@ -279,7 +279,7 @@ const UNSUPPORTED: Catalog = (Code::UnsupportedConstruct, Some("not-yet-implemen
 
 /// FR-147-AC-1 (TC-552 step 1): the checked refinement selects the protocol
 /// side and resolves its internal abstract step class.
-#[trace("TC-552", "FR-147-AC-1")]
+#[trace("TC-552", "FR-147-AC-1", "FR-135-AC-12")]
 #[test]
 fn a_refinement_over_a_protocol_checks_with_its_internal_list() {
     let graph = checked(&cas_twice(), internal(&["Spec::Twice::Done"]));

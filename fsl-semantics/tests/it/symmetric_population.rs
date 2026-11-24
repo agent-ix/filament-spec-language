@@ -22,8 +22,9 @@ use ix_trace_rs::trace;
 use serde_json::json;
 
 use crate::model_operations::{
-    admit_and_assemble_with_body, attempt_update_modifies_version_number, config_unit_with_body,
-    config_version_document, PACKAGE_IDENTITY,
+    admit_and_assemble_with_body, admit_and_assemble_with_profiles,
+    attempt_update_modifies_version_number, config_unit_with_body, config_version_document,
+    PACKAGE_IDENTITY,
 };
 
 const POPULATION: &str = "ix://example/config-version/config_history";
@@ -95,6 +96,104 @@ fn with_peer_collection(document: &[u8], unique: bool) -> Vec<u8> {
                 }
             },
         }));
+    serde_json::to_vec(&envelope).expect("valid JSON")
+}
+
+/// Add a second, unannotated population of `Draft` objects and a
+/// `ConfigVersion.drafts` reference set.
+fn with_drafts(document: &[u8]) -> Vec<u8> {
+    const DRAFT: &str = "ix://example/config-version/Draft";
+    const DRAFTS: &str = "ix://example/config-version/drafts";
+    let mut envelope: serde_json::Value = serde_json::from_slice(document).expect("valid JSON");
+    let types = envelope["types"].as_array_mut().expect("types");
+    let config_version = types
+        .iter_mut()
+        .find(|entry| entry["identity"] == CONFIG_VERSION)
+        .expect("ConfigVersion is declared");
+    let fields = config_version["fields"].as_array_mut().expect("fields");
+    let mut drafts = fields
+        .iter()
+        .find(|field| field["name"] == "parent")
+        .expect("the parent field")
+        .clone();
+    drafts["identity"] = format!("{CONFIG_VERSION}/drafts").into();
+    drafts["name"] = "drafts".into();
+    drafts["typeRef"] = DRAFT.into();
+    drafts["multiplicity"] = json!({
+        "lower": 0, "upper": 5, "ordered": false, "unique": true,
+    });
+    drafts["origin"]["generated"]["generatorIdentity"] =
+        format!("{CONFIG_VERSION}/drafts").into();
+    drafts["origin"]["generated"]["inputIdentities"] =
+        json!([format!("{CONFIG_VERSION}/drafts")]);
+    fields.push(drafts);
+
+    let config_type = types
+        .iter()
+        .find(|entry| entry["identity"] == CONFIG_VERSION)
+        .expect("ConfigVersion is declared")
+        .clone();
+    let mut draft_type = config_type;
+    draft_type["identity"] = DRAFT.into();
+    draft_type["displayName"] = DRAFT.into();
+    draft_type["fields"] = json!([{
+        "identity": format!("{DRAFT}/versionNumber"),
+        "name": "versionNumber",
+        "typeRef": "ix://filament/native/Integer",
+        "presence": "required", "nullable": false, "defaultKind": "none",
+        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+        "origin": {
+            "generated": {
+                "generatorIdentity": format!("{DRAFT}/versionNumber"),
+                "generatorVersion": "1.0.0",
+                "inputIdentities": [format!("{DRAFT}/versionNumber")],
+            }
+        },
+    }]);
+    draft_type["operations"] = json!([]);
+    draft_type["relationships"] = json!([]);
+    types.push(draft_type);
+    envelope["populations"].as_array_mut().expect("populations").push(json!({
+        "identity": DRAFTS,
+        "displayName": DRAFTS,
+        "kind": {"module": "example/config-version", "name": "population"},
+        "members": [DRAFT],
+        "extent": "closed",
+        "origin": {
+            "generated": {
+                "generatorIdentity": DRAFTS,
+                "generatorVersion": "1.0.0",
+                "inputIdentities": [DRAFTS],
+            }
+        },
+    }));
+    serde_json::to_vec(&envelope).expect("valid JSON")
+}
+
+/// Add the primitive integer set used by the population-independent fold
+/// case in FR-150-AC-4.
+fn with_integer_set(document: &[u8]) -> Vec<u8> {
+    let mut envelope: serde_json::Value = serde_json::from_slice(document).expect("valid JSON");
+    let owner = envelope["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|entry| entry["identity"] == CONFIG_VERSION)
+        .expect("ConfigVersion is declared");
+    owner["fields"].as_array_mut().expect("fields").push(json!({
+        "identity": format!("{CONFIG_VERSION}/s"),
+        "name": "s",
+        "typeRef": "ix://filament/native/Integer",
+        "presence": "optional", "nullable": false, "defaultKind": "none",
+        "multiplicity": {"lower": 0, "upper": 3, "ordered": false, "unique": true},
+        "origin": {
+            "generated": {
+                "generatorIdentity": format!("{CONFIG_VERSION}/s"),
+                "generatorVersion": "1.0.0",
+                "inputIdentities": [format!("{CONFIG_VERSION}/s")],
+            }
+        },
+    }));
     serde_json::to_vec(&envelope).expect("valid JSON")
 }
 
@@ -242,6 +341,51 @@ fn a_counting_fold_over_a_bag_of_references_checks_and_a_chooser_refuses() {
     );
 }
 
+/// FR-150-AC-6: refusal precedence is decided for each fold from its own
+/// source type. The annotated `config_history` fold gets the identity cause;
+/// the unannotated `drafts` fold keeps FR-145's operator cause, in source
+/// order and at each offending fold.
+#[trace("TC-566", "FR-150-AC-6")]
+#[test]
+fn each_fold_uses_the_annotation_of_its_own_source_population() {
+    let document = annotated(&with_drafts(&with_peers(&document())));
+    let peers_fold = "fold<Flag>(acc, p in self.peers: p = self, identity: false)";
+    let drafts_fold =
+        "fold<Flag>(acc, p in self.drafts: p.versionNumber = self.versionNumber, identity: false)";
+    let body = format!(
+        "{FLAG}post Peer using v on Config::ConfigVersion::attemptUpdate {{ not {peers_fold} }}\n\
+         post Draft using v on Config::ConfigVersion::attemptUpdate {{ not {drafts_fold} }}\n"
+    );
+    let refusals = check(&document, &body).expect_err("both order-sensitive folds refuse");
+    assert_eq!(
+        causes(&refusals),
+        [
+            (Code::IllTyped, Some("identity-observing-form")),
+            (Code::IllTyped, Some("operator-ineligible")),
+        ]
+    );
+    let regions = admit_and_assemble_with_body(&document, &body)
+        .expect("the unit assembles")
+        .regions();
+    let (text, _) = config_unit_with_body(&document, &body);
+    let actual: Vec<(u64, u64)> = refusals
+        .iter()
+        .map(|refusal| {
+            let region = regions.refusal_region(refusal).expect("a source region");
+            (region.start(), region.end())
+        })
+        .collect();
+    let expected = [peers_fold, drafts_fold].map(|fold| {
+        let span = span_of(&text, fold);
+        (span.start as u64, span.end as u64)
+    });
+    assert_eq!(actual, expected, "each refusal names its own fold node");
+    let CheckCause::IdentityObservingForm(cause) = &refusals[0].cause else {
+        panic!("the annotated fold reports identity observation");
+    };
+    assert_eq!(cause.population.node, POPULATION);
+}
+
 /// `reduce`, and a conversion of a reference, refuse the same way.
 #[trace("TC-566", "FR-150-AC-3")]
 #[test]
@@ -305,37 +449,140 @@ fn a_terminal_predicate_refuses_and_two_refusals_report_in_source_order() {
     assert!(starts[0] < starts[1], "source order: {starts:?}");
 }
 
-/// Dereference, `reaches`, `size`, `contains` and `count` over an annotated
-/// population's references still check. A `fold` over a `Set<Int[0, 3]>`,
-/// `forall` and `holds` are not exercised.
-#[trace("TC-566")]
+/// Population quantification, a primitive-set fold, and a temporal atom that
+/// compares references through fields remain admissible under the annotation.
+#[trace("TC-566", "FR-150-AC-4")]
 #[test]
-fn transparent_uses_of_an_annotated_population_check() {
-    let document = annotated(&with_peers(&document()));
+fn non_identity_observing_population_reads_and_primitive_set_fold_check() {
+    let document = annotated(&with_integer_set(&with_peers(&document())));
     let body = format!(
         "{FLAG}{PARENT_ORDER}{NO_CYCLE}\
          invariant Peers using v on Config::ConfigVersion at current {{ \
            size(self.peers) <= 5 and contains(self.peers, self) }}\n\
+         invariant Quantified using v on Config::ConfigVersion at current {{ \
+           forall p in config_history: p.parent = self implies p != self }}\n\
+         invariant PrimitiveFold using v on Config::ConfigVersion at current {{ \
+           fold<Tally>(acc, x in self.s: acc + 1, identity: 0) <= 3 }}\n\
          invariant Count using v on Config::ConfigVersion at current {{ \
            count<Tally>(p in self.peers: p = self) = 0 }}\n"
     );
     check(&document, &body).expect("transparent forms check");
+
+    let temporal = "temporal SameParent using t over (a: Config::ConfigVersion, c: Config::ConfigVersion) \
+        clock \"model-steps\" on origin { always holds(c.parent = a.parent) }";
+    let package = admit_and_assemble_with_profiles(
+        &document,
+        "profile t = \"filament.temporal.infinite-trace/v1\";\n",
+        temporal,
+    )
+    .expect("the temporal unit assembles");
+    package
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+        .expect("the temporal equality atom checks");
 }
 
-/// `convert<Sequence<..>>` of a set of symmetric references reads the set in
-/// identity order, so it refuses as an order-sensitive traversal. Verifies
-/// that conversion only; it is not one of FR-150-AC-3's listed forms.
-#[trace("TC-566")]
+/// FR-150-AC-7: a chooser fold in a function body keeps FR-145's typed
+/// operator refusal without an identity-observing cause, while ordinary
+/// reference equality, conversion and sequence reads in function bodies and
+/// the order-independent population operators in a postcondition check.
+#[trace("TC-566", "FR-150-AC-7")]
 #[test]
-fn a_set_converted_to_a_sequence_refuses() {
+fn function_bodies_keep_their_rules_and_population_operators_check() {
     let document = annotated(&with_peers(&document()));
-    let convert = "convert<Sequence<Config::ConfigVersion>[0, 5]>(self.peers)";
+    let chooser = "fold<Flag>(acc, p in s: p = p, identity: false)";
     let body = format!(
-        "invariant Order using v on Config::ConfigVersion at current {{ size({convert}) = 0 }}\n"
+        "{FLAG}function pick using v(s: Set<Reference<Config::ConfigVersion>>): Boolean pure {{ {chooser} }}\n"
     );
-    let payload = identity_refusal(&document, &body, convert);
-    assert_eq!(payload.node, IdentityNode::Convert);
+    let refusals = check(&document, &body).expect_err("the function fold is not catalogued");
+    assert_eq!(
+        causes(&refusals),
+        [(Code::IllTyped, Some("operator-ineligible"))]
+    );
+    let regions = admit_and_assemble_with_body(&document, &body)
+        .expect("the function unit assembles")
+        .regions();
+    let (text, _) = config_unit_with_body(&document, &body);
+    let region = regions.refusal_region(&refusals[0]).expect("a refusal locus");
+    let span = span_of(&text, chooser);
+    assert_eq!(
+        (region.start(), region.end()),
+        (span.start as u64, span.end as u64)
+    );
+
+    let functions = format!(
+        "{FLAG}function same using v(p: Reference<Config::ConfigVersion>): Boolean pure {{ p = p }}\n\
+         function render using v(p: Reference<Config::ConfigVersion>): String pure {{ convert<String>(p) }}\n\
+         function ordered using v(s: Set<Reference<Config::ConfigVersion>>): Sequence<Reference<Config::ConfigVersion>>[0, 8] pure {{ convert<Sequence<Reference<Config::ConfigVersion>>[0, 8]>(s) }}\n"
+    );
+    check(&document, &functions).expect("function bodies use the unannotated rules");
+
+    let post = format!(
+        "{FLAG}type Tally = Integer;\n\
+         post PopulationReads using v on Config::ConfigVersion::attemptUpdate {{\
+           count<Tally>(p in self.peers: p.versionNumber >= 0) <= 5 and\
+           sum<Tally>(p in self.peers: p.versionNumber) >= 0 and\
+           exists(p in self.peers where p.versionNumber >= 0) and\
+           forall(p in self.peers where p.versionNumber >= 0) and\
+           contains(self.peers, self) and size(self.peers) <= 5 and\
+           size(filter(p in self.peers where p.versionNumber >= 0)) <= 5 and\
+           size(map(p in self.peers: p)) <= 5 }}\n"
+    );
+    check(&document, &post).expect("order-independent population operators check");
+}
+
+/// Ordered conversions of symmetric references refuse at the conversion;
+/// unordered bag conversion is accepted, while choosing an element after
+/// that conversion refuses at the fold. The same sequence conversion remains
+/// valid when the population is not annotated.
+#[trace("TC-566", "FR-150-AC-5")]
+#[test]
+fn ordered_reference_conversions_refuse_and_bag_conversion_preserves_scope() {
+    let plain_document = with_peers(&document());
+    let document = annotated(&plain_document);
+    for convert in [
+        "convert<Sequence<Config::ConfigVersion>[0, 5]>(self.peers)",
+        "convert<OrderedSet<Config::ConfigVersion>[0, 5]>(self.peers)",
+    ] {
+        let body = format!(
+            "invariant Order using v on Config::ConfigVersion at current {{ size({convert}) = 0 }}\n"
+        );
+        let payload = identity_refusal(&document, &body, convert);
+        assert_eq!(payload.node, IdentityNode::Convert, "{convert}");
+        assert_eq!(
+            payload.form,
+            IdentityForm::OrderSensitiveTraversal,
+            "{convert}"
+        );
+        assert_eq!(payload.population.node, POPULATION, "{convert}");
+    }
+
+    let bag = "convert<Bag<Config::ConfigVersion>[0, 5]>(self.peers)";
+    let body = format!(
+        "invariant BagSize using v on Config::ConfigVersion at current {{ size({bag}) <= 5 }}\n"
+    );
+    check(&document, &body).expect("an unordered bag conversion checks");
+
+    let chooser = format!(
+        "fold<Flag>(acc, p in {bag}: p = self, identity: false)"
+    );
+    let body = format!(
+        "{FLAG}invariant Chooser using v on Config::ConfigVersion at current {{ not {chooser} }}\n"
+    );
+    let payload = identity_refusal(&document, &body, &chooser);
+    assert_eq!(payload.node, IdentityNode::Fold);
     assert_eq!(payload.form, IdentityForm::OrderSensitiveTraversal);
+    assert_eq!(payload.population.node, POPULATION);
+
+    let sequence = "convert<Sequence<Config::ConfigVersion>[0, 5]>(self.peers)";
+    let body = format!(
+        "invariant Order using v on Config::ConfigVersion at current {{ size({sequence}) = 0 }}\n"
+    );
+    check(&plain_document, &body)
+        .expect("the same ordered conversion checks without the annotation");
 }
 
 /// A reference typed as a supertype of a symmetric population's member type

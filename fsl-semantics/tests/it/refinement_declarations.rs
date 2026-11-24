@@ -719,11 +719,10 @@ fn cas_key(node_name: &str) -> DeclarationKey {
     }
 }
 
-/// FR-135-AC-1 (TC-540 step 1): `CasRefinesCounter` checks to one population
-/// row, one object row with the field row `value = self.value` and no hidden
-/// field. The dependency-package half needs the S4 closure and is not
-/// tested.
-#[trace("TC-540")]
+/// FR-135-AC-1 (TC-540 step 1): the local-model case of `CasRefinesCounter`
+/// checks to one population row, one object row with `value = self.value`
+/// and no hidden field.
+#[trace("TC-540", "FR-135-AC-1")]
 #[test]
 fn the_counter_refinement_checks_to_one_population_and_one_object_row() {
     let graph = checked_counter(&cas_refines_counter());
@@ -1230,9 +1229,8 @@ fn a_row_nesting_a_reference_in_a_composite_is_lifted() {
 }
 
 /// FR-135-AC-4 (TC-540 step 4): with the `value` row removed, the refinement
-/// checks with `value` hidden. The node-identity half needs S4 emission and
-/// is not tested.
-#[trace("TC-540")]
+/// records that abstract field as hidden and keeps no visible field rows.
+#[trace("TC-540", "FR-135-AC-4")]
 #[test]
 fn an_abstract_field_with_no_row_is_hidden() {
     let base = cas_refines_counter();
@@ -1975,7 +1973,7 @@ fn with_machine_fields(
 
 /// FR-136-AC-12: object-type-only model subjects are not rejected for lacking
 /// a state-machine anchor: the mapped refinement checks, its rows keyed.
-#[trace("TC-541", "FR-136-AC-12")]
+#[trace("TC-541", "FR-136-AC-12", "FR-135-AC-12")]
 #[test]
 fn an_object_type_only_refinement_subject_checks_and_is_emittable() {
     let (spec, cas) = counters();
@@ -1997,7 +1995,7 @@ fn an_object_type_only_refinement_subject_checks_and_is_emittable() {
 
 /// FR-136-AC-12: several state machines are selected by explicit rows rather
 /// than refused as an ambiguous subject.
-#[trace("TC-541", "FR-136-AC-12")]
+#[trace("TC-541", "FR-136-AC-12", "FR-135-AC-12")]
 #[test]
 fn several_state_machines_are_not_an_ambiguous_refinement_subject() {
     let (spec, cas) = counters();
@@ -2210,7 +2208,7 @@ fn a_step_row_naming_an_ambiguous_operation_refuses_at_its_name() {
 /// binds `Impl` to the sub-counter package; unit `b` binds `Impl` to the
 /// CAS package and declares `CasRefinesCounter`, whose concrete side is
 /// `b`'s.
-#[trace("FR-480")]
+#[trace("FR-480", "FR-135-AC-12")]
 #[test]
 fn a_refinements_models_are_its_own_units_packages() {
     let ((spec, cas), sub) = (counters(), sub_counter());
