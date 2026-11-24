@@ -810,7 +810,6 @@ impl From<AdmissionFailure> for ProbabilityAdmissionFailure {
     }
 }
 
-/// FR-120: the transition system of a checked package's state family.
 type ClockCandidateCache = std::sync::Mutex<
     BTreeMap<
         Option<domain::ClockSelectorMaxima>,
@@ -818,6 +817,7 @@ type ClockCandidateCache = std::sync::Mutex<
     >,
 >;
 
+/// FR-120 transition system for exploring one checked package's state family.
 pub struct ModelSystem<'a> {
     /// The identity of the one domain package this system is over, when it
     /// is over one (FR-140's `WrongSystem` check reads it).
