@@ -373,7 +373,7 @@ mod candidate_tests {
             &cancel,
         )
         .expect("the interior tick hop witnesses both fairness and recurring liveness"));
-        let no_interior_tick = through(&[], None);
+        let no_interior_tick = through(&[tick], None);
         assert!(!candidate_lasso_has_fair_run_with_recurring_edge(
             &positions,
             &no_interior_tick,
