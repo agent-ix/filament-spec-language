@@ -6874,9 +6874,8 @@ fn catalogued_step(
         let branch_is_accumulator = |operand: &Node| is_accumulator(operand);
         let branch_is_other =
             |operand: &Node| matches!(operand.kind, NodeKind::Local(slot) if slot == *other_slot);
-        if other_node.value_type != *value_type
-            || !((branch_is_accumulator(then) && branch_is_other(otherwise))
-                || (branch_is_other(then) && branch_is_accumulator(otherwise)))
+        if !((branch_is_accumulator(then) && branch_is_other(otherwise))
+            || (branch_is_other(then) && branch_is_accumulator(otherwise)))
         {
             return false;
         }
