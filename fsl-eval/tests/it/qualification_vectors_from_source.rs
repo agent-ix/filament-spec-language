@@ -285,9 +285,10 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             let mut cases = Vec::new();
             for row in vector.expected.split(';') {
                 let tokens = quoted(row);
-                let Some(mode) = tokens.first().filter(|name| {
-                    **name == "exact" || DIRECTIONS.contains(name)
-                }) else {
+                let Some(mode) = tokens
+                    .first()
+                    .filter(|name| **name == "exact" || DIRECTIONS.contains(name))
+                else {
                     continue;
                 };
                 for (index, operand) in operands.iter().enumerate() {
@@ -408,18 +409,31 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 ),
                 // The second outcome is a refusal on the coefficient, the
                 // code D07 gives for a coefficient outside its domain.
-                function(types[1], &source, refusal_expected(self::vector("D07").expected)),
+                function(
+                    types[1],
+                    &source,
+                    refusal_expected(self::vector("D07").expected),
+                ),
             ]
         }
         "D28" => {
             let tokens = quoted(vector.inputs);
-            let refusal = |ty: &str, body: &str| {
-                function(ty, body, refusal_expected(vector.expected))
-            };
+            let refusal =
+                |ty: &str, body: &str| function(ty, body, refusal_expected(vector.expected));
             vec![
                 refusal(tokens[0], tokens[1]),
                 refusal(tokens[2], tokens[3]),
-                function(tokens[0], tokens[4], decimal_expected(self::vector("D26").expected.split_once(';').expect("result").0)),
+                function(
+                    tokens[0],
+                    tokens[4],
+                    decimal_expected(
+                        self::vector("D26")
+                            .expected
+                            .split_once(';')
+                            .expect("result")
+                            .0,
+                    ),
+                ),
             ]
         }
         "D29" => {
@@ -683,15 +697,27 @@ fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
         "F01" => {
             let (positive, negative) = (operands[0], operands[1]);
             vec![
-                boolean_case(width, &format!("{} = {}", constant(negative), constant(positive)), true),
                 boolean_case(
                     width,
-                    &format!("{IEEE}bitIdentical({}, {})", constant(negative), constant(positive)),
+                    &format!("{} = {}", constant(negative), constant(positive)),
+                    true,
+                ),
+                boolean_case(
+                    width,
+                    &format!(
+                        "{IEEE}bitIdentical({}, {})",
+                        constant(negative),
+                        constant(positive)
+                    ),
                     false,
                 ),
                 boolean_case(
                     width,
-                    &format!("{IEEE}totalOrder({}, {})", constant(negative), constant(positive)),
+                    &format!(
+                        "{IEEE}totalOrder({}, {})",
+                        constant(negative),
+                        constant(positive)
+                    ),
                     true,
                 ),
             ]
@@ -700,7 +726,11 @@ fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             let (first, second) = (operands[0], operands[1]);
             let mut cases = Vec::new();
             for bits in [first, second] {
-                cases.push(boolean_case(width, &format!("{} = {}", constant(bits), constant(bits)), false));
+                cases.push(boolean_case(
+                    width,
+                    &format!("{} = {}", constant(bits), constant(bits)),
+                    false,
+                ));
                 cases.push(boolean_case(
                     width,
                     &format!("{IEEE}bitIdentical({}, {})", constant(bits), constant(bits)),
@@ -709,7 +739,11 @@ fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             }
             cases.push(boolean_case(
                 width,
-                &format!("{IEEE}totalOrder({}, {})", constant(first), constant(second)),
+                &format!(
+                    "{IEEE}totalOrder({}, {})",
+                    constant(first),
+                    constant(second)
+                ),
                 true,
             ));
             cases
@@ -719,7 +753,11 @@ fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             .map(|pair| {
                 boolean_case(
                     width,
-                    &format!("{IEEE}totalOrder({}, {})", constant(pair[0]), constant(pair[1])),
+                    &format!(
+                        "{IEEE}totalOrder({}, {})",
+                        constant(pair[0]),
+                        constant(pair[1])
+                    ),
                     true,
                 )
             })
@@ -732,9 +770,16 @@ fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
         )],
         "F04b" => {
             let flags = float_flags(vector.expected);
-            let bits = *hexes(vector.expected).first().expect("authored result bits");
+            let bits = *hexes(vector.expected)
+                .first()
+                .expect("authored result bits");
             vec![
-                float_function(32, "nearest-even", &add(operands[0], operands[1]), float_value(bits, &flags)),
+                float_function(
+                    32,
+                    "nearest-even",
+                    &add(operands[0], operands[1]),
+                    float_value(bits, &flags),
+                ),
                 float_function(
                     32,
                     "nearest-even",
@@ -748,12 +793,44 @@ fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 ),
             ]
         }
+        "F06" => {
+            // The authored word `ill-typed` is the catalog code `ill_typed`.
+            let code = vector
+                .expected
+                .split_whitespace()
+                .find(|word| *word == "ill-typed")
+                .expect("authored refusal word")
+                .replace('-', "_");
+            vec![boolean_case(
+                width,
+                &format!(
+                    "{} = {}",
+                    float_constant(32, operands[0]),
+                    float_constant(64, operands[1])
+                ),
+                true,
+            )]
+            .into_iter()
+            .map(|case| SourceCase {
+                expected: Expected::Refused {
+                    code: code.clone(),
+                    cause: None,
+                },
+                ..case
+            })
+            .collect()
+        }
         "F07" | "F08" | "F10" => {
             let flags = float_flags(vector.expected);
             direction_rows(vector.expected)
                 .into_iter()
                 .map(|(mode, bits)| {
-                    float_function(width, &mode, &add(operands[0], operands[1]), float_value(bits, &flags))
+                    float_function(
+                        width,
+                        &mode,
+                        &add(operands[0], operands[1]),
+                        float_value(bits, &flags),
+                    )
                 })
                 .collect()
         }
@@ -777,7 +854,12 @@ fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                     &add(first_operands[0], first_operands[1]),
                     refusal_expected(vector.expected),
                 ),
-                float_function(32, "exact", &add(operands[0], operands[1]), float_value(result[0], &flags)),
+                float_function(
+                    32,
+                    "exact",
+                    &add(operands[0], operands[1]),
+                    float_value(result[0], &flags),
+                ),
             ]
         }
         "F11" => vec![float_function(
@@ -799,7 +881,12 @@ fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             let mut cases = Vec::new();
             for source in &sources {
                 for mode in DIRECTIONS.iter().chain(std::iter::once(&"exact")) {
-                    cases.push(float_function(32, mode, source, float_expected(vector.expected)));
+                    cases.push(float_function(
+                        32,
+                        mode,
+                        source,
+                        float_expected(vector.expected),
+                    ));
                 }
             }
             cases
@@ -821,7 +908,12 @@ fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                     constant(zero(negative_zero))
                 );
                 for mode in DIRECTIONS.iter().chain(std::iter::once(&"exact")) {
-                    cases.push(float_function(32, mode, &source, float_value(results[index], &flags)));
+                    cases.push(float_function(
+                        32,
+                        mode,
+                        &source,
+                        float_value(results[index], &flags),
+                    ));
                 }
             }
             cases
@@ -835,7 +927,12 @@ fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                     &add(operands[0], operands[1]),
                     float_value(operands_result(vector.expected), &flags),
                 ),
-                float_function(32, "exact", &add(operands[0], operands[1]), refusal_expected(vector.expected)),
+                float_function(
+                    32,
+                    "exact",
+                    &add(operands[0], operands[1]),
+                    refusal_expected(vector.expected),
+                ),
             ]
         }
         "F15" | "F16" => vec![float_function(
@@ -859,7 +956,12 @@ fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                     &add(operands[0], operands[1]),
                     float_value(operands_result(rows[1]), &float_flags(rows[1])),
                 ),
-                float_function(32, "exact", &add(operands[0], operands[1]), refusal_expected(self::vector("F14").expected)),
+                float_function(
+                    32,
+                    "exact",
+                    &add(operands[0], operands[1]),
+                    refusal_expected(self::vector("F14").expected),
+                ),
             ]
         }
         _ => return None,
@@ -975,27 +1077,10 @@ fn quantity_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
     }
 }
 
-fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
-    let snippets = quoted(vector.inputs);
-    let source = match vector.id {
-        "U11a" => format!("dimension L; {} {}", snippets[1], snippets[0]),
-        "U11b" => format!("dimension L; {} {}", snippets[0], snippets[1]),
-        "U11c" | "U11f" | "U11h" => format!("dimension L; unit m : L = 1; {}", snippets[0]),
-        "U11g1" | "U11g2" | "U11g3" | "U11g4" | "U11n" | "U11o" | "U11w" => snippets.join("\n"),
-        _ => return None,
-    };
-    let expected = if vector.expected.starts_with("admitted:") {
-        Expected::Admitted
-    } else {
-        let fields = quoted(vector.expected);
-        Expected::Refused {
-            code: fields[0].to_owned(),
-            cause: Some(fields[1].to_owned()),
-        }
-    };
-    // The standard's mathematical unit scale is rendered with the native
-    // grammar's exact-rational literal; dimension terms are left intact.
-    let source: String = source
+/// The standard's mathematical unit scale is rendered with the native
+/// grammar's exact-rational literal; dimension terms are left intact.
+fn native_units(source: &str) -> String {
+    source
         .split(';')
         .filter(|declaration| !declaration.trim().is_empty())
         .map(|declaration| {
@@ -1015,11 +1100,133 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 format!("{declaration};\n")
             }
         })
-        .collect();
-    Some(vec![SourceCase {
-        declarations: format!("{source}function f using v(): Boolean pure {{ true }}"),
+        .collect()
+}
+
+fn unit_program(source: &str, expected: Expected) -> SourceCase {
+    SourceCase {
+        declarations: format!(
+            "{}function f using v(): Boolean pure {{ true }}",
+            native_units(source)
+        ),
         expected,
-    }])
+    }
+}
+
+/// The `code`/`cause` pairs of an authored cell, in order: a backticked
+/// package-level code followed by its backticked cause.
+fn refusal_pairs(text: &str) -> Vec<Expected> {
+    let tokens = quoted(text);
+    tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, token)| matches!(**token, "invalid_package" | "missing_declaration"))
+        .map(|(index, token)| Expected::Refused {
+            code: (*token).to_owned(),
+            cause: Some(tokens[index + 1].to_owned()),
+        })
+        .collect()
+}
+
+fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
+    let snippets = quoted(vector.inputs);
+    let pairs = refusal_pairs(vector.expected);
+    let first = || {
+        pairs.first().map(|pair| match pair {
+            Expected::Refused { code, cause } => Expected::Refused {
+                code: code.clone(),
+                cause: cause.clone(),
+            },
+            _ => unreachable!("refusal_pairs returns refusals"),
+        })
+    };
+    let nth = |index: usize| match &pairs[index] {
+        Expected::Refused { code, cause } => Expected::Refused {
+            code: code.clone(),
+            cause: cause.clone(),
+        },
+        _ => unreachable!("refusal_pairs returns refusals"),
+    };
+    let source = match vector.id {
+        "U11a" => format!("dimension L; {} {}", snippets[1], snippets[0]),
+        "U11b" => format!("dimension L; {} {}", snippets[0], snippets[1]),
+        "U11c" | "U11f" | "U11h" => format!("dimension L; unit m : L = 1; {}", snippets[0]),
+        "U11g1" | "U11g2" | "U11g3" | "U11g4" | "U11n" | "U11o" | "U11w" => snippets.join("\n"),
+        "U11d" => format!("dimension L; dimension T; unit s : T = 1; {}", snippets[0]),
+        "U11i" => format!("dimension {}; {} {}", snippets[0], snippets[1], snippets[2]),
+        "U11j" => format!(
+            "dimension {}; {} {} {}",
+            snippets[0], snippets[3], snippets[1], snippets[2]
+        ),
+        "U11k" => format!(
+            "dimension {}; dimension {}; {} {}",
+            snippets[0], snippets[1], snippets[3], snippets[5]
+        ),
+        "U11l" => format!("dimension L; {} {}", snippets[0], snippets[1]),
+        "U11p" => snippets.join("\n"),
+        "U11m" => {
+            return Some(vec![
+                unit_program(
+                    &format!(
+                        "{} {} {} {}",
+                        snippets[0], snippets[1], snippets[2], snippets[3]
+                    ),
+                    nth(0),
+                ),
+                unit_program(
+                    &format!(
+                        "{} {} {} {}",
+                        snippets[4], snippets[5], snippets[2], snippets[3]
+                    ),
+                    nth(1),
+                ),
+            ]);
+        }
+        "U11q" => {
+            let (t_dimension, t_unit) = ("dimension T;", "unit z : T = 0;");
+            let (l_dimension, l_unit) = ("dimension L;", "unit u_self : L = 1 * u_self;");
+            return Some(vec![
+                unit_program(
+                    &format!("{t_dimension} {t_unit} {l_dimension} {l_unit}"),
+                    nth(0),
+                ),
+                unit_program(
+                    &format!("{l_dimension} {l_unit} {t_dimension} {t_unit}"),
+                    nth(1),
+                ),
+            ]);
+        }
+        "U11x" => {
+            let base = format!(
+                "{} {} {} {}",
+                snippets[0], snippets[1], snippets[2], snippets[3]
+            );
+            return Some(vec![
+                unit_program(&base, nth(0)),
+                unit_program(&format!("{base} {}", quoted(vector.inputs)[4]), nth(1)),
+            ]);
+        }
+        "U11z3" => {
+            let declarations = format!("{} {} {}", snippets[0], snippets[2], snippets[3]);
+            return Some(vec![
+                unit_program(
+                    &format!(
+                        "{} {} {} {}",
+                        snippets[0], snippets[1], snippets[2], snippets[3]
+                    ),
+                    nth(0),
+                ),
+                unit_program(&declarations, nth(1)),
+            ]);
+        }
+        _ => return None,
+    };
+    let expected = if vector.expected.starts_with("admitted:") {
+        Expected::Admitted
+    } else {
+        first().expect("authored refusal")
+    };
+    Some(vec![unit_program(&source, expected)])
 }
 
 fn source_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
@@ -1073,7 +1280,11 @@ fn observed(case: &SourceCase) -> Expected {
             .expect("public IEEE definition selection"),
     );
     let checked = match declarations.check(
-        if case.declarations.starts_with(KERNEL) { CheckMode::Kernel } else { CheckMode::Linked },
+        if case.declarations.starts_with(KERNEL) {
+            CheckMode::Kernel
+        } else {
+            CheckMode::Linked
+        },
         CheckingLimits::default(),
         &fsl_eval::value::S6aRewardEvaluator,
     ) {
@@ -1217,6 +1428,48 @@ struct Unexpressible {
 /// write those operands anyway.
 const UNEXPRESSIBLE: &[Unexpressible] = &[
     Unexpressible {
+        id: "DIV-05",
+        probe: "#kernel\nprofile d = \"filament.value.integer-division.truncating/v1\";\nfunction f using v(): Int[-9223372036854775808, 9223372036854775807] pure { (-9223372036854775808) div (-1) }",
+        code: "integer_out_of_domain",
+        cause: Some("outside-domain"),
+        key: None,
+    },
+    Unexpressible {
+        id: "DIV-06",
+        probe: "#kernel\nprofile d = \"filament.value.integer-division.truncating/v1\";\nfunction f using v(): Int[-9223372036854775808, 9223372036854775807] pure { (-9223372036854775808) div (-1) }",
+        code: "integer_out_of_domain",
+        cause: Some("outside-domain"),
+        key: None,
+    },
+    Unexpressible {
+        id: "DIV-15",
+        probe: "#kernel\nprofile d = \"filament.value.integer-division.truncating/v1\";\nfunction f using v(): Int[1, 10] pure { 10 rem 5 }",
+        code: "integer_out_of_domain",
+        cause: Some("outside-domain"),
+        key: None,
+    },
+    Unexpressible {
+        id: "T04",
+        probe: "function f using v(): Text[1,1;binary-utf8] pure { Text(\"é\") }",
+        code: "ill_typed",
+        cause: Some("type-mismatch"),
+        key: None,
+    },
+    Unexpressible {
+        id: "T05",
+        probe: "function f using v(): Text[0,0;nfc] pure { Text(\"a\") }",
+        code: "ill_typed",
+        cause: Some("type-mismatch"),
+        key: None,
+    },
+    Unexpressible {
+        id: "T13",
+        probe: "function f using v(): Text[1,1;nfd] pure { Text(\"é\") }",
+        code: "ill_typed",
+        cause: Some("type-mismatch"),
+        key: None,
+    },
+    Unexpressible {
         id: "D13",
         probe: "function f using v(): Decimal[-9,9;0,0;toward-zero] pure { decimal(150, 2) * decimal(2, 0) }",
         code: "ill_typed",
@@ -1260,7 +1513,10 @@ fn all_vectors_from_source() {
         failures.len(),
         failures.join("\n")
     );
-    assert!(cases >= executed, "every executed vector runs a source case");
+    assert!(
+        cases >= executed,
+        "every executed vector runs a source case"
+    );
     assert!(
         pending.is_empty(),
         "{} vector(s) have neither a source adapter nor a recorded refusal: {}",
@@ -1291,8 +1547,17 @@ fn refusing_vectors_match_codes() {
             let actual = observed(&case);
             let matches = match (&actual, code) {
                 (Expected::Undefined, "undefined") => true,
-                (Expected::Refused { code: actual, cause: actual_cause }, _) => {
-                    actual == code && cause.as_ref().is_none_or(|cause| Some(cause) == actual_cause.as_ref())
+                (
+                    Expected::Refused {
+                        code: actual,
+                        cause: actual_cause,
+                    },
+                    _,
+                ) => {
+                    actual == code
+                        && cause
+                            .as_ref()
+                            .is_none_or(|cause| Some(cause) == actual_cause.as_ref())
                 }
                 _ => false,
             };
@@ -1323,7 +1588,10 @@ fn refusing_vectors_match_codes() {
 #[trace("FSpec-TC-185")]
 #[test]
 fn recorded_refusals_still_occur() {
-    assert!(!UNEXPRESSIBLE.is_empty(), "an empty registry proves nothing");
+    assert!(
+        !UNEXPRESSIBLE.is_empty(),
+        "an empty registry proves nothing"
+    );
     for entry in UNEXPRESSIBLE {
         let actual = observed(&SourceCase {
             declarations: entry.probe.to_owned(),
