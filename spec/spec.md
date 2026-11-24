@@ -66,6 +66,8 @@ relationships:
     type: contains
   - target: ix://agent-ix/filament-spec-language/NFR-016
     type: contains
+  - target: ix://agent-ix/filament-spec-language/NFR-141
+    type: contains
   - target: ix://agent-ix/filament-spec-language/FR-043
     type: contains
   - target: ix://agent-ix/filament-spec-language/FR-044
@@ -1394,6 +1396,7 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [NFR-013](non-functional/NFR-013-isolate-native-ci-feature-artifacts.md) | NFR |
 | [NFR-015](non-functional/NFR-015-build-evaluator-crates-no-std-behind-a-default-std-feature.md) | NFR |
 | [NFR-016](non-functional/NFR-016-audit-unsafe-code-in-the-evaluator-closure.md) | NFR |
+| [NFR-141](non-functional/NFR-141-measure-performance-program-paths.md) | NFR |
 | [ADR-014](decisions/ADR-014-temporal-trace-and-boundedness-architecture.md) | ADR |
 | [ADR-015](decisions/ADR-015-compile-and-replay-against-dependencies.md) | ADR |
 | [ADR-016](decisions/ADR-016-state-model-finite-execution-mapping.md) | ADR |
