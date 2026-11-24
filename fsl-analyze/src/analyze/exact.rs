@@ -314,6 +314,23 @@ fn unbounded_failure(
     }
 }
 
+/// A witness producer found no path set whose mass exceeds the bound's margin,
+/// on a run that reached it only because the solved values refute the bound.
+/// The producer reads the solver's extremal policy (or, at a tie, the
+/// scheduler that reaches a failure most), under which those values give the
+/// refuting path mass, so finding none is a disagreement between the solver and
+/// the producer: the engine's own fault, not an unbuilt form. A limit or a cancel
+/// reaches the producer as an error and settles before this.
+fn witness_absent() -> EngineReport {
+    broken()
+}
+
+/// Require the witness a refuted bound implies. Keep every producer path on
+/// this classification so a missing witness cannot silently become unbuilt.
+fn require_witness<T>(witness: Option<T>) -> Result<T, EngineReport> {
+    witness.ok_or_else(witness_absent)
+}
+
 fn broken() -> EngineReport {
     EngineReport::Refused(Refusal::Failed(BROKEN))
 }
@@ -402,9 +419,10 @@ fn bounded_monitor_failure(
     use fsl_eval::automaton::QualifiedBoundedError;
     match error {
         QualifiedBoundedError::Translation(_) => not_yet(),
-        QualifiedBoundedError::Automaton(error) => {
-            build_refusal(crate::exact_probabilistic::automaton_refusal(error), subject)
-        }
+        QualifiedBoundedError::Automaton(error) => build_refusal(
+            crate::exact_probabilistic::automaton_refusal(error),
+            subject,
+        ),
         QualifiedBoundedError::Key(_) => broken(),
     }
 }
@@ -412,7 +430,10 @@ fn bounded_monitor_failure(
 /// Dyadic refinement reached its maximum precision with the threshold still inside
 /// `[lower, upper]`.
 fn precision_budget(lower: Rational, upper: Rational, subject: SubjectLimits<'_>) -> EngineReport {
-    settled(&ExactProbBuildIssue::PrecisionBudget { lower, upper }, subject)
+    settled(
+        &ExactProbBuildIssue::PrecisionBudget { lower, upper },
+        subject,
+    )
 }
 
 fn settled(issue: &ExactProbBuildIssue, subject: SubjectLimits<'_>) -> EngineReport {
@@ -1182,6 +1203,7 @@ fn run(
         return not_yet();
     }
     let document_limits = ProbabilityDocumentLimits::for_exact(&limits, meter);
+    let mut reward_subject_undefined = None;
     let reward_system = if expected_reward {
         let item = match fsl_replay::probabilistic_claim_identity(claim) {
             Ok(item) => item,
@@ -1202,7 +1224,15 @@ fn run(
             document_limits,
             cancel,
         ) {
-            return document_failure(error, subject);
+            match error {
+                error @ ProbabilityDocumentError::UndefinedPredicate(_) => {
+                    // Let the product builder confirm that this is its first
+                    // undefined read. The expected-reward undefined path is
+                    // unbuilt; a later disagreement remains an engine fault.
+                    reward_subject_undefined = Some(error);
+                }
+                error => return document_failure(error, subject),
+            }
         }
         Some(system)
     } else {
@@ -1291,6 +1321,9 @@ fn run(
             )
         }
     };
+    if let Some(error) = reward_subject_undefined {
+        return document_failure(error, subject);
+    }
     if let Some(formula) = bounded_formula {
         let Some(profile) =
             fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
@@ -2616,12 +2649,15 @@ fn replay_refutation(
         return settled(&issue, subject);
     }
     let produced = match produced {
-        Ok(Some(witness)) => witness,
-        Ok(None) => return not_yet(),
+        Ok(witness) => witness,
         Err(crate::exact_probabilistic::WitnessError::Limit { limit, value }) => {
             return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
         Err(_) => return broken(),
+    };
+    let produced = match require_witness(produced) {
+        Ok(witness) => witness,
+        Err(report) => return report,
     };
     replay_produced_witness(
         system,
@@ -2731,12 +2767,15 @@ fn replay_fair_refutation(
         return settled(&issue, subject);
     }
     let produced = match produced {
-        Ok(Some(witness)) => witness,
-        Ok(None) => return not_yet(),
+        Ok(witness) => witness,
         Err(crate::exact_probabilistic::WitnessError::Limit { limit, value }) => {
             return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
         Err(_) => return broken(),
+    };
+    let produced = match require_witness(produced) {
+        Ok(witness) => witness,
+        Err(report) => return report,
     };
     replay_produced_witness(
         system,
@@ -3215,6 +3254,17 @@ fn finish_replay(
     }
 }
 
+/// A stopped expansion keeps its budget; any other schedule failure is a
+/// product the engine built that the system cannot write.
+fn schedule_failure(error: fsl_replay::ProductActionError) -> ProbabilityDocumentError {
+    match error {
+        fsl_replay::ProductActionError::Stopped(stop) => {
+            ProbabilityDocumentError::Build(Box::new(ExactProbBuildIssue::Expansion(stop)))
+        }
+        _ => ProbabilityDocumentError::Malformed,
+    }
+}
+
 fn canonical_action(
     system: &ModelSystem<'_>,
     product: &ProbProduct,
@@ -3223,14 +3273,7 @@ fn canonical_action(
         &crate::exact_probabilistic::ProbKey,
     ) -> Result<ProbabilityProductKey, ProbabilityDocumentError>,
 ) -> Result<fsl_replay::ProductAction, ProbabilityDocumentError> {
-    // A stopped expansion keeps its budget; any other schedule failure is a
-    // product the engine built that the system cannot write.
-    let unscheduled = |error| match error {
-        fsl_replay::ProductActionError::Stopped(stop) => {
-            ProbabilityDocumentError::Build(Box::new(ExactProbBuildIssue::Expansion(stop)))
-        }
-        _ => ProbabilityDocumentError::Malformed,
-    };
+    let unscheduled = schedule_failure;
     use crate::exact_probabilistic::ProductAction as AnalyzerAction;
     Ok(match choice {
         AnalyzerAction::Identity(identity) => fsl_replay::ProductAction::Identity(
@@ -3329,6 +3372,88 @@ mod tests {
         assert!(evidence.is_none() && counterexample.is_none());
     }
 
+    fn is_fault(report: &EngineReport) -> bool {
+        matches!(report, EngineReport::Refused(Refusal::Failed(code)) if *code == BROKEN)
+    }
+
+    fn is_not_yet(report: &EngineReport) -> bool {
+        matches!(report, EngineReport::Refused(Refusal::Unsupported(code)) if *code == NOT_YET)
+    }
+
+    /// The witness classifier maps an absent value to the broken-invariant
+    /// report. This unit test covers the helper directly, not a claim route.
+    #[test]
+    fn require_witness_rejects_none_as_a_broken_invariant() {
+        let report = match require_witness::<()>(None) {
+            Ok(()) => panic!("a missing witness cannot be accepted"),
+            Err(report) => report,
+        };
+        assert!(is_fault(&report));
+        assert!(!is_not_yet(&report));
+    }
+
+    /// QSL-2850 FR-281 "Engine refusals": a swallowed identity, binding or
+    /// schedule error settles as its own outcome (a stopped expansion or a
+    /// cancel is a limit, a graph the claim was never bound to is a fault),
+    /// never as `not-yet-implemented`.
+    #[trace("TC-763", "FR-281-AC-11")]
+    #[test]
+    fn swallowed_exact_errors_settle_as_their_own_outcome() {
+        let meter = fsl_replay::AccountingLimits::default().0;
+        let subject = SubjectLimits {
+            expansion: fsl_eval::simulation::model::ExpansionLimits { max_candidates: 1 },
+            meter: &meter,
+        };
+        let limits = crate::exact_probabilistic::ExactProbLimits::default();
+        let stop = fsl_eval::simulation::ExpansionStop {
+            cause: filament_semantic_value::catalog::CatalogCode::new(
+                "resource_exhausted",
+                "insufficient-next-charge",
+            ),
+            limit: Some(fsl_eval::simulation::ExpansionLimit::MaxCandidates),
+        };
+        let stopped = document_failure(
+            schedule_failure(fsl_replay::ProductActionError::Stopped(stop)),
+            subject,
+        );
+        assert!(
+            matches!(&stopped, EngineReport::Exact(report) if matches!(**report, ExactReport::Settled(_))),
+            "a stopped expansion keeps its budget"
+        );
+        for unwritable in [
+            fsl_replay::ProductActionError::Schedule,
+            fsl_replay::ProductActionError::Canonical,
+        ] {
+            assert!(is_fault(&document_failure(
+                schedule_failure(unwritable),
+                subject
+            )));
+        }
+        assert!(is_fault(&graph_failure(
+            ExactProbabilityGraphError::ClaimNotBound,
+            &limits,
+            subject
+        )));
+        let cancelled = graph_failure(
+            ExactProbabilityGraphError::Cancelled(filament_exact::CancelCause::Requested),
+            &limits,
+            subject,
+        );
+        assert!(!is_not_yet(&cancelled) && !is_fault(&cancelled));
+        assert!(matches!(
+            graph_failure(ExactProbabilityGraphError::RequiresBound, &limits, subject),
+            EngineReport::Refused(Refusal::RequiresBound)
+        ));
+        assert!(is_fault(&document_failure(
+            ProbabilityDocumentError::UndefinedPredicate(
+                fsl_eval::temporal::UndefinedCause::Kernel(
+                    filament_exact::Undefined::DivisionByZero
+                )
+            ),
+            subject
+        )));
+    }
+
     #[trace("FR-203-AC-11")]
     #[test]
     fn an_inequality_rejection_settles_inconclusive_at_the_same_complete_key() {
@@ -3404,12 +3529,15 @@ fn replay_timed_refutation(
     };
     let produced = match produce_witness(product, policy, scope, initial, &accepting, &past, limits)
     {
-        Ok(Some(produced)) => produced,
-        Ok(None) => return not_yet(),
+        Ok(produced) => produced,
         Err(crate::exact_probabilistic::WitnessError::Limit { limit, value }) => {
             return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
         Err(_) => return broken(),
+    };
+    let produced = match require_witness(produced) {
+        Ok(produced) => produced,
+        Err(report) => return report,
     };
     replay_timed_paths(
         system, claim, product, produced, initial, binding, limits, cancel, subject, tamper,
@@ -3627,8 +3755,8 @@ fn timed_step_for(
     TimedStepFailure,
 > {
     use fsl_eval::simulation::model::{TimedState, TimedSystem};
-    let valuation = fsl_replay::digital_key_clocks(system, claim, previous)
-        .ok_or(TimedStepFailure::Unbuilt)?;
+    let valuation =
+        fsl_replay::digital_key_clocks(system, claim, previous).ok_or(TimedStepFailure::Unbuilt)?;
     let timed = TimedSystem::new(system, claim.subject.alias.as_str())
         .map_err(TimedStepFailure::Subject)?;
     // A tie among the zero-time operations of one instant: the product never

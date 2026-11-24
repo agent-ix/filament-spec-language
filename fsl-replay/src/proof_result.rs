@@ -2060,9 +2060,21 @@ impl TerminalRecord {
         diagnostic: CatalogCode,
         detail: serde_json::Map<String, serde_json::Value>,
     ) -> Self {
+        Self::disposition_unsupported_by(request_index, None, diagnostic, detail)
+    }
+
+    /// [`Self::disposition_unsupported`] for a refusal the engine `backend`
+    /// itself returned: FSL FR-281 "Engine refusals" requires the record to
+    /// name the engine that decided it.
+    pub fn disposition_unsupported_by(
+        request_index: RequestIndex,
+        backend: Option<BackendId>,
+        diagnostic: CatalogCode,
+        detail: serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
         Self {
             request_index,
-            backend: None,
+            backend,
             value: TerminalValue::Unsupported(UnavailabilityCause::Disposition),
             replay: None,
             protocol_analysis_key: None,

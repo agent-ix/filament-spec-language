@@ -183,7 +183,40 @@ fn failure(
         // The reset-construction optimum, a cyclic phase graph, a form other than
         // unbounded `eventually`, a timed claim and a fairness set are not built.
         fsl_replay::ProbabilityDocumentError::Unsupported => super::not_yet(),
-        fsl_replay::ProbabilityDocumentError::UndefinedPredicate(_) => super::not_yet(),
+        fsl_replay::ProbabilityDocumentError::UndefinedPredicate(_) => broken(),
         error => document_failure(error, subject),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analyze::items::{BROKEN, NOT_YET};
+    use crate::analyze::Refusal;
+    use ix_trace_rs::trace;
+
+    /// QSL-2850 FR-281 "Engine refusals": the product build reports a first
+    /// undefined read itself, so one the checker finds afterwards is a
+    /// disagreement (a fault); a form the route does not build stays unbuilt.
+    #[trace("TC-763", "FR-281-AC-11")]
+    #[test]
+    fn an_undefined_read_after_a_clean_build_is_a_fault_not_an_unbuilt_form() {
+        let meter = fsl_replay::AccountingLimits::default().0;
+        let subject = SubjectLimits {
+            expansion: fsl_eval::simulation::model::ExpansionLimits { max_candidates: 1 },
+            meter: &meter,
+        };
+        let limits = crate::exact_probabilistic::ExactProbLimits::default();
+        let undefined = fsl_replay::ProbabilityDocumentError::UndefinedPredicate(
+            fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero),
+        );
+        assert!(matches!(
+            failure(undefined, &limits, subject),
+            EngineReport::Refused(Refusal::Failed(code)) if code == BROKEN
+        ));
+        assert!(matches!(
+            failure(fsl_replay::ProbabilityDocumentError::Unsupported, &limits, subject),
+            EngineReport::Refused(Refusal::Unsupported(code)) if code == NOT_YET
+        ));
     }
 }

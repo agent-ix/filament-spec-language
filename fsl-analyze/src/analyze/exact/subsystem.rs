@@ -182,10 +182,15 @@ pub(super) fn refute(
         }
     };
     let evidence = match evidence {
-        Ok(Some(evidence)) => evidence,
-        // The selected chain does not refute the bound: no counterexample.
-        Ok(None) => return not_yet(),
+        Ok(evidence) => evidence,
+        // The claim was refuted (this route runs only for a bound the solved
+        // values violate) yet the selected chain does not refute it: the
+        // solver and the chain disagree, the engine's own fault.
         Err(stop) => return stopped(stop),
+    };
+    let evidence = match require_witness(evidence) {
+        Ok(evidence) => evidence,
+        Err(report) => return report,
     };
     fn state_key(
         product: &ProbProduct,
@@ -258,7 +263,7 @@ pub(super) fn refute(
             };
             let schedule = match fsl_replay::Schedule::of(system, identity) {
                 Ok(schedule) => schedule,
-                Err(_) => return not_yet(),
+                Err(error) => return document_failure(schedule_failure(error), subject),
             };
             spelled.push((
                 fsl_eval::simulation::StateKey::from_canonical_bytes(state_key.as_bytes().to_vec()),

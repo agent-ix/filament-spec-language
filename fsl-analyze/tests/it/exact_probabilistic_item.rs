@@ -30,6 +30,7 @@ mod certificate_boundary_cases;
 mod cyclic_state_refutation;
 mod fraction_window;
 mod measure_profile;
+mod outcomes;
 mod subsystem_refutation;
 
 /// `Link` delivers within two attempts: the least delivery probability over

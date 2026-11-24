@@ -36,7 +36,7 @@ pub(super) fn run(
     let claims = package.graph().probabilistic_model().claims();
     let item = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(item) => item,
-        Err(_) => return not_yet(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let binding = match claim_binding(&system, claim) {
         Ok(binding) => binding,
@@ -503,17 +503,21 @@ fn refute(
     if let Some(issue) = issue {
         return settled(&issue, subject);
     }
-    match produced {
-        Ok(Some(produced)) => replay_produced_witness(
-            system, claim, product, produced, initial, binding, None, limits, cancel, subject,
-            tamper, meter, storage,
-        ),
-        Ok(None) => not_yet(),
+    let produced = match produced {
+        Ok(produced) => produced,
         Err(WitnessError::Limit { limit, value }) => {
-            settled(&ExactProbBuildIssue::Limit { limit, value }, subject)
+            return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
-        Err(_) => broken(),
-    }
+        Err(_) => return broken(),
+    };
+    let produced = match require_witness(produced) {
+        Ok(produced) => produced,
+        Err(report) => return report,
+    };
+    replay_produced_witness(
+        system, claim, product, produced, initial, binding, None, limits, cancel, subject, tamper,
+        meter, storage,
+    )
 }
 
 fn induction_failure(error: QualifiedFhError, cancel: &Cancel) -> ProbabilityDocumentError {
@@ -607,7 +611,7 @@ fn refute_mean(
             };
             let action = match canonical_action(system, product, &action, &key_of) {
                 Ok(action) => action,
-                Err(_) => return not_yet(),
+                Err(error) => return document_failure(error, subject),
             };
             scheduler.push((key, action));
         }

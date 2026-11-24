@@ -2790,24 +2790,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                     serde_json::json!(declaration),
                     &failure,
                 );
-                let record = match refused {
-                    super::super::Refusal::UnsupportedWithDetail(code, details) => {
-                        TerminalRecord::disposition_unsupported(index, code, details)
-                    }
-                    super::super::Refusal::FailedWithDetail(code, details) => {
-                        TerminalRecord::failed_with(
-                            index,
-                            BackendId::new(crate::model_check::manifest::BACKEND_ID),
-                            code,
-                        )
-                        .with_diagnostic_detail(details)
-                    }
-                    super::super::Refusal::Failed(code) => TerminalRecord::failed_with(
-                        index,
-                        BackendId::new(crate::model_check::manifest::BACKEND_ID),
-                        code,
-                    ),
-                    _ => return Ok(malformed()),
+                let Some(record) = model_relation_refusal_record(index, refused) else {
+                    return Ok(malformed());
                 };
                 return Ok(settled(record));
             }
@@ -4080,4 +4064,49 @@ fn pending_declaration(index: RequestIndex, declaration: &CheckedNodeId) -> Pack
         family: PendingFamily::Declaration,
         node: Some(declaration.clone()),
     })
+}
+
+/// The record of a model-relation form whose projection EN-1 refuses. Each
+/// arm names EN-1 (FSL FR-281 "Engine refusals": the record names the engine
+/// that decided the refusal).
+fn model_relation_refusal_record(
+    index: RequestIndex,
+    refused: super::super::Refusal,
+) -> Option<TerminalRecord> {
+    let backend = || BackendId::new(crate::model_check::manifest::BACKEND_ID);
+    Some(match refused {
+        super::super::Refusal::UnsupportedWithDetail(code, details) => {
+            TerminalRecord::disposition_unsupported_by(index, Some(backend()), code, details)
+        }
+        super::super::Refusal::FailedWithDetail(code, details) => {
+            TerminalRecord::failed_with(index, backend(), code).with_diagnostic_detail(details)
+        }
+        super::super::Refusal::Failed(code) => TerminalRecord::failed_with(index, backend(), code),
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod model_relation_record_tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    /// QSL-2850 FSL FR-281 "Engine refusals": an unsupported model-relation
+    /// projection refusal names EN-1 as its siblings do.
+    #[trace("TC-763", "FR-281-AC-11")]
+    #[test]
+    fn an_unsupported_model_relation_projection_names_en_1() {
+        let mut details = Map::new();
+        details.insert("fact".to_owned(), json!("model-relation-body"));
+        let refused = super::super::super::Refusal::UnsupportedWithDetail(
+            CatalogCode::new("unsupported_construct", "not-yet-implemented"),
+            details,
+        );
+        let record = model_relation_refusal_record(RequestIndex::new(0), refused)
+            .expect("an unsupported refusal settles a record");
+        assert_eq!(
+            record.backend(),
+            Some(&BackendId::new(crate::model_check::manifest::BACKEND_ID))
+        );
+    }
 }

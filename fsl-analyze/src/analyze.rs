@@ -3604,10 +3604,24 @@ fn settle(
         EngineReport::Refused(Refusal::Unsupported(code)) => {
             disposed(DispositionKind::Unsupported, Diagnostic::new(code), backend)
         }
-        EngineReport::Refused(Refusal::UnsupportedWithDetail(code, detail)) => record(
-            terminal(TerminalRecord::disposition_unsupported(index, code, detail)),
-            None,
-        ),
+        EngineReport::Refused(Refusal::UnsupportedWithDetail(code, mut detail)) => {
+            // FSL FR-281 "Engine refusals": the record names the engine that
+            // decided the refusal, as the detail-less `Unsupported` does.
+            // An engine-set `backend` member (FSpec FR-272 names the provider that
+            // excludes the construct) is kept; the record field names the engine.
+            detail
+                .entry("backend".to_owned())
+                .or_insert_with(|| backend.as_str().into());
+            record(
+                terminal(TerminalRecord::disposition_unsupported_by(
+                    index,
+                    Some(backend),
+                    code,
+                    detail,
+                )),
+                None,
+            )
+        }
         EngineReport::Refused(Refusal::NotEmitted) => {
             let diagnostic = Diagnostic {
                 code: CatalogCode::new(
@@ -4612,6 +4626,55 @@ mod tests {
             "test-a",
             move |_| EngineReport::Refused(refusal()),
         )
+    }
+
+    /// QSL-2850 FR-281 "Engine refusals": an `unsupported` refusal that carries
+    /// detail settles a record naming the engine that decided it, as the
+    /// detail-less refusal does.
+    #[trace("TC-763", "FR-281-AC-11")]
+    #[test]
+    fn an_unsupported_refusal_with_detail_names_its_engine() {
+        let mut engines = Engines::default();
+        engines
+            .with(engine("test-a", Capability::OperationContract))
+            .expect("first");
+        let item = refusing(|| {
+            let mut detail = serde_json::Map::new();
+            detail.insert("fact".to_owned(), "package-fact".into());
+            Refusal::UnsupportedWithDetail(
+                CatalogCode::new("unsupported_construct", "not-yet-implemented"),
+                detail,
+            )
+        });
+        let records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new()));
+        let record = &records[0];
+        assert_eq!(record.backend(), Some(&BackendId::new("test-a")));
+        let detail = record.disposition_detail().expect("the refusal's detail");
+        assert_eq!(detail["fact"], "package-fact");
+        assert_eq!(detail["backend"], "test-a");
+    }
+
+    /// FSpec FR-272: a `backend` member the engine set (the provider whose class
+    /// excludes the construct) is not overwritten by the deciding engine.
+    #[trace("TC-763", "FR-281-AC-11")]
+    #[test]
+    fn an_engine_set_backend_member_in_the_detail_is_kept() {
+        let mut engines = Engines::default();
+        engines
+            .with(engine("test-a", Capability::OperationContract))
+            .expect("first");
+        let item = refusing(|| {
+            let mut detail = serde_json::Map::new();
+            detail.insert("backend".to_owned(), "provider-x".into());
+            Refusal::UnsupportedWithDetail(
+                CatalogCode::new("unsupported_construct", "not-yet-implemented"),
+                detail,
+            )
+        });
+        let records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new()));
+        assert_eq!(records[0].backend(), Some(&BackendId::new("test-a")));
+        let detail = records[0].disposition_detail().expect("the detail");
+        assert_eq!(detail["backend"], "provider-x");
     }
 
     /// FR-281-AC-11: each engine refusal row settles its record naming the

@@ -18,6 +18,19 @@ pub(super) fn run(
     subject: SubjectLimits<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
+    // The spec's undefined entry admits every form (FSL FR-202), the producer
+    // below builds the path of these four; for any other form (a long-run
+    // fraction, an expected reward) the undefined path is an unbuilt form, not
+    // an engine fault.
+    if !matches!(
+        claim.form,
+        ProbForm::Reach { .. }
+            | ProbForm::Probability { .. }
+            | ProbForm::MeanOfFraction { .. }
+            | ProbForm::Quantile { .. }
+    ) {
+        return not_yet();
+    }
     let system = match ModelSystem::new_with_cancel(simulation, cancel) {
         Ok(system) => system,
         Err(error) => return build_refusal(ProductRefusal::Admission(error), subject),

@@ -58,11 +58,11 @@ pub(super) fn run(
     };
     let item = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(item) => item,
-        Err(_) => return not_yet(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let binding = match claim_binding(&system, claim) {
         Ok(binding) => binding,
-        Err(_) => return not_yet(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let io = ProbabilityDocumentIoLimits {
         bytes: limits.document.bytes,
@@ -83,17 +83,17 @@ pub(super) fn run(
         let mut admission = candidate.admission();
         match build_retaining_monitor_with_budget(request, identity, &mut admission, cancel) {
             Ok((ProbBuild::Built(product), _)) => product,
+            // Long-run forms are outside the undefined witness producer's
+            // supported forms, so their undefined product is unbuilt.
             Ok((ProbBuild::Undefined(_), _)) => return not_yet(),
             Err(BudgetedProductError::Product(error)) => return build_refusal(error, subject),
             Err(BudgetedProductError::Key(error)) => {
                 return document_failure(admission.refusal(error), subject)
             }
-            Err(BudgetedProductError::Undefined(cause)) => {
-                return document_failure(
-                    ProbabilityDocumentError::UndefinedPredicate(cause),
-                    subject,
-                )
-            }
+            // The undefined entry builds no long-run path (its guard returns
+            // not-yet for this form), so exploring again to hand it a path
+            // would only double the cost of a known answer.
+            Err(BudgetedProductError::Undefined(_)) => return not_yet(),
         }
     };
     let kind = if every {
@@ -171,7 +171,9 @@ pub(super) fn run(
         Err(UnboundedError::ZeroWeightComponent) => {
             return EngineReport::Refused(Refusal::Unsupported(ZERO_WEIGHT_COMPONENT))
         }
-        Err(UnboundedError::MissingReward) => return not_yet(),
+        // `MissingReward` included: `admit_weights` refused every non-numeric or
+        // negative reward above, so a solve that still names one is a disagreement
+        // between admission and the solver, the engine's own fault.
         Err(_) => return broken(),
     };
     if let Some(cause) = cancel.tripped() {
