@@ -1165,8 +1165,8 @@ fn observations_for(
         &packages,
         ModelNormalizationLimits::default(),
         &Provisions {
-            snapshots: &snapshots,
-            invocations: &invocations,
+            snapshots,
+            invocations,
         },
         &selection,
         ObservationLimits::default(),

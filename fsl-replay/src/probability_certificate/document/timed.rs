@@ -3336,6 +3336,8 @@ fn same_choice(left: &[ProbabilityEdge], right: &[ProbabilityEdge]) -> bool {
             .all(|(a, b)| a.target == b.target && a.probability == b.probability)
 }
 
+type DigitalWorkloadChoices = (Vec<Vec<ProbabilityEdge>>, Vec<Vec<crate::ProductAction>>);
+
 /// FR-204's choices of a running state under a workload, each a distribution
 /// the workload's weights fix: the race of the identities whose delays
 /// `discrete` distributions give (with the scheduler's free delays after the
@@ -3358,7 +3360,7 @@ fn digital_workload_choices(
     storage: &mut u64,
     reached: &mut BTreeMap<ProbabilityProductKey, RegionState>,
     pending: &mut VecDeque<ProbabilityProductKey>,
-) -> Result<(Vec<Vec<ProbabilityEdge>>, Vec<Vec<crate::ProductAction>>), ProbabilityDocumentError> {
+) -> Result<DigitalWorkloadChoices, ProbabilityDocumentError> {
     let trajectory = run.trajectory(current)?;
     let windows = run.windows(&trajectory)?;
     let reach = u64::try_from(trajectory.states.len().saturating_sub(1))
