@@ -2299,7 +2299,7 @@ fn enums_are_admitted_with_nominal_keys_over_the_units_owner() {
     );
 }
 
-#[trace("FR-091-AC-28", "TC-481")]
+#[trace("FR-091-AC-28", "FR-317-AC-6", "TC-481")]
 #[test]
 fn enum_types_and_members_check_and_a_case_the_enum_lacks_refuses() {
     let checked = |declarations: &str| {
@@ -2350,11 +2350,12 @@ fn enum_types_and_members_check_and_a_case_the_enum_lacks_refuses() {
     .expect_err("Status has no GONE");
     assert!(
         refusals.iter().any(|refusal| {
-            refusal.cause.code() == fsl_foundation::Code::MissingDeclaration
-                && refusal.cause.cause() == Some("missing-name")
+            refusal.cause.code() == fsl_foundation::Code::IllTyped
+                && refusal.cause.cause() == Some("type-mismatch")
                 && matches!(
                     &refusal.cause,
-                    CheckCause::MissingQualifiedName(name) if name.name == "Status::GONE"
+                    CheckCause::UndeclaredVariantCase { owner, case }
+                        if owner == "Status" && case == "GONE"
                 )
         }),
         "{refusals:?}"
