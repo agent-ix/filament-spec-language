@@ -323,7 +323,10 @@ impl<'a> Walk<'a> {
 
 /// The function owners with a body in FR-322's package-wide walk order:
 /// declaration source position, then node id.
-fn owner_order(nodes: &[CheckedSemanticNodeV2], source_map: &[CheckedSourceMapEntry]) -> Vec<usize> {
+pub(super) fn owner_order(
+    nodes: &[CheckedSemanticNodeV2],
+    source_map: &[CheckedSourceMapEntry],
+) -> Vec<usize> {
     let mut declared = BTreeMap::<&CheckedNodeId, (&CheckedSourceRef, u64, u64)>::new();
     for entry in source_map {
         if entry.role != CheckedOccurrenceRole::Declaration {
@@ -370,6 +373,7 @@ pub(super) struct Visit {
 pub(super) fn visits(
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
+    keep: &[bool],
 ) -> Vec<Visit> {
     let index: BTreeMap<&CheckedNodeId, usize> = nodes
         .iter()
@@ -388,18 +392,30 @@ pub(super) fn visits(
             continue;
         };
         walk.owner(root, true, &mut counters, &mut table);
-        found.extend(table.visited.drain(..).map(|node| Visit {
-            owner,
-            measure: false,
-            node,
-        }));
+        found.extend(
+            table
+                .visited
+                .drain(..)
+                .filter(|&node| keep[node])
+                .map(|node| Visit {
+                    owner,
+                    measure: false,
+                    node,
+                }),
+        );
         if let Some(measure) = function_measure_root(&nodes[owner].body) {
             walk.owner(measure, false, &mut counters, &mut table);
-            found.extend(table.visited.drain(..).map(|node| Visit {
-                owner,
-                measure: true,
-                node,
-            }));
+            found.extend(
+                table
+                    .visited
+                    .drain(..)
+                    .filter(|&node| keep[node])
+                    .map(|node| Visit {
+                        owner,
+                        measure: true,
+                        node,
+                    }),
+            );
         }
     }
     found
@@ -529,6 +545,7 @@ pub(super) fn derive(
             walk.owner(measure, false, &mut visits, &mut table);
         }
         touched_by.push((position, std::mem::take(&mut table.first_touched)));
+        table.visited.clear();
         let Some(records) = records_of.get(owner_id) else {
             continue;
         };
@@ -539,7 +556,9 @@ pub(super) fn derive(
             let terminal = derived
                 .get(&(
                     application,
-                    renumbering.ordinal(claim.node(), claim.origin().ordinal()),
+                    renumbering
+                        .ordinal(claim.node(), claim.origin().ordinal())
+                        .ok_or(EmitRefusal::SourceMapInvariant)?,
                 ))
                 .copied()
                 .flatten()
@@ -630,6 +649,7 @@ pub(super) fn rederive(
             walk.owner(measure, false, &mut visits, &mut table);
         }
         touched_by.push((position, std::mem::take(&mut table.first_touched)));
+        table.visited.clear();
         for &(at, application, occurrence) in wanted.get(&position).into_iter().flatten() {
             terminals[at] = derived
                 .get(&(application, occurrence))

@@ -1356,7 +1356,7 @@ pub(super) fn finish(
 ) -> Result<Emission, EmitRefusal> {
     let lock = base.lock().clone();
     super::order_dependencies(&mut nodes, invariant)?;
-    let (requirement_rows, path_condition_frames) =
+    let (requirement_rows, path_condition_frames, renumbered) =
         super::value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     let operand_rows = super::write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
@@ -1382,6 +1382,7 @@ pub(super) fn finish(
         for (old, new) in changes {
             super::replace_term_data_node(data, old, new);
         }
+        super::value_validity_requirements::ordinals::relabel_term_data(&renumbered, data);
     }
     let operation_bodies = base.operation_body_rows().map(|rows| {
         let mut rows = rows.to_vec();
@@ -1746,20 +1747,59 @@ mod tests {
         }
     }
 
-    /// The guards from the outermost to frame `at`, as (guard, holds); a guard's occurrence is the walk's next one, so it follows the final owner order too.
+    /// The guards from the outermost to frame `at`, as (guard, holds, region of
+    /// the use the frame's occurrence names). A guard's occurrence is the walk's
+    /// next one, so it follows the final owner order, and the region it names
+    /// is what stays the same across a rekey.
     fn frame_chain(
         frames: &[filament_contract_model::PathConditionFrame],
+        source_map: &[filament_contract_model::CheckedSourceMapEntry],
         at: Option<filament_contract_model::PathConditionFrameId>,
-    ) -> Vec<(CheckedNodeId, bool)> {
+    ) -> Vec<(CheckedNodeId, bool, (u64, u64))> {
         let mut chain = Vec::new();
         let mut at = at;
         while let Some(id) = at {
             let frame = &frames[id.0];
-            chain.push((frame.guard.clone(), frame.holds));
+            let used: Vec<_> = source_map
+                .iter()
+                .filter(|entry| {
+                    entry.node_id == frame.guard
+                        && entry.role == CheckedOccurrenceRole::Expression
+                        && entry.ordinal == frame.occurrence
+                })
+                .collect();
+            assert_eq!(
+                used.len(),
+                1,
+                "a frame's occurrence is a source-map entry of its guard"
+            );
+            let region = &used[0].regions[0];
+            chain.push((frame.guard.clone(), frame.holds, (region.start, region.end)));
             at = frame.parent;
         }
         chain.reverse();
         chain
+    }
+
+    /// `id` with the terminal frame its identity path cites replaced by `frame`.
+    fn cited(
+        id: &CheckedNodeId,
+        frame: Option<filament_contract_model::PathConditionFrameId>,
+    ) -> CheckedNodeId {
+        let mut id = id.clone();
+        let Some(frame) = frame else {
+            return id;
+        };
+        let mut segments = id.path.iter_mut();
+        let cited = segments
+            .by_ref()
+            .find(|segment| {
+                matches!(segment, filament_contract_model::CheckedNodePathSegment::Name(name) if name.as_ref() == "path_condition")
+            })
+            .and_then(|_| segments.next())
+            .expect("a guarded record's identity path cites its frame");
+        *cited = filament_contract_model::CheckedNodePathSegment::Name(frame.0.to_string().into());
+        id
     }
 
     impl Rekeyed {
@@ -1829,15 +1869,23 @@ mod tests {
                 // another frame id (its identity path cites the id). The record
                 // stands on the same guard chain at the new id.
                 assert_eq!(
-                    frame_chain(self.base.path_condition_frames(), before.path_condition_frame)
-                        .into_iter()
-                        .map(|(guard, holds)| (rename(&guard), holds))
-                        .collect::<Vec<_>>(),
-                    frame_chain(self.final_package.path_condition_frames(), after.path_condition_frame),
-                    "a rekey keeps each record's guard chain"
+                    frame_chain(
+                        self.base.path_condition_frames(),
+                        self.base.source_map(),
+                        before.path_condition_frame
+                    )
+                    .into_iter()
+                    .map(|(guard, holds, region)| (rename(&guard), holds, region))
+                    .collect::<Vec<_>>(),
+                    frame_chain(
+                        self.final_package.path_condition_frames(),
+                        self.final_package.source_map(),
+                        after.path_condition_frame
+                    ),
+                    "a rekey keeps each record's guards, outcomes and the uses they read"
                 );
                 expected.path_condition_frame = after.path_condition_frame;
-                expected.node = after.node.clone();
+                expected.node = cited(&expected.node, after.path_condition_frame);
                 assert_eq!(*after, expected);
                 let regions = self
                     .final_package
@@ -1848,9 +1896,15 @@ mod tests {
                             && entry.role == CheckedOccurrenceRole::Generated
                     })
                     .count();
-                assert_eq!(regions, 1, "each record keeps its generated source-map entry");
+                assert_eq!(
+                    regions, 1,
+                    "each record keeps its generated source-map entry"
+                );
             }
-            assert_eq!(renamed_owners, renamed, "records of rekeyed entries name the new owner");
+            assert_eq!(
+                renamed_owners, renamed,
+                "records of rekeyed entries name the new owner"
+            );
             // The shared frames keep their guard chains and outcomes, each guard names its renamed node, and the table is
             // re-derived in the final canonical order (FSpec FR-825).
             let frames_before = self.base.path_condition_frames();
@@ -1858,14 +1912,24 @@ mod tests {
             assert_eq!(frames_before.len(), frames_after.len());
             let mut chains_before = (0..frames_before.len())
                 .map(|at| {
-                    frame_chain(frames_before, Some(filament_contract_model::PathConditionFrameId(at)))
-                        .into_iter()
-                        .map(|(guard, holds)| (rename(&guard), holds))
-                        .collect::<Vec<_>>()
+                    frame_chain(
+                        frames_before,
+                        self.base.source_map(),
+                        Some(filament_contract_model::PathConditionFrameId(at)),
+                    )
+                    .into_iter()
+                    .map(|(guard, holds, region)| (rename(&guard), holds, region))
+                    .collect::<Vec<_>>()
                 })
                 .collect::<Vec<_>>();
             let mut chains_after = (0..frames_after.len())
-                .map(|at| frame_chain(frames_after, Some(filament_contract_model::PathConditionFrameId(at))))
+                .map(|at| {
+                    frame_chain(
+                        frames_after,
+                        self.final_package.source_map(),
+                        Some(filament_contract_model::PathConditionFrameId(at)),
+                    )
+                })
                 .collect::<Vec<_>>();
             chains_before.sort();
             chains_after.sort();
@@ -1909,7 +1973,10 @@ mod tests {
             other => panic!("record nodes without rows must be refused: {other:?}"),
         };
         assert_eq!(refusal.code, CheckedPackageRefusalCode::InvalidPackage);
-        assert_eq!(refusal.cause, Some(CheckedPackageRefusalCause::InvalidValue));
+        assert_eq!(
+            refusal.cause,
+            Some(CheckedPackageRefusalCause::InvalidValue)
+        );
         assert_eq!(
             refusal
                 .loci
@@ -1951,13 +2018,19 @@ mod tests {
              function on_gap using v(x: Int[0, 9]): Integer pure { x + 4 }\n",
         );
         let records = rekeyed.assert_rows_follow_the_rekey(records_of_entries(&rekeyed));
-        assert!(records.iter().any(|record| record.path_condition_frame.is_some()));
+        assert!(records
+            .iter()
+            .any(|record| record.path_condition_frame.is_some()));
         assert!(records.iter().any(|record| record.conversion.is_some()));
         assert!(records.iter().all(|record| !record.extent_roots.is_empty()));
-        assert!(rekeyed.final_package.requirement_items().iter().any(|row| matches!(
-            row.extent,
-            filament_contract_model::RequirementExtent::Unbounded(_)
-        )));
+        assert!(rekeyed
+            .final_package
+            .requirement_items()
+            .iter()
+            .any(|row| matches!(
+                row.extent,
+                filament_contract_model::RequirementExtent::Unbounded(_)
+            )));
     }
 
     /// The claims of `owner`'s records, in the package's row order.
@@ -2015,7 +2088,10 @@ mod tests {
             sorted_before.sort();
             let mut sorted_after = after.clone();
             sorted_after.sort();
-            assert_eq!(sorted_before, sorted_after, "the same claims, maybe reordered");
+            assert_eq!(
+                sorted_before, sorted_after,
+                "the same claims, maybe reordered"
+            );
             if before != after {
                 reordered += 1;
             }

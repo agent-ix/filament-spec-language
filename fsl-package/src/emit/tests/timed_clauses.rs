@@ -1243,7 +1243,10 @@ fn an_unwritten_presence_claim_is_an_omitted_node_its_record_names() {
         .iter()
         .filter(|omission| matches!(omission.cause, crate::emit::OmissionCause::NoClauseNode))
         .collect();
-    assert!(!claims.is_empty(), "the presence claim is an omitted node: {omitted:?}");
+    assert!(
+        !claims.is_empty(),
+        "the presence claim is an omitted node: {omitted:?}"
+    );
     for omission in &omitted {
         if let crate::emit::OmissionCause::NamesOmittedNode(named) = &omission.cause {
             assert!(
@@ -1254,7 +1257,10 @@ fn an_unwritten_presence_claim_is_an_omitted_node_its_record_names() {
     }
     for claim in &claims {
         assert_eq!(
-            omitted.iter().filter(|other| other.node == claim.node).count(),
+            omitted
+                .iter()
+                .filter(|other| other.node == claim.node)
+                .count(),
             1,
             "an unwritten claim is omitted once"
         );

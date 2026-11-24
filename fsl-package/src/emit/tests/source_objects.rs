@@ -1873,3 +1873,139 @@ fn an_optional_clock_is_rendered_once_in_every_member_entry() {
         "the file reads back"
     );
 }
+
+/// FSpec FR-322 "Expression occurrence ordinals", FR-825-AC-11: fixture S
+/// shares applications between function owners. Each record names the
+/// occurrence its owner's walk visit takes, the source-map region of that
+/// occurrence is the use the record stands for (the record's own region), and
+/// each body-location row of an application lies inside the declaration of the
+/// function it names, so the rows moved with their uses.
+/// The functions the body-location rows of `application` at `occurrence` name.
+fn data_rows(
+    admitted: &filament_contract_model::CheckedPackageV2,
+    application: &CheckedNodeId,
+    occurrence: u64,
+) -> Vec<CheckedNodeId> {
+    use filament_contract_model::CheckedBodyLocationOrigin;
+    admitted
+        .checked_term_data()
+        .into_iter()
+        .flat_map(|data| &data.body_locations)
+        .filter(|row| row.application == *application && row.occurrence.ordinal == occurrence)
+        .map(|row| {
+            let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
+            function.clone()
+        })
+        .collect()
+}
+
+#[trace("FR-825-AC-11", "FSpec-FR-322")]
+#[test]
+fn fixture_s_regions_and_rows_follow_the_owner_walk_numbering() {
+    use filament_contract_model::{
+        CheckedBodyLocationOrigin, CheckedOccurrenceRole as Role, CheckedPackageReadLimits,
+        CheckedPackageV2, CheckedPackageV2ReadResult,
+    };
+    let package = fixture_s_package();
+    let emission = emit_checked(&package).expect("S4 emits fixture S");
+    let admitted = match CheckedPackageV2::read(
+        emission.package().bytes(),
+        CheckedPackageReadLimits::bounded(),
+        emission.evidence(),
+    ) {
+        CheckedPackageV2ReadResult::Admitted(admitted) => admitted,
+        failure => panic!("the strict reader admits fixture S: {failure:?}"),
+    };
+    let region = |node: &CheckedNodeId, role: Role, ordinal: u64| {
+        let entries: Vec<_> = admitted
+            .source_map()
+            .iter()
+            .filter(|entry| {
+                entry.node_id == *node && entry.role == role && entry.ordinal == ordinal
+            })
+            .collect();
+        assert_eq!(
+            entries.len(),
+            1,
+            "one source-map entry for {node:?} {ordinal}"
+        );
+        let region = &entries[0].regions[0];
+        (region.start, region.end)
+    };
+    let records: Vec<_> = admitted
+        .requirement_items()
+        .iter()
+        .filter_map(crate::emit::value_validity_requirements::value_record)
+        .collect();
+    assert!(!records.is_empty(), "fixture S has scalar records");
+    let mut shared = 0;
+    for record in &records {
+        let application = admitted
+            .resolved_graph()
+            .nodes
+            .iter()
+            .find(|node| node.node_id == record.application)
+            .expect("the application is written");
+        let uses = application
+            .occurrences
+            .iter()
+            .filter(|occurrence| occurrence.role == Role::Expression)
+            .count();
+        shared += usize::from(uses > 1);
+        let own = admitted
+            .resolved_graph()
+            .nodes
+            .iter()
+            .find(|node| node.node_id == record.node)
+            .expect("the record is written")
+            .occurrences[0]
+            .ordinal;
+        assert_eq!(
+            region(&record.application, Role::Expression, record.occurrence),
+            region(&record.node, Role::Generated, own),
+            "the occurrence a record names is the use the record stands for"
+        );
+    }
+    assert!(shared > 0, "fixture S shares an application between owners");
+    let data = admitted
+        .checked_term_data()
+        .expect("fixture S has term rows");
+    let data = admitted
+        .checked_term_data()
+        .expect("fixture S has term rows");
+    // A body-location row names the function whose body holds the use, so a row
+    // at a record's occurrence names the record's owner.
+    let mut checked = 0;
+    for record in &records {
+        for row in data_rows(&admitted, &record.application, record.occurrence) {
+            assert_eq!(
+                row, record.owner,
+                "a row follows its use to the record's owner"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "some record's use has a body-location row");
+    let mut inside = 0;
+    for row in &data.body_locations {
+        let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
+        let Some(declaration) = admitted
+            .source_map()
+            .iter()
+            .find(|entry| entry.node_id == *function && entry.role == Role::Declaration)
+        else {
+            continue;
+        };
+        let (start, end) = region(&row.application, Role::Expression, row.occurrence.ordinal);
+        let declared = &declaration.regions[0];
+        assert!(
+            declared.start <= start && end <= declared.end,
+            "a body-location row's occurrence is a use in the function it names: {row:?}"
+        );
+        inside += 1;
+    }
+    assert!(
+        inside > 0,
+        "fixture S has body-location rows of declared functions"
+    );
+}

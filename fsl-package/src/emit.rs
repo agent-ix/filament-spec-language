@@ -6924,8 +6924,11 @@ pub fn emit_timed_models(
         &ForeignNodes::default(),
     )?;
     order_dependencies(&mut nodes, EmitRefusal::TimedModelWriterInvariant)?;
-    let (requirement_rows, path_condition_frames) =
+    let (requirement_rows, path_condition_frames, renumbered) =
         value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
+    if let Some(data) = &mut checked_term_data {
+        value_validity_requirements::ordinals::relabel_term_data(&renumbered, data);
+    }
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: base.graph().graph_version.clone(),
@@ -7964,11 +7967,12 @@ fn emit_package_nodes(
     let value_validity_region = |claim: &OccurrenceKey| {
         candidates
             .get(claim.node())
-            .and_then(|candidate| {
-                candidate.expression_region(claim.origin().ordinal(), &regions)
-            })
+            .and_then(|candidate| candidate.expression_region(claim.origin().ordinal(), &regions))
             .or_else(|| graph.occurrence_region(claim.node().clone(), claim.origin()))
     };
+    // The meter charges the owner walks the renumbering makes, then every row
+    // section below.
+    let mut meter = OutputMeter::new(limits);
     let value_validity = value_validity_requirements::append(
         ids,
         graph,
@@ -7976,8 +7980,9 @@ fn emit_package_nodes(
         &mut source_map,
         &value_validity_region,
         &omitted_causes,
+        &mut meter,
     )?;
-    omitted.extend(value_validity.omitted);
+    omitted.extend(value_validity.omitted.iter().cloned());
     omitted.sort_by(|left, right| left.node.cmp(&right.node));
     let (mut profile_selections, mut laws) = split_laws(&order);
     for refinement in emitted_refinements {
@@ -8049,7 +8054,6 @@ fn emit_package_nodes(
     // its canonical bytes are a floor on the package's. Charge them, and each
     // typed row section below as it is built, rather than after the final
     // encode.
-    let mut meter = OutputMeter::new(limits);
     meter.charge(&source_map)?;
     let producer_node_ids =
         producer_node_ids_after_timed_rekey(&emitted_node_ids, &timed_substitutions)?;
@@ -8103,7 +8107,11 @@ fn emit_package_nodes(
     if let Some(data) = &mut checked_term_data {
         if value_validity.renumbering.renumbers() {
             let mut row_ids = emitted_node_ids.clone();
-            row_ids.extend(producer_node_ids.iter().map(|(key, id)| (key.clone(), id.clone())));
+            row_ids.extend(
+                producer_node_ids
+                    .iter()
+                    .map(|(key, id)| (key.clone(), id.clone())),
+            );
             value_validity.renumbering.relabel_term_data(&row_ids, data);
         }
     }
@@ -8185,12 +8193,9 @@ fn emit_package_nodes(
         ids,
         graph,
         &producer_node_ids,
-        &value_validity.records,
-        &value_validity.operation_records,
+        &value_validity,
         &relation_rows,
         &omitted_causes,
-        &omitted,
-        &value_validity.renumbering,
     )?;
     meter.charge(&requirement_rows)?;
     let path_condition_frames =

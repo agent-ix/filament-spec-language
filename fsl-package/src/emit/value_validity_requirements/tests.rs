@@ -15,9 +15,7 @@ use crate::CheckedPackage;
 
 const GUARDED: &str = "function Guarded using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x * 2 }";
 
-fn admitted_package(
-    declarations: &str,
-) -> (CheckedPackage, Emission, CheckedPackageV2) {
+fn admitted_package(declarations: &str) -> (CheckedPackage, Emission, CheckedPackageV2) {
     let (_, package) = crate::emit::tests::package_from_text(declarations);
     let emission = emit_checked(&package, crate::EmitLimits::fixture()).expect("scalar unit emits");
     let admitted = match CheckedPackageV2::read(
@@ -33,7 +31,12 @@ fn admitted_package(
 
 fn emitted_records(
     declarations: &str,
-) -> (CheckedPackage, Emission, CheckedPackageV2, Vec<ValueValidityRecord>) {
+) -> (
+    CheckedPackage,
+    Emission,
+    CheckedPackageV2,
+    Vec<ValueValidityRecord>,
+) {
     let (package, emission, admitted) = admitted_package(declarations);
     let records = admitted
         .requirement_items()
@@ -95,8 +98,14 @@ fn bare_parameter_guard_is_one_shared_frame_per_outcome() {
     assert_eq!(frames.len(), 2, "one frame per outcome of the one guard");
     assert_eq!(frames[0].parent, None);
     assert_eq!(frames[1].parent, None);
-    assert!(frames[0].holds && !frames[1].holds, "then frame first, else frame second");
-    assert_eq!(frames[0].guard, frames[1].guard, "both read the one parameter");
+    assert!(
+        frames[0].holds && !frames[1].holds,
+        "then frame first, else frame second"
+    );
+    assert_eq!(
+        frames[0].guard, frames[1].guard,
+        "both read the one parameter"
+    );
     assert_eq!(frames[0].occurrence, frames[1].occurrence);
     // contract-ir reader defect B (QSL-2776 chain): the reader derives the
     // guard node's first `expression` occurrence (0) although the checker's
@@ -140,11 +149,20 @@ fn bare_parameter_guard_is_one_shared_frame_per_outcome() {
             continue;
         }
         assert_eq!(source.path_condition().len(), 1);
-        terminals.push(record.path_condition_frame.expect("a guarded record cites a frame").0);
+        terminals.push(
+            record
+                .path_condition_frame
+                .expect("a guarded record cites a frame")
+                .0,
+        );
         guarded += 1;
     }
     terminals.sort_unstable();
-    assert_eq!(terminals, [0, 1], "each branch's record cites its own frame");
+    assert_eq!(
+        terminals,
+        [0, 1],
+        "each branch's record cites its own frame"
+    );
     assert_eq!(guarded, 2, "both branches retain their source guard");
 }
 
@@ -205,11 +223,18 @@ fn wire_frames(emission: &Emission) -> (Vec<(Option<u64>, bool)>, Vec<Option<u64
         .iter()
         .filter(|node| node["semantic_form"] == "value_validity")
         .map(|node| {
-            let cited = node["body"]["members"][5]["value"]["members"].as_array().unwrap();
-            assert!(cited.len() <= 1, "a record cites at most one terminal frame");
+            let cited = node["body"]["members"][5]["value"]["members"]
+                .as_array()
+                .unwrap();
+            assert!(
+                cited.len() <= 1,
+                "a record cites at most one terminal frame"
+            );
             cited.first().map(|id| {
                 let value = &id["value"];
-                value.as_u64().unwrap_or_else(|| value.as_str().unwrap().parse().unwrap())
+                value
+                    .as_u64()
+                    .unwrap_or_else(|| value.as_str().unwrap().parse().unwrap())
             })
         })
         .collect::<Vec<_>>();
@@ -254,7 +279,11 @@ fn nested_guards_share_every_prefix_in_one_table() {
         [(None, true), (None, true)],
         "the `if` condition and the `n >= 0` read of `and`, both outermost"
     );
-    assert_eq!(terminals, [None, Some(0), Some(1)], "`>=`, then `+` and `<` each one frame");
+    assert_eq!(
+        terminals,
+        [None, Some(0), Some(1)],
+        "`>=`, then `+` and `<` each one frame"
+    );
 }
 
 /// FSpec FR-825 package order over hand-built rows: claim key first, then
@@ -273,7 +302,8 @@ fn package_order_sorts_by_claim_key_then_role_ordinal_and_kind() {
 
     let text = |value: &str| PathSegment::Text(value.to_owned());
     let leaf = |name: &str, ordinal| NodeKey::new("p", vec![text(name)], ordinal).unwrap();
-    let nested = |inner: NodeKey| NodeKey::new("p", vec![text("b"), PathSegment::Node(inner)], 0).unwrap();
+    let nested =
+        |inner: NodeKey| NodeKey::new("p", vec![text("b"), PathSegment::Node(inner)], 0).unwrap();
     let keys = [
         nested(leaf("z", 0)),
         leaf("b", 1),
@@ -287,7 +317,10 @@ fn package_order_sorts_by_claim_key_then_role_ordinal_and_kind() {
     by_key.sort();
     let mut by_id = keys.to_vec();
     by_id.sort_by_cached_key(|key| crate::emit::node_id(&ids, key));
-    assert_eq!(by_key, by_id, "NodeKey order is the reader's structural-id order");
+    assert_eq!(
+        by_key, by_id,
+        "NodeKey order is the reader's structural-id order"
+    );
 
     let claim = CheckedNodeId {
         package: "p".into(),
@@ -304,11 +337,46 @@ fn package_order_sorts_by_claim_key_then_role_ordinal_and_kind() {
     let tie = leaf("b", 0);
     let first = leaf("a", 0);
     let rows = vec![
-        (tie.clone(), row(CheckedOccurrenceRole::Expression, 1, CapabilityKind::ValueValidity)),
-        (tie.clone(), row(CheckedOccurrenceRole::Expression, 0, CapabilityKind::ValueValidity)),
-        (tie.clone(), row(CheckedOccurrenceRole::Claim, 3, CapabilityKind::TemporalSatisfaction)),
-        (tie.clone(), row(CheckedOccurrenceRole::Expression, 0, CapabilityKind::OperationContract)),
-        (first, row(CheckedOccurrenceRole::Generated, 9, CapabilityKind::ValueValidity)),
+        (
+            tie.clone(),
+            row(
+                CheckedOccurrenceRole::Expression,
+                1,
+                CapabilityKind::ValueValidity,
+            ),
+        ),
+        (
+            tie.clone(),
+            row(
+                CheckedOccurrenceRole::Expression,
+                0,
+                CapabilityKind::ValueValidity,
+            ),
+        ),
+        (
+            tie.clone(),
+            row(
+                CheckedOccurrenceRole::Claim,
+                3,
+                CapabilityKind::TemporalSatisfaction,
+            ),
+        ),
+        (
+            tie.clone(),
+            row(
+                CheckedOccurrenceRole::Expression,
+                0,
+                CapabilityKind::OperationContract,
+            ),
+        ),
+        (
+            first,
+            row(
+                CheckedOccurrenceRole::Generated,
+                9,
+                CapabilityKind::ValueValidity,
+            ),
+        ),
     ];
     let ordered = super::package_order(rows)
         .into_iter()
@@ -317,11 +385,31 @@ fn package_order_sorts_by_claim_key_then_role_ordinal_and_kind() {
     assert_eq!(
         ordered,
         [
-            (CheckedOccurrenceRole::Generated, 9, CapabilityKind::ValueValidity),
-            (CheckedOccurrenceRole::Claim, 3, CapabilityKind::TemporalSatisfaction),
-            (CheckedOccurrenceRole::Expression, 0, CapabilityKind::OperationContract),
-            (CheckedOccurrenceRole::Expression, 0, CapabilityKind::ValueValidity),
-            (CheckedOccurrenceRole::Expression, 1, CapabilityKind::ValueValidity),
+            (
+                CheckedOccurrenceRole::Generated,
+                9,
+                CapabilityKind::ValueValidity
+            ),
+            (
+                CheckedOccurrenceRole::Claim,
+                3,
+                CapabilityKind::TemporalSatisfaction
+            ),
+            (
+                CheckedOccurrenceRole::Expression,
+                0,
+                CapabilityKind::OperationContract
+            ),
+            (
+                CheckedOccurrenceRole::Expression,
+                0,
+                CapabilityKind::ValueValidity
+            ),
+            (
+                CheckedOccurrenceRole::Expression,
+                1,
+                CapabilityKind::ValueValidity
+            ),
         ]
     );
 }
@@ -335,8 +423,8 @@ fn package_order_sorts_by_claim_key_then_role_ordinal_and_kind() {
 fn reordering_frames_remaps_every_record_citation() {
     use filament_contract_model::{
         CheckedNodeId, CheckedNodePathSegment as Segment, CheckedOccurrence, CheckedOccurrenceRole,
-        CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedTerm, LiteralKind,
-        PathConditionFrame, PathConditionFrameId, RequirementExtent, RequirementItemRow,
+        CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedTerm, LiteralKind, PathConditionFrame,
+        PathConditionFrameId, RequirementExtent, RequirementItemRow,
         RequirementRecord as WireRecord,
     };
 
@@ -437,8 +525,14 @@ fn reordering_frames_remaps_every_record_citation() {
     let mut rows = vec![row(&nodes[0], 1), row(&nodes[1], 2)];
 
     // The owner of `c` now sorts first: `c`, then `a`, then `a`'s child `b`.
-    super::reorder_frames(&[1, 2, 0], &mut frames, &mut rows, &mut nodes, &mut source_map)
-        .expect("a parent stays before its child");
+    super::reorder_frames(
+        &[1, 2, 0],
+        &mut frames,
+        &mut rows,
+        &mut nodes,
+        &mut source_map,
+    )
+    .expect("a parent stays before its child");
 
     assert_eq!(
         frames
@@ -456,12 +550,22 @@ fn reordering_frames_remaps_every_record_citation() {
         .iter()
         .map(|row| super::value_record(row).unwrap().path_condition_frame)
         .collect::<Vec<_>>();
-    assert_eq!(cited, [Some(PathConditionFrameId(2)), Some(PathConditionFrameId(0))]);
-    assert_eq!(nodes[0].node_id, id("one", Some(2)), "the identity path cites the new id");
+    assert_eq!(
+        cited,
+        [Some(PathConditionFrameId(2)), Some(PathConditionFrameId(0))]
+    );
+    assert_eq!(
+        nodes[0].node_id,
+        id("one", Some(2)),
+        "the identity path cites the new id"
+    );
     assert_eq!(nodes[1].node_id, id("two", Some(0)));
     assert_eq!(source_map[0].node_id, nodes[0].node_id);
     assert_eq!(source_map[1].node_id, nodes[1].node_id);
-    assert_eq!(super::value_record(&rows[0]).unwrap().node, nodes[0].node_id);
+    assert_eq!(
+        super::value_record(&rows[0]).unwrap().node,
+        nodes[0].node_id
+    );
     for (node, expected) in nodes.iter().zip([2_u64, 0]) {
         let CheckedTerm::Aggregate { members, .. } = &node.body else {
             panic!("a record body is an aggregate");
@@ -480,8 +584,10 @@ fn reordering_frames_remaps_every_record_citation() {
 
     // A frame moved before its parent is refused.
     let mut broken = vec![frame(None, "a", true), frame(Some(0), "b", true)];
-    assert!(super::reorder_frames(&[1, 0], &mut broken, &mut rows, &mut nodes, &mut source_map)
-        .is_err());
+    assert!(
+        super::reorder_frames(&[1, 0], &mut broken, &mut rows, &mut nodes, &mut source_map)
+            .is_err()
+    );
 }
 
 /// FSpec FR-322 "Expression occurrence ordinals", FR-825-AC-11: two function
@@ -503,7 +609,11 @@ fn records_of_a_shared_application_follow_the_owner_walk() {
     );
     let mut occurrences: Vec<u64> = records.iter().map(|record| record.occurrence).collect();
     occurrences.sort_unstable();
-    assert_eq!(occurrences, [0, 1], "each owner's visit takes the next ordinal");
+    assert_eq!(
+        occurrences,
+        [0, 1],
+        "each owner's visit takes the next ordinal"
+    );
     let application = admitted
         .resolved_graph()
         .nodes

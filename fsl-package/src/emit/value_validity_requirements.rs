@@ -22,7 +22,7 @@ use super::{
 };
 
 mod frames;
-pub(super) mod ordinals;
+pub(in crate::emit) mod ordinals;
 
 type Records = HashMap<OccurrenceKey, ValueValidityRecord>;
 type OperationRecords = HashMap<OccurrenceKey, OperationContractRecord>;
@@ -530,6 +530,7 @@ pub(super) fn append(
     source_map: &mut Vec<CheckedSourceMapEntry>,
     regions: &impl Fn(&OccurrenceKey) -> Option<fsl_foundation::source::provenance::SourceRegion>,
     omitted: &Omitted,
+    meter: &mut super::OutputMeter,
 ) -> Result<Appended, EmitRefusal> {
     let mut records = HashMap::new();
     let mut operation_records = HashMap::new();
@@ -552,7 +553,7 @@ pub(super) fn append(
         });
     }
     let renumbering = if has_value_validity {
-        ordinals::renumber(ids, graph, nodes, source_map, omitted)?
+        ordinals::renumber(ids, graph, nodes, source_map, omitted, meter)?
     } else {
         ordinals::Renumbering::default()
     };
@@ -641,6 +642,15 @@ pub(super) fn append(
         // when its owner is, and then all of that owner's records are, so
         // the `generated` ordinals of every written owner stay dense.
         let owner_omitted = omitted.contains_key(&*owner_key);
+        // The use of an omitted owner is dropped, and its omitted record keeps the
+        // checker's ordinal in its id; a written record's use is never dropped.
+        let settled = |new: Option<u64>, old: u64| -> Result<u64, EmitRefusal> {
+            match new {
+                Some(new) => Ok(new),
+                None if owner_omitted => Ok(old),
+                None => Err(EmitRefusal::SourceMapInvariant),
+            }
+        };
         if !owner_omitted && names_an_omitted_node(graph, claim, source, omitted)? {
             return Err(EmitRefusal::SourceMapInvariant);
         }
@@ -648,13 +658,20 @@ pub(super) fn append(
         let result_bound = node_id(ids, source.result_bound().node());
         let conversion = source
             .conversion_context()
-            .map(|key| {
-                (
+            .map(|key| -> Result<_, EmitRefusal> {
+                Ok((
                     node_id(ids, key.node()),
-                    renumbering.ordinal(key.node(), key.origin().ordinal()),
-                )
-            });
-        let occurrence_ordinal = renumbering.ordinal(claim.node(), claim.origin().ordinal());
+                    settled(
+                        renumbering.ordinal(key.node(), key.origin().ordinal()),
+                        key.origin().ordinal(),
+                    )?,
+                ))
+            })
+            .transpose()?;
+        let occurrence_ordinal = settled(
+            renumbering.ordinal(claim.node(), claim.origin().ordinal()),
+            claim.origin().ordinal(),
+        )?;
         let terminal = if owner_omitted {
             None
         } else {
@@ -686,6 +703,7 @@ pub(super) fn append(
             operands.push(PathSegment::Text(
                 renumbering
                     .ordinal(context.node(), context.origin().ordinal())
+                    .ok_or(EmitRefusal::SourceMapInvariant)?
                     .to_string(),
             ));
         }
@@ -817,13 +835,17 @@ pub(super) fn rows(
     ids: &StructuralIds,
     graph: &CheckedGraph,
     emitted: &HashMap<NodeKey, CheckedNodeId>,
-    records: &Records,
-    operation_records: &OperationRecords,
+    appended: &Appended,
     existing: &[RequirementItemRow],
     omitted: &Omitted,
-    unwritten: &[OmittedNode],
-    renumbering: &ordinals::Renumbering,
 ) -> Result<Vec<RequirementItemRow>, EmitRefusal> {
+    let Appended {
+        records,
+        operation_records,
+        omitted: unwritten,
+        renumbering,
+        ..
+    } = appended;
     // Sidecar references remain document-held. Only the record body goes
     // through the containing node's operand-slot writer.
     let mut keys = ids.key_reader();
@@ -902,7 +924,9 @@ pub(super) fn rows(
                 shape: "claim-occurrence",
             })?;
         if occurrence.role == CheckedOccurrenceRole::Expression {
-            occurrence.ordinal = renumbering.ordinal(claim.node(), occurrence.ordinal);
+            occurrence.ordinal = renumbering
+                .ordinal(claim.node(), occurrence.ordinal)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
         }
         if let Some(row) = existing
             .get(&(claim_id.clone(), occurrence.clone()))
@@ -1061,14 +1085,51 @@ pub(super) fn frame_rows(
 /// position, so a node the writer renamed is named by its new id; an id that
 /// names no local node (a dependency node) is kept. A graph that does not
 /// hold a node of the base's tag and form at each base position is refused.
+/// The rows a writer carries, its frame table and the occurrences it renumbered.
+pub(super) type CarriedRows = (
+    Vec<RequirementItemRow>,
+    Vec<PathConditionFrame>,
+    BTreeMap<CheckedNodeId, ordinals::Mapping>,
+);
+
+/// Move each record, conversion and row naming a renumbered expression
+/// occurrence to its new ordinal.
+fn relabel_rows(
+    rows: &mut [RequirementItemRow],
+    renumbered: &BTreeMap<CheckedNodeId, ordinals::Mapping>,
+) {
+    let moved = |id: &CheckedNodeId, old: u64| -> u64 {
+        renumbered
+            .get(id)
+            .and_then(|mapping| {
+                mapping
+                    .binary_search_by_key(&old, |(old, _)| *old)
+                    .ok()
+                    .and_then(|at| mapping[at].1)
+            })
+            .unwrap_or(old)
+    };
+    for row in rows {
+        if row.occurrence.role == CheckedOccurrenceRole::Expression {
+            row.occurrence.ordinal = moved(&row.claim, row.occurrence.ordinal);
+        }
+        if let Some(WireRecord::ValueValidity(record)) = &mut row.record {
+            record.occurrence = moved(&record.application, record.occurrence);
+            if let Some((narrow, occurrence)) = &mut record.conversion {
+                *occurrence = moved(narrow, *occurrence);
+            }
+        }
+    }
+}
+
 pub(super) fn carry_rows(
     base: &filament_contract_model::CheckedPackageV2,
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],
-) -> Result<(Vec<RequirementItemRow>, Vec<PathConditionFrame>), EmitRefusal> {
+) -> Result<CarriedRows, EmitRefusal> {
     let rows = base.requirement_items();
     if rows.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok((Vec::new(), Vec::new(), BTreeMap::new()));
     }
     let base_nodes = &base.resolved_graph().nodes;
     let finals = nodes
@@ -1137,6 +1198,15 @@ pub(super) fn carry_rows(
             None => {}
         }
     }
+    // A rekey of declaration-less functions reorders the owner walk, and the
+    // expression occurrences follow it (FSpec FR-322).
+    let renumbered = ordinals::rewalk(
+        &base.resolved_graph().nodes,
+        base.source_map(),
+        nodes,
+        source_map,
+    )?;
+    relabel_rows(&mut rows, &renumbered);
     // A rename changes the structural key of every node holding the renamed
     // node as an operand (a call of a rekeyed entry), so the rows are put in
     // package order again by their final claim keys.
@@ -1157,7 +1227,7 @@ pub(super) fn carry_rows(
     let mut rows = package_order(keyed);
     frames = rederived_frames(frames, &mut rows, nodes, source_map)?;
     renumber_records(&rows, nodes, source_map)?;
-    Ok((rows, frames))
+    Ok((rows, frames, renumbered))
 }
 
 /// The frame table re-derived from the final `nodes` by the reader's walk
@@ -1201,7 +1271,9 @@ fn rederived_frames(
                 "a carried record cites a frame the table does not hold",
             ))?;
             if *slot != usize::MAX && *slot != to.0 {
-                return Err(refuse("a carried frame has two places in the derived table"));
+                return Err(refuse(
+                    "a carried frame has two places in the derived table",
+                ));
             }
             *slot = to.0;
             old = frames[at.0].parent;
