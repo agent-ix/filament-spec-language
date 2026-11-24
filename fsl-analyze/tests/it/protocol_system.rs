@@ -725,6 +725,7 @@ fn protocol_refuses_at_max_states_before_settling_the_crossing_initial_state() {
                 max_live_instances: None,
                 limits,
                 ignore_memory_constraints: false,
+                workers: 1,
             },
             &Cancel::new(),
         )

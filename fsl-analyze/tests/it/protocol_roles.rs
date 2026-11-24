@@ -1571,6 +1571,7 @@ fn liveness_refuses_before_settling_the_crossing_protocol_root() {
             max_live_instances: None,
             limits,
             ignore_memory_constraints: false,
+            workers: 1,
         },
         &Cancel::new(),
     )

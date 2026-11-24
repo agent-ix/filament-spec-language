@@ -513,9 +513,12 @@ mod worker_capacity_tests {
         type TransitionId = u8;
         type Key = u8;
         type Finding = ();
+        type InitialError = std::convert::Infallible;
 
-        fn initial(&self) -> Vec<Self::State> {
-            vec![0]
+        fn initial_iter(
+            &self,
+        ) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+            std::iter::once(Ok(0))
         }
 
         fn key(&self, state: &Self::State) -> Self::Key {
