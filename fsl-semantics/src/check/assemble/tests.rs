@@ -3027,9 +3027,15 @@ fn first_defect(source: &str) -> (String, String) {
     )
 }
 
-/// FR-091-AC-46 and FSpec FR-142-AC-15 (TC-187 U11h to U11k): the first
+/// FR-091-AC-46/71 and FSpec FR-142-AC-15 (TC-187 U11h to U11k): the first
 /// defect is the earliest row of the earliest unit of the earliest node.
-#[trace("FR-091-AC-46", "TC-483", "FSpec-TC-187", "FSpec-FR-142-AC-15")]
+#[trace(
+    "FR-091-AC-46",
+    "FR-091-AC-71",
+    "TC-483",
+    "FSpec-TC-187",
+    "FSpec-FR-142-AC-15"
+)]
 #[test]
 fn the_first_defect_is_the_earliest_row_unit_and_node() {
     let found = first_defect;
@@ -3059,7 +3065,7 @@ fn the_first_defect_is_the_earliest_row_unit_and_node() {
         ),
         pair("invalid_package/conflicting-definition", "q")
     );
-    // U11k: `L` takes its turn before `T`, so row 5 at `l`, not row 1 at `t`.
+    // A targetless non-identity unit in `L` takes its turn before `T`'s zero scale.
     assert_eq!(
         found(
             "dimension L; dimension T; unit t : T = rational(0, 1) * tr; \
@@ -3067,6 +3073,30 @@ fn the_first_defect_is_the_earliest_row_unit_and_node() {
         ),
         pair("invalid_package/invalid-value", "l")
     );
+    // TC-187 U11k: the self-cycle in the earlier dimension wins over the
+    // later dimension's zero-scale unit.
+    let vector_u11k = "dimension L; dimension T; \
+        unit u_self : L = rational(1, 1) * u_self; \
+        unit z : T = rational(0, 1);";
+    assert_eq!(
+        found(vector_u11k),
+        pair("invalid_package/definition-cycle", "u_self")
+    );
+    let (text, errors_found) = errors(vector_u11k);
+    let [error] = errors_found.as_slice() else {
+        panic!("one U11k diagnostic, not {errors_found:?}")
+    };
+    assert_eq!(
+        error.cause,
+        AssemblyCause::UnitGraphTopology {
+            fault: super::TopologyFault::TargetCycle,
+            retained: vec![super::TopologyRetained::Edge {
+                from: "u_self".to_owned(),
+                to: "u_self".to_owned(),
+            }],
+        }
+    );
+    assert_eq!(&text[error.span.start..error.span.end], "u_self");
     // A dimension cycle comes before any unit row of a later dimension.
     assert_eq!(
         found(
@@ -3182,33 +3212,41 @@ fn u11j_two_roots_refuse_before_a_self_cycle() {
 fn u11e_non_identity_root_retains_its_scale_and_offset() {
     use filament_exact::Rational;
 
-    let (text, found) = errors("dimension L; unit m : L = rational(2, 1);");
-    let [error] = found.as_slice() else {
-        panic!("one error, not {found:?}")
-    };
-    assert_eq!(
-        error.cause,
-        AssemblyCause::UnitGraphTopology {
-            fault: super::TopologyFault::NonIdentityRoot,
-            retained: vec![
-                super::TopologyRetained::Unit {
-                    name: "m".into(),
-                    key: None,
-                },
-                super::TopologyRetained::Scale(Rational::from_integer(
-                    filament_exact::Integer::from(2_i64),
-                )),
-                super::TopologyRetained::Offset(Rational::from_integer(
-                    filament_exact::Integer::zero(),
-                )),
-            ],
-        }
-    );
-    assert_eq!(
-        error.cause.catalog_code().to_string(),
-        "invalid_package/invalid-value"
-    );
-    assert_eq!(&text[error.span.start..error.span.end], "m");
+    for (vector_expression, source_expression) in [
+        ("2", "rational(2, 1)"),
+        // TC-187's second spelling is an arithmetic expression in the
+        // vector language; source FSL admits only a decimal or rational here.
+        ("1 + 1", "rational(2, 1)"),
+    ] {
+        let (text, found) = errors(&format!("dimension L; unit m : L = {source_expression};"));
+        let [error] = found.as_slice() else {
+            panic!("one error for vector expression {vector_expression}, not {found:?}")
+        };
+        assert_eq!(
+            error.cause,
+            AssemblyCause::UnitGraphTopology {
+                fault: super::TopologyFault::NonIdentityRoot,
+                retained: vec![
+                    super::TopologyRetained::Unit {
+                        name: "m".into(),
+                        key: None,
+                    },
+                    super::TopologyRetained::Scale(Rational::from_integer(
+                        filament_exact::Integer::from(2_i64),
+                    )),
+                    super::TopologyRetained::Offset(Rational::from_integer(
+                        filament_exact::Integer::zero(),
+                    )),
+                ],
+            },
+            "vector expression {vector_expression}"
+        );
+        assert_eq!(
+            error.cause.catalog_code().to_string(),
+            "invalid_package/invalid-value"
+        );
+        assert_eq!(&text[error.span.start..error.span.end], "m");
+    }
 }
 
 /// FSpec FR-142-AC-16, TC-187 U11m: with `Area` declared before `L`, `Area`'s
