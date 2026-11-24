@@ -795,6 +795,8 @@ fn replay_probabilistic_witness_impl(
             &witness.initial_key,
             limits,
             cancel,
+            &mut meter,
+            &mut storage,
         )?
     {
         // FR-202: an unfair witness settles `inconclusive`, `replay-parity`.
@@ -1041,12 +1043,153 @@ fn replay_probabilistic_witness_impl(
     )))
 }
 
+#[cfg(test)]
+mod fair_component_tests {
+    use super::*;
+    use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
+    use ix_trace_rs::trace;
+
+    type Node = FairNode<u8>;
+
+    fn node(enabled: &[(u8, &str)], support: &[u8], successors: &[usize], escapes: bool) -> Node {
+        FairNode {
+            enabled: enabled
+                .iter()
+                .map(|(id, op)| (*id, (*op).to_owned()))
+                .collect(),
+            support: support.to_vec(),
+            successors: successors.to_vec(),
+            escapes,
+        }
+    }
+
+    fn fair(
+        nodes: &[Node],
+        kind: FairnessKind,
+        granularity: FairnessGranularity,
+        operation: &str,
+    ) -> bool {
+        bottom_components_are_fair(
+            nodes,
+            &[(kind, granularity, operation.to_owned())],
+            &mut || Ok(()),
+        )
+        .expect("the fairness walk completes")
+    }
+
+    /// A two-state bottom component that cycles on `a` while `b` stays enabled
+    /// at both states and is never taken: weak fairness to `b` fails.
+    fn a_loop_ignoring_b() -> Vec<Node> {
+        vec![
+            node(&[(1, "a"), (2, "b")], &[1], &[1], false),
+            node(&[(1, "a"), (2, "b")], &[1], &[0], false),
+        ]
+    }
+
+    #[trace("TC-364", "FR-413-AC-5", "FR-202-AC-3")]
+    #[test]
+    fn an_unfair_nontrivial_bottom_component_is_not_fair() {
+        let nodes = a_loop_ignoring_b();
+        assert!(!fair(
+            &nodes,
+            FairnessKind::Weak,
+            FairnessGranularity::Whole,
+            "b"
+        ));
+        assert!(!fair(
+            &nodes,
+            FairnessKind::Strong,
+            FairnessGranularity::Whole,
+            "b"
+        ));
+        assert!(!fair(
+            &nodes,
+            FairnessKind::Weak,
+            FairnessGranularity::Each,
+            "b"
+        ));
+    }
+
+    #[trace("TC-364", "FR-413-AC-5", "FR-200-AC-4")]
+    #[test]
+    fn a_component_that_takes_the_operation_or_cannot_enable_it_is_fair() {
+        let nodes = a_loop_ignoring_b();
+        // `a` is taken inside the component.
+        assert!(fair(
+            &nodes,
+            FairnessKind::Weak,
+            FairnessGranularity::Whole,
+            "a"
+        ));
+        // An operation enabled nowhere is vacuously fair.
+        assert!(fair(
+            &nodes,
+            FairnessKind::Strong,
+            FairnessGranularity::Whole,
+            "c"
+        ));
+        // Weak fairness needs enabledness at every member: `b` disabled at one
+        // member of the component leaves a weak constraint satisfied.
+        let partly = vec![
+            node(&[(1, "a"), (2, "b")], &[1], &[1], false),
+            node(&[(1, "a")], &[1], &[0], false),
+        ];
+        assert!(fair(
+            &partly,
+            FairnessKind::Weak,
+            FairnessGranularity::Whole,
+            "b"
+        ));
+        assert!(!fair(
+            &partly,
+            FairnessKind::Strong,
+            FairnessGranularity::Whole,
+            "b"
+        ));
+    }
+
+    #[trace("TC-364", "FR-413-AC-5")]
+    #[test]
+    fn a_component_with_an_exit_is_not_bottom_and_is_not_checked() {
+        let mut nodes = a_loop_ignoring_b();
+        nodes[1].escapes = true;
+        assert!(fair(
+            &nodes,
+            FairnessKind::Weak,
+            FairnessGranularity::Whole,
+            "b"
+        ));
+    }
+
+    #[trace("TC-364", "FR-413-AC-5")]
+    #[test]
+    fn each_granularity_checks_every_enabled_identity() {
+        // Identity 2 of `b` is taken, identity 3 of `b` is enabled and never taken.
+        let nodes = vec![
+            node(&[(1, "a"), (2, "b"), (3, "b")], &[2], &[1], false),
+            node(&[(1, "a"), (2, "b"), (3, "b")], &[2], &[0], false),
+        ];
+        assert!(fair(
+            &nodes,
+            FairnessKind::Weak,
+            FairnessGranularity::Whole,
+            "b"
+        ));
+        assert!(!fair(
+            &nodes,
+            FairnessKind::Weak,
+            FairnessGranularity::Each,
+            "b"
+        ));
+    }
+}
+
 /// One state of the chain a randomized witness induces on its evidence.
-struct FairNode {
+struct FairNode<S = crate::Schedule> {
     /// Enabled scheduled identities with their operation text.
-    enabled: Vec<(crate::Schedule, String)>,
+    enabled: Vec<(S, String)>,
     /// The identities the entry gives positive probability.
-    support: Vec<crate::Schedule>,
+    support: Vec<S>,
     /// Successor nodes.
     successors: Vec<usize>,
     /// Whether a positive-probability step leaves the evidence's states.
@@ -1069,8 +1212,9 @@ fn witness_is_fair(
     initial_key: &ProbabilityProductKey,
     limits: &ExactProbLimits,
     cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
 ) -> Result<bool, ProbabilityWitnessError> {
-    use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
     let is_leaf = |key: &ProbabilityProductKey| -> Result<bool, ProbabilityWitnessError> {
         let terminal = graph
             .states
@@ -1103,6 +1247,14 @@ fn witness_is_fair(
     queue.push_back(initial_key.clone());
     while let Some(key) = queue.pop_front() {
         poll_cancel(cancel)?;
+        bounded::visit(meter, cancel)?;
+        bounded::retain(
+            key.as_bytes()
+                .len()
+                .saturating_add(std::mem::size_of::<FairNode>()),
+            storage,
+            limits,
+        )?;
         let Some(entry) = scheduler.get(&key) else {
             return Ok(false);
         };
@@ -1143,6 +1295,15 @@ fn witness_is_fair(
                 continue;
             }
             for draw in action.draws {
+                if draw.probability == rational(0) {
+                    continue;
+                }
+                // A draw with several post-states needs the witness's PostState
+                // choice (ADR-028 WS-1), which this replay does not read: refuse
+                // rather than over-approximate the chain.
+                if draw.successors.len() != 1 {
+                    return Err(ExactProbabilityGraphError::UnsupportedDraw.into());
+                }
                 for (_, post) in draw.successors {
                     let post_key = key_of(system, reference, &post, limits, cancel)?;
                     if is_leaf(&post_key)? {
@@ -1167,6 +1328,35 @@ fn witness_is_fair(
         // Nodes are numbered in discovery order, which is queue order.
         nodes.push(node);
     }
+    let mut constraints = Vec::with_capacity(claim.fairness.len());
+    for constraint in &claim.fairness {
+        let text = system
+            .operation_text(
+                constraint.operation().declaring_type(),
+                constraint.operation().name(),
+            )
+            .ok_or(ProbabilityWitnessError::Refused)?;
+        constraints.push((constraint.kind(), constraint.granularity(), text.to_owned()));
+    }
+    bottom_components_are_fair(&nodes, &constraints, &mut || {
+        poll_cancel(cancel)?;
+        bounded::visit(meter, cancel)
+    })
+}
+
+/// FR-406's condition on every bottom component of the induced chain: a
+/// weak constraint enabled at every member, or a strong one enabled at some
+/// member, is taken inside it (per identity for an each constraint).
+fn bottom_components_are_fair<S: PartialEq>(
+    nodes: &[FairNode<S>],
+    constraints: &[(
+        filament_semantic_value::fairness::FairnessKind,
+        filament_semantic_value::fairness::FairnessGranularity,
+        String,
+    )],
+    tick: &mut impl FnMut() -> Result<(), ProbabilityWitnessError>,
+) -> Result<bool, ProbabilityWitnessError> {
+    use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
     let count = nodes.len();
     let edges: Vec<Vec<usize>> = nodes.iter().map(|node| node.successors.clone()).collect();
     let mut reverse = vec![Vec::new(); count];
@@ -1175,56 +1365,57 @@ fn witness_is_fair(
             reverse[*to].push(from);
         }
     }
-    let (_, components, closed) = bottom_components(&edges, &reverse, &mut |_| Ok(()))
-        .map_err(|_| ProbabilityWitnessError::Refused)?;
+    let mut stopped = None;
+    let bottom = bottom_components(&edges, &reverse, &mut |_| {
+        tick().map_err(|error| {
+            stopped = Some(error);
+            ProbabilityDocumentError::Malformed
+        })
+    });
+    if let Some(error) = stopped {
+        return Err(error);
+    }
+    let (_, components, closed) = bottom.map_err(|_| ProbabilityWitnessError::Refused)?;
     for (component, members) in components.iter().enumerate() {
-        poll_cancel(cancel)?;
+        tick()?;
         if !closed[component] || members.iter().any(|member| nodes[*member].escapes) {
             continue;
         }
-        for constraint in &claim.fairness {
-            let text = system
-                .operation_text(
-                    constraint.operation().declaring_type(),
-                    constraint.operation().name(),
-                )
-                .ok_or(ProbabilityWitnessError::Refused)?;
-            let operation = |schedule: &(crate::Schedule, String)| schedule.1 == text;
-            let identities: Vec<Option<&crate::Schedule>> =
-                if constraint.granularity() == FairnessGranularity::Whole {
-                    vec![None]
-                } else {
-                    let mut seen: Vec<&crate::Schedule> = Vec::new();
-                    for member in members {
-                        for enabled in nodes[*member].enabled.iter().filter(|e| operation(e)) {
-                            if !seen.contains(&&enabled.0) {
-                                seen.push(&enabled.0);
-                            }
+        for (kind, granularity, text) in constraints {
+            let operation = |schedule: &(S, String)| schedule.1 == *text;
+            let identities: Vec<Option<&S>> = if *granularity == FairnessGranularity::Whole {
+                vec![None]
+            } else {
+                let mut seen: Vec<&S> = Vec::new();
+                for member in members {
+                    for enabled in nodes[*member].enabled.iter().filter(|e| operation(e)) {
+                        if !seen.contains(&&enabled.0) {
+                            seen.push(&enabled.0);
                         }
                     }
-                    seen.into_iter().map(Some).collect()
-                };
+                }
+                seen.into_iter().map(Some).collect()
+            };
             for identity in identities {
-                let matches = |schedule: &crate::Schedule, node: &FairNode| {
-                    node.enabled.iter().any(|enabled| {
-                        &enabled.0 == schedule
-                            && operation(enabled)
-                            && identity.is_none_or(|identity| identity == schedule)
-                    })
-                };
-                let enabled_at = |node: &FairNode| {
+                let enabled_at = |node: &FairNode<S>| {
                     node.enabled.iter().any(|enabled| {
                         operation(enabled) && identity.is_none_or(|identity| identity == &enabled.0)
                     })
                 };
                 let taken = members.iter().any(|member| {
                     let node = &nodes[*member];
-                    node.support.iter().any(|schedule| matches(schedule, node))
+                    node.support.iter().any(|schedule| {
+                        node.enabled.iter().any(|enabled| {
+                            &enabled.0 == schedule
+                                && operation(enabled)
+                                && identity.is_none_or(|identity| identity == schedule)
+                        })
+                    })
                 });
                 if taken {
                     continue;
                 }
-                let unfair = match constraint.kind() {
+                let unfair = match kind {
                     FairnessKind::Weak => members.iter().all(|member| enabled_at(&nodes[*member])),
                     FairnessKind::Strong => {
                         members.iter().any(|member| enabled_at(&nodes[*member]))

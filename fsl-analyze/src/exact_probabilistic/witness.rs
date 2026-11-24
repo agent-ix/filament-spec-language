@@ -852,9 +852,8 @@ pub struct ProducedRandomizedWitness {
     /// Entries in state order; a state with one certain action carries
     /// [`EntryChoice::Action`].
     pub entries: Vec<(ProbStateId, EntryChoice)>,
-    /// The paths, most probable first. Each path's probability includes the
-    /// entries' choice probabilities; its steps carry the step's own
-    /// probability, without the choice weight.
+    /// The paths, most probable first. Each path's probability, and each
+    /// step's `probability`, includes the entry's choice weight.
     pub paths: Vec<ProducedPath>,
 }
 

@@ -1317,6 +1317,9 @@ fn run(
             &product, None, &target, objective, &limits,
         ) {
             Ok(fair) => fair,
+            Err(crate::exact_probabilistic::FairProductError::Product(error)) => {
+                return unbounded_failure(error, &limits, subject)
+            }
             Err(_) => return broken(),
         };
         fair_policy = Some(fair.policy);
@@ -2530,35 +2533,7 @@ fn replay_refutation(
                 Bound::AtLeast(threshold) => Rational::from_integer(1_i64.into()).sub(threshold),
             },
         ),
-        (
-            ProbForm::Reach {
-                bound: Bound::AtMost(threshold),
-                ..
-            },
-            _,
-        ) => (target.to_vec(), threshold.clone()),
-        (
-            ProbForm::Reach {
-                bound: Bound::AtLeast(threshold),
-                ..
-            },
-            _,
-        ) => (
-            product
-                .states
-                .iter()
-                .enumerate()
-                .map(|(index, _)| {
-                    !target.get(index).copied().unwrap_or(false)
-                        && product
-                            .edges
-                            .iter()
-                            .filter(|edge| edge.from.index() == index)
-                            .all(|edge| matches!(edge.choice, ProductAction::TerminalStutter))
-                })
-                .collect(),
-            Rational::from_integer(1_i64.into()).sub(threshold),
-        ),
+        (ProbForm::Reach { bound, .. }, _) => reach_accepting(product, bound, target),
         _ => return not_yet(),
     };
     let scope = match claim.scheduler {
@@ -2656,28 +2631,11 @@ fn replay_refutation(
     )
 }
 
-/// Refute an unbounded eventual claim under every scheduler with a fairness
-/// set (FR-200, FR-413): a memoryless randomized fair witness over an acyclic
-/// subject, replayed independently, including the fairness check (FS-9).
-#[allow(clippy::too_many_arguments)]
-fn replay_fair_refutation(
-    system: &ModelSystem<'_>,
-    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
-    product: &ProbProduct,
-    policy: &[Option<crate::exact_probabilistic::SchedulerChoice>],
-    initial: crate::exact_probabilistic::ProbStateId,
-    target: &[bool],
-    binding: Option<&ObjectReference>,
-    limits: &crate::exact_probabilistic::ExactProbLimits,
-    cancel: &Cancel,
-    subject: SubjectLimits<'_>,
-    tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
-) -> EngineReport {
-    let one = Rational::from_integer(1_i64.into());
-    let ProbForm::Reach { bound, .. } = &claim.form else {
-        return not_yet();
-    };
-    let (accepting, past): (Vec<bool>, Rational) = match bound {
+/// The accepting states and the mass a refutation must pass for an unwindowed
+/// `eventually` claim: the target against `<=`, the failing terminal states
+/// against `>=` (FR-202).
+fn reach_accepting(product: &ProbProduct, bound: &Bound, target: &[bool]) -> (Vec<bool>, Rational) {
+    match bound {
         Bound::AtMost(threshold) => (target.to_vec(), threshold.clone()),
         Bound::AtLeast(threshold) => (
             product
@@ -2698,9 +2656,32 @@ fn replay_fair_refutation(
                             })
                 })
                 .collect(),
-            one.sub(threshold),
+            Rational::from_integer(1_i64.into()).sub(threshold),
         ),
+    }
+}
+
+/// Refute an unbounded eventual claim under every scheduler with a fairness
+/// set (FR-200, FR-413): a memoryless randomized fair witness over an acyclic
+/// subject, replayed independently, including the fairness check (FS-9).
+#[allow(clippy::too_many_arguments)]
+fn replay_fair_refutation(
+    system: &ModelSystem<'_>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    product: &ProbProduct,
+    policy: &[Option<crate::exact_probabilistic::SchedulerChoice>],
+    initial: crate::exact_probabilistic::ProbStateId,
+    target: &[bool],
+    binding: Option<&ObjectReference>,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    cancel: &Cancel,
+    subject: SubjectLimits<'_>,
+    tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+) -> EngineReport {
+    let ProbForm::Reach { bound, .. } = &claim.form else {
+        return not_yet();
     };
+    let (accepting, past) = reach_accepting(product, bound, target);
     let mut producer_meter =
         filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
     let mut producer_storage = 0u64;
