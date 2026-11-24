@@ -101,7 +101,6 @@ fn an_unbounded_fair_eventual_certificate_is_accepted() {
 /// certificates the checker accepts.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2903: FR-1042 (lower/upper value bounds) not implemented yet"]
 fn value_bounds_certificates_are_accepted() {
     let source = likely(
         "inf",
@@ -113,6 +112,107 @@ fn value_bounds_certificates_are_accepted() {
         ..ExactProbLimits::default()
     };
     accepted_then_rejected(&certified(&source, limits), &["lower", "upper"]);
+
+    let partial_source = likely(
+        "inf",
+        "Even",
+        "probability >= 0.5 [ eventually holds(true) ]",
+    );
+    let mut partial_limits = ExactProbLimits::default();
+    partial_limits.model.limits.max_states = 1;
+    let (partial, settlement) = request_with(
+        &partial_source,
+        SNAPSHOT,
+        partial_limits,
+        domain().as_bytes(),
+    );
+    let partial = partial.unwrap_or_else(|| {
+        panic!("a lower proof on the explored prefix settles: {settlement:?}")
+    });
+    let fsl_analyze::analyze::Settlement::Terminal(record) = settlement else {
+        panic!("partial evidence settles with a terminal record: {settlement:?}");
+    };
+    assert!(matches!(
+        record.value(),
+        fsl_replay::TerminalValue::Proved {
+            basis: fsl_replay::ProofBasis::ValueBounds {
+                upper: fsl_replay::ExactBound::Finite(value),
+                exploration: fsl_replay::BoundsExploration::Partial,
+                ..
+            },
+            ..
+        } if value.value() == &filament_exact::Rational::from_integer(1_i64.into())
+    ));
+    let doc = document(&partial);
+    assert_eq!(doc["kind"], "lower");
+    let (code, output) = run(&partial);
+    assert_eq!(code, 0, "{output}");
+
+    let partial_measure_source = likely(
+        "ev",
+        "every scheduler",
+        "probability >= 0.5 [steps from holds(m.delivered) until holds(true) within 4 <= 3]",
+    );
+    let (partial_measure, measure_settlement) = request_with(
+        &partial_measure_source,
+        SNAPSHOT,
+        partial_limits,
+        domain().as_bytes(),
+    );
+    let partial_measure = partial_measure.unwrap_or_else(|| {
+        panic!("the explored measure prefix proves the zero lower bound: {measure_settlement:?}")
+    });
+    assert_eq!(document(&partial_measure)["kind"], "lower");
+    let (code, output) = run(&partial_measure);
+    assert_eq!(code, 0, "{output}");
+    let fsl_analyze::analyze::Settlement::Terminal(record) = measure_settlement else {
+        panic!("partial measure proof settles: {measure_settlement:?}");
+    };
+    assert!(matches!(
+        record.value(),
+        fsl_replay::TerminalValue::Proved {
+            basis: fsl_replay::ProofBasis::ValueBounds {
+                upper: fsl_replay::ExactBound::Finite(value),
+                exploration: fsl_replay::BoundsExploration::Partial,
+                ..
+            },
+            ..
+        } if value.value() == &filament_exact::Rational::from_integer(1_i64.into())
+    ));
+
+    let shifted_source = likely(
+        "ev",
+        "every scheduler",
+        "quantile 0.4 of (steps from holds(true) until holds(m.delivered) within 4) <= 3",
+    );
+    let mut shifted_limits = ExactProbLimits::default();
+    shifted_limits.model.limits.max_states = 10;
+    let (shifted, shifted_settlement) = request_with(
+        &shifted_source,
+        SNAPSHOT,
+        shifted_limits,
+        domain().as_bytes(),
+    );
+    let shifted = shifted.unwrap_or_else(|| {
+        panic!("the explored shifted prefix proves level 0.4: {shifted_settlement:?}")
+    });
+    assert_eq!(document(&shifted)["kind"], "lower");
+    let (code, output) = run(&shifted);
+    assert_eq!(code, 0, "{output}");
+    let fsl_analyze::analyze::Settlement::Terminal(record) = shifted_settlement else {
+        panic!("partial shifted proof settles: {shifted_settlement:?}");
+    };
+    assert!(matches!(
+        record.value(),
+        fsl_replay::TerminalValue::Proved {
+            basis: fsl_replay::ProofBasis::ValueBounds {
+                upper: fsl_replay::ExactBound::Finite(value),
+                exploration: fsl_replay::BoundsExploration::Partial,
+                ..
+            },
+            ..
+        } if value.value() == &filament_exact::Rational::new(3_i64.into(), 5_i64.into()).unwrap()
+    ));
 }
 
 /// A finite-horizon quantile over every scheduler: its certificate is

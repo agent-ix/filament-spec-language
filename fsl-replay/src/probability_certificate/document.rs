@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-201's closed probability document profiles and strict JCS codec.
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 
 use super::*;
@@ -10,43 +10,42 @@ use crate::ExactProbLimits;
 
 pub(super) mod measure;
 pub use measure::{
-    conditional_measure_probability_certificate, measure_probability_certificate_document,
-    measure_probability_objective, measure_probability_product_key,
-    read_measure_probability_certificate, vacuous_measure_probability_certificate_document,
-    write_measure_probability_certificate, MeasurePayoffKind, MeasureProbabilityDocument,
+    MeasurePayoffKind, MeasureProbabilityDocument, conditional_measure_probability_certificate,
+    measure_probability_certificate_document, measure_probability_objective,
+    measure_probability_product_key, read_measure_probability_certificate,
+    vacuous_measure_probability_certificate_document, write_measure_probability_certificate,
 };
 mod fairness;
 pub(super) mod instances;
 #[cfg(feature = "test-support")]
 pub use fairness::BoundedFairProbabilityPhase;
-pub use instances::{on_each_has_instance, on_each_outcome, replay_on_each_witness, OnEachOutcome};
+pub use instances::{OnEachOutcome, on_each_has_instance, on_each_outcome, replay_on_each_witness};
 mod key;
 mod mdp;
 #[cfg(feature = "test-support")]
 pub use mdp::{
-    check_cyclic_mdp_probability_certificate_observing,
-    check_cyclic_mdp_probability_certificate_with_identity, CyclicMdpProbabilityPhase,
+    CyclicMdpProbabilityPhase, check_cyclic_mdp_probability_certificate_observing,
+    check_cyclic_mdp_probability_certificate_with_identity,
 };
 pub use mdp::{
-    cyclic_mdp_probability_certificate_document,
+    ProbabilityProofDocument, cyclic_mdp_probability_certificate_document,
     cyclic_mdp_reward_probability_certificate_document, probability_proof_document,
     read_probability_proof_document, write_probability_proof_document,
-    write_value_bounds_proof_document, ProbabilityProofDocument,
+    write_value_bounds_proof_document,
 };
 pub(super) mod long_run;
 pub(super) mod refutation;
+pub use long_run::{
+    LongRunOptimization, LongRunPolicyRow, LongRunProbabilityComponent, LongRunProbabilityDocument,
+    WeightedLongRunProbabilityDocument, long_run_probability_certificate_document,
+    read_long_run_probability_certificate, read_weighted_long_run_probability_certificate,
+    weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
+    write_weighted_long_run_probability_certificate,
+};
 #[cfg(feature = "test-support")]
 pub use long_run::{
-    check_long_run_probability_certificate_observing,
-    check_long_run_probability_certificate_with_identity, LongRunProbabilityPhase,
-};
-pub use long_run::{
-    long_run_probability_certificate_document, read_long_run_probability_certificate,
-    read_weighted_long_run_probability_certificate,
-    weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
-    write_weighted_long_run_probability_certificate, LongRunOptimization,
-    LongRunPolicyRow, LongRunProbabilityComponent, LongRunProbabilityDocument,
-    WeightedLongRunProbabilityDocument,
+    LongRunProbabilityPhase, check_long_run_probability_certificate_observing,
+    check_long_run_probability_certificate_with_identity,
 };
 pub use refutation::SubsystemBoundKind;
 mod timed;
@@ -1189,6 +1188,28 @@ pub fn write_value_bounds_certificate(
     value_bounds::wrap(&exact, side, limits)
 }
 
+/// FR-1042: write a finite-horizon measure document as one side of a
+/// value-bounds proof. A lower partial document may list only its explored
+/// product states; its ranking is restricted to those same keys.
+pub fn write_value_bounds_measure_certificate(
+    document: &MeasureProbabilityDocument,
+    side: SubsystemBoundKind,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<Vec<u8>, ProbabilityDocumentError> {
+    let mut document = document.clone();
+    if side == SubsystemBoundKind::Lower {
+        let states = document
+            .values
+            .iter()
+            .map(|row| row.state.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        document.ranking.retain(|(state, _)| states.contains(state));
+    }
+    let exact = write_measure_probability_certificate(&document, limits, cancel)?;
+    value_bounds::wrap(&exact, side, limits)
+}
+
 /// Write the single RFC 8785 representation admitted by the profile reader.
 pub fn write_probability_certificate(
     document: &ProbabilityCertificateDocument,
@@ -1991,10 +2012,19 @@ fn check_document_bytes(
     }
     match dispatch {
         ProfileDispatch::Measure => {
-            if bound_side.is_some() {
-                return Err(ProbabilityDocumentError::Unsupported);
-            }
-            return measure::check(system, claims, item, bytes, limits, cancel);
+            let partial_lower = bound_side == Some(SubsystemBoundKind::Lower)
+                && offer.role == CertificateRole::Claim;
+            return measure::check(
+                system,
+                claims,
+                item,
+                bytes,
+                partial_lower,
+                bound_side.filter(|_| !partial_lower),
+                offer.role,
+                limits,
+                cancel,
+            );
         }
         ProfileDispatch::Timed => {
             return timed::check(
@@ -2005,7 +2035,7 @@ fn check_document_bytes(
                 offer.relation(),
                 limits,
                 cancel,
-            )
+            );
         }
         ProfileDispatch::OnEach => {
             return instances::check(system, claims, item, bytes, limits, cancel)
@@ -2096,7 +2126,7 @@ fn check_document_bytes(
     } else {
         bounded_ranks.is_some()
     };
-    if bound_side.is_some() && (!bound_base || reward.is_some() || !fairness_records.is_empty()) {
+    if bound_side.is_some() && (!bound_base || !fairness_records.is_empty()) {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let relation = offer.relation();
@@ -2108,14 +2138,28 @@ fn check_document_bytes(
     let certificate = ExactProbabilityCertificate {
         values: document.values,
     };
-    let values = match certificate_values(&graph, &certificate, cancel)? {
-        CertificateValues::Complete(values) => values,
+    let (values, named, partial) = match certificate_values(
+        &graph,
+        &certificate,
+        cancel,
+        bound_side == Some(SubsystemBoundKind::Lower),
+    )? {
+        CertificateValues::Complete(values) => {
+            let named = values.keys().cloned().collect::<BTreeSet<_>>();
+            (values, named, false)
+        }
+        CertificateValues::Partial { values, named } => (values, named, true),
         CertificateValues::Rejected(rejection) => {
             return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
     };
-    let ranked = bound_side != Some(SubsystemBoundKind::Upper);
-    for (key, state) in graph.states.iter().filter(|_| ranked) {
+    let reward_upper = reward.is_some() && bound_side == Some(SubsystemBoundKind::Upper);
+    let ranked = bound_side != Some(SubsystemBoundKind::Upper) || reward_upper;
+    for (key, state) in graph
+        .states
+        .iter()
+        .filter(|(key, _)| ranked && named.contains(*key))
+    {
         if !ranks.contains_key(key) {
             return Ok(
                 if bounded_ranks.is_none()
@@ -2130,7 +2174,7 @@ fn check_document_bytes(
             );
         }
     }
-    if ranked && ranks.len() != graph.states.len() {
+    if ranked && !partial && ranks.len() != graph.states.len() {
         return Ok(malformed_ranking());
     }
     if let Some(expected) = bounded_ranks
@@ -2153,27 +2197,34 @@ fn check_document_bytes(
     let progress_checked = match bound_side {
         None => true,
         Some(SubsystemBoundKind::Lower) => document.cyclic_dtmc,
-        Some(SubsystemBoundKind::Upper) => false,
+        Some(SubsystemBoundKind::Upper) => reward_upper,
     };
-    for (key, state) in graph.states.iter().filter(|_| progress_checked) {
+    for (key, state) in graph
+        .states
+        .iter()
+        .filter(|(key, _)| progress_checked && (!partial || named.contains(*key)))
+    {
         poll(cancel)?;
+        if partial && values.get(key).is_some_and(|value| *value == rational(0)) {
+            continue;
+        }
         if document.cyclic_dtmc && reward.is_some() {
             control.phase(super::reward::RewardProbabilityPhase::Progress)?;
             let rank = ranks.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
             let progress = if state.terminal == Some(true) {
                 *rank == 0
             } else {
-                let mut lower = false;
+                let mut progress = false;
                 for edge in state.choices.iter().flatten() {
                     super::reward::visit(cancel, &mut meter)?;
                     if edge.probability > rational(0)
                         && ranks.get(&edge.target).is_some_and(|next| next < rank)
                     {
-                        lower = true;
+                        progress = true;
                         break;
                     }
                 }
-                *rank > 0 && lower
+                *rank > 0 && progress
             };
             if !progress {
                 return Ok(rejected(
@@ -2212,6 +2263,7 @@ fn check_document_bytes(
         objective,
         &bound,
         relation,
+        &named,
         reward.as_ref(),
         limits,
         cancel,
@@ -2353,6 +2405,7 @@ fn check_document_equalities(
     objective: ProbabilityObjective,
     bound: &Bound,
     relation: ValueRelation,
+    named: &BTreeSet<ProbabilityProductKey>,
     reward: Option<&super::reward::RewardGraph>,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
@@ -2361,6 +2414,9 @@ fn check_document_equalities(
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     for (key, state) in &graph.states {
         poll(cancel)?;
+        if !named.contains(key) {
+            continue;
+        }
         let value = values.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
         let expected = match state.terminal {
             Some(true) => rational(i64::from(reward.is_none())),
@@ -2869,7 +2925,7 @@ mod tests {
             ]),
             scheduler_actions: Default::default(),
         };
-        let values = BTreeMap::from([(root, rational(1)), (target, rational(1))]);
+        let values = BTreeMap::from([(root.clone(), rational(1)), (target.clone(), rational(1))]);
         let check = |limits: ProbabilityDocumentLimits| {
             let cancel = Cancel::new();
             let mut meter =
@@ -2880,6 +2936,7 @@ mod tests {
                 ProbabilityObjective::Minimum,
                 &Bound::AtLeast(rational(1)),
                 ValueRelation::Exact,
+                &BTreeSet::from([root.clone(), target.clone()]),
                 None,
                 limits,
                 &cancel,
