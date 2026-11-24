@@ -5,8 +5,8 @@
 
 use filament_eval::FamilyOutcome;
 use filament_exact::{
-    ChargePoint, Decimal, DecimalRepresentation, Integer, LimitKind, Meter, Outcome, Rational,
-    ScalarLimits, UnitDomain, Value,
+    ChargePoint, Decimal, DecimalRepresentation, Integer, LimitKind, Meter, Outcome, Quantity,
+    Rational, ScalarLimits, UnitDomain, Value,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::loss::ValueLoss;
@@ -86,6 +86,8 @@ struct SourceCase {
     declarations: String,
     expected: Expected,
     arguments: Vec<Value>,
+    /// Magnitudes bound to a checked quantity parameter's unit identity.
+    quantity_parameter_arguments: Vec<(usize, Rational)>,
     /// Remaining budget at the source expression under test. The source
     /// function call's `FunctionCall` work unit is added by `observed`.
     limits: ScalarLimits,
@@ -99,6 +101,7 @@ fn function(result: &str, body: &str, expected: Expected) -> SourceCase {
         declarations: format!("function f using v(): {result} pure {{ {body} }}"),
         expected,
         arguments: Vec::new(),
+        quantity_parameter_arguments: Vec::new(),
         limits: UNLIMITED,
         expected_charges: None,
         check_mode: CheckMode::Linked,
@@ -136,6 +139,7 @@ fn limited_function_with(
         declarations: format!("function f using v({params}): {result} pure {{ {body} }}"),
         expected,
         arguments,
+        quantity_parameter_arguments: Vec::new(),
         limits,
         expected_charges: Some(expected_charges.to_vec()),
         check_mode: CheckMode::Linked,
@@ -263,6 +267,7 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             ),
             expected: Expected::Boolean(vector.expected.starts_with("equal ")),
             arguments: Vec::new(),
+            quantity_parameter_arguments: Vec::new(),
             limits: UNLIMITED,
             expected_charges: None,
             check_mode: CheckMode::Linked,
@@ -317,6 +322,7 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                     refusal_expected(vector.expected)
                 },
                 arguments: Vec::new(),
+                quantity_parameter_arguments: Vec::new(),
                 limits: UNLIMITED,
                 expected_charges: None,
                 check_mode: CheckMode::Linked,
@@ -433,8 +439,8 @@ fn decimal_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCa
                 vec![],
                 tuple(8, 3, 2, 3, 1),
                 Expected::Refused {
-                    code: "inexact_decimal".to_owned(),
-                    cause: Some("nonzero-discarded-digit".to_owned()),
+                    code: "inexact_conversion".to_owned(),
+                    cause: Some("inexact-conversion".to_owned()),
                 },
                 &[
                     ChargePoint::DecimalOperands,
@@ -740,6 +746,7 @@ fn text_comparison(
         ),
         expected: Expected::Boolean(expected),
         arguments: Vec::new(),
+        quantity_parameter_arguments: Vec::new(),
         limits: UNLIMITED,
         expected_charges: None,
         check_mode: CheckMode::Linked,
@@ -786,6 +793,7 @@ fn text_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             declarations: "type P = Text;".to_owned(),
             expected: refusal_expected(vector.expected),
             arguments: Vec::new(),
+            quantity_parameter_arguments: Vec::new(),
             limits: UNLIMITED,
             expected_charges: None,
             check_mode: CheckMode::Linked,
@@ -864,7 +872,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
             let mut complete = limited_function(
                 "Boolean",
                 "true",
-                limits(5, 3, 2, 2, 8, 1),
+                limits(5, 3, 2, 2, 6, 1),
                 Expected::Boolean(true),
                 &full_points,
             );
@@ -872,7 +880,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
             let mut normalized_limit = limited_function(
                 "Boolean",
                 "true",
-                limits(5, 3, 1, 2, 8, 1),
+                limits(5, 3, 1, 2, 6, 1),
                 Expected::Incomplete {
                     limit_kind: LimitKind::NormalizedScalars,
                     limit: 1,
@@ -886,7 +894,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
             let mut result_limit = limited_function(
                 "Boolean",
                 "true",
-                limits(5, 3, 2, 2, 8, 0),
+                limits(5, 3, 2, 2, 6, 0),
                 Expected::Incomplete {
                     limit_kind: LimitKind::ResultUnits,
                     limit: 0,
@@ -907,7 +915,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 );
                 let mut complete = function("Boolean", "true", Expected::Boolean(false));
                 complete.declarations = body.clone();
-                complete.limits = limits(5, 3, 0, 2, 5, 1);
+                complete.limits = limits(5, 3, 0, 2, 3, 1);
                 complete.expected_charges = Some(vec![
                     ChargePoint::TextInputBytes,
                     ChargePoint::TextDecodeScalars,
@@ -918,14 +926,14 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     "true",
                     Expected::Incomplete {
                         limit_kind: LimitKind::WorkUnits,
-                        limit: 4,
-                        consumed: 4,
+                        limit: 2,
+                        consumed: 2,
                         next_charge: Integer::from(1_i64),
                         charge_point: ChargePoint::TextResultRetain,
                     },
                 );
                 denied.declarations = body.clone();
-                denied.limits = limits(5, 3, 0, 2, 4, 1);
+                denied.limits = limits(5, 3, 0, 2, 2, 1);
                 denied.expected_charges = Some(vec![
                     ChargePoint::TextInputBytes,
                     ChargePoint::TextDecodeScalars,
@@ -936,7 +944,11 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
             cases
         }
         "T16" => {
-            let input = format!("Text(\"{decomposed}\")");
+            let nfd_input = format!("convert<Text[1, 1; nfd]>(Text(\"{decomposed}\"))");
+            let scalar_input = format!(
+                "convert<Text[1, 1; unicode-scalars]>(Text(\"{decomposed}\"))"
+            );
+            let binary_input = "convert<Text[1, 1; binary-utf8]>(Text(\"é\"))";
             let nfd_points = [
                 ChargePoint::TextInputBytes,
                 ChargePoint::TextDecodeScalars,
@@ -947,7 +959,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
             vec![
                 limited_function(
                     "Text[1, 1; nfd]",
-                    &input,
+                    &nfd_input,
                     limits(3, 2, 2, 1, 5, 1),
                     Expected::Refused {
                         code: "text_length_out_of_domain".to_owned(),
@@ -957,7 +969,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 ),
                 limited_function(
                     "Text[1, 1; nfd]",
-                    &input,
+                    &nfd_input,
                     limits(3, 2, 1, 1, 5, 1),
                     Expected::Incomplete {
                         limit_kind: LimitKind::NormalizedScalars,
@@ -970,7 +982,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 ),
                 limited_function(
                     "Text[1, 1; unicode-scalars]",
-                    &input,
+                    &scalar_input,
                     limits(3, 2, 0, 1, 2, 1),
                     Expected::Refused {
                         code: "text_length_out_of_domain".to_owned(),
@@ -983,7 +995,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 ),
                 limited_function(
                     "Text[1, 1; unicode-scalars]",
-                    &input,
+                    &scalar_input,
                     limits(3, 1, 0, 1, 2, 1),
                     Expected::Incomplete {
                         limit_kind: LimitKind::TextScalars,
@@ -996,7 +1008,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 ),
                 limited_function(
                     "Text[1, 1; binary-utf8]",
-                    "Text(\"é\")",
+                    binary_input,
                     limits(2, 0, 0, 1, 1, 1),
                     Expected::Refused {
                         code: "text_length_out_of_domain".to_owned(),
@@ -1006,7 +1018,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 ),
                 limited_function(
                     "Text[1, 1; binary-utf8]",
-                    "Text(\"é\")",
+                    binary_input,
                     limits(1, 0, 0, 1, 1, 1),
                     Expected::Incomplete {
                         limit_kind: LimitKind::TextInputBytes,
@@ -1033,6 +1045,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     cause: None,
                 },
                 arguments: Vec::new(),
+                quantity_parameter_arguments: Vec::new(),
                 limits: limits(0, 0, 0, 0, 0, 0),
                 expected_charges: Some(Vec::new()),
                 check_mode: CheckMode::Linked,
@@ -1044,6 +1057,7 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     cause: None,
                 },
                 arguments: Vec::new(),
+                quantity_parameter_arguments: Vec::new(),
                 limits: limits(0, 0, 0, 0, 0, 0),
                 expected_charges: Some(Vec::new()),
                 check_mode: CheckMode::Linked,
@@ -1306,6 +1320,7 @@ fn float_extended_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>>
                 cause: None,
             },
             arguments: Vec::new(),
+            quantity_parameter_arguments: Vec::new(),
             limits: limits(0, 0, 0, 0),
             expected_charges: Some(Vec::new()),
             check_mode: CheckMode::Linked,
@@ -1633,7 +1648,7 @@ fn division_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceC
             limited_function_with(
                 "Int[0, 1]",
                 "a: Integer, b: Integer",
-                "a mod b",
+                "convert<Int[0, 1]>(a mod b)",
                 vec![
                     Value::Integer(Integer::from(-7_i64)),
                     Value::Integer(Integer::from(3_i64)),
@@ -1648,7 +1663,7 @@ fn division_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceC
             limited_function_with(
                 "Int[0, 1]",
                 "a: Integer, b: Integer",
-                "a mod b",
+                "convert<Int[0, 1]>(a mod b)",
                 vec![
                     Value::Integer(Integer::from(-7_i64)),
                     Value::Integer(Integer::from(3_i64)),
@@ -1739,6 +1754,7 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
         declarations: format!("{source}function f using v(): Boolean pure {{ true }}"),
         expected,
         arguments: Vec::new(),
+        quantity_parameter_arguments: Vec::new(),
         limits: UNLIMITED,
         expected_charges: None,
         check_mode: CheckMode::Linked,
@@ -1806,10 +1822,35 @@ fn accounting_unit_case(
         ),
         expected,
         arguments: Vec::new(),
+        quantity_parameter_arguments: Vec::new(),
         limits,
         expected_charges: Some(charges.to_vec()),
         check_mode: CheckMode::Linked,
     }
+}
+
+fn accounting_unit_case_with_quantity_parameter(
+    result: &str,
+    parameter: &str,
+    expression: &str,
+    magnitude: i64,
+    limits: ScalarLimits,
+    expected: Expected,
+    charges: &[ChargePoint],
+) -> SourceCase {
+    let mut case = limited_function_with(
+        result,
+        parameter,
+        expression,
+        Vec::new(),
+        limits,
+        expected,
+        charges,
+    );
+    case.declarations = format!("{ACCOUNTING_UNITS}{}", case.declarations);
+    case.quantity_parameter_arguments
+        .push((0, Rational::from_integer(Integer::from(magnitude))));
+    case
 }
 
 fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
@@ -1885,6 +1926,7 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                         cause: None,
                     },
                     arguments: Vec::new(),
+                    quantity_parameter_arguments: Vec::new(),
                     limits: unit_limits(0, 0, 0, 0, 0, 0, 0),
                     expected_charges: Some(Vec::new()),
                     check_mode: CheckMode::Linked,
@@ -1950,8 +1992,8 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
         ],
         "U17" => vec![
             accounting_unit_case(
-                "Decimal[-2, 2; 0, 0; exact]",
-                "convert<Decimal[-2, 2; 0, 0; exact]>(3 m)",
+                "Quantity<m, Decimal[-2, 2; 0, 0; exact]>",
+                "convert<Quantity<m, Decimal[-2, 2; 0, 0; exact]>>(3 m)",
                 unit_limits(2, 1, 0, 1, 1, 2, 0),
                 Expected::Refused {
                     code: "decimal_out_of_domain".to_owned(),
@@ -1960,8 +2002,8 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 &[UnitIdentityRead, UnitEdge, UnitTargetDomain],
             ),
             accounting_unit_case(
-                "Decimal[-2, 2; 0, 0; exact]",
-                "convert<Decimal[-2, 2; 0, 0; exact]>(3 m)",
+                "Quantity<m, Decimal[-2, 2; 0, 0; exact]>",
+                "convert<Quantity<m, Decimal[-2, 2; 0, 0; exact]>>(3 m)",
                 unit_limits(2, 1, 0, 1, 1, 1, 0),
                 Expected::Incomplete {
                     limit_kind: LimitKind::WorkUnits,
@@ -1974,8 +2016,8 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
             ),
         ],
         "U18" => vec![accounting_unit_case(
-            "Decimal[0, 1; 0, 4294967295; exact]",
-            "convert<Decimal[0, 1; 0, 4294967295; exact]>(1 m)",
+            "Quantity<m, Decimal[0, 1; 0, 4294967295; exact]>",
+            "convert<Quantity<m, Decimal[0, 1; 0, 4294967295; exact]>>(1 m)",
             unit_limits(u64::MAX, 64, 0, 1, 1, 2, 1),
             Expected::Incomplete {
                 limit_kind: LimitKind::DecimalDigits,
@@ -2044,6 +2086,7 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                         cause: None,
                     },
                     arguments: Vec::new(),
+                    quantity_parameter_arguments: Vec::new(),
                     limits: unit_limits(0, 0, 0, 0, 0, 0, 0),
                     expected_charges: Some(Vec::new()),
                     check_mode: CheckMode::Linked,
@@ -2083,7 +2126,13 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 },
                 &[],
             ),
-        ],
+        ]
+        .into_iter()
+        .map(|mut case| {
+            case.check_mode = CheckMode::Kernel;
+            case
+        })
+        .collect(),
         "U22" => vec![
             SourceCase {
                 declarations: format!(
@@ -2094,20 +2143,25 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     cause: None,
                 },
                 arguments: Vec::new(),
+                quantity_parameter_arguments: Vec::new(),
                 limits: unit_limits(0, 0, 0, 0, 0, 0, 0),
                 expected_charges: Some(Vec::new()),
                 check_mode: CheckMode::Linked,
             },
-            accounting_unit_case(
+            accounting_unit_case_with_quantity_parameter(
                 "Quantity<m2>",
-                "convert<Quantity<m2>>(4 m ^ 2)",
+                "q: Quantity<m ^ 2>",
+                "convert<Quantity<m2>>(q)",
+                4,
                 unit_limits(3, 0, 0, 0, 1, 3, 1),
                 quantity_expected(4, 1, quantity),
                 &[UnitIdentityRead, UnitTargetDomain, UnitResultRetain],
             ),
-            accounting_unit_case(
+            accounting_unit_case_with_quantity_parameter(
                 "Quantity<cm2>",
-                "convert<Quantity<cm2>>(4 m ^ 2)",
+                "q: Quantity<m ^ 2>",
+                "convert<Quantity<cm2>>(q)",
+                4,
                 unit_limits(17, 0, 0, 1, 1, 6, 1),
                 quantity_expected(40000, 1, quantity),
                 &[
@@ -2119,9 +2173,11 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     UnitResultRetain,
                 ],
             ),
-            accounting_unit_case(
+            accounting_unit_case_with_quantity_parameter(
                 "Quantity<cm2>",
-                "convert<Quantity<cm2>>(4 m ^ 2)",
+                "q: Quantity<m ^ 2>",
+                "convert<Quantity<cm2>>(q)",
+                4,
                 unit_limits(16, 0, 0, 1, 1, 6, 1),
                 Expected::Incomplete {
                     limit_kind: LimitKind::IntegerBits,
@@ -2216,6 +2272,7 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     cause: None,
                 },
                 arguments: Vec::new(),
+                quantity_parameter_arguments: Vec::new(),
                 limits: unit_limits(0, 0, 0, 0, 0, 0, 0),
                 expected_charges: Some(Vec::new()),
                 check_mode: CheckMode::Linked,
@@ -2229,6 +2286,7 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     cause: None,
                 },
                 arguments: Vec::new(),
+                quantity_parameter_arguments: Vec::new(),
                 limits: unit_limits(0, 0, 0, 0, 0, 0, 0),
                 expected_charges: Some(Vec::new()),
                 check_mode: CheckMode::Linked,
@@ -2255,9 +2313,11 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 quantity_expected(1, 1, compound),
                 &[UnitIdentityRead, UnitTargetDomain, UnitResultRetain],
             ),
-            accounting_unit_case(
+            accounting_unit_case_with_quantity_parameter(
                 "Quantity<J>",
-                "convert<Quantity<J>>(convert<Quantity<kg*m^2*s^-2>>(1 N_m))",
+                "q: Quantity<kg*m^2*s^-2>",
+                "convert<Quantity<J>>(q)",
+                1,
                 unit_limits(1, 0, 0, 1, 1, 3, 1),
                 quantity_expected(1, 1, quantity),
                 &[UnitIdentityRead, UnitTargetDomain, UnitResultRetain],
@@ -2300,14 +2360,14 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
         ],
         "U27" => vec![
             accounting_unit_case(
-            "Quantity<cm/cm>",
+                "Quantity<m ^ 0>",
                 "1 cm / 0 cm",
                 unit_limits(1, 0, 0, 2, 2, 2, 0),
                 Expected::Undefined,
                 &[UnitIdentityRead, UnitIdentityRead],
             ),
             accounting_unit_case(
-                "Quantity<cm/cm>",
+                "Quantity<m ^ 0>",
                 "1 cm / 0 cm",
                 unit_limits(1, 0, 0, 2, 2, 1, 0),
                 Expected::Incomplete {
@@ -2319,7 +2379,13 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 },
                 &[UnitIdentityRead],
             ),
-        ],
+        ]
+        .into_iter()
+        .map(|mut case| {
+            case.check_mode = CheckMode::Kernel;
+            case
+        })
+        .collect(),
         "U28" => vec![
             accounting_unit_case(
                 "Quantity<m ^ 2>",
@@ -2385,18 +2451,18 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
         ],
         "U29" => vec![
             accounting_unit_case(
-                "Quantity<m, Int[-2, 2]>",
-                "convert<Quantity<m, Int[-2, 2]>>(1 inch)",
+                "Quantity<m, Int[-2, 2; exact]>",
+                "convert<Quantity<m, Int[-2, 2; exact]>>(1 inch)",
                 unit_limits(15, 0, 0, 1, 1, 4, 1),
                 Expected::Refused {
-                    code: "inexact_decimal".to_owned(),
-                    cause: Some("nonzero-discarded-digit".to_owned()),
+                    code: "inexact_conversion".to_owned(),
+                    cause: Some("inexact-conversion".to_owned()),
                 },
                 &[UnitIdentityRead, UnitEdge, UnitRationalArithmetic, UnitRationalArithmetic],
             ),
             accounting_unit_case(
-                "Quantity<m, Int[-2, 2]>",
-                "convert<Quantity<m, Int[-2, 2]>>(1 inch)",
+                "Quantity<m, Int[-2, 2; nearest-even]>",
+                "convert<Quantity<m, Int[-2, 2; nearest-even]>>(1 inch)",
                 unit_limits(15, 0, 0, 1, 1, 4, 1),
                 Expected::Incomplete {
                     limit_kind: LimitKind::WorkUnits,
@@ -2536,10 +2602,26 @@ fn observed(case: &SourceCase) -> Observation {
             .expect("source function call work charges fit");
     }
     let mut meter = Meter::new(limits);
+    let callable = package.graph().callable("f").expect("function f exists");
+    let mut arguments = case.arguments.clone();
+    for (index, magnitude) in &case.quantity_parameter_arguments {
+        assert_eq!(*index, arguments.len(), "quantity arguments are in order");
+        let (_, parameter_type) = callable
+            .parameters
+            .get(*index)
+            .expect("quantity argument has a function parameter");
+        let filament_exact::ValueType::Quantity(unit) = parameter_type else {
+            panic!("parameter {index} is a quantity");
+        };
+        arguments.push(Value::Quantity(Quantity::new(
+            magnitude.clone(),
+            unit.clone(),
+        )));
+    }
     let evaluation = package
         .call(
             &QualifiedName::unqualified("f").expect("function name"),
-            case.arguments.clone(),
+            arguments,
             &ObjectEnvironment::default(),
             &mut meter,
         )
@@ -2690,15 +2772,20 @@ fn compare(vector: &QualificationVector) -> Result<usize, String> {
             .expected_charges
             .as_ref()
             .is_none_or(|expected| *expected == actual.node_charges);
-        let expected_function_call_charges = usize::from(
-            case.expected_charges.is_some()
-                && !(matches!(case.expected, Expected::Refused { .. })
-                    && case.expected_charges.as_ref().is_some_and(Vec::is_empty)),
-        );
-        let function_calls_match = actual.function_call_charges == expected_function_call_charges;
+        let expected_function_call_charges = case.expected_charges.as_ref().map(|_| {
+            if matches!(case.expected, Expected::Refused { .. })
+                && case.expected_charges.as_ref().is_some_and(Vec::is_empty)
+            {
+                0
+            } else {
+                case.declarations.matches("function ").count()
+            }
+        });
+        let function_calls_match = expected_function_call_charges
+            .is_none_or(|expected| actual.function_call_charges == expected);
         if !matches || !charges_match || !function_calls_match {
             failures.push(format!(
-                "{}:{}[{index}] expected {:?} with node charges {:?} and {expected_function_call_charges} FunctionCall charges, actual {:?} with node charges {:?} and {} FunctionCall charges; source {}",
+                "{}:{}[{index}] expected {:?} with node charges {:?} and {expected_function_call_charges:?} FunctionCall charges, actual {:?} with node charges {:?} and {} FunctionCall charges; source {}",
                 vector.test_case.id(),
                 vector.id,
                 case.expected,
