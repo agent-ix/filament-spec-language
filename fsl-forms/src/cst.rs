@@ -12,57 +12,65 @@ use std::fmt;
 pub type CompleteCode = Code;
 
 /// A complete-source diagnostic cause, retained by its stable catalog tag.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CompleteCause(&'static str);
+#[derive(Clone, Copy, Debug)]
+pub struct CompleteCause(&'static str, Option<fsl_cst::CompleteCause>);
+
+impl PartialEq for CompleteCause {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for CompleteCause {}
 
 #[allow(non_upper_case_globals)]
 impl CompleteCause {
     /// An unexpected token.
-    pub const UnexpectedToken: Self = Self("unexpected-token");
+    pub const UnexpectedToken: Self = Self("unexpected-token", None);
     /// A required token was absent at end of input.
-    pub const UnexpectedEnd: Self = Self("unexpected-end");
+    pub const UnexpectedEnd: Self = Self("unexpected-end", None);
     /// The source contains bytes that are not a token.
-    pub const InvalidToken: Self = Self("invalid-token");
+    pub const InvalidToken: Self = Self("invalid-token", None);
     /// The parser reached its diagnostic-list bound.
-    pub const DiagnosticListCut: Self = Self("diagnostic-list-cut");
+    pub const DiagnosticListCut: Self = Self("diagnostic-list-cut", None);
     /// A string contains an invalid escape.
-    pub const InvalidEscape: Self = Self("invalid-escape");
+    pub const InvalidEscape: Self = Self("invalid-escape", None);
     /// A declaration form is not admitted.
-    pub const DeclarationForm: Self = Self("declaration-form");
+    pub const DeclarationForm: Self = Self("declaration-form", None);
     /// A selection is unsupported.
-    pub const UnsupportedSelection: Self = Self("unsupported-selection");
+    pub const UnsupportedSelection: Self = Self("unsupported-selection", None);
     /// A resource budget denied the next charge.
-    pub const InsufficientNextCharge: Self = Self("insufficient-next-charge");
+    pub const InsufficientNextCharge: Self = Self("insufficient-next-charge", None);
     /// A selected definition is missing.
-    pub const MissingSelection: Self = Self("missing-selection");
+    pub const MissingSelection: Self = Self("missing-selection", None);
     /// A name is ambiguous.
-    pub const AmbiguousName: Self = Self("ambiguous-name");
+    pub const AmbiguousName: Self = Self("ambiguous-name", None);
     /// An identity has conflicting authorities.
-    pub const ConflictingAuthority: Self = Self("conflicting-authority");
+    pub const ConflictingAuthority: Self = Self("conflicting-authority", None);
     /// A package member is duplicated.
-    pub const DuplicateMember: Self = Self("duplicate-member");
+    pub const DuplicateMember: Self = Self("duplicate-member", None);
     /// A package value is invalid.
-    pub const InvalidValue: Self = Self("invalid-value");
+    pub const InvalidValue: Self = Self("invalid-value", None);
     /// A definition graph contains a cycle.
-    pub const DefinitionCycle: Self = Self("definition-cycle");
+    pub const DefinitionCycle: Self = Self("definition-cycle", None);
     /// A selected feature set is inconsistent.
-    pub const FeatureSetMismatch: Self = Self("feature-set-mismatch");
+    pub const FeatureSetMismatch: Self = Self("feature-set-mismatch", None);
     /// A required feature is unknown.
-    pub const UnknownFeature: Self = Self("unknown-feature");
+    pub const UnknownFeature: Self = Self("unknown-feature", None);
     /// A required feature is unsupported.
-    pub const UnsupportedFeature: Self = Self("unsupported-feature");
+    pub const UnsupportedFeature: Self = Self("unsupported-feature", None);
     /// A model selection is wrong.
-    pub const WrongModelSelection: Self = Self("wrong-model-selection");
+    pub const WrongModelSelection: Self = Self("wrong-model-selection", None);
     /// A model declaration is malformed.
-    pub const MalformedDeclaration: Self = Self("malformed-declaration");
+    pub const MalformedDeclaration: Self = Self("malformed-declaration", None);
     /// A model reference has the wrong exported kind.
-    pub const WrongExport: Self = Self("wrong-export");
+    pub const WrongExport: Self = Self("wrong-export", None);
     /// A model declaration is missing.
-    pub const MissingDeclaration: Self = Self("missing-name");
+    pub const MissingDeclaration: Self = Self("missing-name", None);
     /// A model identity has conflicting bindings.
-    pub const ConflictingBinding: Self = Self("conflicting-binding");
+    pub const ConflictingBinding: Self = Self("conflicting-binding", None);
     /// An established runtime invariant failed.
-    pub const EstablishedInvariantBroken: Self = Self("established-invariant-broken");
+    pub const EstablishedInvariantBroken: Self = Self("established-invariant-broken", None);
 
     /// The stable complete-source cause tag.
     pub const fn as_str(self) -> &'static str {
@@ -70,7 +78,7 @@ impl CompleteCause {
     }
 
     fn from_layer_one(cause: fsl_cst::CompleteCause) -> Self {
-        Self(cause.as_str())
+        Self(cause.as_str(), Some(cause))
     }
 }
 
@@ -284,6 +292,9 @@ pub mod diagnostic {
 
     fn layer_one_cause(cause: CompleteCause) -> fsl_cst::CompleteCause {
         use fsl_cst::CompleteCause as LayerOne;
+        if let Some(cause) = cause.1 {
+            return cause;
+        }
         match cause.as_str() {
             "unexpected-token" => LayerOne::UnexpectedToken,
             "unexpected-end" => LayerOne::UnexpectedEnd,
@@ -308,7 +319,7 @@ pub mod diagnostic {
             "missing-name" => LayerOne::MissingDeclaration,
             "conflicting-binding" => LayerOne::ConflictingBinding,
             "established-invariant-broken" => LayerOne::EstablishedInvariantBroken,
-            _ => unreachable!("the forms seam admits only closed layer-1 causes"),
+            _ => LayerOne::EstablishedInvariantBroken,
         }
     }
 }
