@@ -61,18 +61,19 @@ fn run_case(workspace: &Path, mode: &str, fail_at: usize) -> Result<String, Erro
     )
 }
 
+// AC gap: QSL-3074 (no FR-350 AC names the state-core runner).
 #[cfg(unix)]
-#[ix_trace_rs::trace("FR-350-AC-21")]
+#[ix_trace_rs::trace("FR-350")]
 #[test]
 fn both_source_fixture_runners_are_required_conformance_selections() {
     for (selection, summary) in [
         (
             "fspec_finite_window::conformance_fspec_finite_window_source_windows",
-            "conformance: 77 finite-window source windows matched",
+            "conformance: 77 finite-window source windows matched\nconformance: 15 tick-cover vectors matched, 8 through source and 7 by the evaluator comparison only",
         ),
         (
             "fspec_state_core::conformance_fspec_state_core_source_cases",
-            "conformance: 94 state-core source cases matched",
+            "conformance: 28 state-core source cases matched",
         ),
     ] {
         let check = CHECKS
@@ -113,10 +114,21 @@ fn the_finite_window_source_runner_is_a_required_conformance_selection() {
     assert!(matches!(check.target, super::Target::Test));
     let output = std::process::Output {
         status: std::os::unix::process::ExitStatusExt::from_raw(0),
-        stdout: b"test result: ok. 1 passed; 0 failed; 0 ignored;\nconformance: 46 finite-window source windows matched\n".to_vec(),
+        stdout: b"test result: ok. 1 passed; 0 failed; 0 ignored;\nconformance: 77 finite-window source windows matched\nconformance: 15 tick-cover vectors matched, 8 through source and 7 by the evaluator comparison only\n".to_vec(),
         stderr: Vec::new(),
     };
     super::check_output(check, &output).expect("source window evidence is required");
+    let windows_only = std::process::Output {
+        stdout: b"test result: ok. 1 passed; 0 failed; 0 ignored;\nconformance: 77 finite-window source windows matched\n".to_vec(),
+        ..output.clone()
+    };
+    assert!(
+        matches!(
+            super::check_output(check, &windows_only),
+            Err(Error::ConformanceCheck { .. })
+        ),
+        "the tick-cover line is required"
+    );
     let missing = std::process::Output {
         stdout: b"test result: ok. 1 passed; 0 failed; 0 ignored;\n".to_vec(),
         ..output

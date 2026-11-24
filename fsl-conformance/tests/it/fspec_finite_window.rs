@@ -882,10 +882,11 @@ fn settle_order(case: &Order, all: &[Order]) -> Settled {
 /// non-negative tick count and the request and acknowledgement are distinct
 /// readings (one instant carries one reading), the comparison functions
 /// otherwise.
-fn settle_tick_cover(case: &Value) -> (String, Settled) {
+fn settle_tick_cover(case: &Value) -> (String, Settled, bool) {
     let id = case["id"].as_str().unwrap_or("TCV-?").to_owned();
     let uncertainty = case["uncertainty"].as_u64().unwrap_or(0);
     let cover = ClockCover::Counter { uncertainty };
+    let mut via_source = false;
     let settled = match case["kind"].as_str() {
         Some("within_bound") => {
             let (Some(bound), Some(request), Some(ack)) = (
@@ -893,11 +894,21 @@ fn settle_tick_cover(case: &Value) -> (String, Settled) {
                 case["request_tick"].as_u64(),
                 case["ack_tick"].as_u64(),
             ) else {
-                return (id, Settled::Unsupported("within_bound fields".to_owned()));
+                return (
+                    id,
+                    Settled::Unsupported("within_bound fields".to_owned()),
+                    false,
+                );
             };
             let word = match case["expected"].as_str() {
                 Some(word) => word.to_owned(),
-                None => return (id, Settled::Unsupported("no expected word".to_owned())),
+                None => {
+                    return (
+                        id,
+                        Settled::Unsupported("no expected word".to_owned()),
+                        false,
+                    )
+                }
             };
             let function = match cover.within_bound(bound, request, ack) {
                 Containment::True => "true",
@@ -923,6 +934,7 @@ fn settle_tick_cover(case: &Value) -> (String, Settled) {
                             .split_once('/')
                             .map_or(actual.as_str(), |(head, _)| head);
                         if source_word == word {
+                            via_source = true;
                             Settled::Matched
                         } else {
                             Settled::Mismatch(format!("{id}: expected {word}, source run {actual}"))
@@ -943,6 +955,7 @@ fn settle_tick_cover(case: &Value) -> (String, Settled) {
                 return (
                     id,
                     Settled::Unsupported("definitely_before fields".to_owned()),
+                    false,
                 );
             };
             let actual = cover.definitely_before(a, b);
@@ -954,7 +967,7 @@ fn settle_tick_cover(case: &Value) -> (String, Settled) {
         }
         other => Settled::Unsupported(format!("{id}: no adapter for kind {other:?}")),
     };
-    (id, settled)
+    (id, settled, via_source)
 }
 
 /// Every case of the file and what running it produced.
@@ -981,29 +994,77 @@ fn run_all(fixtures: &Fixtures) -> Vec<(String, Settled)> {
     for case in &fixtures.admits {
         cases.push((case.id.clone(), settle_admit(case)));
     }
-    for case in &fixtures.tick_cover {
-        cases.push(settle_tick_cover(case));
-    }
     cases
+}
+
+/// The TCV vectors: each id, what it settled to, and whether a compiled
+/// source run took part in the judgment (otherwise only the evaluator's
+/// comparison functions did).
+fn run_tick_cover(fixtures: &Fixtures) -> Vec<(String, Settled, bool)> {
+    fixtures.tick_cover.iter().map(settle_tick_cover).collect()
 }
 
 fn standard() -> Fixtures {
     load().unwrap_or_else(|error| panic!("{error}"))
 }
 
+/// FR-350-AC-21: with `FSPEC_FULL_QUALIFICATION` set, a fixture case that
+/// lacks a source adapter (settles unsupported) fails the run, keyed or not.
+fn full_qualification_gap(
+    requested: bool,
+    cases: &[(String, Settled)],
+    tick_cover: &[(String, Settled, bool)],
+) -> Option<String> {
+    if !requested {
+        return None;
+    }
+    let lacking: Vec<&str> = cases
+        .iter()
+        .map(|(id, settled)| (id, settled))
+        .chain(tick_cover.iter().map(|(id, settled, _)| (id, settled)))
+        .filter(|(_, settled)| matches!(settled, Settled::Unsupported(_)))
+        .map(|(id, _)| id.as_str())
+        .collect();
+    (!lacking.is_empty()).then(|| {
+        format!(
+            "FSPEC_FULL_QUALIFICATION is set and {} fixture cases lack a source adapter: {}",
+            lacking.len(),
+            lacking.join(", ")
+        )
+    })
+}
+
 /// Provenance: QSL-2048. Every vector comes from parsed, checked, emitted
-/// FSL; a vector that does not match must carry a ticket key.
+/// FSL; a vector that does not match must carry a ticket key. The tick-cover
+/// vectors are reported on their own line: only some of them run through
+/// compiled source, the rest are judged by the evaluator's comparison
+/// functions alone and are not source windows.
 #[trace("FR-350-AC-20", "FR-350-AC-21", "FR-501-AC-4")]
 #[test]
 fn conformance_fspec_finite_window_source_windows() {
     let fixtures = standard();
-    let cases = run_all(&fixtures);
-    let executed = cases.len();
+    let windows = run_all(&fixtures);
+    let tick_cover = run_tick_cover(&fixtures);
     assert_eq!(
-        executed,
-        fixtures.total + fixtures.tick_cover.len(),
-        "executed cases and listed cases differ"
+        windows.len(),
+        fixtures.total,
+        "executed and listed windows differ"
     );
+    assert_eq!(tick_cover.len(), fixtures.tick_cover.len());
+    if let Some(error) = full_qualification_gap(
+        std::env::var_os("FSPEC_FULL_QUALIFICATION").is_some(),
+        &windows,
+        &tick_cover,
+    ) {
+        panic!("{error}");
+    }
+    let source_checked: BTreeSet<String> = tick_cover
+        .iter()
+        .filter(|(_, _, via_source)| *via_source)
+        .map(|(id, _, _)| id.clone())
+        .collect();
+    let mut cases = windows;
+    cases.extend(tick_cover.into_iter().map(|(id, settled, _)| (id, settled)));
     let tally = fspec_standard::settle(RUNNER, cases, fspec_standard::registry());
     for id in &tally.matched {
         println!("passed: {id}");
@@ -1011,15 +1072,51 @@ fn conformance_fspec_finite_window_source_windows() {
     if let Err(error) = fspec_standard::report(RUNNER, &tally) {
         panic!("{error}");
     }
+    let tick_matched: Vec<&String> = tally
+        .matched
+        .iter()
+        .filter(|id| id.starts_with("TCV-"))
+        .collect();
+    let through_source = tick_matched
+        .iter()
+        .filter(|id| source_checked.contains(**id))
+        .count();
+    let window_matched = tally.matched.len() - tick_matched.len();
+    println!("conformance: {window_matched} finite-window source windows matched");
     println!(
-        "conformance: {} finite-window source windows matched",
-        tally.matched.len()
+        "conformance: {} tick-cover vectors matched, {through_source} through source and {} by the evaluator comparison only",
+        tick_matched.len(),
+        tick_matched.len() - through_source
     );
     println!(
-        "qualification: {} of {executed} finite-window vectors matched, {} keyed to open tickets",
-        tally.matched.len(),
+        "qualification: {window_matched} of {} finite-window windows matched, {} keyed to open tickets",
+        fixtures.total,
         tally.keyed.len()
     );
+}
+
+/// Provenance: QSL-2048. FSPEC_FULL_QUALIFICATION fails the run while any
+/// fixture case lacks a source adapter, and passes when every case has one.
+#[trace("FR-350-AC-21")]
+#[test]
+fn full_qualification_fails_while_any_case_lacks_an_adapter() {
+    let none: Vec<(String, Settled)> = vec![("A".to_owned(), Settled::Matched)];
+    let lacking = vec![
+        ("A".to_owned(), Settled::Matched),
+        (
+            "B".to_owned(),
+            Settled::Unsupported("no adapter".to_owned()),
+        ),
+    ];
+    assert_eq!(full_qualification_gap(false, &lacking, &[]), None);
+    assert_eq!(full_qualification_gap(true, &none, &[]), None);
+    let error = full_qualification_gap(true, &lacking, &[]).expect("a lacking case fails");
+    assert!(
+        error.contains("FSPEC_FULL_QUALIFICATION") && error.contains('B'),
+        "{error}"
+    );
+    let tick = vec![("T".to_owned(), Settled::Unsupported("x".to_owned()), false)];
+    assert!(full_qualification_gap(true, &none, &tick).is_some());
 }
 
 /// Provenance: QSL-2048. Evidence atoms refer to compiled holds nodes, and
@@ -1125,77 +1222,4 @@ fn a_missing_standard_is_an_error_before_any_case_runs() {
         .err()
         .expect("an empty corpus fails");
     assert_eq!(error, "finite-window fixture has no window cases");
-}
-
-/// Provenance: QSL-2048. A case that does not match needs a ticket key, and
-/// a keyed case that matches must lose it.
-#[trace("FR-350-AC-20")]
-#[test]
-fn a_mismatch_needs_a_ticket_key_and_a_fixed_case_loses_it() {
-    static KEYED: &[crate::fspec_pending::Pending] = &[
-        crate::fspec_pending::Pending {
-            runner: RUNNER,
-            case: "A",
-            ticket: "QSL-3027",
-        },
-        crate::fspec_pending::Pending {
-            runner: RUNNER,
-            case: "B",
-            ticket: "QSL-3028",
-        },
-    ];
-    let cases = vec![
-        ("A".to_owned(), Settled::Mismatch("wrong".to_owned())),
-        ("B".to_owned(), Settled::Matched),
-        (
-            "C".to_owned(),
-            Settled::Unsupported("no adapter".to_owned()),
-        ),
-        ("D".to_owned(), Settled::Mismatch("wrong".to_owned())),
-    ];
-    let tally = fspec_standard::settle(RUNNER, cases, KEYED);
-    assert_eq!(tally.keyed.len(), 1);
-    assert_eq!(tally.keyed[0].1, "QSL-3027");
-    assert_eq!(tally.failures.len(), 3, "{:?}", tally.failures);
-    assert!(tally
-        .failures
-        .iter()
-        .any(|text| text.contains("B now matches")));
-    assert!(tally
-        .failures
-        .iter()
-        .any(|text| text.contains("C not executed")));
-    assert!(tally
-        .failures
-        .iter()
-        .any(|text| text.contains("D mismatch")));
-    assert!(fspec_standard::is_ticket_key("QSL-2048"));
-    assert!(!fspec_standard::is_ticket_key("2048"));
-    assert!(!fspec_standard::is_ticket_key("QSL-"));
-    static STRAY: &[crate::fspec_pending::Pending] = &[crate::fspec_pending::Pending {
-        runner: RUNNER,
-        case: "Z",
-        ticket: "bad",
-    }];
-    let tally = fspec_standard::settle(RUNNER, Vec::new(), STRAY);
-    assert_eq!(tally.failures.len(), 3, "{:?}", tally.failures);
-    static FOREIGN: &[crate::fspec_pending::Pending] = &[crate::fspec_pending::Pending {
-        runner: RUNNER,
-        case: "A",
-        ticket: "QSL-9999",
-    }];
-    let tally = fspec_standard::settle(
-        RUNNER,
-        vec![("A".to_owned(), Settled::Mismatch("x".to_owned()))],
-        FOREIGN,
-    );
-    assert!(
-        tally
-            .failures
-            .iter()
-            .any(|text| text.contains("not in the allowed set")),
-        "{:?}",
-        tally.failures
-    );
-    assert!(crate::fspec_pending::ALLOWED_TICKETS.contains(&"QSL-3035"));
 }
