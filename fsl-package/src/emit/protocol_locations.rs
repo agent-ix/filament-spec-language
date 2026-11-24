@@ -616,21 +616,29 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
         let origins = HashSet::from([&root.origin]);
         let applications = applications_at(&graph, &origins);
         let root_keys = applications.get(root).expect("the lowered count root");
-        let [(root_key, _)] = root_keys.as_slice() else {
-            panic!("one actual retained count root");
-        };
-        let operands = graph
-            .semantic_graph()
-            .node(root_key.clone())
-            .expect("the actual root")
-            .body()
-            .leaves()
-            .into_iter()
-            .filter_map(|leaf| match leaf {
-                LeafTerm::Reference { target } => target.admitted().cloned(),
-                _ => None,
+        // The query's source and predicate can share the root's location.
+        // Select the retained count by its two actual direct operands instead
+        // of assuming a source location uniquely identifies one application.
+        let roots_with_two_operands = root_keys
+            .iter()
+            .filter_map(|(key, _)| {
+                let operands = graph
+                    .semantic_graph()
+                    .node(key.clone())?
+                    .body()
+                    .leaves()
+                    .into_iter()
+                    .filter_map(|leaf| match leaf {
+                        LeafTerm::Reference { target } => target.admitted().cloned(),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                (operands.len() == 2).then_some((key.clone(), operands))
             })
             .collect::<Vec<_>>();
+        let [(_, operands)] = roots_with_two_operands.as_slice() else {
+            panic!("one actual retained count root with its two operands");
+        };
         assert_eq!(
             operands.len(),
             2,
@@ -680,7 +688,7 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
                     }
                     let id: CheckedNodeId = serde_json::from_value(row["application"].clone())
                         .expect("the actual application id");
-                    structural.key(&id).expect("the actual producer key") == operand
+                    structural.key(&id).expect("the actual producer key") == *operand
                 })
                 .count();
             assert_eq!(
