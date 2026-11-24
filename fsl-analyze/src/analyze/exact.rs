@@ -1877,17 +1877,19 @@ fn run(
             let lower = make_document(&interval.lower, fsl_replay::SubsystemBoundKind::Lower);
             let upper = make_document(&interval.upper, fsl_replay::SubsystemBoundKind::Upper);
             return match finish_interval(
-                bound,
-                &limits,
-                lower,
-                upper,
-                binding.as_ref(),
-                extremum,
-                interval.precision_bits,
+                IntervalSettlement {
+                    bound,
+                    limits: &limits,
+                    lower,
+                    upper,
+                    binding: binding.as_ref(),
+                    extremum,
+                    precision_bits: interval.precision_bits,
+                },
                 subject,
             ) {
                 Ok(report) => report,
-                Err(report) => report,
+                Err(report) => *report,
             };
         }
     }
@@ -3229,16 +3231,12 @@ fn replay_refutation(
     let produced = match produced {
         Ok(witness) => match require_witness(witness) {
             Ok(witness) => witness,
-            Err(report) => return report,
+            Err(report) => return *report,
         },
         Err(crate::exact_probabilistic::WitnessError::Limit { limit, value }) => {
             return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
         Err(_) => return broken(),
-    };
-    let produced = match require_witness(produced) {
-        Ok(witness) => witness,
-        Err(report) => return *report,
     };
     replay_produced_witness(
         system,
@@ -3391,10 +3389,6 @@ fn replay_fair_refutation(
             return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
         Err(_) => return broken(),
-    };
-    let produced = match require_witness(produced) {
-        Ok(witness) => witness,
-        Err(report) => return *report,
     };
     replay_produced_witness(
         system,
