@@ -360,16 +360,13 @@ fn cyclic_mdp_bounds_check_hinted_and_selected_policies() {
     let go = selected(&output, &s);
     assert!(names(&go, "send_b"), "{go}");
 
-    // Minimum (0): the `upper` counterpart `1/4` without a hint selects
-    // `wait`, the only action whose value it bounds.
+    // A minimum objective cannot back an every-scheduler `<=` claim: that
+    // claim requires the maximum objective. Keep the mismatch as a refusal.
     let output = accepted(
         &bound(&minimum, "upper", &[(&s, rational(1, 4))], None, false),
         rational(1, 4),
     );
     let wait = selected(&output, &s);
-
-    // A minimum objective cannot back an every-scheduler `<=` claim: that
-    // claim requires the maximum objective. Keep the mismatch as a refusal.
     let mut minimum_at_most = maximum.clone();
     replace_source_and_rebind(&mut minimum_at_most, &w("<=", "rational(1,4)"));
     let minimum_at_most = edit(&minimum_at_most, |doc| {
@@ -390,6 +387,35 @@ fn cyclic_mdp_bounds_check_hinted_and_selected_policies() {
         "invalid_runtime_input: probability certificate objective mismatch",
         "{output}"
     );
+
+    // A minimum `upper` is still accepted as a counterpart, even when its
+    // value is below the actual minimum claim's `>= 1/4` threshold.
+    let output = accepted(
+        &bound(
+            &minimum,
+            "upper",
+            &[(&s, rational(0, 1))],
+            Some(json!([hint(&s, &wait)])),
+            false,
+        ),
+        rational(0, 1),
+    );
+    assert_eq!(selected(&output, &s), wait);
+
+    // The same minimum `upper` is valid as a counterpart to its actual
+    // minimum claim. The counterpart role checks its conditions, not a
+    // threshold.
+    let output = accepted(
+        &bound(
+            &minimum,
+            "upper",
+            &[(&s, rational(1, 4))],
+            Some(json!([hint(&s, &wait)])),
+            false,
+        ),
+        rational(1, 4),
+    );
+    assert_eq!(selected(&output, &s), wait);
 
     // AC-3, AC-17: hinted `go` is checked and accepted for the maximum
     // `lower`; hinted `wait` is rank-broken there, and with the value 1 no
