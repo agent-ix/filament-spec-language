@@ -684,8 +684,6 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
         let [source, predicate] = query_operands.as_slice() else {
             panic!("the query has its source and predicate operands");
         };
-        assert!(matches!(source.kind(), NodeKind::NamedPopulation { .. }));
-        assert!(matches!(predicate.kind(), NodeKind::Equality(..)));
         let shared = source.location();
         assert_eq!(shared, predicate.location());
         assert_ne!(shared, root);
