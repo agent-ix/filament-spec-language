@@ -115,7 +115,8 @@ fn run_kernel_package(directory: &Path, name: &str, trace: Value) -> Output {
         serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
             "models": [], "program": program(), "check_mode": "kernel",
             "clocks": clocks(),
-            "output": {"package": "package.json"}}}))
+            "handoff": {"directory": "handoff", "package_name": "test:temporal-capture",
+                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}}))
         .unwrap(),
     )
     .unwrap();
@@ -130,7 +131,7 @@ fn run_kernel_package(directory: &Path, name: &str, trace: Value) -> Output {
 
     let request_path = directory.join("package-run.json");
     let request = json!({"format": "native-run/1", "request": {
-        "models": [], "package": {"file": "package.json"},
+        "models": [], "package": {"directory": "handoff"},
         "clause": {"selection": {"temporal": {"name": name, "trace": trace}},
             "observations": {}}}});
     std::fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
