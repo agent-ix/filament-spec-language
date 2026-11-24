@@ -2085,7 +2085,8 @@ fn run(
             tamper,
             subject,
         ) {
-            Ok(report) | Err(report) => report,
+        Ok(report) => report,
+        Err(report) => *report,
         };
     }
     let certificate = match (bounded_formula, monitor) {

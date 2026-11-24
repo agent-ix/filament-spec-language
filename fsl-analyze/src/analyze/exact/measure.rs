@@ -657,7 +657,7 @@ fn finish_measure_interval(
     };
     EngineReport::Exact(Box::new(ExactReport::ProvedBounds {
         claim: lower_check,
-        counterpart: upper_check,
+        counterpart: Box::new(upper_check),
         method: fsl_replay::BoundsMethod::BackwardInduction { precision_bits },
         extremum,
         binding,
