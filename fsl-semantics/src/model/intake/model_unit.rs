@@ -2,7 +2,8 @@
 //! FR-710: compile an FSL model unit to its FR-154 domain-package document.
 
 use agent_ix_extraction_frontend::identity::PackageIdentity;
-use fsl_forms::cst::{self, CompleteCause, CompleteCode, CompleteDiagnostic, ParsedSource};
+use fsl_cst as cst;
+use fsl_cst::{CompleteCause, CompleteCode, CompleteDiagnostic, ParsedSource};
 use fsl_foundation::diagnostic::{Code, Diagnostic};
 use fsl_foundation::{Phase, Source, SourceIdentity, Span};
 use serde_json::{json, Value};
@@ -70,7 +71,7 @@ pub(super) fn compile_model_unit_bytes(
         .get(6)
         .and_then(|value| serde_json::from_str::<String>(value).ok())
         .ok_or_else(|| refusal("model-unit domain identity is missing"))?;
-    let source = cst::read_source(
+    let source = cst::diagnostic::read_source(
         SourceIdentity::new("filament", identity),
         "model-unit.fsl",
         bytes,
@@ -1298,7 +1299,7 @@ fn project_link_refusal(
 ) -> CompleteDiagnostic {
     if let super::ModelRefusalCause::IntakeLimitExceeded { bound, .. } = refusal.cause {
         if let Ok(bound) = usize::try_from(bound) {
-            let mut reported = *cst::resource_exhausted(
+            let mut reported = *cst::diagnostic::resource_exhausted(
                 parsed.source(),
                 Phase::Parse,
                 span,
@@ -3322,7 +3323,7 @@ fn diagnostic(
     span: Span,
     message: impl Into<String>,
 ) -> CompleteDiagnostic {
-    *cst::error(
+    *cst::diagnostic::error(
         parsed.source(),
         code,
         cause,

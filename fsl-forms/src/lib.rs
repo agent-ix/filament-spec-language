@@ -59,17 +59,6 @@ mod terminal_declaration;
 mod time_model;
 mod value;
 
-/// Layer-1 parsing entry points and evidence types needed by source-driven
-/// semantic intake. Layer 3 depends on S2, so it obtains these through this
-/// narrow S2 surface instead of naming `fsl-cst` as a direct dependency.
-pub mod cst {
-    pub use fsl_cst::diagnostic::{error, read_source, resource_exhausted};
-    pub use fsl_cst::{
-        parse, parse_source, CompleteCause, CompleteCode, CompleteDiagnostic, Limits, ParsedSource,
-        TokenClass,
-    };
-}
-
 pub use abstraction_declaration::{
     AbstractionBindingForm, AbstractionDeclarationForm, FieldBindingForm, FrameBindingForm,
     ObjectBindingForm, ParameterBindingForm, PopulationBindingForm, RustSpelling,

@@ -939,7 +939,13 @@ fn is_nested_structural(value: &serde_json::Value) -> bool {
     value
         .get("path")
         .and_then(serde_json::Value::as_array)
-        .is_some_and(|path| path.iter().any(|segment| segment.get("package").is_some()))
+        .is_some_and(|path| {
+            path.iter().any(|segment| {
+                segment.get("package").is_some()
+                    && segment.get("path").is_some()
+                    && segment.get("ordinal").is_some()
+            })
+        })
 }
 
 /// Whether `object` is a foreign id container, `{package, node}` or a

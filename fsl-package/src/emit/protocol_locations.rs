@@ -151,9 +151,12 @@ pub(super) fn term_rows<L>(
         // A literal and a `Local` read lower to no application of their own.
         let application = match applications.get(at) {
             Some(candidates)
-                if !matches!(node.kind(), NodeKind::Literal(_) | NodeKind::Local(_)) =>
+                if !matches!(
+                    node.kind(),
+                    NodeKind::Literal(_) | NodeKind::Local(_) | NodeKind::NamedPopulation { .. }
+                ) =>
             {
-                term_application(graph, candidates, &taken, under)?
+                term_application(graph, node, candidates, &taken, under)?
             }
             _ => None,
         };
@@ -339,14 +342,15 @@ fn walk(root: CheckedNode<'_>) -> Vec<(CheckedNode<'_>, Option<usize>)> {
     visited
 }
 
-/// Whether a position can be a term: a literal, a `Local` read, a `let`, a
-/// conditional and a `case` never are (FR-383 assumption A1), even where
-/// lowering keys a node for them.
+/// Whether a position can be a term: a literal, a `Local` read, a named
+/// population reference, a `let`, a conditional and a `case` never are (FR-383
+/// assumption A1), even where lowering keys a node for them.
 pub(super) fn is_term_kind(node: CheckedNode<'_>) -> bool {
     !matches!(
         node.kind(),
         NodeKind::Literal(_)
             | NodeKind::Local(_)
+            | NodeKind::NamedPopulation { .. }
             | NodeKind::Let { .. }
             | NodeKind::If { .. }
             | NodeKind::Case { .. }
@@ -436,12 +440,27 @@ fn reachable_operands(graph: &CheckedGraph, key: &NodeKey) -> HashSet<NodeKey> {
 /// and its operand are two positions at one location.
 fn term_application<'c>(
     graph: &CheckedGraph,
+    node: CheckedNode<'_>,
     candidates: &'c [(NodeKey, filament_exact::Origin)],
     taken: &[&NodeKey],
     under: Option<(&NodeKey, &[&NodeKey])>,
 ) -> Result<Option<&'c NodeKey>, EmitRefusal> {
     let mut keys: Vec<&NodeKey> = Vec::new();
+    let form = match node.kind() {
+        NodeKind::Query { .. } => Some("query"),
+        NodeKind::Collection { .. } => Some("collection"),
+        _ => None,
+    };
     for (key, _) in candidates {
+        if form.is_some_and(|form| {
+            !matches!(
+                key.path().as_slice(),
+                [PathSegment::Text(expression), PathSegment::Text(candidate), ..]
+                    if expression == "expression" && candidate == form
+            )
+        }) {
+            continue;
+        }
         if !keys.contains(&key) && !taken.contains(&key) {
             keys.push(key);
         }
@@ -616,43 +635,78 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
         let origins = HashSet::from([&root.origin]);
         let applications = applications_at(&graph, &origins);
         let root_keys = applications.get(root).expect("the lowered count root");
-        let [(root_key, _)] = root_keys.as_slice() else {
-            panic!("one actual retained count root");
-        };
-        let operands = graph
-            .semantic_graph()
-            .node(root_key.clone())
-            .expect("the actual root")
-            .body()
-            .leaves()
-            .into_iter()
-            .filter_map(|leaf| match leaf {
-                LeafTerm::Reference { target } => target.admitted().cloned(),
+        // The count and query applications share the root location. Select
+        // the retained count by its actual direct operands instead of
+        // assuming a source location uniquely identifies one application.
+        let root_forms = root_keys
+            .iter()
+            .filter_map(|(key, _)| match key.path().get(1) {
+                Some(PathSegment::Text(form)) => Some(form.clone()),
                 _ => None,
             })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            operands.len(),
-            2,
-            "the population source and equality predicate"
-        );
-        let (shared, _) = applications
+            .collect::<HashSet<_>>();
+        assert!(root_forms.contains("collection") && root_forms.contains("query"));
+        let roots_with_two_operands = root_keys
             .iter()
-            .find(|(_, candidates)| {
-                operands
-                    .iter()
-                    .all(|operand| candidates.iter().any(|(key, _)| key == operand))
+            .filter_map(|(key, _)| {
+                let operands = graph
+                    .semantic_graph()
+                    .node(key.clone())?
+                    .body()
+                    .leaves()
+                    .into_iter()
+                    .filter_map(|leaf| match leaf {
+                        LeafTerm::Reference { target } => target.admitted().cloned(),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                (operands.len() == 2).then_some((key.clone(), operands))
             })
-            .expect("both direct operands really share one recorded location");
-        assert_ne!(
-            *shared, root,
-            "the retained parent has a different location"
-        );
-        let name = match &shared.origin {
-            Origin::TypeDeclaration { name } => name.clone(),
-            _ => panic!("an actual protocol slot origin"),
+            .collect::<Vec<_>>();
+        let [(_, operands)] = roots_with_two_operands.as_slice() else {
+            panic!("one actual retained count root with its two operands");
         };
-        let path = shared.path();
+        let positions = walk(capture.initializer.root());
+        let located_operands = operands
+            .iter()
+            .map(|operand| {
+                let locations = applications
+                    .iter()
+                    .filter(|(_, candidates)| candidates.iter().any(|(key, _)| key == operand))
+                    .map(|(location, _)| (*location).clone())
+                    .collect::<Vec<_>>();
+                let [location] = locations.as_slice() else {
+                    panic!("each retained operand has one actual location: {operand}");
+                };
+                let path = operand.path();
+                let operation = match path.as_slice() {
+                    [PathSegment::Text(form), ..] if form == "expression" => match path.get(1) {
+                        Some(PathSegment::Text(operation)) => operation.as_str(),
+                        _ => panic!("an expression operand has its operator path"),
+                    },
+                    _ => panic!("a retained term operand has an expression path"),
+                };
+                let visits = positions
+                    .iter()
+                    .filter(|(node, _)| {
+                        if node.location() != location {
+                            return false;
+                        }
+                        matches!(
+                            (operation, node.kind()),
+                            ("query", NodeKind::Query { .. }) | ("binary", NodeKind::Equality(..))
+                        )
+                    })
+                    .count();
+                if operation == "query" {
+                    assert_eq!(
+                        visits, 1,
+                        "the query has one checked visit at its shared location"
+                    );
+                }
+                (operand.clone(), location.clone(), visits)
+            })
+            .collect::<Vec<_>>();
         let package = crate::CheckedPackage::link(graph);
         let read = crate::read_evaluation_package(
             &package,
@@ -669,7 +723,12 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
         let rows = wire["checked_term_data"]["protocol_locations"]
             .as_array()
             .expect("the actual protocol rows");
-        for operand in operands {
+        for (operand, location, expected_visits) in located_operands {
+            let name = match &location.origin {
+                Origin::TypeDeclaration { name } => name.clone(),
+                _ => panic!("an actual protocol slot origin"),
+            };
+            let path = location.path();
             let matching = rows
                 .iter()
                 .filter(|row| {
@@ -684,8 +743,8 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
                 })
                 .count();
             assert_eq!(
-                matching, 1,
-                "each distinct source/predicate operand keeps its own row"
+                matching, expected_visits,
+                "each direct operand keeps one row per checked visit: {operand}"
             );
         }
     }

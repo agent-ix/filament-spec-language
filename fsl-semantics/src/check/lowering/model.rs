@@ -916,6 +916,7 @@ impl AdmittedModel {
             key = &alias.target;
         }
         match key {
+            ValueTypeRef::Native(NativeValueType::Boolean) => Some(ValueType::Boolean),
             ValueTypeRef::Native(NativeValueType::Text | NativeValueType::String) => {
                 Some(ValueType::String)
             }
