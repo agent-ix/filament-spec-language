@@ -30,3 +30,11 @@ Reviewed QSL-3108 PR #3701 at frozen head `c04ac782a1e8a97ab3d9e7ec34cf19230e51c
 ## Test evidence
 
 The PR's listed focused filters are the applicable checks. My rerun waited on the worktree target lock held by a concurrent Cargo build and produced no test result; the code lead reports the same two filters green on this exact head.
+
+## Dispositions
+
+Disposition pass 1 at head `b24fd2f15b1c6ee73cd240b76c9951c40de5ff5e`.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | `bounded_min_max_folds_and_reductions_check` now checks both bounded Rational Bag reduce forms. `bounded_rational_bag_min_max_reductions_are_permutation_invariant` evaluates min and max for the same fixed nonempty Rational Bag under original, reversed and rotated orders. |

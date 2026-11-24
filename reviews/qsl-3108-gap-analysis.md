@@ -31,3 +31,11 @@ Planless, diff-bounded assurance review of the QSL-3108 implementation chain fro
 - Semantic review: skipped as a separate pass; code/test intent was inspected for the changed paths.
 - Plan completion: not assessed
 - Evidence: no run evidence read
+
+## Dispositions
+
+Disposition pass 1 at head `b24fd2f15b1c6ee73cd240b76c9951c40de5ff5e`.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | The checker case now includes bounded Rational Bag min/max reductions, and the evaluator test exercises both reductions across original, reversed and rotated input orders. |
