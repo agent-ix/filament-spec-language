@@ -2896,7 +2896,8 @@ fn bounded_event_position_formulas_use_formula_keys_and_exact_extrema() {
         );
         let mut records = analyze_items(&engines, vec![item], &Cancel::new());
         assert_eq!(records.len(), 1);
-        let terminal = records.remove(0).terminal().expect("exact analysis settles");
+        let record = records.remove(0);
+        let terminal = record.terminal().expect("exact analysis settles");
         let TerminalValue::Proved {
             basis: ProofBasis::ExactValue { value, .. },
             ..
