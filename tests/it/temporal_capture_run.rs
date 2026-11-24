@@ -4,9 +4,9 @@
 //! the capture value it took at its own position, and a capture fault is
 //! reported at the capture, never as an internal fault (exit 30).
 
-use crate::command_harness::{run_file, Output};
+use crate::command_harness::{Output, run_file};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 const EVENTS: &str = "filament.temporal.event-position.false-extension/v1";
@@ -67,15 +67,14 @@ fn run_request(temporal: Value) -> Value {
         "clause": {"selection": {"temporal": temporal}, "observations": {}}}})
 }
 
-/// FR-860-AC-4's clauses whose capture divides through the function `k`:
-/// Linked checking refuses `k`'s unproved `mod` (FR-495-AC-3), so they are
-/// kept out of the shared unit until the fixture is checked under
-/// `CheckMode::Kernel`.
+/// FR-860-AC-4's clauses whose capture divides through function `k`. Linked
+/// checking refuses `k`'s unproved `mod` (FR-495-AC-3), so the fixture uses
+/// the library's kernel-check route.
 const DIVISION: &str = "function k using v(x: Integer): Integer pure { 3 mod x }\n\
      temporal Div using e over (r: Reading) clock \"events\" on origin \
      { capture m: Integer = k(2 - r.level); always[0,1] holds(m >= 0) }\n\
      temporal DivEach using e over (r: Reading) clock \"events\" on each (q: Reading) \
-     { capture m: Integer = k(2 - r.level); always[0,1] holds(m >= 0) }\n";
+     { capture m: Integer = k(2 - q.level); always[0,1] holds(m >= 0) }\n";
 
 fn write(directory: &Path, name: &str, request: &Value) -> PathBuf {
     write_with(directory, "", name, request)
@@ -107,6 +106,14 @@ fn run_with(directory: &Path, extra: &str, name: &str, trace: Value) -> Output {
 /// Compiles the capture-fault unit under Kernel checking and runs it from the
 /// checked package bytes, as FR-860-AC-4 specifies.
 fn run_kernel_package(directory: &Path, name: &str, trace: Value) -> Output {
+    let handoff = directory.join("handoff");
+    if handoff.exists() {
+        std::fs::remove_dir_all(handoff).unwrap();
+    }
+    let package = directory.join("package.json");
+    if package.exists() {
+        std::fs::remove_file(package).unwrap();
+    }
     let unit_path = directory.join("unit.native");
     std::fs::write(&unit_path, unit() + DIVISION).unwrap();
     let compile_path = directory.join("compile.json");
@@ -115,6 +122,7 @@ fn run_kernel_package(directory: &Path, name: &str, trace: Value) -> Output {
         serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
             "models": [], "program": program(), "check_mode": "kernel",
             "clocks": clocks(),
+            "output": {"package": "package.json"},
             "handoff": {"directory": "handoff", "package_name": "test:temporal-capture",
                 "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}}))
         .unwrap(),
@@ -280,9 +288,8 @@ fn an_undefined_capture_is_reported_at_the_capture() {
         json!({"finite": moving(&[0, 2])}),
     ));
     assert_eq!(temporal(&defined)["kind"], "holds", "{defined}");
-    let each = result(&run_with(
+    let each = result(&run_kernel_package(
         directory.path(),
-        DIVISION,
         "DivEach",
         json!({"finite": moving(&[0, 2])}),
     ));

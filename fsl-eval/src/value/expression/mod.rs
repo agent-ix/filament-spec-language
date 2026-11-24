@@ -1626,6 +1626,24 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
 
+    /// Evaluate capture `index` of the selected package temporal clause,
+    /// with the clause's `over` value and all earlier captures bound.
+    fn evaluate_package_capture(
+        &self,
+        clause: &NodeKey,
+        index: usize,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+    ) -> Result<Evaluation, CallFailure> {
+        let _ = (clause, index, over, captures, objects, meter);
+        Err(CallFailure::Fault(InternalFault::new(
+            "FR-940",
+            "package-capture-on-source-route",
+        )))
+    }
+
     /// Evaluate a model behaviour's holds condition with FR-107 model-read accounting.
     /// With `absent_population`, `over` is a reference to an absent instance:
     /// constants evaluate normally, field reads are undefined and lookup retains

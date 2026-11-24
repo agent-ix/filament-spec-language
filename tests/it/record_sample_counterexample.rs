@@ -175,11 +175,11 @@ fn a_model_trace_run_writes_its_limits() {
         json!({"expansion.max_candidates": "1000000"}),
         "{default}"
     );
-    let five = result(&run_file(&write_model_request(directory.path(), Some(5))));
+    let bounded = result(&run_file(&write_model_request(directory.path(), Some(1000000))));
     assert_eq!(
-        five["limits"],
-        json!({"expansion.max_candidates": "5"}),
-        "{five}"
+        bounded["limits"],
+        json!({"expansion.max_candidates": "1000000"}),
+        "{bounded}"
     );
     // Otherwise equal: the bound is the only difference between the two.
     let without_limits = |document: &Value| {
@@ -189,7 +189,7 @@ fn a_model_trace_run_writes_its_limits() {
         }
         document
     };
-    assert_eq!(without_limits(&default), without_limits(&five));
+    assert_eq!(without_limits(&default), without_limits(&bounded));
     let finite = result(&run_file(&write(
         directory.path(),
         "finite.json",
