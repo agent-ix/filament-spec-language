@@ -1667,7 +1667,7 @@ fn an_every_scheduler_long_run_claim_settles_refuted_with_its_scheduler_witness(
     }
 }
 
-#[trace("TC-3191")]
+#[trace("TC-3191", "FR-202-AC-45")]
 #[test]
 fn avail2_every_scheduler_long_run_refutations_replay_their_induced_chains() {
     let world = World::new(&prob_world::avail2(&format!(

@@ -815,7 +815,7 @@ fn a_repeatable_operation_cycle_refutes_always_and_empty_event_without_path_sear
     }
 }
 
-#[trace("FSpec-TC-433", "FSpec-FR-412-AC-28")]
+#[trace("FSpec-TC-433", "FSpec-FR-412-AC-28", "FR-202-AC-46")]
 #[test]
 fn a_fair_minimum_ranking_over_the_repeatable_operation_cycle_is_malformed() {
     let fair_claim = claim(
