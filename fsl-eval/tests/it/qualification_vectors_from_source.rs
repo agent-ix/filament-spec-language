@@ -325,7 +325,10 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 {
                     Expected::Admitted
                 } else {
-                    refusal_expected(vector.expected)
+                    Expected::Refused {
+                        code: "ill_typed".to_owned(),
+                        cause: Some("type-mismatch".to_owned()),
+                    }
                 },
                 arguments: Vec::new(),
                 quantity_parameter_arguments: Vec::new(),
@@ -2757,6 +2760,10 @@ fn compare_accounting(vector: &QualificationVector) -> Result<usize, String> {
     let cases = source_cases(vector).expect("accounting vector has a declared adapter");
     assert!(!cases.is_empty(), "{} must have cases", vector.id);
     let result_only = matches!(vector.id, "F23" | "F29");
+    let budgeted_cases = cases
+        .iter()
+        .filter(|case| case.expected_charges.is_some())
+        .count();
     for (index, case) in cases.iter().enumerate() {
         if result_only {
             assert!(
@@ -2769,18 +2776,26 @@ fn compare_accounting(vector: &QualificationVector) -> Result<usize, String> {
                 "{}[{index}] has no call budget",
                 vector.id
             );
-        } else {
-            assert!(
-                case.expected_charges.is_some(),
-                "{}[{index}] lacks literal node charges",
-                vector.id
-            );
+        } else if case.expected_charges.is_some() {
             assert!(
                 case.expected_function_call_charges.is_some(),
                 "{}[{index}] lacks a literal FunctionCall count",
                 vector.id
             );
+        } else {
+            assert!(
+                case.expected_function_call_charges.is_none(),
+                "{}[{index}] has a call count without a tuple budget",
+                vector.id
+            );
         }
+    }
+    if !result_only {
+        assert!(
+            budgeted_cases > 0,
+            "{} must include a tuple-budget case",
+            vector.id
+        );
     }
     compare(vector)
 }
@@ -2962,7 +2977,7 @@ fn t16_direct_text_type_admission_covers_each_profile_boundary() {
             retained: "é",
             exact_length: 2,
             refused_charges: &[TextInputBytes],
-            success_charges: &[TextInputBytes, TextResultRetain],
+            success_charges: &[TextInputBytes, TextDecodeScalars, TextResultRetain],
             incomplete_limits: ScalarLimits {
                 text_input_bytes: 1,
                 ..UNLIMITED
@@ -3113,16 +3128,24 @@ fn qsl3060_members_have_explicit_source_qualification_status() {
                     panic!("{id} lacks a source adapter or non-qualification status")
                 });
                 if tuple_members.contains(&id) {
-                    assert!(!cases.is_empty(), "{id} has tuple cases");
+                    let budgeted = cases
+                        .iter()
+                        .filter(|case| case.expected_charges.is_some())
+                        .collect::<Vec<_>>();
+                    assert!(!budgeted.is_empty(), "{id} has tuple cases");
+                    assert!(
+                        budgeted
+                            .iter()
+                            .all(|case| case.expected_function_call_charges.is_some()),
+                        "{id} tuple cases carry literal FunctionCall counts"
+                    );
                     for (index, case) in cases.iter().enumerate() {
-                        assert!(
-                            case.expected_charges.is_some(),
-                            "{id}[{index}] lacks literal node charges"
-                        );
-                        assert!(
-                            case.expected_function_call_charges.is_some(),
-                            "{id}[{index}] lacks literal FunctionCall count"
-                        );
+                        if case.expected_charges.is_none() {
+                            assert!(
+                                case.expected_function_call_charges.is_none(),
+                                "{id}[{index}] has a call count without a tuple"
+                            );
+                        }
                     }
                 }
             }
