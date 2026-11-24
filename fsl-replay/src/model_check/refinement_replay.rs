@@ -48,13 +48,13 @@ use crate::model_check::replay::{
 };
 use crate::refinement::RefinementRead;
 use crate::refinement::{
-    abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
-    check_protocol_state_relations, check_protocol_step, check_step, initial_history,
-    loop_segments, map_state, row_clock_step, step_history, stop_verdict, AssumptionSide,
-    AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep, ConcreteStep,
-    InvariantReading, ProtocolAssumptionReason, ProtocolAssumptionWitness, ProtocolRelationError,
-    ProtocolStateRelation, RefinementFailure, RefinementPosition, RefinementSystems, RowClockStep,
-    StepVerdict, Taken,
+    abstract_classes, candidate_edge_target_ordinal, candidate_lasso_has_fair_run, check_initial,
+    check_protocol_initial, check_protocol_state_relations, check_protocol_step, check_step,
+    initial_history, loop_segments, map_state, row_clock_step, step_history, stop_verdict,
+    AssumptionSide, AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep,
+    ConcreteStep, InvariantReading, ProtocolAssumptionReason, ProtocolAssumptionWitness,
+    ProtocolRelationError, ProtocolStateRelation, RefinementFailure, RefinementPosition,
+    RefinementSystems, RowClockStep, StepVerdict, Taken,
 };
 use crate::result::DisagreementCause;
 use crate::timed::explore::{explore, widen, Closure};
@@ -1532,6 +1532,13 @@ fn replay_lasso(
         payload.refinement.as_ref(),
         Some(RefinementFailure::HiddenUnfair { .. })
     ) {
+        type CandidateRow = (
+            usize,
+            Vec<u8>,
+            Option<ModelTransition>,
+            Vec<u8>,
+            Vec<(Vec<ModelTransition>, Option<ModelTransition>)>,
+        );
         let mut identities = BTreeSet::<ModelTransition>::new();
         let (mut positions, mut candidate_rows) =
             if let Some(protocol) = systems.abstract_protocol.as_ref() {
@@ -1543,7 +1550,7 @@ fn replay_lasso(
                 let mut positions = Vec::with_capacity(loop_trail.len());
                 for position in loop_trail {
                     let mut candidates = Vec::with_capacity(position.abstract_states.len());
-                    for candidate in &position.abstract_states {
+                    for (ordinal, candidate) in position.abstract_states.iter().enumerate() {
                         let (key, _) = systems
                             .abstract_system
                             .state_key_of(candidate)
@@ -1568,7 +1575,7 @@ fn replay_lasso(
                             .map(|(transition, _)| transition)
                             .collect();
                         identities.extend(transitions.iter().cloned());
-                        candidates.push((key, transitions));
+                        candidates.push((ordinal, key, transitions));
                     }
                     positions.push(candidates);
                 }
@@ -1579,6 +1586,7 @@ fn replay_lasso(
                             .iter()
                             .map(|row| {
                                 (
+                                    row.pre_candidate,
                                     row.pre_state.clone(),
                                     row.transition.clone(),
                                     row.post_state.clone(),
@@ -1597,31 +1605,38 @@ fn replay_lasso(
             // run along the loop, FR-900 "Delay"); the step's rows leave the
             // last, from the candidates alive there, to those alive when the
             // next delay starts.
-            let mut timed_positions = Vec::new();
-            let mut timed_rows = Vec::new();
+            let mut timed_positions: Vec<Vec<(usize, Vec<u8>, Vec<ModelTransition>)>> = Vec::new();
+            let mut timed_rows: Vec<Vec<CandidateRow>> = Vec::new();
             for (index, step_segments) in segments.iter().enumerate() {
-                let known: Vec<&Vec<u8>> = positions[index].iter().map(|(key, _)| key).collect();
+                let known: Vec<(usize, &Vec<u8>)> = positions[index]
+                    .iter()
+                    .map(|(ordinal, key, _)| (*ordinal, key))
+                    .collect();
                 let next_alive = segments[(index + 1) % segments.len()]
                     .first()
                     .map(|segment| segment.alive.as_slice())
                     .unwrap_or_default();
                 for (at, segment) in step_segments.iter().enumerate() {
-                    let keys: Vec<Vec<u8>> = segment
+                    let candidates: Vec<(usize, Vec<u8>)> = segment
                         .alive
                         .iter()
-                        .filter(|key| known.contains(key))
+                        .filter(|(ordinal, key)| known.contains(&(*ordinal, key)))
                         .cloned()
                         .collect();
                     timed_positions.push(
-                        keys.iter()
-                            .map(|key| {
+                        candidates
+                            .iter()
+                            .map(|(ordinal, key)| {
                                 (
+                                    *ordinal,
                                     key.clone(),
                                     segment
                                         .enabled
                                         .iter()
-                                        .filter(|(candidate, _)| candidate == key)
-                                        .map(|(_, transition)| transition.clone())
+                                        .filter(|(candidate_ordinal, candidate, _)| {
+                                            candidate_ordinal == ordinal && candidate == key
+                                        })
+                                        .map(|(_, _, transition)| transition.clone())
                                         .collect::<Vec<_>>(),
                                 )
                             })
@@ -1630,17 +1645,23 @@ fn replay_lasso(
                     if at + 1 < step_segments.len() {
                         let later = &step_segments[at + 1].alive;
                         timed_rows.push(
-                            keys.iter()
-                                .filter(|key| later.contains(key))
-                                .map(|key| (key.clone(), None, key.clone(), Vec::new()))
-                                .collect::<Vec<_>>(),
+                            candidates
+                                .iter()
+                                .filter(|(ordinal, key)| later.contains(&(*ordinal, key.clone())))
+                                .map(|(ordinal, key)| {
+                                    (*ordinal, key.clone(), None, key.clone(), Vec::new())
+                                })
+                                .collect(),
                         );
                     } else {
                         timed_rows.push(
                             candidate_rows[index]
                                 .iter()
-                                .filter(|(pre, _, post, _)| {
-                                    keys.contains(pre) && next_alive.contains(post)
+                                .filter(|(pre_ordinal, pre, _, post, _)| {
+                                    candidates.contains(&(*pre_ordinal, pre.clone()))
+                                        && next_alive.iter().any(|(ordinal, key)| {
+                                            ordinal == pre_ordinal && key == post
+                                        })
                                 })
                                 .cloned()
                                 .collect::<Vec<_>>(),
@@ -1652,12 +1673,12 @@ fn replay_lasso(
             candidate_rows = timed_rows;
         }
         for candidates in &positions {
-            for (_, enabled) in candidates {
+            for (_, _, enabled) in candidates {
                 identities.extend(enabled.iter().cloned());
             }
         }
         for rows in &candidate_rows {
-            for (_, transition, _, hops) in rows {
+            for (_, _, transition, _, hops) in rows {
                 identities.extend(transition.iter().cloned());
                 for (enabled, taken) in hops {
                     identities.extend(enabled.iter().cloned());
@@ -1677,8 +1698,9 @@ fn replay_lasso(
             .map(|candidates| {
                 candidates
                     .iter()
-                    .map(|(key, enabled)| {
+                    .map(|(ordinal, key, enabled)| {
                         Ok(CandidateFairState {
+                            ordinal: *ordinal,
                             key: key.clone(),
                             enabled: enabled
                                 .iter()
@@ -1695,9 +1717,18 @@ fn replay_lasso(
             .collect::<Result<Vec<_>, ReplayRefusal>>()?;
         let candidate_steps = candidate_rows
             .iter()
-            .map(|rows| {
+            .enumerate()
+            .map(|(position, rows)| {
+                let next_position = (position + 1) % candidate_positions.len();
                 rows.iter()
-                    .map(|(pre_state, transition, post_state, hops)| {
+                    .map(|(pre_candidate, pre_state, transition, post_state, hops)| {
+                        let post_candidate = candidate_edge_target_ordinal(
+                            &candidate_positions[position],
+                            &candidate_positions[next_position],
+                            *pre_candidate,
+                            post_state,
+                        )
+                        .map_err(|_| fault("candidate-replay-row-target-is-ordinal"))?;
                         let number = |transition: &ModelTransition| {
                             numbered
                                 .get(transition)
@@ -1718,6 +1749,7 @@ fn replay_lasso(
                             })
                             .collect::<Result<Vec<_>, ReplayRefusal>>()?;
                         Ok(CandidateFairStep {
+                            pre_candidate: *pre_candidate,
                             pre_state: pre_state.clone(),
                             transition: transition
                                 .as_ref()
@@ -1728,6 +1760,7 @@ fn replay_lasso(
                                         .ok_or_else(|| fault("candidate-taken-transition-numbered"))
                                 })
                                 .transpose()?,
+                            post_candidate,
                             post_state: post_state.clone(),
                             interior,
                         })
@@ -1805,7 +1838,7 @@ fn replay_lasso(
                     segment
                         .enabled
                         .iter()
-                        .map(|(_, transition)| transition.clone())
+                        .map(|(_, _, transition)| transition.clone())
                         .collect()
                 })
                 .collect();
@@ -1817,7 +1850,8 @@ fn replay_lasso(
                 Taken::CandidateSteps(steps) => {
                     identities.extend(steps.iter().filter_map(|step| step.transition.clone()))
                 }
-                Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => {}
+                Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => {
+                }
             }
         }
         let classes = abstract_classes(&systems.abstract_system, &abstract_fairness, &identities)
@@ -1840,7 +1874,9 @@ fn replay_lasso(
     let divergent = loop_taken.iter().all(|taken| match taken {
         Taken::Stutter => true,
         Taken::CandidateSteps(steps) => steps.iter().all(|step| step.transition.is_none()),
-        Taken::Abstract(_) | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => false,
+        Taken::Abstract(_) | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => {
+            false
+        }
     });
     Ok(match (payload.refinement.as_ref(), violated, divergent) {
         (Some(RefinementFailure::Divergence { .. }), true, true)
@@ -2169,14 +2205,20 @@ enum ConstraintScope {
 }
 
 /// A candidate configuration key with the operations enabled from it.
-type EnabledCandidate = (Vec<u8>, Vec<ModelTransition>);
+type EnabledCandidate = (usize, Vec<u8>, Vec<ModelTransition>);
 
 /// The operations enabled at a configuration and the one a step takes from it.
 type HopRow = (Vec<ModelTransition>, Option<ModelTransition>);
 
 /// One candidate step row: source key, first taken operation, target key and
 /// the further steps through intermediate configurations.
-type CandidateRow = (Vec<u8>, Option<ModelTransition>, Vec<u8>, Vec<HopRow>);
+type CandidateRow = (
+    usize,
+    Vec<u8>,
+    Option<ModelTransition>,
+    Vec<u8>,
+    Vec<HopRow>,
+);
 
 /// The candidate graph of a hidden abstract protocol lasso: per position the
 /// candidate configurations' keys with the abstract operations the protocol
@@ -2242,12 +2284,12 @@ fn protocol_hidden_graph(
     let mut positions = Vec::with_capacity(loop_trail.len());
     for position in loop_trail {
         let mut candidates = Vec::with_capacity(position.abstract_protocol_states.len());
-        for candidate in &position.abstract_protocol_states {
+        for (ordinal, candidate) in position.abstract_protocol_states.iter().enumerate() {
             let enabled = match protocol_enabled_at(protocol, candidate)? {
                 Ok(enabled) => enabled,
                 Err(settlement) => return Ok(ProtocolHiddenGraph::Settled(settlement)),
             };
-            candidates.push((key_of(candidate)?, enabled));
+            candidates.push((ordinal, key_of(candidate)?, enabled));
         }
         positions.push(candidates);
     }
@@ -2259,14 +2301,14 @@ fn protocol_hidden_graph(
         let target = positions
             .get((index + 1) % positions.len())
             .ok_or_else(|| fault("a-protocol-loop-edge-has-a-target"))?;
-        let reaches = |key: &Vec<u8>| target.iter().any(|(candidate, _)| candidate == key);
+        let reaches = |key: &Vec<u8>| target.iter().any(|(_, candidate, _)| candidate == key);
         let mut rows = Vec::new();
-        for candidate in &source.abstract_protocol_states {
+        for (pre_candidate, candidate) in source.abstract_protocol_states.iter().enumerate() {
             let pre = key_of(candidate)?;
             match taken {
                 Taken::Stutter => {
                     if reaches(&pre) {
-                        rows.push((pre.clone(), None, pre, Vec::new()));
+                        rows.push((pre_candidate, pre.clone(), None, pre, Vec::new()));
                     }
                 }
                 Taken::Protocol(transitions) => {
@@ -2280,6 +2322,7 @@ fn protocol_hidden_graph(
                         let post = key_of(&post)?;
                         if reaches(&post) {
                             rows.push((
+                                pre_candidate,
                                 pre.clone(),
                                 transition.application().cloned(),
                                 post,
@@ -2319,7 +2362,7 @@ fn protocol_hidden_graph(
                             };
                             hops.push((enabled, step.application().cloned()));
                         }
-                        rows.push((pre.clone(), first, post, hops));
+                        rows.push((pre_candidate, pre.clone(), first, post, hops));
                     }
                 }
                 Taken::Abstract(_) | Taken::CandidateSteps(_) | Taken::Failing => {

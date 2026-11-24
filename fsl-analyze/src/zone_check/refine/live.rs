@@ -34,7 +34,7 @@ use fsl_eval::fairness::{
 use fsl_eval::simulation::ExpansionLimit;
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, PlaceConstraint};
 use fsl_replay::{
-    abstract_classes, candidate_lasso_has_fair_run,
+    abstract_classes, candidate_edge_target_ordinal, candidate_lasso_has_fair_run,
     candidate_lasso_has_fair_run_with_recurring_edge, check_step, AbstractClass,
     CandidateFairState, CandidateFairStep, ConcreteStep, CounterexampleKind, Lasso,
     ModelCheckLimit, ReachedLimit, RefinementFailure, Taken, TemporalCounterexample, Undetermined,
@@ -1130,8 +1130,10 @@ impl Product<'_, '_> {
             .map(|candidates| {
                 candidates
                     .iter()
-                    .map(|(key, enabled)| {
+                    .enumerate()
+                    .map(|(ordinal, (key, enabled))| {
                         Ok(CandidateFairState {
+                            ordinal,
                             key: key.clone(),
                             enabled: enabled
                                 .iter()
@@ -1154,12 +1156,23 @@ impl Product<'_, '_> {
             .map(|(index, &arc_index)| {
                 let arc = &live.arcs[arc_index];
                 let source = &positions[index];
-                let next = &positions[(index + 1) % positions.len()];
+                let next_index = (index + 1) % positions.len();
+                let next = &positions[next_index];
                 let rows = match arc.taken.as_ref() {
                     Some(Taken::CandidateSteps(rows)) => rows
                         .iter()
                         .map(|row| {
+                            let post_candidate = candidate_edge_target_ordinal(
+                                &fair_positions[index],
+                                &fair_positions[next_index],
+                                row.pre_candidate,
+                                &row.post_state,
+                            )
+                            .map_err(|_| {
+                                ZoneCheckRefusal::Fault("candidate-loop-row-target-is-ordinal")
+                            })?;
                             Ok(CandidateFairStep {
+                                pre_candidate: row.pre_candidate,
                                 pre_state: row.pre_state.clone(),
                                 transition: row
                                     .transition
@@ -1172,6 +1185,7 @@ impl Product<'_, '_> {
                                         )
                                     })
                                     .transpose()?,
+                                post_candidate,
                                 post_state: row.post_state.clone(),
                                 interior: Vec::new(),
                             })
@@ -1179,14 +1193,28 @@ impl Product<'_, '_> {
                         .collect::<Result<Vec<_>, ZoneCheckRefusal>>()?,
                     Some(Taken::Stutter | Taken::Failing) | None => source
                         .iter()
-                        .filter(|(key, _)| next.iter().any(|(held, _)| held == key))
-                        .map(|(key, _)| CandidateFairStep {
-                            pre_state: key.clone(),
-                            transition: None,
-                            post_state: key.clone(),
-                            interior: Vec::new(),
+                        .enumerate()
+                        .filter(|(_, (key, _))| next.iter().any(|(held, _)| held == key))
+                        .map(|(pre_candidate, (key, _))| {
+                            let post_candidate = candidate_edge_target_ordinal(
+                                &fair_positions[index],
+                                &fair_positions[next_index],
+                                pre_candidate,
+                                key,
+                            )
+                            .map_err(|_| {
+                                ZoneCheckRefusal::Fault("candidate-loop-stutter-target-is-ordinal")
+                            })?;
+                            Ok(CandidateFairStep {
+                                pre_candidate,
+                                pre_state: key.clone(),
+                                transition: None,
+                                post_candidate,
+                                post_state: key.clone(),
+                                interior: Vec::new(),
+                            })
                         })
-                        .collect(),
+                        .collect::<Result<Vec<_>, ZoneCheckRefusal>>()?,
                     _ => return Err(ZoneCheckRefusal::Fault("candidate-loop-taken-shape")),
                 };
                 Ok(rows)

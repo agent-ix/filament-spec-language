@@ -408,7 +408,7 @@ pub use refinement_query::{
 };
 
 pub use refinement::{
-    abstract_classes, candidate_lasso_has_fair_run,
+    abstract_classes, candidate_edge_target_ordinal, candidate_lasso_has_fair_run,
     candidate_lasso_has_fair_run_with_recurring_edge, check_initial, check_protocol_initial,
     check_protocol_state_relations, check_protocol_step, check_step, initial_history, map_state,
     open_protocol_systems, open_systems, protocol_observation_label, protocol_transition_class,

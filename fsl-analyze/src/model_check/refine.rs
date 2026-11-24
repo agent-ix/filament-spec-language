@@ -50,16 +50,16 @@ use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, chec
 use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTarget};
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop, TransitionSystem};
 use fsl_replay::{
-    AbstractClass, AbstractProtocolSystem, CandidateFairState, CandidateFairStep,
-    CandidateLivenessError, CertifiedEdge, CertifiedPosition, ConcreteStep, CounterexampleKind,
-    IncompleteCause, Lasso, LivenessHalf, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
-    ModelStep, ProtocolRelationError, ProtocolStateRelation, ProtocolSystemsRefusal, ReachedLimit,
-    RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems, RunStats,
-    SafetyOutcome, SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal,
-    Taken, TemporalCounterexample, UndecidedCause, UndefinedEvaluation, Undetermined,
-    abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
-    check_protocol_state_relations, check_protocol_step, check_step, open_protocol_systems,
-    open_systems,
+    abstract_classes, candidate_edge_target_ordinal, candidate_lasso_has_fair_run, check_initial,
+    check_protocol_initial, check_protocol_state_relations, check_protocol_step, check_step,
+    open_protocol_systems, open_systems, AbstractClass, AbstractProtocolSystem, CandidateFairState,
+    CandidateFairStep, CandidateLivenessError, CertifiedEdge, CertifiedPosition, ConcreteStep,
+    CounterexampleKind, IncompleteCause, Lasso, LivenessHalf, ModelCheckLimit, ModelCheckLimits,
+    ModelCheckOutcome, ModelStep, ProtocolRelationError, ProtocolStateRelation,
+    ProtocolSystemsRefusal, ReachedLimit, RefinementFailure, RefinementOutcome, RefinementPosition,
+    RefinementSystems, RunStats, SafetyOutcome, SafetyUndecided, SimulationCertificate, StepResult,
+    StepVerdict, SubjectRefusal, Taken, TemporalCounterexample, UndecidedCause,
+    UndefinedEvaluation, Undetermined,
 };
 
 use super::check::{BOUND_POSITIONS, ModelCheckRefusal, fault, not_simulated, widen};
@@ -152,6 +152,8 @@ struct CandidateNode {
 
 /// Abstract operations enabled at one hidden-field candidate state.
 struct CandidateEnabled {
+    /// Ordinal in this product position's canonical hidden-candidate order.
+    ordinal: usize,
     /// Candidate identity: a model state key, or a protocol configuration key.
     key: Vec<u8>,
     protocol: Option<fsl_replay::ProtocolCandidate>,
@@ -2521,7 +2523,9 @@ impl Run<'_, '_> {
                     })
                     .collect::<Result<Vec<_>, End>>()?
             };
-            for (key, candidate, protocol_candidate) in candidates {
+            for (ordinal, (key, candidate, protocol_candidate)) in
+                candidates.into_iter().enumerate()
+            {
                 if let (Some(protocol), Some(configuration)) =
                     (self.abstract_protocol, &protocol_candidate)
                 {
@@ -2529,6 +2533,7 @@ impl Run<'_, '_> {
                         self.protocol_enabled(protocol, configuration, &mut transitions)?;
                     here.extend(candidate_transitions.iter().cloned());
                     candidate_enabled.push(CandidateEnabled {
+                        ordinal,
                         key,
                         protocol: protocol_candidate,
                         transitions: candidate_transitions,
@@ -2562,6 +2567,7 @@ impl Run<'_, '_> {
                     .collect::<Vec<_>>();
                 here.extend(candidate_transitions.iter().cloned());
                 candidate_enabled.push(CandidateEnabled {
+                    ordinal,
                     key,
                     protocol: protocol_candidate,
                     transitions: candidate_transitions,
@@ -3055,7 +3061,7 @@ impl Run<'_, '_> {
     ) -> Result<bool, End> {
         let mut positions = Vec::with_capacity(context.path.len());
         let mut steps = Vec::with_capacity(context.path.len());
-        for (product, edge_index) in context.path {
+        for (product, _) in context.path {
             let candidates = context
                 .enabled
                 .get(*product)
@@ -3065,6 +3071,7 @@ impl Run<'_, '_> {
                     .iter()
                     .map(|candidate| {
                         Ok(CandidateFairState {
+                            ordinal: candidate.ordinal,
                             key: candidate.key.clone(),
                             enabled: candidate
                                 .transitions
@@ -3077,8 +3084,11 @@ impl Run<'_, '_> {
                                 .collect::<Result<Vec<_>, _>>()?,
                         })
                     })
-                    .collect::<Result<Vec<_>, End>>()?,
-            );
+                    .collect::<Result<Vec<_>, End>>()
+            })
+            .collect::<Result<Vec<_>, End>>()?;
+        let mut steps = Vec::with_capacity(context.path.len());
+        for (index, (product, edge_index)) in context.path.iter().enumerate() {
             let edge = self
                 .nodes
                 .get(*product)
@@ -3087,10 +3097,19 @@ impl Run<'_, '_> {
             let Taken::CandidateSteps(rows) = &edge.taken else {
                 return Err(fault("candidate-lasso-edge-retains-candidate-steps").into());
             };
+            let target = &positions[(index + 1) % positions.len()];
             steps.push(
                 rows.iter()
                     .map(|row| {
+                        let post_candidate = candidate_edge_target_ordinal(
+                            &positions[index],
+                            target,
+                            row.pre_candidate,
+                            &row.post_state,
+                        )
+                        .map_err(|_| fault("candidate-lasso-row-target-is-ordinal"))?;
                         Ok(CandidateFairStep {
+                            pre_candidate: row.pre_candidate,
                             pre_state: row.pre_state.clone(),
                             transition: row
                                 .transition
@@ -3101,6 +3120,7 @@ impl Run<'_, '_> {
                                     })
                                 })
                                 .transpose()?,
+                            post_candidate,
                             post_state: row.post_state.clone(),
                             interior: Vec::new(),
                         })
