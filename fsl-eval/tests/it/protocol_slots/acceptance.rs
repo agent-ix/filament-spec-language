@@ -4531,7 +4531,7 @@ fn incomplete_sole_population_is_returned_with_its_population_locus() {
 /// but not complete it is `incomplete-scope`, both at that population before
 /// check 8; with the row complete, check 8 reports the ghost against it.
 #[test]
-#[trace("TC-1071", "FR-106-AC-64", "FR-106-AC-65")]
+#[trace("TC-1071", "FR-106-AC-65")]
 fn a_seed_population_without_a_row_is_a_missing_required_artifact() {
     let (package, view) = fixture_with_view();
     let evaluation_view = package.evaluation_view();
