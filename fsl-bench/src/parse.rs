@@ -139,8 +139,9 @@ pub fn outcome_id(outcome: &ParseOutcome, input: impl std::fmt::Display) -> Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ix_trace_rs::trace;
 
-    #[ix_trace_rs::trace("NFR-141-AC-10", "NFR-141-AC-11")]
+    #[trace("NFR-141-AC-10", "NFR-141-AC-11")]
     #[test]
     fn depth_zero_uses_the_ticket_150_byte_input() {
         assert_eq!(nested_source(0).len(), 150);

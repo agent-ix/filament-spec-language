@@ -228,7 +228,7 @@ pub(super) fn parse(
     // A declaration the recovery skipped is kept as a `Declaration` node,
     // whether or not the declarations around it matched (FR-762-AC-3, AC-9).
     {
-        let starts = declaration_starts(&grammar);
+        let starts = declaration_starts(grammar);
         let recovered_declarations: Vec<_> = recoveries
             .iter()
             .filter(|recovery| recovery.expected == "next declaration")
@@ -641,7 +641,7 @@ fn parse_with_declaration_recovery(
                                         &tokens,
                                         failure.position,
                                         &failure.expected,
-                                        &reserved_words,
+                                        reserved_words,
                                     )
                                 },
                                 str::to_owned,
@@ -746,7 +746,7 @@ fn parse_with_declaration_recovery(
                                     &tokens,
                                     failure.position,
                                     &failure.expected,
-                                    &reserved_words,
+                                    reserved_words,
                                 )
                             },
                             str::to_owned,
@@ -806,7 +806,7 @@ fn parse_with_declaration_recovery(
                                 &tokens,
                                 failure.position,
                                 &failure.expected,
-                                &reserved_words,
+                                reserved_words,
                             )
                         },
                         str::to_owned,
@@ -2955,7 +2955,7 @@ mod tests {
     fn work(text: &str) -> (usize, usize) {
         let source = source(text);
         let grammar = grammar::complete_v1();
-        let compounds = grammar::complete_compound_spellings(&grammar);
+        let compounds = grammar::complete_compound_spellings(grammar);
         let cancel = Cancel::new();
         let (_, significant, diagnostics, _) =
             scan(&source, Limits::default(), &compounds, &cancel).expect("scan");
@@ -2997,7 +2997,7 @@ mod tests {
             )
             .expect("test source");
             let grammar = grammar::complete_v1();
-            let compounds = grammar::complete_compound_spellings(&grammar);
+            let compounds = grammar::complete_compound_spellings(grammar);
             let cancel = Cancel::new();
             let (_, significant, diagnostics, _) =
                 scan(&source, unlimited, &compounds, &cancel).expect("scan");
@@ -3080,7 +3080,7 @@ mod tests {
     #[test]
     fn nested_trailing_comma_work_is_linear_in_depth() {
         let grammar = grammar::complete_v1();
-        let compounds = grammar::complete_compound_spellings(&grammar);
+        let compounds = grammar::complete_compound_spellings(grammar);
         let steps = |depth: usize| {
             let source = source(&nested_trailing_comma(depth));
             let cancel = Cancel::new();

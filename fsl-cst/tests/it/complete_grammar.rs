@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use fsl_cst::{
-    CompleteCause, CompleteCode, CstElement, HostCause, Limits, ParsedSource, Production,
-    TokenClass,
+    CompleteCause, CompleteCode, CstElement, ExtensionForms, ExtensionProduction, HostCause,
+    Limits, ParsedSource, Production, TokenClass,
 };
 use fsl_foundation::{SourceIdentity, Span};
 use ix_trace_rs::trace;
@@ -1148,4 +1148,70 @@ fn every_corpus_unit_formats_idempotently_with_its_tokens_and_tree() {
             "{id}"
         );
     }
+}
+
+#[trace("NFR-141-AC-10")]
+#[test]
+fn default_and_caller_forms_preserve_parser_outputs() {
+    let no_forms = ExtensionForms::default();
+    for (id, text) in corpus() {
+        let identity = SourceIdentity {
+            authority: "test".into(),
+            identity: format!("test:{id}"),
+        };
+        let default = fsl_cst::parse(
+            identity.clone(),
+            format!("{id}.native"),
+            text.as_bytes(),
+            Limits::default(),
+        )
+        .unwrap();
+        let with_empty_forms = fsl_cst::parse_with_extensions(
+            identity,
+            format!("{id}.native"),
+            text.as_bytes(),
+            Limits::default(),
+            &no_forms,
+            &filament_exact::Cancel::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            significant_tokens(&default),
+            significant_tokens(&with_empty_forms),
+            "{id}"
+        );
+        assert_eq!(
+            production_tree(&default),
+            production_tree(&with_empty_forms),
+            "{id}"
+        );
+        assert_eq!(default.diagnostics(), with_empty_forms.diagnostics(), "{id}");
+    }
+
+    let forms = ExtensionForms::new([ExtensionProduction::new("deploy", ["by"])]);
+    let text = source("deploy Instance { by: \"team/service\" }");
+    let parsed = fsl_cst::parse_with_extensions(
+        SourceIdentity {
+            authority: "test".into(),
+            identity: "test:caller-forms".into(),
+        },
+        "caller-forms.native",
+        text.as_bytes(),
+        Limits::default(),
+        &forms,
+        &filament_exact::Cancel::new(),
+    )
+    .unwrap();
+    assert!(
+        parsed.diagnostics().is_empty(),
+        "{:?}",
+        parsed.diagnostics()
+    );
+    assert!(
+        parsed
+            .cst()
+            .nodes()
+            .iter()
+            .any(|node| node.production() == Production::ExtensionDeclaration)
+    );
 }

@@ -3772,7 +3772,7 @@ mod tests {
     use crate::{parse, ExtensionForms, ExtensionProduction, Limits};
     use fsl_foundation::SourceIdentity;
 
-    #[ix_trace_rs::trace("NFR-141-AC-10")]
+    #[trace("NFR-141-AC-10")]
     #[test]
     fn default_grammar_table_is_shared_and_custom_forms_are_built() {
         let first = complete_v1();
@@ -3788,7 +3788,7 @@ mod tests {
     #[trace("FSpec-TC-180", "FSpec-FR-339-AC-1", "FSpec-FR-302-AC-1")]
     #[test]
     fn every_declarative_compound_is_one_budgeted_cst_leaf() {
-        let compounds = complete_compound_spellings(&complete_v1());
+        let compounds = complete_compound_spellings(complete_v1());
         assert!(!compounds.is_empty());
         for compound in compounds {
             let parsed = parse(
@@ -3834,7 +3834,7 @@ mod tests {
             "profile Complete = \"filament.value.complete/v1\";\n",
             "record "
         );
-        for word in complete_reserved_words(&complete_v1()) {
+        for word in complete_reserved_words(complete_v1()) {
             let text = format!("{prefix}{word} {{ datum: Integer; }}");
             let parsed = parse(
                 SourceIdentity {

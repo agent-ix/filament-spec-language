@@ -19,6 +19,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use fsl_bench::parse::{nested_source, outcome_id, parse, volume_source, ParseOutcome};
 use fsl_bench::widen;
 use std::hint::black_box;
+use ix_trace_rs::trace;
 
 /// Depths either side of today's refusal boundary (4 parses, 5 refuses).
 const DEPTHS: [usize; 7] = [0, 1, 2, 3, 4, 5, 8];
@@ -26,6 +27,7 @@ const DEPTHS: [usize; 7] = [0, 1, 2, 3, 4, 5, 8];
 /// Function counts, up to one past today's volume refusal.
 const VOLUMES: [usize; 5] = [100, 500, 1_000, 2_000, 3_000];
 
+#[trace("NFR-141-AC-11")]
 fn depth(c: &mut Criterion) {
     let mut group = c.benchmark_group("parser/depth");
     for depth in DEPTHS {
