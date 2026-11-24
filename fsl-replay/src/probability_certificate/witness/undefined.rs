@@ -59,13 +59,13 @@ pub(super) fn replay_probabilistic_undefined_with_claim(
     if evidence.subsystem.is_some() || item != &evidence.item {
         return Err(ProbabilityWitnessError::Refused);
     }
-    let bound = system
+    let claims = system
         .input()
         .probabilistic
-        .claims()
-        .iter()
-        .find(|candidate| candidate.occurrence() == Some(item));
-    if !bound.is_some_and(|bound| std::ptr::eq(bound, claim)) {
+        .claims();
+    let identity = crate::probabilistic_claim_identity(claim)
+        .map_err(|_| ProbabilityWitnessError::Refused)?;
+    if &identity != item || !claims.iter().any(|bound| std::ptr::eq(bound, claim)) {
         return Err(ProbabilityWitnessError::Refused);
     }
     if super::undefined_timed::is_timed_key(&witness.product_state) {
