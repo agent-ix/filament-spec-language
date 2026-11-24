@@ -129,7 +129,8 @@ fn counter_group() -> SymmetryGroup {
 #[trace("TC-570", "FR-152-AC-2", "FR-623-AC-1")]
 #[test]
 fn canonicalise_is_permutation_invariant_on_each_fairness_quotient() {
-    let system = configs(PROOF).system();
+    let world = configs(PROOF);
+    let system = world.system();
     let group = counter_group();
     let states = system.initial();
     let state = states.first().expect("the subject has an initial state");
@@ -166,7 +167,8 @@ fn canonicalise_is_permutation_invariant_on_each_fairness_quotient() {
 #[trace("TC-570", "FR-152-AC-4", "FR-623-AC-1")]
 #[test]
 fn canonicalise_is_idempotent_on_each_fairness_quotient() {
-    let system = configs(PROOF).system();
+    let world = configs(PROOF);
+    let system = world.system();
     let group = counter_group();
     for state in system.initial() {
         let once = system
