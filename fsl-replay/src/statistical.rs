@@ -19,9 +19,11 @@ use fsl_semantics::model::observation::AdmissionFailure;
 use crate::proof_result::SymmetryRefusal;
 use crate::UndefinedEvaluation;
 
+mod result_reader;
 mod settle;
 mod witness;
 
+pub use result_reader::{verify_statistical_result_bound, StatisticalBoundReadError};
 pub use settle::{
     settle_statistical, settle_statistical_refusal, NotStatisticalRequest, StatisticalRecord,
     SubjectLimits, UnsettledRefusal,

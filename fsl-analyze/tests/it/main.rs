@@ -191,6 +191,7 @@ mod state_graph_certificate;
 mod state_graph_settle;
 mod state_probabilistic_replay;
 mod statistical_coverage;
+mod statistical_fr192;
 mod statistical_manifest;
 mod statistical_model;
 mod statistical_witness_replay;
