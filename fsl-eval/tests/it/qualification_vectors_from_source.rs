@@ -1310,14 +1310,22 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                         "{} {} {} {}",
                         snippets[0], snippets[1], snippets[2], snippets[3]
                     ),
-                    nth(0),
+                    refusal_with_details(
+                        &nth(0),
+                        &["QuantityCycle", "(\"a\", \"b\")", "(\"b\", \"a\")"],
+                        Some("Area"),
+                    ),
                 ),
                 unit_program(
                     &format!(
                         "{} {} {} {}",
                         snippets[4], snippets[5], snippets[2], snippets[3]
                     ),
-                    nth(1),
+                    refusal_with_details(
+                        &nth(1),
+                        &["UnanchoredBaseDimension", "dimension: \"L\"", "unit: \"a\""],
+                        Some("L"),
+                    ),
                 ),
             ]);
         }
@@ -1327,11 +1335,23 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             return Some(vec![
                 unit_program(
                     &format!("{t_dimension} {t_unit} {l_dimension} {l_unit}"),
-                    nth(0),
+                    refusal_with_details(
+                        &nth(0),
+                        &[
+                            "fault: ZeroScale",
+                            "name: \"z\"",
+                            "Scale(Rational { numerator: Integer(0), denominator: Integer(1) })",
+                        ],
+                        Some("z"),
+                    ),
                 ),
                 unit_program(
                     &format!("{l_dimension} {l_unit} {t_dimension} {t_unit}"),
-                    nth(1),
+                    refusal_with_details(
+                        &nth(1),
+                        &["fault: TargetCycle", "from: \"u_self\", to: \"u_self\""],
+                        Some("L"),
+                    ),
                 ),
             ]);
         }
@@ -1341,8 +1361,26 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 snippets[0], snippets[1], snippets[2], snippets[3]
             );
             return Some(vec![
-                unit_program(&base, nth(0)),
-                unit_program(&format!("{base} {}", quoted(vector.inputs)[4]), nth(1)),
+                unit_program(
+                    &base,
+                    refusal_with_details(
+                        &nth(0),
+                        &["UnresolvedDimensionTerm", "dimension: \"D\"", "term: \"K\""],
+                        Some("K"),
+                    ),
+                ),
+                unit_program(
+                    &format!("{base} {}", quoted(vector.inputs)[4]),
+                    refusal_with_details(
+                        &nth(1),
+                        &[
+                            "fault: ZeroScale",
+                            "name: \"e\"",
+                            "Scale(Rational { numerator: Integer(0), denominator: Integer(1) })",
+                        ],
+                        Some("e"),
+                    ),
+                ),
             ]);
         }
         "U11z3" => {
@@ -1353,9 +1391,24 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                         "{} {} {} {}",
                         snippets[0], snippets[1], snippets[2], snippets[3]
                     ),
-                    nth(0),
+                    refusal_with_details(
+                        &nth(0),
+                        &[
+                            "fault: ZeroScale",
+                            "name: \"e\"",
+                            "Scale(Rational { numerator: Integer(0), denominator: Integer(1) })",
+                        ],
+                        Some("e"),
+                    ),
                 ),
-                unit_program(&declarations, nth(1)),
+                unit_program(
+                    &declarations,
+                    refusal_with_details(
+                        &nth(1),
+                        &["QuantityCycle", "(\"A\", \"B\")", "(\"B\", \"A\")"],
+                        Some("A"),
+                    ),
+                ),
             ]);
         }
         _ => return None,
@@ -1383,7 +1436,117 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 "from: \"m\", to: \"cm\"",
                 "from: \"cm\", to: \"m\"",
             ],
-            None,
+            Some("L"),
+        ),
+        "U11c" => refusal_with_details(
+            &expected,
+            &[
+                "fault: UnknownTarget",
+                "name: \"x\"",
+                "TargetName(\"nothing\")",
+            ],
+            Some("nothing"),
+        ),
+        "U11d" => refusal_with_details(
+            &expected,
+            &[
+                "fault: CrossDimensionTarget",
+                "name: \"cm\"",
+                "TargetName(\"s\")",
+                "name: \"L\"",
+                "name: \"T\"",
+            ],
+            Some("cm"),
+        ),
+        "U11f" => refusal_with_details(
+            &expected,
+            &["fault: TargetCycle", "from: \"u_self\", to: \"u_self\""],
+            Some("L"),
+        ),
+        "U11g1" => refusal_with_details(
+            &expected,
+            &[
+                "UnanchoredBaseDimension",
+                "dimension: \"L\"",
+                "unit: \"m2\"",
+            ],
+            Some("L"),
+        ),
+        "U11g2" => refusal_with_details(
+            &expected,
+            &[
+                "UnanchoredBaseDimension",
+                "dimension: \"L\"",
+                "unit: \"m3\"",
+            ],
+            Some("L"),
+        ),
+        "U11g4" => refusal_with_details(
+            &expected,
+            &[
+                "UnanchoredBaseDimension",
+                "dimension: \"L\"",
+                "unit: \"m4\"",
+            ],
+            Some("L"),
+        ),
+        "U11h" => refusal_with_details(
+            &expected,
+            &[
+                "fault: ZeroScale",
+                "name: \"z\"",
+                "Scale(Rational { numerator: Integer(0), denominator: Integer(1) })",
+            ],
+            Some("z"),
+        ),
+        "U11i" => refusal_with_details(
+            &expected,
+            &[
+                "fault: UnknownTarget",
+                "name: \"a\"",
+                "TargetName(\"nothing\")",
+            ],
+            Some("nothing"),
+        ),
+        "U11j" => refusal_with_details(
+            &expected,
+            &[
+                "fault: TwoRoots",
+                "name: \"L\"",
+                "name: \"m_alt\"",
+                "name: \"m\"",
+            ],
+            Some("m"),
+        ),
+        "U11k" => refusal_with_details(
+            &expected,
+            &["fault: TargetCycle", "from: \"u_self\", to: \"u_self\""],
+            Some("L"),
+        ),
+        "U11l" => refusal_with_details(
+            &expected,
+            &[
+                "fault: TargetCycle",
+                "from: \"cm\", to: \"m\"",
+                "from: \"m\", to: \"cm\"",
+            ],
+            Some("L"),
+        ),
+        "U11n" => refusal_with_details(
+            &expected,
+            &["QuantityCycle", "(\"A\", \"B\")", "(\"B\", \"A\")"],
+            Some("A"),
+        ),
+        "U11o" => refusal_with_details(&expected, &["QuantityCycle", "(\"D\", \"D\")"], Some("D")),
+        "U11p" => refusal_with_details(
+            &expected,
+            &["UnresolvedDimensionTerm", "dimension: \"D\"", "term: \"K\""],
+            Some("K"),
+        ),
+        "U11w" => refusal_with_details(
+            &expected,
+            &["UnresolvedDimensionTerm", "dimension: \"A\"", "term: \"K\""],
+            Some("K"),
         ),
         _ => expected,
     };
