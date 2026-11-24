@@ -95,7 +95,8 @@ impl ComponentCertificate {
     }
 }
 
-/// A proof certificate carried by an EN-1 holding outcome (FR-126).
+/// A closure, component or SMT proof certificate carried by an EN-1 holding
+/// outcome (FR-126).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofCertificate {
     /// A closure certificate for an item checked by FR-338.

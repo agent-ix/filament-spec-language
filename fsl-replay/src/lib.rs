@@ -194,7 +194,8 @@ pub use certificate::simulation::{
     UndeterminedStep,
 };
 pub use certificate::smt::{
-    check_refinement_smt_proof, ProofFormat, RefinementSmtCertificate, RefutedQuery, SmtProofCheck,
+    check_refinement_smt_proof, check_smt_proof, ProofFormat, RefinementSmtCertificate,
+    RefutedQuery, SmtProofBasis, SmtProofCertificate, SmtProofCheck, SmtProofOutcome,
 };
 pub use certificate::state_graph::{
     check_state_graph, StateGraphCertificate, StateGraphCertificateRequest,
@@ -372,8 +373,8 @@ pub use model_check::replay::{
 };
 pub use model_check::settle::{
     settle_model_check, settle_model_check_over_stutter_closure, settle_protocol_check,
-    CertificateChecker, Execution, ModelCheckRecord, RecordWarning, ResultLabel, Truth,
-    EXPLICIT_STATE, K_INDUCTION,
+    settle_smt_proof, CertificateChecker, Execution, ModelCheckRecord, RecordWarning, ResultLabel,
+    Truth, EXPLICIT_STATE, K_INDUCTION,
 };
 pub use model_check::smt_query::{
     encode_smt_query, Refusal, SmtEncodingLimits, SmtEncodingRefusal, SmtQueryKind,
