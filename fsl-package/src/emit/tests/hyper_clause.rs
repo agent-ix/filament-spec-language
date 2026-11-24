@@ -921,6 +921,43 @@ fn supplied_hyper(
     run(bare);
 }
 
+/// Function calls retain trace-variable reads in the package normal form,
+/// matching the source checker when corresponding values from two traces
+/// flow through the same pure function.
+#[trace("FR-940-AC-20", "TC-3126")]
+#[test]
+fn a_package_hyper_form_preserves_copy_groups_through_function_calls() {
+    let declarations = "function f using v(x: Integer): Integer pure { x }\n\
+        hyper Called using t over behaviours (c: V::ConfigVersion) \
+        forall trace a of V forall trace b of V \
+        { always holds(f(c.versionNumber @ a) = f(c.versionNumber @ b)) }";
+    let built = build(INFINITE, &["V"], declarations);
+    let source = &built.clauses[0];
+    assert_eq!(
+        source.copy_group().classes,
+        [vec!["a".to_owned(), "b".to_owned()]]
+    );
+
+    let admitted = admitted(&built);
+    let root = hyper_roots(&admitted).expect("hyper roots").remove(0);
+    supplied_hyper(&built, &admitted, |bare| {
+        let form = bare
+            .hyper_clause_form(root.occurrence())
+            .expect("package hyper form");
+        let rebuilt = fsl_semantics::check::CheckedHyperClause::of_package_form(
+            form,
+            &built.types,
+            1_000_000,
+        )
+        .expect("package form rebuilds");
+        assert_eq!(rebuilt.copy_group(), source.copy_group());
+        assert_eq!(
+            rebuilt.copy_group().classes,
+            [vec!["a".to_owned(), "b".to_owned()]]
+        );
+    });
+}
+
 /// FR-940's hyper-form contract: real emitted Equal facts rebuild without
 /// a source expression, preserving the two traces and their copy swap.
 #[trace("FR-940-AC-16")]

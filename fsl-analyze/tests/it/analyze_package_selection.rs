@@ -587,9 +587,9 @@ fn a_package_state_graph_claim_settles_as_its_source_claim() {
     assert_eq!(run.exit, source.exit);
 }
 
-/// FR-940-AC-4/5/11: payload-bearing source unions survive both analyze
-/// claim forms across the source and admitted package routes.
-#[trace("TC-2958", "TC-3034", "FR-940-AC-4", "FR-940-AC-5", "FR-940-AC-11")]
+/// FR-940-AC-31: payload-bearing source unions survive both analyze claim
+/// forms across the source and admitted package routes.
+#[trace("TC-2958", "TC-3034", "FR-940-AC-31")]
 #[test]
 fn payload_union_in_invariant_and_state_graph_claim_match_across_routes() {
     let body = format!(
