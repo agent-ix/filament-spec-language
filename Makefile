@@ -548,13 +548,13 @@ bench-evaluator:
 	cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- start
 	cargo bench --locked -p fsl-bench --bench evaluator -- $(BENCH_ARGS)
 	cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- profile evaluator/call_chain
-	cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- report evaluator/call_chain
+	cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- report evaluator/call_chain --candidate
 
 bench-evaluator_kernel:
 	cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- start
 	cargo bench --locked -p fsl-bench --bench evaluator_kernel -- $(BENCH_ARGS)
 	cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- profile evaluator/kernel
-	cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- report evaluator/kernel
+	cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- report evaluator/kernel --candidate
 
 # One process per `check`/`eval` size: peak RSS is process-wide.
 BENCH_PROBE := cargo run --locked --release -q -p fsl-bench --bin fsl-bench-probe --

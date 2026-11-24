@@ -38,8 +38,10 @@ call. The report joins those probe rows with the fresh Criterion estimate and
 writes `target/evaluator-cost-<axis>-<run-id>.json`. Each per-size row contains
 `wall_time_ns`, `child_traversal_allocation_count`,
 `child_traversal_allocation_share`, and `evaluation_allocation_count`. The
-report refuses stale or missing rows and any nonzero child-traversal allocation
-count. Allocation probing runs in its own process, so its allocator does not
+baseline report preserves observed nonzero child-traversal allocations so the A
+measurement remains reportable. Candidate reports, selected with `--candidate`,
+require zero child-traversal allocations. Both reports refuse stale or missing
+rows. Allocation probing runs in its own process, so its allocator does not
 affect the timed Criterion process.
 
 ### Evaluator kernels

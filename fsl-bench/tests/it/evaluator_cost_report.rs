@@ -2,8 +2,8 @@
 //! The invocation-local evaluator report is the acceptance evidence artifact.
 
 use fsl_bench::evaluator_cost::{
-    self, AllocationProbe, CALL_CHAIN_SIZES, EVALUATOR_CALL_CHAIN_AXIS, EVALUATOR_KERNEL_AXIS,
-    PROFILE_AXES, REPORT_FIELDS,
+    self, AllocationProbe, ReportRole, CALL_CHAIN_SIZES, EVALUATOR_CALL_CHAIN_AXIS,
+    EVALUATOR_KERNEL_AXIS, PROFILE_AXES, REPORT_FIELDS,
 };
 use fsl_bench::kernel::{KernelKind, SIZES};
 use ix_trace_rs::trace;
@@ -71,7 +71,7 @@ fn expected_cases(axis: &str) -> Vec<(&'static str, usize)> {
     }
 }
 
-fn seed_complete_invocation(target: &TempTarget) -> u128 {
+fn seed_complete_invocation(target: &TempTarget, child_allocation_count: u64) -> u128 {
     let run_id = evaluator_cost::start_invocation(&target.0)
         .expect("the benchmark invocation is initialized");
     for (axis, _) in PROFILE_AXES {
@@ -83,8 +83,8 @@ fn seed_complete_invocation(target: &TempTarget) -> u128 {
                 case,
                 size,
                 AllocationProbe {
-                    child_traversal_allocation_count: 0,
-                    evaluation_allocation_count: 11,
+                    child_traversal_allocation_count: child_allocation_count,
+                    evaluation_allocation_count: 100,
                 },
             )
             .expect("the invocation allocation probe is recorded");
@@ -98,16 +98,17 @@ fn seed_complete_invocation(target: &TempTarget) -> u128 {
 #[trace("NFR-141-AC-7")]
 fn emitted_invocation_artifacts_contain_the_required_axes_sizes_and_metrics() {
     let target = TempTarget::new();
-    let run_id = seed_complete_invocation(&target);
+    let run_id = seed_complete_invocation(&target, 0);
 
     for (axis, sizes) in PROFILE_AXES {
-        let artifact = evaluator_cost::emit_report(&target.0, axis)
+        let artifact = evaluator_cost::emit_report(&target.0, axis, ReportRole::Candidate)
             .expect("complete fresh Criterion and allocation data emits a report");
         let report: serde_json::Value =
             serde_json::from_slice(&fs::read(artifact).expect("report artifact exists"))
                 .expect("report artifact is JSON");
         assert_eq!(report["run_id"], run_id.to_string());
         assert_eq!(report["axis"], axis);
+        assert_eq!(report["role"], "candidate");
         assert_eq!(
             report["fields"],
             serde_json::to_value(REPORT_FIELDS).expect("report fields serialize")
@@ -139,9 +140,46 @@ fn emitted_invocation_artifacts_contain_the_required_axes_sizes_and_metrics() {
             assert!(row["wall_time_ns"].as_f64().unwrap() > 0.0);
             assert_eq!(row["child_traversal_allocation_count"], 0);
             assert_eq!(row["child_traversal_allocation_share"], 0.0);
-            assert_eq!(row["evaluation_allocation_count"], 11);
+            assert_eq!(row["evaluation_allocation_count"], 100);
         }
     }
+}
+
+#[test]
+#[trace("NFR-141-AC-7")]
+fn baseline_report_preserves_nonzero_child_traversal_allocations() {
+    let target = TempTarget::new();
+    seed_complete_invocation(&target, 18);
+
+    let artifact =
+        evaluator_cost::emit_report(&target.0, EVALUATOR_CALL_CHAIN_AXIS, ReportRole::Baseline)
+            .expect("baseline allocations remain reportable");
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(artifact).expect("baseline report artifact exists"))
+            .expect("baseline report artifact is JSON");
+
+    assert_eq!(report["role"], "baseline");
+    for row in report["rows"]
+        .as_array()
+        .expect("baseline rows are an array")
+    {
+        assert_eq!(row["child_traversal_allocation_count"], 18);
+        assert_eq!(row["child_traversal_allocation_share"], 0.18);
+    }
+}
+
+#[test]
+#[trace("NFR-141-AC-7")]
+fn candidate_report_rejects_nonzero_child_traversal_allocations() {
+    let target = TempTarget::new();
+    seed_complete_invocation(&target, 18);
+
+    let error =
+        evaluator_cost::emit_report(&target.0, EVALUATOR_CALL_CHAIN_AXIS, ReportRole::Candidate)
+            .expect_err("candidate child traversal must allocate zero times");
+    assert!(error
+        .to_string()
+        .contains("candidate child traversal allocation"));
 }
 
 #[test]
@@ -169,7 +207,8 @@ fn report_refuses_a_missing_per_size_probe() {
         target.write_estimate(EVALUATOR_CALL_CHAIN_AXIS, case, size, 100.0 + size as f64);
     }
 
-    let error = evaluator_cost::emit_report(&target.0, EVALUATOR_CALL_CHAIN_AXIS)
-        .expect_err("missing per-size evidence prevents report emission");
+    let error =
+        evaluator_cost::emit_report(&target.0, EVALUATOR_CALL_CHAIN_AXIS, ReportRole::Candidate)
+            .expect_err("missing per-size evidence prevents report emission");
     assert!(error.to_string().contains("missing allocation probe"));
 }

@@ -42,6 +42,24 @@ pub struct AllocationProbe {
     pub evaluation_allocation_count: u64,
 }
 
+/// Whether a report is describing the baseline A or verifying candidate B.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReportRole {
+    /// Preserve observed allocations for the unmodified baseline.
+    Baseline,
+    /// Require zero child-traversal allocations for the candidate.
+    Candidate,
+}
+
+impl ReportRole {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Baseline => "baseline",
+            Self::Candidate => "candidate",
+        }
+    }
+}
+
 /// Start an invocation and return its unique run identifier.
 pub fn start_invocation(target: &Path) -> io::Result<u128> {
     fs::create_dir_all(target)?;
@@ -73,13 +91,6 @@ pub fn record_probe(
     if !PROFILE_AXES.iter().any(|(name, _)| *name == axis) {
         return Err(io::Error::other(format!("unknown evaluator profile axis: {axis}")).into());
     }
-    if probe.child_traversal_allocation_count != 0 {
-        return Err(io::Error::other(format!(
-            "child traversal allocated {} times for {axis}/{case}/{size}",
-            probe.child_traversal_allocation_count
-        ))
-        .into());
-    }
     let row = serde_json::json!({
         "run_id": run_id.to_string(),
         "axis": axis,
@@ -98,7 +109,7 @@ pub fn record_probe(
 }
 
 /// Emit and return the invocation-local report artifact for one evaluator axis.
-pub fn emit_report(target: &Path, axis: &str) -> Result<PathBuf, Box<dyn Error>> {
+pub fn emit_report(target: &Path, axis: &str, role: ReportRole) -> Result<PathBuf, Box<dyn Error>> {
     let run_id = current_invocation(target)?;
     let expected = expected_cases(axis)?;
     let probes = read_probes(target, run_id, axis)?;
@@ -121,9 +132,9 @@ pub fn emit_report(target: &Path, axis: &str) -> Result<PathBuf, Box<dyn Error>>
         } else {
             child_count as f64 / probe.evaluation_allocation_count as f64
         };
-        if child_count != 0 || allocation_share != 0.0 {
+        if role == ReportRole::Candidate && (child_count != 0 || allocation_share != 0.0) {
             return Err(io::Error::other(format!(
-                "nonzero child traversal allocation evidence for {axis}/{case}/{size}"
+                "candidate child traversal allocation is nonzero for {axis}/{case}/{size}"
             ))
             .into());
         }
@@ -150,6 +161,7 @@ pub fn emit_report(target: &Path, axis: &str) -> Result<PathBuf, Box<dyn Error>>
     let report = serde_json::json!({
         "run_id": run_id.to_string(),
         "axis": axis,
+        "role": role.name(),
         "fields": REPORT_FIELDS,
         "rows": rows,
     });

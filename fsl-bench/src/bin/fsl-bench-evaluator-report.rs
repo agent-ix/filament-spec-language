@@ -3,7 +3,8 @@
 
 use fsl_bench::check::{call_head, completed_with_five, linked_chain};
 use fsl_bench::evaluator_cost::{
-    self, AllocationProbe, CALL_CHAIN_SIZES, EVALUATOR_CALL_CHAIN_AXIS, EVALUATOR_KERNEL_AXIS,
+    self, AllocationProbe, ReportRole, CALL_CHAIN_SIZES, EVALUATOR_CALL_CHAIN_AXIS,
+    EVALUATOR_KERNEL_AXIS,
 };
 use fsl_bench::kernel::{KernelCase, KernelKind, SIZES};
 use fsl_semantics::check::CheckedNode;
@@ -35,7 +36,15 @@ fn run(target: &Path, arguments: impl Iterator<Item = String>) -> Result<(), Box
         }
         Some("report") => {
             let axis = arguments.next().ok_or("expected an evaluator axis")?;
-            let path = evaluator_cost::emit_report(target, &axis)?;
+            let role = match arguments.next().as_deref() {
+                None => ReportRole::Baseline,
+                Some("--candidate") => ReportRole::Candidate,
+                Some(argument) => return Err(format!("unknown report role: {argument}").into()),
+            };
+            if let Some(argument) = arguments.next() {
+                return Err(format!("unexpected report argument: {argument}").into());
+            }
+            let path = evaluator_cost::emit_report(target, &axis, role)?;
             println!("wrote evaluator cost report: {}", path.display());
         }
         Some(command) => return Err(format!("unknown evaluator report command: {command}").into()),
