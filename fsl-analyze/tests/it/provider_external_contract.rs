@@ -302,7 +302,7 @@ fn external_unbounded_counterexamples_are_called_and_replayed_by_both_entries() 
 /// Process-provider assignments settle only after the native replay agrees.
 /// This exercises the reproduced and parity cases; the external-provider
 /// fixture cannot express AC-2's missing named-function-parameter refusal.
-#[trace("TC-1337")]
+#[trace("TC-1337", "FR-288-AC-4")]
 #[test]
 fn process_counterexamples_require_replay_agreement_before_terminal_settlement() {
     let reproduced = Fixture::new(UNBOUNDED);
@@ -322,8 +322,16 @@ fn process_counterexamples_require_replay_agreement_before_terminal_settlement()
         },
         false,
     );
+    let descriptor_id = engines
+        .registrations()
+        .find(|descriptor| descriptor.id().as_str() == EXTERNAL)
+        .expect("the routed process provider has one registered descriptor")
+        .id()
+        .clone();
     assert_eq!(outcome.records[0].value(), &TerminalValue::Refuted);
     let replayed = assignment_counterexample(&outcome.counterexamples);
+    assert_eq!(outcome.counterexamples[0].backend, descriptor_id);
+    assert_eq!(outcome.records[0].backend(), Some(&descriptor_id));
     assert_division_assignment(replayed.reproduced.assignment());
 
     let parity = Fixture::new(UNBOUNDED);
