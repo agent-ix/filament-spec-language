@@ -68,7 +68,7 @@ fn markdown(body: &str, newline: &str) -> String {
 }
 
 #[test]
-#[trace("FR-031-AC-4")]
+#[trace("FR-031-AC-4", "FR-267-AC-17")]
 fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenance() {
     for newline in ["\n", "\r\n"] {
         for (case, category, exit, truth) in [
@@ -103,6 +103,19 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
             assert_eq!(document["disposition"]["category"], category, "{document}");
             assert_eq!(document["disposition"]["truth"], truth, "{document}");
             let extraction = &document["extraction"];
+            let mut extraction_members = extraction
+                .as_object()
+                .expect("extraction is an object")
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            extraction_members.sort_unstable();
+            let expected_members: &[&str] = if case == Case::Violating {
+                &["binding", "body", "map", "original", "original_regions", "outcome"]
+            } else {
+                &["binding", "body", "map", "original", "outcome"]
+            };
+            assert_eq!(extraction_members, expected_members);
             assert_eq!(
                 extraction["original"]["identity"],
                 "ix://agent-ix/native-workflow/original"
@@ -113,6 +126,35 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
             assert_eq!(extraction["outcome"], upstream);
             assert!(!expected_segments.is_empty());
             assert_eq!(extraction["map"]["segments"], json!(expected_segments));
+
+            let read = fsl_replay::spine::read_native_run_result(
+                &serde_json::to_vec(document).expect("the command result serializes"),
+            )
+            .expect("the extracted native result reads");
+            let fsl_replay::spine::NativeRunResult::Clause(read) = read else {
+                panic!("a clause result");
+            };
+            assert_eq!(read.extraction(), Some(extraction));
+
+            let malformed = [
+                { let mut value = document.clone(); value["extraction"]["source"] = json!({}); value },
+                { let mut value = document.clone(); value["extraction"].as_object_mut().unwrap().remove("map"); value },
+                { let mut value = document.clone(); value["extraction"]["binding"] = Value::Null; value },
+                { let mut value = document.clone(); value["extraction"]["body"]["identity"] = json!(3); value },
+                { let mut value = document.clone(); value["extraction"]["map"]["segments"] = json!([]); value },
+            ];
+            for mutant in malformed {
+                let error = fsl_replay::spine::read_native_run_result(
+                    &serde_json::to_vec(&mutant).expect("edited result serializes"),
+                )
+                .expect_err("malformed extraction refuses");
+                assert!(error.to_string().contains("extraction"), "{error}");
+            }
+
+            if case == Case::Violating {
+                assert!(extraction["original_regions"].is_array());
+                assert_eq!(extraction["original_regions"].as_array().map(Vec::len), Some(1));
+            }
         }
     }
 }
