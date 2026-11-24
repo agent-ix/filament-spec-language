@@ -1150,7 +1150,7 @@ fn tc235_m15_run6_operation_requires_reading_pre_refuses() {
         fsl_foundation::diagnostic::Code::WrongSnapshot
     );
     assert!(matches!(
-        refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     ));
     assert_eq!(
@@ -1217,7 +1217,7 @@ fn operation_clause_refusals_are_located_by_kind_and_position() {
         .expect_err("the second requires reads pre");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert!(matches!(
-        refusals[0].cause,
+        refusals[0].cause.as_ref(),
         CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead)
     ));
     assert_eq!(

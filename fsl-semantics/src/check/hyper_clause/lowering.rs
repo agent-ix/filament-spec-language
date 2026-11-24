@@ -452,7 +452,7 @@ pub(crate) fn lower_atom<'a>(
     if body.root().value_type() != &ValueType::Boolean {
         return Err(refused(CheckRefusal {
             location: location.clone(),
-            cause: CheckCause::NonBooleanRoot,
+            cause: Box::new(CheckCause::NonBooleanRoot),
         }));
     }
     let slot_count = typer.slots();
@@ -477,9 +477,9 @@ pub(crate) fn lower_atom<'a>(
                 return Err(Refused {
                     refusal: Box::new(CheckRefusal {
                         location: read.clone(),
-                        cause: CheckCause::Hyper(Box::new(super::HyperCause::UnindexedRead {
-                            span: locate(read),
-                        })),
+                        cause: Box::new(CheckCause::Hyper(Box::new(
+                            super::HyperCause::UnindexedRead { span: locate(read) },
+                        ))),
                     }),
                     span: locate(read),
                 });
@@ -567,7 +567,7 @@ pub(crate) fn lower_conjunct<'a>(
     if body.root().value_type() != &ValueType::Boolean {
         return Err(refused(CheckRefusal {
             location: location.clone(),
-            cause: CheckCause::NonBooleanRoot,
+            cause: Box::new(CheckCause::NonBooleanRoot),
         }));
     }
     let slot_count = typer.slots();

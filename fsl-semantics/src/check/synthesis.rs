@@ -170,13 +170,13 @@ pub(crate) fn check_forms(
         let Some(domain) = named_type(scope, &form.domain.name) else {
             return Err(vec![CheckRefusal {
                 location,
-                cause: CheckCause::MissingQualifiedName(form.domain.clone()),
+                cause: Box::new(CheckCause::MissingQualifiedName(form.domain.clone())),
             }]);
         };
         let Some(grammar) = named_type(scope, &form.grammar.name) else {
             return Err(vec![CheckRefusal {
                 location,
-                cause: CheckCause::MissingQualifiedName(form.grammar.clone()),
+                cause: Box::new(CheckCause::MissingQualifiedName(form.grammar.clone())),
             }]);
         };
 
@@ -188,10 +188,10 @@ pub(crate) fn check_forms(
                 if let Some(component) = first_unbounded_component(scope.types(), &domain) {
                     return Err(vec![CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::SynthesisUnboundedDomain {
+                        cause: Box::new(CheckCause::SynthesisUnboundedDomain {
                             component,
                             span: form.domain.span,
-                        },
+                        }),
                     }]);
                 }
                 let lengths =
@@ -251,14 +251,14 @@ pub(crate) fn check_forms(
                 plan.scope.seal_plan_union(handle, settled).ok_or_else(|| {
                     vec![CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::InternalFault(Box::new(
+                        cause: Box::new(CheckCause::InternalFault(Box::new(
                             super::refusal::KeyFault::StageFault(
                                 filament_semantic_value::catalog::InternalFault::new(
                                     "S3",
                                     "plan-receiver-union-seal",
                                 ),
                             ),
-                        )),
+                        ))),
                     }]
                 })?;
             }
@@ -369,7 +369,7 @@ fn check_expression(
     if expected == Some(&ValueType::Boolean) && body.root().value_type() != &ValueType::Boolean {
         return Err(CheckRefusal {
             location: location.clone(),
-            cause: CheckCause::NonBooleanRoot,
+            cause: Box::new(CheckCause::NonBooleanRoot),
         });
     }
     Ok((body, typer.slot_names().to_vec()))

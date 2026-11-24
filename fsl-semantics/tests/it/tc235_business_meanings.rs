@@ -1427,8 +1427,8 @@ fn tc235_record_parent_value_is_refused_at_child_typed_parameter() {
         )
         .expect_err("a parent value does not conform to its child");
     assert!(
-        refusals.iter().all(|refusal| refusal.cause
-            == fsl_semantics::check::CheckCause::IllTyped(
+        refusals.iter().all(|refusal| refusal.cause.as_ref()
+            == &fsl_semantics::check::CheckCause::IllTyped(
                 filament_exact::IllTypedCause::TypeMismatch
             )),
         "{refusals:?}"

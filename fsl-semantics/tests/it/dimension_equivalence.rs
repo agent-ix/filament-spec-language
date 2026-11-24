@@ -471,9 +471,7 @@ fn dimension_equivalences_are_decided_by_fr_142_steps() {
     );
     let errors = assembled.expect_err("the turns refuse");
     assert!(
-        errors.iter().any(|error| matches!(
-            &error.cause,
-            AssemblyCause::UnitGraphTopology {
+        errors.iter().any(|error| matches!(& error.cause, AssemblyCause::UnitGraphTopology {
                 fault: TopologyFault::ZeroScale,
                 retained,
             } if retained == &[
@@ -486,7 +484,7 @@ fn dimension_equivalences_are_decided_by_fr_142_steps() {
     assert!(
         !errors
             .iter()
-            .any(|error| matches!(error.cause, AssemblyCause::DimensionEquivalence { .. })),
+            .any(|error| matches!(&error.cause, AssemblyCause::DimensionEquivalence { .. })),
         "{errors:?}"
     );
 
@@ -755,7 +753,7 @@ fn two_units_writing_one_spelling_resolve_each_through_its_own_bindings() {
         refusal
             .errors
             .iter()
-            .any(|error| matches!(error.cause, AssemblyCause::UnresolvedQuantityName { .. })),
+            .any(|error| matches!(&error.cause, AssemblyCause::UnresolvedQuantityName { .. })),
         "{refusal:?}"
     );
 }
@@ -1316,7 +1314,7 @@ fn convert_causes(
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .map(|_| ())
-        .map_err(|refusals| refusals.into_iter().map(|refusal| refusal.cause).collect())
+        .map_err(|refusals| refusals.into_iter().map(|refusal| *refusal.cause).collect())
 }
 
 /// FR-093 "Dimension equivalence" (QSL-2734): `convert<Quantity<ub>>(3 ua)`

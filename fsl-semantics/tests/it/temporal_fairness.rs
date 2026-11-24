@@ -112,13 +112,10 @@ fn checked(profile: &str, body: &str) -> (String, CheckedTemporalClause) {
 /// The temporal cause `body` refuses with, and the unit text.
 fn refused(profile: &str, body: &str) -> (String, TemporalCause) {
     match check_in(&config_version(), profile, CONFIG_VERSION, body) {
-        (
-            text,
-            Err(StageFailure::Refused(CheckRefusal {
-                cause: CheckCause::Temporal(cause),
-                ..
-            })),
-        ) => (text, *cause),
+        (text, Err(StageFailure::Refused(refusal))) => match *refusal.cause {
+            CheckCause::Temporal(cause) => (text, *cause),
+            other => panic!("a temporal refusal, not {other:?}"),
+        },
         (_, other) => panic!("{body}: a temporal refusal, not {other:?}"),
     }
 }
@@ -227,13 +224,10 @@ fn same_named_operations_of_different_types_stay_distinct() {
 
     let body = format!("fair weak Config::Both::dup; {EVENTUALLY_TWO}");
     match check_in(&document, INFINITE, "Config::Both", &body) {
-        (
-            text,
-            Err(StageFailure::Refused(CheckRefusal {
-                cause: CheckCause::Temporal(cause),
-                ..
-            })),
-        ) => {
+        (text, Err(StageFailure::Refused(refusal))) => {
+            let CheckCause::Temporal(cause) = *refusal.cause else {
+                panic!("a temporal refusal, not {refusal:?}");
+            };
             assert_eq!(
                 *cause,
                 TemporalCause::AmbiguousFairnessOperation {

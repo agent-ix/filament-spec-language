@@ -821,10 +821,10 @@ fn unmappable_model_inputs_are_internal_faults() {
             )
         });
     let fault = |result: Result<NodeKey, CheckRefusal>| match result {
-        Err(CheckRefusal {
-            cause: CheckCause::InternalFault(fault),
-            ..
-        }) => *fault,
+        Err(CheckRefusal { cause, .. }) => match *cause {
+            CheckCause::InternalFault(fault) => *fault,
+            cause => panic!("expected an internal fault cause, got {cause:?}"),
+        },
         other => panic!("expected an internal fault, got {other:?}"),
     };
     assert_eq!(fault(by_id), KeyFault::UnknownEffectiveId(unknown.clone()));
@@ -870,16 +870,15 @@ fn keying_a_second_declaration_onto_a_recorded_node_refuses() {
         let keyed = lowering.model_node(&d2, &location);
         (keyed, lowering.correspondence.resolve(n.clone()).cloned())
     });
-    let Err(CheckRefusal {
-        cause: CheckCause::InternalFault(fault),
-        ..
-    }) = keyed
-    else {
+    let Err(CheckRefusal { ref cause, .. }) = keyed else {
+        panic!("expected an internal fault, got {keyed:?}");
+    };
+    let CheckCause::InternalFault(fault) = cause.as_ref() else {
         panic!("expected an internal fault, got {keyed:?}");
     };
     assert_eq!(
-        *fault,
-        KeyFault::CorrespondenceConflict(Box::new(
+        fault.as_ref(),
+        &KeyFault::CorrespondenceConflict(Box::new(
             crate::check::CorrespondenceConflict::NodeRebound {
                 node: n,
                 recorded: d1.clone(),
@@ -887,7 +886,7 @@ fn keying_a_second_declaration_onto_a_recorded_node_refuses() {
             }
         ))
     );
-    let cause = CheckCause::InternalFault(fault);
+    let cause = CheckCause::InternalFault(fault.clone());
     assert_eq!(
         cause.code(),
         fsl_foundation::diagnostic::Code::RuntimeInvariant
@@ -970,7 +969,7 @@ fn two_admitted_versions_of_one_model_identity_refuse() {
         .expect_err("two packages of one identity refuse");
     assert!(
         matches!(
-            &refusals[0].cause,
+            refusals[0].cause.as_ref(),
             CheckCause::InternalFault(fault)
                 if **fault == KeyFault::DuplicateModelSelection("acme/orders".to_owned())
         ),
@@ -1927,13 +1926,8 @@ mod quantities {
         let (result, graph) = lower(&[], units(), |lowering| {
             lowering.type_node(&ValueType::Quantity(unheld.clone()), &generated_location())
         });
-        assert!(matches!(
-            result,
-            Err(CheckRefusal {
-                cause: CheckCause::InternalFault(fault),
-                ..
-            }) if *fault == KeyFault::UnheldUnit(unheld)
-        ));
+        assert!(matches!(result, Err(CheckRefusal { cause, .. })
+            if matches!(cause.as_ref(), CheckCause::InternalFault(fault) if **fault == KeyFault::UnheldUnit(unheld))));
         assert_eq!(graph.nodes().count(), 0);
     }
 
@@ -1955,13 +1949,8 @@ mod quantities {
         let (result, graph) = lower(&[], table, |lowering| {
             lowering.type_node(&quantity(METRE), &generated_location())
         });
-        assert!(matches!(
-            result,
-            Err(CheckRefusal {
-                cause: CheckCause::InternalFault(fault),
-                ..
-            }) if *fault == KeyFault::UnheldNominal(node_key(METRE))
-        ));
+        assert!(matches!(result, Err(CheckRefusal { cause, .. })
+            if matches!(cause.as_ref(), CheckCause::InternalFault(fault) if **fault == KeyFault::UnheldNominal(node_key(METRE)))));
         assert_eq!(graph.nodes().count(), 0);
     }
 

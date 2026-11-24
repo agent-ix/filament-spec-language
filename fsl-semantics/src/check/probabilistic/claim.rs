@@ -903,16 +903,16 @@ fn keep<T>(refusals: &mut Vec<CheckRefusal>, result: Result<T, CheckRefusal>) ->
 fn broken(invariant: &'static str) -> CheckRefusal {
     CheckRefusal {
         location: Location::root(filament_semantic_value::location::ExpressionOwner::Expression),
-        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
             filament_semantic_value::catalog::InternalFault::new("S3", invariant),
-        ))),
+        )))),
     }
 }
 
 fn temporal_refusal(cause: TemporalCause) -> CheckRefusal {
     CheckRefusal {
         location: Location::root(filament_semantic_value::location::ExpressionOwner::Expression),
-        cause: CheckCause::Temporal(Box::new(cause)),
+        cause: Box::new(CheckCause::Temporal(Box::new(cause))),
     }
 }
 
@@ -1009,13 +1009,13 @@ impl Pass<'_, '_> {
                 {
                     self.refusals.push(CheckRefusal {
                         location: checked.declaration_location(),
-                        cause: CheckCause::AmbiguousName {
+                        cause: Box::new(CheckCause::AmbiguousName {
                             name: checked.name.clone(),
                             loci: vec![
                                 earlier.declaration_location(),
                                 checked.declaration_location(),
                             ],
-                        },
+                        }),
                     });
                     return;
                 }
@@ -1805,7 +1805,7 @@ impl Pass<'_, '_> {
         for cause in causes {
             if !bounded
                 && matches!(
-                    &cause,
+                    cause,
                     TemporalCause::MissingInterval { .. } | TemporalCause::OpenInterval { .. }
                 )
             {
@@ -2234,7 +2234,7 @@ impl Pass<'_, '_> {
         if body.root().value_type() != &ValueType::Boolean {
             return Err(CheckRefusal {
                 location,
-                cause: CheckCause::NonBooleanRoot,
+                cause: Box::new(CheckCause::NonBooleanRoot),
             });
         }
         let slots = typer.slots();
@@ -2303,7 +2303,7 @@ impl Pass<'_, '_> {
             .infer(&expression.expression, hint.as_ref(), &location)
             // A `rational(n, d)` has no type to take where the measure is
             // not a fraction: that is a threshold of the wrong type.
-            .map_err(|refused| match refused.cause {
+            .map_err(|refused| match refused.cause.as_ref() {
                 CheckCause::IllTyped(IllTypedCause::AmbiguousLiteral) => {
                     CheckRefusal::ill_typed(&location, IllTypedCause::TypeMismatch)
                 }
@@ -2831,13 +2831,13 @@ fn conversion_limit(location: &Location, incomplete: &filament_exact::Incomplete
     };
     CheckRefusal {
         location: location.clone(),
-        cause: CheckCause::ResourceExhausted(Box::new(StageLimitCause {
+        cause: Box::new(CheckCause::ResourceExhausted(Box::new(StageLimitCause {
             stage: CheckingStage::Typing,
             kind,
             limit: incomplete.limit,
             actual,
             region: None,
-        })),
+        }))),
     }
 }
 
@@ -2950,7 +2950,7 @@ mod conversion_budget_tests {
                 .expect_err(
                     "actual quantity conversion must enforce its representation and work ceilings",
                 );
-            let CheckCause::ResourceExhausted(cause) = error.cause else {
+            let CheckCause::ResourceExhausted(cause) = *error.cause else {
                 panic!("actual conversion must retain its meter denial");
             };
             assert_eq!(cause.kind, kind);

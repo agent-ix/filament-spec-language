@@ -352,11 +352,11 @@ impl SelectedProtocol {
     pub(crate) fn unkeyed(&self, refusal: CheckRefusal) -> CheckRefusal {
         CheckRefusal {
             location: refusal.location,
-            cause: CheckCause::Refinement(Box::new(RefinementRefusal {
+            cause: Box::new(CheckCause::Refinement(Box::new(RefinementRefusal {
                 refinement: self.refinement.clone(),
                 span: self.first,
-                cause: RefinementCause::Check(refusal.cause),
-            })),
+                cause: RefinementCause::Check(*refusal.cause),
+            }))),
         }
     }
 }
@@ -717,7 +717,9 @@ impl ProtocolRefinement<'_> {
                 return (
                     Err(vec![CheckRefusal {
                         location: Location::root(Origin::Expression),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(fault))),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                            fault,
+                        )))),
                     }]),
                     nodes,
                 );

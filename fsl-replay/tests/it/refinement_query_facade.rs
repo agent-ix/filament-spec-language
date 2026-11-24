@@ -619,6 +619,6 @@ fn removing_steps_from_a_model_with_operations_is_not_a_zero_row_selection() {
     else {
         panic!("operation completeness must reach the checker");
     };
-    assert!(refusals.iter().any(|refusal| matches!(&refusal.cause,
+    assert!(refusals.iter().any(|refusal| matches!(refusal.cause.as_ref(),
         CheckCause::Refinement(refusal) if matches!(refusal.cause, RefinementCause::MissingRow { .. }))));
 }

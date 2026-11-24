@@ -258,7 +258,7 @@ fn unresolved_internal_class_keeps_its_native_cause_and_request_locus() {
     let fsl_replay::CompileRefusal::Check { refusals, .. } = *refusal else {
         panic!("native root S3 check");
     };
-    let fsl_semantics::check::CheckCause::Refinement(refusal) = &refusals[0].cause else {
+    let fsl_semantics::check::CheckCause::Refinement(refusal) = &*refusals[0].cause else {
         panic!("native refinement cause");
     };
     let fsl_semantics::check::RefinementCause::InternalList(defect) = &refusal.cause else {

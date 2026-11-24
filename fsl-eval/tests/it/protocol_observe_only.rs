@@ -426,7 +426,7 @@ fn an_observed_attempt_refuses_before_the_first_step() {
         .expect_err("an observed attempt is refused before evaluation");
     assert!(refusals.iter().any(|refusal| {
         matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             fsl_semantics::check::CheckCause::ProtocolAnchor(cause)
                 if matches!(cause.as_ref(), fsl_semantics::check::ProtocolAnchorCause::ObserveOnlyAction { action: "attempt", boundary, .. } if boundary == "Main")
         )

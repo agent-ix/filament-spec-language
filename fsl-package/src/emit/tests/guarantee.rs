@@ -122,11 +122,10 @@ fn refused(unit: &str, documents: &[Value]) -> GuaranteeRefusal {
     let Err(Failure::Check(refusals)) = compile_with(unit, documents) else {
         panic!("{unit}: a check refusal");
     };
-    let [CheckRefusal {
-        cause: CheckCause::Abstraction(cause),
-        ..
-    }] = &refusals[..]
-    else {
+    let [CheckRefusal { cause, .. }] = &refusals[..] else {
+        panic!("{unit}: one guarantee refusal: {refusals:?}");
+    };
+    let CheckCause::Abstraction(cause) = cause.as_ref() else {
         panic!("{unit}: one guarantee refusal: {refusals:?}");
     };
     let AbstractionRefusal::Guarantee(refusal) = &**cause else {

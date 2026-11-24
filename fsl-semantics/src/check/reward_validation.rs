@@ -125,14 +125,14 @@ fn check_reward(
         if let Some(denied) = denied {
             let refusal = CheckRefusal {
                 location: reward.evaluation_location(),
-                cause: CheckCause::ResourceExhausted(Box::new(StageLimitCause {
+                cause: Box::new(CheckCause::ResourceExhausted(Box::new(StageLimitCause {
                     stage: CheckingStage::Typing,
                     kind: CheckingLimitKind::WorkBudget,
                     limit: work_limit,
                     actual: u128::from(denied.consumed)
                         + denied.next_charge.to_u64().unwrap_or(u64::MAX) as u128,
                     region: None,
-                })),
+                }))),
             };
             return Err(vec![refusal]);
         }
@@ -148,7 +148,7 @@ fn check_reward(
             Err(failure) => {
                 return Err(vec![CheckRefusal {
                     location: reward.evaluation_location(),
-                    cause: CheckCause::RewardEvaluation(Box::new(failure)),
+                    cause: Box::new(CheckCause::RewardEvaluation(Box::new(failure))),
                 }]);
             }
         }
@@ -231,10 +231,12 @@ fn negative_refusal(reward: &Reward, arguments: &[Value]) -> CheckRefusal {
         .collect();
     CheckRefusal {
         location: reward.evaluation_location(),
-        cause: CheckCause::Probabilistic(Box::new(super::ProbabilisticCause::NegativeReward {
-            operation: reward.operation().name().to_owned(),
-            reward: reward.name().to_owned(),
-            arguments: values,
-        })),
+        cause: Box::new(CheckCause::Probabilistic(Box::new(
+            super::ProbabilisticCause::NegativeReward {
+                operation: reward.operation().name().to_owned(),
+                reward: reward.name().to_owned(),
+                arguments: values,
+            },
+        ))),
     }
 }

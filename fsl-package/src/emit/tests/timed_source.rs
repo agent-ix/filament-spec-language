@@ -699,13 +699,16 @@ fn the_timed_model_writer_carries_value_validity_rows_through_a_rename() {
         .insert_domain_package_document(package_identity(document), document.to_vec())
         .expect("a fresh evidence key");
     let limits = V2ReadLimits::fixture().for_ir();
-    let read = |bytes: &[u8]| filament_contract_model::read_checked_package(bytes, limits, &evidence);
+    let read =
+        |bytes: &[u8]| filament_contract_model::read_checked_package(bytes, limits, &evidence);
     let base = match read(emission.package.bytes()) {
         filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(base) => base,
         other => panic!("the base reads: {other:?}"),
     };
     assert!(
-        base.requirement_items().iter().any(|row| row.record.is_some()),
+        base.requirement_items()
+            .iter()
+            .any(|row| row.record.is_some()),
         "the scalar function carries value-validity records"
     );
     let mut typed = CheckedTimedModel::from_admitted(&base).expect("the tick model reads back");
@@ -728,7 +731,11 @@ fn the_timed_model_writer_carries_value_validity_rows_through_a_rename() {
             .map(|node| node.node_id.clone())
             .expect("one time source")
     };
-    assert_ne!(source_id(&*reread), source_id(&*base), "the timed nodes are renamed");
+    assert_ne!(
+        source_id(&*reread),
+        source_id(&*base),
+        "the timed nodes are renamed"
+    );
     assert_eq!(reread.requirement_items(), base.requirement_items());
     for record in reread
         .requirement_items()

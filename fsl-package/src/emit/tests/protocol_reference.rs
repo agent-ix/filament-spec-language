@@ -977,7 +977,10 @@ fn unresolved_and_non_protocol_references_refuse_by_cause() {
     let [missing] = missing.as_slice() else {
         panic!("one refusal: {missing:?}");
     };
-    assert_eq!(missing.cause, CheckCause::MissingName("Missing".to_owned()));
+    assert_eq!(
+        missing.cause.as_ref(),
+        &CheckCause::MissingName("Missing".to_owned())
+    );
 
     let qualified = refusals(&selecting(&format!(
         "function refers using v(): Boolean pure {{ protocol M::Fill }}\n{flow}"
@@ -986,7 +989,7 @@ fn unresolved_and_non_protocol_references_refuse_by_cause() {
         panic!("one refusal: {qualified:?}");
     };
     assert_eq!(
-        qualified.cause,
+        *qualified.cause,
         CheckCause::MissingName("M::Fill".to_owned())
     );
 
@@ -1011,7 +1014,7 @@ fn a_reference_with_a_missing_protocol_profile_alias_refuses_missing_profile() {
         panic!("one refusal: {refused:?}");
     };
     assert!(matches!(
-        &refused.cause,
+        refused.cause.as_ref(),
         CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), fsl_semantics::check::ProtocolAnchorCause::MissingProfile { alias, .. } if alias == "p")
     ));

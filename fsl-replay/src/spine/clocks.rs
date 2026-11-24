@@ -713,7 +713,7 @@ pub(crate) fn check_clock_refusal(
 ) -> Option<Box<CompileRefusal>> {
     use fsl_semantics::check::{CheckCause, ClockSelectionFault, TemporalCause};
 
-    let CheckCause::Temporal(cause) = &refusal.cause else {
+    let CheckCause::Temporal(cause) = &*refusal.cause else {
         return None;
     };
     let TemporalCause::ClockSelection {

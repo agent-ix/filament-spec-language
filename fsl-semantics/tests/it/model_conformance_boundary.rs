@@ -275,7 +275,7 @@ fn run_unit(
 fn failures(refusals: &[CheckRefusal]) -> Vec<&ModelConformanceFailure> {
     refusals
         .iter()
-        .map(|refusal| match &refusal.cause {
+        .map(|refusal| match &*refusal.cause {
             CheckCause::ModelConformance(failure) => &**failure,
             other => panic!("a typed model conformance failure is required: {other:?}"),
         })
@@ -303,7 +303,7 @@ fn denial(refusals: &[CheckRefusal]) -> NormalizationIncomplete {
         1,
         "an unfinished stage exposes only its denial: {refusals:?}"
     );
-    match &refusals[0].cause {
+    match &*refusals[0].cause {
         CheckCause::ModelIncomplete(incomplete) => *incomplete,
         other => panic!("an incomplete record is required: {other:?}"),
     }
@@ -583,7 +583,7 @@ pub(super) fn malformed_numeric_domain() {
     assert_eq!(refusals[0].code, Code::InvalidModelBinding);
     assert!(
         matches!(
-            refusals[0].cause,
+            &refusals[0].cause,
             ModelRefusalCause::IntakeMalformedDeclaration { .. }
         ),
         "{:?}",
@@ -975,7 +975,9 @@ fn c01_r03_and_r08a_report_every_failure_in_member_axis_order() {
             .outcome
             .as_ref()
             .err()
-            .is_some_and(|refusals| matches!(refusals[0].cause, CheckCause::ModelIncomplete(_)))
+            .is_some_and(|refusals| {
+                matches!(refusals[0].cause.as_ref(), CheckCause::ModelIncomplete(_))
+            })
         {
             total += 1;
         }
@@ -1019,7 +1021,7 @@ fn c02_unresolved_clause_name_precedes_conformance() {
             "{body}"
         );
         assert!(!matches!(
-            refused[0].cause,
+            refused[0].cause.as_ref(),
             CheckCause::ModelIncomplete(_) | CheckCause::ModelConformance(_)
         ));
     }
@@ -1089,7 +1091,9 @@ fn stage_total(document: &[u8], body: &str) -> u64 {
         .outcome
         .as_ref()
         .err()
-        .is_some_and(|refusals| matches!(refusals[0].cause, CheckCause::ModelIncomplete(_)))
+        .is_some_and(|refusals| {
+            matches!(refusals[0].cause.as_ref(), CheckCause::ModelIncomplete(_))
+        })
     {
         total += 1;
     }
@@ -1336,7 +1340,9 @@ fn c06_two_selections_canonical_order() {
             .outcome
             .as_ref()
             .err()
-            .is_some_and(|refusals| matches!(refusals[0].cause, CheckCause::ModelIncomplete(_)))
+            .is_some_and(|refusals| {
+                matches!(refusals[0].cause.as_ref(), CheckCause::ModelIncomplete(_))
+            })
         {
             total += 1;
         }
@@ -1362,7 +1368,9 @@ fn c07_second_selection_denial_withholds_first_failures() {
         .outcome
         .as_ref()
         .err()
-        .is_some_and(|refusals| matches!(refusals[0].cause, CheckCause::ModelIncomplete(_)))
+        .is_some_and(|refusals| {
+            matches!(refusals[0].cause.as_ref(), CheckCause::ModelIncomplete(_))
+        })
     {
         total += 1;
     }
@@ -1516,7 +1524,7 @@ fn contested_field_and_operation_targets_refuse_at_intake_with_one_structural_au
         assert_eq!(refusals[0].code, Code::InvalidModelBinding);
         assert!(
             matches!(
-                refusals[0].cause,
+                &refusals[0].cause,
                 ModelRefusalCause::RedefinitionTarget { .. }
             ),
             "operations={operation_contest}: {:?}",

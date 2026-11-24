@@ -518,7 +518,7 @@ fn operation_parameter_presence_is_contravariant_under_redefinition() {
         failure.axis == "parameter-presence"
             && failure.code == Code::IllTyped
             && matches!(
-                failure.cause,
+                &failure.cause,
                 ModelRefusalCause::VarianceParameter { index: 1, .. }
             )
     }));
@@ -1265,7 +1265,7 @@ fn a_wide_domain_and_a_literal_above_i64_max_are_decided_exactly() {
         } else {
             let refused = result.expect_err("2^63+1 does not fit the narrowed interval");
             assert_eq!(refused.len(), 1);
-            let CheckCause::ModelConformance(failure) = &refused[0].cause else {
+            let CheckCause::ModelConformance(failure) = refused[0].cause.as_ref() else {
                 panic!("actual refinement failure: {refused:?}");
             };
             assert_eq!(failure.cause, ModelRefusalCause::UnprovedRefinement);

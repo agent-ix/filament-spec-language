@@ -443,7 +443,7 @@ fn a_complete_function_does_not_enable_integer_operators_in_a_state_only_clause(
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert_eq!(refusals[0].cause.code(), Code::UnsupportedConstruct);
     assert!(matches!(
-        refusals[0].cause,
+        refusals[0].cause.as_ref(),
         CheckCause::ProfileProhibitedOperator(fsl_forms::BinaryOperator::IntegerMod)
     ));
     assert_eq!(refusals[0].location.path(), vec![2, 0]);
@@ -513,8 +513,8 @@ fn result_outside_a_postcondition_refuses_wrong_anchor() {
         let refusals = check_refusals(&document, body).expect_err("check-stage refusal");
         assert_eq!(refusals.len(), 1);
         assert_eq!(
-            refusals[0].cause,
-            CheckCause::UnanchoredResult {
+            refusals[0].cause.as_ref(),
+            &CheckCause::UnanchoredResult {
                 clause: expected_kind,
                 operation: expected_operation.map(str::to_owned),
             }
@@ -917,8 +917,8 @@ fn pre_in_an_invariant_or_a_precondition_refuses_forbidden_pre_read_at_the_pre()
         let refusals = check_refusals(&document, body).expect_err("pre refuses outside a post");
         assert_eq!(refusals.len(), 1, "{body}");
         assert_eq!(
-            refusals[0].cause,
-            CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead),
+            refusals[0].cause.as_ref(),
+            &CheckCause::WrongSnapshot(WrongSnapshotCause::ForbiddenPreRead),
             "{body}"
         );
         // `= 1`'s left child (index 0) is the `pre`.

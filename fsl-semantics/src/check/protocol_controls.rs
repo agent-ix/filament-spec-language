@@ -94,7 +94,7 @@ fn refusal(cause: ProtocolAnchorCause) -> CheckRefusal {
         // `region::DeclarationRegions::refusal_region` reads a
         // `ProtocolAnchor` cause's own span directly instead.
         location: Location::root(Origin::Expression),
-        cause: CheckCause::ProtocolAnchor(Box::new(cause)),
+        cause: Box::new(CheckCause::ProtocolAnchor(Box::new(cause))),
     }
 }
 
@@ -518,7 +518,7 @@ fn check_fifo(
             let wrapped = if wraps(&cause) && cause.cause().is_some() {
                 refusal(ProtocolAnchorCause::KeyClause {
                     channel: name.to_owned(),
-                    cause: Box::new(cause),
+                    cause: Box::new(*cause),
                     span,
                 })
             } else {
@@ -1013,7 +1013,7 @@ mod tests {
     fn causes(refusals: &[CheckRefusal]) -> Vec<&ProtocolAnchorCause> {
         refusals
             .iter()
-            .map(|refusal| match &refusal.cause {
+            .map(|refusal| match refusal.cause.as_ref() {
                 CheckCause::ProtocolAnchor(cause) => cause.as_ref(),
                 other => panic!("a ProtocolAnchor cause, got {other:?}"),
             })

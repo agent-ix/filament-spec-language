@@ -97,11 +97,11 @@ impl TypeInvariantDeclaration {
     pub(crate) fn refusal(&self, refusal: CheckRefusal) -> CheckRefusal {
         CheckRefusal {
             location: refusal.location,
-            cause: CheckCause::TypeInvariant(Box::new(TypeInvariantRefusal {
+            cause: Box::new(CheckCause::TypeInvariant(Box::new(TypeInvariantRefusal {
                 clause: self.invariant.clause.clone(),
                 position: self.invariant.position,
-                cause: refusal.cause,
-            })),
+                cause: *refusal.cause,
+            }))),
         }
     }
 
@@ -139,7 +139,7 @@ impl CheckRefusal {
     /// for a refusal located anywhere else.
     #[must_use]
     pub fn type_invariant_clause(&self) -> Option<&DeclarationKey> {
-        match &self.cause {
+        match self.cause.as_ref() {
             CheckCause::TypeInvariant(refusal) => Some(&refusal.clause),
             _ => None,
         }
@@ -150,7 +150,7 @@ impl CheckRefusal {
     /// else.
     #[must_use]
     pub fn type_invariant_member(&self) -> Option<MemberPath> {
-        match &self.cause {
+        match self.cause.as_ref() {
             CheckCause::TypeInvariant(refusal) => Some(refusal.member()),
             _ => None,
         }
@@ -160,7 +160,7 @@ impl CheckRefusal {
     /// about.
     #[must_use]
     pub fn type_invariant_cause(&self) -> Option<&CheckCause> {
-        match &self.cause {
+        match self.cause.as_ref() {
             CheckCause::TypeInvariant(refusal) => Some(&refusal.cause),
             _ => None,
         }

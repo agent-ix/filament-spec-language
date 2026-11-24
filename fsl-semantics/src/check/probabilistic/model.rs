@@ -1088,9 +1088,9 @@ pub(super) fn literal(node: CheckedNode<'_>) -> Option<CheckedLiteral> {
 fn fault(location: Location, invariant: &'static str) -> CheckRefusal {
     CheckRefusal {
         location,
-        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::StageFault(
             filament_semantic_value::catalog::InternalFault::new("S3", invariant),
-        ))),
+        )))),
     }
 }
 
@@ -1496,12 +1496,12 @@ impl Pass<'_, '_> {
                 .convert(&magnitude, &written.unit.name, &target)
                 .map_err(|cause| CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::Temporal(Box::new(
+                    cause: Box::new(CheckCause::Temporal(Box::new(
                         super::super::TemporalCause::TimeQuantity {
                             cause: Box::new(cause),
                             span: written.unit.span,
                         },
-                    )),
+                    ))),
                 })
         };
         let positive = |value: &Rational| !value.is_zero() && !value.numerator().is_negative();
@@ -1679,13 +1679,13 @@ impl Pass<'_, '_> {
             if random {
                 self.refusals.push(CheckRefusal {
                     location: read.location.clone(),
-                    cause: CheckCause::Probabilistic(Box::new(
+                    cause: Box::new(CheckCause::Probabilistic(Box::new(
                         ProbabilisticCause::RandomReadInPrecondition {
                             operation: read.operation.clone(),
                             parameter: read.parameter.clone(),
                             precondition: read.site.clone(),
                         },
-                    )),
+                    ))),
                 });
             }
         }

@@ -176,7 +176,7 @@ fn refusal_cause(refusal: &CompileRefusal) -> &ExtensionCause {
     let [first] = refusals.as_slice() else {
         panic!("expected one refusal, got {refusals:?}");
     };
-    let CheckCause::Extension(cause) = &first.cause else {
+    let CheckCause::Extension(cause) = &*first.cause else {
         panic!("expected an extension refusal, got {:?}", first.cause);
     };
     cause
@@ -839,7 +839,9 @@ fn a_node_kind_clause_naming_nothing_or_another_kind_refuses() {
     };
     assert_eq!(refusals[0].cause.code(), Code::MissingDeclaration);
     assert_eq!(refusals[0].cause.cause(), Some("missing-name"));
-    assert!(matches!(&refusals[0].cause, CheckCause::MissingName(name) if name == "Missing"));
+    assert!(
+        matches!(refusals[0].cause.as_ref(), CheckCause::MissingName(name) if name == "Missing")
+    );
 
     let other = compile(
         &node_kind_catalog(),
@@ -945,7 +947,7 @@ fn extension_causes(refusal: &CompileRefusal) -> Vec<&ExtensionCause> {
     };
     refusals
         .iter()
-        .map(|refusal| match &refusal.cause {
+        .map(|refusal| match &*refusal.cause {
             CheckCause::Extension(cause) => cause.as_ref(),
             other => panic!("expected an extension refusal, got {other:?}"),
         })

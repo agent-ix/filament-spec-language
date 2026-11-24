@@ -35,7 +35,7 @@ fn reserved(declarations: &str) -> (Vec<Found>, Vec<CheckRefusal>) {
     let found = refusals
         .iter()
         .filter_map(|refusal| {
-            let CheckCause::ReservedSlotName(cause) = &refusal.cause else {
+            let CheckCause::ReservedSlotName(cause) = refusal.cause.as_ref() else {
                 return None;
             };
             assert_eq!(refusal.cause.code(), Code::AmbiguousDeclaration);

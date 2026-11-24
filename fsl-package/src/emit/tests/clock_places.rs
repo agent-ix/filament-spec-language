@@ -1892,8 +1892,14 @@ fn renamed_timed_nodes_are_sorted_again_in_the_dependencies_of_a_holder() {
     for node in &mut graph {
         node.replace_node_id(&first, &renamed);
     }
-    assert_eq!(graph[holder].dependencies, [renamed.clone(), second.clone()]);
-    assert!(key(&graph, &second) < key(&graph, &renamed), "the order flips");
+    assert_eq!(
+        graph[holder].dependencies,
+        [renamed.clone(), second.clone()]
+    );
+    assert!(
+        key(&graph, &second) < key(&graph, &renamed),
+        "the order flips"
+    );
 
     crate::emit::order_dependencies(&mut graph, EmitRefusal::TimedModelWriterInvariant)
         .expect("the dependencies order");

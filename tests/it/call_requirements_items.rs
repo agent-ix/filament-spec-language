@@ -350,7 +350,7 @@ fn recursive_predicate_cycles_without_measures_refuse_on_the_spine() {
     };
     let cycles: Vec<_> = refusals
         .iter()
-        .filter_map(|refusal| match &refusal.cause {
+        .filter_map(|refusal| match &*refusal.cause {
             fsl_semantics::check::CheckCause::UnprovedDecrease {
                 cycle,
                 obligation: fsl_semantics::check::MeasureObligation::MissingMeasure,
@@ -424,7 +424,7 @@ fn recursive_predicate_cycles_with_decreasing_measures_admit_on_the_spine() {
         };
         assert!(
             refusals.iter().any(|refusal| matches!(
-                &refusal.cause,
+                refusal.cause.as_ref(),
                 fsl_semantics::check::CheckCause::UnprovedDecrease {
                     obligation: fsl_semantics::check::MeasureObligation::Decrease,
                     ..

@@ -423,7 +423,7 @@ pub(crate) fn assert_refusal(
     assert_eq!(refusal.cause.code(), code, "{body}: {refusal:?}");
     assert_eq!(refusal.cause.cause(), Some(cause), "{body}: {refusal:?}");
     assert_eq!(refusal.location.path(), path, "{body}: {refusal:?}");
-    let CheckCause::StateModel(model) = &refusal.cause else {
+    let CheckCause::StateModel(model) = refusal.cause.as_ref() else {
         panic!("{body}: a StateModel refusal, not {refusal:?}");
     };
     assert_eq!(model.family(), FamilyKind::StateModel);
@@ -439,7 +439,7 @@ pub(crate) fn assert_refusal(
 }
 
 pub(crate) fn candidates(refusal: &CheckRefusal) -> (&str, &[MemberCandidate]) {
-    let CheckCause::StateModel(model) = &refusal.cause else {
+    let CheckCause::StateModel(model) = &*refusal.cause else {
         panic!("a StateModel refusal: {refusal:?}");
     };
     let CheckCause::AmbiguousMember(ambiguous) = &model.cause else {
@@ -814,7 +814,7 @@ fn assert_old_field_refusal(declarations: &str) {
     assert_eq!(refusals.len(), 1, "{declarations}: {refusals:?}");
     assert_eq!(
         refusals[0].cause,
-        CheckCause::IllTyped(IllTypedCause::TypeMismatch),
+        Box::new(CheckCause::IllTyped(IllTypedCause::TypeMismatch)),
         "{declarations}"
     );
     assert_eq!(refusals[0].location.path(), vec![0], "{declarations}");

@@ -1723,7 +1723,7 @@ impl Found {
             // cause; value-typer refusals retain their original declaration
             // location so package region lookup can resolve the source node.
             location,
-            cause,
+            cause: Box::new(cause),
         })
     }
 }
@@ -2525,12 +2525,15 @@ fn body_refusal_at(
     execution_fields: &BTreeMap<String, BTreeSet<String>>,
     scope: &Scope,
 ) -> Found {
-    if matches!(&refusal.cause, CheckCause::ResourceExhausted(_)) {
+    if matches!(refusal.cause.as_ref(), CheckCause::ResourceExhausted(_)) {
         return Found::Raw(refusal, span);
     }
     let location = refusal.location.clone();
     let path = location.path();
-    if matches!(&refusal.cause, CheckCause::Unproved(Obligation::Nonzero)) {
+    if matches!(
+        refusal.cause.as_ref(),
+        CheckCause::Unproved(Obligation::Nonzero)
+    ) {
         if let Some(divisor_span) = unproved_nonzero_divisor_span(expression, spans, span) {
             span = divisor_span;
         }
@@ -2567,7 +2570,7 @@ fn body_refusal_at(
             return None;
         }
         let exists = scope.types().attribute(object.clone(), name).is_some();
-        let legacy_execution_root = matches!(&refusal.cause, CheckCause::MissingName(_));
+        let legacy_execution_root = matches!(refusal.cause.as_ref(), CheckCause::MissingName(_));
         (!exists || legacy_execution_root).then(|| {
             span = node_spans
                 .as_ref()
@@ -2577,7 +2580,7 @@ fn body_refusal_at(
             name.to_owned()
         })
     });
-    let untyped = match &refusal.cause {
+    let untyped = match refusal.cause.as_ref() {
         CheckCause::StateModel(state) => match &state.cause {
             CheckCause::UntypedMember(untyped) => Some((**untyped).clone()),
             _ => None,
@@ -2596,7 +2599,7 @@ fn body_refusal_at(
             location,
         );
     }
-    let cause = match refusal.cause {
+    let cause = match *refusal.cause {
         CheckCause::MissingName(_) if missing_member.is_some() => HyperCause::BodyMissing {
             name: missing_member.expect("checked above"),
             span,

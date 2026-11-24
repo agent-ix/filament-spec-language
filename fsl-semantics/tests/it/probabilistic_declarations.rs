@@ -553,7 +553,7 @@ fn the_service_model_checks_and_records_its_declarations() {
 fn causes(body: &str) -> Vec<ProbabilisticCause> {
     refusals_of(body)
         .into_iter()
-        .map(|refusal| match refusal.cause {
+        .map(|refusal| match *refusal.cause {
             CheckCause::Probabilistic(cause) => *cause,
             other => panic!("{body}: not a probabilistic refusal: {other:?}"),
         })
@@ -723,7 +723,7 @@ fn a_reference_valued_random_parameter_refuses_value_outside_type() {
         panic!("one refusal: {refusals:?}");
     };
     assert_eq!(refusal.cause.cause(), Some("value-outside-type"));
-    let CheckCause::Probabilistic(cause) = &refusal.cause else {
+    let CheckCause::Probabilistic(cause) = refusal.cause.as_ref() else {
         panic!("a probabilistic refusal: {refusal:?}");
     };
     assert!(names_parameter(cause, "target"), "{cause:?}");
@@ -740,7 +740,7 @@ fn a_reference_valued_random_parameter_refuses_value_outside_type() {
         panic!("one refusal: {refusals:?}");
     };
     assert_eq!(refusal.cause.cause(), Some("value-outside-type"));
-    let CheckCause::Probabilistic(cause) = &refusal.cause else {
+    let CheckCause::Probabilistic(cause) = refusal.cause.as_ref() else {
         panic!("a probabilistic refusal: {refusal:?}");
     };
     assert!(names_parameter(cause, "target"), "{cause:?}");
@@ -840,7 +840,7 @@ fn a_configured_rational_bits_ceiling_is_named_by_the_refusal() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("256 is nine bits");
-    let CheckCause::ResourceExhausted(limit) = &refusals[0].cause else {
+    let CheckCause::ResourceExhausted(limit) = refusals[0].cause.as_ref() else {
         panic!("a limit refusal: {:?}", refusals[0].cause);
     };
     assert_eq!(
@@ -866,7 +866,7 @@ fn exact_values_are_bounded_as_written() {
         let body = service(Some((STEADY, &steady_with_request(&value))), "");
         assert_eq!(located(&body), [limit(&value)], "{value:.40}");
         let refusals = refusals_of(&body);
-        let CheckCause::ResourceExhausted(limit) = &refusals[0].cause else {
+        let CheckCause::ResourceExhausted(limit) = refusals[0].cause.as_ref() else {
             panic!("a limit refusal: {:?}", refusals[0].cause);
         };
         assert_eq!(limit.kind.setting().name(), "s3.rational_bits");
@@ -1110,7 +1110,7 @@ fn a_quantity_random_parameter_checks_its_unit_and_precondition() {
         assert_eq!(refusals.len(), 1, "one refusal for {value}: {refusals:?}");
         let refusal = &refusals[0];
         assert_eq!(refusal.cause.cause(), Some("value-outside-type"));
-        let CheckCause::Probabilistic(cause) = &refusal.cause else {
+        let CheckCause::Probabilistic(cause) = refusal.cause.as_ref() else {
             panic!("a probabilistic refusal: {refusal:?}");
         };
         assert!(names_parameter(cause, "d"), "{cause:?}");
@@ -1131,7 +1131,7 @@ fn a_quantity_random_parameter_checks_its_unit_and_precondition() {
         panic!("one refusal: {refusals:?}");
     };
     assert_eq!(refusal.cause.cause(), Some("random-read-in-precondition"));
-    let CheckCause::Probabilistic(cause) = &refusal.cause else {
+    let CheckCause::Probabilistic(cause) = refusal.cause.as_ref() else {
         panic!("a probabilistic refusal: {refusal:?}");
     };
     assert!(names_parameter(cause, "d"), "{cause:?}");
@@ -1181,7 +1181,7 @@ fn a_quantity_literal_is_bounded_by_the_configured_rational_bits() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("256 is nine bits");
-    let CheckCause::ResourceExhausted(limit) = &past[0].cause else {
+    let CheckCause::ResourceExhausted(limit) = past[0].cause.as_ref() else {
         panic!("a limit refusal: {:?}", past[0].cause);
     };
     assert_eq!(
@@ -1206,7 +1206,7 @@ fn a_distribution_total_is_bounded_by_the_configured_rational_bits() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("the sum is four bits");
-    let CheckCause::ResourceExhausted(limit) = &refusals[0].cause else {
+    let CheckCause::ResourceExhausted(limit) = refusals[0].cause.as_ref() else {
         panic!("a limit refusal: {:?}", refusals[0].cause);
     };
     assert_eq!(
@@ -1787,7 +1787,7 @@ fn delay_weighting_is_a_timed_subject_form() {
         panic!("one refusal: {refusals:?}");
     };
     assert!(matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::Probabilistic(cause)
             if matches!(cause.as_ref(), ProbabilisticCause::TimeTypeMismatch { .. })
     ));
@@ -3246,7 +3246,7 @@ fn a_weight_sum_past_the_ceiling_refuses_promptly() {
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
     };
-    let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+    let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
         panic!("a limit refusal: {:?}", refusal.cause);
     };
     assert_eq!(limit.limit, 65_536);
@@ -3328,7 +3328,7 @@ fn a_huge_written_confidence_value_is_refused_with_the_limit_refusal() {
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
     };
-    let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+    let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
         panic!("a limit refusal: {:?}", refusal.cause);
     };
     assert_eq!(limit.kind.setting().name(), "s3.rational_bits");
@@ -3386,7 +3386,7 @@ fn a_workload_name_is_package_wide() {
         let [refusal] = &refusals[..] else {
             panic!("{second}: one refusal: {refusals:?}");
         };
-        let CheckCause::Probabilistic(cause) = &refusal.cause else {
+        let CheckCause::Probabilistic(cause) = refusal.cause.as_ref() else {
             panic!("a probabilistic cause: {refusal:?}");
         };
         assert!(matches!(
@@ -3436,7 +3436,7 @@ fn a_distribution_total_is_bounded_after_each_addition() {
     let refused = service(Some((D, &random(5, 65_535))), "");
     assert_eq!(located(&refused), [limit("d")]);
     let refusals = refusals_of(&refused);
-    let CheckCause::ResourceExhausted(limit) = &refusals[0].cause else {
+    let CheckCause::ResourceExhausted(limit) = refusals[0].cause.as_ref() else {
         panic!("a limit refusal: {refusals:?}");
     };
     assert_eq!((limit.limit, limit.actual), (65_536, 65_537));
@@ -3491,7 +3491,7 @@ fn a_cancelled_check_ends_cancelled() {
         );
         assert!(!refusals.is_empty(), "{when}");
         for refusal in &refusals {
-            let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+            let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
                 panic!("{when}: a cancelled refusal: {refusal:?}");
             };
             assert_eq!(
@@ -3938,7 +3938,7 @@ fn bare_decimal_threshold_overlong_refused() {
     };
     assert_eq!(refusal.cause.code(), Code::StageLimitExceeded);
     assert_eq!(refusal.cause.cause(), Some("work-budget-exceeded"));
-    let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+    let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
         panic!("a decimal scale limit refusal: {refusal:?}");
     };
     assert_eq!(limit.kind, CheckingLimitKind::DecimalLiteralScale);

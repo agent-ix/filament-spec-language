@@ -72,9 +72,9 @@ impl Typer<'_> {
                 let text = literal.text();
                 let uuid = Uuid::from_canonical_text(text).map_err(|_| CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::MalformedUuidLiteral {
+                    cause: Box::new(CheckCause::MalformedUuidLiteral {
                         argument: text.to_owned(),
-                    },
+                    }),
                 })?;
                 Ok(node(
                     NodeKind::Literal(CheckedLiteral(Value::Uuid(uuid))),
@@ -97,7 +97,7 @@ impl Typer<'_> {
                 if let Some(outside) = IntegerOutsideI128::of(IntegerSite::Literal, magnitude) {
                     return Err(CheckRefusal {
                         location: magnitude_location,
-                        cause: CheckCause::IntegerOutsideI128(outside),
+                        cause: Box::new(CheckCause::IntegerOutsideI128(outside)),
                     });
                 }
                 let count = if negated && *magnitude != Integer::from(0_i64) {
@@ -129,13 +129,13 @@ impl Typer<'_> {
                 if !(text_type.min()..=text_type.max()).contains(&retained_length) {
                     return Err(CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::TextLiteralOutsideBounds {
+                        cause: Box::new(CheckCause::TextLiteralOutsideBounds {
                             argument: text.to_owned(),
                             min: text_type.min(),
                             max: text_type.max(),
                             profile,
                             retained_length,
-                        },
+                        }),
                     });
                 }
                 let text_type = *text_type;
@@ -163,7 +163,7 @@ impl Typer<'_> {
         if let Some(index) = self.signatures().position(name) {
             return Err(CheckRefusal {
                 location: location.clone(),
-                cause: CheckCause::AmbiguousName {
+                cause: Box::new(CheckCause::AmbiguousName {
                     name: name.to_owned(),
                     loci: vec![
                         location.clone(),
@@ -172,16 +172,13 @@ impl Typer<'_> {
                             index,
                         }),
                     ],
-                },
+                }),
             });
         }
         match self.type_named(name, location) {
-            Err(
-                refusal @ CheckRefusal {
-                    cause: CheckCause::AmbiguousName { .. },
-                    ..
-                },
-            ) => Err(refusal),
+            Err(refusal) if matches!(refusal.cause.as_ref(), CheckCause::AmbiguousName { .. }) => {
+                Err(refusal)
+            }
             _ => Ok(()),
         }
     }

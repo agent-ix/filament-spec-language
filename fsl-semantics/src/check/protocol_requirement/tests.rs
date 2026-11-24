@@ -129,7 +129,7 @@ fn protocol_refusals(declarations: &str) -> (String, Vec<(ProtocolAnchorCause, C
         .unwrap_or_default();
     let found = refusals
         .into_iter()
-        .filter_map(|refusal| match &refusal.cause {
+        .filter_map(|refusal| match refusal.cause.as_ref() {
             CheckCause::ProtocolAnchor(cause) => Some(((**cause).clone(), refusal.clone())),
             _ => None,
         })
@@ -250,7 +250,7 @@ fn a_requirement_binds_a_clause_with_an_activation_and_a_capture() {
     assert!(
         refusals
             .iter()
-            .all(|refusal| !matches!(refusal.cause, CheckCause::Temporal(_))),
+            .all(|refusal| !matches!(refusal.cause.as_ref(), CheckCause::Temporal(_))),
         "{refusals:?}"
     );
 }
@@ -278,7 +278,7 @@ fn a_refused_protocol_is_followed_by_no_later_stage_consequence() {
     assert!(
         refusals
             .iter()
-            .all(|refusal| matches!(refusal.cause, CheckCause::ProtocolAnchor(_))),
+            .all(|refusal| matches!(refusal.cause.as_ref(), CheckCause::ProtocolAnchor(_))),
         "only the protocol's own refusals: {refusals:?}"
     );
 }
@@ -399,7 +399,7 @@ fn one_package_checks_three_families_and_binds_the_requirement() {
     assert!(
         refusals
             .iter()
-            .all(|refusal| matches!(&refusal.cause, CheckCause::ProtocolReference(_))),
+            .all(|refusal| matches!(refusal.cause.as_ref(), CheckCause::ProtocolReference(_))),
         "{refusals:?}"
     );
     let (_, assembled) = assemble_under(&one_temporal, unit);
@@ -596,7 +596,7 @@ fn three_units_bind_a_predicate_a_clause_and_a_protocol_across_units() {
         (refusal.cause.code().as_str(), refusal.cause.cause()),
         ("missing_declaration", Some("missing-name"))
     );
-    let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+    let CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() else {
         panic!("a protocol anchor refusal, got {refusal:?}");
     };
     assert!(

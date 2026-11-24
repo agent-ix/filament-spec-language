@@ -303,7 +303,9 @@ synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {
             Ok(_) => panic!("a presence-only arguments collision must refuse"),
         };
         assert!(
-            refusals.iter().any(|refusal| matches!(&refusal.cause,
+            refusals
+                .iter()
+                .any(|refusal| matches!(refusal.cause.as_ref(),
             fsl_semantics::check::CheckCause::PlanUnsupported { form, .. }
                 if form.contains("amount") && form.contains("declared presence")
                     && form.contains("acceptRequired") && form.contains("acceptOptional"))),
@@ -470,7 +472,9 @@ synthesis Reach using v grammar Config::ConfigVersion domain Lengths satisfies {
             )
             .expect_err("the individual Option/optional form remains explicitly staged");
         assert!(
-            refusals.iter().any(|refusal| matches!(&refusal.cause,
+            refusals
+                .iter()
+                .any(|refusal| matches!(refusal.cause.as_ref(),
             fsl_semantics::check::CheckCause::PlanUnsupported { form, .. }
                 if form.contains("amount") && !form.contains("conflicting")
                     && !(form.contains("requiredOption") && form.contains("optionalBool")))),

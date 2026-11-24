@@ -251,7 +251,7 @@ fn a_channel_refuses_reversed_ports_and_incompatible_carries() {
     );
     let refusals = check_connection_protocol(&reversed).unwrap_err();
     assert!(refusals.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), ProtocolAnchorCause::ChannelConnectionEnds { .. })
     )));
@@ -262,7 +262,7 @@ fn a_channel_refuses_reversed_ports_and_incompatible_carries() {
     );
     let refusals = check_connection_protocol(&incompatible).unwrap_err();
     assert!(refusals.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), ProtocolAnchorCause::ChannelConnectionCarries { .. })
     )));
@@ -280,7 +280,7 @@ fn a_channel_refuses_missing_connections_navigation_relationships_and_non_port_r
     );
     let refusals = check_connection_protocol(&missing).unwrap_err();
     assert!(refusals.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), ProtocolAnchorCause::MissingChannelConnection { .. })
     )));
@@ -295,7 +295,7 @@ fn a_channel_refuses_missing_connections_navigation_relationships_and_non_port_r
     );
     let refusals = check_connection_protocol(&navigation).unwrap_err();
     assert!(refusals.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), ProtocolAnchorCause::ChannelConnectionExport { required: "connection", actual: "relationship", .. })
     )));
@@ -307,7 +307,7 @@ fn a_channel_refuses_missing_connections_navigation_relationships_and_non_port_r
     .replace("role Outlet on M::pump_out;", "role Outlet on M::Sys;");
     let refusals = check_connection_protocol(&component_role).unwrap_err();
     assert!(refusals.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), ProtocolAnchorCause::ChannelPortRole { role, .. } if role == "Outlet")
     )));
@@ -329,7 +329,7 @@ fn a_connection_relates_no_values_and_cannot_bind_a_role() {
     );
     let refusals = check_connection_protocol(&related).unwrap_err();
     assert!(refusals.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), ProtocolAnchorCause::RelatedConnection { message, .. } if *message == "a connection relates ports, not values; bind it to a channel with via")
     )));
@@ -403,7 +403,7 @@ fn refused(text: &str) -> Vec<Refused<'_>> {
     refusals
         .iter()
         .map(|refusal| {
-            let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+            let CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() else {
                 panic!("a protocol cause, got {refusal:?}");
             };
             let span = cause.span();
@@ -590,7 +590,7 @@ fn unwritten(text: &str) -> Vec<ProtocolConstruct> {
     let refusals = check(&text).map(|_| ()).expect_err("the protocol refuses");
     refusals
         .iter()
-        .map(|refusal| match &refusal.cause {
+        .map(|refusal| match refusal.cause.as_ref() {
             CheckCause::ProtocolReference(cause) => match cause.as_ref() {
                 ProtocolReferenceCause::NotEmitted { construct } => *construct,
             },

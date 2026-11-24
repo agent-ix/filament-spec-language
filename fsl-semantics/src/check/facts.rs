@@ -1472,7 +1472,7 @@ impl<'a> Definedness<'a> {
     fn refuse(node: CheckedNode<'_>, obligation: Obligation) -> CheckRefusal {
         CheckRefusal {
             location: node.location().clone(),
-            cause: CheckCause::Unproved(obligation),
+            cause: Box::new(CheckCause::Unproved(obligation)),
         }
     }
 
@@ -1588,10 +1588,11 @@ impl<'a> Definedness<'a> {
                 match self.discharge_node(node, facts) {
                     // FR-495: an unproved obligation is not recorded; the
                     // evaluator meets it at run time.
-                    Err(CheckRefusal {
-                        cause: CheckCause::Unproved(_),
-                        ..
-                    }) => Ok(()),
+                    Err(CheckRefusal { cause, .. })
+                        if matches!(cause.as_ref(), CheckCause::Unproved(_)) =>
+                    {
+                        Ok(())
+                    }
                     other => other,
                 }
             }
@@ -1676,11 +1677,11 @@ impl<'a> Definedness<'a> {
                     );
                     Err(CheckRefusal {
                         location: node.location().clone(),
-                        cause: CheckCause::Unproved(Obligation::Range {
+                        cause: Box::new(CheckCause::Unproved(Obligation::Range {
                             required: Box::new(required.proved()),
                             proved: Box::new(proved.proved()),
                             operand,
-                        }),
+                        })),
                     })
                 }
             }
@@ -2084,11 +2085,11 @@ impl<'a> Definedness<'a> {
                 let Some(declared_operation) = self.dispatch_operations.get(operation_index) else {
                     return Err(CheckRefusal {
                         location: node.location().clone(),
-                        cause: CheckCause::InvalidDispatchDeclaration(Box::new(
+                        cause: Box::new(CheckCause::InvalidDispatchDeclaration(Box::new(
                             InvalidDispatchDeclaration::OperationOutOfRange {
                                 operation: operation_index,
                             },
-                        )),
+                        ))),
                     });
                 };
                 let callees = self
@@ -2097,12 +2098,12 @@ impl<'a> Definedness<'a> {
                     .map(DispatchTable::callees)
                     .ok_or_else(|| CheckRefusal {
                         location: node.location().clone(),
-                        cause: CheckCause::InvalidDispatchDeclaration(Box::new(
+                        cause: Box::new(CheckCause::InvalidDispatchDeclaration(Box::new(
                             InvalidDispatchDeclaration::TableOutOfRange {
                                 member: declared_operation.member.clone(),
                                 table: table_index,
                             },
-                        )),
+                        ))),
                     })?;
                 for callee in callees {
                     self.calls.push(CallSite {

@@ -307,7 +307,7 @@ impl Lowering<'_> {
                 })
                 .map_err(|refusal| CheckRefusal {
                     location: clause.name_location.clone(),
-                    cause: CheckCause::ExecutionPointBinding(refusal),
+                    cause: Box::new(CheckCause::ExecutionPointBinding(refusal)),
                 })?;
         }
         let mut scope = Vec::with_capacity(clause.parameters.len());

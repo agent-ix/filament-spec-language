@@ -1530,8 +1530,14 @@ fn tc_740_a_satisfied_exists_or_negated_forall_derives_a_decisive_witness() {
         Some(occurrence(&unit, "EqualsAll", &[], Operator::Binary))
     );
     let operands = equals.operands.as_ref().expect("comparison operands");
-    assert!(crate::result::same_element(&operands[0], &Value::Boolean(false)));
-    assert!(crate::result::same_element(&operands[1], &Value::Boolean(true)));
+    assert!(crate::result::same_element(
+        &operands[0],
+        &Value::Boolean(false)
+    ));
+    assert!(crate::result::same_element(
+        &operands[1],
+        &Value::Boolean(true)
+    ));
     assert!(equals.quantifier.is_none() && equals.index.is_none());
 }
 

@@ -936,7 +936,7 @@ fn rational_bound_operands_refuse_noncanonical_strings_and_shapes() {
         let parsed = parse_document(&serde_json::to_vec(&document).unwrap());
         let refusals = read_records("test/rational-value-type", &parsed).unwrap_err();
         assert!(
-            matches!(&refusals[0].cause,
+            matches!(& refusals[0].cause,
                 fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
                     if node == "ix://test/rational-value-type/Ratio/constraints/minNumerator" && member.to_string() == "TypeDefinition.constraints[1].operands"
             ),
@@ -952,7 +952,7 @@ fn rational_bound_operands_refuse_noncanonical_strings_and_shapes() {
         let parsed = parse_document(&serde_json::to_vec(&document).unwrap());
         let refusals = read_records("test/rational-value-type", &parsed).unwrap_err();
         assert!(
-            matches!(&refusals[0].cause,
+            matches!(& refusals[0].cause,
                 fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
                     if member.to_string() == "TypeDefinition.constraints[1].operands"
             ),
@@ -981,7 +981,7 @@ fn unsafe_numeric_rational_bounds_refuse_before_operand_intake() {
         };
         assert_eq!(refusal.code, Code::NoncanonicalWire);
         assert!(
-            matches!(&refusal.cause,
+            matches!(& refusal.cause,
                 fsl_semantics::model::refusal::ModelRefusalCause::NoncanonicalNumber {
                     inexact: fsl_semantics::model::refusal::Inexact::Integer, document_pointer,
                 } if document_pointer.as_str() == "/types/0/constraints/1/operands/value"
@@ -1005,7 +1005,7 @@ fn rational_string_bounds_preserve_missing_operand_and_domain_refusal_order() {
     let parsed = parse_document(&serde_json::to_vec(&document).unwrap());
     let refusals = read_records("test/rational-value-type", &parsed).unwrap_err();
     assert!(
-        matches!(&refusals[0].cause, ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
+        matches!(& refusals[0].cause, ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
         if member.to_string() == "TypeDefinition.constraints"),
         "{refusals:?}"
     );
@@ -1017,7 +1017,7 @@ fn rational_string_bounds_preserve_missing_operand_and_domain_refusal_order() {
     let parsed = parse_document(&serde_json::to_vec(&document).unwrap());
     let refusals = read_records("test/rational-value-type", &parsed).unwrap_err();
     assert!(
-        matches!(&refusals[0].cause, ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
+        matches!(& refusals[0].cause, ModelRefusalCause::IntakeMalformedDeclaration { member, .. }
         if member.to_string() == "TypeDefinition.constraints[3].operands"),
         "{refusals:?}"
     );
@@ -1032,7 +1032,7 @@ fn rational_string_bounds_preserve_missing_operand_and_domain_refusal_order() {
         let parsed = parse_document(&serde_json::to_vec(&document).unwrap());
         let refusals = read_records("test/rational-value-type", &parsed).unwrap_err();
         assert!(
-            matches!(&refusals[0].cause, ModelRefusalCause::UnsupportedDeclarationForm { member, .. }
+            matches!(& refusals[0].cause, ModelRefusalCause::UnsupportedDeclarationForm { member, .. }
             if member.to_string() == "TypeDefinition.constraints"),
             "{refusals:?}"
         );
@@ -1096,8 +1096,7 @@ fn duplicate_package_documents_refuse_and_one_identity_can_have_two_aliases() {
     let assert_conflict = |refusal: fsl_semantics::model::normalize::ModelRefusal| {
         assert_eq!(refusal.code, Code::InvalidPackage);
         assert_eq!(refusal.cause.as_str(), "conflicting-definition");
-        assert!(matches!(
-            refusal.cause,
+        assert!(matches!(& refusal.cause,
             fsl_semantics::model::refusal::ModelRefusalCause::ConflictingPackage { identity }
                 if identity == "example/config-version"
         ));
@@ -2035,7 +2034,7 @@ fn a_deep_member_the_schema_refuses_is_judged_by_the_readers_rule() {
             );
             assert!(
                 matches!(
-                    refusal.cause,
+                    &refusal.cause,
                     fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration { .. }
                 ),
                 "{refusal:?}"
@@ -2045,8 +2044,7 @@ fn a_deep_member_the_schema_refuses_is_judged_by_the_readers_rule() {
         // and span.
         let named = refusals.iter().any(|refusal| {
             refusal.detail.contains("agent-ix-semantic-ir refused")
-                && matches!(
-                    &refusal.cause,
+                && matches!(& refusal.cause,
                     fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration {
                         node,
                         artifact: Some(artifact),
@@ -2105,8 +2103,7 @@ fn a_composite_cycle_of_any_length_is_refused_by_the_readers_rule() {
             let closing = format!("ix://{package_identity}/relationship/C{}-has-C0", count - 1);
             let names_it = refusals.iter().any(|refusal| {
                 refusal.code == fsl_foundation::diagnostic::Code::InvalidModelBinding
-                    && matches!(
-                        &refusal.cause,
+                    && matches!(& refusal.cause,
                         fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration {
                             node,
                             ..
@@ -3413,7 +3410,7 @@ mod float_members {
                 },
                 "the diagnostic path ends at the rejected operator expression: {clause}: {refusal:?}"
             );
-            match &refusal.cause {
+            match &*refusal.cause {
                 CheckCause::OperandTypeMismatch {
                     operator,
                     left_type,

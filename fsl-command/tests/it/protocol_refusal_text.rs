@@ -60,7 +60,7 @@ fn a_protocol_slot_refusal_renders_its_declared_subject_and_location() {
     };
     assert!(
         refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::ProtocolAnchor(cause)
                 if matches!(cause.as_ref(), ProtocolAnchorCause::SlotModelState { node, .. } if node == "Pick")
         )),
@@ -123,7 +123,7 @@ fn a_wrong_observation_refusal_renders_its_decision_and_read_location() {
     };
     assert!(
         refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::ProtocolAnchor(cause)
                 if matches!(cause.as_ref(), ProtocolAnchorCause::WrongObservation {
                     node, owner, binder, ..
@@ -164,7 +164,7 @@ fn an_undeclared_owner_refusal_renders_its_name_and_location() {
     };
     assert!(
         refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::ProtocolAnchor(cause)
                 if matches!(cause.as_ref(), ProtocolAnchorCause::NodeRole { node, name, .. }
                     if node == "Pick" && name == "Absent")
@@ -241,7 +241,7 @@ fn an_inverted_delivery_interval_refuses_type_mismatch_at_the_interval() {
     };
     assert!(
         refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::ProtocolAnchor(cause)
                 if matches!(cause.as_ref(), ProtocolAnchorCause::ChannelDeliveryRange {
                     lower: 4, upper: 3, ..
@@ -250,9 +250,10 @@ fn an_inverted_delivery_interval_refuses_type_mismatch_at_the_interval() {
         "{refusals:?}"
     );
     assert!(
-        !refusals
-            .iter()
-            .any(|refusal| matches!(&refusal.cause, CheckCause::UnsupportedFeature { .. })),
+        !refusals.iter().any(|refusal| matches!(
+            refusal.cause.as_ref(),
+            CheckCause::UnsupportedFeature { .. }
+        )),
         "a refused protocol is not also unsupported: {refusals:?}"
     );
     let headline = refusals.first().expect("one refusal at least");
@@ -319,9 +320,10 @@ fn the_filed_handover_example_with_an_inverted_interval_refuses_type_mismatch() 
         panic!("a check refusal: {:?}", failure.refusal);
     };
     assert!(
-        !refusals
-            .iter()
-            .any(|refusal| matches!(&refusal.cause, CheckCause::UnsupportedFeature { .. })),
+        !refusals.iter().any(|refusal| matches!(
+            refusal.cause.as_ref(),
+            CheckCause::UnsupportedFeature { .. }
+        )),
         "a refused protocol is not also unsupported: {refusals:?}"
     );
     let headline = refusals.first().expect("one refusal at least");

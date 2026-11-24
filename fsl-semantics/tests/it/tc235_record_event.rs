@@ -472,7 +472,7 @@ fn tc235_m20_unrelated_process_root_schema_error_is_retained() {
     assert!(refusals.iter().all(|refusal| {
         refusal.code == Code::InvalidModelBinding
             && matches!(
-                refusal.cause,
+                &refusal.cause,
                 ModelRefusalCause::IntakeMalformedDeclaration { .. }
             )
             && refusal.detail.contains("TypeDefinition")

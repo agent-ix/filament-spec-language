@@ -376,7 +376,7 @@ fn complete_value_requires_one_admitted_division_law_but_mod_needs_none() {
         ));
         assert_eq!(refusal.cause.code().as_str(), "missing_declaration");
         assert!(matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::MissingSelection {
                 role: LawRole::IntegerDivision
             }
@@ -398,7 +398,7 @@ fn integer_operators_refuse_noninteger_operands_and_state_only_dead_branches() {
         noninteger.integer_division = Some(admitted_integer_division(DivisionProfile::Floor));
         let refusal = one_check_refusal(noninteger);
         assert_eq!(refusal.cause.code().as_str(), "ill_typed");
-        assert!(matches!(refusal.cause, CheckCause::IllTyped(_)));
+        assert!(matches!(refusal.cause.as_ref(), CheckCause::IllTyped(_)));
         assert!(refusal.location.path().is_empty());
 
         let mut state_only = operator_declarations(
@@ -411,7 +411,7 @@ fn integer_operators_refuse_noninteger_operands_and_state_only_dead_branches() {
         let refusal = one_check_refusal(state_only);
         assert_eq!(refusal.cause.code().as_str(), "unsupported_construct");
         assert!(matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::ProfileProhibitedOperator(_)
         ));
         assert_eq!(refusal.location.path(), vec![2]);
@@ -426,7 +426,7 @@ fn integer_slash_needs_complete_value_and_a_rational_result_type() {
     let refusal = one_check_refusal(state_only);
     assert_eq!(refusal.cause.code().as_str(), "unsupported_construct");
     assert!(matches!(
-        refusal.cause,
+        refusal.cause.as_ref(),
         CheckCause::ProfileProhibitedOperator(fsl_forms::BinaryOperator::Divide)
     ));
     assert!(refusal.location.path().is_empty());

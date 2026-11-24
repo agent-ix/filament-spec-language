@@ -30,7 +30,7 @@ fn a_contract_entry_naming_two_clauses_of_one_name_refuses() {
         !found.is_empty()
             && found
                 .iter()
-                .all(|refusal| matches!(&refusal.cause, CheckCause::AmbiguousName { name, .. } if name == "Dup")),
+                .all(|refusal| matches!(refusal.cause.as_ref(), CheckCause::AmbiguousName { name, .. } if name == "Dup")),
         "{found:?}"
     );
 

@@ -76,7 +76,7 @@ fn a_rational_operation_over_an_integer_operand_is_refused_under_both_check_mode
                 .check(body.root())
                 .expect_err("the malformed operation is refused");
             assert_eq!(
-                refusal.cause,
+                *refusal.cause,
                 CheckCause::Unproved(Obligation::RationalRange),
                 "{mode:?}"
             );

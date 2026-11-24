@@ -85,7 +85,7 @@ fn reported(declarations: &str) -> Vec<Reported> {
         .expect_err("S3 refuses")
         .iter()
         .map(|refusal| {
-            let CheckCause::Temporal(cause) = &refusal.cause else {
+            let CheckCause::Temporal(cause) = refusal.cause.as_ref() else {
                 panic!("a temporal refusal: {refusal:?}");
             };
             let span = cause.span();
@@ -429,7 +429,7 @@ fn causes(declarations: &str) -> Vec<TemporalCause> {
     check(declarations)
         .expect_err("S3 refuses")
         .into_iter()
-        .map(|refusal| match refusal.cause {
+        .map(|refusal| match *refusal.cause {
             CheckCause::Temporal(cause) => *cause,
             other => panic!("a temporal refusal: {other:?}"),
         })
@@ -473,7 +473,7 @@ fn each_task_set_declaration_needs_the_temporal_complete_layer() {
         let [error] = refusals.as_slice() else {
             panic!("{body}: one error expected: {refusals:?}");
         };
-        let CheckCause::Temporal(cause) = &error.cause else {
+        let CheckCause::Temporal(cause) = error.cause.as_ref() else {
             panic!("{body}: {error:?}");
         };
         assert!(

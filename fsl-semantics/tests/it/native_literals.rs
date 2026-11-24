@@ -216,7 +216,7 @@ fn a_non_canonical_uuid_literal_refuses_with_its_argument() {
             "function f using v(): UUID pure {{ UUID(\"{text}\") }}"
         ));
         assert_eq!(
-            refusal.cause,
+            *refusal.cause,
             CheckCause::MalformedUuidLiteral {
                 argument: text.to_owned()
             },
@@ -244,7 +244,7 @@ fn a_timestamp_outside_i128_refuses_as_the_integer_literal() {
         "function f using v(): Timestamp pure {{ Timestamp({too_high}) }}"
     ));
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::IntegerOutsideI128(IntegerOutsideI128 {
             site: IntegerSite::Literal,
             value: too_high.to_owned(),
@@ -257,7 +257,7 @@ fn a_timestamp_outside_i128_refuses_as_the_integer_literal() {
         "function f using v(): Timestamp pure {{ Timestamp(-{too_low}) }}"
     ));
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::IntegerOutsideI128(IntegerOutsideI128 {
             site: IntegerSite::Literal,
             value: too_low.to_owned(),
@@ -290,7 +290,7 @@ fn a_call_that_is_not_the_literal_form_refuses_type_mismatch() {
         let refusal = refused(&format!(
             "function f using v({parameters}): {result} pure {{ {body} }}"
         ));
-        assert_eq!(refusal.cause, mismatch(), "{body}");
+        assert_eq!(*refusal.cause, mismatch(), "{body}");
         assert_eq!(refusal.location.path(), path, "{body}");
     }
 }
@@ -306,7 +306,7 @@ fn a_function_named_like_a_native_literal_makes_the_call_ambiguous() {
         "function UUID using v(): Boolean pure {{ true }}\n\
          function f using v(): UUID pure {{ UUID(\"{U1}\") }}"
     ));
-    let CheckCause::AmbiguousName { name, loci } = &refusal.cause else {
+    let CheckCause::AmbiguousName { name, loci } = refusal.cause.as_ref() else {
         panic!("ambiguous name: {:?}", refusal.cause);
     };
     assert_eq!(name, "UUID");
@@ -341,7 +341,7 @@ fn a_literal_never_adapts_to_a_slot_of_another_type() {
         let refusal = refused(&format!(
             "function f using v({parameters}): {result} pure {{ {body} }}"
         ));
-        assert_eq!(refusal.cause, mismatch(), "{body}");
+        assert_eq!(*refusal.cause, mismatch(), "{body}");
     }
     for body in [
         "\"abc\" < \"abd\"".to_owned(),
@@ -350,7 +350,7 @@ fn a_literal_never_adapts_to_a_slot_of_another_type() {
     ] {
         let refusal = refused(&format!("function f using v(): Boolean pure {{ {body} }}"));
         assert_eq!(
-            refusal.cause,
+            *refusal.cause,
             CheckCause::IllTyped(IllTypedCause::OperatorIneligible),
             "{body}"
         );
@@ -373,7 +373,7 @@ fn native_scalars_reject_ordering() {
             };
             let refusal = refused(&format!("function f using v(): Boolean pure {{ {body} }}"));
             assert_eq!(
-                refusal.cause,
+                *refusal.cause,
                 CheckCause::IllTyped(IllTypedCause::OperatorIneligible),
                 "{ty} rejects {operator}"
             );
@@ -416,7 +416,7 @@ fn a_function_named_text_makes_the_constructor_call_ambiguous() {
         "function Text using v(): Boolean pure { true }\n\
          function f using v(): Text[0, 8; nfc] pure { Text(\"abc\") }",
     );
-    let CheckCause::AmbiguousName { name, loci } = &refusal.cause else {
+    let CheckCause::AmbiguousName { name, loci } = refusal.cause.as_ref() else {
         panic!("ambiguous name: {:?}", refusal.cause);
     };
     assert_eq!(name, "Text");
@@ -442,13 +442,13 @@ fn a_qualified_constructor_name_is_an_ordinary_name() {
         let refusal = refused(&format!("function f using v(): {result} pure {{ {body} }}"));
         assert!(
             matches!(
-                refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::MissingQualifiedName(_) | CheckCause::MissingName(_)
             ),
             "{body}: {:?}",
             refusal.cause
         );
-        causes.push(std::mem::discriminant(&refusal.cause));
+        causes.push(std::mem::discriminant(refusal.cause.as_ref()));
     }
     assert!(causes.windows(2).all(|pair| pair[0] == pair[1]));
 }
@@ -567,7 +567,7 @@ fn a_text_literal_outside_its_retained_bounds_refuses_at_the_call() {
             "function f using v(): {result} pure {{ Text(\"{literal}\") }}"
         ));
         assert_eq!(
-            refusal.cause,
+            *refusal.cause,
             CheckCause::TextLiteralOutsideBounds {
                 argument: literal
                     .replace("\\u0301", "\u{301}")
@@ -605,7 +605,7 @@ fn text_literals_require_a_text_position_and_one_quoted_argument() {
         let refusal = refused(&format!(
             "function f using v({parameters}): {result} pure {{ {body} }}"
         ));
-        assert_eq!(refusal.cause, mismatch(), "{body}");
+        assert_eq!(*refusal.cause, mismatch(), "{body}");
         assert_eq!(refusal.location.path(), path, "{body}");
         assert!(matches!(
             refusal.location.origin,
@@ -625,7 +625,7 @@ fn decimal_arithmetic_rejects_mixed_types_unless_an_operand_is_converted() {
          type R = Decimal[0, 1000; 1, 1; exact];\n\
          function mixed using v(p: P, r: R): P pure { p + r }",
     );
-    assert_eq!(refusal.cause, mismatch());
+    assert_eq!(*refusal.cause, mismatch());
     assert_eq!(
         (refusal.cause.code().as_str(), refusal.cause.cause()),
         ("ill_typed", Some("type-mismatch"))
@@ -636,7 +636,7 @@ fn decimal_arithmetic_rejects_mixed_types_unless_an_operand_is_converted() {
          type R = Decimal[0, 1000; 1, 1; exact];\n\
          function wrongResult using v(p: P, q: P): R pure { p + q }",
     );
-    assert_eq!(refusal.cause, mismatch());
+    assert_eq!(*refusal.cause, mismatch());
 
     check(
         "type P = Decimal[0, 10000; 2, 2; exact];\n\

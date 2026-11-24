@@ -158,7 +158,7 @@ fn arithmetic_and_comparison_across_a_class_require_conversion() {
             assert!(
                 matches!(
                     refusals.as_slice(),
-                    [refusal] if refusal.cause == CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+                    [refusal] if refusal.cause.as_ref() == &CheckCause::IllTyped(IllTypedCause::TypeMismatch)
                 ),
                 "{expression} under {equivalence}: {refusals:?}"
             );

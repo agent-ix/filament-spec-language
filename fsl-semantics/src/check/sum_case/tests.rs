@@ -172,7 +172,7 @@ fn locals(node: CheckedNode<'_>) -> Vec<(Slot, ValueType)> {
 
 /// The exhaustiveness refusal `refusal` carries.
 fn exhaustiveness(refusal: &CheckRefusal) -> (&NodeKey, &[String], ExhaustivenessObligation) {
-    let CheckCause::SumCase(cause) = &refusal.cause else {
+    let CheckCause::SumCase(cause) = refusal.cause.as_ref() else {
         panic!("a SumCase cause, not {:?}", refusal.cause)
     };
     let SumCaseCause::UnprovedExhaustiveness {
@@ -241,7 +241,7 @@ fn a_binder_is_visible_only_in_its_own_arm_and_a_case_nests() {
         "Integer",
         "case s { Circle(r): 0; Shape::Rect(w, h): r; Empty: 0; }",
     );
-    assert_eq!(refusal.cause, CheckCause::MissingName("r".into()));
+    assert_eq!(*refusal.cause, CheckCause::MissingName("r".into()));
 
     let (_, typed) = check(
         "Integer",
@@ -260,7 +260,10 @@ fn without_an_expectation_the_arm_bodies_decide_the_result_type() {
         "Integer",
         "let c = case s { Circle(r): r; Rect(w, h): true; Empty: 0; } in 0",
     );
-    assert_eq!(bad.cause, CheckCause::IllTyped(IllTypedCause::TypeMismatch));
+    assert_eq!(
+        *bad.cause,
+        CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+    );
     assert_eq!(bad.location, at(1), "at the body `true`");
 
     // Integer and Int[..] bodies infer Integer; one shared type is kept.
@@ -353,7 +356,10 @@ fn a_case_reports_only_its_first_refusal_in_the_fixed_order() {
 
     // Typing comes before reachability.
     let (_, bad) = refused("Integer", "case s { Circle(r): true; Empty: 0; }");
-    assert_eq!(bad.cause, CheckCause::IllTyped(IllTypedCause::TypeMismatch));
+    assert_eq!(
+        *bad.cause,
+        CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+    );
     assert_eq!(bad.location, Unit::body().child(1), "at the body `true`");
 
     // A scrutinee that is no union ends the builder before any arm.
@@ -362,7 +368,10 @@ fn a_case_reports_only_its_first_refusal_in_the_fixed_order() {
             "Integer",
             &format!("case {scrutinee} {{ Missing: 0; Other::X: 1; }}"),
         );
-        assert_eq!(bad.cause, CheckCause::IllTyped(IllTypedCause::TypeMismatch));
+        assert_eq!(
+            *bad.cause,
+            CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+        );
         assert_eq!(
             bad.location,
             Unit::body().child(0),
@@ -410,11 +419,10 @@ fn nesting_is_bounded_only_by_the_node_ceiling() {
         ClauseKind::Body,
         CheckingLimits::default().with_nodes(needed - 1),
     );
-    let Err(CheckRefusal {
-        cause: CheckCause::ResourceExhausted(limit),
-        ..
-    }) = typed
-    else {
+    let Err(CheckRefusal { ref cause, .. }) = typed else {
+        panic!("one node short is a limit, not {typed:?}")
+    };
+    let CheckCause::ResourceExhausted(limit) = cause.as_ref() else {
         panic!("one node short is a limit, not {typed:?}")
     };
     assert_eq!(limit.kind, CheckingLimitKind::Nodes);
@@ -437,7 +445,7 @@ fn nesting_is_bounded_only_by_the_node_ceiling() {
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal, not {refusals:?}")
     };
-    let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+    let CheckCause::ResourceExhausted(limit) = refusal.cause.as_ref() else {
         panic!("a node limit, not {refusal:?}")
     };
     assert_eq!(limit.kind, CheckingLimitKind::Nodes);
@@ -554,7 +562,10 @@ fn a_union_construction_checks_as_the_member_over_its_union() {
 
     // A payload is checked against its declared position type.
     let (_, bad) = refused("Shape", "Shape::Rect(2, true)");
-    assert_eq!(bad.cause, CheckCause::IllTyped(IllTypedCause::TypeMismatch));
+    assert_eq!(
+        *bad.cause,
+        CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+    );
     assert_eq!(bad.location, Unit::body().child(1), "at `true`");
 }
 
@@ -569,7 +580,7 @@ fn a_construction_of_the_wrong_shape_refuses_at_the_construction() {
     ] {
         let (_, bad) = refused("Shape", body);
         assert_eq!(
-            bad.cause,
+            *bad.cause,
             CheckCause::IllTyped(IllTypedCause::TypeMismatch),
             "{body}"
         );
@@ -578,7 +589,7 @@ fn a_construction_of_the_wrong_shape_refuses_at_the_construction() {
     // A union name is a type, so an unknown qualifier is an unresolved name.
     let (_, bad) = refused("Shape", "Missing::Empty");
     assert!(
-        matches!(bad.cause, CheckCause::MissingQualifiedName(name) if name.name == "Missing::Empty")
+        matches!(bad.cause.as_ref(), CheckCause::MissingQualifiedName(name) if name.name == "Missing::Empty")
     );
 }
 
@@ -634,7 +645,7 @@ fn a_construction_checks_the_same_under_every_clause_kind() {
         let (typed, _) = bad.type_body(clause, CheckingLimits::default());
         let refusal = typed.expect_err("Shape::Rect(1) is refused");
         assert_eq!(
-            refusal.cause,
+            *refusal.cause,
             CheckCause::IllTyped(IllTypedCause::TypeMismatch),
             "{clause:?}"
         );
@@ -647,7 +658,7 @@ fn a_construction_checks_the_same_under_every_clause_kind() {
     let measure = "case Shape::Rect(1) { Empty: 0; Circle(r): r; Rect(w, h): w; }";
     let refusal = type_measure(&measure_unit(measure)).expect_err("Shape::Rect(1) is refused");
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::IllTyped(IllTypedCause::TypeMismatch)
     );
     assert_eq!(refusal.location, Unit::body().child(0));
@@ -701,7 +712,7 @@ fn scope_over(unit: &Unit, extra: Vec<CompositeDeclaration>, enums: Vec<EnumBind
 const Q: &str = "union q { m(Integer) }\nenum E { m, z }\n";
 
 fn ambiguity(refusal: &CheckRefusal) -> (&str, &[QualifiedCandidate]) {
-    let CheckCause::AmbiguousQualified(ambiguous) = &refusal.cause else {
+    let CheckCause::AmbiguousQualified(ambiguous) = refusal.cause.as_ref() else {
         panic!("an ambiguous qualified reference, not {:?}", refusal.cause)
     };
     (&ambiguous.name, &ambiguous.candidates)
@@ -928,7 +939,7 @@ fn union_equality_compares_one_union_and_refuses_two() {
     let (typed, _) = unit.type_body_in(&scope, ClauseKind::Body, CheckingLimits::default());
     let refusal = typed.expect_err("A::X(1) = B::X(1) is refused");
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::IllTyped(IllTypedCause::TypeMismatch)
     );
     assert_eq!(refusal.location, Unit::body());
@@ -1016,7 +1027,7 @@ fn a_case_result_type_follows_the_expectation_then_the_arm_bodies() {
     ] {
         let refusal = refused_over("", "Integer", body);
         assert_eq!(
-            refusal.cause,
+            *refusal.cause,
             CheckCause::IllTyped(IllTypedCause::TypeMismatch),
             "{body}"
         );
@@ -1030,7 +1041,7 @@ fn a_case_result_type_follows_the_expectation_then_the_arm_bodies() {
         "let c = case s { Empty: sequence[]; Circle(a): sequence[]; Rect(a, b): sequence[]; } in 0",
     );
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::IllTyped(IllTypedCause::AmbiguousLiteral)
     );
 }

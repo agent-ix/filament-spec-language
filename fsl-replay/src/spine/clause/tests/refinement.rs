@@ -60,7 +60,7 @@ fn check(causes: Vec<CheckCause>) -> CompileRefusal {
             .into_iter()
             .map(|cause| CheckRefusal {
                 location: location(),
-                cause,
+                cause: Box::new(cause),
             })
             .collect(),
         region: None,

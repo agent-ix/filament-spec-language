@@ -1042,7 +1042,7 @@ fn w_missing_required_temporal_refuses_before_a_package_exists() {
         fsl_foundation::Code::MissingDeclaration
     );
     assert_eq!(refusal.cause.cause(), Some("missing-name"));
-    let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+    let CheckCause::ProtocolAnchor(cause) = &*refusal.cause else {
         panic!("protocol requirement: {refusal:?}");
     };
     let fsl_semantics::check::ProtocolAnchorCause::MissingRequirement { name, span } =
@@ -1128,7 +1128,7 @@ fn a_canonical_relationship_binds_through_real_model_intake() {
         };
         assert_eq!(refusal.cause.code(), code);
         assert_eq!(refusal.cause.cause(), Some(cause));
-        let CheckCause::ProtocolAnchor(detail) = &refusal.cause else {
+        let CheckCause::ProtocolAnchor(detail) = &*refusal.cause else {
             panic!("relationship refusal: {refusal:?}");
         };
         let span = detail.span();
@@ -1612,7 +1612,7 @@ fn tc134_compensation_rejects_a_protocol_profile_alias() {
         )
         .expect_err("a protocol profile cannot select a compensation clock role");
     assert!(refusals.iter().any(|refusal| matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         fsl_semantics::check::CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), fsl_semantics::check::ProtocolAnchorCause::WrongProfileKind { alias, required, .. } if alias == "P" && *required == "temporal profile")
     )), "{refusals:?}");

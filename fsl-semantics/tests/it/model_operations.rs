@@ -2304,8 +2304,7 @@ fn a_decimal_typed_parameter_admits_with_its_policy() {
     let parameter_node = note["identity"].as_str().unwrap();
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert!(
-        matches!(
-            &refusals[0].cause,
+        matches!(& refusals[0].cause,
             fsl_semantics::model::refusal::ModelRefusalCause::IntakeMalformedDeclaration { node, .. }
                 if node == parameter_node
         ) && refusals[0].code.as_str() == "invalid_model_binding",

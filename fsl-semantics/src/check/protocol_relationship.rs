@@ -65,7 +65,7 @@ fn refusal(cause: ProtocolAnchorCause) -> CheckRefusal {
         // `region::DeclarationRegions::refusal_region` reads the cause's own
         // span.
         location: Location::root(Origin::Expression),
-        cause: CheckCause::ProtocolAnchor(Box::new(cause)),
+        cause: Box::new(CheckCause::ProtocolAnchor(Box::new(cause))),
     }
 }
 
@@ -202,7 +202,7 @@ pub(crate) fn check(
                     target.span,
                     CheckRefusal {
                         location: Location::root(Origin::Expression),
-                        cause: CheckCause::ModelIncomplete(denial),
+                        cause: Box::new(CheckCause::ModelIncomplete(denial)),
                     },
                 ));
                 continue;

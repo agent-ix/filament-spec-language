@@ -1045,9 +1045,7 @@ impl CheckedGraph {
                 .map(|identity| {
                     self.object_types
                         .iter()
-                        .find_map(|(declaration, known)| {
-                            (known == identity).then_some(declaration)
-                        })
+                        .find_map(|(declaration, known)| (known == identity).then_some(declaration))
                         .and_then(|declaration| self.object_nodes.get(declaration))
                         .cloned()
                         .ok_or_else(|| fault("referenced-object-has-a-model-node"))

@@ -148,7 +148,7 @@ fn read(
 
 fn refused_at_check(package: &CheckedPackage, static_type: &str, field: &str) -> CheckCause {
     match check(package, static_type, field) {
-        Err(refusal) => refusal.cause,
+        Err(refusal) => *refusal.cause,
         Ok(checked) => panic!("expected a check refusal, got {:?}", checked.value_type()),
     }
 }

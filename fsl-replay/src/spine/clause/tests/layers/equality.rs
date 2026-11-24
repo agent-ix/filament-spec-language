@@ -141,7 +141,7 @@ fn refuses(layer: &str, operand: &str, required: HeaderLayer) {
             selected,
             required: actual,
             span,
-        } = found.cause
+        } = *found.cause
         else {
             panic!("expected a typed layer refusal: {found:?}");
         };
@@ -308,7 +308,7 @@ fn tuple_union_and_collection_kinds_are_whole_values() {
                 };
                 assert_eq!(refusals.len(), 1);
                 assert!(matches!(
-                    refusals[0].cause,
+                    refusals[0].cause.as_ref(),
                     CheckCause::LayerEquality {
                         required: HeaderLayer::ValueComplete,
                         ..
@@ -346,7 +346,7 @@ fn function_equalities_use_their_selected_layer() {
                 panic!("check-stage refusal")
             };
             assert!(matches!(
-                refusals[0].cause,
+                refusals[0].cause.as_ref(),
                 CheckCause::LayerEquality {
                     required: HeaderLayer::StateGraph,
                     ..
@@ -371,7 +371,7 @@ fn an_ineligible_equality_keeps_its_operator_refusal() {
     assert_eq!(refusals[0].cause.code(), Code::IllTyped);
     assert_eq!(refusals[0].cause.cause(), Some("operator-ineligible"));
     assert!(!matches!(
-        refusals[0].cause,
+        refusals[0].cause.as_ref(),
         CheckCause::LayerEquality { .. }
     ));
 }

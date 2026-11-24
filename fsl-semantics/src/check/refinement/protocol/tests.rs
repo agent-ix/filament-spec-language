@@ -172,14 +172,14 @@ struct Refused {
 
 impl Refused {
     fn refinement(&self) -> &RefinementCause {
-        let CheckCause::Refinement(refusal) = &self.refusal.cause else {
+        let CheckCause::Refinement(refusal) = self.refusal.cause.as_ref() else {
             panic!("a refinement refusal: {:?}", self.refusal);
         };
         &refusal.cause
     }
 
     fn refinement_refusal(&self) -> &RefinementRefusal {
-        let CheckCause::Refinement(refusal) = &self.refusal.cause else {
+        let CheckCause::Refinement(refusal) = self.refusal.cause.as_ref() else {
             panic!("a refinement refusal: {:?}", self.refusal);
         };
         refusal
@@ -543,7 +543,7 @@ fn the_rows_select_the_concrete_protocol_and_record_its_node() {
     );
     assert_eq!(unselected.at, "pp");
     assert!(matches!(
-        &unselected.refusal.cause,
+        unselected.refusal.cause.as_ref(),
         CheckCause::ProtocolAnchor(cause)
             if matches!(cause.as_ref(), crate::check::refusal::ProtocolAnchorCause::MissingProfile { alias, .. } if alias == "pp")
     ));
@@ -831,7 +831,10 @@ fn the_coverage_waits_for_the_clause_and_a_refused_clause_reports_alone() {
         assert!(!found.is_empty());
         for refused in &found {
             assert!(
-                matches!(refused.refusal.cause, CheckCause::ProtocolAnchor(_)),
+                matches!(
+                    refused.refusal.cause.as_ref(),
+                    CheckCause::ProtocolAnchor(_)
+                ),
                 "the clause's own refusal alone: {refused:?}"
             );
         }
@@ -863,9 +866,10 @@ fn a_refusal_of_a_row_outside_the_clause_is_reported_beside_a_refused_clause() {
         "{found:?}"
     );
     assert!(
-        found
-            .iter()
-            .any(|refused| matches!(refused.refusal.cause, CheckCause::ProtocolAnchor(_))),
+        found.iter().any(|refused| matches!(
+            refused.refusal.cause.as_ref(),
+            CheckCause::ProtocolAnchor(_)
+        )),
         "the clause's own refusal: {found:?}"
     );
     assert!(
@@ -883,15 +887,15 @@ fn a_refusal_of_a_row_outside_the_clause_is_reported_beside_a_refused_clause() {
         .position(|refused| refused.refinement_or_none().is_some())
         .expect("the row refusal is reported");
     assert!(
-        found[..first_row]
-            .iter()
-            .all(|refused| matches!(refused.refusal.cause, CheckCause::ProtocolAnchor(_)))
-            && first_row > 0,
+        found[..first_row].iter().all(|refused| matches!(
+            refused.refusal.cause.as_ref(),
+            CheckCause::ProtocolAnchor(_)
+        )) && first_row > 0,
         "protocol refusals lead: {found:?}"
     );
     assert!(
         found.iter().all(|refused| matches!(
-            refused.refusal.cause,
+            refused.refusal.cause.as_ref(),
             CheckCause::ProtocolAnchor(_) | CheckCause::Refinement(_)
         )),
         "no later-stage consequence: {found:?}"
@@ -900,7 +904,7 @@ fn a_refusal_of_a_row_outside_the_clause_is_reported_beside_a_refused_clause() {
 
 impl Refused {
     fn refinement_or_none(&self) -> Option<&RefinementCause> {
-        match &self.refusal.cause {
+        match self.refusal.cause.as_ref() {
             CheckCause::Refinement(refusal) => Some(&refusal.cause),
             _ => None,
         }

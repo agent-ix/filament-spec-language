@@ -2568,9 +2568,12 @@ fn object_parameter_reward_candidates_are_checked_before_runtime() {
         };
         assert!(
             refusals.iter().any(|refusal| match expected {
-                0 => matches!(refusal.cause, CheckCause::Unproved(Obligation::Nonzero)),
+                0 => matches!(
+                    refusal.cause.as_ref(),
+                    CheckCause::Unproved(Obligation::Nonzero)
+                ),
                 1 => matches!(
-                    refusal.cause,
+                    refusal.cause.as_ref(),
                     CheckCause::IllTyped(IllTypedCause::TypeMismatch)
                 ),
                 _ => refusal.cause.cause() == Some("state-read-in-reward"),

@@ -11,8 +11,9 @@ use fsl_replay::{
     call_site, replay, CallSite, CanonicalAssignment, Code, DependencyEntryWire, DependencyInput,
     EnvironmentLabels, EvaluatedValue, FunctionSite, Identifier, ImportedFunctionName,
     ImportedFunctionSite, InputArmResult, InputSettlement, LibraryName, ObjectEnvironmentRef,
-    QualifiedName, ReplayLimits, RequestClocks, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource,
-    RequestTargetWire, SourceIdentity, StateEnvironment, SuppliedLibrary, WitnessValue,
+    QualifiedName, ReplayLimits, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource,
+    RequestClocks, RequestTargetWire, SourceIdentity, StateEnvironment, SuppliedLibrary,
+    WitnessValue,
 };
 use ix_trace_rs::trace;
 use std::collections::BTreeMap;
@@ -576,7 +577,7 @@ fn supplied_dependency_internal_lists_reach_the_library_semantic_owner() {
     let fsl_replay::CompileRefusal::Check { refusals, .. } = *refusal else {
         panic!("the library semantic checker refuses: {refusal:?}")
     };
-    let fsl_semantics::check::CheckCause::Refinement(refusal) = &refusals[0].cause else {
+    let fsl_semantics::check::CheckCause::Refinement(refusal) = &*refusals[0].cause else {
         panic!("typed refinement list refusal: {refusals:?}")
     };
     let fsl_semantics::check::RefinementCause::InternalList(defect) = &refusal.cause else {

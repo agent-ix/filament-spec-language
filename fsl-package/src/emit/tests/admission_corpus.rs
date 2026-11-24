@@ -2281,7 +2281,7 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
         .expect_err("a dependency protocol over another model is refused");
     assert!(
         refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             fsl_semantics::check::CheckCause::Refinement(refinement)
                 if matches!(
                     &refinement.cause,
@@ -2327,7 +2327,7 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
             )
             .expect_err("an unknown dependency clause or type refuses");
         assert!(refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             fsl_semantics::check::CheckCause::Refinement(refinement)
                 if matches!(
                     &refinement.cause,
@@ -2469,7 +2469,7 @@ fn a_dependency_protocol_node_row_checks_its_receiver_argument() {
         .iter()
         .find(|refusal| {
             matches!(
-                &refusal.cause,
+                refusal.cause.as_ref(),
                 fsl_semantics::check::CheckCause::Refinement(refinement)
                     if matches!(
                         &refinement.cause,
@@ -2487,7 +2487,7 @@ fn a_dependency_protocol_node_row_checks_its_receiver_argument() {
         .expect("typed receiver argument mismatch");
     assert_eq!(refusal.cause.code(), fsl_foundation::Code::IllTyped);
     assert_eq!(refusal.cause.cause(), Some("type-mismatch"));
-    let fsl_semantics::check::CheckCause::Refinement(refinement) = &refusal.cause else {
+    let fsl_semantics::check::CheckCause::Refinement(refinement) = &*refusal.cause else {
         unreachable!("the selected refusal is a refinement mismatch")
     };
     assert_eq!(
@@ -4132,7 +4132,7 @@ fn a_present_option_history_initial_has_no_literal_form_and_is_refused_typed() {
     };
     assert!(
         matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             fsl_semantics::check::CheckCause::RefinementNotEmitted { name, .. } if name == "R"
         ),
         "a typed refusal naming the refinement: {refusal:?}"

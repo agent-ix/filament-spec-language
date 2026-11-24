@@ -568,7 +568,7 @@ pub(crate) struct Refused {
 
 impl Refused {
     pub(crate) fn refinement(&self) -> &RefinementCause {
-        let CheckCause::Refinement(refusal) = &self.refusal.cause else {
+        let CheckCause::Refinement(refusal) = self.refusal.cause.as_ref() else {
             panic!("a refinement refusal: {:?}", self.refusal);
         };
         &refusal.cause
@@ -2147,7 +2147,10 @@ fn only_the_refinement_beside_a_terminal_is_refused() {
         )
         .expect_err("the refinement is not emitted yet");
     assert!(
-        matches!(refusals[0].cause, CheckCause::RefinementNotEmitted { .. }),
+        matches!(
+            refusals[0].cause.as_ref(),
+            CheckCause::RefinementNotEmitted { .. }
+        ),
         "{refusals:?}"
     );
     assert_eq!(refusals.len(), 1, "{refusals:?}");

@@ -242,8 +242,8 @@ fn quantity_types_check_in_every_position_over_the_one_unit_node() {
         panic!("one refusal: {refusals:?}");
     };
     assert_eq!(
-        refusal.cause,
-        CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+        refusal.cause.as_ref(),
+        &CheckCause::IllTyped(IllTypedCause::TypeMismatch)
     );
     let region = regions.refusal_region(refusal).expect("a region");
     assert_eq!(&text[region.start() as usize..region.end() as usize], "3 s");

@@ -2186,8 +2186,10 @@ impl Scope {
             location: Location::root(
                 filament_semantic_value::location::ExpressionOwner::Expression,
             ),
-            cause: CheckCause::InternalFault(Box::new(super::refusal::KeyFault::StageFault(
-                filament_semantic_value::catalog::InternalFault::new("S3", invariant),
+            cause: Box::new(CheckCause::InternalFault(Box::new(
+                super::refusal::KeyFault::StageFault(
+                    filament_semantic_value::catalog::InternalFault::new("S3", invariant),
+                ),
             ))),
         };
         let unions: Vec<(filament_exact::NodeKey, Vec<String>)> = self
@@ -2349,8 +2351,8 @@ impl Scope {
                 Some(
                     admit_ieee_profile(&[definition], &[]).map_err(|cause| CheckRefusal {
                         location: Location::root(Origin::Expression),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::IeeeProfileAdmission(
-                            cause,
+                        cause: Box::new(CheckCause::InternalFault(Box::new(
+                            KeyFault::IeeeProfileAdmission(cause),
                         ))),
                     })?,
                 );
@@ -2767,7 +2769,7 @@ pub(super) const NO_CHARGE: filament_exact::ScalarLimits = filament_exact::Scala
 fn refuse(location: &Location, cause: CheckCause) -> CheckRefusal {
     CheckRefusal {
         location: location.clone(),
-        cause,
+        cause: Box::new(cause),
     }
 }
 
@@ -2886,11 +2888,11 @@ fn operand_mismatch(
 ) -> CheckRefusal {
     CheckRefusal {
         location: location.clone(),
-        cause: CheckCause::OperandTypeMismatch {
+        cause: Box::new(CheckCause::OperandTypeMismatch {
             operator,
             left_type: Box::new(left_type),
             right_type: Box::new(right_type),
-        },
+        }),
     }
 }
 
@@ -3449,16 +3451,16 @@ impl<'a> Typer<'a> {
             StageFailure::RefusedWithPayload(refusal, _) => *refusal,
             StageFailure::Limit(limit) => CheckRefusal {
                 location: location.clone(),
-                cause: super::limit_cause(&limit),
+                cause: Box::new(super::limit_cause(&limit)),
             },
             StageFailure::LimitWithPayload(limit, _) => CheckRefusal {
                 location: location.clone(),
-                cause: super::limit_cause(&limit),
+                cause: Box::new(super::limit_cause(&limit)),
             },
             StageFailure::Fault(fault) => CheckRefusal {
                 location: location.clone(),
-                cause: CheckCause::InternalFault(Box::new(super::refusal::KeyFault::StageFault(
-                    fault,
+                cause: Box::new(CheckCause::InternalFault(Box::new(
+                    super::refusal::KeyFault::StageFault(fault),
                 ))),
             },
             StageFailure::Cancelled(_) => super::state_model::fault(location),
@@ -3587,7 +3589,7 @@ impl<'a> Typer<'a> {
         site: Option<(&Location, usize)>,
     ) -> Result<Slot, CheckRefusal> {
         if let Some(mut refusal) = reserved_slot_refusal(name, None, location) {
-            if let CheckCause::ReservedSlotName(cause) = &mut refusal.cause {
+            if let CheckCause::ReservedSlotName(cause) = refusal.cause.as_mut() {
                 cause.binder = site.map(|(node, ordinal)| (node.clone(), ordinal));
             }
             return Err(refusal);
@@ -4429,11 +4431,13 @@ impl<'a> Typer<'a> {
                     .get(unit_id.clone())
                     .ok_or_else(|| CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::UnheldUnit(unit_id))),
+                        cause: Box::new(CheckCause::InternalFault(Box::new(KeyFault::UnheldUnit(
+                            unit_id,
+                        )))),
                     })?;
                 units.insert(unit.clone()).map_err(|refusal| CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::Identity(refusal),
+                    cause: Box::new(CheckCause::Identity(refusal)),
                 })?;
             }
         }
@@ -4466,8 +4470,8 @@ impl<'a> Typer<'a> {
                     if !units.ids().any(|held| held == unit_id) {
                         return Err(CheckRefusal {
                             location: location.clone(),
-                            cause: CheckCause::InternalFault(Box::new(KeyFault::UnheldUnit(
-                                unit_id,
+                            cause: Box::new(CheckCause::InternalFault(Box::new(
+                                KeyFault::UnheldUnit(unit_id),
                             ))),
                         });
                     }
@@ -4877,7 +4881,7 @@ impl<'a> Typer<'a> {
                     .map_err(|refusal| CheckRefusal::from_ill_typed(location, refusal))?;
                 let unit = IdentifiedUnit::new(unit).map_err(|refusal| CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::Identity(refusal),
+                    cause: Box::new(CheckCause::Identity(refusal)),
                 })?;
                 (
                     NodeKind::Quantity(operator, left_box, right_box),
@@ -4893,11 +4897,11 @@ impl<'a> Typer<'a> {
                 };
                 return Err(CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::OperandTypeMismatch {
+                    cause: Box::new(CheckCause::OperandTypeMismatch {
                         operator,
                         left_type: Box::new(left_type),
                         right_type: Box::new(right_type),
-                    },
+                    }),
                 });
             }
         };
@@ -4935,7 +4939,7 @@ impl<'a> Typer<'a> {
             QuantityRefusal::IllTyped(_) => ineligible(location),
             QuantityRefusal::Identity(refusal) => CheckRefusal {
                 location: location.clone(),
-                cause: CheckCause::Identity(refusal),
+                cause: Box::new(CheckCause::Identity(refusal)),
             },
         })?;
         let base = self.push(operand);
@@ -5020,7 +5024,7 @@ impl<'a> Typer<'a> {
                     QuantityRefusal::IllTyped(_) => ineligible(location),
                     QuantityRefusal::Identity(refusal) => CheckRefusal {
                         location: location.clone(),
-                        cause: CheckCause::Identity(refusal),
+                        cause: Box::new(CheckCause::Identity(refusal)),
                     },
                 })?;
                 (
@@ -5165,7 +5169,7 @@ impl<'a> Typer<'a> {
         field == "step"
             && self
                 .name(&name.name, None, &Location::root(Origin::Expression))
-                .is_err_and(|refusal| matches!(refusal.cause, CheckCause::MissingName(_)))
+                .is_err_and(|refusal| matches!(refusal.cause.as_ref(), CheckCause::MissingName(_)))
     }
 
     /// `comparison`, located at `location`, when it is `p = absent` or `p

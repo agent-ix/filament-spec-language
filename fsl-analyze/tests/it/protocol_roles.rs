@@ -2183,7 +2183,7 @@ fn a_retire_predicate_reads_a_named_population() {
         "{refusal:?}"
     );
     assert_eq!(at.as_deref(), Some("absent"), "located at `absent`");
-    let CheckCause::MissingSegment { name, .. } = &refusal.cause else {
+    let CheckCause::MissingSegment { name, .. } = &*refusal.cause else {
         panic!("a missing population segment: {refusal:?}");
     };
     assert_eq!(name, "M::absent", "the refusal retains the name");

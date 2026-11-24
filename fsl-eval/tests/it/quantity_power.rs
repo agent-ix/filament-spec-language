@@ -48,7 +48,7 @@ fn refusal(functions: &str) -> CheckRefusal {
 fn ill_typed(functions: &str, path: &[usize]) -> IllTypedCause {
     let refusal = refusal(functions);
     assert_at(&refusal, path);
-    match refusal.cause {
+    match *refusal.cause {
         CheckCause::IllTyped(cause) => cause,
         other => panic!("an ill_typed refusal, not {other:?}"),
     }
@@ -159,7 +159,10 @@ fn a_negative_exponent_over_a_base_not_proved_nonzero_refuses() {
     ] {
         let refusal = refusal(functions);
         assert!(
-            matches!(refusal.cause, CheckCause::Unproved(Obligation::Nonzero)),
+            matches!(
+                refusal.cause.as_ref(),
+                CheckCause::Unproved(Obligation::Nonzero)
+            ),
             "{functions}: {refusal:?}"
         );
         // At the first `^`: the left operand of the comparison, under the
@@ -325,7 +328,7 @@ fn an_exponent_outside_i128_refuses_and_the_i128_extremes_check() {
         "function big using v(): Boolean pure { 2 m ^ 170141183460469231731687303715884105728 = 2 m ^ 0 }",
     );
     assert!(
-        matches!(refusal.cause, CheckCause::IntegerOutsideI128(_)),
+        matches!(refusal.cause.as_ref(), CheckCause::IntegerOutsideI128(_)),
         "{refusal:?}"
     );
     assert_at(&refusal, &[0]);

@@ -690,7 +690,7 @@ fn preimage_bytes_bind_before_the_work_budget() {
         .expect_err("one declaration's preimage passes 10,000 bytes");
     assert!(
         matches!(
-            refusals[0].cause,
+            *refusals[0].cause,
             CheckCause::ResourceExhausted(ref exceeded)
                 if exceeded.stage == CheckingStage::Typing
                     && exceeded.kind == CheckingLimitKind::InputBytes
@@ -920,7 +920,7 @@ fn rational_literal_outcome(numerator: i64, denominator: i64) -> Result<Json, Ve
             assert_eq!(literals.len(), 1, "{numerator}/{denominator}");
             Ok(literals[0]["body"].clone())
         }
-        Err(refusals) => Err(refusals.into_iter().map(|refusal| refusal.cause).collect()),
+        Err(refusals) => Err(refusals.into_iter().map(|refusal| *refusal.cause).collect()),
     }
 }
 
@@ -1026,7 +1026,7 @@ fn rational_literal_normalization_exhausting_the_bits_limit_is_a_stage_limit() {
         outcome(numerator, denominator)
             .expect_err("the normalization exceeds the limit")
             .into_iter()
-            .map(|refusal| refusal.cause)
+            .map(|refusal| *refusal.cause)
             .collect::<Vec<_>>()
     };
     assert_eq!(
@@ -1062,7 +1062,7 @@ fn a_rational_literal_never_picks_its_own_domain() {
         checked
             .expect_err("the literal picks no domain")
             .into_iter()
-            .map(|refusal| refusal.cause)
+            .map(|refusal| *refusal.cause)
             .collect::<Vec<_>>()
     };
     assert_eq!(

@@ -1178,7 +1178,7 @@ impl<'a> Application<'a> {
             }) {
                 return Err(CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::ReservedIntrinsicConflict(name.to_owned()),
+                    cause: Box::new(CheckCause::ReservedIntrinsicConflict(name.to_owned())),
                 });
             }
             // FR-397-AC-25: a unit without a float form refuses the profile
@@ -1186,7 +1186,7 @@ impl<'a> Application<'a> {
             if typer.scope().ieee_profile.is_none() {
                 return Err(CheckRefusal {
                     location: location.clone(),
-                    cause: CheckCause::IeeeProfileNotAdmitted,
+                    cause: Box::new(CheckCause::IeeeProfileNotAdmitted),
                 });
             }
             if arity != intrinsic.arity() {
@@ -1219,10 +1219,14 @@ impl<'a> Application<'a> {
         }
         let declared = match typer.type_named(name, location) {
             Ok(value_type) => Some(value_type),
-            Err(CheckRefusal {
-                cause: CheckCause::MissingName(_) | CheckCause::MissingQualifiedName(_),
-                ..
-            }) => None,
+            Err(CheckRefusal { cause, .. })
+                if matches!(
+                    cause.as_ref(),
+                    CheckCause::MissingName(_) | CheckCause::MissingQualifiedName(_)
+                ) =>
+            {
+                None
+            }
             Err(refusal) => return Err(refusal),
         };
         match &declared {
@@ -1261,11 +1265,11 @@ impl<'a> Application<'a> {
             // check did not expand is outside every place that admits it.
             None if typer.scope().is_clock_reading(name) => Err(CheckRefusal {
                 location: location.clone(),
-                cause: CheckCause::ClockReadingCall(name.to_owned()),
+                cause: Box::new(CheckCause::ClockReadingCall(name.to_owned())),
             }),
             None => Err(CheckRefusal {
                 location: location.clone(),
-                cause: CheckCause::MissingName(name.to_owned()),
+                cause: Box::new(CheckCause::MissingName(name.to_owned())),
             }),
         }
     }
@@ -1287,7 +1291,7 @@ impl<'a> Application<'a> {
             .resolve(member)
             .map_err(|cause| CheckRefusal {
                 location: location.clone(),
-                cause,
+                cause: Box::new(cause),
             })?;
         let ineligible = || CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible);
         let (function, signature) = import
@@ -2320,8 +2324,8 @@ impl crate::family::FamilyContract for ValueFunctionFamily {
         // or a lowering work charge) is a `StageFailure::Limit` naming that
         // limit's kind, bound and count, located at the node whose entry
         // failed (FR-096), not a typed `Refused`.
-        let body = checked_body.map_err(|refusal| match refusal.cause {
-            CheckCause::ResourceExhausted(ref exceeded) => StageFailure::Limit(
+        let body = checked_body.map_err(|refusal| match refusal.cause.as_ref() {
+            CheckCause::ResourceExhausted(exceeded) => StageFailure::Limit(
                 LimitExceeded::new(exceeded.kind.setting(), exceeded.limit, exceeded.actual)
                     .at(declarations.locus(&refusal.location)),
             ),
@@ -2341,7 +2345,9 @@ impl crate::family::FamilyContract for ValueFunctionFamily {
             ClassifyFailure::Limit(exceeded) => located(exceeded),
             ClassifyFailure::Fault(fault) => StageFailure::Refused(CheckRefusal {
                 location: declarations.location.clone(),
-                cause: CheckCause::InternalFault(Box::new(KeyFault::UnclassifiedExtent(fault))),
+                cause: Box::new(CheckCause::InternalFault(Box::new(
+                    KeyFault::UnclassifiedExtent(fault),
+                ))),
             }),
         })?;
         Ok(Staged::new(CheckedDeclaration { body, claims }))
@@ -2381,7 +2387,9 @@ mod tests {
             &TargetTypes::new(&scope, &location),
         )
         .unwrap_err();
-        assert!(matches!(refusal.cause, CheckCause::MissingName(name) if name == "Nowhere"));
+        assert!(
+            matches!(refusal.cause.as_ref(), CheckCause::MissingName(name) if name == "Nowhere")
+        );
     }
 }
 
@@ -2743,7 +2751,7 @@ pub(crate) mod checking_tests {
         let refusal = check_application(&mut typer, "f", &arguments, &location)
             .expect_err("two arguments against a one-parameter signature must refuse");
         assert!(matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(IllTypedCause::TypeMismatch)
         ));
     }
@@ -2767,8 +2775,7 @@ pub(crate) mod checking_tests {
         let location = root_location();
         let refusal = check_application(&mut typer, "nowhere", &[], &location)
             .expect_err("an undeclared name with no tuple-constructor type must refuse");
-        assert!(matches!(
-            refusal.cause,
+        assert!(matches!(refusal.cause.as_ref(),
             CheckCause::MissingName(name) if name == "nowhere"
         ));
     }
@@ -2797,7 +2804,7 @@ pub(crate) mod checking_tests {
         let refusal = check_application(&mut typer, "f", &arguments, &location)
             .expect_err("an Integer argument against a declared Boolean parameter must refuse");
         assert!(matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(IllTypedCause::TypeMismatch)
         ));
     }
@@ -2978,7 +2985,7 @@ pub(crate) mod checking_tests {
         let refusal = check_declaration_body(&input, &form)
             .expect_err("an Integer body against a declared Boolean result must refuse");
         assert!(matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(IllTypedCause::TypeMismatch)
         ));
     }
@@ -3027,7 +3034,7 @@ pub(crate) mod checking_tests {
             "value(o) with no proved present(o) is statically undefined, not ill-typed",
         );
         assert!(matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::Unproved(crate::check::refusal::Obligation::Presence)
         ));
     }
@@ -3089,7 +3096,7 @@ pub(crate) mod checking_tests {
         match refused {
             StageFailure::Refused(refusal) => assert!(
                 matches!(
-                    refusal.cause,
+                    refusal.cause.as_ref(),
                     CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
                 ),
                 "expected an ill-typed/type-mismatch refusal, got {refusal:?}"
@@ -4097,10 +4104,10 @@ pub(crate) mod checking_tests {
                     .collect();
                 CheckRefusal {
                     location: at(index),
-                    cause: CheckCause::AmbiguousName {
+                    cause: Box::new(CheckCause::AmbiguousName {
                         name: names[index].to_owned(),
                         loci,
-                    },
+                    }),
                 }
             })
             .collect();
@@ -4451,7 +4458,7 @@ mod locus_tests {
         let [refusal] = refusals.as_slice() else {
             panic!("one refusal, got {refusals:?}");
         };
-        let CheckCause::ResourceExhausted(cause) = &refusal.cause else {
+        let CheckCause::ResourceExhausted(cause) = refusal.cause.as_ref() else {
             panic!("a stage limit, got {refusal:?}");
         };
         ((**cause).clone(), regions.refusal_region(refusal))

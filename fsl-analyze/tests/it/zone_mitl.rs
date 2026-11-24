@@ -688,7 +688,7 @@ temporal Projection using inf over (c: M::Call) clock \"model-steps\" on origin 
             let [refusal] = refusals.as_slice() else {
                 panic!("one typed interval refusal: {refusals:?}");
             };
-            let CheckCause::Temporal(cause) = &refusal.cause else {
+            let CheckCause::Temporal(cause) = &*refusal.cause else {
                 panic!("expected temporal refusal, got {refusal:?}");
             };
             let start = text.find(interval).expect("interval source");

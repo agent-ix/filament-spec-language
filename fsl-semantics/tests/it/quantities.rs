@@ -133,7 +133,7 @@ fn quantity_times_text_refuses() {
     )
     .expect_err("text is not an exact quantity scale factor");
     assert!(matches!(
-        refusals.first().map(|refusal| &refusal.cause),
+        refusals.first().map(|refusal| refusal.cause.as_ref()),
         Some(fsl_semantics::check::CheckCause::OperandTypeMismatch { .. })
     ));
 }

@@ -3671,8 +3671,12 @@ pub(super) fn admit_population_values<'t>(
                                     "objects".to_owned(),
                                 ),
                                 filament_semantic_value::admission::PathStep::Index(object_index),
-                                filament_semantic_value::admission::PathStep::Field("fields".to_owned()),
-                                filament_semantic_value::admission::PathStep::Field(name.to_owned()),
+                                filament_semantic_value::admission::PathStep::Field(
+                                    "fields".to_owned(),
+                                ),
+                                filament_semantic_value::admission::PathStep::Field(
+                                    name.to_owned(),
+                                ),
                             ]),
                     ));
                 }

@@ -88,7 +88,7 @@ fn refused_at_comparison(declarations: &str, function: &str, cause: IllTypedCaus
     let refusals = check(declarations).expect_err("the unit does not check");
     assert_eq!(refusals.len(), 1, "{declarations}: {refusals:?}");
     assert_eq!(
-        refusals[0].cause,
+        *refusals[0].cause,
         CheckCause::IllTyped(cause),
         "{declarations}"
     );
@@ -113,7 +113,7 @@ fn refused_at_equality_conversion(declarations: &str) {
     // the refusal is still `ill_typed` with the cause `type-mismatch`.
     assert!(
         matches!(
-            &refusals[0].cause,
+            refusals[0].cause.as_ref(),
             CheckCause::OperandTypeMismatch {
                 operator: fsl_forms::BinaryOperator::Equal,
                 left_type,
@@ -316,7 +316,7 @@ fn a_uuid_against_a_reference_refuses_type_mismatch() {
         .expect_err("the unit does not check");
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert_eq!(
-        refusals[0].cause,
+        *refusals[0].cause,
         CheckCause::IllTyped(IllTypedCause::TypeMismatch)
     );
     assert!(refusals[0].location.path().is_empty());
@@ -344,7 +344,10 @@ fn no_other_kind_is_a_source_of_a_reference() {
                     &crate::reward_evaluator::ZeroRewardEvaluator,
                 )
                 .expect_err("the unit does not check");
-            let causes: Vec<_> = refusals.iter().map(|refusal| &refusal.cause).collect();
+            let causes: Vec<_> = refusals
+                .iter()
+                .map(|refusal| refusal.cause.as_ref())
+                .collect();
             assert_eq!(
                 causes,
                 [&CheckCause::IllTyped(IllTypedCause::TypeMismatch)],

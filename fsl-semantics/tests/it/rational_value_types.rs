@@ -331,7 +331,7 @@ fn an_unbounded_ratio_refuses_as_a_tuple_position_and_a_variant_payload() {
             .expect("the tuple position refuses malformed-declaration");
         assert!(
             matches!(&position.cause, ModelRefusalCause::IntakeMalformedDeclaration { node, member, .. }
-                if *node == identity("P/p0")
+                if node == &identity("P/p0")
                     && member.to_string() == "TypeDefinition.positions[0].typeRef"),
             "alias {via_alias}: {position:#?}"
         );
@@ -341,7 +341,7 @@ fn an_unbounded_ratio_refuses_as_a_tuple_position_and_a_variant_payload() {
             .expect("the variant payload refuses declaration-form");
         assert!(
             matches!(&payload.cause, ModelRefusalCause::UnsupportedDeclarationForm { node, member, .. }
-                if *node == identity("variant/V-c") && member.to_string() == "Variant.payloadType"),
+                if node == &identity("variant/V-c") && member.to_string() == "Variant.payloadType"),
             "alias {via_alias}: {payload:#?}"
         );
     }
@@ -707,7 +707,7 @@ fn unit_name_causes(
         .map_err(|refusals| {
             (
                 Vec::new(),
-                refusals.into_iter().map(|refusal| refusal.cause).collect(),
+                refusals.into_iter().map(|refusal| *refusal.cause).collect(),
             )
         })
 }

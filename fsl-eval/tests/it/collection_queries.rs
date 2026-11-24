@@ -228,10 +228,10 @@ fn ill_typed(
     expression: &Expression,
 ) -> IllTypedCause {
     match check(package, parameters, expression).map(|_| ()) {
-        Err(CheckRefusal {
-            cause: CheckCause::IllTyped(cause),
-            ..
-        }) => cause,
+        Err(CheckRefusal { cause, .. }) => match *cause {
+            CheckCause::IllTyped(cause) => cause,
+            cause => panic!("an ill_typed refusal, not {cause:?}"),
+        },
         other => panic!("an ill_typed refusal, not {other:?}"),
     }
 }
@@ -628,7 +628,7 @@ fn q04_empty_fold_uses_identity_and_empty_reduce_is_undefined_or_refused() {
     assert_eq!(refusal.cause.code().as_str(), "undefined_expression");
     assert_eq!(refusal.cause.cause(), Some("unproved-range"));
     assert_eq!(
-        refusal.cause,
+        *refusal.cause,
         CheckCause::Unproved(Obligation::NonemptyReduction {
             size: Box::new(ProvedInterval {
                 lower: Some(Integer::from(0_i64)),
@@ -1199,8 +1199,9 @@ fn q13_sum_proves_every_prefix_inside_its_domain_for_every_order() {
         assert_eq!(
             check_linked(&package, &signed, &sum("Small", "q", name("x")))
                 .unwrap_err()
-                .cause,
-            CheckCause::Unproved(Obligation::Range {
+                .cause
+                .as_ref(),
+            &CheckCause::Unproved(Obligation::Range {
                 required: Box::new(ProvedInterval {
                     lower: Some(Integer::from(0_i64)),
                     upper: Some(Integer::from(30_i64)),
@@ -1583,8 +1584,9 @@ fn tc_441_an_unbounded_source_has_no_proved_size_maximum() {
     assert_eq!(
         check_linked(&package, &open, &sum("Small", "q", name("x")))
             .unwrap_err()
-            .cause,
-        CheckCause::Unproved(Obligation::Range {
+            .cause
+            .as_ref(),
+        &CheckCause::Unproved(Obligation::Range {
             required: Box::new(ProvedInterval {
                 lower: Some(Integer::from(0_i64)),
                 upper: Some(Integer::from(30_i64)),
@@ -1895,8 +1897,9 @@ fn fr041_a_wrong_domain_refuses_and_six_items_are_not_admitted_to_the_total() {
     assert!(matches!(
         check_linked(&package, &six, &sum("Hundred", "q", name("x")))
             .unwrap_err()
-            .cause,
-        CheckCause::Unproved(Obligation::Range { .. })
+            .cause
+            .as_ref(),
+        &CheckCause::Unproved(Obligation::Range { .. })
     ));
     // A non-integer total domain is ill typed.
     assert_eq!(
@@ -2361,8 +2364,9 @@ fn q14_count_refuses_unproved_range_at_check() {
         assert_eq!(
             check_linked(&package, &source, &count("Three", "q", positive()))
                 .unwrap_err()
-                .cause,
-            unproved_count((0, 3), (0, Some(5))),
+                .cause
+                .as_ref(),
+            &unproved_count((0, 3), (0, Some(5))),
             "{kind:?}"
         );
     }
@@ -2374,8 +2378,9 @@ fn q14_count_refuses_unproved_range_at_check() {
             &count("Positive", "q", Expression::boolean(true))
         )
         .unwrap_err()
-        .cause,
-        unproved_count((1, 3), (0, Some(3)))
+        .cause
+        .as_ref(),
+        &unproved_count((1, 3), (0, Some(3)))
     );
     let open = [("q", unbounded(CollectionKind::Sequence, ValueType::Integer))];
     assert_eq!(
@@ -2385,8 +2390,9 @@ fn q14_count_refuses_unproved_range_at_check() {
             &count("Tiny", "q", Expression::boolean(true))
         )
         .unwrap_err()
-        .cause,
-        unproved_count((0, 5), (0, None))
+        .cause
+        .as_ref(),
+        &unproved_count((0, 5), (0, None))
     );
 }
 
@@ -2474,8 +2480,9 @@ fn q14_count_under_a_size_guard_proves() {
         assert_eq!(
             check_linked(&package, &source, &guarded(4))
                 .unwrap_err()
-                .cause,
-            unproved_count((0, 3), (0, Some(4))),
+                .cause
+                .as_ref(),
+            &unproved_count((0, 3), (0, Some(4))),
             "{kind:?}"
         );
     }

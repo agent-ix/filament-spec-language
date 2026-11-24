@@ -120,7 +120,7 @@ impl PendingLinks {
 /// The member and receiver type of a call the check found no dispatch
 /// operation for.
 fn unresolved_call(refusal: &CheckRefusal) -> Option<(&str, EffectiveId)> {
-    match &refusal.cause {
+    match refusal.cause.as_ref() {
         CheckCause::StateModel(model) => match (&model.cause, model.receiver.clone()) {
             (CheckCause::MissingName(name), Some(receiver)) => Some((name, receiver)),
             (CheckCause::MissingQualifiedName(name), Some(receiver)) => {
@@ -680,7 +680,7 @@ impl PackageDeclarations {
 fn dispatch_link(cause: DispatchLinkCause) -> CheckRefusal {
     CheckRefusal {
         location: Location::root(Origin::Expression),
-        cause: CheckCause::DispatchLink(Box::new(cause)),
+        cause: Box::new(CheckCause::DispatchLink(Box::new(cause))),
     }
 }
 

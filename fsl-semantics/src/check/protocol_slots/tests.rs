@@ -118,7 +118,7 @@ fn checks(text: &str) -> CheckedGraph {
         .flat_map(|result| result.refusals.iter())
         .filter(|refusal| {
             !matches!(
-                            &refusal.cause,
+                            refusal.cause.as_ref(),
             CheckCause::ProtocolReference(cause)
             if matches!(**cause, ProtocolReferenceCause::NotEmitted { .. })
                         )
@@ -140,7 +140,7 @@ fn only(
     let [refusal] = refusals.as_slice() else {
         panic!("{text}: one refusal, got {refusals:?}");
     };
-    let CheckCause::ProtocolAnchor(cause) = &refusal.cause else {
+    let CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() else {
         panic!("a protocol cause, got {refusal:?}");
     };
     let span = cause.span();
@@ -703,7 +703,7 @@ fn a_composite_of_two_receive_fields_lists_neither_operand() {
     let refusals = check(&text).expect_err("neither operand is individually visible");
     let mut reads = Vec::new();
     for refusal in refusals {
-        let CheckCause::ProtocolAnchor(cause) = refusal.cause else {
+        let CheckCause::ProtocolAnchor(cause) = refusal.cause.as_ref() else {
             panic!("protocol anchor refusal, got {refusal:?}");
         };
         let ProtocolAnchorCause::WrongObservation {
@@ -711,11 +711,11 @@ fn a_composite_of_two_receive_fields_lists_neither_operand() {
             field,
             reason,
             ..
-        } = *cause
+        } = cause.as_ref()
         else {
             panic!("wrong-observation refusal, got {cause:?}");
         };
-        reads.push((binder, field, reason));
+        reads.push((binder.clone(), field.clone(), reason.clone()));
     }
     assert_eq!(
         reads,

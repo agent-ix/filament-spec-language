@@ -1645,7 +1645,7 @@ fn a_window_aggregate_over_a_model_subject_is_refused_at_compile() {
     let [only] = refusals.as_slice() else {
         panic!("one refusal, not {refusals:?}");
     };
-    let CheckCause::Temporal(cause) = &only.cause else {
+    let CheckCause::Temporal(cause) = &*only.cause else {
         panic!("a temporal cause, not {:?}", only.cause);
     };
     let TemporalCause::AggregateModelSubject { span } = cause.as_ref() else {

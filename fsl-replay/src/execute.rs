@@ -2366,7 +2366,7 @@ fn refinement_internals_pointer(
         | CompileRefusal::CheckDiagnostics { refusals, .. } => refusals,
         _ => return None,
     };
-    let fsl_semantics::check::CheckCause::Refinement(refinement) = &refusals.first()?.cause else {
+    let fsl_semantics::check::CheckCause::Refinement(refinement) = &*refusals.first()?.cause else {
         return None;
     };
     let fsl_semantics::check::RefinementCause::InternalList(defect) = &refinement.cause else {

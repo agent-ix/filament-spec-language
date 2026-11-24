@@ -193,7 +193,7 @@ fn unknown_time_unit_refuses_at_the_written_name() {
         )
         .expect_err("S3 resolves the time unit");
     assert!(refusals.iter().any(|refusal| matches!(
-        &refusal.cause,
+        &*refusal.cause,
         CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::TimeQuantity { cause, span } if matches!(&**cause, fsl_semantics::check::TimeUnitCause::UnknownUnit { name } if name == "hour") && span.end - span.start == 4)
     )), "{refusals:?}");
 }
@@ -215,7 +215,7 @@ fn a_length_unit_cannot_be_the_time_source() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("S3 requires the Time dimension");
-    assert!(refusals.iter().any(|refusal| matches!(&refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::TimeQuantity { cause, .. } if matches!(&**cause, fsl_semantics::check::TimeUnitCause::NotTimeDimension { name } if name == "m")))), "{refusals:?}");
+    assert!(refusals.iter().any(|refusal| matches!(&*refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::TimeQuantity { cause, .. } if matches!(&**cause, fsl_semantics::check::TimeUnitCause::NotTimeDimension { name } if name == "m")))), "{refusals:?}");
 }
 
 #[trace("TC-685")]
@@ -235,7 +235,7 @@ fn a_source_without_base_time_refuses_before_looking_up_the_unit() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("S3 requires a base Time node");
-    assert!(refusals.iter().any(|refusal| matches!(&refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::TimeQuantity { cause, .. } if matches!(&**cause, fsl_semantics::check::TimeUnitCause::NoTimeDimension { name } if *name == "Time")))), "{refusals:?}");
+    assert!(refusals.iter().any(|refusal| matches!(&*refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::TimeQuantity { cause, .. } if matches!(&**cause, fsl_semantics::check::TimeUnitCause::NoTimeDimension { name } if *name == "Time")))), "{refusals:?}");
 }
 
 #[trace("TC-685")]
@@ -255,7 +255,7 @@ fn derived_duration_is_not_the_base_time_dimension() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("Duration and Time have distinct nodes");
-    assert!(refusals.iter().any(|refusal| matches!(&refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::TimeQuantity { cause, .. } if matches!(&**cause, fsl_semantics::check::TimeUnitCause::NotTimeDimension { name } if name == "d")))), "{refusals:?}");
+    assert!(refusals.iter().any(|refusal| matches!(&*refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::TimeQuantity { cause, .. } if matches!(&**cause, fsl_semantics::check::TimeUnitCause::NotTimeDimension { name } if name == "d")))), "{refusals:?}");
 }
 
 #[trace("TC-685")]
@@ -275,7 +275,7 @@ fn affine_time_unit_cannot_be_a_model_time_source() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("S3 rejects a nonzero composed offset");
-    assert!(refusals.iter().any(|refusal| matches!(&refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::TimeQuantity { cause, .. } if matches!(&**cause, fsl_semantics::check::TimeUnitCause::AffineUnit { name, .. } if name == "degc")))), "{refusals:?}");
+    assert!(refusals.iter().any(|refusal| matches!(&*refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::TimeQuantity { cause, .. } if matches!(&**cause, fsl_semantics::check::TimeUnitCause::AffineUnit { name, .. } if name == "degc")))), "{refusals:?}");
 }
 
 #[trace("TC-685")]
@@ -288,7 +288,7 @@ fn duplicate_source_time_dimensions_refuse_at_assembly() {
         body,
     )
     .expect_err("S2 assembly rejects a duplicate source dimension");
-    assert!(refusal.errors.iter().any(|error| matches!(&error.cause, AssemblyCause::DuplicateQuantityName { name, spans } if name == "Time" && spans.len() == 2) && error.cause.catalog_code().to_string() == "ambiguous_declaration/ambiguous-name"), "{refusal:?}");
+    assert!(refusal.errors.iter().any(|error| matches!(& error.cause, AssemblyCause::DuplicateQuantityName { name, spans } if name == "Time" && spans.len() == 2) && error.cause.catalog_code().to_string() == "ambiguous_declaration/ambiguous-name"), "{refusal:?}");
 }
 
 #[trace("TC-685", "FR-230-AC-38")]
@@ -308,7 +308,7 @@ fn time_source_names_an_admitted_model() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("S3 resolves the model alias");
-    assert!(refusals.iter().any(|refusal| matches!(&refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::MissingTimedModel { name, .. } if name == "Missing"))), "{refusals:?}");
+    assert!(refusals.iter().any(|refusal| matches!(&*refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::MissingTimedModel { name, .. } if name == "Missing"))), "{refusals:?}");
 }
 
 #[trace("TC-685")]
@@ -327,7 +327,7 @@ fn urgent_when_without_a_time_source_refuses_as_a_missing_binding() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("urgency needs a timed model");
-    assert!(refusals.iter().any(|refusal| matches!(&refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::UrgencyWithoutTimeSource { .. }))), "{refusals:?}");
+    assert!(refusals.iter().any(|refusal| matches!(&*refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::UrgencyWithoutTimeSource { .. }))), "{refusals:?}");
 }
 
 #[trace("TC-685", "FR-230-AC-5", "FR-230-AC-33")]
@@ -369,7 +369,7 @@ fn duplicate_time_source_refuses_at_the_second_declaration() {
         )
         .expect_err("one model has one time source");
     assert!(refusals.iter().any(|refusal| matches!(
-        &refusal.cause,
+        &*refusal.cause,
         CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::DuplicateTimeSource { model, .. } if model == "Config")
     )), "{refusals:?}");
 }
@@ -439,7 +439,7 @@ fn a_model_with_multiple_object_nodes_refuses_a_tick_source_on_a_derived_object(
         )
         .expect_err("the model alias has multiple semantic nodes");
     assert!(
-        refusals.iter().any(|refusal| matches!(&refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::AmbiguousTimedModel { name, .. } if name == "Config"))),
+        refusals.iter().any(|refusal| matches!(&*refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::AmbiguousTimedModel { name, .. } if name == "Config"))),
         "{refusals:?}"
     );
 }
@@ -506,7 +506,7 @@ fn tick_period_respects_the_s3_rational_bit_limit() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("the configured S3 ceiling stops the exact reduction");
-    assert!(refusals.iter().any(|refusal| matches!(&refusal.cause, CheckCause::ResourceExhausted(limit) if limit.kind == fsl_semantics::check::CheckingLimitKind::RationalBits && limit.region.is_some())), "{refusals:?}");
+    assert!(refusals.iter().any(|refusal| matches!(&*refusal.cause, CheckCause::ResourceExhausted(limit) if limit.kind == fsl_semantics::check::CheckingLimitKind::RationalBits && limit.region.is_some())), "{refusals:?}");
 }
 
 #[trace("TC-685")]
@@ -526,7 +526,7 @@ fn zero_tick_period_refuses_at_the_period() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("tick period must be positive");
-    assert!(refusals.iter().any(|refusal| matches!(&refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::InvalidTickPeriod { .. }))), "{refusals:?}");
+    assert!(refusals.iter().any(|refusal| matches!(&*refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::InvalidTickPeriod { .. }))), "{refusals:?}");
 }
 
 /// FR-230-AC-3's S3 half (TC-685 step 3): the tick source over
@@ -586,7 +586,7 @@ fn tick_sources_check_and_refuse_at_their_spans() {
         let [refusal] = refusals.as_slice() else {
             panic!("{line}: one refusal: {refusals:?}");
         };
-        let CheckCause::Temporal(cause) = &refusal.cause else {
+        let CheckCause::Temporal(cause) = &*refusal.cause else {
             panic!("{line}: a timed refusal: {refusal:?}");
         };
         let (text, _) = config_unit_with_profiles(&document(), temporal, &body);
@@ -616,7 +616,7 @@ fn a_tick_period_with_zero_denominator_refuses_at_the_magnitude() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("S3 refuses an undefined rational");
-    assert!(refusals.iter().any(|refusal| matches!(&refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::ZeroDenominator { .. }))), "{refusals:?}");
+    assert!(refusals.iter().any(|refusal| matches!(&*refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::ZeroDenominator { .. }))), "{refusals:?}");
 }
 
 #[trace("TC-685")]
@@ -636,7 +636,7 @@ fn missing_tick_operation_refuses_at_its_name() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("S3 resolves the operation");
-    assert!(refusals.iter().any(|refusal| matches!(&refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::MissingTickOperation { name, .. } if name == "ConfigVersion::absent"))), "{refusals:?}");
+    assert!(refusals.iter().any(|refusal| matches!(&*refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::MissingTickOperation { name, .. } if name == "ConfigVersion::absent"))), "{refusals:?}");
 }
 
 /// `document()` with `Sub` (a subtype of `ConfigVersion`) that declares its
@@ -680,7 +680,7 @@ fn tick_over(
 fn a_timed_model_with_multiple_object_nodes_refuses_an_unqualified_tick_operation() {
     let refusals = tick_over(&overriding_document(), "attemptUpdate")
         .expect_err("the model alias has multiple semantic nodes");
-    assert!(refusals.iter().any(|refusal| matches!(&refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::AmbiguousTimedModel { name, .. } if name == "Config"))), "{refusals:?}");
+    assert!(refusals.iter().any(|refusal| matches!(&*refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::AmbiguousTimedModel { name, .. } if name == "Config"))), "{refusals:?}");
 }
 
 #[trace("TC-685", "FR-230-AC-38")]
@@ -688,7 +688,7 @@ fn a_timed_model_with_multiple_object_nodes_refuses_an_unqualified_tick_operatio
 fn a_timed_model_with_multiple_object_nodes_refuses_a_qualified_tick_operation() {
     let refusals = tick_over(&overriding_document(), "Sub::attemptUpdate")
         .expect_err("the model alias has multiple semantic nodes");
-    assert!(refusals.iter().any(|refusal| matches!(&refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::AmbiguousTimedModel { name, .. } if name == "Config"))), "{refusals:?}");
+    assert!(refusals.iter().any(|refusal| matches!(&*refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::AmbiguousTimedModel { name, .. } if name == "Config"))), "{refusals:?}");
 }
 
 #[trace("TC-685")]
@@ -708,7 +708,7 @@ fn tick_operation_cannot_resolve_through_another_model_alias() {
             &crate::reward_evaluator::ZeroRewardEvaluator,
         )
         .expect_err("an unrelated qualifier does not resolve");
-    assert!(refusals.iter().any(|refusal| matches!(&refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::MissingTickOperation { name, .. } if name == "Other::ConfigVersion::attemptUpdate"))), "{refusals:?}");
+    assert!(refusals.iter().any(|refusal| matches!(&*refusal.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::MissingTickOperation { name, .. } if name == "Other::ConfigVersion::attemptUpdate"))), "{refusals:?}");
 }
 
 #[trace("TC-1078")]
@@ -744,7 +744,7 @@ fn each_timed_declaration_reaches_the_s3_facet_gate() {
             panic!("{body}: one S3 error expected");
         };
         assert!(
-            matches!(&error.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::TimedFacetRequired { construct: found, .. } if *found == construct)),
+            matches!(&*error.cause, CheckCause::Temporal(cause) if matches!(&**cause, TemporalCause::TimedFacetRequired { construct: found, .. } if *found == construct)),
             "{body}: {error:?}"
         );
         assert_eq!(error.cause.code(), Code::UnsupportedConstruct, "{body}");
@@ -752,7 +752,7 @@ fn each_timed_declaration_reaches_the_s3_facet_gate() {
             error.cause.catalog_code().expect("catalog").cause(),
             "declaration-form"
         );
-        if let CheckCause::Temporal(cause) = &error.cause {
+        if let CheckCause::Temporal(cause) = &*error.cause {
             assert_eq!(cause.span().start, offset(body, at), "{body}");
         }
     }
@@ -785,7 +785,7 @@ fn facet_refusals(
                 refusal.cause.catalog_code().expect("catalog").cause(),
                 "declaration-form"
             );
-            let CheckCause::Temporal(cause) = &refusal.cause else {
+            let CheckCause::Temporal(cause) = &*refusal.cause else {
                 panic!("a facet refusal expected: {refusal:?}");
             };
             let TemporalCause::TimedFacetRequired {
@@ -989,7 +989,7 @@ fn a_clock_bearing_value_inside_an_expression_refuses_by_its_use() {
     .expect_err("no clock rule admits these uses");
     let found: Vec<(&str, usize)> = refusals
         .iter()
-        .map(|refusal| match &refusal.cause {
+        .map(|refusal| match &*refusal.cause {
             CheckCause::Temporal(cause) => match **cause {
                 TemporalCause::ClockReadOutsideConstraint { span } => ("read", span.start),
                 TemporalCause::ClockWrite { span } => ("write", span.start),
@@ -1061,7 +1061,7 @@ fn delay_refusal(timed: bool, declarations: &str) -> (Code, &'static str, String
     let [refusal] = &refusals[..] else {
         panic!("one refusal, got {refusals:?}");
     };
-    let CheckCause::Probabilistic(cause) = &refusal.cause else {
+    let CheckCause::Probabilistic(cause) = &*refusal.cause else {
         panic!("a probabilistic cause, got {refusal:?}");
     };
     let body = format!(
@@ -1179,7 +1179,7 @@ fn delay_cause(
     let [refusal] = &refusals[..] else {
         panic!("one refusal, got {refusals:?}");
     };
-    let CheckCause::Probabilistic(cause) = &refusal.cause else {
+    let CheckCause::Probabilistic(cause) = &*refusal.cause else {
         panic!("a probabilistic cause, got {refusal:?}");
     };
     let body = format!("{SECONDS_AND_MILLISECONDS}{time}{declarations}\n");
@@ -1545,7 +1545,7 @@ fn time_refusal(packages: &[(&str, &str, Vec<u8>)], body: &str) -> (Code, &'stat
     let [refusal] = refusals.as_slice() else {
         panic!("{body}: one refusal: {refusals:?}");
     };
-    let CheckCause::Temporal(cause) = &refusal.cause else {
+    let CheckCause::Temporal(cause) = &*refusal.cause else {
         panic!("{body}: a timed refusal: {refusal:?}");
     };
     let span = cause.span();
@@ -1644,7 +1644,7 @@ fn time_dimensions_of_different_owners_do_not_mix() {
         let [refusal] = refusals.as_slice() else {
             panic!("{body}: one refusal: {refusals:?}");
         };
-        let CheckCause::Temporal(cause) = &refusal.cause else {
+        let CheckCause::Temporal(cause) = &*refusal.cause else {
             panic!("{body}: a timed refusal: {refusal:?}");
         };
         let span = cause.span();

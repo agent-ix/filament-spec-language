@@ -192,7 +192,7 @@ fn supplied_root_internal_lists_reach_the_semantic_owner_before_native_admission
         | CompileRefusal::CheckDiagnostics { refusals, .. } => refusals,
         other => panic!("S3 list check: {other:?}"),
     };
-    let fsl_semantics::check::CheckCause::Refinement(refusal) = &refusals[0].cause else {
+    let fsl_semantics::check::CheckCause::Refinement(refusal) = &*refusals[0].cause else {
         panic!("typed refinement list cause: {refusals:?}")
     };
     let fsl_semantics::check::RefinementCause::InternalList(defect) = &refusal.cause else {

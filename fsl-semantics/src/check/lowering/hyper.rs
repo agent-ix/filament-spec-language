@@ -876,6 +876,23 @@ pub(crate) fn read_slot_name(read: &crate::check::hyper_clause::StepRead) -> Opt
     }
 }
 
+/// The atom slots the clause's formula reaches, in slot order: every slot a
+/// `holds` atom's condition reads (FSpec FR-402 "Wrapper slot scope").
+fn reached_slots(clause: &CheckedHyperClause) -> Vec<usize> {
+    let count = clause.atom_slots().len();
+    let mut reached = vec![false; count];
+    for condition in clause.atom_conditions().values() {
+        for node in condition.root().descendants() {
+            if let NodeKind::Local(slot) = node.kind() {
+                if let Some(held) = reached.get_mut(*slot) {
+                    *held = true;
+                }
+            }
+        }
+    }
+    (0..count).filter(|slot| reached[*slot]).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use ix_trace_rs::trace;
@@ -915,21 +932,4 @@ mod tests {
             "slot_sa__b_sc"
         );
     }
-}
-
-/// The atom slots the clause's formula reaches, in slot order: every slot a
-/// `holds` atom's condition reads (FSpec FR-402 "Wrapper slot scope").
-fn reached_slots(clause: &CheckedHyperClause) -> Vec<usize> {
-    let count = clause.atom_slots().len();
-    let mut reached = vec![false; count];
-    for condition in clause.atom_conditions().values() {
-        for node in condition.root().descendants() {
-            if let NodeKind::Local(slot) = node.kind() {
-                if let Some(held) = reached.get_mut(*slot) {
-                    *held = true;
-                }
-            }
-        }
-    }
-    (0..count).filter(|slot| reached[*slot]).collect()
 }

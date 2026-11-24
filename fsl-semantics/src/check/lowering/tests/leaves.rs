@@ -397,7 +397,7 @@ fn a_leaf_walk_charges_the_node_limit() {
     let exhausted = |refusals: Vec<CheckRefusal>, limit: u64| {
         assert!(
             matches!(
-                refusals[0].cause,
+                *refusals[0].cause,
                 CheckCause::ResourceExhausted(ref exceeded)
                     if exceeded.kind == CheckingLimitKind::Nodes && exceeded.limit == limit
             ),
@@ -443,7 +443,7 @@ fn a_text_reachable_cluster_refuses_on_the_default_node_ceiling() {
     let refusals = eq_over(text_cluster(9), "R0", CheckingLimits::default())
         .expect_err("the nine-record cluster's leaves pass the default node ceiling");
     assert_eq!(
-        refusals[0].cause,
+        *refusals[0].cause,
         CheckCause::ResourceExhausted(Box::new(StageLimitCause {
             stage: CheckingStage::Typing,
             kind: CheckingLimitKind::Nodes,
@@ -558,7 +558,7 @@ fn long_leaf_paths_refuse_on_the_default_work_budget() {
         .expect_err("the leaves' key bytes pass the default work budget");
     assert!(
         matches!(
-            refusals[0].cause,
+            *refusals[0].cause,
             CheckCause::ResourceExhausted(ref exceeded)
                 if exceeded.stage == CheckingStage::Typing
                     && exceeded.kind == CheckingLimitKind::WorkBudget

@@ -317,13 +317,7 @@ fn a_record_clock_under_an_optional_or_collection_field() {
     assert!(
         matches!(
             refusals.as_slice(),
-            [fsl_semantics::check::CheckRefusal {
-                cause: fsl_semantics::check::CheckCause::TimedNotChecked {
-                    construct: fsl_semantics::check::TimedConstruct::Clock,
-                    ..
-                },
-                ..
-            }]
+            [refusal] if matches!(refusal.cause.as_ref(), fsl_semantics::check::CheckCause::TimedNotChecked { construct: fsl_semantics::check::TimedConstruct::Clock, .. })
         ),
         "{refusals:?}"
     );
@@ -1672,10 +1666,7 @@ fn a_max_constraint_on_a_clock_alias_bounds_its_places() {
     assert!(
         matches!(
             refusals.as_slice(),
-            [fsl_semantics::check::CheckRefusal {
-                cause: fsl_semantics::check::CheckCause::Temporal(cause),
-                ..
-            }] if cause.code() == Code::InvalidTimedModel && cause.tag() == "time-invariant-shape"
+            [refusal] if matches!(refusal.cause.as_ref(), fsl_semantics::check::CheckCause::Temporal(cause) if cause.code() == Code::InvalidTimedModel && cause.tag() == "time-invariant-shape")
         ),
         "{refusals:?}"
     );
@@ -2469,7 +2460,7 @@ fn absent_takes_the_option_type_its_context_expects() {
         assert!(
             refusals
                 .iter()
-                .any(|refusal| refusal.cause == CheckCause::IllTyped(expected)),
+                .any(|refusal| refusal.cause.as_ref() == &CheckCause::IllTyped(expected)),
             "{function}: {refusals:?}"
         );
     }
@@ -2827,10 +2818,7 @@ fn a_sequence_of_option_clocks_is_a_place_with_a_bit() {
     assert!(
         matches!(
             refusals.as_slice(),
-            [fsl_semantics::check::CheckRefusal {
-                cause: fsl_semantics::check::CheckCause::TimedNotChecked { .. },
-                ..
-            }]
+            [refusal] if matches!(refusal.cause.as_ref(), fsl_semantics::check::CheckCause::TimedNotChecked { .. })
         ),
         "{refusals:?}"
     );
@@ -3313,7 +3301,7 @@ fn a_ref_names_a_clock_place_of_its_owner() {
     let missing = refusal("ref(self.nothing)");
     assert!(
         matches!(
-            &missing.cause,
+            missing.cause.as_ref(),
             CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
         ),
         "{missing:?}"
@@ -3323,7 +3311,7 @@ fn a_ref_names_a_clock_place_of_its_owner() {
         let named = refusal(term);
         assert!(
             matches!(
-                &named.cause,
+                named.cause.as_ref(),
                 CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
             ),
             "{term}: {named:?}"
@@ -3443,7 +3431,7 @@ fn a_ref_crosses_an_object_reference_field() {
         panic!("one wrong receiver refusal: {refusals:?}");
     };
     assert!(matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         fsl_semantics::check::CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
     ));
     assert_eq!(refusal.location.path(), vec![0], "refusal is at the ref");
@@ -3593,13 +3581,13 @@ fn a_ref_selects_a_slot_by_index_and_no_map_place_has_an_id() {
         .unwrap_or_else(|refusals| panic!("sequence place reference checks: {refusals:?}"));
     let text_index = refusal("ref(self.ts[\"a\"].x)");
     assert_eq!(
-        text_index.cause,
+        *text_index.cause,
         CheckCause::IllTyped(IllTypedCause::TypeMismatch)
     );
     assert_eq!(text_index.location.path(), vec![0, 0, 0, 1]);
     let keyed = refusal("ref(self.m[\"a\"].x)");
     assert_eq!(
-        keyed.cause,
+        *keyed.cause,
         CheckCause::IllTyped(IllTypedCause::TypeMismatch)
     );
     assert_eq!(keyed.location.path(), vec![0]);
@@ -3609,7 +3597,7 @@ fn a_ref_selects_a_slot_by_index_and_no_map_place_has_an_id() {
         let longer = refusal(term);
         assert!(
             matches!(
-                &longer.cause,
+                longer.cause.as_ref(),
                 CheckCause::IllTyped(IllTypedCause::TypeMismatch)
             ),
             "{term}: {longer:?}"
@@ -3634,7 +3622,10 @@ fn a_ref_sequence_selector_requires_a_presence_proof() {
         panic!("one selector refusal: {refusals:?}");
     };
     assert!(
-        matches!(refusal.cause, CheckCause::Unproved(Obligation::Presence)),
+        matches!(
+            refusal.cause.as_ref(),
+            CheckCause::Unproved(Obligation::Presence)
+        ),
         "{refusal:?}"
     );
     assert_eq!(refusal.location.path(), vec![0, 0, 0, 1], "{refusal:?}");
@@ -3658,9 +3649,10 @@ fn a_ref_sequence_selector_requires_a_presence_proof() {
     let refusals = check(&direct_sequence, &unguarded_population)
         .expect_err("the population slot has no size proof");
     assert!(
-        refusals
-            .iter()
-            .any(|refusal| matches!(refusal.cause, CheckCause::Unproved(Obligation::Presence))),
+        refusals.iter().any(|refusal| matches!(
+            refusal.cause.as_ref(),
+            CheckCause::Unproved(Obligation::Presence)
+        )),
         "the population selector carries its presence obligation: {refusals:?}"
     );
 
@@ -3683,7 +3675,10 @@ fn a_ref_sequence_selector_requires_a_presence_proof() {
         panic!("one direct selector refusal: {refusals:?}");
     };
     assert!(
-        matches!(refusal.cause, CheckCause::Unproved(Obligation::Presence)),
+        matches!(
+            refusal.cause.as_ref(),
+            CheckCause::Unproved(Obligation::Presence)
+        ),
         "{refusal:?}"
     );
     let positive = direct.replace(
@@ -3748,7 +3743,10 @@ fn a_population_ref_selected_by_a_parameter_requires_the_size_premise() {
         panic!("one selector refusal: {refusals:?}");
     };
     assert!(
-        matches!(refusal.cause, CheckCause::Unproved(Obligation::Presence)),
+        matches!(
+            refusal.cause.as_ref(),
+            CheckCause::Unproved(Obligation::Presence)
+        ),
         "{refusal:?}"
     );
     assert_eq!(
@@ -3771,7 +3769,7 @@ fn a_set_of_maps_is_refused_as_a_declared_type() {
     let refusals = check(&timer_document(|_| {}), &body).expect_err("Set<Map<..>> is refused");
     assert!(
         refusals.iter().any(|refusal| matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(IllTypedCause::OperatorIneligible)
         )),
         "{refusals:?}"
@@ -3902,8 +3900,8 @@ fn a_refinement_row_clock_read_is_refused() {
     let clock_reads: Vec<_> = refusals
         .iter()
         .filter(|found| {
-            matches!(&found.refusal.cause, CheckCause::Refinement(refinement)
-                if matches!(refinement.cause, RefinementCause::ClockRead))
+            matches!(&*found.refusal.cause, CheckCause::Refinement(refinement)
+                if matches!(& refinement.cause, RefinementCause::ClockRead))
         })
         .collect();
     let [found] = clock_reads.as_slice() else {
@@ -3943,7 +3941,7 @@ fn population_clock_reads_and_ill_typed_refs_are_refused() {
         let refusals = refusals_of(clause);
         assert!(
             refusals.iter().any(|refusal| matches!(
-                &refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::Temporal(cause)
                     if matches!(**cause, TemporalCause::ClockReadOutsideConstraint { .. })
             )),
@@ -3967,7 +3965,7 @@ fn population_clock_reads_and_ill_typed_refs_are_refused() {
         let refusals = refusals_of(clause);
         assert!(
             refusals.iter().any(
-                |refusal| matches!(&refusal.cause, CheckCause::IllTyped(found) if *found == cause)
+                |refusal| matches!(refusal.cause.as_ref(), CheckCause::IllTyped(found) if *found == cause)
             ),
             "{clause}: {refusals:?}"
         );
@@ -3991,7 +3989,7 @@ fn a_clock_read_in_a_ref_selector_is_an_unknown_field() {
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal: {refusals:?}");
     };
-    let CheckCause::StateModel(model) = &refusal.cause else {
+    let CheckCause::StateModel(model) = refusal.cause.as_ref() else {
         panic!("a state-model refusal: {refusal:?}");
     };
     assert!(
@@ -4030,7 +4028,7 @@ fn a_function_body_reads_no_reference_field_through_ref_or_size() {
             .expect_err("a bare field read through a reference");
         assert!(
             refusals.iter().any(|refusal| matches!(
-                refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::IllTyped(IllTypedCause::TypeMismatch)
             )),
             "{function}: {refusals:?}"
@@ -4267,8 +4265,8 @@ fn a_ref_through_an_optional_reference_needs_value() {
         panic!("one refusal: {refusals:?}");
     };
     assert_eq!(
-        refusal.cause,
-        CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+        refusal.cause.as_ref(),
+        &CheckCause::IllTyped(IllTypedCause::TypeMismatch)
     );
     assert_eq!(refusal.location.path(), vec![0], "{refusal:?}");
     check(
@@ -4732,7 +4730,7 @@ fn a_clock_reading_call_over_a_population_clock_is_refused() {
     let refusals = check(&timer_sequence_and_map(), &body).expect_err("the clock is read");
     assert!(
         refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::Temporal(cause)
                 if matches!(**cause, TemporalCause::ClockReadOutsideConstraint { .. })
         )),
@@ -4890,7 +4888,7 @@ fn a_selector_outside_a_ref_is_not_checked_yet() {
         let [refusal] = refusals.as_slice() else {
             panic!("{clause}: one refusal expected: {refusals:?}");
         };
-        let CheckCause::Temporal(cause) = &refusal.cause else {
+        let CheckCause::Temporal(cause) = refusal.cause.as_ref() else {
             panic!("{clause}: {refusal:?}");
         };
         let TemporalCause::SelectionNotChecked { span } = **cause else {
@@ -4932,7 +4930,7 @@ fn a_selector_outside_a_ref_is_not_checked_yet() {
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal expected: {refusals:?}");
     };
-    let CheckCause::Temporal(cause) = &refusal.cause else {
+    let CheckCause::Temporal(cause) = refusal.cause.as_ref() else {
         panic!("{refusal:?}");
     };
     let TemporalCause::UnprovedPresence { span } = **cause else {
@@ -4952,9 +4950,10 @@ fn a_selector_outside_a_ref_is_not_checked_yet() {
     );
     let refusals = check(&document, &body).expect_err("the selector is refused");
     assert!(
-        refusals
-            .iter()
-            .any(|refusal| matches!(refusal.cause, CheckCause::UnsupportedFeature { .. })),
+        refusals.iter().any(|refusal| matches!(
+            refusal.cause.as_ref(),
+            CheckCause::UnsupportedFeature { .. }
+        )),
         "{refusals:?}"
     );
 
@@ -4978,7 +4977,7 @@ fn a_selector_outside_a_ref_is_not_checked_yet() {
         check(&document, &body).expect_err("an indexed Clock value is outside a constraint");
     assert!(
         refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::Temporal(cause)
                 if matches!(**cause, TemporalCause::NotAPlaceExpression { .. })
         )),
@@ -5190,7 +5189,7 @@ fn a_clock_guard_binder_in_the_reserved_slot_form_is_refused() {
     let refusals = check(&document, &body).expect_err("the reserved binder is refused");
     let reserved: Vec<_> = refusals
         .iter()
-        .filter_map(|refusal| match &refusal.cause {
+        .filter_map(|refusal| match refusal.cause.as_ref() {
             fsl_semantics::check::CheckCause::ReservedSlotName(cause) => Some(cause),
             _ => None,
         })
@@ -5213,7 +5212,7 @@ fn a_clock_guard_binder_in_the_reserved_slot_form_is_refused() {
         .iter()
         .find(|refusal| {
             matches!(
-                refusal.cause,
+                refusal.cause.as_ref(),
                 fsl_semantics::check::CheckCause::ReservedSlotName(_)
             )
         })

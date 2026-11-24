@@ -668,7 +668,7 @@ fn abstraction_refusals(declarations: &str) -> (Vec<AbstractionRefusal>, String)
     };
     let causes = refusals
         .iter()
-        .map(|refusal| match &refusal.cause {
+        .map(|refusal| match &*refusal.cause {
             CheckCause::Abstraction(cause) => (**cause).clone(),
             other => panic!("an abstraction refusal, not {other:?}"),
         })
@@ -741,7 +741,7 @@ fn an_abstraction_binding_naming_nothing_refuses_at_the_name() {
             .to_string(),
         "missing_declaration/missing-name"
     );
-    let CheckCause::Abstraction(cause) = &refusals[0].cause else {
+    let CheckCause::Abstraction(cause) = &*refusals[0].cause else {
         panic!("an abstraction refusal");
     };
     let AbstractionRefusal::UnresolvedName { package, name, .. } = &**cause else {

@@ -680,11 +680,10 @@ fn a_union_and_an_import_alias_sharing_a_member_name_are_ambiguous() {
     let CompileRefusal::Check { refusals, .. } = &*refusal else {
         panic!("a check refusal, not {refusal:?}")
     };
-    let [CheckRefusal {
-        cause: CheckCause::AmbiguousQualified(ambiguous),
-        ..
-    }] = refusals.as_slice()
-    else {
+    let [CheckRefusal { cause, .. }] = refusals.as_slice() else {
+        panic!("one ambiguity, not {refusals:?}")
+    };
+    let CheckCause::AmbiguousQualified(ambiguous) = cause.as_ref() else {
         panic!("one ambiguity, not {refusals:?}")
     };
     assert_eq!(ambiguous.name, "g::f");
@@ -872,7 +871,7 @@ fn e3_resolves_an_imported_name_only_through_its_qualifier() {
         };
         let missing_name_matches = if call.contains("::") {
             matches!(
-                &refusals[0].cause,
+                refusals[0].cause.as_ref(),
                 fsl_semantics::check::CheckCause::MissingQualifiedName(missing)
                     if missing.name == call.split('(').next().unwrap_or_default()
                         && missing.segments.iter().map(String::as_str).collect::<Vec<_>>()
@@ -880,7 +879,7 @@ fn e3_resolves_an_imported_name_only_through_its_qualifier() {
             )
         } else {
             matches!(
-                &refusals[0].cause,
+                refusals[0].cause.as_ref(),
                 fsl_semantics::check::CheckCause::MissingName(missing) if missing == name
             )
         };

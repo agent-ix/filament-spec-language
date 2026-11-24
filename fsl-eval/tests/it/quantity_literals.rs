@@ -567,7 +567,7 @@ fn a_carried_quantity_is_not_an_arithmetic_operand() {
                 operator,
                 left_type,
                 right_type,
-            } = &refusal.cause
+            } = &*refusal.cause
             else {
                 panic!("{function} retains its binary operands: {refusal:?}");
             };
@@ -576,7 +576,7 @@ fn a_carried_quantity_is_not_an_arithmetic_operand() {
             assert_eq!(**right_type, carried_type, "{function}: the right type");
         } else {
             assert!(matches!(
-                &refusal.cause,
+                refusal.cause.as_ref(),
                 CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
             ));
         }
@@ -646,7 +646,7 @@ fn a_carried_quantity_is_not_a_summand() {
     );
     assert!(
         in_sum.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
         )),
         "the carried summand is a type mismatch: {refusals:?}"
@@ -955,7 +955,7 @@ fn conversion_into_a_bounded_type_from_another_dimension_is_a_type_mismatch() {
     .expect_err("a time quantity does not convert into a length bound");
     assert!(
         refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
         )),
         "refused as a type mismatch: {refusals:?}"

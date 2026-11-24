@@ -449,11 +449,12 @@ fn keying_a_recursion_group_is_charged_to_the_work_budget() {
     let declared = declaration_work(&ring(k));
     let refusals = checked(declared).expect_err("keying the ring exceeds the budget");
     assert!(
-        refusals.iter().any(|refusal| matches!(
-            refusal.cause,
-            CheckCause::ResourceExhausted(ref exceeded)
-                if exceeded.kind == CheckingLimitKind::WorkBudget && exceeded.limit == declared
-        )),
+        refusals
+            .iter()
+            .any(|refusal| matches!(refusal.cause.as_ref(),
+                CheckCause::ResourceExhausted(ref exceeded)
+                    if exceeded.kind == CheckingLimitKind::WorkBudget && exceeded.limit == declared
+            )),
         "{refusals:?}"
     );
     // The smallest budget that checks the ring: the keying's share grows
@@ -481,12 +482,13 @@ fn keying_a_recursion_group_is_charged_to_the_work_budget() {
     );
     let one_short = checked(admitted - 1).expect_err("one unit short refuses");
     assert!(
-        one_short.iter().any(|refusal| matches!(
-            refusal.cause,
-            CheckCause::ResourceExhausted(ref exceeded)
-                if exceeded.kind == CheckingLimitKind::WorkBudget
-                    && exceeded.limit == admitted - 1
-        )),
+        one_short
+            .iter()
+            .any(|refusal| matches!(refusal.cause.as_ref(),
+                CheckCause::ResourceExhausted(ref exceeded)
+                    if exceeded.kind == CheckingLimitKind::WorkBudget
+                        && exceeded.limit == admitted - 1
+            )),
         "{one_short:?}"
     );
 }
@@ -1379,7 +1381,7 @@ fn a_bounded_quantity_has_no_type_node() {
     });
     assert!(
         matches!(
-            refusal.cause,
+            refusal.cause.as_ref(),
             CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
         ),
         "{:?}",
@@ -2292,7 +2294,7 @@ fn map_literal_refusal_names_the_unbuilt_map_form() {
     assert_eq!(refusal.cause.code(), Code::UnsupportedConstruct);
     assert_eq!(refusal.cause.cause(), Some("not-yet-implemented"));
     assert!(matches!(
-        &refusal.cause,
+        refusal.cause.as_ref(),
         super::CheckCause::PopulationFormNotChecked { what: "map" }
     ));
 }

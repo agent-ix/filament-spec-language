@@ -1943,7 +1943,7 @@ fn refusal(cause: CheckCause) -> CheckRefusal {
         location: filament_semantic_value::location::ExpressionLocation::root(
             filament_semantic_value::location::ExpressionOwner::Expression,
         ),
-        cause,
+        cause: Box::new(cause),
     }
 }
 
@@ -4842,10 +4842,10 @@ pub(crate) fn prepare(
                     name: clock_reading_site(name),
                 },
             ),
-            cause: CheckCause::UnprovedDecrease {
+            cause: Box::new(CheckCause::UnprovedDecrease {
                 cycle,
                 obligation: super::refusal::MeasureObligation::MissingMeasure,
-            },
+            }),
         });
     }
     prepare_models(inputs, state_clauses, meter).map_err(refusal)
@@ -5469,7 +5469,7 @@ fn typed_in(
             .unwrap_or(Span { start: 0, end: 0 });
         // A population name that names nothing is located at its second
         // segment (FR-391 "Resolution").
-        let span = match &refused.cause {
+        let span = match refused.cause.as_ref() {
             CheckCause::MissingSegment { offset, span, .. } => {
                 let name = span.unwrap_or(located);
                 Span {
@@ -5480,7 +5480,7 @@ fn typed_in(
             _ => located,
         };
         refusal(timed(TemporalCause::TimedPredicate {
-            cause: Box::new(refused.cause),
+            cause: refused.cause,
             span,
         }))
     })?;

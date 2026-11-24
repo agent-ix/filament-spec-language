@@ -1521,7 +1521,7 @@ fn untimed_delay_names_missing_binding_and_duration_stays_a_reward() {
     };
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert!(matches!(
-        &refusals[0].cause,
+        refusals[0].cause.as_ref(),
         CheckCause::Probabilistic(cause)
             if matches!(
                 cause.as_ref(),

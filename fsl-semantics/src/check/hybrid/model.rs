@@ -115,7 +115,7 @@ fn refusal(stop: Stop) -> CheckRefusal {
     };
     CheckRefusal {
         location: Location::root(Origin::Expression),
-        cause,
+        cause: Box::new(cause),
     }
 }
 
