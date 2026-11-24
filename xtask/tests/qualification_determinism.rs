@@ -153,7 +153,7 @@ fn sample_corpus(fspec: &Path, root: &Path) -> Vec<String> {
 fn run_sample(fspec: &Path, corpus: &Path) -> xtask::qualification::Execution {
     let arguments = [
         std::ffi::OsString::from("--corpus"),
-        corpus.join("complete-v1.json").into_os_string(),
+        corpus.as_os_str().to_owned(),
     ];
     xtask::qualification::execute_with_fspec(fspec, &arguments)
         .expect("the published sample runs through qualification")
