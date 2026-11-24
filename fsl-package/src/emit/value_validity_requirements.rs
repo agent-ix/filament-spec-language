@@ -93,7 +93,7 @@ fn record_names_of(
     graph: &CheckedGraph,
     claim: &OccurrenceKey,
     source: &RequirementRecord,
-    mut guards: Option<&mut GuardRows>,
+    guards: Option<&mut GuardRows>,
 ) -> Result<RecordNames, EmitRefusal> {
     let mut terminal = None;
     let mut names = Vec::new();

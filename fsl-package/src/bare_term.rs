@@ -181,11 +181,18 @@ struct FormParts<'a, 'p> {
     profile: &'p filament_contract_model::CheckedSelection,
 }
 
-struct FormResolution<'a, W, L, M, A> {
-    lookup: L,
+struct FormResolution<'n, 'a, W: FormWork> {
+    lookup: &'a dyn Fn(&CheckedNodeId) -> Option<&'n CheckedSemanticNodeV2>,
     intervals: bool,
-    malformed: M,
-    atom_span: A,
+    malformed: &'a dyn Fn() -> BareClauseRefusal,
+    atom_span: &'a mut (
+        dyn for<'p, 'entry> FnMut(
+                usize,
+                &'entry crate::checked_views::FormulaNodeUse<'p>,
+                &mut W,
+            ) -> Result<fsl_foundation::Span, W::Error>
+            + 'a,
+    ),
     work: &'a mut W,
 }
 
@@ -1364,42 +1371,45 @@ impl<'p> BarePackage<'p> {
                     profile: body.profile,
                 },
                 FormResolution {
-                    lookup: |id| bodies.node(id),
+                    lookup: &|id: &CheckedNodeId| bodies.node(id),
                     intervals: true,
-                    malformed: || BareClauseRefusal::from(fault("clause-form-shape-is-admitted")),
-                    atom_span: |_position, atom, work: &mut MeteredForm<'_>| {
-                        let mut found = None;
-                        let mut multiple = false;
-                        for entry in self.package().source_map() {
-                            work.visit()?;
-                            if entry.node_id != *atom.node
+                    malformed: &|| BareClauseRefusal::from(fault("clause-form-shape-is-admitted")),
+                    atom_span:
+                        &mut |_position: usize,
+                              atom: &crate::checked_views::FormulaNodeUse<'_>,
+                              work: &mut MeteredForm<'_>| {
+                            let mut found = None;
+                            let mut multiple = false;
+                            for entry in self.package().source_map() {
+                                work.visit()?;
+                                if entry.node_id != *atom.node
                                 || entry.role
                                     != filament_contract_model::CheckedOccurrenceRole::Expression
                             {
                                 continue;
                             }
-                            for region in &entry.regions {
-                                work.visit()?;
-                                if region.source == row.declaration_region.source
-                                    && region.start >= row.declaration_region.start
-                                    && region.end <= row.declaration_region.end
-                                {
-                                    if found.is_some() {
-                                        multiple = true;
-                                    } else {
-                                        found = Some(region_span(region));
+                                for region in &entry.regions {
+                                    work.visit()?;
+                                    if region.source == row.declaration_region.source
+                                        && region.start >= row.declaration_region.start
+                                        && region.end <= row.declaration_region.end
+                                    {
+                                        if found.is_some() {
+                                            multiple = true;
+                                        } else {
+                                            found = Some(region_span(region));
+                                        }
                                     }
                                 }
                             }
-                        }
-                        match (found, multiple) {
-                            (Some(span), false) => Ok(span),
-                            (Some(_), true) => Ok(region_span(&row.declaration_region)),
-                            (None, _) => {
-                                Err(crate::checked_views::ViewRefusal::LeafHasNoSource.into())
+                            match (found, multiple) {
+                                (Some(span), false) => Ok(span),
+                                (Some(_), true) => Ok(region_span(&row.declaration_region)),
+                                (None, _) => {
+                                    Err(crate::checked_views::ViewRefusal::LeafHasNoSource.into())
+                                }
                             }
-                        }
-                    },
+                        },
                     work: &mut work,
                 },
             )?);
@@ -1523,10 +1533,12 @@ impl<'p> BarePackage<'p> {
                 profile: view.profile(),
             },
             FormResolution {
-                lookup: |id| nodes.get(id).copied(),
+                lookup: &|id: &CheckedNodeId| nodes.get(id).copied(),
                 intervals,
-                malformed: || BareClauseRefusal::from(malformed()),
-                atom_span: |position, _entry, _work| {
+                malformed: &|| BareClauseRefusal::from(malformed()),
+                atom_span: &mut |position: usize,
+                                 _entry: &crate::checked_views::FormulaNodeUse<'_>,
+                                 _work: &mut UnmeteredFairness| {
                     let sources = self
                         .temporal_atom_sources(claim, position)
                         .map_err(|_| malformed())?;
@@ -1544,23 +1556,13 @@ impl<'p> BarePackage<'p> {
     }
 
     #[ix_trace_rs::string_edge]
-    fn finish_temporal_clause_form<'n, W, L, M, A>(
+    fn finish_temporal_clause_form<'n, W: FormWork>(
         &self,
         row: &filament_contract_model::TemporalClauseName,
         node: &'n CheckedSemanticNodeV2,
         parts: FormParts<'_, '_>,
-        resolution: FormResolution<'_, W, L, M, A>,
-    ) -> Result<fsl_semantics::check::PackageClauseForm, W::Error>
-    where
-        W: FormWork,
-        L: Fn(&CheckedNodeId) -> Option<&'n CheckedSemanticNodeV2>,
-        M: Fn() -> BareClauseRefusal,
-        A: FnMut(
-            usize,
-            &crate::checked_views::FormulaNodeUse<'_>,
-            &mut W,
-        ) -> Result<fsl_foundation::Span, W::Error>,
-    {
+        resolution: FormResolution<'n, '_, W>,
+    ) -> Result<fsl_semantics::check::PackageClauseForm, W::Error> {
         let FormResolution {
             lookup,
             intervals,
@@ -1569,7 +1571,6 @@ impl<'p> BarePackage<'p> {
             work,
             ..
         } = resolution;
-        let malformed = &malformed;
         use fsl_semantics::check::{BinaryTemporal, PackageFormulaNode, UnaryTemporal};
         let package = self.package();
         work.text(row.name.as_ref())?;
