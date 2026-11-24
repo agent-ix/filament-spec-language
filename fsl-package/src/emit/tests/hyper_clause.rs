@@ -924,7 +924,7 @@ fn supplied_hyper(
 /// Function calls retain trace-variable reads in the package normal form,
 /// matching the source checker when the same pure function is applied to
 /// corresponding values from two traces.
-#[trace("FR-940-AC-20", "FSpec-TC-3126")]
+#[trace("FR-940-AC-20", "TC-3126")]
 #[test]
 fn a_package_hyper_form_preserves_copy_groups_through_function_calls() {
     let declarations = "function f using v(x: Integer): Integer pure { x }\n\
