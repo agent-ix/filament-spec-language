@@ -108,6 +108,7 @@ dependency) pair.
 | FR-284-AC-3 | During AC-2's runs, the bytes written to the process's stdout and stderr by core crates are empty, and the process exits only when the test harness ends it. | Test (TC-768) |
 | FR-284-AC-4 | The ambient-input scan of each FSL core crate's shipped source, `#[cfg(test)]` code excluded, fails naming the file and line of each environment read, clock read, filesystem or search-path access (a path method such as `.exists()` or `.metadata()` included), mutable global (a `static mut`, or a `static` lock, cell, once-cell or lazy value), stdout, stderr or stdin access and process exit, and finds none of them in a comment, a string literal or test code. It skips only Behavior's `lift_document` filesystem exemption. | Test (TC-768) |
 
+| FR-284-AC-5 | Each core crate reads the bytes it needs from its request, by identity where an identity names them; it does not read an unrelated file or source path. | Test |
 ## Dependencies
 
 - ADR-029 CB-2, CB-3: the core and separability.

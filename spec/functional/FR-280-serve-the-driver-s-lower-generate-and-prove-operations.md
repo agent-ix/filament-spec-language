@@ -220,6 +220,7 @@ order, and exactly one `ItemCounterexample` for each `refuted` record, which the
 | FR-280-AC-9 | Through `fsl_analyze::provider::run` over `Engines::fsl()`, FR-281-AC-1's EN-5 item returns a `proved` record naming `en-5`; FR-281-AC-2's EN-1 item returns a `refuted` record naming `en-1` and its `ItemCounterexample`; FR-281-AC-11's EN-1 item over the model with an `Integer` field returns `unsupported` with `unsupported_projection`/`unbounded-extent`; FR-281-AC-6 (a)'s item returns `incomplete` naming `max_states`; each equals the record `analyze` returns for the same item, and none needs a test-built replay request. | Test (TC-761) |
 | FR-280-AC-10 | Through `fsl_analyze::provider::run`, AC-2's items with a `SourceProvision` that omits the source the package names return one `declined` record per item, cause `incomplete-input`, code `missing_import`/`missing-selection`, and no engine runs; the same items with the provision complete return AC-2's records. | Test (TC-761) |
 
+| FR-280-AC-11 | Each FSL engine's provider manifest definition is owned and located in that engine's module. The `fsl-route` module owns only registry construction and manifest conversion, with no engine manifest definitions. | Test |
 ## Dependencies
 
 - ADR-029 LC-1, OP-1, OP-2: the operation owners and `analyze` inside

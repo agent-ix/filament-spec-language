@@ -79,6 +79,9 @@ delivers (ADR-030 D-8 O-6):
 | FR-259-AC-3 | On a thread with a 512 KiB stack, the simulation state key FSL mints for a 100,000-long recursive list value, and the intake read of a 100,000-deep JSON package document, each equal the result on a thread with an 8 MiB stack, and the state key equals the RFC 8785 text of the state. | Test (TC-729) |
 | FR-259-AC-4 | **RETIRED (node preimages are deleted).** A node key is the structural triple `{package, path, ordinal}`; there is no node or package identity preimage whose nesting depth could be measured. | Test (TC-728), retired |
 | FR-259-AC-5 | An allocation failure of 4096 requested bytes from `quire-canonical`'s reader or encoder refuses `resource_exhausted`/`allocation-failed` carrying 4096 at domain package intake and at the observation document reader, and none of them reports a limit, a malformed value or malformed input. | Test (TC-729) |
+| FR-259-AC-6 | `identity.input_bytes` accepts `0` and `u64::MAX`; an encoding or read whose canonical byte count fits `u64::MAX` is not refused by an implementation ceiling, and a configured bound is applied exactly as given. | Test (TC-729) |
+| FR-259-AC-7 | An encoded key larger than `identity.input_bytes` bound `B` is refused as that calling stage's input-bytes limit with bound `B`, actual byte count and setting `identity.input_bytes`; the same bytes at a bound equal to their byte count succeed. This byte refusal is distinct from malformed-input and malformed-value refusals. | Test (TC-729) |
+| FR-259-AC-8 | A malformed JSON read reports the malformed-input refusal with its byte offset, while an injected 4096-byte allocation failure reports `resource_exhausted`/`allocation-failed` with `requested: 4096`, with no limit fields in either outcome. | Test (TC-729) |
 
 ## Dependencies
 

@@ -80,6 +80,7 @@ Every cancelled outcome is O-16 category incomplete, which exits 22
 | FR-276-AC-4 | An `analyze` request of two items, where the test engine settles the first and then blocks on the second until the handle is cancelled, returns the first item's record unchanged and the second settled `incomplete` with cause cancelled. | Test (TC-757) |
 | FR-276-AC-5 | The category of `StageFailure::Cancelled` of each cause and of `CallFailure::Cancelled` is incomplete, and its exit code is 22. | Test (TC-757) |
 | FR-276-AC-6 | `call` of FR-262-AC-1's `count` with `3`, over a meter whose installed handle is already cancelled with `Requested`, returns an evaluation whose outcome is `incomplete` at the `function.call` charge with `limit_kind: work_units` and `limit` equal to `consumed`, with no admitted charge, and the handle's `tripped()` returns `Requested`. `execute` of the same function with the same handle returns `CallFailure::Cancelled(Requested)` and no value. | Test (TC-757) |
+| FR-276-AC-7 | For each lifecycle operation listed in FR-276-AC-1, cancellation immediately before a work-meter or stage-limit charge stops at that charge and returns the operation's cancelled failure carrying the exact cause installed on the handle; no charge after cancellation is admitted and no partial output artifact is returned. | Test (TC-757) |
 
 ## Dependencies
 

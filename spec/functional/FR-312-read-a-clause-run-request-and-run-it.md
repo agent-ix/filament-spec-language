@@ -243,6 +243,7 @@ The existing AC-1 through AC-5 test-case association remains TC-891;
 FR-312-AC-11 is associated with TC-1706. Method-only Verification cells do
 not replace the existing trace tags.
 
+| FR-312-AC-12 | The request reader admits the items-only `value_invariants` and population-selection request only through the supported `items` form; the same selections in `clause` refuse at request stage. An absent, multiple or invalid selection variant refuses; unsupported observation format or role, missing required selection members, malformed trace kinds or trace members refuse with the owning request-stage diagnostic. Duplicate or unknown closed-envelope members and positional record arrays refuse; simultaneous `call`, `clause` and `items`, or none of them, refuses. With extraction enabled, a valid extraction is carried through to the clause request; without the feature, `extraction` is refused as unknown. Each admitted observation is read once relative to the request directory, its bytes are passed to `run_clause` without a path, and the command invokes `run_clause` exactly once. Compile, selection, admission and evaluation results use the report; a reader refusal uses the command-error envelope and its exit code. | Test (TC-1706) |
 ## Dependencies
 
 - [FR-109](FR-109-run-a-state-clause-through-the-spine.md): `ClauseRunRequest`,
