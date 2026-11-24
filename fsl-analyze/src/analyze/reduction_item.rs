@@ -80,6 +80,9 @@ pub(super) fn admit(
         Some(Value::String(name)) => {
             return Err(ReductionIssue::UnknownConstraint(json!(name)));
         }
+        Some(node) if node.is_object() => {
+            return Err(ReductionIssue::UnknownConstraint(node.clone()));
+        }
         Some(_) => return Err(issue("constraint is not a name")),
     }
     Ok(reductions)

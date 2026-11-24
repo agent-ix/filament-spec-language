@@ -162,8 +162,9 @@ fn a_constraint_never_proves_past_its_boundary() {
 /// TC-581: a named Low selection cuts exploration at the
 /// constraint boundary, records `constraint-reached`, and retains the
 /// selected constraint's node key in its request echo. A request naming the
-/// invariant Wide by name refuses before any state is expanded, and a
-/// constraint anchored at an operation refuses during source compilation.
+/// invariant Wide by name or package node key refuses before any state is
+/// expanded, and a constraint anchored at an operation refuses during source
+/// compilation.
 #[trace("TC-581")]
 #[test]
 fn constraint_request_key_truth_and_invalid_selections_are_typed() {
@@ -186,6 +187,19 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
         !package_bytes.is_empty(),
         "the compiled request has package bytes"
     );
+    let package: Value = serde_json::from_slice(&package_bytes).expect("the package is JSON");
+    let nodes = package["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("the package emits semantic nodes");
+    let wide_key = nodes
+        .iter()
+        .find(|node| {
+            node["node_tag"] == "state"
+                && node["semantic_form"] == "state_clause"
+                && node["body"]["operation"]["member"]["clause"] == "invariant"
+        })
+        .expect("Wide emits an invariant state-clause node")["node_id"]
+        .clone();
     let package_path = ws.write(
         "analyze-package.json",
         json!({"format": "native-analyze/1", "request": selected})
@@ -251,12 +265,11 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
                 .as_bytes(),
         )
     };
-    {
-        let invalid = analyze(&invalid_package(
-            "state-constraint-invariant-name",
-            json!("Wide"),
-        ))
-        .item(0);
+    for (name, key) in [
+        ("state-constraint-invariant-name", json!("Wide")),
+        ("state-constraint-invariant-key", wide_key.clone()),
+    ] {
+        let invalid = analyze(&invalid_package(name, key.clone())).item(0);
         assert_eq!(
             invalid["record"]["diagnostic"]["code"], "invalid_runtime_input",
             "{invalid}"
@@ -265,6 +278,26 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
             invalid["record"]["diagnostic"]["cause"], "invalid-value",
             "{invalid}"
         );
+        let diagnostic_name = &invalid["record"]["diagnostic"]["detail"]["name"];
+        if name == "state-constraint-invariant-key" {
+            assert_eq!(
+                diagnostic_name,
+                &json!({
+                    "ordinal": 0,
+                    "package": "analyze-unit",
+                    "path": [
+                        "state",
+                        "state_clause",
+                        "invariant",
+                        {"node": 8},
+                        {"node": 23}
+                    ]
+                }),
+                "the refusal names the canonical node key for Wide: {invalid}"
+            );
+        } else {
+            assert_eq!(diagnostic_name, &key, "{invalid}");
+        }
         assert!(
             invalid["exploration"].is_null(),
             "no state was expanded: {invalid}"
