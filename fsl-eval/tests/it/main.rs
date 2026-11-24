@@ -87,6 +87,7 @@ mod protocol_population;
 mod protocol_reference;
 mod protocol_retry_bound;
 mod protocol_slots;
+mod qualification_enum_rows;
 mod qualification_vectors_from_source;
 mod qualified_bounded_monitor;
 mod quantity_class_convert;
