@@ -5,12 +5,52 @@
 //! the item of the request over the source settles, with the source deleted,
 //! and never settles `unsupported` for a fact the source route reads.
 
+use std::cell::RefCell;
+
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{
-    analyze, label, package_selection, request_over, Workspace,
-};
+use crate::analyze_cli_support::{analyze, label, package_selection, request_over, Workspace};
+
+#[derive(Default)]
+struct CandidateCapture {
+    backend: RefCell<Option<String>>,
+    candidates: RefCell<Vec<String>>,
+    claim: RefCell<Option<String>>,
+}
+
+impl fsl_analyze::analyze::document::Negotiate for CandidateCapture {
+    fn negotiate(
+        &self,
+        item: &fsl_analyze::analyze::ClaimItem,
+        candidates: &fsl_route::CandidateOutcome,
+    ) -> (
+        fsl_route::routing::Disposition,
+        Option<fsl_analyze::analyze::Diagnostic>,
+    ) {
+        *self.backend.borrow_mut() = item
+            .backend
+            .as_ref()
+            .map(|backend| backend.as_str().to_owned());
+        *self.claim.borrow_mut() = Some(format!("{:?}", item.claim));
+        let ids = match candidates {
+            fsl_route::CandidateOutcome::Candidates(set) => set
+                .candidates()
+                .iter()
+                .map(|candidate| candidate.id().as_str().to_owned())
+                .collect(),
+            fsl_route::CandidateOutcome::UnknownBackend(backend) => {
+                vec![format!("unknown:{}", backend.as_str())]
+            }
+        };
+        *self.candidates.borrow_mut() = ids;
+        fsl_analyze::analyze::document::Negotiate::negotiate(
+            &crate::analyze_cli_support::Fr290,
+            item,
+            candidates,
+        )
+    }
+}
 
 /// ADR-026 section 12's task sets: `Full` fits an EDF test exactly at
 /// utilization 1, `Over` is utilized at 11/10, `Ctl` is a fixed-priority set.
@@ -154,25 +194,29 @@ fn a_package_schedulability_claim_rejects_a_backend_outside_its_requirements() {
 #[trace("TC-3009", "FR-075-AC-23")]
 #[test]
 fn package_release_backing_admits_task_product_candidates() {
-    let declarations = "taskset Pair {\n\
+    let declarations = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.model.complete/v1\";\n\
+        profile t = \"filament.temporal.complete/v1\";\n\
+        model M = \"test/counter\";\n\
+        dimension Time;\n\
+        unit ms : Time = rational(1, 1);\n\
+        taskset Pair {\n\
         task a periodic 4 ms deadline 3 ms wcet 1 ms priority 1 lo;\n\
         }\n\
         schedulable PairFp on Pair under fixed_priority;\n\
         response PairAResponse on Pair.a <= 3 ms under fixed_priority;\n\
-        release Pair.a on M::Call::fire_a;\n";
-    let model = crate::zone_search::rpc_document_with(&[("fire_a", &["phase"])]);
-    let unit = crate::analyze_family_cli::rpc_unit(4, declarations);
+        release Pair.a on M::Counter::inc;\n";
     let ws = Workspace::new("package-sched-release-backed-marker");
     let path = request_over(
         &ws,
-        &unit,
-        &model,
-        &[crate::analyze_family_cli::rpc_snapshot()],
+        declarations,
+        &crate::counter::document(false),
+        &[],
         json!({"items": [{"claim": "PairFp"}, {"claim": "PairAResponse"}]}),
     );
     let request: Value = serde_json::from_slice(&std::fs::read(&path).expect("request"))
         .expect("request JSON");
-    let (_, bytes) = package_selection(&ws, &request["request"]);
+    let (mut selected, bytes) = package_selection(&ws, &request["request"]);
     let package: Value = serde_json::from_slice(&bytes).expect("checked package JSON");
     let rows = package["schedulability_claims"]
         .as_array()
@@ -197,41 +241,96 @@ fn package_release_backing_admits_task_product_candidates() {
     markers.sort_unstable_by_key(|(name, _)| *name);
     assert_eq!(markers, [("PairAResponse", false), ("PairFp", true)]);
 
-    let release_backed = rows
-        .iter()
-        .find(|row| {
-            names.iter().any(|name| {
-                name["declaration"] == row["declaration"]
-                    && name["occurrence"]["ordinal"] == row["occurrence"]
-                    && name["name"] == "PairFp"
-            })
-        })
-        .expect("the package row for PairFp")["release_backed"]
-        .as_bool()
-        .expect("release-backed flag");
-    assert!(release_backed, "the admitted package row backs PairFp");
-
-    let engines = fsl_analyze::analyze::Engines::fsl().expect("linked manifests");
-    let mut registry = fsl_route::Registry::new();
-    for descriptor in engines.registrations() {
-        registry
-            .register(descriptor.clone())
-            .expect("the registered backend is valid");
+    selected["items"] = json!([{"claim": "PairFp", "backend": "en-6"}]);
+    let model_bytes = crate::counter::document(false);
+    let packages = fsl_semantics::model::intake::package_input([model_bytes.as_slice()])
+        .expect("the counter model package is admitted");
+    let mut evidence = filament_contract_model::CheckedPackageEvidence::new();
+    for feature in package["lock"]["required_features"]
+        .as_array()
+        .expect("required package features")
+    {
+        evidence.support_feature(feature.as_str().expect("feature name"));
     }
-    let named_en6 = registry.candidates(
-        fsl_semantics::check::Capability::Schedulability,
-        Some(&fsl_foundation::BackendId::new("en-6")),
-    );
-    let candidates = registry.restrict_to_task_product(named_en6, release_backed);
-    let fsl_route::CandidateOutcome::Candidates(candidates) = candidates else {
-        panic!("a release-backed package claim keeps named EN-6 eligible");
+    for (identity, domain) in &packages {
+        evidence
+            .insert_domain_package_document(identity.clone(), domain.clone())
+            .expect("one evidence package per identity");
+    }
+    let checked = match filament_contract_model::CheckedPackageV2::read(
+        &bytes,
+        filament_contract_model::CheckedPackageReadLimits::bounded(),
+        &evidence,
+    ) {
+        filament_contract_model::CheckedPackageV2ReadResult::Admitted(package) => package,
+        other => panic!("the emitted package is admitted: {other:?}"),
     };
-    let ids = candidates
-        .candidates()
-        .iter()
-        .map(|candidate| candidate.id().as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(ids, ["en-6"]);
+    let mut budget = filament_contract_model::NativeJoinBudget::new(1 << 40, 1 << 24);
+    let identity_bytes = std::fs::read(ws.path("handoff/identities.json")).expect("identity rows");
+    let identity_rows = fsl_package::ReadIdentityRows::read(&identity_bytes, &checked, &mut budget)
+    .expect("the package identity rows are admitted");
+    let equality_bytes = std::fs::read(ws.path("handoff/equality.json")).expect("equality rows");
+    let equality_rows = fsl_package::ReadEqualityRows::read(&equality_bytes, &checked)
+    .expect("the package equality rows are admitted");
+    let bare = fsl_package::BarePackage::new(&checked)
+        .with_canonical_bytes(&bytes)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &identity_rows,
+                equality: Some(&equality_rows),
+            },
+            &mut budget,
+        )
+        .expect("the package supply joins");
+    let admitted_claims = fsl_package::schedulability_roots(bare.package())
+        .expect("the admitted package has schedulability roots");
+    assert!(
+        admitted_claims
+            .iter()
+            .any(|claim| claim.claim().release_backed()),
+        "the admitted package preserves the release-backed claim marker"
+    );
+    let snapshots = fsl_semantics::model::observation::DocumentProvision::new();
+    let binding = fsl_analyze::analyze::SubjectBinding {
+        packages: &packages,
+        snapshots: &snapshots,
+        initial: Vec::new(),
+        universes: Vec::new(),
+    };
+    let engines = fsl_analyze::analyze::Engines::fsl().expect("linked manifests");
+    let selections = serde_json::from_value::<Vec<fsl_analyze::analyze::document::ItemSelection>>(
+        selected["items"].clone(),
+    )
+    .expect("the named EN-6 package request");
+    let capture = CandidateCapture::default();
+    // The callback captures the package route's candidate output before the
+    // item proceeds to package task-product execution.
+    let _result = fsl_analyze::analyze::document::settle_package_run(
+        fsl_analyze::analyze::document::PackageRun {
+            package: &bare,
+            package_bytes: &bytes,
+            supply: fsl_replay::HandoffSupply {
+                dependencies: &[],
+                identities: &identity_bytes,
+                equality: Some(&equality_bytes),
+            },
+            subject: fsl_analyze::analyze::document::SubjectSelection::default(),
+            binding,
+            items: Some(&selections),
+            engines: &engines,
+            limits: fsl_analyze::analyze::AnalyzeLimits::unbounded(),
+            budget,
+        },
+        &capture,
+        &filament_exact::Cancel::new(),
+    );
+    assert_eq!(
+        *capture.candidates.borrow(),
+        ["en-6"],
+        "the package route resolved claim {:?} for named backend {:?}",
+        capture.claim.borrow(),
+        capture.backend.borrow()
+    );
 }
 
 /// FR-850-AC-3 (negative): package bytes missing the claim rows or nodes

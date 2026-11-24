@@ -34,3 +34,9 @@ Manually checked the owning criteria, their tagged tests, and the changed packag
 - `quoin matrix --repo . --json` and `quire matrix --scope . --format json` each timed out after 30 seconds without output. Manual scoped tag inspection found tags for all three owning ACs, but this is not a computed matrix result.
 - Reverse-gap and stub checks were limited to the changed production files: no new unowned behavior or source stubs were found. A repository-wide audit was not completed.
 - Plan completion: not assessed.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | The new test reads the package row's `release_backed` value, then directly calls `Registry::candidates` and `Registry::restrict_to_task_product`. It does not invoke the package analysis route (`ClaimReads::schedule`), so it still passes if that production path ignores the release-backed row. Add an assertion over a named EN-6 package request's actual candidate output. |

@@ -33,3 +33,9 @@ The changed `Cargo.toml` and `Cargo.lock` both pin `filament-contract-model` to 
 
 `cargo test --locked -p fsl-analyze --test it package_schedulability -- --nocapture` passed: 10 passed, 0 failed.
 `cargo fmt --check` failed on widespread existing formatting diffs in unrelated files; the diff contains no workflow changes.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | The new test reads the package row's `release_backed` value, then directly calls `Registry::candidates` and `Registry::restrict_to_task_product`. It does not invoke the package analysis route (`ClaimReads::schedule`), so it still passes if that production path ignores the release-backed row. Add an assertion over a named EN-6 package request's actual candidate output. |
