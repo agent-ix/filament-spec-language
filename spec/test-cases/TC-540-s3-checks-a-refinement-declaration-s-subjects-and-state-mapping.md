@@ -48,7 +48,9 @@ Fixtures: ADR-020 §8's `CasRefinesCounter` unit, with `Spec` local and with
    `holder = self.holder` with `Has` payloads carrying those references.
    Finally check `Parcel { owners: Sequence<Option<Reference<Ring>>>[0, 2] }`
    mapped to the same record field with `Reference<Queue>`; its value is
-   `[Some(ring b), None]`.
+   `[Some(ring b), None]`. The map-key and map-value cases in FR-135-AC-6
+   are the `lift_nested` unit cases in TC-1086/FR-140-AC-16; no validated
+   package declares a map type.
 7. Check `RingIsQueue` with a relationship declared on the abstract `Queue`.
 8. Check `RingIsQueue` in a unit that selects no layer of its own, then with
    a Boolean row naming a protocol of the unit.
