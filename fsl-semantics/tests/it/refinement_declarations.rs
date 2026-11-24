@@ -719,10 +719,11 @@ fn cas_key(node_name: &str) -> DeclarationKey {
     }
 }
 
-/// FR-135-AC-1 (TC-540 step 1): `CasRefinesCounter` checks to one population
-/// row, one object row with the field row `value = self.value` and no hidden
-/// field. The dependency-package half needs the S4 closure and is not
-/// tested.
+/// FR-135-AC-1 (TC-540 step 1): the local-model case of `CasRefinesCounter`
+/// checks to one population row, one object row with `value = self.value`
+/// and no hidden field. This covers only the local-model half of FR-135-AC-1;
+/// the model-subject dependency half has no dependency variant in the current
+/// checked model-binding representation and remains uncovered.
 #[trace("TC-540")]
 #[test]
 fn the_counter_refinement_checks_to_one_population_and_one_object_row() {
@@ -747,6 +748,10 @@ fn the_counter_refinement_checks_to_one_population_and_one_object_row() {
             .find(|selection| selection.identity == CAS)
             .expect("selected concrete package")
     );
+    assert_eq!(refinement.abstract_model_selection().identity, SPEC);
+    assert_eq!(refinement.concrete_model_selection().identity, CAS);
+    assert_ne!(refinement.abstract_model_selection().identity, "Spec");
+    assert_ne!(refinement.concrete_model_selection().identity, "Impl");
 
     let [population] = refinement.populations() else {
         panic!("one population row: {:?}", refinement.populations());
@@ -773,6 +778,41 @@ fn the_counter_refinement_checks_to_one_population_and_one_object_row() {
             .collect::<Vec<_>>(),
         ["self"]
     );
+}
+
+/// FR-135-AC-12 (TC-540): the checked binding keeps the selected package's
+/// canonical identity when the source aliases are unrelated to those
+/// identities. `DomainPackageRef` exposes identity only; source package
+/// version is not retained on the checked refinement binding. This remains a
+/// partial case; the version and zero/one/many object-type and state-machine
+/// cardinality clauses are not covered by this assertion.
+#[trace("TC-540")]
+#[test]
+fn refinement_bindings_use_canonical_package_identity_not_source_aliases() {
+    let (spec, cas) = counters();
+    let body = cas_refines_counter().replace(
+        "abstract Spec concrete Impl",
+        "abstract AbstractModel concrete ConcreteModel",
+    );
+    let graph = check_with(
+        "",
+        &[
+            ("AbstractModel", SPEC, &spec),
+            ("ConcreteModel", CAS, &cas),
+        ],
+        &body,
+    )
+    .unwrap_or_else(|refusals| {
+        panic!(
+            "renamed refinement aliases check: {:?}",
+            refusals.iter().map(|r| &r.refusal).collect::<Vec<_>>()
+        )
+    });
+    let refinement = only_refinement(&graph);
+    assert_eq!(refinement.abstract_model(), "AbstractModel");
+    assert_eq!(refinement.concrete_model(), "ConcreteModel");
+    assert_eq!(refinement.abstract_model_selection().identity, SPEC);
+    assert_eq!(refinement.concrete_model_selection().identity, CAS);
 }
 
 /// FR-136 and FSpec FR-375-AC-22: source provenance covers every authored
@@ -1230,8 +1270,7 @@ fn a_row_nesting_a_reference_in_a_composite_is_lifted() {
 }
 
 /// FR-135-AC-4 (TC-540 step 4): with the `value` row removed, the refinement
-/// checks with `value` hidden. The node-identity half needs S4 emission and
-/// is not tested.
+/// records that abstract field as hidden and keeps no visible field rows.
 #[trace("TC-540")]
 #[test]
 fn an_abstract_field_with_no_row_is_hidden() {
@@ -1242,6 +1281,30 @@ fn an_abstract_field_with_no_row_is_hidden() {
     };
     assert!(object.fields.is_empty());
     assert_eq!(object.hidden, [spec_key("Counter/value")]);
+}
+
+/// FR-135-AC-4 (TC-540 step 4): changing the checked field mapping changes
+/// the refinement's V2 node identity, even though its source name is stable.
+/// The package_id half is not observable through the current checked binding.
+#[trace("TC-540")]
+#[test]
+fn changing_a_field_mapping_changes_the_refinement_node_identity() {
+    let base = cas_refines_counter();
+    let direct = checked_counter(&base);
+    let changed = checked_counter(&mutated(
+        &base,
+        "value = self.value;",
+        "value = self.tmpA;",
+    ));
+    let direct_node = only_refinement(&direct)
+        .requirement_occurrence()
+        .expect("the checked refinement has a V2 occurrence")
+        .node();
+    let changed_node = only_refinement(&changed)
+        .requirement_occurrence()
+        .expect("the checked refinement has a V2 occurrence")
+        .node();
+    assert_ne!(direct_node, changed_node);
 }
 
 /// FR-136-AC-1 (TC-541 step 1): `CasRefinesCounter` checks seven step rows,

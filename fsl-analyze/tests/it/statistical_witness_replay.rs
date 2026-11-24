@@ -464,11 +464,12 @@ fn a_cancelled_replay_is_refused_as_cancelled() {
     );
 }
 
-/// Checks TC-628 step 4: supplement `Service` and `Health` with the
-/// independent `Both` workload, which S4 refuses `not-yet-implemented`.
-/// The `2 ms` and fault-claim witnesses still replay `Reproduced` over the
-/// original stochastic subjects.
-#[trace("TC-628")]
+/// Checks TC-628 step 4 and FR-193-AC-5: supplement `Service` and `Health`
+/// with the independent `test/mixed-workload` selection and `Both` workload,
+/// which S4 refuses `unsupported_construct`/`not-yet-implemented`. The `2 ms`
+/// and fault-claim witnesses still replay `Reproduced` over the checked
+/// stochastic subjects; ordinary `Service` remains emittable.
+#[trace("TC-628", "FR-193-AC-5")]
 #[test]
 fn witnesses_replay_over_a_subject_whose_package_s4_refuses() {
     let refused = |world: &World| {
@@ -509,6 +510,13 @@ fn witnesses_replay_over_a_subject_whose_package_s4_refuses() {
         replay(&health, "Fault", &verdict.provenance, &verdict.witnesses[0]),
         Ok(SampledWitnessReplay::Reproduced)
     );
+
+    let ordinary_service = World::new(&prob_world::service(&p95("Two", 2)));
+    fsl_package::emit_checked(
+        &ordinary_service.package,
+        fsl_package::EmitLimits::fixture(),
+    )
+    .expect("ordinary Service remains emittable");
 }
 
 /// TC-761 step 4, the part of FR-280-AC-5 that holds without `analyze`: `Service`'s

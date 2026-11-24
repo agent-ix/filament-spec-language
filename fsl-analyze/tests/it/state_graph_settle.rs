@@ -1439,6 +1439,199 @@ fn a_claim_with_no_instances_settles_no_instance_without_exploration() {
     assert_eq!(replays, 0, "NoInstance carries no evidence to replay");
 }
 
+/// FR-169-AC-14 (TC-1197): a malformed closure certificate settles
+/// inconclusive before any witness replay is requested.
+#[trace("TC-1197", "FR-169-AC-14")]
+#[test]
+fn a_malformed_state_graph_certificate_settles_inconclusive() {
+    let world = config_world(REACHES_TWO, &[(0, 0)]);
+    let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
+    let mut malformed = result.items[0][0].clone();
+    let StateGraphOutcome::Witnessed { certificate, .. } = &mut malformed.outcome else {
+        panic!("the run returns a witnessed certificate: {:?}", malformed.outcome);
+    };
+    let duplicate_state = certificate.closure[0].clone();
+    certificate.closure[1] = duplicate_state.clone();
+
+    let mut replays = 0;
+    let record = settle(
+        &world,
+        AB,
+        "ReachesTwo",
+        &malformed,
+        no_samples(),
+        &mut replays,
+    );
+    assert_eq!(replays, 0);
+    assert_eq!(record.label, ResultLabel::Inconclusive);
+    assert_eq!(record.basis, SettlementBasis::Unsettled);
+    assert!(matches!(
+        record.value,
+        TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+            rule: CertificateRule::Malformed,
+            at: CertificateLocus::ModelKey(ref state),
+        }) if state == &duplicate_state
+    ));
+}
+
+/// FR-169-AC-15 (TC-644): the wrong-form `counts` list settles as a
+/// malformed certificate rejection at closure state 0, never as a proof.
+#[trace("TC-644", "FR-169-AC-15")]
+#[test]
+fn a_certificate_with_the_other_forms_list_settles_inconclusive() {
+    let world = config_world(REACHES_TWO, &[(0, 0)]);
+    let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
+    let mut malformed = result.items[0][0].clone();
+    let StateGraphOutcome::Witnessed { certificate, .. } = &mut malformed.outcome else {
+        panic!("the run returns a witnessed certificate: {:?}", malformed.outcome);
+    };
+    let closure_state_zero = certificate.closure[0].clone();
+    certificate.counts.push((0, 1, 0));
+
+    let mut replays = 0;
+    let record = settle(
+        &world,
+        AB,
+        "ReachesTwo",
+        &malformed,
+        no_samples(),
+        &mut replays,
+    );
+    assert_eq!(replays, 0);
+    assert_eq!(record.label, ResultLabel::Inconclusive);
+    assert_eq!(record.basis, SettlementBasis::Unsettled);
+    assert!(matches!(
+        record.value,
+        TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+            rule: CertificateRule::Malformed,
+            at: CertificateLocus::ModelKey(ref state),
+        }) if state == &closure_state_zero
+    ));
+}
+
+/// FR-169-AC-14 (TC-1197): every named malformed closure/rank/count variant
+/// is rejected by settlement at the same typed locus as certificate checking.
+#[trace("TC-1197", "FR-169-AC-14")]
+#[test]
+fn each_malformed_certificate_variant_settles_before_replay() {
+    let world = config_world(REACHES_TWO, &[(0, 0)]);
+    let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
+    let original = &result.items[0][0];
+    let StateGraphOutcome::Witnessed { certificate, .. } = &original.outcome else {
+        panic!("the run returns a witnessed certificate: {:?}", original.outcome);
+    };
+    let mut variants = Vec::new();
+
+    let mut swapped = certificate.clone();
+    swapped.closure.swap(0, 1);
+    variants.push((swapped, CertificateLocus::ModelKey(certificate.closure[0].clone())));
+
+    let mut invalid_key = certificate.clone();
+    invalid_key.closure[0] = StateKey::from_canonical_bytes(b"not-a-state-key".to_vec());
+    variants.push((invalid_key.clone(), CertificateLocus::ModelKey(invalid_key.closure[0].clone())));
+
+    let mut out_of_range = certificate.clone();
+    let rank_index = u64::try_from(out_of_range.closure.len()).expect("closure length");
+    out_of_range.ranks.push((rank_index, 0));
+    variants.push((out_of_range, CertificateLocus::Entry { index: rank_index }));
+
+    let mut descending = certificate.clone();
+    descending.ranks.reverse();
+    let offending = usize::try_from(descending.ranks[1].0).expect("rank index");
+    variants.push((descending, CertificateLocus::ModelKey(certificate.closure[offending].clone())));
+
+    for (candidate, locus) in variants {
+        let instance = with_certificate(original, candidate);
+        let mut replays = 0;
+        let record = settle(&world, AB, "ReachesTwo", &instance, no_samples(), &mut replays);
+        assert_eq!(replays, 0);
+        assert_eq!(record.value, TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+            rule: CertificateRule::Malformed, at: locus,
+        }));
+        assert_eq!((record.label, record.basis), (ResultLabel::Inconclusive, SettlementBasis::Unsettled));
+    }
+
+    let sequenced = job_world(true, false);
+    let result = run(sequenced.request(&["j"], vec![sequenced.item("InOneWay")], no_samples()));
+    let original = &result.items[0][0];
+    let StateGraphOutcome::Holds { certificate } = &original.outcome else {
+        panic!("the sequenced count claim holds: {:?}", original.outcome);
+    };
+    let count_index = usize::try_from(certificate.counts[0].0).expect("count index");
+    let mut bad_count = certificate.clone();
+    bad_count.counts[0].1 = 3;
+    let instance = with_certificate(original, bad_count);
+    let mut replays = 0;
+    let record = settle(&sequenced, &["j"], "InOneWay", &instance, no_samples(), &mut replays);
+    assert_eq!(replays, 0);
+    assert_rejected(&record, CertificateRule::Malformed, certificate.closure[count_index].clone());
+}
+
+/// FR-169-AC-15 (TC-644): each wrong-form list shape settles as malformed;
+/// the engine's valid certificates with empty other-form lists remain proved.
+#[trace("TC-644", "FR-169-AC-15")]
+#[test]
+fn wrong_form_list_variants_settle_rejected_and_empty_lists_settle_proved() {
+    let world = config_world(REACHES_TWO, &[(0, 0)]);
+    let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
+    let original = &result.items[0][0];
+    let StateGraphOutcome::Witnessed { certificate, .. } = &original.outcome else {
+        panic!("the run returns a witnessed certificate: {:?}", original.outcome);
+    };
+    let mut wrong_form = certificate.clone();
+    wrong_form.counts.push((0, 1, 0));
+    let mut out_of_range = certificate.clone();
+    out_of_range.counts.push((9, 1, 0));
+    for (candidate, locus) in [
+        (wrong_form, CertificateLocus::ModelKey(certificate.closure[0].clone())),
+        (out_of_range, CertificateLocus::Entry { index: 9 }),
+    ] {
+        let instance = with_certificate(original, candidate);
+        let mut replays = 0;
+        let record = settle(&world, AB, "ReachesTwo", &instance, no_samples(), &mut replays);
+        assert_eq!(replays, 0);
+        assert_eq!(record.value, TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+            rule: CertificateRule::Malformed, at: locus,
+        }));
+        assert_eq!((record.label, record.basis), (ResultLabel::Inconclusive, SettlementBasis::Unsettled));
+    }
+    let mut replays = 0;
+    let record = settle(&world, AB, "ReachesTwo", original, no_samples(), &mut replays);
+    assert_eq!(record.label, ResultLabel::Proved);
+    assert!(matches!(
+        record.value,
+        TerminalValue::Proved {
+            certification: Certification::Certified,
+            ..
+        }
+    ));
+
+    let sequenced = job_world(true, false);
+    let result = run(sequenced.request(&["j"], vec![sequenced.item("InOneWay")], no_samples()));
+    let original = &result.items[0][0];
+    let StateGraphOutcome::Holds { certificate } = &original.outcome else {
+        panic!("the sequenced count claim holds: {:?}", original.outcome);
+    };
+    let mut wrong_form = certificate.clone();
+    wrong_form.ranks.push((0, 0));
+    let instance = with_certificate(original, wrong_form);
+    let mut replays = 0;
+    let record = settle(&sequenced, &["j"], "InOneWay", &instance, no_samples(), &mut replays);
+    assert_eq!(replays, 0);
+    assert_rejected(&record, CertificateRule::Malformed, certificate.closure[0].clone());
+
+    let mut replays = 0;
+    let record = settle(&sequenced, &["j"], "InOneWay", original, no_samples(), &mut replays);
+    assert_eq!(record.label, ResultLabel::Proved);
+    assert!(matches!(
+        record.value,
+        TerminalValue::Proved {
+            certification: Certification::Certified,
+            ..
+        }
+    ));
+}
+
 /// FR-169-AC-6: FR-168-AC-5's `Undefined` outcome settles `refuted`,
 /// `decisive-counterexample`, violation, after its replay reproduces it,
 /// with cause `UndefinedEvaluation` naming the node `(2, 0)` and division

@@ -416,17 +416,29 @@ impl World {
         &self,
         reductions: Reductions,
     ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
+        self.run_with_limits(reductions, ModelCheckLimits::default(), UNLIMITED)
+    }
+
+    /// The run under caller supplied search limits and evaluation meter.
+    pub(crate) fn run_with_limits(
+        &self,
+        reductions: Reductions,
+        limits: ModelCheckLimits,
+        meter: filament_exact::ScalarLimits,
+    ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
         let letters = self.letters();
+        let mut subject = self.model_subject();
+        subject.simulation.meter = meter;
         check_model(
             ModelCheckRequest {
                 temporal_clock_selections: &[],
-                subject: self.model_subject(),
+                subject,
                 item: ModelCheckItem::Clause {
                     clause: &self.clauses[0],
                     letters: &letters,
                 },
                 max_depth: None,
-                limits: ModelCheckLimits::default(),
+                limits,
                 reductions,
             },
             &Cancel::new(),

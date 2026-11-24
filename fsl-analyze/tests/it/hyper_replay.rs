@@ -20,6 +20,7 @@ use fsl_replay::{
 };
 use ix_trace_rs::trace;
 
+use crate::hyper::positions;
 use crate::hyper_projected::{aligned, IDLE, MID_OPERATION};
 use crate::hyper_witness::{
     members, ExhaustedExistential, GUARDED_CLAUSE, KERNEL_DIV_FUNCTION, KERNEL_GUARDED,
@@ -257,6 +258,92 @@ fn an_undefined_match_counterexample_replays_to_its_value() {
         world.replay(&elsewhere),
         Ok(ModelTraceSettlement::Inconclusive(_))
     ));
+}
+
+/// FR-176-AC-5 (TC-601): on ADR-023 §8's secure vault, an undefined body at
+/// the first canonical tuple is a body atom at `(0, 0), (1, 0)`, not the
+/// undefined precondition `G`, and replays as a reproduced refutation. When
+/// the body is defined there, the same tuple identifies `G` and only `b`'s
+/// step transition.
+#[trace("TC-601", "FR-176-AC-5")]
+#[test]
+fn undefined_body_at_the_first_tuple_precedes_the_undefined_guard() {
+    const GUARDED_SECURE: &str =
+        "pre G using v on V::Vault::step { q(1 - self.h) = 0 }\n\
+         post Step using v on V::Vault::step { self.l = i }\n";
+    let body = "always holds(q(1 - v.h @ a) = q(1 - v.h @ b))";
+    let clause = format!(
+        "hyper NonInterference using inf over behaviours (v: V::Vault) \
+         forall trace a of V forall trace b of V {EQUAL_INPUTS} {{ {body} }}"
+    );
+    let world = World::new_with_kernel_function(
+        Vault::Custom(GUARDED_SECURE),
+        false,
+        &STARTS,
+        &clause,
+        KERNEL_MOD_FUNCTION,
+    );
+    let counterexample = refuted(&world);
+    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
+        panic!(
+            "expected an undefined body counterexample, got {:?}",
+            counterexample.kind
+        );
+    };
+    assert_eq!(counterexample.trace_position, 0);
+    assert_eq!(undefined.position, 0);
+    assert!(matches!(&undefined.locus, HyperLocus::Atom(_)));
+    assert_ne!(undefined.locus, HyperLocus::Contract("G".to_owned()));
+    assert_eq!(
+        undefined.variables,
+        [("a".to_owned(), "v".to_owned()), ("b".to_owned(), "v".to_owned())]
+    );
+    assert_eq!(undefined.cause, UndefinedCause::Kernel(Undefined::DivisionByZero));
+    assert_eq!(counterexample.traces.len(), 2);
+    assert_eq!(counterexample.traces[0].variable, "a");
+    assert_eq!(counterexample.traces[0].initial, 0);
+    assert_eq!(counterexample.traces[1].variable, "b");
+    assert_eq!(counterexample.traces[1].initial, 1);
+    assert!(counterexample.traces.iter().all(|trace| trace.steps.is_empty()));
+    assert_eq!(positions(&world, &counterexample, 0), [(0, 0)]);
+    assert_eq!(positions(&world, &counterexample, 1), [(1, 0)]);
+    assert_eq!(
+        world.replay(&counterexample).expect("the replay settles"),
+        ModelTraceSettlement::Reproduced {
+            value: ModelTraceValue::HyperUndefined(undefined.clone()),
+            trace_position: Some(0),
+        }
+    );
+
+    let defined_clause = format!(
+        "hyper NonInterference using inf over behaviours (v: V::Vault) \
+         forall trace a of V forall trace b of V {EQUAL_INPUTS} {{ always holds(v.l @ a = v.l @ b) }}"
+    );
+    let defined_world = World::new_with_kernel_function(
+        Vault::Custom(GUARDED_SECURE),
+        false,
+        &STARTS,
+        &defined_clause,
+        KERNEL_MOD_FUNCTION,
+    );
+    let guarded = refuted(&defined_world);
+    let HyperCounterexampleKind::Undefined(guard_undefined) = &guarded.kind else {
+        panic!("expected undefined guard counterexample, got {:?}", guarded.kind);
+    };
+    assert_eq!(guarded.trace_position, 0);
+    assert_eq!(guard_undefined.position, 0);
+    assert_eq!(guard_undefined.locus, HyperLocus::Contract("G".to_owned()));
+    assert_eq!(guard_undefined.variables, [("b".to_owned(), "v".to_owned())]);
+    assert_eq!(guard_undefined.state_keys.len(), 1);
+    let Some(transition) = &guard_undefined.transition else {
+        panic!("the undefined guard names its step transition");
+    };
+    assert!(transition.operation().contains("/Vault/step\""));
+    assert_eq!(guarded.traces.len(), 1);
+    assert_eq!(guarded.traces[0].variable, "b");
+    assert_eq!(guarded.traces[0].initial, 1);
+    assert!(guarded.traces[0].steps.is_empty());
+    assert_eq!(positions(&defined_world, &guarded, 0), [(1, 0)]);
 }
 
 /// ADR-023 section 8.2's `Opaque` over `vault`.

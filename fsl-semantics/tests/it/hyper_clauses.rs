@@ -687,9 +687,10 @@ fn a_single_existential_clause_admits_no_match_and_the_event_profile_classifies(
     assert_eq!(fixed.form(), None);
 }
 
-/// FR-173-AC-4 (S3): the clause records one subject alias per distinct model
-/// it names, for the request writer to supply a subject and a deadlock-freedom
-/// item each.
+/// FR-173-AC-4 (S3): `SavesPower` names both distinct model subjects, while
+/// clauses over one model name that subject once. These aliases are the
+/// checked input from which the request supplies one subject and deadlock
+/// item per distinct model.
 #[trace("TC-598")]
 #[test]
 fn a_clause_names_one_subject_alias_per_distinct_model() {
@@ -703,6 +704,38 @@ fn a_clause_names_one_subject_alias_per_distinct_model() {
     assert_eq!(aliases(&clause(&["S", "N"], SAVES_POWER)), ["S", "N"]);
     assert_eq!(aliases(&clause(&["V"], &non_interference())), ["V"]);
     assert_eq!(aliases(&clause(&["V"], OPAQUE)), ["V"]);
+}
+
+/// FR-173-AC-5 (S3): an unsupported HP-4 form is classified as `Other` while
+/// its supported universal sibling keeps the `Universal` form in the same
+/// package, in declaration order.
+#[trace("TC-598")]
+#[test]
+fn an_other_hyper_clause_keeps_its_supported_universal_sibling() {
+    let unsupported = "hyper Unsupported using inf over behaviours (v: V::ConfigVersion) \
+         forall trace a of V exists trace b of V match { \
+         a.step.ConfigVersion::step.i = b.step.ConfigVersion::step.i } \
+         { always eventually holds(v.versionNumber @ a = v.versionNumber @ b) }";
+    let (text, package) = assemble(
+        &["V"],
+        INFINITE,
+        &format!("{unsupported}\n{}", non_interference()),
+    );
+    let outcomes = check_hyper_clauses(&package);
+    assert_eq!(outcomes.len(), 2, "{text}");
+    let [Ok(CheckedHyper::Behaviours(unsupported)), Ok(CheckedHyper::Behaviours(sibling))] =
+        outcomes.as_slice()
+    else {
+        panic!("one classified Other and one supported sibling: {outcomes:?}");
+    };
+    assert_eq!(
+        unsupported.form(),
+        Some(&HyperForm::Other {
+            reason: HyperUnsupported::ExistentialOutsideSafety,
+        })
+    );
+    assert_eq!(sibling.form(), Some(&HyperForm::Universal));
+    assert_eq!(sibling.aliases().iter().map(|alias| alias.as_str()).collect::<Vec<_>>(), ["V"]);
 }
 
 /// FR-174-AC-1: noninterference has the copy group `[[a, b]]`; a `<=` body, a
@@ -821,7 +854,9 @@ fn a_copy_group_carries_the_exchange_of_the_body_s_atoms() {
 
 /// FR-180-AC-1 (S3): `Det` over a vault whose `step` is bound to an
 /// implementation has a code claim beside its model claim; with no binding it
-/// has the model claim alone.
+/// has the model claim alone. The current S3 claim types expose capability
+/// kind and presence but no independent code-claim identity, so the identity
+/// clause remains uncovered.
 #[trace("TC-605")]
 #[test]
 fn a_bound_step_relation_has_a_code_claim_beside_its_model_claim() {

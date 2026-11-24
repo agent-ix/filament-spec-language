@@ -117,6 +117,202 @@ fn refused(world: &World, claim: &str) -> ProductRefusal {
     }
 }
 
+/// FR-195-AC-4: EN-4 refuses each exact-only class with its first applicable
+/// cause, while a confidence-bounded quantile claim passes negotiation.
+#[trace("TC-630", "FR-195-AC-4")]
+#[test]
+fn the_statistical_gate_returns_each_exact_only_cause() {
+    use fsl_analyze::statistical::require_statistical;
+    use fsl_replay::statistical::StatisticalRefusal;
+
+    let workload = World::new(&prob_world::link(
+        "probabilistic Cost using ev on M over (m: M::Msg) under Even on origin { expected accumulate cost until holds(m.delivered) <= rational(6, 5) }\n\
+         probabilistic Bounded using ev on M over (m: M::Msg) under Even on origin { probability >= 0.5 [ eventually[0, 2] holds(m.delivered) ] }\n\
+         probabilistic P95 using ev on M over (m: M::Msg) under Steady on origin with alpha 0.01, beta 0.01, indifference 0.01 { quantile 0.95 of (accumulate cost from holds(m.attempts = 0) until holds(m.delivered) within 2) <= 3 }\n\
+         workload Steady on M { weight Msg::send_a = 1; weight Msg::send_b = 1; }",
+    ));
+    let every = World::new(&prob_world::process(
+        "probabilistic FairTerminates using inf on M over (p: M::Proc) under every scheduler on origin { probability >= 0.99 [ eventually holds(p.done) ] }",
+    ));
+
+    assert_eq!(
+        require_statistical(every.claim("FairTerminates")),
+        Err(fsl_replay::statistical::StatisticalRefusal::EveryScheduler)
+    );
+    assert_eq!(
+        require_statistical(workload.claim("Cost")),
+        Err(StatisticalRefusal::ExactOnlyForm)
+    );
+    assert_eq!(
+        require_statistical(workload.claim("Bounded")),
+        Err(StatisticalRefusal::MissingConfidence)
+    );
+    assert_eq!(require_statistical(workload.claim("P95")), Ok(()));
+}
+
+/// FR-195-AC-8: simultaneous EN-4 gates select the specified first refusal,
+/// before claim reduction or sampler admission; the confidence-bounded P95
+/// passes the gate and proceeds as far as the deliberately invalid sampler.
+#[trace("TC-630", "FR-195-AC-8")]
+#[test]
+fn statistical_gate_precedence_precedes_claim_reduction_and_sampling() {
+    use fsl_analyze::statistical::{StatisticalRequest, check_statistical};
+    use fsl_foundation::selection::DefinitionRef;
+    use fsl_replay::statistical::{StatisticalLimits, StatisticalMethod, StatisticalRefusal};
+
+    let workload = World::new(&prob_world::link(
+        "probabilistic Cost using ev on M over (m: M::Msg) under Even on origin { expected accumulate cost until holds(m.delivered) <= rational(6, 5) }\n\
+         probabilistic Bounded using ev on M over (m: M::Msg) under Even on origin { probability >= 0.5 [ eventually[0, 2] holds(m.delivered) ] }\n\
+         probabilistic P95 using ev on M over (m: M::Msg) under Steady on origin with alpha 0.01, beta 0.01, indifference 0.01 { quantile 0.95 of (accumulate cost from holds(m.attempts = 0) until holds(m.delivered) within 2) <= 3 }\n\
+         workload Steady on M { weight Msg::send_a = 1; weight Msg::send_b = 1; }",
+    ));
+    let every = World::new(&prob_world::process(
+        "probabilistic FairTerminates using inf on M over (p: M::Proc) under every scheduler on origin { probability >= 0.99 [ eventually holds(p.done) ] }",
+    ));
+    let invalid_sampler = DefinitionRef::new("agent-ix", "not-a-sampler/v1").unwrap();
+
+    for (world, name, expected) in [
+        (&every, "FairTerminates", StatisticalRefusal::EveryScheduler),
+        (&workload, "Cost", StatisticalRefusal::ExactOnlyForm),
+        (&workload, "Bounded", StatisticalRefusal::MissingConfidence),
+    ] {
+        let refusal = check_statistical(
+            StatisticalRequest {
+                subject: world.subject(),
+                claim: world.claim(name),
+                method: StatisticalMethod::Okamoto,
+                seed: 7,
+                sampler: invalid_sampler.clone(),
+                limits: StatisticalLimits::default(),
+                max_witnesses: 1,
+                symmetry: Vec::new(),
+                timed_sampling: fsl_replay::statistical::TimedSampling::default(),
+            },
+            &Cancel::new(),
+        );
+        assert_eq!(refusal, Err(expected));
+    }
+
+    let passed_gate = check_statistical(
+        StatisticalRequest {
+            subject: workload.subject(),
+            claim: workload.claim("P95"),
+            method: StatisticalMethod::Okamoto,
+            seed: 7,
+            sampler: invalid_sampler.clone(),
+            limits: StatisticalLimits::default(),
+            max_witnesses: 1,
+            symmetry: Vec::new(),
+            timed_sampling: fsl_replay::statistical::TimedSampling::default(),
+        },
+        &Cancel::new(),
+    );
+    assert!(matches!(
+        passed_gate,
+        Err(StatisticalRefusal::GeneratorMismatch { supplied }) if supplied == invalid_sampler
+    ));
+}
+
+/// FR-195-AC-5: EN-5 advertises only exact unbounded probabilistic evidence,
+/// and FR-192 maps each EN-4 gate refusal to unsupported with its cause.
+#[trace("TC-630", "FR-195-AC-5")]
+#[test]
+fn exact_probability_manifest_and_statistical_refusal_settlement_are_exact() {
+    use fsl_analyze::exact_probabilistic::manifest;
+    use fsl_analyze::statistical::manifest as statistical_manifest;
+    use fsl_foundation::bound::DomainKind;
+    use fsl_replay::statistical::{StatisticalRefusal, settle_statistical_refusal};
+    use fsl_replay::{StatisticalRequestRefusal, TerminalValue, UnavailabilityCause};
+    use fsl_route::{EvidenceKind, Mode, ProviderOrigin};
+
+    let exact = manifest::descriptor(ProviderOrigin::Linked).unwrap();
+    assert_eq!(
+        exact.advertises().collect::<Vec<_>>(),
+        [(
+            fsl_semantics::check::Capability::ProbabilisticSatisfaction,
+            Mode::Unbounded,
+        )]
+    );
+    assert_eq!(
+        exact.evidence_kinds(),
+        &BTreeSet::from([EvidenceKind::Exact])
+    );
+    assert_eq!(
+        exact.domains(),
+        Some(&BTreeSet::from([
+            DomainKind::Population,
+            DomainKind::Integer
+        ]))
+    );
+    assert_eq!(
+        statistical_manifest::descriptor(ProviderOrigin::Linked)
+            .unwrap()
+            .evidence_kinds(),
+        &BTreeSet::from([EvidenceKind::Statistical])
+    );
+
+    for (refusal, cause) in [
+        (
+            StatisticalRefusal::EveryScheduler,
+            StatisticalRequestRefusal::EveryScheduler,
+        ),
+        (
+            StatisticalRefusal::ExactOnlyForm,
+            StatisticalRequestRefusal::ExactOnlyForm,
+        ),
+        (
+            StatisticalRefusal::MissingConfidence,
+            StatisticalRequestRefusal::MissingConfidence,
+        ),
+    ] {
+        let settled = settle_statistical_refusal(&refusal).expect("request refusal settles");
+        assert_eq!(
+            settled.value,
+            TerminalValue::Unsupported(UnavailabilityCause::StatisticalRequest(cause))
+        );
+        assert_eq!(settled.diagnostic, None);
+    }
+}
+
+/// FR-195-AC-6 (TC-1163): exact claims have a claim-occurrence-keyed
+/// probabilistic requirement with its exact evidence and full record shape.
+#[trace("TC-1163")]
+#[test]
+fn exact_probabilistic_requirement_records_keep_occurrence_and_evidence() {
+    use fsl_foundation::bound::{DomainKey, DomainKind};
+    use fsl_semantics::check::Capability;
+    use fsl_semantics::check::RequirementRecord;
+    use fsl_semantics::family::{ClaimEvidence, ClaimExtent};
+    use std::collections::BTreeMap;
+
+    let world = World::new(&prob_world::process(
+        "probabilistic FairTerminates using inf on M over (p: M::Proc) under every scheduler on origin { probability >= 0.99 [ eventually holds(p.done) ] }",
+    ));
+    let claim = world.claim("FairTerminates");
+    let occurrence = claim.occurrence().expect("the package claim occurrence");
+    let boolean = crate::fixture_ids::node_key([99]);
+    let record = RequirementRecord::model_claim(
+        claim.requirements(occurrence.node().clone()),
+        boolean.clone(),
+    );
+    let requirements = record.requirements();
+    assert_eq!(requirements.kind(), Capability::ProbabilisticSatisfaction);
+    assert_eq!(requirements.evidence(), Some(ClaimEvidence::Exact));
+    assert_eq!(
+        requirements.extent(),
+        &ClaimExtent::from_domains(BTreeMap::from([(
+            DomainKey::Node {
+                node: occurrence.node().clone(),
+                path: Vec::new()
+            },
+            DomainKind::InfiniteTrace,
+        )]))
+    );
+    assert_eq!(record.result_bound().node(), boolean);
+    assert!(record.conversion_context().is_none());
+    assert!(record.path_condition().is_empty());
+}
+
 /// The probabilities of `edges`, summed.
 fn total(edges: &[ProbEdge]) -> Rational {
     edges
@@ -2619,6 +2815,171 @@ fn a_budget_equal_to_the_product_size_completes() {
             ..
         }))
     ));
+}
+
+/// TC-631: an unbounded exact claim retains real None monitor and accumulator
+/// members in its key; exhausting the state budget returns a typed stop and
+/// does not manufacture a partial product. This does not cover FR-196-AC-9's
+/// timed-key clock/deadline retention or malformed-key admission negatives.
+#[trace("TC-631")]
+#[test]
+fn exact_unbounded_keys_keep_none_and_budget_stops_have_no_product() {
+    let world = World::new(&prob_world::process(REACH));
+    let product = built(&world, "Terminates");
+    let initial = &product.states[start(&product).index()];
+    assert_eq!(initial.monitor, None);
+    assert_eq!(initial.accumulator, None);
+
+    let limits = ModelCheckLimits {
+        limits: Limits {
+            max_states: 1,
+            ..ModelCheckLimits::default().limits
+        },
+        ..ModelCheckLimits::default()
+    };
+    let result = build_product(world.request("Terminates", limits), &Cancel::new());
+    assert!(
+        matches!(
+            result,
+            Err(ProductRefusal::Stopped(ProductStop::Limit {
+                limit: ModelCheckLimit::ExactProbMaxStates,
+                value: 1,
+            }))
+        ),
+        "typed budget refusal: {result:?}"
+    );
+}
+
+/// FR-196-AC-17: the admitted event-position profile builds its formula
+/// monitor into EN-5's bounded product. A raw model self-cycle at the first
+/// loss therefore has a distinct remaining-horizon key, while the exact
+/// eventual and always values match their independent finite-horizon cases.
+#[trace("TC-631", "FR-196-AC-17")]
+#[test]
+fn bounded_event_position_formulas_use_formula_keys_and_exact_extrema() {
+    use fsl_analyze::analyze::{Engines, analyze_items, exact_probabilistic_item};
+    use fsl_foundation::RequestIndex;
+    use fsl_replay::{ModelCheckLimits, ProofBasis, TerminalValue};
+
+    let eventual = World::new(&prob_world::Model {
+        package: "test/bounded-event-position",
+        object: "T",
+        population: "ts",
+        key: "x",
+        integers: vec![],
+        fields: vec![("delivered", prob_world::BOOLEAN.into())],
+        operations: vec![prob_world::Operation {
+            name: "step",
+            parameters: vec![("outcome", prob_world::BOOLEAN.into())],
+            modifies: vec!["delivered"],
+            deletes: false,
+        }],
+        body: "pre Active using v on M::T::step { not self.delivered }\n\
+               post Stepped using v on M::T::step { self.delivered = outcome }\n\
+               random T::step(outcome) ~ { true: 1, false: 1 };\n\
+               terminal Done using v on M when { self.delivered };\n\
+               workload Steady on M { weight T::step = 1; }\n\
+               probabilistic WithinTwo using ev on M over (t: M::T) under Steady on origin { probability >= rational(3, 4) [ eventually[0, 2] holds(t.delivered) ] }"
+            .to_owned(),
+        initial: serde_json::json!({"delivered": {"boolean": false}}),
+    });
+    let product = built(&eventual, "WithinTwo");
+    let initial_id = start(&product);
+    let initial = &product.states[initial_id.index()];
+    assert!(matches!(
+        initial.monitor,
+        Some(MonitorState::Formula(FormulaState::Running(_)))
+    ));
+    let loss = product
+        .outgoing(initial_id)
+        .iter()
+        .find(|edge| product.states[edge.to.index()].model == initial.model)
+        .expect("the undelivered half-probability branch returns to the same model state");
+    assert_eq!(loss.probability, ratio(1, 2));
+    let one_loss = &product.states[loss.to.index()];
+    assert_ne!(
+        initial, one_loss,
+        "remaining horizon is part of the full key"
+    );
+    assert_ne!(initial.monitor, one_loss.monitor);
+    assert!(matches!(
+        one_loss.monitor,
+        Some(MonitorState::Formula(FormulaState::Running(_)))
+    ));
+
+    let always = World::new(&prob_world::Model {
+        package: "test/bounded-always",
+        object: "T",
+        population: "ts",
+        key: "x",
+        integers: vec![("Phase", 0, 2)],
+        fields: vec![
+            ("phase", "ix://test/bounded-always/Phase".into()),
+            ("p", prob_world::BOOLEAN.into()),
+        ],
+        operations: vec![
+            prob_world::Operation {
+                name: "a",
+                parameters: vec![("outcome", prob_world::BOOLEAN.into())],
+                modifies: vec!["phase", "p"],
+                deletes: false,
+            },
+            prob_world::Operation {
+                name: "b",
+                parameters: vec![("outcome", prob_world::BOOLEAN.into())],
+                modifies: vec!["phase", "p"],
+                deletes: false,
+            },
+            prob_world::Operation {
+                name: "recover",
+                parameters: vec![],
+                modifies: vec!["phase", "p"],
+                deletes: false,
+            },
+        ],
+        body: "pre A using v on M::T::a { self.phase = 0 }\n\
+               post ADone using v on M::T::a { (outcome and self.phase = 1 and self.p = true) or (not outcome and self.phase = 2 and self.p = false) }\n\
+               pre B using v on M::T::b { self.phase = 0 }\n\
+               post BDone using v on M::T::b { (outcome and self.phase = 1 and self.p = true) or (not outcome and self.phase = 2 and self.p = false) }\n\
+               pre Recover using v on M::T::recover { self.phase = 2 }\n\
+               post Recovered using v on M::T::recover { self.phase = 1 and self.p = true }\n\
+               random T::a(outcome) ~ { true: 1, false: 3 };\n\
+               random T::b(outcome) ~ { true: 3, false: 1 };\n\
+               terminal Done using v on M when { self.phase = 1 };\n\
+               probabilistic Minimum using ev on M over (t: M::T) under every scheduler on origin { probability >= rational(1, 4) [ always[0, 1] holds(t.p) ] }\n\
+               probabilistic Maximum using ev on M over (t: M::T) under every scheduler on origin { probability <= rational(3, 4) [ always[0, 1] holds(t.p) ] }"
+            .to_owned(),
+        initial: serde_json::json!({
+            "phase": {"integer": "0"},
+            "p": {"boolean": true},
+        }),
+    });
+
+    let engines = Engines::fsl().expect("exact EN-5 is registered");
+    let exact_value = |world: &World, name: &str| {
+        let item = exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request(name, ModelCheckLimits::default()),
+        );
+        let mut records = analyze_items(&engines, vec![item], &Cancel::new());
+        assert_eq!(records.len(), 1);
+        let record = records.remove(0);
+        let terminal = record.terminal().expect("exact analysis settles");
+        let TerminalValue::Proved {
+            basis: ProofBasis::ExactValue { value, .. },
+            ..
+        } = terminal.value()
+        else {
+            panic!(
+                "{name} is proved with an exact formula value: {:?}",
+                terminal.value()
+            );
+        };
+        value.value().clone()
+    };
+    assert_eq!(exact_value(&eventual, "WithinTwo"), ratio(3, 4));
+    assert_eq!(exact_value(&always, "Minimum"), ratio(1, 4));
+    assert_eq!(exact_value(&always, "Maximum"), ratio(3, 4));
 }
 
 /// Observe the real relation and full-target construction boundaries, rather

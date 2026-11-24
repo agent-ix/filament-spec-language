@@ -8,7 +8,9 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Integer, Rational, Value};
 use filament_semantic_value::catalog::UndefinedReason;
 use fsl_analyze::statistical::{
-    check_statistical, witness_reader, witness_reader_with_timed_sampling, StatisticalRequest,
+    check_sampled, check_statistical, witness_reader, witness_reader_with_timed_sampling,
+    BehaviourSampler, Drawn, QuantileComparison, RegenerationWalk, Sample, SampleHalt,
+    SampledRequest, StatisticalClaim, StatisticalRequest, TestSubject, WalkStep,
     DEFAULT_MAX_WITNESSES,
 };
 use fsl_eval::model_subject::ModelSubject;
@@ -18,11 +20,12 @@ use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
 use fsl_replay::statistical::{
-    replay_sampled_witness, Decision, MeasureValue, StatisticalLimit, StatisticalLimits,
-    StatisticalMethod, StatisticalOutcome, StatisticalRefusal, StatisticalStop,
+    replay_sampled_witness, Confidence, Decision, MeasureValue, StatisticalLimit,
+    StatisticalLimits, StatisticalMethod, StatisticalOutcome, StatisticalRefusal, StatisticalStop,
     StatisticalUnsupported, StatisticalVerdict, UndecidedCause, WitnessReplay, WitnessValue,
 };
 use fsl_replay::statistical::{settle_statistical, settle_statistical_refusal, SubjectLimits};
+use fsl_replay::{settle_exact_prob_build_issue, ExactProbBuildIssue, IncompleteCause, ModelCheckLimit};
 use fsl_replay::SymmetryRefusal;
 use fsl_replay::{ClaimPredicate, TerminalValue, UndefinedLocus};
 use fsl_route::reductions::SymmetryDeclaration;
@@ -63,10 +66,145 @@ fn run(
     )
 }
 
+/// An unused walk for the synchronous `check_sampled` test seam.
+struct UnusedWalk;
+
+impl RegenerationWalk for UnusedWalk {
+    fn step(&mut self) -> Result<WalkStep, SampleHalt> {
+        panic!("the SPRT tests do not request a regenerative walk")
+    }
+}
+
+struct CandidateStopSampler;
+
+impl BehaviourSampler for CandidateStopSampler {
+    type Walk = UnusedWalk;
+
+    fn sample(
+        &mut self,
+        _test: &TestSubject,
+        _seed: u64,
+        _trace: u64,
+    ) -> Result<Drawn, SampleHalt> {
+        Err(SampleHalt::Expansion(
+            fsl_eval::simulation::ExpansionStop {
+                cause: filament_semantic_value::catalog::CatalogCode::new(
+                    "resource_exhausted",
+                    "insufficient-next-charge",
+                ),
+                limit: Some(fsl_eval::simulation::ExpansionLimit::MaxCandidates),
+            },
+        ))
+    }
+
+    fn walk(&mut self, _test: &TestSubject, _seed: u64, _trace: u64) -> Self::Walk {
+        UnusedWalk
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TracePattern {
+    /// Alternate the result for the first hundred trace indices, then hold.
+    PrefixAroundBoundary,
+    /// Every sample holds.
+    AlwaysHolds,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RecordedSample {
+    seed: u64,
+    initial: u32,
+    binding: Option<String>,
+    trace: u64,
+    holds: bool,
+}
+
+/// Deterministic seam test double. The first hundred samples remain inside
+/// the SPRT indifference region, and the all-holding tail makes the default
+/// run terminate shortly after the stopped prefix.
+struct TraceSampler {
+    pattern: TracePattern,
+    draws: Vec<RecordedSample>,
+}
+
+impl TraceSampler {
+    fn new(pattern: TracePattern) -> Self {
+        Self {
+            pattern,
+            draws: Vec::new(),
+        }
+    }
+}
+
+impl BehaviourSampler for TraceSampler {
+    type Walk = UnusedWalk;
+
+    fn sample(
+        &mut self,
+        test: &TestSubject,
+        seed: u64,
+        trace: u64,
+    ) -> Result<Drawn, SampleHalt> {
+        let holds = match self.pattern {
+            TracePattern::AlwaysHolds => true,
+            TracePattern::PrefixAroundBoundary if trace >= 100 => true,
+            TracePattern::PrefixAroundBoundary => (trace % 2 == 0) == (seed == 7),
+        };
+        self.draws.push(RecordedSample {
+            seed,
+            initial: test.initial,
+            binding: test.binding.as_ref().map(|instance| instance.key.clone()),
+            trace,
+            holds,
+        });
+        Ok(Drawn {
+            sample: Sample::Measured {
+                holds,
+                value: MeasureValue::Value(if holds { ratio(4, 1) } else { ratio(6, 1) }),
+            },
+            steps: Vec::new(),
+        })
+    }
+
+    fn walk(&mut self, _test: &TestSubject, _seed: u64, _trace: u64) -> Self::Walk {
+        UnusedWalk
+    }
+}
+
+fn sampled_p95() -> StatisticalClaim {
+    StatisticalClaim::quantile(
+        ratio(1, 2),
+        QuantileComparison::AtMost,
+        ratio(5, 1),
+        Confidence::new(ratio(1, 10), ratio(1, 10), ratio(1, 10)).expect("confidence"),
+    )
+    .expect("a valid quantile claim")
+}
+
+fn sampled_request<'a>(
+    claim: &'a StatisticalClaim,
+    tests: &'a [TestSubject],
+    sampler_identity: &'a DefinitionRef,
+    method: StatisticalMethod,
+    seed: u64,
+    limits: StatisticalLimits,
+) -> SampledRequest<'a> {
+    SampledRequest {
+        claim,
+        tests,
+        method,
+        seed,
+        sampler: sampler_identity,
+        limits,
+        max_witnesses: 0,
+        timed_sampling: fsl_replay::statistical::TimedSampling::default(),
+    }
+}
+
 /// Two real binding tests execute serially with the same per-test
 /// confidence. The minimum allowance that completes either alone cannot be
 /// replenished when the second test starts.
-#[trace("FR-120-AC-35", "FR-191-AC-8")]
+#[trace("FR-120-AC-35", "FR-191-AC-8", "FR-192-AC-8")]
 #[test]
 fn serial_binding_tests_share_the_probability_work_allowance() {
     let claims = "probabilistic One using ev on M over (n: M::Node) under Steady on origin with alpha 0.2, beta 0.2, indifference 0.4 { probability >= 0.5 [ always[0,0] holds(n.healthy) ] }\nprobabilistic Two using ev on M over (n: M::Node) under Steady on origin with alpha 0.4, beta 0.4, indifference 0.4 { probability >= 0.5 [ always[0,0] holds(n.healthy) ] }";
@@ -134,7 +272,7 @@ fn serial_binding_tests_share_the_probability_work_allowance() {
     };
     assert!(
         matches!(
-            stop,
+            stop.clone(),
             StatisticalStop::Expansion(fsl_eval::simulation::ExpansionStop {
                 limit: Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
                     filament_exact::LimitKind::WorkUnits
@@ -155,6 +293,323 @@ fn serial_binding_tests_share_the_probability_work_allowance() {
         provenance.tests[1].traces.count, 1,
         "the existing serial sampler reports its attempted unpaid draw"
     );
+
+    let mut meter = prob_world::UNLIMITED;
+    meter.work_units = low;
+    let limits = SubjectLimits {
+        expansion: ExpansionLimits {
+            max_candidates: 1_000_000,
+        },
+        meter: &meter,
+    };
+    let outcome = StatisticalOutcome::Stopped {
+        stop: stop.clone(),
+        partial: partial.clone(),
+        provenance: provenance.clone(),
+    };
+    let statistical = settle_statistical(&outcome, limits);
+    let StatisticalStop::Expansion(expansion) = &stop else {
+        panic!("expected an expansion stop, got {stop:?}");
+    };
+    let exact = settle_exact_prob_build_issue(
+        &ExactProbBuildIssue::Expansion(expansion.clone()),
+        limits,
+    );
+    assert_eq!(statistical.value, exact.value().clone());
+    assert_eq!(statistical.measured(), None);
+    assert!(statistical.diagnostic.is_none());
+    assert_eq!(
+        statistical.value,
+        TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::EvaluationMeter {
+                counter: filament_exact::LimitKind::WorkUnits,
+            },
+            value: low,
+            required: None,
+        })
+    );
+    let TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, .. }) = &statistical.value
+    else {
+        panic!("the work-unit stop remains incomplete: {:?}", statistical.value);
+    };
+    assert_eq!(limit.setting(), "accounting.work_units");
+
+    let local_candidate_bound = 17;
+    let local_claim = sampled_p95();
+    let local_tests = [TestSubject {
+        initial: 0,
+        binding: None,
+        reference: None,
+    }];
+    let sampler_identity = sampler();
+    let local_candidate = check_sampled(
+        sampled_request(
+            &local_claim,
+            &local_tests,
+            &sampler_identity,
+            StatisticalMethod::Sprt,
+            7,
+            StatisticalLimits::default(),
+        ),
+        &mut CandidateStopSampler,
+        &Cancel::new(),
+    )
+    .expect("the sampler's candidate stop is returned");
+    assert!(matches!(
+        &local_candidate,
+        StatisticalOutcome::Stopped {
+            stop: StatisticalStop::Expansion(fsl_eval::simulation::ExpansionStop {
+                limit: Some(fsl_eval::simulation::ExpansionLimit::MaxCandidates),
+                ..
+            }),
+            ..
+        }
+    ));
+    let local_limits = SubjectLimits {
+        expansion: ExpansionLimits {
+            max_candidates: local_candidate_bound,
+        },
+        meter: &meter,
+    };
+    let local_record = settle_statistical(&local_candidate, local_limits);
+    assert_eq!(
+        local_record.value,
+        TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::MaxCandidates,
+            value: local_candidate_bound,
+            required: None,
+        })
+    );
+    let TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, .. }) = &local_record.value
+    else {
+        panic!("the candidate stop remains incomplete: {:?}", local_record.value);
+    };
+    assert_eq!(limit.setting(), "expansion.max_candidates");
+    assert_eq!(local_record.measured(), None);
+    assert!(local_record.diagnostic.is_none());
+
+    let cancel = Cancel::new();
+    cancel.cancel(filament_exact::CancelCause::Requested);
+    let cancelled = check_sampled(
+        sampled_request(
+            &local_claim,
+            &local_tests,
+            &sampler_identity,
+            StatisticalMethod::Sprt,
+            7,
+            StatisticalLimits::default(),
+        ),
+        &mut TraceSampler::new(TracePattern::AlwaysHolds),
+        &cancel,
+    )
+    .expect("the cancelled request retains its cause");
+    assert!(matches!(
+        &cancelled,
+        StatisticalOutcome::Stopped {
+            stop: StatisticalStop::Cancelled(filament_exact::CancelCause::Requested),
+            ..
+        }
+    ));
+    let cancelled_record = settle_statistical(&cancelled, limits);
+    assert_eq!(
+        cancelled_record.value,
+        TerminalValue::Incomplete(IncompleteCause::Cancelled {
+            source: filament_exact::CancelCause::Requested,
+        })
+    );
+    assert_eq!(cancelled_record.measured(), None);
+    assert!(cancelled_record.diagnostic.is_none());
+}
+
+/// FR-191-AC-3's sample-reproduction clauses through the public
+/// `BehaviourSampler` seam: the stopped trace prefix and its default-limit
+/// rerun have identical sample values; changing only the seed changes a
+/// value while retaining the same checked statistical claim.
+#[trace("TC-626")]
+#[test]
+fn sampled_seven_reproduces_a_stopped_prefix_and_seed_eight_changes_it() {
+    let claim = sampled_p95();
+    let tests = [TestSubject {
+        initial: 0,
+        binding: None,
+        reference: None,
+    }];
+    let sampler_identity = sampler();
+    let default = sampled_request(
+        &claim,
+        &tests,
+        &sampler_identity,
+        StatisticalMethod::Sprt,
+        7,
+        StatisticalLimits::default(),
+    );
+    let mut first_sampler = TraceSampler::new(TracePattern::PrefixAroundBoundary);
+    let first = check_sampled(default, &mut first_sampler, &Cancel::new())
+        .expect("the deterministic sampled run completes");
+    let mut repeated_sampler = TraceSampler::new(TracePattern::PrefixAroundBoundary);
+    let repeated = check_sampled(default, &mut repeated_sampler, &Cancel::new())
+        .expect("the repeated sampled run completes");
+    assert_eq!(first, repeated);
+    assert_eq!(format!("{first:?}").as_bytes(), format!("{repeated:?}").as_bytes());
+    assert_eq!(first_sampler.draws, repeated_sampler.draws);
+
+    let mut limited = StatisticalLimits::default();
+    limited.max_samples = 100;
+    let stopped_request = sampled_request(
+        &claim,
+        &tests,
+        &sampler_identity,
+        StatisticalMethod::Sprt,
+        7,
+        limited,
+    );
+    let mut stopped_sampler = TraceSampler::new(TracePattern::PrefixAroundBoundary);
+    let stopped = check_sampled(stopped_request, &mut stopped_sampler, &Cancel::new())
+        .expect("the requested sample limit is an outcome");
+    let StatisticalOutcome::Stopped {
+        stop: StatisticalStop::Limit {
+            limit: StatisticalLimit::MaxSamples,
+            value: 100,
+        },
+        partial,
+        provenance,
+    } = stopped
+    else {
+        panic!("stopped at max_samples 100: {stopped:?}");
+    };
+    assert_eq!((partial.samples, partial.draws), (100, 100));
+    assert_eq!(provenance.seed, 7);
+    assert_eq!(provenance.tests[0].traces.first, 0);
+    assert_eq!(provenance.tests[0].traces.step, 1);
+    assert_eq!(provenance.tests[0].traces.count, 100);
+    assert_eq!(
+        stopped_sampler
+            .draws
+            .iter()
+            .map(|draw| draw.trace)
+            .collect::<Vec<_>>(),
+        (0..100).collect::<Vec<_>>()
+    );
+
+    let StatisticalOutcome::Completed(full) = first else {
+        panic!("the default-limit rerun completes: {first:?}");
+    };
+    assert_eq!(full.provenance.seed, 7);
+    assert_eq!(
+        stopped_sampler.draws,
+        repeated_sampler
+            .draws
+            .iter()
+            .take(100)
+            .cloned()
+            .collect::<Vec<_>>()
+    );
+
+    let reseeded_request = sampled_request(
+        &claim,
+        &tests,
+        &sampler_identity,
+        StatisticalMethod::Sprt,
+        8,
+        StatisticalLimits::default(),
+    );
+    let mut reseeded_sampler = TraceSampler::new(TracePattern::PrefixAroundBoundary);
+    let reseeded = check_sampled(reseeded_request, &mut reseeded_sampler, &Cancel::new())
+        .expect("seed 8 is the same claim under another seed");
+    assert_eq!(claim.verdict_bound(), sampled_p95().verdict_bound());
+    assert!(reseeded_sampler.draws.iter().any(|draw| {
+        repeated_sampler
+            .draws
+            .iter()
+            .find(|prior| prior.trace == draw.trace)
+            .is_some_and(|prior| prior.holds != draw.holds)
+    }));
+    match reseeded {
+        StatisticalOutcome::Completed(verdict) => assert_eq!(verdict.provenance.seed, 8),
+        StatisticalOutcome::Stopped { provenance, .. }
+        | StatisticalOutcome::Unsupported { provenance, .. } => {
+            assert_eq!(provenance.seed, 8)
+        }
+    }
+    // StatisticalOutcome exposes request provenance and the claim-bound, but
+    // no obligation-identity field exists at this seam to compare by seed.
+}
+
+/// FR-191-AC-4's provenance fields through `check_sampled`: each logical test
+/// retains its initial-state index, concrete binding and interleaved trace
+/// range, and the selected method is recorded in the result basis.
+#[trace("TC-626")]
+#[test]
+fn sampled_two_test_provenance_keeps_bindings_and_method() {
+    let claim = sampled_p95();
+    let population = DeclarationKey {
+        package: "test/statistical".to_owned(),
+        node: "ix://test/statistical/servers".to_owned(),
+    };
+    let tests = [
+        TestSubject {
+            initial: 3,
+            binding: Some(fsl_eval::model_subject::ModelInstance {
+                population: population.clone(),
+                key: "a".to_owned(),
+            }),
+            reference: None,
+        },
+        TestSubject {
+            initial: 4,
+            binding: Some(fsl_eval::model_subject::ModelInstance {
+                population: population.clone(),
+                key: "b".to_owned(),
+            }),
+            reference: None,
+        },
+    ];
+    let sampler_identity = sampler();
+    let request = |method| {
+        sampled_request(
+            &claim,
+            &tests,
+            &sampler_identity,
+            method,
+            7,
+            StatisticalLimits::default(),
+        )
+    };
+    let mut okamoto_sampler = TraceSampler::new(TracePattern::AlwaysHolds);
+    let StatisticalOutcome::Completed(okamoto) =
+        check_sampled(request(StatisticalMethod::Okamoto), &mut okamoto_sampler, &Cancel::new())
+            .expect("Okamoto completes")
+    else {
+        panic!("Okamoto completion expected");
+    };
+    assert_eq!(okamoto.provenance.tests.len(), 2);
+    for (entry, initial, key, trace) in [
+        (&okamoto.provenance.tests[0], 3, "a", 0),
+        (&okamoto.provenance.tests[1], 4, "b", 1),
+    ] {
+        assert_eq!(entry.initial, initial);
+        assert_eq!(entry.binding.as_ref().map(|binding| binding.key.as_str()), Some(key));
+        assert_eq!((entry.traces.first, entry.traces.step), (trace, 2));
+        assert_eq!(entry.traces.count, okamoto.tests[entry.index as usize].draws);
+    }
+    assert_eq!(okamoto.basis.method, StatisticalMethod::Okamoto);
+
+    let mut sprt_sampler = TraceSampler::new(TracePattern::AlwaysHolds);
+    let StatisticalOutcome::Completed(sprt) =
+        check_sampled(request(StatisticalMethod::Sprt), &mut sprt_sampler, &Cancel::new())
+            .expect("SPRT completes")
+    else {
+        panic!("SPRT completion expected");
+    };
+    assert_eq!(sprt.basis.method, StatisticalMethod::Sprt);
+    assert_eq!(
+        okamoto.provenance.tests,
+        sprt.provenance.tests,
+        "the logical tests and trace assignment do not depend on method"
+    );
+    // Obligation identity is not returned by SampledRequest or
+    // StatisticalOutcome, so the method/identity clause has no comparison
+    // surface at this API boundary.
 }
 
 fn run_timed_method(
@@ -1020,7 +1475,7 @@ fn a_non_unique_post_state_is_unsupported_with_its_step() {
 /// test's `undefined` names test 0, that sample's trace index and the first
 /// position after the drop, `absent-key`; the sample is kept as an undefined
 /// witness.
-#[trace("TC-640", "FR-189-AC-6")]
+#[trace("TC-640", "TC-627", "FR-189-AC-6")]
 #[test]
 fn a_dropped_coin_rejects_its_test_at_the_undefined_position() {
     let claim = "probabilistic Kept using ev on M over (c: M::Coin) under Even on origin \
@@ -1039,6 +1494,11 @@ fn a_dropped_coin_rejects_its_test_at_the_undefined_position() {
         panic!("one test: {:?}", verdict.tests);
     };
     assert_eq!(test.decision, Decision::Rejected);
+    assert_eq!(
+        (test.draws, test.samples),
+        (test.samples + 1, test.samples),
+        "the undefined sample is a draw but not a counted sample"
+    );
     let undefined = test.undefined.as_ref().expect("an undefined sample");
     assert_eq!(undefined.test, 0);
     // The run stops at this sample: it is the test's last draw.
@@ -1149,7 +1609,7 @@ fn a_draw_above_the_range_is_unsupported() {
 /// a claim under every scheduler, one with no confidence parameters and an
 /// expected-reward form are each refused with its cause before the subject
 /// is read.
-#[trace("TC-627")]
+#[trace("TC-627", "FR-192-AC-4")]
 #[test]
 fn exact_only_claims_are_refused_before_any_sample() {
     let claims = "probabilistic Every using ev on M over (s: M::Server) under every scheduler \
@@ -1160,23 +1620,57 @@ fn exact_only_claims_are_refused_before_any_sample() {
          probabilistic Expected using inf on M over (s: M::Server) under Steady on origin \
          { expected accumulate duration until holds(s.phase = 2) <= 5 }";
     let world = World::new(&prob_world::service(claims));
-    for (claim, refusal) in [
+    for (claim, refusal_expected) in [
         ("Every", StatisticalRefusal::EveryScheduler),
         ("Bare", StatisticalRefusal::MissingConfidence),
         ("Expected", StatisticalRefusal::ExactOnlyForm),
     ] {
-        assert_eq!(
-            run(
-                &world,
-                claim,
-                StatisticalMethod::Okamoto,
-                StatisticalLimits::default(),
-                DEFAULT_MAX_WITNESSES
-            ),
-            Err(refusal),
-            "{claim}"
-        );
+        let refusal = run(
+            &world,
+            claim,
+            StatisticalMethod::Okamoto,
+            StatisticalLimits::default(),
+            DEFAULT_MAX_WITNESSES,
+        )
+        .expect_err("the gate refuses before a sample");
+        assert_eq!(refusal, refusal_expected);
+        let record = settle_statistical_refusal(&refusal)
+            .expect("a gate refusal has a terminal settlement");
+        let TerminalValue::Unsupported(cause) = record.value else {
+            panic!("an exact-only gate refusal settles unsupported: {record:?}");
+        };
+        assert_eq!(cause.as_str(), match claim {
+            "Every" => "every-scheduler",
+            "Bare" => "missing-confidence",
+            "Expected" => "exact-only-form",
+            _ => unreachable!("listed claim"),
+        });
     }
+}
+
+/// FR-189-AC-11 and FR-192-AC-1: a subject with no initial-state/binding
+/// pair is refused before sampling and settles as inconclusive
+/// `no-initial-state`, never as a measured acceptance.
+#[trace("TC-627", "FR-189-AC-11", "FR-192-AC-1")]
+#[test]
+fn a_subject_without_an_initial_binding_pair_is_inconclusive() {
+    let model = prob_world::service(&p95("P95", 5));
+    let world = World::with_initials(&model, &[]);
+    let refusal = run(
+        &world,
+        "P95",
+        StatisticalMethod::Okamoto,
+        StatisticalLimits::default(),
+        DEFAULT_MAX_WITNESSES,
+    )
+    .expect_err("there is no test to sample");
+    assert_eq!(refusal, StatisticalRefusal::NoTest);
+    let record = settle_statistical_refusal(&refusal).expect("NoTest settles");
+    assert_eq!(
+        record.value,
+        TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::NoInitialState)
+    );
+    assert_eq!(record.measured(), None);
 }
 
 /// FR-189 "Methods" and FR-190: over `Service` a mean of a fraction is

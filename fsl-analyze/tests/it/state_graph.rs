@@ -1435,7 +1435,7 @@ fn a_sampled_witness_never_hides_an_undefined_target() {
 /// sampled witness per instance, the exploration stops at `max_states`, and
 /// the outcome is `WitnessedUnchecked` with `Sampled` sources; with
 /// `witness_samples` 0 the same run decides nothing.
-#[trace("TC-614", "FR-168-AC-8")]
+#[trace("TC-614", "FR-166-AC-6", "FR-168-AC-8")]
 #[test]
 fn a_stopped_exploration_leaves_sampled_witnesses_unchecked() {
     let world = config_world(REACHES_TWO, &[(0, 0)]);
@@ -1592,6 +1592,98 @@ fn the_walk_budget_bounds_and_counts_each_walk() {
         };
         assert_eq!(witness.path.steps.len(), 2);
     }
+}
+
+/// FR-168-AC-15 (TC-593): an impossible target is trapped at the initial
+/// state under either symmetry or partial-order reduction.
+#[trace("TC-593", "FR-168-AC-15")]
+#[test]
+fn an_impossible_target_is_trapped_under_each_reduction() {
+    let world = crate::graph_world::symmetric_config_world_over(
+        "",
+        "possible Impossible using v over (c: Config::ConfigVersion) { c.versionNumber = 0 and c.versionNumber = 1 }\n",
+        &["a", "b", "c"],
+        &[vec![0, 0, 0]],
+    );
+    let mut symmetry = world.request(
+        &["a", "b", "c"],
+        vec![world.item("Impossible")],
+        no_samples(),
+    );
+    symmetry
+        .reductions
+        .symmetry
+        .push(fsl_route::reductions::SymmetryDeclaration {
+            population: filament_checked::key::DeclarationKey {
+                package: "test/config".to_owned(),
+                node: "ix://test/config/config_history".to_owned(),
+            },
+            classes: vec![vec!["a".to_owned(), "b".to_owned(), "c".to_owned()]],
+        });
+    let result = run(symmetry);
+    assert_eq!(result.graph.end, RunEnd::Completed);
+    let instance = &result.items[0][0];
+    let StateGraphOutcome::Trapped { stem } = &instance.outcome else {
+        panic!("the symmetric impossible target is trapped: {:?}", instance.outcome);
+    };
+    assert_eq!(stem.initial, 0);
+    assert!(stem.steps.is_empty());
+    let bound = ModelInstance {
+        population: filament_checked::key::DeclarationKey {
+            package: "test/config".to_owned(),
+            node: "ix://test/config/config_history".to_owned(),
+        },
+        key: "a".to_owned(),
+    };
+    let replay = world
+        .replay_evidence(
+            world.claim("Impossible"),
+            fsl_replay::GraphEvidence::Trap {
+                stem: stem.clone(),
+                closure: fsl_replay::TrapClosure::StateGraph,
+                over: Some(bound),
+            },
+            &["a", "b", "c"],
+            Default::default(),
+        )
+        .expect("the trap replays over the concrete closure");
+    assert_eq!(replay.settlement, fsl_replay::GraphReplaySettlement::Reproduced);
+
+    let job = job_world_with_claims(
+        false,
+        false,
+        "possible Impossible using v over (j: M::Job) { j.a = 0 and j.a = 1 }\n",
+    );
+    let mut por = job.request(&["j"], vec![job.item("Impossible")], no_samples());
+    por.reductions.partial_order = true;
+    let result = run(por);
+    assert_eq!(result.graph.end, RunEnd::Completed);
+    let instance = &result.items[0][0];
+    let StateGraphOutcome::Trapped { stem } = &instance.outcome else {
+        panic!("the POR impossible target is trapped: {:?}", instance.outcome);
+    };
+    assert_eq!(stem.initial, 0);
+    assert!(stem.steps.is_empty());
+    let bound = ModelInstance {
+        population: filament_checked::key::DeclarationKey {
+            package: "test/job".to_owned(),
+            node: "ix://test/job/jobs".to_owned(),
+        },
+        key: "j".to_owned(),
+    };
+    let replay = job
+        .replay_evidence(
+            job.claim("Impossible"),
+            fsl_replay::GraphEvidence::Trap {
+                stem: stem.clone(),
+                closure: fsl_replay::TrapClosure::StateGraph,
+                over: Some(bound),
+            },
+            &["j"],
+            Default::default(),
+        )
+        .expect("the POR trap replays over the concrete closure");
+    assert_eq!(replay.settlement, fsl_replay::GraphReplaySettlement::Reproduced);
 }
 
 // ---------------------------------------------------------------- FR-168
@@ -1879,6 +1971,104 @@ fn an_undefined_target_refutes_in_place_of_a_witness() {
         undefined.cause,
         fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
     );
+}
+
+/// FR-168-AC-11 (TC-612): after reaching `versionNumber = 2`, evaluation of
+/// the `Guard` precondition is undefined. The result identifies the state
+/// and contract clause, rather than misreporting a target-predicate failure.
+#[trace("TC-612", "FR-168-AC-11")]
+#[test]
+fn an_undefined_operation_guard_is_reported_at_its_contract_site() {
+    let guard = "pre Guard using v on Config::ConfigVersion::attemptUpdate { \
+        quotient(2 - self.versionNumber) >= 1 }\n";
+    let world = config_kernel_world_over(
+        guard,
+        REACHES_TWO,
+        &["a", "b"],
+        &[vec![0, 0]],
+    );
+    let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
+    let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
+        panic!("an undefined guard: {:?}", result.items[0][0].outcome);
+    };
+    assert_eq!(versions(&world, stem), vec![(0, 0), (1, 0), (2, 0)]);
+    assert_eq!(undefined.state_key, stem.steps[1].post_state);
+    assert_eq!(undefined.predicate, None);
+    assert!(undefined.locus.is_some());
+    assert_eq!(undefined.transition, Some(stem.steps[1].transition.clone()));
+    assert_eq!(
+        undefined.cause,
+        fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
+    );
+}
+
+/// FR-168-AC-12 (TC-612): a terminal predicate has no value at `value = 3`,
+/// even though that state satisfies the possible target.
+#[trace("TC-612", "FR-168-AC-12")]
+#[test]
+fn an_undefined_terminal_predicate_is_reported_without_a_claim_predicate() {
+    let model = Model {
+        package: "test/counter",
+        alias: "C",
+        object: "Counter",
+        population: "counters",
+        symmetric: false,
+        fields: vec![Field {
+            name: "value",
+            range: Some((0, 3)),
+        }],
+        operations: vec![Operation {
+            name: "inc",
+            modifies: &["value"],
+        }],
+    };
+    let body = "pre CanInc using v on C::Counter::inc { self.value < 3 }\n\
+        post Inc using v on C::Counter::inc { self.value = pre(self.value) + 1 }\n\
+        terminal Done using v on C when { 6 mod (3 - self.value) = 0 };\n\
+        possible AtThree using v over (c: C::Counter) { c.value = 3 }\n";
+    let world = World::new(model, body, &[&[("c", &[("value", 0)])]]);
+    let result = run(world.request(
+        &["c"],
+        vec![world.item("AtThree")],
+        no_samples(),
+    ));
+    let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
+        panic!("undefined terminal predicate: {:?}", result.items[0][0].outcome);
+    };
+    assert_eq!(stem.steps.len(), 3);
+    let path_states = positions(&world, &["c"], stem);
+    assert_eq!(world.value(path_states.last().expect("terminal state"), "c", "value"), 3);
+    assert_eq!(undefined.state_key, stem.steps[2].post_state);
+    assert_eq!(undefined.predicate, None);
+    assert!(undefined.locus.is_some());
+    assert_eq!(undefined.transition, None);
+    assert_eq!(
+        undefined.cause,
+        fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
+    );
+}
+
+/// FR-168-AC-13 (TC-612): the selected `Half` state constraint is evaluated
+/// at each explored state and becomes undefined at `va = 2`.
+#[trace("TC-612", "FR-168-AC-13")]
+#[test]
+fn an_undefined_selected_state_constraint_is_not_a_boundary() {
+    let extra = "constraint Half using v on Config::ConfigVersion at current { \
+        quotient(2 - self.versionNumber) >= 1 }\n";
+    let world = config_kernel_world_over(extra, REACHES_TWO, &["a"], &[vec![0]]);
+    let mut request = world.request(&["a"], vec![world.item("ReachesTwo")], no_samples());
+    request.reductions.constraint = Some("Half".to_owned());
+    let result = run(request);
+    let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
+        panic!("undefined state constraint: {:?}", result.items[0][0].outcome);
+    };
+    assert_eq!(versions(&world, stem), vec![(0, 0), (1, 0), (2, 0)]);
+    assert_eq!(undefined.state_key, stem.steps[1].post_state);
+    assert_eq!(undefined.predicate, None);
+    assert!(undefined.locus.is_some());
+    assert_eq!(undefined.transition, None);
+    let at = node_of(&result, undefined.state_key.clone());
+    assert_eq!(result.graph.open.get(&at), Some(&OpenCause::UndecidedSuccessor));
 }
 
 /// FR-168-AC-6: `ReachesTwo` with `witness_samples` 64 and with 0 both
