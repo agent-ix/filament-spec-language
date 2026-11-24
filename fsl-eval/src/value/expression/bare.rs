@@ -1579,7 +1579,7 @@ mod tests {
 
     /// Public FR-390 supply admission remains strict. The internal engine
     /// can forward its typed owner value, but absent P never authorizes ref.
-    #[trace("FR-390-AC-23", "FSpec-FR-230-AC-71", "FSpec-TC-3084")]
+    #[trace("FR-390-AC-23", "FR-230-AC-71", "TC-3084")]
     #[test]
     fn generated_owner_without_population_keeps_public_admission_strict_and_clock_closed() {
         use super::super::protocol_slot::{ProtocolSuppliedValue, SuppliedValue};
