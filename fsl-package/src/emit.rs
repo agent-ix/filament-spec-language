@@ -6646,7 +6646,8 @@ fn timed_body_operands(
 
 /// FSpec FR-322 `model_root`, FR-322-AC-132 and AC-134: append one self-typed
 /// root and generated source-map entry per selected domain package, in
-/// selection order. The placeholder region is the checked unit's first byte.
+/// selection order. Each generated occurrence uses its selected model's
+/// source region.
 fn append_model_roots<'a>(
     ids: &StructuralIds,
     roots: impl Iterator<
