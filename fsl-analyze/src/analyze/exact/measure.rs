@@ -508,7 +508,7 @@ fn refute(
             system, claim, product, produced, initial, binding, None, limits, cancel, subject,
             tamper, meter, storage,
         ),
-        Ok(None) => not_yet(),
+        Ok(None) => witness_absent(),
         Err(WitnessError::Limit { limit, value }) => {
             settled(&ExactProbBuildIssue::Limit { limit, value }, subject)
         }

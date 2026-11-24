@@ -288,7 +288,7 @@ fn refute(request: Refutation<'_>) -> EngineReport {
         &mut |_| Ok(()),
     ) {
         Ok(Some(produced)) => produced,
-        Ok(None) => return not_yet(),
+        Ok(None) => return witness_absent(),
         Err(WitnessError::Limit { limit, value }) => {
             return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }

@@ -14,7 +14,7 @@ use fsl_replay::{
 };
 
 pub(super) fn run(
-    mut request: ProductRequest<'_>,
+    request: ProductRequest<'_>,
     cancel: &Cancel,
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
@@ -81,7 +81,6 @@ pub(super) fn run(
     let product = {
         let identity = candidate.identity;
         let mut admission = candidate.admission();
-        let proof_bounds = std::mem::take(&mut request.subject.proof_bounds);
         match build_retaining_monitor_with_budget(request, identity, &mut admission, cancel) {
             Ok((ProbBuild::Built(product), _)) => product,
             // The same route as every other exact form: an undefined read is a
@@ -102,34 +101,10 @@ pub(super) fn run(
             Err(BudgetedProductError::Key(error)) => {
                 return document_failure(admission.refusal(error), subject)
             }
-            Err(BudgetedProductError::Undefined(_)) => {
-                // The proof-only builder does not retain a failing path: explore
-                // again under the same limits, as the other exact forms do.
-                let undefined_request = ProductRequest {
-                    subject: fsl_eval::model_subject::ModelSubject {
-                        simulation: simulation.clone(),
-                        proof_bounds,
-                    },
-                    claim,
-                    limits,
-                };
-                match build_retaining_monitor(undefined_request, cancel) {
-                    Ok((ProbBuild::Undefined(path), monitor)) => {
-                        return undefined::run(
-                            simulation.clone(),
-                            claim,
-                            path,
-                            monitor,
-                            &limits,
-                            cancel,
-                            subject,
-                            tamper_witness,
-                        )
-                    }
-                    Ok((ProbBuild::Built(_), _)) => return broken(),
-                    Err(error) => return build_refusal(error, subject),
-                }
-            }
+            // The undefined entry builds no long-run path (its guard returns
+            // not-yet for this form), so exploring again to hand it a path
+            // would only double the cost of a known answer.
+            Err(BudgetedProductError::Undefined(_)) => return not_yet(),
         }
     };
     let kind = if every {

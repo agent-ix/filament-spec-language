@@ -186,7 +186,7 @@ pub(super) fn refute(
         // The claim was refuted (this route runs only for a bound the solved
         // values violate) yet the selected chain does not refute it: the
         // solver and the chain disagree, the engine's own fault.
-        Ok(None) => return broken(),
+        Ok(None) => return witness_absent(),
         Err(stop) => return stopped(stop),
     };
     fn state_key(

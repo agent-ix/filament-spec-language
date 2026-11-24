@@ -1230,18 +1230,27 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         // decision (QSL-1092) returns no verdict for a `holds` condition that
         // reads a capture, and FR-174 states no verdict for a state constraint
         // undefined at a component state. Whether each settles as an unbuilt
-        // form, a user-input refusal or a fault is not decided by the spec.
+        // form, a user-input refusal or a fault is not decided by the spec. A
+        // clause with no property form (`FormNotDecided { form: None }`) is the
+        // same kind of open case: the checker's classification never leaves a
+        // clause unformed on any route this crate has read, but no router
+        // invariant proves it, so it is not claimed as a fault.
         ModelCheckRefusal::CaptureRead { .. }
-        | ModelCheckRefusal::Hyper(HyperRefusal::ConstraintUndefined { .. }) => {
+        | ModelCheckRefusal::FormNotDecided { form: None }
+        | ModelCheckRefusal::Hyper(
+            HyperRefusal::ConstraintUndefined { .. }
+            | HyperRefusal::FormNotDecided { form: None },
+        ) => {
             Refusal::Unsupported(NOT_YET)
         }
-        // A routing fault: a clause with no property form reaches no engine, an
-        // HP-5 clause is sent to `check_single_existential` alone (so it names
-        // its own form there), and an HP-1 clause is the relation engine's; a
-        // refusal naming any of them is a router that disagrees with the engine,
-        // the engine's own fault. (HP-4 `Other` is the unbuilt form above.)
-        ModelCheckRefusal::FormNotDecided { form: None }
-        | ModelCheckRefusal::Hyper(
+        // A routing fault: hyper_route sends an HP-5 clause to
+        // `check_single_existential` alone (so `check_hyper` never sees it), and
+        // every other form check_hyper decides is refused only by a router fault; a refusal
+        // naming either (or the defensive no-alias branch) is a router that
+        // disagrees with the engine, the engine's own fault. HP-4 `Other` also
+        // reaches `check_hyper`, but it is a form the spec defines that no engine
+        // builds, so it stays the unbuilt arm above.
+        ModelCheckRefusal::Hyper(
             HyperRefusal::FormNotDecided { .. } | HyperRefusal::NotSingleExistential { .. },
         ) => Refusal::Failed(BROKEN),
         // Clauses and operations the engine cannot read: unsupported forms.
@@ -1533,12 +1542,10 @@ mod tests {
         // QSL-2850: a routing fault is the engine's own (`failed`), never a form
         // the spec defines and no engine builds.
         for fault in [
-            ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided { form: None }),
             ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided {
                 form: Some(fsl_semantics::check::HyperForm::StepRelation),
             }),
             ModelCheckRefusal::Hyper(HyperRefusal::NotSingleExistential { form: None }),
-            ModelCheckRefusal::FormNotDecided { form: None },
         ] {
             let shown = format!("{fault:?}");
             assert_eq!(failed(fault), broken, "{shown}");
@@ -1578,6 +1585,13 @@ mod tests {
                     )
                 }
             )),
+            not_yet
+        );
+        assert_eq!(unsupported(ModelCheckRefusal::FormNotDecided { form: None }), not_yet);
+        assert_eq!(
+            unsupported(ModelCheckRefusal::Hyper(HyperRefusal::FormNotDecided {
+                form: None
+            })),
             not_yet
         );
         assert_eq!(

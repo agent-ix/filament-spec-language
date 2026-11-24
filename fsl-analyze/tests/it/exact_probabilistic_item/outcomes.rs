@@ -40,7 +40,7 @@ fn a_long_run_claim_that_reads_an_undefined_value_is_unbuilt_not_a_fault() {
 
 /// A cancel at any poll of a long-run run settles incomplete or with its
 /// verdict, never as an unbuilt form or a fault.
-#[trace("TC-763", "FR-281-AC-6", "FR-203-AC-3")]
+#[trace("TC-763", "FR-281-AC-11")]
 #[test]
 fn cancelling_a_long_run_claim_at_any_poll_is_never_unbuilt() {
     let world = availability_with_claims(

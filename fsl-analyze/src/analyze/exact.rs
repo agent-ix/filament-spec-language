@@ -314,6 +314,17 @@ fn unbounded_failure(
     }
 }
 
+/// A witness producer found no path set whose mass exceeds the bound's margin,
+/// on a run that reached it only because the solved values refute the bound.
+/// The producer reads the solver's extremal policy (or, at a tie, the
+/// scheduler that reaches a failure most), under which those values give the
+/// refuting path mass, so finding none is a disagreement between the solver and
+/// the producer: the engine's own fault, not an unbuilt form. A limit or a cancel
+/// reaches the producer as an error and settles before this.
+fn witness_absent() -> EngineReport {
+    broken()
+}
+
 fn broken() -> EngineReport {
     EngineReport::Refused(Refusal::Failed(BROKEN))
 }
@@ -2617,7 +2628,7 @@ fn replay_refutation(
     }
     let produced = match produced {
         Ok(Some(witness)) => witness,
-        Ok(None) => return not_yet(),
+        Ok(None) => return witness_absent(),
         Err(crate::exact_probabilistic::WitnessError::Limit { limit, value }) => {
             return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
@@ -2732,7 +2743,7 @@ fn replay_fair_refutation(
     }
     let produced = match produced {
         Ok(Some(witness)) => witness,
-        Ok(None) => return not_yet(),
+        Ok(None) => return witness_absent(),
         Err(crate::exact_probabilistic::WitnessError::Limit { limit, value }) => {
             return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
@@ -3345,7 +3356,7 @@ mod tests {
     /// schedule error settles as its own outcome (a stopped expansion or a
     /// cancel is a limit, a graph the claim was never bound to is a fault),
     /// never as `not-yet-implemented`.
-    #[trace("TC-763", "FR-281-AC-11", "FR-203-AC-3")]
+    #[trace("TC-763", "FR-281-AC-11")]
     #[test]
     fn swallowed_exact_errors_settle_as_their_own_outcome() {
         let meter = fsl_replay::AccountingLimits::default().0;
@@ -3479,7 +3490,7 @@ fn replay_timed_refutation(
     let produced = match produce_witness(product, policy, scope, initial, &accepting, &past, limits)
     {
         Ok(Some(produced)) => produced,
-        Ok(None) => return not_yet(),
+        Ok(None) => return witness_absent(),
         Err(crate::exact_probabilistic::WitnessError::Limit { limit, value }) => {
             return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
