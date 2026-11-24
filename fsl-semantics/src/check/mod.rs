@@ -3409,6 +3409,10 @@ impl PackageDeclarations {
         let models = self.models;
         let operation_effects = checked_model_operation_effects(&models, &source);
         let model_inputs = self.model_inputs;
+        let model_versions = model_inputs
+            .as_ref()
+            .map(|(_, versions, _)| versions.clone())
+            .unwrap_or_default();
         let mut pending_types = self
             .pending_types
             .map(|staged| std::cell::RefCell::new(staged.0));
@@ -3890,7 +3894,7 @@ impl PackageDeclarations {
         let mut stopped_at: Option<usize> = None;
         let redefinition_family = model_inputs
             .as_ref()
-            .map_or_else(BTreeSet::new, |(selected, _)| {
+            .map_or_else(BTreeSet::new, |(selected, _, _)| {
                 redefinition_family_keys(selected)
             });
         let mut operation_precondition_facts: BTreeMap<
@@ -4479,8 +4483,8 @@ impl PackageDeclarations {
                             .any(|attempt| attempt.ordering.is_some())
                 })
             })
-            .map(|(selected, _)| selected.iter().map(|model| model.view.clone()).collect());
-        if let Some((selected, mut model_meter)) = model_inputs {
+            .map(|(selected, _, _)| selected.iter().map(|model| model.view.clone()).collect());
+        if let Some((selected, _, mut model_meter)) = model_inputs {
             match model_conformance::check(
                 &selected,
                 &mut model_meter,
@@ -5108,6 +5112,12 @@ impl PackageDeclarations {
         };
         for checked in &mut refinements {
             checked.package_name = Some(package_name.clone());
+            checked.abstract_model_version = model_versions
+                .get(&checked.abstract_model_selection().identity)
+                .cloned();
+            checked.concrete_model_version = model_versions
+                .get(&checked.concrete_model_selection().identity)
+                .cloned();
             // FSpec FR-375: the refinement's subjects are the selected model
             // packages' `model_root` nodes, of the packages its own unit
             // selects (FR-480 "Selections and imports").
