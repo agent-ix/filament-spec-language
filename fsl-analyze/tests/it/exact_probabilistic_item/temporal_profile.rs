@@ -29,6 +29,52 @@ fn bounded_eventually_reads_each_position_and_settles_at_three_quarters() {
     assert_eq!(value.value(), &ratio(3, 4));
 }
 
+#[trace("FR-186-AC-3")]
+#[test]
+fn bounded_nested_eventually_always_uses_the_literal_horizon_110() {
+    let claim = "probabilistic Nested using ev on M over (n: M::Node) under every scheduler on origin { probability >= 0.99 [ eventually[0,100] always[0,10] holds(n.healthy) ] }";
+    let mut model = prob_world::health("self.healthy = true", "true: 1", false, claim);
+    model.initial["healthy"] = serde_json::json!({"boolean": false});
+    let world = World::new(&model);
+    let record = settle(&world, "Nested", ModelCheckLimits::default());
+    let terminal = record
+        .terminal()
+        .unwrap_or_else(|| panic!("the horizon-110 claim has a terminal: {record:#?}"));
+    let TerminalValue::Proved {
+        basis: ProofBasis::ExactValue { value, .. },
+        certification: Certification::Certified,
+    } = terminal.value()
+    else {
+        panic!(
+            "the checked nested formula settles: {:#?}",
+            terminal.value()
+        );
+    };
+    assert_eq!(value.value(), &ratio(1, 1));
+}
+
+#[trace("FR-186-AC-7")]
+#[test]
+fn bounded_open_upper_event_interval_is_refused_as_an_expression_form() {
+    let claim = "probabilistic OpenUpper using ev on M over (n: M::Node) under every scheduler on origin { probability >= 0.99 [ eventually[2, *] holds(n.healthy) ] }";
+    let world = World::new(&prob_world::health(
+        "self.healthy = true",
+        "true: 1",
+        false,
+        claim,
+    ));
+    let record = settle(&world, "OpenUpper", ModelCheckLimits::default());
+    let terminal = record.terminal().expect("the unsupported form settles");
+    assert!(matches!(terminal.value(), TerminalValue::Unsupported(_)));
+    assert_eq!(
+        terminal
+            .diagnostic()
+            .map(|code| code.to_string())
+            .as_deref(),
+        Some("unsupported_construct/expression-form")
+    );
+}
+
 fn bounded_always_world() -> World {
     let package = "test/temporal-profile-always";
     let boolean = prob_world::BOOLEAN.to_owned();

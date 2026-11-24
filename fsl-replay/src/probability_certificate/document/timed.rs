@@ -9,6 +9,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
+use fsl_eval::temporal::{
+    AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition, TimedTrace,
+};
 use num_traits::Zero;
 use serde_json::{Value as JsonValue, json};
 
@@ -1329,15 +1332,13 @@ fn deadline_event(
 /// The independently checked FR-204 bounded monitor shape. Operator node
 /// positions are retained so nested occurrences remain distinct in the key.
 fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound, Watch<'_>)> {
-    use fsl_semantics::check::{
-        BinaryTemporal, CheckedInterval, FormulaNode, ProbForm, UnaryTemporal,
-    };
+    use fsl_semantics::check::ProbForm;
     let ProbForm::Probability {
         bound,
         event:
             fsl_semantics::check::Event::Formula {
                 formula,
-                timed_horizon: Some(_),
+                timed_horizon: Some(timed_horizon),
                 ..
             },
     } = &claim.form
@@ -1345,120 +1346,37 @@ fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound
         return None;
     };
     let checked = formula.formula();
-    let nodes = checked.nodes();
-    let root_id = checked.root();
-    let root_index = root_id.index();
-    let (root_kind, root_interval, operands) = match nodes.get(root_index)? {
-        FormulaNode::Unary {
-            operator: UnaryTemporal::Eventually,
-            interval: Some(CheckedInterval::Timed(interval)),
-            operand,
-        } => {
-            if let Some(FormulaNode::Unary {
-                operator: UnaryTemporal::Always,
-                interval: Some(CheckedInterval::Timed(inner)),
-                operand: atom,
-            }) = nodes.get(operand.index())
-            {
-                let inner_upper = inner.upper()?;
-                if inner.lower() != inner_upper
-                    || !interval.lower_closed()
-                    || !interval.upper_closed()
-                    || !inner.lower_closed()
-                    || !inner.upper_closed()
-                {
-                    return None;
-                }
-                if !matches!(nodes.get(atom.index())?, FormulaNode::Holds { .. }) {
-                    return None;
-                }
-                let outer_upper = interval.upper()?;
-                let root = fsl_eval::probabilistic::TimedOperatorState {
-                    occurrence: u64::try_from(root_index).ok()?,
-                    kind: fsl_eval::probabilistic::DeadlineKind::Eventually,
-                    lower: time_units(interval.lower(), scale)?,
-                    upper: time_units(outer_upper, scale)?,
-                    elapsed: 0,
-                    phase: fsl_eval::probabilistic::DeadlinePhase::Pending,
-                };
-                let nested = fsl_eval::probabilistic::TimedOperatorState {
-                    occurrence: u64::try_from(operand.index()).ok()?,
-                    kind: fsl_eval::probabilistic::DeadlineKind::Always,
-                    lower: time_units(inner.lower(), scale)?,
-                    upper: time_units(inner_upper, scale)?,
-                    elapsed: 0,
-                    phase: fsl_eval::probabilistic::DeadlinePhase::Pending,
-                };
-                let horizon = root.upper.checked_add(nested.upper)?;
-                let predicate = formula.condition(atom.index())?;
-                return Some((
-                    bound.clone(),
-                    Watch::Nested {
-                        root,
-                        nested,
-                        predicate,
-                        horizon,
-                    },
-                ));
-            }
-            (
-                fsl_eval::probabilistic::DeadlineKind::Eventually,
-                interval,
-                vec![*operand],
-            )
-        }
-        FormulaNode::Unary {
-            operator: UnaryTemporal::Always,
-            interval: Some(CheckedInterval::Timed(interval)),
-            operand,
-        } => (
-            fsl_eval::probabilistic::DeadlineKind::Always,
-            interval,
-            vec![*operand],
-        ),
-        FormulaNode::Binary {
-            operator: BinaryTemporal::Until,
-            interval: Some(CheckedInterval::Timed(interval)),
-            left,
-            right,
-        } => (
-            fsl_eval::probabilistic::DeadlineKind::Until,
-            interval,
-            vec![*left, *right],
-        ),
-        _ => return None,
-    };
-    if !root_interval.lower_closed() || !root_interval.upper_closed() {
+    let predicates = checked
+        .nodes()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| {
+            matches!(node, fsl_semantics::check::FormulaNode::Holds { .. })
+                .then(|| formula.condition(index))
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    if predicates.len()
+        != checked
+            .nodes()
+            .iter()
+            .filter(|node| matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }))
+            .count()
+    {
         return None;
     }
-    let upper = root_interval.upper()?;
-    let predicates = operands
-        .into_iter()
-        .map(|operand| {
-            matches!(nodes.get(operand.index())?, FormulaNode::Holds { .. })
-                .then(|| formula.condition(operand.index()))?
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let horizon = time_units(upper, scale)?;
-    let root = fsl_eval::probabilistic::TimedOperatorState {
-        occurrence: u64::try_from(root_index).ok()?,
-        kind: root_kind,
-        lower: time_units(root_interval.lower(), scale)?,
-        upper: horizon,
-        elapsed: 0,
-        phase: fsl_eval::probabilistic::DeadlinePhase::Pending,
-    };
     Some((
         bound.clone(),
-        Watch::Bounded {
-            root,
+        Watch::TimedTrace {
+            formula,
             predicates,
-            horizon,
+            horizon: time_units(timed_horizon, scale)?,
+            scale,
         },
     ))
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum Phase {
     Pending,
     Accepted,
@@ -1478,21 +1396,52 @@ enum Phase {
         fsl_eval::probabilistic::TimedOperatorState,
         fsl_eval::probabilistic::TimedOperatorState,
     ),
+    /// The exact observation history needed to replay every occurrence in a
+    /// checked timed formula, retained through its complete closed horizon.
+    TimedTrace {
+        horizon: u64,
+        history: Vec<TimedFormulaObservation>,
+        verdict: Option<bool>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TimedFormulaObservation {
+    time: u64,
+    values: Vec<bool>,
+}
+
+fn push_timed_formula_observation(
+    history: &mut Vec<TimedFormulaObservation>,
+    time: u64,
+    values: &[bool],
+) {
+    if history
+        .last()
+        .is_some_and(|last| last.time == time && last.values == values)
+    {
+        return;
+    }
+    history.push(TimedFormulaObservation {
+        time,
+        values: values.to_vec(),
+    });
 }
 
 impl Phase {
-    fn decided(self) -> bool {
+    fn decided(&self) -> bool {
         match self {
             Self::Pending | Self::Inactive | Self::Active => false,
             Self::Bounded(operator) | Self::NestedBounded(operator, _) => {
                 operator.phase != fsl_eval::probabilistic::DeadlinePhase::Pending
             }
+            Self::TimedTrace { verdict, .. } => verdict.is_some(),
             _ => true,
         }
     }
 }
 
-fn phase_value(phase: Phase) -> Option<bool> {
+fn phase_value(phase: &Phase) -> Option<bool> {
     use fsl_eval::probabilistic::DeadlinePhase as MonitorPhase;
     match phase {
         Phase::Accepted => Some(true),
@@ -1507,11 +1456,12 @@ fn phase_value(phase: Phase) -> Option<bool> {
             MonitorPhase::Reject => Some(false),
             MonitorPhase::Pending => None,
         },
+        Phase::TimedTrace { verdict, .. } => *verdict,
         _ => None,
     }
 }
 
-fn monitor_json(phase: Phase) -> JsonValue {
+fn monitor_json(phase: &Phase) -> JsonValue {
     use fsl_eval::probabilistic::{DeadlineKind, DeadlinePhase, TimedOperatorState};
     let kind_name = |kind| match kind {
         DeadlineKind::Eventually => "eventually",
@@ -1544,10 +1494,27 @@ fn monitor_json(phase: Phase) -> JsonValue {
         Phase::NestedBounded(root, nested) => {
             json!([
                 "timed-formula",
-                encode_operator(root),
-                Some(encode_operator(nested))
+                encode_operator(*root),
+                Some(encode_operator(*nested))
             ])
         }
+        Phase::TimedTrace {
+            horizon,
+            history,
+            verdict,
+        } => json!([
+            "timed-formula-trace",
+            horizon.to_string(),
+            history
+                .iter()
+                .map(|observation| json!([observation.time.to_string(), observation.values,]))
+                .collect::<Vec<_>>(),
+            match verdict {
+                None => "pending",
+                Some(true) => "accept",
+                Some(false) => "reject",
+            }
+        ]),
         Phase::Pending => json!(["deadline", "eventually", "pending"]),
         Phase::Accepted => json!(["deadline", "eventually", "accept"]),
         Phase::Rejected => json!(["deadline", "eventually", "reject"]),
@@ -1569,6 +1536,12 @@ struct ElapsedWatch<'a> {
 /// FR-877's elapsed measure.
 enum Watch<'a> {
     Deadline(&'a fsl_semantics::check::CheckedPredicate),
+    TimedTrace {
+        formula: &'a fsl_semantics::check::CheckedTemporalFormula,
+        predicates: Vec<&'a fsl_semantics::check::CheckedPredicate>,
+        horizon: u64,
+        scale: u64,
+    },
     Bounded {
         root: fsl_eval::probabilistic::TimedOperatorState,
         predicates: Vec<&'a fsl_semantics::check::CheckedPredicate>,
@@ -1587,6 +1560,11 @@ impl Watch<'_> {
     fn start(&self) -> Phase {
         match self {
             Self::Deadline(_) => Phase::Pending,
+            Self::TimedTrace { horizon, .. } => Phase::TimedTrace {
+                horizon: *horizon,
+                history: Vec::new(),
+                verdict: None,
+            },
             Self::Bounded { root, .. } => Phase::Bounded(*root),
             Self::Nested { root, nested, .. } => {
                 let mut root = *root;
@@ -1601,6 +1579,7 @@ impl Watch<'_> {
 
     fn horizon(&self) -> u64 {
         match self {
+            Self::TimedTrace { horizon, .. } => *horizon,
             Self::Bounded { horizon, .. } | Self::Nested { horizon, .. } => *horizon,
             _ => 0,
         }
@@ -1620,6 +1599,94 @@ impl Watch<'_> {
         cancel: &Cancel,
     ) -> Result<(Phase, u64), ProbabilityDocumentError> {
         let watch = match self {
+            Self::TimedTrace {
+                formula,
+                predicates,
+                horizon,
+                scale,
+            } => {
+                let (mut history, prior_verdict) = match previous {
+                    Phase::TimedTrace {
+                        history, verdict, ..
+                    } => (history, verdict),
+                    _ => (Vec::new(), None),
+                };
+                if let Some(verdict) = prior_verdict {
+                    return Ok((
+                        Phase::TimedTrace {
+                            horizon: *horizon,
+                            history,
+                            verdict: Some(verdict),
+                        },
+                        elapsed,
+                    ));
+                }
+                let truths = read_truths(system, predicates, binding, state, cancel)?;
+                if let Some(previous) = history.last().cloned() {
+                    let mut at = previous.time.saturating_add(1);
+                    while at < elapsed {
+                        push_timed_formula_observation(&mut history, at, &previous.values);
+                        at = at.saturating_add(1);
+                    }
+                    if elapsed > previous.time && truths != previous.values {
+                        push_timed_formula_observation(&mut history, elapsed, &previous.values);
+                    }
+                }
+                push_timed_formula_observation(&mut history, elapsed, &truths);
+                let verdict = if elapsed > *horizon {
+                    let selected = history
+                        .iter()
+                        .filter(|observation| observation.time <= *horizon)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let stamps = selected
+                        .iter()
+                        .map(|observation| {
+                            Rational::new(Integer::from(observation.time), Integer::from(*scale))
+                                .map_err(|_| ProbabilityDocumentError::Unsupported)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let through = Rational::new(Integer::from(*horizon), Integer::from(*scale))
+                        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+                    let trace = TimedTrace::through(stamps, through)
+                        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+                    let values = selected
+                        .iter()
+                        .map(|observation| observation.values.clone())
+                        .collect::<Vec<_>>();
+                    let mut letters = TimedFormulaLetters {
+                        formula,
+                        history: &values,
+                    };
+                    let mut meter = filament_exact::Meter::new(system.meter_limits())
+                        .with_cancel(cancel.clone());
+                    Some(
+                        match fsl_eval::temporal::evaluate_timed_formula_at(
+                            formula.formula(),
+                            &trace,
+                            TemporalPosition::new(0),
+                            &mut letters,
+                            &mut meter,
+                        )
+                        .map_err(|_| ProbabilityDocumentError::Unsupported)?
+                        {
+                            TemporalOutcome::Holds => true,
+                            TemporalOutcome::Violated { .. } => false,
+                            _ => return Err(ProbabilityDocumentError::Unsupported),
+                        },
+                    )
+                } else {
+                    None
+                };
+                return Ok((
+                    Phase::TimedTrace {
+                        horizon: *horizon,
+                        history,
+                        verdict,
+                    },
+                    elapsed,
+                ));
+            }
             Self::Deadline(predicate) => {
                 let phase = phase_at(system, predicate, binding, state, elapsed, deadline, cancel)?;
                 return Ok((phase, elapsed));
@@ -1726,7 +1793,7 @@ impl Watch<'_> {
 
     /// FR-877's terminal reward `[M <= c] - q` (`[M < c] - q` when strict) of
     /// a decided elapsed measure; a censored measure exceeds every threshold.
-    fn reward(&self, phase: Phase, elapsed: u64) -> Option<(Rational, bool)> {
+    fn reward(&self, phase: &Phase, elapsed: u64) -> Option<(Rational, bool)> {
         let Self::Elapsed(watch) = self else {
             return None;
         };
@@ -1765,6 +1832,49 @@ fn read_truths(
             }
         })
         .collect()
+}
+
+struct TimedFormulaLetters<'a> {
+    formula: &'a fsl_semantics::check::CheckedTemporalFormula,
+    history: &'a [Vec<bool>],
+}
+
+impl TemporalLetters for TimedFormulaLetters<'_> {
+    fn activation(
+        &mut self,
+        _position: TemporalPosition,
+        _meter: &mut filament_exact::Meter,
+    ) -> Result<AtomReading, LetterStop> {
+        Ok(AtomReading::True)
+    }
+
+    fn atom(
+        &mut self,
+        atom: fsl_semantics::check::FormulaNodeId,
+        position: TemporalPosition,
+        _meter: &mut filament_exact::Meter,
+    ) -> Result<AtomReading, LetterStop> {
+        let value_index = self
+            .formula
+            .formula()
+            .nodes()
+            .iter()
+            .take(atom.index())
+            .filter(|node| matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }))
+            .count();
+        let position = usize::try_from(position.index()).map_err(|_| LetterStop::Refused)?;
+        let value = self
+            .history
+            .get(position)
+            .and_then(|values| values.get(value_index))
+            .copied()
+            .ok_or(LetterStop::Refused)?;
+        Ok(if value {
+            AtomReading::True
+        } else {
+            AtomReading::False
+        })
+    }
 }
 
 fn deadline_read(
@@ -1895,7 +2005,7 @@ fn enumerate_digital_deadline(
             .get(&key)
             .cloned()
             .ok_or(ProbabilityDocumentError::Malformed)?;
-        if let Some(value) = phase_value(current.phase) {
+        if let Some(value) = phase_value(&current.phase) {
             insert_checker_state(
                 key,
                 CheckerState {
@@ -1908,7 +2018,7 @@ fn enumerate_digital_deadline(
             )?;
             continue;
         }
-        match current.phase {
+        match current.phase.clone() {
             Phase::Accepted => {
                 insert_checker_state(
                     key,
@@ -1936,7 +2046,7 @@ fn enumerate_digital_deadline(
                 continue;
             }
             Phase::Complete | Phase::Censored => {
-                if let Some(reward) = watch.reward(current.phase, current.elapsed) {
+                if let Some(reward) = watch.reward(&current.phase, current.elapsed) {
                     terminals.insert(key.clone(), reward);
                 }
                 insert_checker_state(
@@ -1955,7 +2065,8 @@ fn enumerate_digital_deadline(
             | Phase::Inactive
             | Phase::Active
             | Phase::Bounded(_)
-            | Phase::NestedBounded(_, _) => {}
+            | Phase::NestedBounded(_, _)
+            | Phase::TimedTrace { .. } => {}
         }
         if current.tail != DigitalTail::Running {
             let mut choices = Vec::new();
@@ -2197,7 +2308,7 @@ fn enumerate_digital_deadline(
                     system,
                     binding,
                     post.discrete(),
-                    current.phase,
+                    current.phase.clone(),
                     current.elapsed,
                     deadline,
                     cancel,
@@ -2360,7 +2471,7 @@ fn enumerate_region_deadline(
             .get(&key)
             .cloned()
             .ok_or(ProbabilityDocumentError::Malformed)?;
-        if let Some(value) = phase_value(current.phase) {
+        if let Some(value) = phase_value(&current.phase) {
             insert_checker_state(
                 key,
                 CheckerState {
@@ -2373,7 +2484,7 @@ fn enumerate_region_deadline(
             )?;
             continue;
         }
-        match current.phase {
+        match current.phase.clone() {
             Phase::Accepted => {
                 insert_checker_state(
                     key,
@@ -2402,7 +2513,7 @@ fn enumerate_region_deadline(
             }
             Phase::Complete | Phase::Censored => {
                 activated.insert(key.clone());
-                if let Some(reward) = watch.reward(current.phase, current.elapsed) {
+                if let Some(reward) = watch.reward(&current.phase, current.elapsed) {
                     terminals.insert(key.clone(), reward);
                 }
                 insert_checker_state(
@@ -2426,6 +2537,7 @@ fn enumerate_region_deadline(
                     activated.insert(key.clone());
                 }
             }
+            Phase::TimedTrace { .. } => {}
         }
         let mut choices = Vec::new();
         if let Some((delayed_key, delayed)) = next_region_delay(
@@ -2491,7 +2603,7 @@ fn enumerate_region_deadline(
                     system,
                     binding,
                     post.discrete(),
-                    current.phase,
+                    current.phase.clone(),
                     current.elapsed,
                     deadline,
                     cancel,
@@ -2747,14 +2859,14 @@ fn region_key(
     }
     // FR-920: an elapsed measure's `["measure",null,phase]`; its clock is
     // `null` before activation.
-    let measure = match state.phase {
+    let measure = match state.phase.clone() {
         Phase::Inactive => Some(("inactive", None)),
         Phase::Active => Some(("active", Some(state.elapsed))),
         Phase::Complete => Some(("complete", Some(state.elapsed))),
         Phase::Censored => Some(("censored", Some(state.elapsed))),
         _ => None,
     };
-    let monitor = monitor_json(state.phase);
+    let monitor = monitor_json(&state.phase);
     let mut keyed_clocks = clocks
         .into_iter()
         .map(|(identity, value, cap)| {
@@ -2922,14 +3034,14 @@ fn digital_key(
             cap: *cap,
         });
     }
-    let measure = match state.phase {
+    let measure = match state.phase.clone() {
         Phase::Inactive => Some(("inactive", None)),
         Phase::Active => Some(("active", Some(state.elapsed))),
         Phase::Complete => Some(("complete", Some(state.elapsed))),
         Phase::Censored => Some(("censored", Some(state.elapsed))),
         _ => None,
     };
-    let monitor = monitor_json(state.phase);
+    let monitor = monitor_json(&state.phase);
     digital_probability_product_key(DigitalProductKeyInput {
         binding,
         discrete,
@@ -2990,7 +3102,7 @@ fn next_digital_delay(
             system,
             binding,
             delayed.discrete(),
-            state.phase,
+            state.phase.clone(),
             elapsed,
             deadline,
             cancel,
@@ -3045,7 +3157,7 @@ fn digital_idle_delay(
         system,
         binding,
         delayed.discrete(),
-        current.phase,
+        current.phase.clone(),
         elapsed,
         deadline,
         cancel,
@@ -3410,7 +3522,7 @@ fn digital_fire_chain(
                     system,
                     binding,
                     post.discrete(),
-                    state.phase,
+                    state.phase.clone(),
                     state.elapsed,
                     deadline,
                     cancel,
@@ -3505,7 +3617,7 @@ impl WorkloadRun<'_, '_> {
                         .elapsed
                         .saturating_add(1)
                         .min(self.deadline.saturating_add(1)),
-                    phase: last.phase,
+                    phase: last.phase.clone(),
                     tail: last.tail,
                 })
             } else {
@@ -4255,7 +4367,7 @@ fn digital_state_after_delay(
             system,
             binding,
             delayed.discrete(),
-            state.phase,
+            state.phase.clone(),
             elapsed,
             deadline,
             cancel,
@@ -4266,9 +4378,6 @@ fn digital_state_after_delay(
             phase,
             tail: current.tail,
         };
-        if state.phase.decided() && !matches!(watch, Watch::Bounded { .. } | Watch::Nested { .. }) {
-            return Ok(Some(state));
-        }
     }
     Ok(Some(state))
 }
@@ -4332,7 +4441,7 @@ fn next_region_delay(
             system,
             binding,
             delayed.discrete(),
-            state.phase,
+            state.phase.clone(),
             elapsed,
             deadline,
             cancel,

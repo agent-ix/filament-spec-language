@@ -12,13 +12,13 @@ use filament_exact::{Cancel, Identifier, Integer, ObjectReference, Rational, Val
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{AutomatonError, Monitor, PropertyAutomaton};
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{
-    same_rewards, Action, ModelSimState, ModelSystem, NotMarkov, PredicateReading,
-    ScheduledIdentity, Unsteppable,
-};
-use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::model::{
+    Action, ModelSimState, ModelSystem, NotMarkov, PredicateReading, ScheduledIdentity,
+    Unsteppable, same_rewards,
+};
+use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::ModelCheckLimit;
@@ -635,6 +635,7 @@ impl Builder<'_, '_, '_, '_> {
                             binding: self.bindings[binding].0.clone(),
                             model: hit.model.clone(),
                             monitor,
+                            timed_history: None,
                             accumulator,
                             pending: None,
                             certificate_state: None,
@@ -838,6 +839,7 @@ impl Builder<'_, '_, '_, '_> {
             binding: self.bindings[binding].0.clone(),
             model,
             monitor,
+            timed_history: None,
             accumulator,
             pending,
             certificate_state: None,
