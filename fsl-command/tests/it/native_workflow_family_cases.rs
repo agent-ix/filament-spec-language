@@ -110,18 +110,7 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
                 .map(String::as_str)
                 .collect::<Vec<_>>();
             extraction_members.sort_unstable();
-            let expected_members: &[&str] = if matches!(&case, Case::Violating) {
-                &[
-                    "binding",
-                    "body",
-                    "map",
-                    "original",
-                    "original_regions",
-                    "outcome",
-                ]
-            } else {
-                &["binding", "body", "map", "original", "outcome"]
-            };
+            let expected_members = ["binding", "body", "map", "original", "outcome"];
             assert_eq!(extraction_members, expected_members);
             assert_eq!(
                 extraction["original"]["identity"],
@@ -142,14 +131,6 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
                 panic!("a clause result");
             };
             assert_eq!(read.extraction(), Some(extraction));
-
-            if matches!(&case, Case::Violating) {
-                assert!(extraction["original_regions"].is_array());
-                assert_eq!(
-                    extraction["original_regions"].as_array().map(Vec::len),
-                    Some(1)
-                );
-            }
         }
     }
 }
