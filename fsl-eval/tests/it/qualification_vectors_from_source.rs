@@ -1233,9 +1233,9 @@ fn unit_program(source: &str, expected: Expected) -> SourceCase {
     }
 }
 
-fn refusal_with_details(
+fn refusal_with_details<T: AsRef<str>>(
     expected: &Expected,
-    required_payload: &[&str],
+    required_payload: &[T],
     source_span: Option<&str>,
 ) -> Expected {
     let Expected::Refused { code, cause } = expected else {
@@ -1246,7 +1246,7 @@ fn refusal_with_details(
         cause: cause.clone(),
         required_payload: required_payload
             .iter()
-            .map(|part| (*part).to_owned())
+            .map(|part| part.as_ref().to_owned())
             .collect(),
         source_span: source_span.map(str::to_owned),
     }
@@ -1312,8 +1312,8 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                     ),
                     refusal_with_details(
                         &nth(0),
-                        &["QuantityCycle", "(\"a\", \"b\")", "(\"b\", \"a\")"],
-                        Some("Area"),
+                        &["from: \"a\", to: \"b\"", "from: \"b\", to: \"a\""],
+                        None,
                     ),
                 ),
                 unit_program(
@@ -1350,7 +1350,7 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                     refusal_with_details(
                         &nth(1),
                         &["fault: TargetCycle", "from: \"u_self\", to: \"u_self\""],
-                        Some("L"),
+                        None,
                     ),
                 ),
             ]);
@@ -1436,7 +1436,7 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 "from: \"m\", to: \"cm\"",
                 "from: \"cm\", to: \"m\"",
             ],
-            Some("L"),
+            None,
         ),
         "U11c" => refusal_with_details(
             &expected,
@@ -1461,7 +1461,7 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
         "U11f" => refusal_with_details(
             &expected,
             &["fault: TargetCycle", "from: \"u_self\", to: \"u_self\""],
-            Some("L"),
+            None,
         ),
         "U11g1" => refusal_with_details(
             &expected,
@@ -1516,12 +1516,12 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 "name: \"m_alt\"",
                 "name: \"m\"",
             ],
-            Some("m"),
+            None,
         ),
         "U11k" => refusal_with_details(
             &expected,
             &["fault: TargetCycle", "from: \"u_self\", to: \"u_self\""],
-            Some("L"),
+            None,
         ),
         "U11l" => refusal_with_details(
             &expected,
@@ -1530,7 +1530,7 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 "from: \"cm\", to: \"m\"",
                 "from: \"m\", to: \"cm\"",
             ],
-            Some("L"),
+            None,
         ),
         "U11n" => refusal_with_details(
             &expected,
@@ -1770,17 +1770,26 @@ fn later_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             let pair = refusal_pairs(vector.expected).remove(0);
             tokens[..2]
                 .iter()
-                .map(|declaration| {
-                    let expected = refusal_with_details(
-                        &pair,
-                        &[
-                            "fault: NonIdentityRoot",
-                            "name: \"m\"",
-                            "Scale(Rational { numerator: Integer(2), denominator: Integer(1) })",
-                            "Offset(Rational { numerator: Integer(0), denominator: Integer(1) })",
-                        ],
-                        Some("m"),
-                    );
+                .enumerate()
+                .map(|(index, declaration)| {
+                    let expected = if index == 0 {
+                        refusal_with_details(
+                            &pair,
+                            &[
+                                "fault: NonIdentityRoot",
+                                "name: \"m\"",
+                                "Scale(Rational { numerator: Integer(2), denominator: Integer(1) })",
+                                "Offset(Rational { numerator: Integer(0), denominator: Integer(1) })",
+                            ],
+                            Some("m"),
+                        )
+                    } else {
+                        refusal_with_details(
+                            &pair,
+                            &["fault: NonIdentityRoot", "name: \"m\""],
+                            None,
+                        )
+                    };
                     unit_program(&format!("dimension L; {declaration}"), expected)
                 })
                 .collect()
@@ -2483,9 +2492,9 @@ fn vector(id: &str) -> &'static QualificationVector {
 
 /// The Linear tickets that own the unexpressible groups (QSL-2052 groups V1
 /// to V9). A recorded vector's key must be one of these.
-const GROUP_KEYS: [&str; 9] = [
+const GROUP_KEYS: [&str; 10] = [
     "QSL-3057", "QSL-3058", "QSL-3059", "QSL-3060", "QSL-3061", "QSL-3062", "QSL-3083", "QSL-3084",
-    "QSL-3089",
+    "QSL-3089", "QSL-3105",
 ];
 const V1: &str = "QSL-3057";
 const V2: &str = "QSL-3058";
@@ -2496,6 +2505,7 @@ const V7: &str = "QSL-3083";
 const V8: &str = "QSL-3084";
 /// State-only operator refusal located at the function declaration (DIV-17, DIV-18).
 const V10: &str = "QSL-3089";
+const V11: &str = "QSL-3105";
 
 /// What a probe's closest FSL source meets today.
 enum Met {
@@ -2694,6 +2704,46 @@ struct Partial {
 }
 
 const PARTIAL: &[Partial] = &[
+    Partial {
+        id: "U11b",
+        remainder: "authored source span L for the retained m-to-cm, cm-to-m cycle; source reports m",
+        key: Some(V11),
+    },
+    Partial {
+        id: "U11e",
+        remainder: "second NonIdentityRoot declaration's authored scale 2 and offset 0; source reports scale 1 and offset 1",
+        key: Some(V11),
+    },
+    Partial {
+        id: "U11f",
+        remainder: "authored source span L for the u_self self-cycle; source reports u_self",
+        key: Some(V11),
+    },
+    Partial {
+        id: "U11j",
+        remainder: "authored source span m for the TwoRoots refusal retaining L, m_alt, m; source reports m_alt",
+        key: Some(V11),
+    },
+    Partial {
+        id: "U11k",
+        remainder: "authored source span L for the u_self self-cycle; source reports u_self",
+        key: Some(V11),
+    },
+    Partial {
+        id: "U11l",
+        remainder: "authored source span L for the cm-to-m, m-to-cm cycle; source reports cm",
+        key: Some(V11),
+    },
+    Partial {
+        id: "U11m",
+        remainder: "authored QuantityCycle payload and source span Area; source reports UnitGraphTopology TargetCycle at a while retaining the same ordered unit edges",
+        key: Some(V11),
+    },
+    Partial {
+        id: "U11q",
+        remainder: "authored source span L for the u_self self-cycle; source reports u_self",
+        key: Some(V11),
+    },
     Partial {
         id: "D24",
         remainder: "the ScalarLimitsV1 rows (charge points, work units, incomplete, refused after decimal.arithmetic)",
