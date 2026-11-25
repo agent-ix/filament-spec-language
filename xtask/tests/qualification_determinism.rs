@@ -155,8 +155,19 @@ fn run_sample(fspec: &Path, corpus: &Path) -> xtask::qualification::Execution {
         std::ffi::OsString::from("--corpus"),
         corpus.as_os_str().to_owned(),
     ];
-    xtask::qualification::execute_with_fspec(fspec, &arguments)
-        .expect("the published sample runs through qualification")
+    // With `test-support` the generated parity units are few, because these
+    // tests assert nothing about them.
+    #[cfg(feature = "test-support")]
+    let execution = xtask::qualify::execute(&xtask::qualify::QualifyInputs {
+        fspec: fspec.to_path_buf(),
+        operands: arguments.to_vec(),
+        matrix: None,
+        parity: None,
+        parity_count: Some(8),
+    });
+    #[cfg(not(feature = "test-support"))]
+    let execution = xtask::qualification::execute_with_fspec(fspec, &arguments);
+    execution.expect("the published sample runs through qualification")
 }
 
 fn child_barrier() -> &'static Barrier {

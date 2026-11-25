@@ -278,7 +278,7 @@ fn analyze_items_name_certificate_replay_target_and_gaps() {
     members.sort_unstable();
     assert_eq!(members, ["model", "node_id", "ordinal"]);
     assert_eq!(identity["model"], "test/counter", "{proved}");
-    assert_eq!(identity["node_id"], proved["request"]["claim"]["node"]);
+    crate::analyze_cli_support::assert_identity_names_claim(&ws, &proved);
     assert_eq!(
         identity["ordinal"],
         proved["request"]["claim"]["occurrence"]["ordinal"]

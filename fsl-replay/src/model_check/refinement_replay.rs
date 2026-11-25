@@ -1324,6 +1324,7 @@ fn settle_positions(
             positions,
             trail,
             taken_by,
+            mapped,
         };
         return replay_lasso(
             refinement,
@@ -1332,7 +1333,6 @@ fn settle_positions(
             lasso.clone(),
             walk,
             found,
-            mapped,
             merge_candidate_states,
         );
     }
@@ -1447,6 +1447,8 @@ struct Walk<'p> {
     trail: Vec<RefinementPosition>,
     /// The abstract steps the step leaving each position took.
     taken_by: Vec<Taken>,
+    /// The abstract state each position maps to, as far as the checks ran.
+    mapped: Vec<ModelState>,
 }
 
 /// The settlement of a lasso whose prefix and loop `check_step` has run along:
@@ -1458,7 +1460,6 @@ fn replay_lasso(
     lasso: Lasso,
     mut walk: Walk<'_>,
     found: Found,
-    mapped: Vec<ModelState>,
     merge_candidate_states: bool,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
     match found {
@@ -1966,7 +1967,7 @@ fn replay_lasso(
                     .refinement
                     .clone()
                     .ok_or_else(|| fault("a-lasso-names-a-failure"))?,
-                mapped,
+                mapped: walk.mapped,
             }
         }
         (Some(RefinementFailure::HiddenUnfair { .. }), true, _) => {
@@ -1975,7 +1976,7 @@ fn replay_lasso(
                     .refinement
                     .clone()
                     .ok_or_else(|| fault("a-lasso-names-a-failure"))?,
-                mapped,
+                mapped: walk.mapped,
             }
         }
         (Some(RefinementFailure::AbstractUnfair { .. }), true, unfair_loop)
@@ -1986,7 +1987,7 @@ fn replay_lasso(
                     .refinement
                     .clone()
                     .ok_or_else(|| fault("a-lasso-names-a-failure"))?,
-                mapped,
+                mapped: walk.mapped,
             }
         }
         (_, true, _) => RefinementTraceSettlement::Inconclusive(disagreement(Category::Violation)),
