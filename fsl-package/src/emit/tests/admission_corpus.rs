@@ -2333,11 +2333,30 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
     );
     let protocol_key = checked.abstract_protocol().expect("protocol key");
     assert_eq!(protocol_key.package(), "test/protocol-dependency");
+    // The external key is written in the dependency graph's own indices, so
+    // the owner is read from the dependency's clause path and operand row.
+    let dependency_raw = raw_wire(&dependency_emission);
+    let (clause_position, slot) = nodes(&dependency_raw)
+        .iter()
+        .enumerate()
+        .find_map(|(position, node)| {
+            let slot = node["node_id"]["path"][1]["operand"].as_u64()?;
+            let slot = usize::try_from(slot).expect("an operand slot");
+            (node["semantic_form"] == "protocol_clause"
+                && node["node_id"]["path"] == json!(["Twice", {"operand": slot}]))
+            .then_some((position, slot))
+        })
+        .expect("the dependency writes its owned clause");
+    let owner = &dependency_raw["semantic_graph"]["operand_rows"][clause_position][slot];
     assert_eq!(
         node["body"]["protocol"],
         json!({
             "package":"test/protocol-dependency",
-            "node":root_ids.wire_value(protocol_key).unwrap()
+            "node":{
+                "package":"test/protocol-dependency",
+                "path":["Twice",{"node":owner}],
+                "ordinal":0
+            }
         })
     );
     let dependency_keys = dependency

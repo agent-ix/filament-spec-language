@@ -10,7 +10,7 @@ use fsl_replay::{
     StageLimits,
 };
 use ix_trace_rs::trace;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 const SOURCE_PREFIX: &str = "language \"ix:native\" edition \"1-draft\";\n\
 profile v = \"filament.model.complete/v1\";\n\
@@ -143,9 +143,26 @@ fn admitted_dimension_equivalence_preserves_exact_root_ratio_and_wrong_kind() {
         .any(|entry| entry.node() == time.node()));
 }
 
+/// The one `dimension_equivalence` node of the emitted package.
+fn emitted_equivalence(compilation: &fsl_replay::AdmittedCompilation) -> Value {
+    let package: Value =
+        serde_json::from_slice(compilation.package().bytes()).expect("the emitted package is JSON");
+    let nodes = package["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic graph nodes");
+    let equivalences: Vec<_> = nodes
+        .iter()
+        .filter(|node| node["semantic_form"] == "dimension_equivalence")
+        .collect();
+    let [equivalence] = equivalences.as_slice() else {
+        panic!("one emitted equivalence node: {package}");
+    };
+    (*equivalence).clone()
+}
+
 #[trace("TC-1092", "FR-398-AC-6")]
 #[test]
-fn dimension_equivalence_ratio_changes_identity_and_absence_refuses_conversion() {
+fn dimension_equivalence_ratio_changes_body_not_identity_and_absence_refuses_conversion() {
     let equal = format!("{SOURCE_PREFIX}dimension Period ~ Time by 1 sec = 1 s;\n");
     let scaled = format!("{SOURCE_PREFIX}dimension Period ~ Time by 1 sec = 2 s;\n");
     let equal_context = compile(&equal);
@@ -166,11 +183,26 @@ fn dimension_equivalence_ratio_changes_identity_and_absence_refuses_conversion()
     };
     assert_eq!(equal_equivalence.root_scale().to_string(), "1/1");
     assert_eq!(scaled_equivalence.root_scale().to_string(), "2/1");
-    assert_ne!(
-        equal_equivalence.root_scale(),
-        scaled_equivalence.root_scale()
+    assert_eq!(equal_equivalence.node(), scaled_equivalence.node());
+
+    // Both packages carry one package name and differ only in the ratio: the
+    // emitted node has one id, and its body and the package bytes differ.
+    let equal_node = emitted_equivalence(&equal_context);
+    let scaled_node = emitted_equivalence(&scaled_context);
+    assert_eq!(equal_node["node_id"], scaled_node["node_id"]);
+    assert_eq!(
+        equal_node["body"]["root_scale"],
+        json!({"numerator": "1", "denominator": "1"})
     );
-    assert_ne!(equal_equivalence.node(), scaled_equivalence.node());
+    assert_eq!(
+        scaled_node["body"]["root_scale"],
+        json!({"numerator": "2", "denominator": "1"})
+    );
+    assert_ne!(equal_node["body"], scaled_node["body"]);
+    assert_ne!(
+        equal_context.package().bytes(),
+        scaled_context.package().bytes()
+    );
 
     let scaled_context = scaled_context.context();
     let scaled_seconds = scaled_context
