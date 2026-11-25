@@ -888,7 +888,7 @@ fn tc_774_function_contract_and_application_items_replay() {
     let refuted = settle(&context, &p, &bounds, input(p_x.clone(), 0));
     assert_eq!(refuted.value(), &TerminalValue::Refuted);
     assert_eq!(refuted.backend(), Some(&plugin()));
-    let parity = settle(&context, &p, &bounds, input(p_x, 5));
+    let parity = settle(&context, &p, &bounds, input(p_x.clone(), 5));
     assert!(matches!(
         parity.value(),
         TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(_))
