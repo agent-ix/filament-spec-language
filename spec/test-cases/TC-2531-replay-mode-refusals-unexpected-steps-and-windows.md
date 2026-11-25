@@ -24,4 +24,4 @@ Catches a recording defect reported as behaviour, or behaviour refused as a defe
 ## Expected Results
 
 - Step 1: `Courier` is refused `missing-name` with its index; the send is `unexpected` and `refuted`; the window is `violated`, then `pending`; batch and incremental verdicts are equal.
-- Step 2: the first recording has every repeat-control obligation `satisfied` in batch and every prefix; the second has no inner repeat-control obligation `violated` in batch or any prefix; the third has the inner repeat-control obligation `violated`, cause `duplicated`, from the second `L`. Each final prefix equals batch, and no verdict advances from `satisfied` to `violated`.
+- Step 2: the first recording has every repeat-control obligation `satisfied` in batch; in every prefix none is `violated`, and a prefix before descendant evidence may leave one `pending`. The second has no inner repeat-control obligation `violated` in batch or any prefix. The third has the inner repeat-control obligation `violated`, cause `duplicated`, from the second `L`; earlier prefixes may leave it `pending`. Each final prefix equals batch, and no verdict advances from `satisfied` to `violated`.
