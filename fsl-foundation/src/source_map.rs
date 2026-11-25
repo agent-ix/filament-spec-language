@@ -395,6 +395,10 @@ impl SourceMap {
         self.region_lookup_steps
             .set(self.region_lookup_steps.get().saturating_add(1));
     }
+
+    #[cfg(not(test))]
+    #[inline(always)]
+    fn record_region_lookup_step(&self) {}
 }
 
 #[cfg(test)]
