@@ -20,19 +20,20 @@ use filament_contract_model::{
     CheckedAbstractionParameter, CheckedAbstractionPopulation, CheckedArtifactRef,
     CheckedCapability, CheckedCapabilityDisposition, CheckedComponentClause,
     CheckedCompositionComponent, CheckedCompositionPremise, CheckedDeclaration,
-    CheckedDependencyClockSelection, CheckedDependencySelection, CheckedDiagnosticsV2,
-    CheckedDimensionOperand, CheckedEffectiveId, CheckedEnvironmentEntry,
+    CheckedDeclaredNodeId, CheckedDependencyClockSelection, CheckedDependencySelection,
+    CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEffectiveId, CheckedEnvironmentEntry,
     CheckedEnvironmentSupplies, CheckedFairnessGranularity, CheckedFairnessKind,
     CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification, CheckedGuaranteeMeasure,
     CheckedGuaranteeProgress, CheckedJson, CheckedNodeId, CheckedNodeKind, CheckedNodeOwner,
     CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry,
     CheckedOperationAnchorBody, CheckedOriginalDeclarationId, CheckedPackageEvidence,
-    CheckedPackageLockV2, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
-    CheckedPackageV2, CheckedRational, CheckedRefinementStepRowRegion, CheckedScopedDeletion,
-    CheckedSelection, CheckedSelectionRole, CheckedSemanticGraphV2, CheckedSemanticNodeV2,
-    CheckedSourceMapEntry, CheckedSourceRef, CheckedSourceRegion, CheckedTerm, DimensionTerm,
-    LiteralKind, NominalBody, OperationBody, OperationBodyRow, ProtocolCorrelationProvenance,
-    ProtocolCorrelationRow, ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
+    CheckedPackageLockV2, CheckedPackageNodeRef, CheckedPackageSidecarsRef,
+    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedRational,
+    CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection, CheckedSelectionRole,
+    CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef,
+    CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody, OperationBody,
+    OperationBodyRow, ProtocolCorrelationProvenance, ProtocolCorrelationRow, ProtocolForm,
+    ScalarTypeForm, StateForm, ValueForm,
 };
 use serde::Deserialize;
 
@@ -2193,19 +2194,29 @@ impl<'g> Candidate<'g> {
     fn wire_node(
         &self,
         ids: &StructuralIds,
+        selected_models: &BTreeSet<&str>,
         function_modes: &dyn Fn(
             Option<usize>,
             &NodeKey,
         ) -> Option<filament_semantic_value::checking::CheckMode>,
     ) -> Result<CheckedSemanticNodeV2, EmitRefusal> {
         let node = self.node;
+        let dependencies = match node.nominal_payload() {
+            Some(NominalPayload::DimensionEquivalence(equivalence)) => equivalence
+                .dimensions()
+                .iter()
+                .filter(|operand| operand.package() == node.key().package())
+                .map(|operand| node_id(ids, operand))
+                .collect(),
+            _ => self.dependencies.clone(),
+        };
         Ok(CheckedSemanticNodeV2 {
             node_id: self.id.clone(),
             schema_version: GRAPH_V2.into(),
             node_tag: self.tag.as_wire().into(),
             semantic_form: node.semantic_form().into(),
             semantic_type: self.semantic_type.clone(),
-            dependencies: self.dependencies.clone(),
+            dependencies,
             occurrences: self
                 .occurrences
                 .iter()
@@ -2230,7 +2241,7 @@ impl<'g> Candidate<'g> {
             owner: node.owner().map(wire_owner),
             owner_model: node.owner_model().map(|key| node_id(ids, key)),
             check_mode: self.function_check_mode(function_modes)?,
-            body: checked_body(ids, node, self.tag)?,
+            body: checked_body(ids, node, self.tag, selected_models)?,
         })
     }
 }
@@ -2241,6 +2252,7 @@ fn checked_body(
     ids: &StructuralIds,
     node: &SemanticNode,
     tag: CheckedNodeTag,
+    selected_models: &BTreeSet<&str>,
 ) -> Result<CheckedTerm, EmitRefusal> {
     // A model-owned nominal node's values are read from the selected
     // document: its body is the empty aggregate (FR-322 "Model-owned
@@ -2249,7 +2261,7 @@ fn checked_body(
         node.nominal_payload(),
         matches!(node.owner(), Some(Owner::Model(_))),
     ) {
-        return nominal_term(ids, &node.key(), nominal);
+        return nominal_term(ids, &node.key(), nominal, selected_models);
     }
     let BodyTerm::Aggregate(aggregate) = node.body() else {
         return checked_term(ids, node.body());
@@ -2301,6 +2313,7 @@ fn nominal_term(
     ids: &StructuralIds,
     node: &NodeKey,
     payload: &NominalPayload,
+    selected_models: &BTreeSet<&str>,
 ) -> Result<CheckedTerm, EmitRefusal> {
     let body = match payload {
         NominalPayload::Enum(enumeration) => NominalBody::try_enum(
@@ -2329,25 +2342,34 @@ fn nominal_term(
             checked_rational(unit.offset()),
         ),
         NominalPayload::DimensionEquivalence(equivalence) => {
-            // A Local operand is a node of the importing package's own graph
-            // (FSpec FR-322-AC-299). A dimension of another package is a
-            // Package operand, which IR checks against a direct dependency
-            // selection; the emitter does not establish that selection here
-            // (QSL-1177 owns it), so it refuses rather than mint a foreign
-            // package into a Local id.
-            for operand in equivalence.dimensions() {
-                if operand.package() != node.package() {
-                    return Err(EmitRefusal::ForeignDimensionOperand {
+            // Foreign package operands are legal only when their package was
+            // selected by this checked graph. The IR reader authenticates the
+            // reference against the package's admitted model selections.
+            let [first, second] = equivalence.dimensions();
+            let [first, second] = [first, second].map(|operand| {
+                let id = node_id(ids, operand);
+                if operand.package() == node.package() {
+                    Ok(CheckedDimensionOperand::Local(id))
+                } else if selected_models.contains(operand.package()) {
+                    let declared = CheckedDeclaredNodeId::try_new(id).map_err(|_| {
+                        EmitRefusal::ForeignDimensionOperand {
+                            node: Box::new(node_id(ids, node)),
+                            operand: Box::new(node_id(ids, operand)),
+                        }
+                    })?;
+                    Ok(CheckedDimensionOperand::Package(CheckedPackageNodeRef {
+                        package: operand.package().into(),
+                        node: declared,
+                    }))
+                } else {
+                    Err(EmitRefusal::ForeignDimensionOperand {
                         node: Box::new(node_id(ids, node)),
                         operand: Box::new(node_id(ids, operand)),
-                    });
+                    })
                 }
-            }
+            });
             NominalBody::try_dimension_equivalence(
-                [
-                    CheckedDimensionOperand::Local(node_id(ids, &equivalence.dimensions()[0])),
-                    CheckedDimensionOperand::Local(node_id(ids, &equivalence.dimensions()[1])),
-                ],
+                [first?, second?],
                 checked_rational(equivalence.scale()),
             )
         }
@@ -5918,7 +5940,7 @@ fn append_schedulability_claims(
         });
         let body = nominal
             .nominal_payload()
-            .map(|payload| nominal_term(ids, &nominal.key, payload))
+            .map(|payload| nominal_term(ids, &nominal.key, payload, &BTreeSet::new()))
             .transpose()?
             .ok_or(EmitRefusal::SourceMapInvariant)?;
         let node = CheckedSemanticNodeV2 {
@@ -7612,6 +7634,11 @@ fn emit_package_nodes(
         .model_roots()
         .map(|(selection, _)| selection.identity.as_str())
         .collect();
+    let selected_dimension_packages: BTreeSet<&str> = graph
+        .model_selections()
+        .iter()
+        .map(|selection| selection.identity.as_str())
+        .collect();
     let omitted = omissions(
         ids,
         &candidates,
@@ -7715,18 +7742,23 @@ fn emit_package_nodes(
         .collect();
     let (mut source_map, mut sources) = source_map(&order, &regions)?;
     sources.extend(graph.sources().into_iter().map(source_artifact));
-    let wire_nodes = order
-        .iter()
-        .map(
-            |candidate| match denied().or_else(|| fault(&candidate.id)) {
-                Some(refusal) => Err(refusal),
-                None => candidate.wire_node(ids, &|index, key| match index {
-                    Some(index) => graph.function_check_mode(index),
-                    None => graph.probabilistic_model().reward_function_check_mode(key),
-                }),
-            },
-        )
-        .collect::<Result<Vec<_>, _>>()?;
+    let wire_nodes =
+        order
+            .iter()
+            .map(
+                |candidate| match denied().or_else(|| fault(&candidate.id)) {
+                    Some(refusal) => Err(refusal),
+                    None => {
+                        candidate.wire_node(ids, &selected_dimension_packages, &|index, key| {
+                            match index {
+                                Some(index) => graph.function_check_mode(index),
+                                None => graph.probabilistic_model().reward_function_check_mode(key),
+                            }
+                        })
+                    }
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()?;
     let mut nodes = wire_nodes;
     for node in &mut nodes {
         rewrite_source_keys_in_clock_place(node, &source_keys)?;
@@ -9868,7 +9900,7 @@ fn write_time_nominal(
         match (nominal.form, nominal.nominal_payload()) {
             (TimeNominalForm::Dimension, Some(payload @ NominalPayload::Dimension(_)))
             | (TimeNominalForm::Unit, Some(payload @ NominalPayload::Unit(_))) => {
-                nominal_term(ids, &nominal.key, payload)?
+                nominal_term(ids, &nominal.key, payload, &BTreeSet::new())?
             }
             _ => {
                 return Err(EmitRefusal::TimedModelWriterInvariant(
