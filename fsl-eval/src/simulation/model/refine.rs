@@ -163,196 +163,194 @@ impl ModelSystem<'_> {
             if done {
                 return None;
             }
-            loop {
-                let exhausted = current
-                    .as_ref()
-                    .is_some_and(|(plan, next)| *next >= plan.combinations);
-                if current.is_none() || exhausted {
-                    current = None;
-                    loop {
-                        if base_index >= self.initial_base.len() {
-                            return None;
+            let exhausted = current
+                .as_ref()
+                .is_some_and(|(plan, next)| *next >= plan.combinations);
+            if current.is_none() || exhausted {
+                current = None;
+                loop {
+                    if base_index >= self.initial_base.len() {
+                        return None;
+                    }
+                    let plan_index = base_index;
+                    base_index += 1;
+                    match prepare(plan_index) {
+                        Ok(Some(plan)) => {
+                            current = Some((plan, 0));
+                            break;
                         }
-                        let plan_index = base_index;
-                        base_index += 1;
-                        match prepare(plan_index) {
-                            Ok(Some(plan)) => {
-                                current = Some((plan, 0));
-                                break;
-                            }
-                            Ok(None) => continue,
-                            Err(refusal) => {
-                                done = true;
-                                return Some(Err(refusal));
-                            }
+                        Ok(None) => continue,
+                        Err(refusal) => {
+                            done = true;
+                            return Some(Err(refusal));
                         }
                     }
                 }
-                let (plan, index) = current.as_mut().expect("plan was initialized");
-                let mut values = Vec::with_capacity(plan.factors.len());
-                for (factor, stride) in plan.factors.iter().zip(&plan.strides) {
-                    let digit = (*index / stride) % factor.cardinality;
-                    let stage = &self.initial_stages[factor.stage];
-                    let value = stage
-                        .values
-                        .nth(digit)
-                        .expect("recipe digit is within its initial stage");
-                    values.push(value.clone());
-                }
-                *index += 1;
-                let base = &self.initial_base[plan.base_index];
-                let mut overrides = encode::InitialOverrides::new();
-                for (factor, value) in plan.factors.iter().zip(&values) {
-                    if let Some(object) = base
-                        .state
-                        .populations
-                        .get(&factor.population)
-                        .and_then(|objects| objects.get(&factor.object))
-                    {
-                        overrides
-                            .entry(object as *const _ as usize)
-                            .or_default()
-                            .insert(
-                                self.initial_stages[factor.stage].field.clone(),
-                                value.clone(),
-                            );
-                    }
-                }
-                let permutation = if let Some(group) = symmetry.filter(|group| !group.is_trivial())
+            }
+            let (plan, index) = current.as_mut().expect("plan was initialized");
+            let mut values = Vec::with_capacity(plan.factors.len());
+            for (factor, stride) in plan.factors.iter().zip(&plan.strides) {
+                let digit = (*index / stride) % factor.cardinality;
+                let stage = &self.initial_stages[factor.stage];
+                let value = stage
+                    .values
+                    .nth(digit)
+                    .expect("recipe digit is within its initial stage");
+                values.push(value.clone());
+            }
+            *index += 1;
+            let base = &self.initial_base[plan.base_index];
+            let mut overrides = encode::InitialOverrides::new();
+            for (factor, value) in plan.factors.iter().zip(&values) {
+                if let Some(object) = base
+                    .state
+                    .populations
+                    .get(&factor.population)
+                    .and_then(|objects| objects.get(&factor.object))
                 {
-                    let limits = quire_canonical::Limits::new(identity_limits().input_bytes);
-                    let mut placeholders = Vec::new();
-                    for class in &group.classes {
-                        let text = match encode::declaration_text(&class.population, limits) {
-                            Ok(text) => text,
+                    overrides
+                        .entry(object as *const _ as usize)
+                        .or_default()
+                        .insert(
+                            self.initial_stages[factor.stage].field.clone(),
+                            value.clone(),
+                        );
+                }
+            }
+            let permutation = if let Some(group) = symmetry.filter(|group| !group.is_trivial())
+            {
+                let limits = quire_canonical::Limits::new(identity_limits().input_bytes);
+                let mut placeholders = Vec::new();
+                for class in &group.classes {
+                    let text = match encode::declaration_text(&class.population, limits) {
+                        Ok(text) => text,
+                        Err(_) => {
+                            done = true;
+                            return Some(Err(InitialStateRefusal::Expansion(stop(BROKEN))));
+                        }
+                    };
+                    placeholders.push((
+                        self.universes_of(&class.population),
+                        &class.population,
+                        &class.keys,
+                        encode::Enc::Object(vec![
+                            ("type", encode::Enc::text("symmetric")),
+                            ("population", encode::Enc::text(text)),
+                        ]),
+                    ));
+                }
+                let placeholder = |reference: &ObjectReference| {
+                    placeholders
+                        .iter()
+                        .find(|(universes, _, keys, _)| {
+                            universes.contains(reference.universe())
+                                && keys.iter().any(|key| key == reference.object().as_str())
+                        })
+                        .map(|(_, _, _, enc)| enc.clone())
+                };
+                let mut permutation = crate::simulation::Permutation::identity();
+                for class in &group.classes {
+                    let objects = base.state.populations.get(&class.population);
+                    let mut sorted = Vec::with_capacity(class.keys.len());
+                    for key in &class.keys {
+                        let Some(original) = objects.and_then(|objects| objects.get(key))
+                        else {
+                            sorted.push((Vec::new(), key));
+                            continue;
+                        };
+                        let bytes = match quire_canonical::to_vec(
+                            &encode::initial_object_enc(
+                                &self.model,
+                                original,
+                                self.typing(),
+                                &placeholder,
+                                &overrides,
+                                &Vec::new(),
+                            ),
+                            limits,
+                        ) {
+                            Ok(bytes) => bytes,
                             Err(_) => {
                                 done = true;
                                 return Some(Err(InitialStateRefusal::Expansion(stop(BROKEN))));
                             }
                         };
-                        placeholders.push((
-                            self.universes_of(&class.population),
-                            &class.population,
-                            &class.keys,
-                            encode::Enc::Object(vec![
-                                ("type", encode::Enc::text("symmetric")),
-                                ("population", encode::Enc::text(text)),
-                            ]),
-                        ));
+                        sorted.push((bytes, key));
                     }
-                    let placeholder = |reference: &ObjectReference| {
-                        placeholders
-                            .iter()
-                            .find(|(universes, _, keys, _)| {
-                                universes.contains(reference.universe())
-                                    && keys.iter().any(|key| key == reference.object().as_str())
-                            })
-                            .map(|(_, _, _, enc)| enc.clone())
-                    };
-                    let mut permutation = crate::simulation::Permutation::identity();
-                    for class in &group.classes {
-                        let objects = base.state.populations.get(&class.population);
-                        let mut sorted = Vec::with_capacity(class.keys.len());
-                        for key in &class.keys {
-                            let Some(original) = objects.and_then(|objects| objects.get(key))
-                            else {
-                                sorted.push((Vec::new(), key));
-                                continue;
-                            };
-                            let bytes = match quire_canonical::to_vec(
-                                &encode::initial_object_enc(
-                                    &self.model,
-                                    original,
-                                    self.typing(),
-                                    &placeholder,
-                                    &overrides,
-                                    &Vec::new(),
-                                ),
-                                limits,
-                            ) {
-                                Ok(bytes) => bytes,
-                                Err(_) => {
-                                    done = true;
-                                    return Some(Err(InitialStateRefusal::Expansion(stop(BROKEN))));
-                                }
-                            };
-                            sorted.push((bytes, key));
-                        }
-                        sorted.sort_by(|left, right| left.0.cmp(&right.0));
-                        permutation.insert(
-                            &class.population,
-                            sorted
-                                .into_iter()
-                                .zip(&class.keys)
-                                .map(|((_, from), to)| (from.clone(), to.clone())),
-                        );
-                    }
-                    permutation
-                } else {
-                    crate::simulation::Permutation::identity()
-                };
-                let renaming: encode::InitialRenaming = permutation
-                    .maps()
-                    .iter()
-                    .map(|(population, mapping)| (self.universes_of(population), mapping.clone()))
-                    .collect();
-                let projected_key = key::state_key(
-                    &encode::initial_model_key(
-                        &self.model,
-                        &base.state,
-                        self.typing(),
-                        &overrides,
-                        &renaming,
-                    ),
-                    limits,
-                )
-                .map(|(bytes, _)| bytes)
-                .map_err(InitialStateRefusal::Encoding);
-                let key = match projected_key {
-                    Ok(key) => key,
-                    Err(refusal) => {
-                        done = true;
-                        return Some(Err(refusal));
-                    }
-                };
-                if !admitted.contains(&key) {
-                    if admitted.len() >= max_states {
-                        done = true;
-                        return Some(Err(InitialStateRefusal::OverBudget(max_states)));
-                    }
-                    admitted.insert(key.clone());
-                }
-                let mut state = base.state.clone();
-                for (factor, value) in plan.factors.iter().zip(values) {
-                    if let Some(object) = state
-                        .populations
-                        .get_mut(&factor.population)
-                        .and_then(|objects| objects.get_mut(&factor.object))
-                    {
-                        object
-                            .fields
-                            .insert(self.initial_stages[factor.stage].field.clone(), value);
-                    }
-                }
-                let generated = base.without_effect(state);
-                if cfg!(debug_assertions) {
-                    let comparison = match symmetry.filter(|group| !group.is_trivial()) {
-                        Some(group) => self
-                            .canonicalise(&generated, group)
-                            .ok()
-                            .and_then(|(canonical, _)| self.state_key(&canonical).ok())
-                            .map(|(bytes, _)| bytes),
-                        _ => self.state_key(&generated).ok().map(|(bytes, _)| bytes),
-                    };
-                    debug_assert_eq!(
-                        comparison.as_ref(),
-                        Some(&key),
-                        "recipe projection key agrees"
+                    sorted.sort_by(|left, right| left.0.cmp(&right.0));
+                    permutation.insert(
+                        &class.population,
+                        sorted
+                            .into_iter()
+                            .zip(&class.keys)
+                            .map(|((_, from), to)| (from.clone(), to.clone())),
                     );
                 }
-                super::count_generated_initial_state();
-                return Some(Ok(generated));
+                permutation
+            } else {
+                crate::simulation::Permutation::identity()
+            };
+            let renaming: encode::InitialRenaming = permutation
+                .maps()
+                .iter()
+                .map(|(population, mapping)| (self.universes_of(population), mapping.clone()))
+                .collect();
+            let projected_key = key::state_key(
+                &encode::initial_model_key(
+                    &self.model,
+                    &base.state,
+                    self.typing(),
+                    &overrides,
+                    &renaming,
+                ),
+                limits,
+            )
+            .map(|(bytes, _)| bytes)
+            .map_err(InitialStateRefusal::Encoding);
+            let key = match projected_key {
+                Ok(key) => key,
+                Err(refusal) => {
+                    done = true;
+                    return Some(Err(refusal));
+                }
+            };
+            if !admitted.contains(&key) {
+                if admitted.len() >= max_states {
+                    done = true;
+                    return Some(Err(InitialStateRefusal::OverBudget(max_states)));
+                }
+                admitted.insert(key.clone());
             }
+            let mut state = base.state.clone();
+            for (factor, value) in plan.factors.iter().zip(values) {
+                if let Some(object) = state
+                    .populations
+                    .get_mut(&factor.population)
+                    .and_then(|objects| objects.get_mut(&factor.object))
+                {
+                    object
+                        .fields
+                        .insert(self.initial_stages[factor.stage].field.clone(), value);
+                }
+            }
+            let generated = base.without_effect(state);
+            if cfg!(debug_assertions) {
+                let comparison = match symmetry.filter(|group| !group.is_trivial()) {
+                    Some(group) => self
+                        .canonicalise(&generated, group)
+                        .ok()
+                        .and_then(|(canonical, _)| self.state_key(&canonical).ok())
+                        .map(|(bytes, _)| bytes),
+                    _ => self.state_key(&generated).ok().map(|(bytes, _)| bytes),
+                };
+                debug_assert_eq!(
+                    comparison.as_ref(),
+                    Some(&key),
+                    "recipe projection key agrees"
+                );
+            }
+            super::count_generated_initial_state();
+            Some(Ok(generated))
         }))
     }
 
