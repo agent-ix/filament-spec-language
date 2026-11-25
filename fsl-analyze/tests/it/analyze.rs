@@ -14,16 +14,20 @@
 //! result by hand); its settlement from a replay result that reproduces the
 //! undefined value is.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use filament_exact::{Cancel, CancelCause, Undefined};
 use filament_semantic_value::catalog::Category;
 use fsl_analyze::analyze::{
     analyze as analyze_request, analyze_items, model_item, Aggregate, AggregateGap, AnalyzeItem,
-    AnalyzeLimits, AnalyzeRequest, ClaimItem, DeadlineSupply, DispositionKind, Engine, Engines,
-    ItemForm, ItemOptions, NegotiatedItem, Payload, ProbabilisticItem, ProbabilisticLimits,
-    Settlement,
+    AnalyzeLimits, AnalyzeRefusal, AnalyzeRequest, ClaimItem, DeadlineSupply, DispositionKind,
+    Engine, Engines, ItemForm, ItemOptions, NegotiatedItem, Payload, ProbabilisticItem,
+    ProbabilisticLimits, Settlement,
 };
 use fsl_eval::simulation::Limits;
 use fsl_eval::temporal::UndefinedCause;
+use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::{
     settle_model_check, CertificateRule, Certification, CounterexampleKind, IncompleteCause,
@@ -32,8 +36,9 @@ use fsl_replay::{
     TerminalValue, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 use fsl_route::{request::ExtentClassification, routing::Disposition};
-use fsl_route::{Candidate, EvidenceKind, Mode, ProviderOrigin};
+use fsl_route::{Candidate, EvidenceKind, ManifestMembers, Mode, ProviderOrigin};
 use fsl_semantics::check::{Capability, DeclarationFamily};
+use fsl_semantics::model::observation::AdmissionFailure;
 use ix_trace_rs::trace;
 
 use crate::closure_certificate::world;
@@ -43,6 +48,20 @@ use crate::model_settle::{case, kernel_case, replay};
 
 fn index(at: usize) -> RequestIndex {
     RequestIndex::new(at)
+}
+
+#[derive(Debug)]
+struct CountingProvider(Arc<AtomicUsize>);
+
+impl fsl_analyze::provider::ExternalProvider for CountingProvider {
+    fn settle(
+        &self,
+        request: &fsl_analyze::provider::ProviderRequest<'_>,
+        _cancel: &Cancel,
+    ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
+        self.0.fetch_add(1, Ordering::Relaxed);
+        vec![fsl_analyze::provider::ProviderVerdict::Unknown; request.items().len()]
+    }
 }
 
 fn en1() -> Engines {
@@ -109,7 +128,7 @@ fn a_broken_item_settles_refuted_and_its_counterexample_replays() {
 /// request of three items, one whose claim kind no engine advertises, one
 /// EN-1 proves and one it refutes, returns three records in request order,
 /// the first `unsupported` with a cause naming the claim kind.
-#[trace("TC-762", "FR-281-AC-3")]
+#[trace("TC-762", "FR-281-AC-3", "FR-281-AC-9")]
 #[test]
 fn three_items_give_three_records_the_first_unsupported_naming_its_kind() {
     let world = world("", &[("c", 0)]);
@@ -160,6 +179,126 @@ fn three_items_give_three_records_the_first_unsupported_naming_its_kind() {
             certification: Certification::Certified,
         }
     );
+}
+
+/// FR-281-AC-9: the analyze route refuses an undeclared population before
+/// settling any of the three request items.
+#[trace("TC-762", "FR-281-AC-9")]
+#[test]
+fn analyze_refuses_an_undeclared_population_before_running_items() {
+    let document = crate::counter::document(false);
+    let source = crate::counter::unit_text("");
+    let package = crate::counter::package_with_mode(
+        &document,
+        "",
+        filament_semantic_value::checking::CheckMode::Linked,
+    );
+    let mut documents = crate::counter::Documents::new(document);
+    let initial = documents.start("binding", &[("c", 0)]);
+    let subject = crate::counter::subject(
+        &package,
+        &documents,
+        vec![initial.clone()],
+        &["c"],
+        UNLIMITED,
+    );
+    let mut binding = fsl_analyze::analyze::SubjectBinding {
+        packages: &documents.packages,
+        snapshots: &documents.snapshots,
+        initial: vec![initial],
+        universes: subject.simulation.universes,
+    };
+    binding.universes[0]
+        .population
+        .node
+        .push_str("/UndeclaredPopulation");
+    let backend = Candidate::new(BackendId::new("fsl.test-binding"));
+    let domains = [fsl_foundation::bound::DomainKind::Integer.to_wire()];
+    let descriptor = fsl_route::descriptor_from_manifest(
+        backend.clone(),
+        ProviderOrigin::Linked,
+        [
+            (
+                Some(Capability::ValueValidity.to_wire()),
+                Some(Mode::Bounded.to_wire()),
+            ),
+            (
+                Some(Capability::ValueValidity.to_wire()),
+                Some(Mode::Unbounded.to_wire()),
+            ),
+        ],
+        ManifestMembers {
+            domains: Some(&domains),
+            fairness_kinds: None,
+            evidence_kinds: None,
+            memory_models: None,
+            reductions: None,
+        },
+    )
+    .expect("the counting provider has a valid descriptor");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut engines = Engines::default();
+    engines
+        .with(
+            Engine::external(
+                descriptor,
+                fsl_analyze::analyze::BackendTool::new("binding-test", "1")
+                    .expect("a tool identity"),
+                Box::new(CountingProvider(calls.clone())),
+            )
+            .expect("the counting provider registers"),
+        )
+        .expect("one engine");
+    let claim = fsl_foundation::source::provenance::OccurrenceKey::generated(
+        package
+            .graph()
+            .semantic_graph()
+            .nodes()
+            .next()
+            .expect("the unit has a checked node")
+            .key(),
+    );
+    let items = (0..3)
+        .map(|request_index| NegotiatedItem {
+            item: ClaimItem {
+                request_index: index(request_index),
+                claim: claim.clone(),
+                kind: Capability::ValueValidity,
+                extent: ExtentClassification::Bounded,
+                backend: Some(backend.id().clone()),
+                candidates: vec![backend.clone()],
+                options: ItemOptions::default(),
+                form: None,
+            },
+            disposition: Disposition::Supported(backend.clone()),
+            diagnostic: None,
+        })
+        .collect();
+    let request = AnalyzeRequest {
+        binding,
+        provision: fsl_analyze::analyze::SourceProvision::single(
+            package.graph().source(),
+            source.as_bytes(),
+        ),
+        items,
+    };
+
+    let result = analyze_request(
+        &package,
+        &request,
+        &engines,
+        &AnalyzeLimits::unbounded(),
+        &Cancel::new(),
+    );
+    let record = match result {
+        Err(StageFailure::Refused(AnalyzeRefusal::Binding(AdmissionFailure::Refused(record)))) => {
+            record
+        }
+        other => panic!("the route refuses the invalid binding: {other:?}"),
+    };
+    assert_eq!(record.catalog.code(), "invalid_runtime_input");
+    assert_eq!(record.catalog.cause(), "wrong-role-mapping");
+    assert_eq!(calls.load(Ordering::Relaxed), 0, "no engine starts");
 }
 
 /// FR-281-AC-4 (TC-763 steps 1 and 2), over EN-1: the invariant item proves

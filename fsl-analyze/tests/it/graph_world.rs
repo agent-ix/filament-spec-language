@@ -381,11 +381,6 @@ impl World {
         &self.packages
     }
 
-    /// The original unit bytes keyed by the package graph's declared source.
-    pub(crate) fn source_provision(&self) -> fsl_analyze::analyze::SourceProvision {
-        fsl_analyze::analyze::SourceProvision::single(self.package.graph().source(), &self.source)
-    }
-
     /// Recompile and replay one state-graph witness through FR-170.
     pub(crate) fn replay_witness(
         &self,
