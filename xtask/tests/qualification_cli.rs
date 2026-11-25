@@ -73,6 +73,40 @@ fn qualify_runs_fspec_formatter_fixture_and_reports_a_qualified_scope() {
     );
 }
 
+/// FR-353-AC-3: a caller-selected passing capability is qualified under its
+/// named scope, without claiming complete-v1; FR-567 still gates the same run
+/// on the lifecycle matrix and linked-backend parity part.
+#[test]
+#[trace("TC-881", "FR-353-AC-3")]
+fn qualify_scoped_passing_capability_keeps_all_gate_parts() {
+    let (_fspec, fixture) = fixture_dir();
+    let output = run(&[
+        "qualify",
+        "--corpus",
+        fixture.to_str().unwrap(),
+        "--capability",
+        "V1-TOOL-004",
+    ]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", utf8(&output.stderr));
+    let report: Value = serde_json::from_slice(&output.stdout).expect("JSON report");
+    assert_eq!(report["verdict"], "qualified");
+    assert_eq!(report["scope"], serde_json::json!(["V1-TOOL-004"]));
+    assert!(report["qualification"].is_null());
+    assert!(!utf8(&output.stdout).contains("complete-v1"));
+    let parts = report["parts"].as_array().expect("the gate parts");
+    let lifecycle = parts
+        .iter()
+        .find(|part| part["part"] == "lifecycle-matrix")
+        .expect("the lifecycle matrix remains in the verdict");
+    let parity = parts
+        .iter()
+        .find(|part| part["part"] == "parity")
+        .expect("backend parity remains in the verdict");
+    assert_eq!(lifecycle["result"], "passed");
+    assert_eq!(parity["result"], "no-backend");
+}
+
 #[test]
 #[trace("TC-875", "FR-350-AC-1")]
 fn qualify_compiles_a_language_vector_through_the_public_entry_point() {
