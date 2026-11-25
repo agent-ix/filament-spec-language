@@ -1407,6 +1407,25 @@ mod tests {
         }
     }
 
+    #[trace("TC-1250", "FR-255-AC-14")]
+    #[test]
+    fn a_replay_request_smt_encoding_entry_refuses_at_decode() {
+        ReplayRequest::decode(wire(999), ReplayLimits::default())
+            .expect("the request decodes without the entry");
+        let mut request = wire(999);
+        request
+            .stage_limits
+            .insert("smt_encoding.max_constants".to_owned(), 8);
+        let refusal = ReplayRequest::decode(request, ReplayLimits::default())
+            .expect_err("a replay encodes no SMT query");
+        assert_eq!(
+            refusal,
+            ReplayRequestRefusal::StageLimitEntry {
+                name: "smt_encoding.max_constants".to_owned()
+            }
+        );
+    }
+
     #[trace("TC-721", "FR-255-AC-4", "FR-255-AC-24")]
     #[test]
     fn stage_limits_admit_only_settings_the_replay_wire_carries() {
