@@ -19,8 +19,9 @@ use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use fsl_foundation::Code;
 use fsl_semantics::check::{
-    AssemblyRefusal, CheckCause, CheckRefusal, CheckedGraph, CheckedRefinement,
-    PackageDeclarations, RefinementCause, RefinementV2Emission, RowClass, StepClass, StepTarget,
+    AssemblyRefusal, BindingValue, BodyTerm, CheckCause, CheckRefusal, CheckedGraph,
+    CheckedRefinement, LeafTerm, LiteralValue, MemberTerm, PackageDeclarations, RefinementCause,
+    RefinementV2Emission, RowClass, StepClass, StepTarget,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
@@ -2350,37 +2351,106 @@ fn a_strong_row_checks_as_strong() {
     assert_eq!(retry.granularity(), FairnessGranularity::Whole);
 }
 
-/// A checked `refinement` declaration S4 cannot write yet (a `history`
-/// row with a present `Option` initial, which has no package form yet, QSL-3011) is refused at package build, so a
-/// package is never built with an identity equal to the same package
-/// without it.
-#[trace("TC-540")]
+/// FR-138-AC-9 (TC-543): present optional enum, integer and decimal initial
+/// values lower through the checked-package route.
+#[trace("TC-543", "FR-138-AC-9")]
 #[test]
-fn a_checked_refinement_refuses_not_emitted_at_package_build() {
+fn present_option_history_initials_lower_through_the_package_route() {
     let (spec, cas) = counters();
-    let (_, declarations) = assemble(
-        "",
-        &[("Spec", SPEC, &spec), ("Impl", CAS, &cas)],
-        &with_refinement_rows(
+    let models = [("Spec", SPEC, &spec[..]), ("Impl", CAS, &cas[..])];
+    let body = format!(
+        "enum Phase {{ idle, busy }}\n{}",
+        with_refinement_rows(
             cas_refines_counter(),
-            "history Impl::Counter.last : Option<Int[0, 1]> = 0 { }\n",
-        ),
-    );
-    let refusals = declarations
-        .expect("the unit assembles")
-        .check(
-            CheckMode::Linked,
-            CheckingLimits::default(),
-            &crate::reward_evaluator::ZeroRewardEvaluator,
+            "history Impl::Counter.last_phase : Option<Phase> = Phase::idle { }\n\
+             history Impl::Counter.last_count : Option<Int[0, 1]> = 1 { }\n\
+             history Impl::Counter.last_amount : Option<Decimal[0, 100; 0, 2; nearest-even]> = decimal(150, 1) { }\n",
         )
-        .expect_err("a refinement is not emitted yet");
-    assert_eq!(
-        refusals
-            .iter()
-            .map(|refusal| (refusal.cause.code(), refusal.cause.cause()))
-            .collect::<Vec<_>>(),
-        [(Code::UnsupportedConstruct, Some("not-yet-implemented"))]
     );
+    let graph = check_with("", &models, &body).unwrap_or_else(|refusals| {
+        panic!(
+            "present Option history initials must lower through the package route: {:?}",
+            refusals
+                .iter()
+                .map(|refusal| &refusal.refusal)
+                .collect::<Vec<_>>()
+        )
+    });
+    let histories = only_refinement(&graph).history();
+    assert_eq!(
+        histories.len(),
+        3,
+        "all present Option histories are emitted"
+    );
+    for history in histories {
+        assert!(
+            matches!(&history.initial, filament_exact::Value::Option(option) if option.payload().is_some()),
+            "{} has a present option initial: {:?}",
+            history.field,
+            history.initial
+        );
+    }
+    let option_payloads = graph
+        .semantic_graph()
+        .nodes()
+        .filter(|node| node.semantic_form() == "option_value")
+        .map(|node| {
+            let BodyTerm::Aggregate(body) = node.body() else {
+                panic!("option_value has an aggregate body: {node:?}");
+            };
+            let [MemberTerm::Binding(binding)] = body.members.as_slice() else {
+                panic!("option_value has one payload binding: {node:?}");
+            };
+            assert_eq!(binding.name, "value");
+            match &binding.value {
+                BindingValue::Leaf(LeafTerm::Literal { value, .. }) => value.clone(),
+                BindingValue::Leaf(LeafTerm::Reference { target }) => {
+                    let literal = graph
+                        .semantic_graph()
+                        .node(
+                            target
+                                .admitted()
+                                .expect("literal reference is admitted")
+                                .clone(),
+                        )
+                        .expect("literal node exists");
+                    let BodyTerm::Leaf(LeafTerm::Literal { value, .. }) = literal.body() else {
+                        panic!("history Option payload resolves to a literal: {literal:?}");
+                    };
+                    value.clone()
+                }
+                _ => panic!("history Option payload is a literal: {node:?}"),
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(option_payloads.len(), 3, "one option_value per history row");
+    assert!(option_payloads
+        .iter()
+        .any(|value| matches!(value, LiteralValue::Enum(case) if case == "idle")));
+    assert!(option_payloads.iter().any(|value| matches!(
+        value,
+        LiteralValue::Integer(number) if number.to_string() == "1"
+    )));
+    assert!(option_payloads
+        .iter()
+        .any(|value| matches!(value, LiteralValue::Decimal(number) if number == "15.0")));
+}
+
+/// FR-138-AC-2 (TC-543): an Option-wrapped integer remains subject to its
+/// declared bounded payload type.
+#[trace("TC-543", "FR-138-AC-2")]
+#[test]
+fn an_out_of_set_option_history_payload_is_refused_at_its_literal() {
+    let refusals = refused_counter(&with_refinement_rows(
+        cas_refines_counter(),
+        "history Impl::Counter.last : Option<Int[0, 1]> = 2 { }\n",
+    ));
+    let refusal = only(&refusals);
+    assert_eq!(
+        refusal.code_and_cause(),
+        (Code::IllTyped, Some("type-mismatch"))
+    );
+    assert_eq!(refusal.at, "2");
 }
 
 fn sub_refinement(source: &str, peek: &str) -> String {
@@ -2668,12 +2738,13 @@ fn state_machine_rows_report_missing_duplicate_and_mixed_kinds() {
     );
 }
 
-/// A unit holding a `terminal` declaration and a refinement S4 cannot write
-/// yet refuses only the refinement: the `terminal` declaration is emitted.
-#[trace("TC-540")]
+/// FR-138-AC-9 (TC-543): a present Option history does not prevent a terminal
+/// and refinement from sharing the emitted package.
+#[trace("TC-543", "FR-138-AC-9")]
 #[test]
-fn only_the_refinement_beside_a_terminal_is_refused() {
+fn a_present_option_history_emits_beside_a_terminal() {
     let (spec, cas) = counters();
+    let models = [("Spec", SPEC, &spec[..]), ("Impl", CAS, &cas[..])];
     let body = format!(
         "terminal Halt using v on Spec any;\n{}",
         with_refinement_rows(
@@ -2681,23 +2752,18 @@ fn only_the_refinement_beside_a_terminal_is_refused() {
             "history Impl::Counter.last : Option<Int[0, 1]> = 0 { }\n",
         )
     );
-    let (_, declarations) = assemble("", &[("Spec", SPEC, &spec), ("Impl", CAS, &cas)], &body);
-    let refusals = declarations
-        .expect("the unit assembles")
-        .check(
-            CheckMode::Linked,
-            CheckingLimits::default(),
-            &crate::reward_evaluator::ZeroRewardEvaluator,
+    let graph = check_with("", &models, &body).unwrap_or_else(|refusals| {
+        panic!(
+            "terminal and present Option history should both emit: {:?}",
+            refusals
+                .iter()
+                .map(|refusal| &refusal.refusal)
+                .collect::<Vec<_>>()
         )
-        .expect_err("the refinement is not emitted yet");
-    assert!(
-        matches!(
-            refusals[0].cause.as_ref(),
-            CheckCause::RefinementNotEmitted { .. }
-        ),
-        "{refusals:?}"
-    );
-    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    });
+    assert!(!graph.terminals().is_empty());
+    assert_eq!(graph.refinements().len(), 1);
+    assert_eq!(graph.refinements()[0].history().len(), 1);
 }
 
 pub(crate) const DIAMOND: &str = "example/diamond-counter";

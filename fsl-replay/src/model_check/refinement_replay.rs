@@ -50,11 +50,11 @@ use crate::refinement::RefinementRead;
 use crate::refinement::{
     abstract_classes, candidate_edge_target_ordinal, candidate_lasso_has_fair_run, check_initial,
     check_protocol_initial, check_protocol_state_relations, check_protocol_step, check_step,
-    initial_history, loop_segments, map_state, row_clock_step, step_history, stop_verdict,
-    AssumptionSide, AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep,
-    ConcreteStep, InvariantReading, ProtocolAssumptionReason, ProtocolAssumptionWitness,
-    ProtocolRelationError, ProtocolStateRelation, RefinementFailure, RefinementPosition,
-    RefinementSystems, RowClockStep, StepVerdict, Taken,
+    check_step_for_model, initial_history, loop_segments, map_state, row_clock_step, step_history,
+    stop_verdict, AssumptionSide, AssumptionTarget, CandidateFairHop, CandidateFairState,
+    CandidateFairStep, ConcreteStep, InvariantReading, ProtocolAssumptionReason,
+    ProtocolAssumptionWitness, ProtocolRelationError, ProtocolStateRelation, RefinementFailure,
+    RefinementPosition, RefinementSystems, RowClockStep, StepVerdict, Taken,
 };
 use crate::result::DisagreementCause;
 use crate::timed::explore::{explore, widen, Closure};
@@ -767,7 +767,7 @@ pub fn replay_refinement_trace(
     if let Some(lasso) = payload.lasso.as_ref() {
         close_loop(&systems.concrete, &positions, lasso.clone())?;
     }
-    settle_positions(refinement, systems, payload, recorded, &positions)
+    settle_positions(refinement, systems, payload, recorded, &positions, true)
 }
 
 /// FSpec FR-430: replay `payload`, a refinement counterexample of
@@ -855,7 +855,7 @@ fn replay_refinement_trace_with_time_source(
             _ => RefinementTraceSettlement::Inconclusive(disagreement(Category::Success)),
         });
     }
-    let settlement = settle_positions(refinement, systems, payload, recorded, &positions)?;
+    let settlement = settle_positions(refinement, systems, payload, recorded, &positions, false)?;
     let RefinementTraceSettlement::Reproduced { failure, .. } = &settlement else {
         return Ok(settlement);
     };
@@ -1130,6 +1130,7 @@ fn settle_positions(
     payload: &TemporalCounterexample,
     recorded: &RefinementFailure,
     positions: &[Position],
+    merge_candidate_states: bool,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
     let mut mapped = Vec::new();
     let mut previous: Option<RefinementPosition> = None;
@@ -1161,7 +1162,12 @@ fn settle_positions(
                         .verdict
                     }
                     None => {
-                        check_step(
+                        let check = if merge_candidate_states {
+                            check_step_for_model
+                        } else {
+                            check_step
+                        };
+                        check(
                             refinement,
                             &systems.concrete,
                             &systems.abstract_system,
@@ -1327,6 +1333,7 @@ fn settle_positions(
             walk,
             found,
             mapped,
+            merge_candidate_states,
         );
     }
     Ok(match found {
@@ -1452,6 +1459,7 @@ fn replay_lasso(
     mut walk: Walk<'_>,
     found: Found,
     mapped: Vec<ModelState>,
+    merge_candidate_states: bool,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
     match found {
         Found::Nothing => {}
@@ -1480,7 +1488,12 @@ fn replay_lasso(
         let (Some(last), Some(position)) = (walk.trail.last(), walk.positions.last()) else {
             return Err(fault("a-lasso-has-a-position"));
         };
-        let verdict = check_step(
+        let check = if merge_candidate_states {
+            check_step_for_model
+        } else {
+            check_step
+        };
+        let verdict = check(
             refinement,
             &systems.concrete,
             &systems.abstract_system,
