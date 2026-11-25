@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(
+    dead_code,
+    reason = "shared fixture support spans split integration test binaries"
+)]
 //! The probabilistic models of FR-196's tests (TC-631, TC-641, TC-630): each
 //! a `test/<name>` domain package with one object type in one population
 //! over the universe `{<key>}`, a unit selecting it as `M` that writes its

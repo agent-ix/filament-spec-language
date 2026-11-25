@@ -42,7 +42,7 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::counter::{CONTRACT, UNLIMITED};
-use crate::model_settle::{envelope_at, request};
+use crate::model_settle_support::{envelope_at, request};
 use crate::model_world::{self, Atom, Clause, Letters, World, BOUNDED, INFINITE};
 
 const ORIGIN: &str = "on origin";

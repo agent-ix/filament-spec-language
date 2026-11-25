@@ -260,8 +260,8 @@ fn the_emitted_clause_node_carries_its_on_each_activation() {
 #[test]
 fn an_echo_on_each_tp3_claim_settles_from_the_package_as_from_source() {
     for (scheduling, expected) in [("", "proved"), ("scheduling adversarial;", "refuted")] {
-        let body = crate::protocol_bounded_lasso::echo_body(scheduling)
-            + &crate::protocol_counted_steps::tp3(
+        let body = crate::protocol_bounded_support::echo_body(scheduling)
+            + &crate::protocol_counted_support::tp3(
                 "on each (q: M::Cell)",
                 "holds(k.v = 0) implies eventually[1,2] holds(k.v = 0)",
             );

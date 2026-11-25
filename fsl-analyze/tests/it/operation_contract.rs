@@ -34,7 +34,7 @@ use crate::graph_world::{
     config_kernel_world_over, config_version, config_world_over, World, CONFIG_CONTRACT,
 };
 use crate::prob_world::source_population;
-use crate::value_validity::source_color;
+use crate::source_value_support::source_color;
 
 /// The world with `extra` declarations and one initial state `a` at
 /// `start`.

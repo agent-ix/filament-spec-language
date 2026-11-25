@@ -20,7 +20,7 @@ use fsl_semantics::check::{Capability, RequirementRecord};
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
-use crate::derived_request::derived_items;
+use crate::derived_request_support::derived_items;
 use crate::refinement_fixture::{cas_refines_counter, mutated, World, UNLIMITED};
 
 const ENSURE: &str = "ensure fair weak each Spec::Counter::inc;\n";

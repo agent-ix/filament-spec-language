@@ -92,7 +92,7 @@ fn digital_clocks_refuse_strict_constraints_and_intervals() {
     assert_eq!(declined["record"]["settled_by"], "result", "{declined}");
     assert_eq!(declined["record"]["backend"], "en-1", "{declined}");
 
-    let strict = crate::analyze_family_cli::rpc_unit(4, claim).replace(
+    let strict = crate::analyze_family_support::rpc_unit(4, claim).replace(
         "self.inflight and self.x >= 1 ms",
         "self.inflight and self.x > 1 ms",
     );
@@ -101,7 +101,7 @@ fn digital_clocks_refuse_strict_constraints_and_intervals() {
         &ws,
         &strict,
         &crate::zone_search::rpc_document(),
-        &[crate::analyze_family_cli::rpc_snapshot()],
+        &[crate::analyze_family_support::rpc_snapshot()],
         items("NoLateReply"),
     ));
     let declined = run.item(0);

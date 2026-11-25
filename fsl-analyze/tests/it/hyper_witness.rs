@@ -32,7 +32,8 @@ use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
 
 use crate::counter::ZERO;
-use crate::hyper::{input, inputs, positions, refuted};
+pub(crate) use crate::hyper_support::KERNEL_MOD_FUNCTION;
+use crate::hyper_support::{input, inputs, positions, refuted};
 use crate::hyper_world::{assert_hyper_division_refused, high, low, opaque, Vault, World, STARTS};
 
 /// The clause of FR-177's third criterion: two existential variables and no universal one.
@@ -1026,9 +1027,6 @@ pub(crate) const KERNEL_GUARDED: Vault = Vault::Custom(
 /// A Kernel-checked division callable from Linked contracts.
 pub(crate) const KERNEL_DIV_FUNCTION: &str =
     "function q using v(x: Integer): Integer pure { 1 div x }\n";
-/// A Kernel-checked remainder function callable from a Linked match body.
-pub(crate) const KERNEL_MOD_FUNCTION: &str =
-    "function q using v(x: Integer): Integer pure { 1 mod x }\n";
 
 /// `Opaque` over [`KERNEL_GUARDED`] with a `match` that confines `a` to `step(0)`.
 pub(crate) const GUARDED_CLAUSE: &str = "hyper Opaque using inf over behaviours (v: V::Vault) \
