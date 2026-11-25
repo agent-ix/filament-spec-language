@@ -1,8 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#![allow(
-    dead_code,
-    reason = "shared fixture support spans split integration test binaries"
-)]
 //! FR-124-AC-1's `Counter` subject: the `test/counter` domain package
 //! (population `counters` of `Counter`, field `value: Int[0, 3]`, operation
 //! `inc` modifying `value`), a native unit that selects it as `M` with the

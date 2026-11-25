@@ -2,6 +2,10 @@
 //! refinement integration tests.
 
 mod analyze_cli_support;
+#[allow(
+    dead_code,
+    reason = "shared fixture support spans split integration test binaries"
+)]
 mod counter;
 mod dense_route_support;
 mod derived_request_support;

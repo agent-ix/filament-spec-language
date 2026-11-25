@@ -2,6 +2,10 @@
 //! monitor_protocol integration tests.
 
 mod analyze_cli_support;
+#[allow(
+    dead_code,
+    reason = "shared fixture support spans split integration test binaries"
+)]
 mod counter;
 mod fixture_ids;
 mod letters;

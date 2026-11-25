@@ -8,6 +8,10 @@ mod analyze_family_support;
 mod analyze_package_selection;
 mod analyze_reach_rulings;
 mod analyze_timed_cli;
+#[allow(
+    dead_code,
+    reason = "shared fixture support spans split integration test binaries"
+)]
 mod counter;
 mod dense_route;
 mod dense_route_support;

@@ -22,6 +22,10 @@ mod analyze_tp3_package;
 mod analyze_wire;
 mod clause_item;
 mod closure_certificate;
+#[allow(
+    dead_code,
+    reason = "shared fixture support spans split integration test binaries"
+)]
 mod counter;
 mod dense_route_support;
 mod derived_request_support;
