@@ -6,6 +6,8 @@ use filament_exact::{EffectiveId, OriginalDeclarationKey};
 use fsl_semantics::model::key::{
     EffectiveDeclarationPreimage, Fact, RULE_INHERIT, RULE_QUALIFY, RULE_REDEFINE, RULE_SUBSET,
 };
+use fsl_semantics::model::links::Links;
+use fsl_semantics::model::normalize::ViewEntry;
 
 /// Read the admitted `correspondence/model_correspondence` scalar sequences.
 /// Each body starts with a row count, followed by the closed preimage grammar
@@ -26,12 +28,29 @@ pub(super) fn read(package: &CheckedPackageV2) -> Result<Vec<EffectiveDeclaratio
             terms: members,
             at: 0,
         };
+        let mut model_rows = Vec::new();
         for _ in 0..cursor.count_bounded()? {
-            rows.push(cursor.preimage()?);
+            let preimage = cursor.preimage()?;
+            preimage.validate_derivation().map_err(|_| ())?;
+            model_rows.push(preimage);
         }
         if cursor.at != members.len() {
             return Err(());
         }
+        let declarations = model_rows
+            .iter()
+            .cloned()
+            .map(|preimage| ViewEntry {
+                effective_id: preimage.identity(),
+                preimage,
+                visible: true,
+            })
+            .collect::<Vec<_>>();
+        // Parent identities are meaningful only within the selected model
+        // projection that emitted this node. Validate kind, owner and
+        // original against that admitted selected-model declaration set.
+        Links::new(&declarations).map_err(|_| ())?;
+        rows.extend(model_rows);
     }
     rows.sort_by_key(EffectiveDeclarationPreimage::identity);
     if rows

@@ -242,6 +242,108 @@ fn read_correspondence(
     read.into_value().package.model_correspondence().to_vec()
 }
 
+fn correspondence_test_evidence(emission: &Emission, document: &[u8]) -> CheckedPackageEvidence {
+    let mut evidence = emission.evidence().clone();
+    evidence
+        .insert_domain_package_document(package_identity(document), document.to_vec())
+        .expect("the selected TC-195 model document is reader evidence");
+    evidence
+}
+
+fn read_mutated_correspondence(wire: &Value, document: &[u8], emission: &Emission) -> Read {
+    let mut slotted = wire.clone();
+    fsl_semantics::check::wire_id::write_operand_rows(&mut slotted);
+    let bytes = quire_canonical::to_vec(&slotted, ceiling().canonical()).expect("canonical");
+    read_v2(
+        &bytes,
+        library(),
+        V2ReadLimits::fixture(),
+        &correspondence_test_evidence(emission, document),
+    )
+}
+
+fn correspondence_members_mut(wire: &mut Value) -> &mut Vec<Value> {
+    let node = wire["semantic_graph"]["nodes"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|node| {
+            node["node_tag"] == "correspondence" && node["semantic_form"] == "model_correspondence"
+        })
+        .expect("the package emits a correspondence node");
+    node["body"]["members"].as_array_mut().unwrap()
+}
+
+fn literal_text(members: &[Value], at: usize) -> &str {
+    members[at]["value"].as_str().expect("text literal")
+}
+
+fn literal_usize(members: &[Value], at: usize) -> usize {
+    members[at]["value"]
+        .as_str()
+        .expect("integer literal uses its decimal spelling")
+        .parse()
+        .expect("integer literal is a non-negative count")
+}
+
+fn skip_effective_id(members: &[Value], at: &mut usize) {
+    match literal_text(members, *at) {
+        "none" => *at += 1,
+        "some" => {
+            let mut depth = 0;
+            while literal_text(members, *at) == "some" {
+                depth += 1;
+                *at += 1;
+            }
+            assert_eq!(literal_text(members, *at), "none");
+            *at += 1 + depth * 2;
+        }
+        marker => panic!("closed effective-id marker: {marker}"),
+    }
+}
+
+fn skip_declaration(at: &mut usize) {
+    *at += 2;
+}
+
+fn find_first_derivation_ordinal(members: &[Value]) -> usize {
+    let mut at = 1;
+    skip_effective_id(members, &mut at);
+    skip_declaration(&mut at);
+    assert!(literal_usize(members, at) > 0);
+    at + 1
+}
+
+fn first_inherit_parent_key(members: &[Value]) -> (usize, usize) {
+    let row_count = literal_usize(members, 0);
+    let mut at = 1;
+    for _ in 0..row_count {
+        skip_effective_id(members, &mut at);
+        skip_declaration(&mut at);
+        let fact_count = literal_usize(members, at);
+        at += 1;
+        for _ in 0..fact_count {
+            at += 1;
+            let rule = literal_text(members, at);
+            at += 1;
+            let input_count = literal_usize(members, at);
+            at += 1 + input_count * 2;
+            let parent_start = at;
+            let has_parent = literal_text(members, at) == "some";
+            skip_effective_id(members, &mut at);
+            if rule == "filament.model.normalize.inherit/v2" && has_parent {
+                let depth = members[parent_start..at]
+                    .iter()
+                    .filter(|term| term["value"] == "some")
+                    .count();
+                let package = parent_start + depth * 3 - 1;
+                return (package, package + 1);
+            }
+        }
+    }
+    panic!("N01 has an inherited parent link")
+}
+
 fn effective_id_json(identity: &filament_exact::EffectiveId) -> Value {
     let owner = identity
         .owner_effective_type()
@@ -409,6 +511,49 @@ fn tc195_n02_checked_package_reader_retains_one_diamond_member_with_direct_links
             vec!["ix://test/orders/B", "ix://test/orders/A/x"],
             vec!["ix://test/orders/C", "ix://test/orders/A/x"],
         ]
+    );
+}
+
+#[trace("FR-400-AC-14", "FSpec-TC-195")]
+#[test]
+fn tc195_reader_refuses_a_malformed_derivation_ordinal() {
+    let (emission, document) = correspondence_fixture(false);
+    let mut edited = wire(&emission);
+    let members = correspondence_members_mut(&mut edited);
+    let ordinal = find_first_derivation_ordinal(members);
+    members[ordinal]["value"] = json!("7");
+
+    assert_eq!(
+        read_mutated_correspondence(&edited, &document, &emission),
+        Read::Refused(crate::checked_v2::V2ReadRefusal::Fault(
+            filament_semantic_value::catalog::InternalFault::new(
+                "I2",
+                "admitted-model-correspondence-has-closed-preimage-shape",
+            ),
+        )),
+        "a derivation ordinal that disagrees with its position is refused",
+    );
+}
+
+#[trace("FR-400-AC-14", "FR-081-AC-9", "FSpec-TC-195")]
+#[test]
+fn tc195_reader_refuses_an_inherit_parent_with_the_wrong_original() {
+    let (emission, document) = correspondence_fixture(false);
+    let mut edited = wire(&emission);
+    let members = correspondence_members_mut(&mut edited);
+    let (package, node) = first_inherit_parent_key(members);
+    members[package]["value"] = json!("test/orders");
+    members[node]["value"] = json!("ix://test/orders/not-the-parent");
+
+    assert_eq!(
+        read_mutated_correspondence(&edited, &document, &emission),
+        Read::Refused(crate::checked_v2::V2ReadRefusal::Fault(
+            filament_semantic_value::catalog::InternalFault::new(
+                "I2",
+                "admitted-model-correspondence-has-closed-preimage-shape",
+            ),
+        )),
+        "an inherit parent that is not the selected model's declared parent is refused",
     );
 }
 
@@ -681,9 +826,11 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
         .collect()
     );
     assert_eq!(member["admitted_name"], "point");
-    assert!(member["original_member_identity"]
-        .as_str()
-        .is_some_and(|identity| !identity.is_empty()));
+    assert!(
+        member["original_member_identity"]
+            .as_str()
+            .is_some_and(|identity| !identity.is_empty())
+    );
     assert_eq!(member["presence"], "required");
     assert!(member["type_node"].is_object());
     assert!(member["value_type"].is_object());
@@ -700,10 +847,11 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
     assert_eq!(read, rows);
     assert_eq!(read.to_bytes(&package).unwrap(), bytes);
     assert_eq!(read.source_objects().len(), 1);
-    assert!(read
-        .source_objects()
-        .iter()
-        .any(|row| row.source_identity.as_ref() == "Order"));
+    assert!(
+        read.source_objects()
+            .iter()
+            .any(|row| row.source_identity.as_ref() == "Order")
+    );
     assert_eq!(
         read.source_object_operations(),
         emission.source_object_operations()
@@ -1415,8 +1563,8 @@ fn a_source_selection_key_reads_back_and_a_foreign_spelling_refuses() {
         .expect("the `Order` table");
     for (member, value) in [("node", json!("Order")), ("package", json!("other/unit"))] {
         let mut edited = wire.clone();
-        edited["checked_term_data"]["dispatch_tables"][table]["candidates"][0]["selection_key"]
-            ["original"][member] = value;
+        edited["checked_term_data"]["dispatch_tables"][table]["candidates"][0]["selection_key"]["original"]
+            [member] = value;
         assert_eq!(
             refused(&edited),
             (
@@ -1648,11 +1796,13 @@ fn source_operations_carry_operation_body_rows() {
         ]
     );
     let identity = owner_identity(&wire, "Order");
-    assert!(wire["operation_bodies"]
-        .as_array()
-        .expect("rows")
-        .iter()
-        .all(|row| row["document"] == json!(identity)));
+    assert!(
+        wire["operation_bodies"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .all(|row| row["document"] == json!(identity))
+    );
 }
 
 #[trace("FR-997-AC-2", "TC-2821", "FSpec-FR-790-AC-2", "FSpec-TC-1920")]
