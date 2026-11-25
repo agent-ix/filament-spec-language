@@ -28,7 +28,7 @@ that it maps to violation with cause `UndefinedEvaluation`; that a bounded
 `on origin` clause reads only its horizon; and that replay reproduces the
 undefined value at its position.
 
-Scope: FR-327-AC-5, FR-327-AC-7, FR-328-AC-5, FR-329-AC-6, FR-330-AC-5,
+Scope: FR-327-AC-5, FR-327-AC-7, FR-327-AC-15, FR-328-AC-5, FR-329-AC-6, FR-330-AC-5,
 FR-330-AC-8, FR-331-AC-4, FR-331-AC-5, FR-331-AC-8,
 FR-331-AC-9, FR-071-AC-8,
 FR-072-AC-6, FR-098-AC-28.
@@ -41,7 +41,8 @@ undefined atom or a refused condition (FR-327-AC-7, FR-330-AC-8).
 
 Fixtures: the evaluator steps 1 to 3 use the record subject `c: Counter`
 (attribute `level`), the closed trace and the prefix with `c.level` 0, 1, 2,
-and the observed lasso with an empty prefix and loop 0, 1, 2. Their clauses,
+and the observed lasso with an empty prefix and loop 0, 1, 2; step 9 uses the
+same subject with a finite trace of `c.level` 0, 1, 2, 3. Their clauses,
 and step 6's, are checked by the temporal family alone, as the package check
 runs it before it types `holds` conditions (S3 would refuse their undefined
 conditions), and the test supplies their letters, reading a zero divisor as
@@ -84,6 +85,8 @@ observation owner supplies; the step 4 unit compiles with no refusal.
    (temporal_mod_undefined(q.value))`, and replay over the snapshots with
    `c.value` 2, 0, 1 an observed temporal `UndefinedEvaluation` packet at
    position 0 whose locus names that clause's `holds` atom.
+9. Evaluate the two clauses of FR-327-AC-15 over its finite trace, reading
+   the positions each evaluation reads.
 
 Tag the tests `#[trace("TC-847", "<AC id>")]`.
 
@@ -140,3 +143,5 @@ Tag the tests `#[trace("TC-847", "<AC id>")]`.
   `division-by-zero` and no undefined locus, and settles `inconclusive`,
   `ReplayParity`, because the undefined expression is the activation guard and
   the packet's locus names a `holds` atom. Tag the test `#[trace("TC-847", "FR-331-AC-9")]`.
+- Step 9: `Undefined{where: 2, cause: division-by-zero}` with positions 0, 1
+  and 2 read; `Completed(true)` with positions 0 and 1 read.

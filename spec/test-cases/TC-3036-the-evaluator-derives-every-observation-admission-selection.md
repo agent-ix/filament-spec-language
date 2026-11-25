@@ -105,11 +105,9 @@ the equal-content, new-identity case of FR-944-AC-4.
   `observation` is that document without `identity`.
 - Step 6: the undefined position's record value carries
   `{"undefined": {"cause": "kernel", "reason": "division-by-zero"}}` for
-  `p`, no partial fact is derived for `p` there, the evaluator reports its
-  own undefined outcome unchanged, no owner answer for it is `Missing`,
-  `Conflicting` or `Indeterminate`, no owner read consumes `p`'s possibility
-  set there, and the clause outcome is
-  `Undefined{where: 2, cause: division-by-zero}`; positions 0 and 1 have
+  `p`, no partial fact is derived for `p` there, no owner answer for it is
+  `Missing`, `Conflicting` or `Indeterminate`, and no owner read consumes
+  `p`'s possibility set there; positions 0 and 1 have
   their facts read back.
 - Step 7: binding, record and interval units are all `ms/4` (all
   `position/4` for the event-position request) and every `partial::derive`

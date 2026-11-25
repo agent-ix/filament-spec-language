@@ -22,7 +22,7 @@ Unless a step names another shape, each trace is a `Document` trace: a `filament
 2. Monitor `always p` over a three-position trace whose `p` is true at every position.
 3. Over a lasso of a two-position prefix and a two-position loop whose `q` holds at loop position 3, monitor `always eventually q`.
 4. Repeat step 3 with `q` false at every loop position.
-5. Over a three-position finite trace whose `x` is 0 at position 1, monitor `always (10 / x > 0)` and map the outcome's category through FR-285.
+5. Over a three-position finite trace whose `x` is 0 at position 1, monitor `always holds(q(x) >= 0)`, `q` being FR-283-AC-5's `Kernel`-checked function, and map the outcome's category through FR-285.
 6. Monitor step 1's clause and step 5's clause in one request over step 5's trace.
 7. Over FR-327-AC-1's closed `Counter` trace as a three-position finite document, monitor `eventually[0,2] holds(c.value = 2)` and `eventually[0,1] holds(c.value = 2)` under event-position false-extension, `on origin`.
 8. Read step 1's `counterexample` and the `decisive` beside it. Over a three-position finite trace whose position-0 and position-1 snapshots hold `items` 1, 2, 3 and whose position-2 snapshot holds `items` 3, 0, 5, monitor `always holds(forall i in self.items : i > 0)`, and evaluate its `holds` atom with FR-107's evaluator over the position-2 observation.

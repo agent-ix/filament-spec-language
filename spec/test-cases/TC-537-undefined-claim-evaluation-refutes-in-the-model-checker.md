@@ -21,19 +21,17 @@ Scope: FR-125-AC-6, FR-126-AC-9.
 
 ## Test Procedure
 
-Steps 1 and 2 use the record subject `c: Counter` (attribute `level`) with
-`c.level` 0, 1, 2, 3. Their clauses are checked by the temporal family alone,
-as the package check runs it before it types `holds` conditions, and the
-test supplies their letters, reading a zero divisor as undefined with cause
-`division-by-zero`. Steps 3 and 4 use the `Counter` subject of FR-124-AC-1
-(universe `{c}`, initial value 0) with the function
+All steps use the `Counter` subject of FR-124-AC-1 (universe `{c}`, initial
+value 0) with the function
 `function q using v(x: Integer): Integer pure { 6 mod x }`, whose body is
-checked under `Kernel` (FR-495-AC-3).
+checked under `Kernel` (FR-495-AC-3). Steps 1 and 2 read the clause's
+letters from the subject's production letters along its behaviour
+`0, 1, 2, 3`.
 
-1. Evaluate the letters of `always holds(6 / (2 - c.level) >= 0)` under
+1. Evaluate the letters of `always holds(q(2 - c.value) >= 0)` under
    infinite-trace.
-2. Evaluate `eventually[0,1] holds(6 / (2 - c.level) = 6)` under
-   event-position false-extension, `on origin`.
+2. Evaluate `eventually[0,1] holds(q(2 - c.value) = 0 and c.value = 1)`
+   under event-position false-extension, `on origin`.
 3. With no `terminal` declaration, run `check_model` on
    `always holds(q(2 - c.value) >= 0)` under infinite-trace, then on
    `always eventually holds(q(2 - c.value) = 0 and c.value = 1)`, then on
