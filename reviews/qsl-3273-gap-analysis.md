@@ -51,3 +51,9 @@ CONDITIONAL. Every criterion this PR touches is tagged by a test that asserts li
 - Stub and tautology check: the 9 changed test files.
 - Semantic review: skipped (reviewer pass).
 - Plan completion: not assessed
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |

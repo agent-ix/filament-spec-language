@@ -53,7 +53,22 @@ FND-001 is the same FR-135-AC-4 defect class in the ticket's own refinement-row 
 
 Mergeability also depends on the remote gate runs (A at base for the 39, B1-B6 at head), which have not run yet.
 
+## New findings (disposition pass 1)
+
+Head f454bfeea8 (fix fa5dc218c3, merge of origin/main 7b05d21e64).
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | medium | A `state`/`transition` node still has the bare path `["state", "transition"]`. `derived_operands` has no arm for it, and `NodeTag::State` is not routed to `walked_operands`, so every transition is told apart only by ordinal. FSpec FR-341 "identity" does determine its operands: the path is "FR-322's derived-node form" holding "the operator, the operation identity, the profile law's definition, the member operator and the five bindings", and "changing the field, the operation, an input, `pre`, `post` or the profile selection yields a different node". Two packages whose one transition differs only in `post` therefore get equal transition node ids. Only the segment order is open (STD-729 item 4). STD-729 is an FSpec ticket and owns no FSL code. | fsl-semantics/src/check/lowering.rs:7995-8039; fsl-semantics/src/check/lowering/state_transition.rs:342-366 |
+| FND-008 | low | The new `Member::ProfileOperator` arm has no production effect. Its only producers are the `state`/`transition` node (`NodeTag::State`, never walked; see FND-007) and protocol `control` nodes (`NodeTag::Protocol`, declared). `a_profile_operator_member_is_its_operator_name` uses the operator `"transition"` on a synthetic `expression` node, which reads as transition coverage that the real transition path does not get. | fsl-semantics/src/check/lowering/tests/member_operands.rs:134-142 |
+
 ## Dispositions
 
 | FND | outcome | reason |
 | --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |
+| FND-005 | fixed | - |
+| FND-006 | deferred | QSL-2955 comment of 2026-11-25 records the exact codegen clause_key change (node(account), text(field) after "filament.op.record.project") for the next pin bump. |

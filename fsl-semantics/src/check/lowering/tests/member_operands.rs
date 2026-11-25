@@ -131,12 +131,16 @@ fn position_and_element_members_hold_their_declaration() {
     );
 }
 
+/// The expression walk's arm alone, over a synthetic node: no lowering puts a
+/// profile operator on an expression node. A `state`/`transition` node is not
+/// walked and a protocol `control` node is declared, so this says nothing
+/// about either node's path.
 #[test]
-fn a_profile_operator_member_is_its_operator_name() {
+fn the_expression_walk_writes_a_profile_operator_arm_as_its_name() {
     assert_eq!(
         operands(Member::ProfileOperator {
-            operator: named("transition"),
+            operator: named("sample"),
         }),
-        around(vec![text("transition")])
+        around(vec![text("sample")])
     );
 }
