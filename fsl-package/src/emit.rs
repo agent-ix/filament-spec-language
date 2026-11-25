@@ -6029,6 +6029,111 @@ fn append_schedulability_claims(
             rows.push(filament_contract_model::CheckedSchedulabilityClaimRow {
                 declaration: id.clone(),
                 occurrence: *ordinal,
+                task_set: claim.task_set.as_str().into(),
+                release_bindings: if matches!(
+                    &claim.claim,
+                    fsl_semantics::check::ScheduleClaim::Schedulable(_)
+                ) {
+                    let mut bindings = task_sets
+                        .releases()
+                        .iter()
+                        .filter(|release| release.task_set() == claim.task_set)
+                        .map(|release| {
+                            let operation = release.operation();
+                            let selected_model_identity = graph
+                                .model_package_identity(operation.model())
+                                .ok_or(EmitRefusal::SourceMapInvariant)?;
+                            let declaring_key = operation
+                                .declaring_key()
+                                .and_then(|key| {
+                                    fsl_semantics::model::key::declaring_node_key(
+                                        key,
+                                        graph.package_name(),
+                                    )
+                                })
+                                .ok_or(EmitRefusal::SourceMapInvariant)?;
+                            Ok(
+                                filament_contract_model::CheckedSchedulabilityReleaseBinding {
+                                    task_name: release.task().into(),
+                                    selected_model_identity: selected_model_identity.into(),
+                                    operation_declaring_identity: node_id(ids, &declaring_key),
+                                    operation_member: operation.name().into(),
+                                },
+                            )
+                        })
+                        .collect::<Result<Vec<_>, EmitRefusal>>()?;
+                    bindings.sort_by(|left, right| {
+                        let left_owner = &left.operation_declaring_identity;
+                        let right_owner = &right.operation_declaring_identity;
+                        (
+                            &left.task_name,
+                            &left.selected_model_identity,
+                            &left_owner.package,
+                            &left_owner.path,
+                            left_owner.ordinal,
+                            &left.operation_member,
+                        )
+                            .cmp(&(
+                                &right.task_name,
+                                &right.selected_model_identity,
+                                &right_owner.package,
+                                &right_owner.path,
+                                right_owner.ordinal,
+                                &right.operation_member,
+                            ))
+                    });
+                    bindings
+                } else {
+                    Vec::new()
+                },
+                mode_switch_bindings: {
+                    let mut bindings = task_sets
+                        .mode_switches()
+                        .iter()
+                        .filter(|mode| mode.task_set() == claim.task_set)
+                        .map(|mode| {
+                            let operation = mode.operation();
+                            let selected_model_identity = graph
+                                .model_package_identity(operation.model())
+                                .ok_or(EmitRefusal::SourceMapInvariant)?;
+                            let declaring_key = operation
+                                .declaring_key()
+                                .and_then(|key| {
+                                    fsl_semantics::model::key::declaring_node_key(
+                                        key,
+                                        graph.package_name(),
+                                    )
+                                })
+                                .ok_or(EmitRefusal::SourceMapInvariant)?;
+                            Ok(
+                                filament_contract_model::CheckedSchedulabilityModeSwitchBinding {
+                                    selected_model_identity: selected_model_identity.into(),
+                                    operation_declaring_identity: node_id(ids, &declaring_key),
+                                    operation_member: operation.name().into(),
+                                },
+                            )
+                        })
+                        .collect::<Result<Vec<_>, EmitRefusal>>()?;
+                    bindings.sort_by(|left, right| {
+                        let left_owner = &left.operation_declaring_identity;
+                        let right_owner = &right.operation_declaring_identity;
+                        (
+                            &left.selected_model_identity,
+                            &left_owner.package,
+                            &left_owner.path,
+                            left_owner.ordinal,
+                            &left.operation_member,
+                        )
+                            .cmp(&(
+                                &right.selected_model_identity,
+                                &right_owner.package,
+                                &right_owner.path,
+                                right_owner.ordinal,
+                                &right.operation_member,
+                            ))
+                    });
+                    bindings
+                },
             });
         }
         let node = CheckedSemanticNodeV2 {
@@ -6652,7 +6757,10 @@ fn append_model_roots<'a>(
     ids: &StructuralIds,
     roots: impl Iterator<
         Item = (
-            (&'a fsl_semantics::model::domain_package::DomainPackageRef, NodeKey),
+            (
+                &'a fsl_semantics::model::domain_package::DomainPackageRef,
+                NodeKey,
+            ),
             Option<SourceRegion>,
         ),
     >,
@@ -7954,12 +8062,16 @@ fn emit_package_nodes(
     }
     append_model_roots(
         ids,
-        graph
-            .model_roots()
-            .zip(graph.model_root_locations().iter().map(|location| regions(location))),
+        graph.model_roots().zip(
+            graph
+                .model_root_locations()
+                .iter()
+                .map(|location| regions(location)),
+        ),
         &mut nodes,
         &mut source_map,
     )?;
+    model_correspondence::append(ids, graph, &regions, &mut nodes, &mut source_map)?;
     normalize_model_declaration_occurrences(&mut nodes, &mut source_map)?;
     probabilistic::append_probabilistic_nodes(ids, graph, &mut nodes, &mut source_map)?;
     probabilistic::write_claim_bodies(ids, graph, &mut nodes, &mut source_map)?;
@@ -11087,6 +11199,7 @@ fn own_evidence(lock: &CheckedPackageLockV2) -> CheckedPackageEvidence {
     evidence
 }
 
+mod model_correspondence;
 mod model_relation_requirements;
 mod probabilistic;
 mod selected_rows;

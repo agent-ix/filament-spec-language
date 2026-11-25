@@ -27,7 +27,7 @@ filament-checked = { git = "https://github.com/agent-ix/filament-eval", rev = "b
 # its own repository so RT and CG depend on it without the FSL repo.
 filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "b50cfacb80459d5f1fb3b8deeafc63222db69401" }
 # IR-owned staged identity, operation-member, and model-enum witness joins.
-filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "4f0b908a5c8077458e4748509284704b9025493f" }
+filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "dc9b220b92390eb8c5999a1b26ac8ff94cfffd33" }
 # Observation's checked-value vocabulary aligned to the same exact/semantic-value revisions.
 filament-observation = { git = "https://github.com/agent-ix/filament-observation", rev = "a36e5ed2e1bde35a27461fa38084d3e140e09fcd" }
 
@@ -203,11 +203,16 @@ opt-level = 3
 [profile.dev.package.filament-exact]
 opt-level = 3
 
-# filament-observation depends on this repository's `fsl-foundation` through a
-# git dependency on `main`. Patching that source to the workspace member keeps
-# one `fsl-foundation` in the graph, so its canonical types are defined once.
+# Workspace crates and the CG dev-dependency both name FSL through this git
+# source. Patching these FSL packages to workspace members keeps one identity
+# for the typed request, evidence, and proof outcome in the cross-crate test.
 [patch."https://github.com/agent-ix/filament-spec-language"]
 fsl-foundation = { path = "fsl-foundation" }
+fsl-replay = { path = "fsl-replay" }
+fsl-package = { path = "fsl-package" }
+fsl-eval = { path = "fsl-eval" }
+fsl-semantics = { path = "fsl-semantics" }
+fsl-forms = { path = "fsl-forms" }
 
 
 # Protocol exploration (QSL-1438: the LT-16 litmus test) spends its time in

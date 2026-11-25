@@ -402,7 +402,9 @@ fn execution_point_refuses_unknown_clause_keys_and_mismatched_operation_names() 
         CompileRefusal::Check { refusals, region } => {
             assert!(matches!(
                 refusals[0].cause.as_ref(),
-                CheckCause::ExecutionPointBinding(_)
+                CheckCause::ExecutionPointBinding(
+                    fsl_semantics::check::ExecutionPointRefusal::OperationMismatch
+                )
             ));
             let source = unit(&document, declaration).0;
             let name_start = source.find("Before").unwrap() as u64;
