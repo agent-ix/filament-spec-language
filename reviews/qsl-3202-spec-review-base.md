@@ -29,3 +29,12 @@ CONDITIONAL — findings identify missing outcome coverage and ticket-scope gaps
 - FR-1049 title, relationships, description, inputs, outputs, behavior, references, and dependencies.
 - FR-1049-AC-1..21 reviewed as context for existing probability coverage.
 - FR-1049-AC-22..42 checked against the supplied non-probability variation matrix and candidate outcomes.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | after_excerpt: “Exactly eight items have `category: unsupported` and `record: {result: unsupported, settled_by: disposition, diagnostic: {code: unsupported_projection, cause: unbounded-extent, detail: {candidate: contract-checker, kind: operation-contract, modes: [bounded]}}}`. The other two items have `category: success` and `record: {backend: en-1, basis: {type: exhaustive}, cause: null, certification: certified, result: proved, settled_by: result}.” |
+| FND-002 | fixed | after_excerpt: “These criteria specify category, exit status, terminal stage, cause/code location and structured outcome shape; they do not specify native message text. FR-286 owns the outcome document and FR-865 owns its text rendering.” |
+| FND-003 | fixed | after_excerpt: “The alpha tutorial CLI inputs do not expose a cancellation or fault trigger. No cancellation or fault row is specified here. Library API cancellation is owned by FR-286-AC-6; fault behavior has no tutorial input in this scope.” |
+| FND-004 | fixed | after_excerpt: “exactly one proved `NeverDeadheads` item with certificate and record evidence” (AC-40 and AC-42 likewise now require exactly one item). |

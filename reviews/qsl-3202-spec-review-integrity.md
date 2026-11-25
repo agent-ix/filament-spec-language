@@ -26,3 +26,9 @@ CONDITIONAL — P4 outcome classification needs an owning criterion before this 
 - FR-1049 title, relationships, description, inputs, outputs, behavior, references, and dependencies.
 - FR-1049-AC-1..21 reviewed as context.
 - FR-1049-AC-22..42 reviewed for testability and atomic, observable outputs.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | after_excerpt: “Exactly eight items have `category: unsupported` and `record: {result: unsupported, settled_by: disposition, diagnostic: {code: unsupported_projection, cause: unbounded-extent, detail: {candidate: contract-checker, kind: operation-contract, modes: [bounded]}}}`. The other two items have `category: success` and `record: {backend: en-1, basis: {type: exhaustive}, cause: null, certification: certified, result: proved, settled_by: result}.” |
