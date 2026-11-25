@@ -405,3 +405,56 @@ fn plan_refusal(failure: StageFailure<PlanRefusal>) -> RunCause {
         ),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use fsl_foundation::Code;
+    use fsl_package::verification_plan::VerificationPlan;
+    use ix_trace_rs::trace;
+    use serde_json::json;
+
+    use super::{select, RunCause};
+
+    /// A plan named `Release` declared in the scope `scope`.
+    fn release_in(scope: &str) -> VerificationPlan {
+        serde_json::from_value(json!({
+            "format": "filament.verification-plan/v1",
+            "package": "test:plans",
+            "plan": {"name": "Release", "qualified_name": [scope, "Release"],
+                "source_location": {
+                    "source": {"authority": "agent-ix", "identity": "test:plans"},
+                    "start": 0, "end": 1}},
+            "profile": "v",
+            "nodes": [],
+            "edges": []
+        }))
+        .expect("a plan document")
+    }
+
+    /// FSpec FR-824-AC-2, its ambiguous selection: a bare `Release` matching
+    /// `A::Release` and `B::Release` refuses at the `plan` pointer, naming
+    /// both, with the refusal exit.
+    #[test]
+    #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-2")]
+    fn a_bare_name_matching_two_plans_refuses_ambiguous_naming_both() {
+        let plans = [release_in("A"), release_in("B")];
+        let refusal = select(&plans, Some("Release")).expect_err("two plans match");
+        assert_eq!(refusal.category().exit_code(), 20, "{refusal}");
+        let RunCause::PlanRequest {
+            code,
+            path,
+            cause,
+            reason,
+        } = refusal
+        else {
+            panic!("a plan request refusal: {refusal}");
+        };
+        assert_eq!(code, Code::AmbiguousDeclaration);
+        assert_eq!(cause, "ambiguous-name");
+        assert_eq!(path, "/request/verification_plan/plan");
+        assert_eq!(
+            reason,
+            "`Release` names several plans: A::Release, B::Release"
+        );
+    }
+}

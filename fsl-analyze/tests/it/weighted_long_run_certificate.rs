@@ -13,7 +13,8 @@ use fsl_foundation::RequestIndex;
 use fsl_replay::{
     check_probability_certificate_document, read_weighted_long_run_probability_certificate,
     write_weighted_long_run_probability_certificate, ExactProbabilityCertificateCheck,
-    ModelCheckLimits, ProbabilityDocumentError, ProbabilityDocumentLimits,
+    ModelCheckLimits, ProbabilityCertificateLocus, ProbabilityCertificateRejection,
+    ProbabilityCertificateRule, ProbabilityDocumentError, ProbabilityDocumentLimits,
     WeightedLongRunProbabilityDocument,
 };
 use ix_trace_rs::trace;
@@ -697,26 +698,54 @@ fn checked_weight_units_and_equivalent_expressions_are_not_display_aliases() {
     assert!(accepted(&compound, "Lower", &compound_doc));
 }
 
-/// FR-199-AC-4 (TC-2177): a component whose every cycle has weight 0 takes
-/// its unweighted fraction, `1800/1801` for the availability model, and its
-/// certificate passes the independent check.
-#[trace("TC-2177", "FR-199-AC-4")]
+/// FR-199-AC-4 and AC-5 (TC-2177): a component whose every cycle has weight 0
+/// takes its unweighted fraction, `1800/1801` for the availability model, and
+/// its certificate passes the independent check; a positive-weight document
+/// rebound to that claim is rejected.
+#[trace("TC-2177", "FR-199-AC-4", "FR-199-AC-5")]
 #[test]
 fn zero_weight_certificate_checks() {
+    let zero_claim = || claim("Zero", "s.phase = 0", ">= rational(999,1000)");
     let world = availability_with_claims(
-        claim("Zero", "s.phase = 0", ">= rational(1800,1801)"),
+        zero_claim(),
         "reward duration on Server::tick = 0;\nreward duration on Server::repair = 0;\n",
     );
     let bytes = produce(&world, "Zero");
     let document =
         read_weighted_long_run_probability_certificate(&bytes, limits(), &Cancel::new()).unwrap();
-    assert!(document
-        .certificate
-        .components
-        .iter()
-        .all(|component| component.value == ratio(1800, 1801)));
-    assert!(matches!(
-        check(&world, "Zero", &bytes, &Cancel::new(), limits()),
-        Ok(ExactProbabilityCertificateCheck::Accepted(_))
-    ));
+    assert_eq!(document.certificate.components.len(), 1);
+    assert_eq!(document.certificate.components[0].value, ratio(1800, 1801));
+    assert!(accepted(&world, "Zero", &document));
+
+    // The positive weights differ, so their gain-bias pair is not the
+    // unweighted one, while their fraction still meets the claim's bound: only
+    // the weights the checker derives from the checked rewards can reject it.
+    let positive = availability_with_claims(
+        zero_claim(),
+        "reward duration on Server::tick = 1000;\nreward duration on Server::repair = 1001;\n",
+    );
+    let positive_document = read_weighted_long_run_probability_certificate(
+        &produce(&positive, "Zero"),
+        limits(),
+        &Cancel::new(),
+    )
+    .unwrap();
+    assert_eq!(positive_document.certificate.components.len(), 1);
+    let component = &positive_document.certificate.components[0];
+    assert_eq!(component.value, ratio(1_800_000, 1_801_001));
+    assert!(accepted(&positive, "Zero", &positive_document));
+
+    let offered = rebound(&world, "Zero", &positive_document);
+    let offered_bytes =
+        write_weighted_long_run_probability_certificate(&offered, limits(), &Cancel::new())
+            .unwrap();
+    assert_eq!(
+        check(&world, "Zero", &offered_bytes, &Cancel::new(), limits()),
+        Ok(ExactProbabilityCertificateCheck::Rejected(
+            ProbabilityCertificateRejection {
+                rule: ProbabilityCertificateRule::InequalityFails,
+                at: ProbabilityCertificateLocus::ProductState(component.bias[0].state.clone()),
+            }
+        ))
+    );
 }

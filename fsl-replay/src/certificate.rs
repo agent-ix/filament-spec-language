@@ -147,6 +147,20 @@ pub enum CertificateLocus {
     },
     /// The product state of a closure certificate at which a rule failed.
     ProductState(ProductStateRef),
+    /// The source and target of a backward product edge.
+    ProductEdge {
+        /// Source of the edge.
+        source: ProductStateRef,
+        /// Target of the edge.
+        target: ProductStateRef,
+    },
+    /// The source and target of a hyper product edge.
+    HyperProductEdge {
+        /// Source of the edge.
+        source: StateKey,
+        /// Target of the edge.
+        target: StateKey,
+    },
     /// The query whose encoding or certificate shape failed.
     Query {
         /// The query's proof obligation part.
@@ -221,6 +235,22 @@ impl Serialize for CertificateLocus {
                 object.end()
             }
             Self::ProductState(state) => state.serialize(serializer),
+            Self::ProductEdge { source, target } => {
+                let mut object = serializer.serialize_struct("ProductEdge", 2)?;
+                object.serialize_field("source", source)?;
+                object.serialize_field("target", target)?;
+                object.end()
+            }
+            Self::HyperProductEdge { source, target } => {
+                let source = crate::certificate::product::product_key_wire(source)
+                    .map_err(serde::ser::Error::custom)?;
+                let target = crate::certificate::product::product_key_wire(target)
+                    .map_err(serde::ser::Error::custom)?;
+                let mut object = serializer.serialize_struct("HyperProductEdge", 2)?;
+                object.serialize_field("source", &source)?;
+                object.serialize_field("target", &target)?;
+                object.end()
+            }
             Self::HyperProductState(state) => product::product_key_wire(state)
                 .map_err(serde::ser::Error::custom)?
                 .serialize(serializer),
