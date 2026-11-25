@@ -4,6 +4,7 @@
 use std::cell::Cell;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+/// Dynamic counters for one evaluation's checked-node child traversal.
 pub struct ChildTraversalProfile {
     /// Number of child iterators constructed during the profiled evaluation.
     pub iterator_count: u64,
@@ -43,14 +44,18 @@ pub(crate) fn measure_child<T>(iterator_construction: bool, operation: impl FnOn
         return operation();
     }
 
-    let (value, allocations) = allocation_counter::measure(operation);
+    let mut value = None;
+    let allocations = allocation_counter::measure(|| value = Some(operation()));
     ACTIVE.with(|active| {
         if let Some(mut profile) = active.get() {
             profile.allocation_count += allocations.count_total;
             active.set(Some(profile));
         }
     });
-    value
+    match value {
+        Some(value) => value,
+        None => unreachable!("the measured child operation always returns"),
+    }
 }
 
 pub(crate) fn note_child_yielded() {

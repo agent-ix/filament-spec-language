@@ -88,7 +88,7 @@ fn record_case(
     size: usize,
     evaluate: impl FnOnce(),
 ) -> Result<(), Box<dyn Error>> {
-    let traversal =
+    let (traversal, _) =
         evaluator_cost::record_evaluation_probe(target, run_id, axis, case, size, evaluate)?;
     println!(
         "{axis}/{case}/{size}: {} child iterators yielded {} children with {} allocations",

@@ -223,7 +223,7 @@ fn emitted_candidate_artifact_uses_dynamic_evaluator_traversal_allocations() {
         .expect("the benchmark invocation is initialized");
     let case = KernelCase::new(KernelKind::ArithmeticRecursion, 5);
     let objects = ObjectEnvironment::default();
-    let traversal = evaluator_cost::record_evaluation_probe(
+    let (traversal, evaluation_allocation_count) = evaluator_cost::record_evaluation_probe(
         &target.0,
         run_id,
         EVALUATOR_KERNEL_AXIS,
@@ -275,5 +275,8 @@ fn emitted_candidate_artifact_uses_dynamic_evaluator_traversal_allocations() {
         .expect("the profiled evaluator case is present");
     assert_eq!(row["child_traversal_allocation_count"], 0);
     assert_eq!(row["child_traversal_allocation_share"], 0.0);
-    assert_eq!(row["evaluation_allocation_count"], 100);
+    assert_eq!(
+        row["evaluation_allocation_count"],
+        evaluation_allocation_count
+    );
 }

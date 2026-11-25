@@ -51,11 +51,12 @@ pub fn record_evaluation_probe(
     case: &str,
     size: usize,
     evaluate: impl FnOnce(),
-) -> Result<fsl_semantics::check::ChildTraversalProfile, Box<dyn Error>> {
+) -> Result<(fsl_semantics::check::ChildTraversalProfile, u64), Box<dyn Error>> {
     use fsl_semantics::check::{begin_child_traversal_profile, end_child_traversal_profile};
 
     begin_child_traversal_profile();
     let evaluation = allocation_counter::measure(evaluate);
+    let evaluation_allocation_count = evaluation.count_total;
     let traversal = end_child_traversal_profile();
     record_probe(
         target,
@@ -65,10 +66,10 @@ pub fn record_evaluation_probe(
         size,
         AllocationProbe {
             child_traversal_allocation_count: traversal.allocation_count,
-            evaluation_allocation_count: evaluation.count_total,
+            evaluation_allocation_count,
         },
     )?;
-    Ok(traversal)
+    Ok((traversal, evaluation_allocation_count))
 }
 
 /// Whether a report is describing the baseline A or verifying candidate B.
