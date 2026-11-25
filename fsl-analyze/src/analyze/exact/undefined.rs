@@ -5,7 +5,7 @@ use super::*;
 use crate::exact_probabilistic::{PredicateRole, UndefinedPath, UndefinedRead};
 use fsl_eval::automaton::{Monitor, PropertyAutomaton, QualifiedBoundedMonitor};
 use fsl_eval::simulation::model::{ModelSimulationRequest, PredicateReading};
-use fsl_replay::{ProbabilityUndefinedWitness, replay_probabilistic_undefined_with_work_scope};
+use fsl_replay::{replay_probabilistic_undefined_with_work_scope, ProbabilityUndefinedWitness};
 use ix_trace_rs::implements;
 
 #[allow(clippy::too_many_arguments)]
@@ -176,6 +176,8 @@ fn materialize_inner(
     cancel: &Cancel,
     work: &filament_exact::WorkScope,
 ) -> Result<(ProbabilityUndefinedWitness, SpelledScheduler), ProbabilityWitnessError> {
+    let mut item_meter = work.meter().with_cancel(cancel.clone());
+    charge_undefined_materialization(&mut item_meter, cancel)?;
     let item = fsl_replay::probabilistic_claim_identity(claim)
         .map_err(|_| ProbabilityWitnessError::Refused)?;
     let binding = claim_binding(system, claim)?;
@@ -369,6 +371,7 @@ fn materialize_inner(
     let mut spelled = Vec::new();
     let mut source_key = initial_key.clone();
     for step in &path.steps {
+        charge_undefined_materialization(&mut item_meter, cancel)?;
         if let Some(cause) = cancel.tripped() {
             return Err(ProbabilityWitnessError::Graph(
                 ExactProbabilityGraphError::Cancelled(cause),
@@ -555,6 +558,27 @@ fn materialize_inner(
         },
         spelled,
     ))
+}
+
+#[implements("FR-203-AC-33")]
+fn charge_undefined_materialization(
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
+) -> Result<(), ProbabilityWitnessError> {
+    meter
+        .charge(filament_exact::Charge::new(
+            filament_exact::ChargePoint::CollectionVisit,
+        ))
+        .map_err(|incomplete| {
+            if let Some(cause) = cancel.tripped() {
+                return ProbabilityWitnessError::Graph(ExactProbabilityGraphError::Cancelled(
+                    cause,
+                ));
+            }
+            ProbabilityWitnessError::Build(Box::new(ExactProbBuildIssue::Predicate(
+                fsl_eval::simulation::model::ClauseOutcome::Incomplete(incomplete),
+            )))
+        })
 }
 
 enum ProducerFailure {
