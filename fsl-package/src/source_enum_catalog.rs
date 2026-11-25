@@ -183,9 +183,7 @@ impl SourceEnumCatalog {
             charge(budget, at, NativeJoinChargeKind::Storage, 1)?;
         }
         let mut sources = Vec::new();
-        let mut rows = joined.source_enum_rows();
-        loop {
-            let Some(row) = rows.next() else { break };
+        for row in joined.source_enum_rows() {
             let at = locus(sources.len(), "source_enum_catalog_source");
             work(budget, at)?;
             native_row::enum_declaration(budget, at, &row.declaration)?;
@@ -238,16 +236,12 @@ impl SourceEnumCatalog {
         }
         // This builder returns one fresh, uniquely owned index. It is never
         // extended after a shallow clone, which would copy the index's map.
-        // An identity-only catalog with no enum rows needs only the empty
-        // index value; it has no index entries to inspect or own.
-        let mut members = if sources.is_empty() && models.is_empty() {
-            filament_semantic_value::enumeration::EnumMemberIndex::default()
-        } else {
+        if has_enum_rows {
             let index_at = locus(0, "source_enum_catalog_index");
             work(budget, index_at)?;
             charge(budget, index_at, NativeJoinChargeKind::Storage, 1)?;
-            Self::model_runtime_members(&models, budget)?
-        };
+        }
+        let mut members = Self::model_runtime_members(&models, budget)?;
         for (index, row) in sources.iter().enumerate() {
             let at = locus(index, "source_enum_catalog_members");
             let mut cases = Vec::new();
@@ -896,6 +890,63 @@ mod tests {
             if work_limit != 0 && storage_limit != 0 {
                 assert!(budget.consumed().work > 0);
             }
+        }
+    }
+
+    #[trace("TC-1331", "FR-531-AC-30", "FR-531-AC-44")]
+    #[test]
+    fn source_enum_catalog_charges_already_joined_source_rows() {
+        let fixture = fixture(ENUMS, false);
+        let mut setup = NativeJoinBudget::new(u64::MAX, u64::MAX);
+        let source_rows = fixture
+            .emission
+            .selected_source_enum_rows(&mut setup)
+            .expect("source rows materialize");
+        let joined = SelectedExactIdentities::empty()
+            .with_source_enum_rows(&fixture.admitted, source_rows, &mut setup)
+            .expect("actual source enum rows join");
+
+        let mut measured = NativeJoinBudget::new(u64::MAX, u64::MAX);
+        let catalog = SourceEnumCatalog::from_joined(&joined, &[], &mut measured)
+            .expect("catalog materializes the already-joined rows");
+        assert!(!catalog.0.sources.is_empty());
+        let last_source_row = catalog.0.sources.len() - 1;
+        let need = measured.consumed();
+        assert!(need.work > 0, "catalog materialization consumes work");
+        assert!(need.storage > 0, "catalog materialization owns storage");
+
+        let mut exact = NativeJoinBudget::new(need.work, need.storage);
+        SourceEnumCatalog::from_joined(&joined, &[], &mut exact)
+            .expect("exact catalog-only budget admits");
+        assert_eq!(exact.consumed(), need);
+
+        for (work_limit, storage_limit, kind) in [
+            (need.work - 1, need.storage, NativeJoinChargeKind::Work),
+            (need.work, need.storage - 1, NativeJoinChargeKind::Storage),
+        ] {
+            let mut short = NativeJoinBudget::new(work_limit, storage_limit);
+            let error = SourceEnumCatalog::from_joined(&joined, &[], &mut short)
+                .expect_err("one-short catalog-only budget refuses");
+            let SourceEnumCatalogError::Native(error) = error else {
+                panic!("budget denial retains its native owner error")
+            };
+            let denied = short
+                .first_unpaid()
+                .expect("first unpaid source-row charge");
+            let at = short
+                .first_unpaid_locus()
+                .expect("first unpaid source-row locus");
+            assert_eq!(denied.kind, kind);
+            assert_eq!(error.denied(), Some(denied));
+            assert_eq!(error.locus(), Some(at));
+            let NativeJoinLocusSource::AdapterRow(index) = at.source else {
+                panic!("catalog denial retains its source-row index: {at:?}")
+            };
+            assert_eq!(
+                index, last_source_row,
+                "the last source row owns the denial"
+            );
+            assert_eq!(at.form, "source_enum_catalog_members");
         }
     }
 
