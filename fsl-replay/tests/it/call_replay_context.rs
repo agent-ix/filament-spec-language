@@ -23,14 +23,14 @@ fn fixture_node(fill: u8) -> NodeKey {
 
 use filament_exact::Cancel;
 use filament_semantic_value::supplied_stop::SuppliedLimits;
-use fsl_replay::spine::{self, default_accounting, ParseRequest};
+use fsl_replay::spine::{self, ParseRequest, default_accounting};
 use fsl_replay::{
-    compile_package, replay, run_with_replay_context, run_with_requirements, BackendId, Call,
-    CallArgument, CallOutcome, CallerLimits, CanonicalAssignment, DependencyInput, DomainKey,
-    DomainKind, FiniteBound, InconclusiveCause, Integer, NodeKey, ObjectEnvironment,
-    PluginReplayContext, PluginReplayRefusal, ProofBound, ReplayLimits, ReplayRequestWire,
-    RequestIndex, RunRefusal, RunWithReplayContext, SourceIdentity, SpineLimits, TerminalRecord,
-    TerminalValue, Value, WitnessValue,
+    BackendId, Call, CallArgument, CallOutcome, CallSiteUnit, CallerLimits, CanonicalAssignment,
+    DependencyInput, DomainKey, DomainKind, FiniteBound, Identifier, InconclusiveCause, Integer,
+    NodeKey, ObjectEnvironment, PluginReplayContext, PluginReplayRefusal, ProofBound,
+    QualifiedName, ReplayLimits, ReplayRequestWire, RequestIndex, RunRefusal, RunWithReplayContext,
+    SourceIdentity, SpineLimits, TerminalRecord, TerminalValue, Value, WitnessValue, call_site,
+    compile_package, replay, run_with_replay_context, run_with_requirements,
 };
 use ix_trace_rs::trace;
 
@@ -329,6 +329,93 @@ fn member_request(
 fn settle(wire: ReplayRequestWire) -> TerminalRecord {
     let replayed = replay(wire, ReplayLimits::default());
     TerminalRecord::from_plugin_counterexample(RequestIndex::new(0), plugin(), &replayed)
+}
+
+/// FR-290-AC-2: a provider counterexample that reproduces the function
+/// contract is refuted; an application claim that evaluates true and a
+/// function contract that evaluates true settle replay-parity; a parameter
+/// from another function is refused with the closed replay refusal code.
+#[trace("TC-774", "FR-290-AC-2")]
+#[test]
+fn provider_counterexamples_settle_contract_application_parity_and_refusal() {
+    let source = unit("");
+    let context = oracle(&source, CallerLimits::default());
+    let site = call_site(
+        identity(),
+        CallSiteUnit::new("fixture".to_owned(), "unit.native", source.as_bytes()),
+        [],
+        &DependencyInput::default(),
+        &Default::default(),
+        &QualifiedName::new(vec![Identifier::new("p").expect("identifier")])
+            .expect("qualified name"),
+    )
+    .expect("the function site compiles");
+    let p_x = parameter(&source, "p");
+    let bounds = [bound_at(p_x.clone())];
+
+    let refuted = settle(
+        context
+            .request(
+                &site.site.declaration,
+                &bounds,
+                &plugin(),
+                assign(p_x.clone(), 0),
+            )
+            .expect("the function contract has a replay request"),
+    );
+    assert_eq!(refuted.value(), &TerminalValue::Refuted);
+    assert_eq!(refuted.backend(), Some(&plugin()));
+
+    let application_run = run(
+        &source,
+        &call("p", integer(0), 1_000_000),
+        CallerLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("the public call runs");
+    assert_eq!(application_run.requirements().members().len(), 1);
+    let application = &application_run.requirements().members()[0];
+    let parity = settle(
+        context
+            .request(
+                application.occurrence(),
+                &bounds,
+                &plugin(),
+                assign(p_x.clone(), 0),
+            )
+            .expect("the application claim has a replay request"),
+    );
+    assert!(matches!(
+        parity.value(),
+        TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(_))
+    ));
+    assert_eq!(parity.backend(), Some(&plugin()));
+
+    let contract_parity = settle(
+        context
+            .request(&site.site.declaration, &bounds, &plugin(), assign(p_x, 5))
+            .expect("the function contract has a replay request"),
+    );
+    assert!(matches!(
+        contract_parity.value(),
+        TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(_))
+    ));
+    assert_eq!(contract_parity.backend(), Some(&plugin()));
+
+    let q_x = parameter(&source, "q");
+    let wrong_parameter = settle(
+        context
+            .request(&site.site.declaration, &bounds, &plugin(), assign(q_x, 0))
+            .expect("the provider request is formed before replay refusal"),
+    );
+    assert_eq!(
+        wrong_parameter.value(),
+        &TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(
+            fsl_foundation::Code::UnknownRequiredFeature
+        ))
+    );
+    assert!(wrong_parameter.replay_result().is_none());
+    assert_eq!(wrong_parameter.backend(), Some(&plugin()));
 }
 
 /// FR-404-AC-2: `q`'s member builds the oracle's request, and its replay
