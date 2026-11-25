@@ -391,6 +391,13 @@ fn malformed_and_mistyped_bit_constructors_refuse_at_the_constructor() {
             CompleteCause::InvalidToken,
             "{constructor}"
         );
+        if constructor.contains("0x3FF") {
+            assert_eq!(
+                diagnostic.message, "expected a lowercase hex digit",
+                "{constructor}"
+            );
+            assert!(!diagnostic.message.contains("malformed"), "{constructor}");
+        }
         let span = diagnostic.byte_span().expect("the refusal is located");
         let constructor_start = text.find(constructor).expect("constructor occurs");
         assert!(
