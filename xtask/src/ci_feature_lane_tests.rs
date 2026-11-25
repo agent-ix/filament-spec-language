@@ -362,7 +362,7 @@ fn aggregate_ci_disables_incremental_metadata_and_debug_symbols() {
     );
     assert_eq!(
         fs::read_to_string(recipe.directory.path().join("calls")).unwrap(),
-        "\trun\t--locked\t--package\txtask\t--\tpin-check\n\trun\t--locked\t--package\txtask\t--\tci\n",
+        "\trun\t--locked\t--package\txtask\t--\tparity\n\trun\t--locked\t--package\txtask\t--\tpin-check\n\trun\t--locked\t--package\txtask\t--\tci\n",
         "the optimization preserves the aggregate Cargo command"
     );
 }
