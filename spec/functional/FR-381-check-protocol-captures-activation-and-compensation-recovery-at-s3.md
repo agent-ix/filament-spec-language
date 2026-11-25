@@ -151,8 +151,11 @@ needs no `visible` listing (FR-218).
   `actual`. An initializer is total: S3 SHALL refuse one with an undischarged
   definedness obligation with the `undefined_expression` cause FR-104 gives it
   (`unproved-range`, `unproved-nonzero`, `unproved-presence`) at the operation.
-- A capture's name is unique across the protocol and a capture never shadows a
-  binder (FR-113); a repeated name refuses as FR-113 states.
+- A capture SHALL refuse only when its name conflicts with an active local
+  binder visible at that capture, a model or profile alias, or a native
+  declaration, as FR-113 specifies. Reuse after the earlier binder's scope
+  ends is admitted; the stage visibility table above determines whether a
+  binder remains active.
 
 ### Activation
 
