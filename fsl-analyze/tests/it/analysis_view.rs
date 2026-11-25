@@ -6,7 +6,7 @@
 use fsl_package::{AnalysisView, BarePackage, EmitLimits, V2ReadLimits};
 use ix_trace_rs::trace;
 
-use crate::counter::{CONTRACT, document, package_with_clauses};
+use crate::counter::{document, package_with_clauses, CONTRACT};
 
 /// The library name `CheckedPackage::link` gives the Counter unit.
 const UNIT: &str = "package";
@@ -72,12 +72,10 @@ fn both_views_read_equal_facts_for_the_counter_package() {
     clause_names.sort_unstable();
     assert_eq!(clause_names, ["AtMostTwo", "BelowThree", "Bounded"]);
     assert_eq!(source.declared_names(), bytes.declared_names());
-    assert!(
-        bytes
-            .declared_names()
-            .iter()
-            .any(|(name, _)| name == "Noop")
-    );
+    assert!(bytes
+        .declared_names()
+        .iter()
+        .any(|(name, _)| name == "Noop"));
     for row in bytes.clause_names() {
         let over_source = format!("{:?}", source.temporal_subject(&row.declaration));
         let over_bytes = format!("{:?}", bytes.temporal_subject(&row.declaration));
@@ -280,13 +278,11 @@ fn value_record_views_and_native_charges_equal_the_source() {
         assert_eq!(right.meter_totals, left.meter_totals);
         assert_eq!(right.function_evaluations, left.function_evaluations);
     }
-    assert!(
-        world
-            .enum_members()
-            .resolve(match &enums[0] {
-                Value::Enum(member) => member.variant().clone(),
-                _ => panic!("enum value"),
-            })
-            .is_some()
-    );
+    assert!(world
+        .enum_members()
+        .resolve(match &enums[0] {
+            Value::Enum(member) => member.variant().clone(),
+            _ => panic!("enum value"),
+        })
+        .is_some());
 }

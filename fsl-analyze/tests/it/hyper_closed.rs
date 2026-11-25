@@ -168,7 +168,11 @@ fn aligned(body: &str) -> String {
 #[test]
 fn an_event_position_projection_aligned_clause_reaches_a_verdict() {
     let body = "always [0, 2] holds(v.l @ a = v.l @ b)";
-    let held = World::busy(Vault::Busy, &crate::hyper_projected_support::IDLE, &aligned(body));
+    let held = World::busy(
+        Vault::Busy,
+        &crate::hyper_projected_support::IDLE,
+        &aligned(body),
+    );
     assert_eq!(held.clause.form(), Some(&HyperForm::ProjectionAligned));
     let outcome = held
         .run(ModelCheckLimits::default(), &Cancel::new())

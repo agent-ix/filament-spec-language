@@ -18,31 +18,31 @@
 
 use filament_exact::{Cancel, CancelCause, ObjectReference, ScalarLimits};
 use filament_semantic_value::checking::CheckMode;
-use fsl_analyze::model_check::{ModelCheckRefusal, ModelCheckRequest, check_model};
+use fsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
 use fsl_eval::automaton::{
-    Letter, Monitor, SafetyState, SafetyStates, SafetyTranslation, StateContext, SubjectKind,
-    TranslationRefusal, translate,
+    translate, Letter, Monitor, SafetyState, SafetyStates, SafetyTranslation, StateContext,
+    SubjectKind, TranslationRefusal,
 };
 use fsl_eval::model_subject::ModelLetters;
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
+use fsl_eval::simulation::TransitionSystem;
 use fsl_package::CheckedPackage;
 use fsl_package::EmitLimits;
 use fsl_replay::{
-    CertificateLocus, CertificateRejection, CertificateRequest, CertificateRule, Certification,
-    ClauseIdentity, ClauseRootRefusal, ClosureCertificate, ClosureRefusal, Execution,
-    IncompleteCause, InconclusiveCause, ItemRefusal, ModelCheckItem, ModelCheckLimit,
-    ModelCheckLimits, ModelCheckOutcome, ProductStateRef, ProofBasis, ProofCertificate,
-    ReachedLimit, ResultLabel, SettlementBasis, TemporalCertificateCheck, TerminalValue,
-    Translation, UndecidedCause, check_closure, settle_model_check,
+    check_closure, settle_model_check, CertificateLocus, CertificateRejection, CertificateRequest,
+    CertificateRule, Certification, ClauseIdentity, ClauseRootRefusal, ClosureCertificate,
+    ClosureRefusal, Execution, IncompleteCause, InconclusiveCause, ItemRefusal, ModelCheckItem,
+    ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ProductStateRef, ProofBasis,
+    ProofCertificate, ReachedLimit, ResultLabel, SettlementBasis, TemporalCertificateCheck,
+    TerminalValue, Translation, UndecidedCause,
 };
 use fsl_semantics::check::CheckedTemporalClause;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
 use crate::counter::{
-    CONTRACT, Documents, Letters, UNLIMITED, ZERO, document, package_with_clauses, reference,
-    subject, value,
+    document, package_with_clauses, reference, subject, value, Documents, Letters, CONTRACT,
+    UNLIMITED, ZERO,
 };
 use crate::fill::tcb_01_event_position_selection;
 
@@ -249,10 +249,10 @@ impl Invariant {
         world: &'w World,
         limits: ModelCheckLimits,
         replay: impl FnOnce(
-            &fsl_replay::TemporalCounterexample,
-        )
-            -> Result<fsl_replay::ModelTraceReplayResult, fsl_replay::ReplayRefusal>
-        + 'w,
+                &fsl_replay::TemporalCounterexample,
+            )
+                -> Result<fsl_replay::ModelTraceReplayResult, fsl_replay::ReplayRefusal>
+            + 'w,
     ) -> fsl_analyze::analyze::ModelItem<'w> {
         fsl_analyze::analyze::ModelItem {
             request: ModelCheckRequest {
@@ -1732,7 +1732,8 @@ fn a_refused_key_rejects_the_certificate_at_the_least_refused_state() {
     );
 }
 
-const AT_MOST: &str = "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n\
+const AT_MOST: &str =
+    "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n\
                        invariant AtMostTwo using v on M::Counter at current { self.value <= 2 }\n\
                        constraint Low using v on M::Counter at current { self.value <= 3 }\n";
 
@@ -1855,11 +1856,11 @@ fn an_invariant_proof_is_certified_under_the_invariant_root() {
 )]
 #[test]
 fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
-    use crate::hyper_world::{EQUAL_INPUTS, STARTS, Vault, World, non_interference};
+    use crate::hyper_world::{non_interference, Vault, World, EQUAL_INPUTS, STARTS};
     use filament_exact::Cancel;
     use fsl_replay::{
-        CertificateLocus, CertificateMember, CertificateRule, HyperOutcome, ModelCheckLimits,
-        ProductClosureRequest, check_product_closure,
+        check_product_closure, CertificateLocus, CertificateMember, CertificateRule, HyperOutcome,
+        ModelCheckLimits, ProductClosureRequest,
     };
     let world = World::new(
         Vault::Secure,
@@ -1929,16 +1930,12 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
         })
     );
     let components = proof.components.as_ref().expect("universal partition");
-    assert!(
-        product_members(proof)
-            .windows(2)
-            .all(|pair| pair[0] < pair[1])
-    );
-    assert!(
-        components
-            .iter()
-            .all(|component| component.states.windows(2).all(|pair| pair[0] < pair[1]))
-    );
+    assert!(product_members(proof)
+        .windows(2)
+        .all(|pair| pair[0] < pair[1]));
+    assert!(components
+        .iter()
+        .all(|component| component.states.windows(2).all(|pair| pair[0] < pair[1])));
     let mut overlapping = proof.clone();
     overlapping.components.as_mut().expect("partition")[0]
         .states
@@ -2028,9 +2025,9 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
 #[trace("TC-646", "FR-163-AC-5")]
 #[test]
 fn hyper_product_missing_components_precedes_recomputation_for_both_forms() {
-    use crate::hyper_world::{EQUAL_INPUTS, STARTS, Vault, World, non_interference, opaque};
+    use crate::hyper_world::{non_interference, opaque, Vault, World, EQUAL_INPUTS, STARTS};
     use fsl_replay::{
-        CertificateMember, HyperOutcome, ProductClosureRequest, check_product_closure,
+        check_product_closure, CertificateMember, HyperOutcome, ProductClosureRequest,
     };
 
     for declaration in [non_interference(EQUAL_INPUTS), opaque("")] {
@@ -2082,8 +2079,8 @@ fn hyper_product_missing_components_precedes_recomputation_for_both_forms() {
 #[trace("TC-646", "FR-163-AC-2", "FR-163-AC-4", "FR-182-AC-1")]
 #[test]
 fn hyper_product_rejection_and_checker_stop_never_settle_certified() {
-    use crate::hyper_world::{EQUAL_INPUTS, STARTS, Vault, World, non_interference};
-    use fsl_replay::{HyperOutcome, ProductClosureRequest, settle_hyper_check};
+    use crate::hyper_world::{non_interference, Vault, World, EQUAL_INPUTS, STARTS};
+    use fsl_replay::{settle_hyper_check, HyperOutcome, ProductClosureRequest};
 
     let world = World::new(
         Vault::Secure,
@@ -2151,13 +2148,13 @@ fn hyper_product_rejection_and_checker_stop_never_settle_certified() {
 #[trace("TC-646", "FR-163-AC-2")]
 #[test]
 fn hyper_product_closure_is_checked_before_a_projected_violation() {
-    use crate::hyper_world::{Vault, World, instance};
+    use crate::hyper_world::{instance, Vault, World};
     use fsl_analyze::model_check::retain;
     use fsl_eval::hyper::{
         CheckedHyperLetters, CheckedStepMatch, ProjectedInputs, ProjectedProduct,
     };
     use fsl_replay::{
-        ProductClosureCertificate, ProductClosureRequest, check_product_closure, product_state_key,
+        check_product_closure, product_state_key, ProductClosureCertificate, ProductClosureRequest,
     };
 
     let declaration = crate::hyper_projected::aligned(&[])
@@ -2244,7 +2241,7 @@ fn hyper_product_closure_is_checked_before_a_projected_violation() {
 #[trace("TC-646", "FR-163-AC-7")]
 #[test]
 fn hyper_product_zero_universal_keys_preserve_their_witness_sets() {
-    use crate::hyper_world::{STARTS, Vault, World};
+    use crate::hyper_world::{Vault, World, STARTS};
     use fsl_eval::hyper::Property;
     use fsl_eval::simulation::StateKey;
     use fsl_replay::ProductStateKey;
@@ -2275,11 +2272,9 @@ fn hyper_product_zero_universal_keys_preserve_their_witness_sets() {
         assert!(read.get("automaton_state").is_none());
         for witness in witnesses {
             assert_eq!(witness["states"].as_array().map(Vec::len), Some(2));
-            assert!(
-                witness["automaton_state"]
-                    .as_str()
-                    .is_some_and(|key| !key.is_empty())
-            );
+            assert!(witness["automaton_state"]
+                .as_str()
+                .is_some_and(|key| !key.is_empty()));
         }
     }
 }
@@ -2289,9 +2284,9 @@ fn hyper_product_zero_universal_keys_preserve_their_witness_sets() {
 #[trace("TC-646", "FR-163-AC-3")]
 #[test]
 fn hyper_product_leaky_closure_rejects_the_secure_partition() {
-    use crate::hyper_world::{EQUAL_INPUTS, STARTS, Vault, World, non_interference};
+    use crate::hyper_world::{non_interference, Vault, World, EQUAL_INPUTS, STARTS};
     use fsl_eval::simulation::StateKey;
-    use fsl_replay::{HyperOutcome, ProductClosureRequest, ProductStateKey, check_product_closure};
+    use fsl_replay::{check_product_closure, HyperOutcome, ProductClosureRequest, ProductStateKey};
 
     let declaration = non_interference(EQUAL_INPUTS);
     let secure = World::new(Vault::Secure, false, &STARTS, &declaration);

@@ -5,8 +5,8 @@
 
 use filament_exact::{Origin, Role};
 use fsl_analyze::schedulability::manifest;
-use fsl_foundation::Span;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::Span;
 use fsl_route::request::items_from_requirements;
 use fsl_route::{CandidateOutcome, ProviderOrigin, Registry};
 use fsl_semantics::check::{
@@ -163,8 +163,8 @@ impl World {
         name: &str,
     ) -> fsl_analyze::analyze::NegotiatedItem {
         use fsl_analyze::analyze::{ClaimItem, NegotiatedItem};
-        use fsl_route::NegotiationSettlement;
         use fsl_route::routing::Disposition;
+        use fsl_route::NegotiationSettlement;
         let checked = self
             .package
             .graph()

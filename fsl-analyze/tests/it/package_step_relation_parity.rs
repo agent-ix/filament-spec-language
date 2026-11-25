@@ -4,12 +4,12 @@
 use fsl_foundation::source::SourceLabel;
 use fsl_package::{AnalysisView, BarePackage};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    HANDOFF, Workspace, analyze, label, package_selection_named, request_over,
+    analyze, label, package_selection_named, request_over, Workspace, HANDOFF,
 };
-use crate::hyper_world::{STARTS, Vault, request_files_over_starts};
+use crate::hyper_world::{request_files_over_starts, Vault, STARTS};
 use crate::package_model_relation::assert_tuple_evaluator_parity;
 use crate::relation_claims::DETERMINISTIC;
 
@@ -19,66 +19,18 @@ use crate::relation_claims::DETERMINISTIC;
 #[test]
 fn step_relation_package_preserves_whole_result_exit_and_tuple_charges() {
     for (case, vault, reset, relation, temporal, expected) in [
-        (
-            "holds",
-            Vault::Secure,
-            false,
-            DETERMINISTIC,
-            json!({}),
-            "proved",
-        ),
-        (
-            "refuted",
-            Vault::Custom("post Step using v on V::Vault::step { self.l = i or self.l = 1 - i }\n"),
-            false,
-            DETERMINISTIC,
-            json!({}),
-            "refuted",
-        ),
-        (
-            "tuple-stop",
-            Vault::Secure,
-            false,
-            DETERMINISTIC,
-            json!({"limits": {"max_relation_tuples": 63}}),
-            "incomplete",
-        ),
-        (
-            "tuple-paid",
-            Vault::Secure,
-            false,
-            DETERMINISTIC,
-            json!({"limits": {"max_relation_tuples": 64}}),
-            "proved",
-        ),
-        (
-            "depth",
-            Vault::Secure,
-            false,
-            DETERMINISTIC,
-            json!({"max_depth": 1}),
-            "inconclusive",
-        ),
-        (
-            "reset-holds",
-            Vault::Custom(""),
-            true,
-            "relation Det using v over (x: V::Vault::reset, y: V::Vault::reset) { pre(x.self.h) = pre(y.self.h) implies x.self.h = y.self.h }",
-            json!({}),
-            "proved",
-        ),
-        (
-            "reset-refuted",
-            Vault::Custom(""),
-            true,
-            "relation Det using v over (x: V::Vault::reset, y: V::Vault::reset) { x.self.l = y.self.l }",
-            json!({}),
-            "refuted",
-        ),
+        ("holds", Vault::Secure, false, DETERMINISTIC, json!({}), "proved"),
+        ("refuted", Vault::Custom("post Step using v on V::Vault::step { self.l = i or self.l = 1 - i }\n"), false, DETERMINISTIC, json!({}), "refuted"),
+        ("tuple-stop", Vault::Secure, false, DETERMINISTIC, json!({"limits": {"max_relation_tuples": 63}}), "incomplete"),
+        ("tuple-paid", Vault::Secure, false, DETERMINISTIC, json!({"limits": {"max_relation_tuples": 64}}), "proved"),
+        ("depth", Vault::Secure, false, DETERMINISTIC, json!({"max_depth": 1}), "inconclusive"),
+        ("reset-holds", Vault::Custom(""), true, "relation Det using v over (x: V::Vault::reset, y: V::Vault::reset) { pre(x.self.h) = pre(y.self.h) implies x.self.h = y.self.h }", json!({}), "proved"),
+        ("reset-refuted", Vault::Custom(""), true, "relation Det using v over (x: V::Vault::reset, y: V::Vault::reset) { x.self.l = y.self.l }", json!({}), "refuted"),
     ] {
         eprintln!("step-relation whole-result/exit/charge parity case: {case}");
         let ws = Workspace::new(&format!("step-relation-whole-parity-{case}"));
-        let (unit, model, snapshots) = request_files_over_starts(vault, reset, &STARTS, relation);
+        let (unit, model, snapshots) =
+            request_files_over_starts(vault, reset, &STARTS, relation);
         let path = request_over(
             &ws,
             &unit,
@@ -87,12 +39,7 @@ fn step_relation_package_preserves_whole_result_exit_and_tuple_charges() {
             json!({"items": [{"claim": "Det", "kind": "temporal-satisfaction", "temporal": temporal}]}),
         );
         let source = analyze(&path);
-        assert_eq!(
-            label(&source.item(0)),
-            expected,
-            "{case}: {}",
-            source.document()
-        );
+        assert_eq!(label(&source.item(0)), expected, "{case}: {}", source.document());
         assert_eq!(source.item(0)["record"]["backend"], "en-1");
 
         let input = fsl_command::command::prepare_analyze(
@@ -101,13 +48,10 @@ fn step_relation_package_preserves_whole_result_exit_and_tuple_charges() {
         )
         .expect("the source request admits")
         .into_input();
-        let package_name = input
-            .source
-            .source()
-            .identity()
-            .label(SourceLabel::Identity);
-        let request: Value = serde_json::from_slice(&std::fs::read(&path).expect("source request"))
-            .expect("request JSON");
+        let package_name = input.source.source().identity().label(SourceLabel::Identity);
+        let request: Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("source request"))
+                .expect("request JSON");
         let (members, bytes) = package_selection_named(&ws, &request["request"], package_name);
         let (packages, _, _) = crate::relation_claims::initial_world(&model);
         let admitted = fsl_package::admit_checked_package(
@@ -132,18 +76,13 @@ fn step_relation_package_preserves_whole_result_exit_and_tuple_charges() {
             .expect("delete retained source copies");
         assert!(!ws.path("program.fsl").exists());
         assert!(!ws.path(&format!("{HANDOFF}/sources")).exists());
-        let package = analyze(
-            &ws.write(
-                "package-analyze.json",
-                json!({"format": "native-analyze/1", "request": members})
-                    .to_string()
-                    .as_bytes(),
-            ),
-        );
+        let package = analyze(&ws.write(
+            "package-analyze.json",
+            json!({"format": "native-analyze/1", "request": members})
+                .to_string()
+                .as_bytes(),
+        ));
         assert_eq!(package.exit, source.exit, "{case}: {}", package.document());
-        assert_eq!(
-            package.stdout, source.stdout,
-            "{case}: whole serialized result"
-        );
+        assert_eq!(package.stdout, source.stdout, "{case}: whole serialized result");
     }
 }

@@ -21,8 +21,8 @@
 
 use filament_exact::{Cancel, CancelCause, Charge, ChargePoint, Meter, Undefined};
 use fsl_eval::hyper::{HyperLetters, MatchReading, ParameterBinding, StepLabel, StepMatch};
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_replay::{
     BoundCovers, HyperCounterexample, HyperCounterexampleKind, HyperLocus, HyperOutcome, HyperStep,
@@ -33,8 +33,8 @@ use ix_trace_rs::trace;
 
 use crate::counter::ZERO;
 use crate::hyper_world::{
-    EQUAL_INPUTS, KEY, STARTS, Vault, World, assert_hyper_division_refused, high, low, low_of,
-    non_interference,
+    assert_hyper_division_refused, high, low, low_of, non_interference, Vault, World, EQUAL_INPUTS,
+    KEY, STARTS,
 };
 
 /// The engine's outcome of `world` under the default limits.
@@ -852,13 +852,11 @@ fn a_negated_body_is_violated_by_the_behaviour_that_never_sets_the_output() {
     }
     // The negated body on its own: the secure vault has the behaviour that
     // never sets the output, which falsifies `l = 1 or always l = 0`.
-    assert!(
-        secure_verdict(
-            "forall trace a of V",
-            "holds(v.l @ a = 1) or always holds(v.l @ a = 0)"
-        )
-        .is_err()
-    );
+    assert!(secure_verdict(
+        "forall trace a of V",
+        "holds(v.l @ a = 1) or always holds(v.l @ a = 0)"
+    )
+    .is_err());
 }
 
 /// QSL-923, HP-2 on a swap-symmetric clause (normal form): over the terminal

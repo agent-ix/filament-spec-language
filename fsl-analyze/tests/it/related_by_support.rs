@@ -5,7 +5,7 @@
 )]
 //! Shared relationship fixture helper for integration targets.
 
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 fn id(suffix: &str) -> String {
     format!("ix://{}/{}", crate::fill::PACKAGE, suffix)

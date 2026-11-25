@@ -8,7 +8,7 @@
 
 use filament_exact::Cancel;
 use fsl_analyze::zone_check::{
-    ZoneCheckLimits, ZoneCheckOutcome, ZoneItem, certificate_item, settle_zone_check,
+    certificate_item, settle_zone_check, ZoneCheckLimits, ZoneCheckOutcome, ZoneItem,
 };
 use fsl_eval::simulation::model::TimedSystem;
 use fsl_replay::{
@@ -20,10 +20,10 @@ use fsl_replay::{
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use ix_trace_rs::trace;
 
-use crate::timed_world::{DENSE, World, document, world};
+use crate::timed_world::{document, world, World, DENSE};
 use crate::zone_replay::{fault, lock_resetting};
 use crate::zone_search::{
-    Certificate, INFINITE, Outcome, SUBJECT, check, claim, deadlock, lock, proved, quiet, rpc,
+    check, claim, deadlock, lock, proved, quiet, rpc, Certificate, Outcome, INFINITE, SUBJECT,
 };
 
 /// `NoLateReply` over `Rpc` with `T = 4 ms`, proved, with its certificate.

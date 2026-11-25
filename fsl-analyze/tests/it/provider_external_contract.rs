@@ -5,13 +5,13 @@
 //! pass through the production native evaluator and replay; these tests do
 //! not claim an SMT solver cross-check or genuine CG negotiation coverage.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use filament_exact::{Cancel, CancelCause, Integer, Value};
 use fsl_analyze::analyze::{
-    AnalyzeLimits, AnalyzeOutcome, AnalyzeRequest, ClaimItem, Counterexample, Engine, Engines,
-    ItemCounterexample, NegotiatedItem, SourceProvision, SubjectBinding, analyze,
+    analyze, AnalyzeLimits, AnalyzeOutcome, AnalyzeRequest, ClaimItem, Counterexample, Engine,
+    Engines, ItemCounterexample, NegotiatedItem, SourceProvision, SubjectBinding,
 };
 use fsl_analyze::provider::{self, ProviderResults};
 use fsl_analyze::provider::{ExternalProvider, ProviderLimit, ProviderRequest, ProviderVerdict};

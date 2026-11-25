@@ -135,9 +135,10 @@ site from text.
 
 ## Outputs
 
-- A `CallSite` on success: `package_id` (FSpec FR-322's checked-package `package_id` member), `package`
-  (`Vec<u8>`, the compiled package's `filament.checked-package/v2` bytes
-  exactly as the S4 emitter wrote them when it minted `package_id`), and
+- A `CallSite` on success: `package_id` (`LibraryName`, the exact identity
+  from the emitted checked package's `name` member), `package` (`Vec<u8>`,
+  the compiled package's `filament.checked-package/v2` bytes exactly as the
+  S4 emitter wrote them), and
   `site`, whose type the selection decides:
   - for a `QualifiedName`, a `FunctionSite`: `function` (`WireNodeId`,
     the function declaration's `function` node, FR-092), `declaration`
@@ -160,8 +161,8 @@ site from text.
   - for a `FieldName`, a `FieldSite`: `domain` (`DomainKey`);
   - for a `PopulationName`, a `PopulationSite`: `domain` (`DomainKey`);
   - for an `ImportedFunctionName`, an `ImportedFunctionSite`: `library`
-    (`LibraryName`, the selected library), `package_id` (the library's
-    checked-package `package_id`, the declaring package identity),
+    (`LibraryName`, the selected library), `package_id` (`LibraryName`, the
+    exact identity from the emitted library package's `name` member),
     `package` (`Vec<u8>`, the library's `filament.checked-package/v2` bytes
     exactly as the S4 emitter wrote them in the unit's compile), and
     `function` (`FunctionSite`, the members above, located in the
@@ -448,7 +449,7 @@ site from text.
 | FR-121-AC-9 | The AC-6 unit with no domain package supplied refuses `CallSiteRefusal::ModelIntake` with the alias `Config`. | Test (TC-516) |
 | FR-121-AC-10 | For the AC-4 unit, a `DependencyInput` supplying the imported library from a source with the unit's own authority and identity refuses `CallSiteRefusal::DependencyInput`, carrying `DependencyInputRefusal::SharedOwner` with `first` the unit, `second` the library and that shared authority and identity. | Test (TC-516) |
 | FR-121-AC-11 | For the AC-4 unit, a `DependencyInput` supplying the imported library from source bytes that do not parse refuses `CallSiteRefusal::Dependency`, its `path` exactly that library's identity. | Test (TC-516) |
-| FR-121-AC-12 | A `CallSite`'s `package` equals the S4 emitter's bytes for the same compile, and the `identity_preimage` member of those bytes (FSpec FR-322) equals the identity the `CallSite`'s `package_id` carries, compared structurally. | Test (TC-516) |
+| FR-121-AC-12 | A `CallSite`'s `package` equals the S4 emitter's bytes for the same compile, and its `name` member equals the exact input package identity as UTF-8 bytes; `CallSite.package_id` carries that same identity. For input identity `test:clocks-program`, the emitted `name` and `package_id.as_str()` are both exactly `test:clocks-program`. The identity is not derived from the package contents. | Test (TC-516) |
 | FR-121-AC-13 | From outside the crate, a `DeclaredDomain` over an integer range on a parameter node `call_site` returned is built through `fsl_replay`'s root paths alone (`ProofBound`, `DomainKey`, `FiniteBound`, `Integer`), its kind is `FiniteBoundKind::IntegerRange` and its interval equals the `IntegerInterval` built there; an inverted range refuses `EmptyFiniteBound::InvertedIntegerRange` through `FiniteBound::integer_range` and `EmptyInterval` through `IntegerInterval::new`. | Test (TC-516) |
 | FR-121-AC-14 | `CallSiteRefusal::code` returns `missing_declaration` for AC-2's `UnknownFunction`, AC-5's `UnknownOperation` and AC-8's `UnknownClause`; for AC-9's `ModelIntake`, AC-10's `DependencyInput`, AC-11's `Dependency` and AC-4's `Import`, the code `ReplayRefusal::code` returns when `replay` is given the same unit, packages and dependency input; and for a unit with a syntax error, `Compile` carrying the same code as the `ReplayRefusal::Recompile` `replay` returns for it. | Test (TC-516) |
 | FR-121-AC-15 | Worked example. For a unit declaring `p(x: Int[0, 9]): Boolean { x < 5 }` and `q(x: Int[0, 9]): Boolean { x < 5 }`, the `FunctionSite` for `p` carries `function` equal to the compiled graph's `function` node whose `declaration` is `p`, and `declaration` equal to `OccurrenceKey::new(function, Origin::new(Role::new("declaration"), 0))`. With a CG obligation kind and `arguments` `[(x's parameter node id, [0, 9])]`, these are the members of `p`'s ADR-013 O-09 function-contract obligation preimage. `q`'s `FunctionSite` has the same `parameters` (one shared parameter node) and a different `function`, so the two obligations differ. Recompiling the unit with a comment and blank lines inserted before `p` gives `p` the same `function` and `declaration`. Over the AC-6 unit, `sameIdentity`'s `function` equals no `ClauseSite` `node` returned for `attemptUpdate`, `probe` or any AC-8 clause selection. | Test (TC-516) |

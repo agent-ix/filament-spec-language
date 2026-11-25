@@ -2,12 +2,12 @@
 //! model_check integration tests.
 
 mod analyze_cli_support;
-mod analyze_family_support;
 mod analyze_coverage_cli;
 mod analyze_family_cli;
+mod analyze_family_support;
+mod analyze_package_selection;
 mod analyze_reach_rulings;
 mod analyze_timed_cli;
-mod analyze_package_selection;
 mod counter;
 mod dense_route;
 mod derived_request;
@@ -97,6 +97,7 @@ mod model_instances;
 mod model_trace_run;
 mod model_world;
 mod por_world;
+mod provider_test_support;
 #[path = "../../../tests/support/published_fspec.rs"]
 pub(crate) mod published_fspec;
 mod repeat_guard;

@@ -4,9 +4,9 @@
 //! verdicts, and a refusal names its cause and location.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{Workspace, analyze, label, litmus_request};
+use crate::analyze_cli_support::{analyze, label, litmus_request, Workspace};
 
 fn root() -> Value {
     let universe = crate::fixture_ids::universe_id("u");

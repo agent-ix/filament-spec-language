@@ -4,7 +4,7 @@
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
-use fsl_semantics::value::{DefinitionRole, admit_integer_division};
+use fsl_semantics::value::{admit_integer_division, DefinitionRole};
 
 pub(crate) fn package_of(declarations: &str) -> CheckedPackage {
     package_with_source(declarations).0

@@ -3,10 +3,10 @@
 //! source-checked package and its admitted handoff bytes.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    Run, Workspace, analyze, label, litmus_request, package_selection,
+    analyze, label, litmus_request, package_selection, Run, Workspace,
 };
 use crate::litmus::{sb_run, sb_unit};
 
@@ -199,20 +199,20 @@ fn package_protocol_graph_with_snapshot<M: crate::fill::Explored + Clone>(
     };
     let request: Value =
         serde_json::from_slice(&std::fs::read(path).expect("request")).expect("request JSON");
-    let capacities =
-        request["request"]["items"][0]["temporal"]["subject"]["protocol"]["capacities"]
-            .as_object()
-            .into_iter()
-            .flat_map(|members| members.iter())
-            .map(|(name, value)| fsl_eval::model_subject::CapacityBinding {
-                name: name.clone(),
-                value: value
-                    .as_str()
-                    .expect("capacity text")
-                    .parse()
-                    .expect("natural capacity"),
-            })
-            .collect();
+    let capacities = request["request"]["items"][0]["temporal"]["subject"]["protocol"]
+        ["capacities"]
+        .as_object()
+        .into_iter()
+        .flat_map(|members| members.iter())
+        .map(|(name, value)| fsl_eval::model_subject::CapacityBinding {
+            name: name.clone(),
+            value: value
+                .as_str()
+                .expect("capacity text")
+                .parse()
+                .expect("natural capacity"),
+        })
+        .collect();
     let source = ProtocolSubject {
         model: crate::fill::model_subject(compiled.checked(), &documents, vec![start], cells),
         protocol: "Flow".to_owned(),
@@ -432,12 +432,10 @@ fn package_workflow_roles_empty_universe_and_binding_refusal() {
     let path = workflow_roles_request(&ws, 2, "workflow", true, &controls, "closing");
     let graph = workflow_role_graph(&ws, &path);
     assert!(graph.iter().all(|state| live_workflow_roles(state) == 0));
-    assert!(
-        graph
-            .iter()
-            .flat_map(|state| &state.steps)
-            .all(|(step, _)| step.actor().is_none())
-    );
+    assert!(graph
+        .iter()
+        .flat_map(|state| &state.steps)
+        .all(|(step, _)| step.actor().is_none()));
     let item = workflow_role_parity(&ws, &path, "refuted");
     let blocked = item["counterexample"]["blocked"]
         .as_array()
@@ -473,15 +471,15 @@ fn package_workflow_roles_empty_universe_and_binding_refusal() {
 #[trace("TC-2958", "FR-940-AC-6", "FR-208-AC-2", "FR-850")]
 #[test]
 fn package_workflow_roles_replay_refuses_forged_actors() {
-    use fsl_analyze::model_check::{ProtocolCheckRequest, check_protocol};
+    use fsl_analyze::model_check::{check_protocol, ProtocolCheckRequest};
     use fsl_eval::model_subject::RoleBinding;
     use fsl_eval::simulation::model::ExpansionLimits;
     use fsl_eval::simulation::protocol::{ProtocolTransition, StepKind};
     use fsl_foundation::diagnostic::Code;
     use fsl_replay::{
-        HandoffSupply, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelTraceRefusal,
-        ModelTraceSettlement, ProtocolTraceSubject, ReplayLimits, ReplayRefusal,
-        replay_protocol_trace, replay_protocol_trace_from_package,
+        replay_protocol_trace, replay_protocol_trace_from_package, HandoffSupply, ModelCheckItem,
+        ModelCheckLimits, ModelCheckOutcome, ModelTraceRefusal, ModelTraceSettlement,
+        ProtocolTraceSubject, ReplayLimits, ReplayRefusal,
     };
 
     let controls = repeat_attempt("Work", "worked", "true").replace("by Machining", "by Worker");
@@ -2903,13 +2901,11 @@ fn package_parallel_send_preserves_replay_and_refusal() {
     let path = channel_send_request(&ws, 1, "block", "exactly-once-premise", &run, "closing");
     let item = channel_send_parity(&ws, &path, "refuted");
     assert_eq!(item["replay"]["reproduced"], true);
-    assert!(
-        item["counterexample"]["prefix"]
-            .as_array()
-            .expect("real deadlock trace")
-            .iter()
-            .any(|step| step["transition"]["step"] == "send")
-    );
+    assert!(item["counterexample"]["prefix"]
+        .as_array()
+        .expect("real deadlock trace")
+        .iter()
+        .any(|step| step["transition"]["step"] == "send"));
 
     let ws = Workspace::new("package-parallel-send-replay-refusal");
     let path = channel_send_request(&ws, 1, "block", "exactly-once-premise", &run, "closing");

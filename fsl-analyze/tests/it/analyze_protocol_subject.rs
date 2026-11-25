@@ -4,9 +4,9 @@
 //! race freedom over a `parallel`, and refuses bad selections and bindings.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{Workspace, analyze, label, litmus_request, request_over};
+use crate::analyze_cli_support::{analyze, label, litmus_request, request_over, Workspace};
 use crate::litmus::{sb_run, sb_unit};
 
 fn binding() -> Value {

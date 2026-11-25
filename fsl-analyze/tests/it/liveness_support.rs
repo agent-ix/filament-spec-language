@@ -19,21 +19,21 @@
 //! test's own [`Letters`]; the lasso's replay is FR-128's.
 
 use filament_exact::{Cancel, ScalarLimits};
-use fsl_analyze::model_check::{ModelCheckRefusal, ModelCheckRequest, check_model};
+use fsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
+use fsl_eval::simulation::TransitionSystem;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    CertificateRequest, ComponentCertificate, Lasso, ModelCheckItem, ModelCheckLimits,
-    ModelCheckOutcome, ProofCertificate, SmtEncodingLimits, TemporalCertificateCheck,
-    TemporalCounterexample, check_components,
+    check_components, CertificateRequest, ComponentCertificate, Lasso, ModelCheckItem,
+    ModelCheckLimits, ModelCheckOutcome, ProofCertificate, SmtEncodingLimits,
+    TemporalCertificateCheck, TemporalCounterexample,
 };
 use fsl_semantics::check::CheckedTemporalClause;
 use fsl_semantics::model::observation::DocumentRef;
 
 use crate::counter::{
-    CONTRACT, Documents, Letters, UNLIMITED, clause_text, key, subject, unit_text, value,
+    clause_text, key, subject, unit_text, value, Documents, Letters, CONTRACT, UNLIMITED,
 };
 
 /// A Counter world with one declared clause.

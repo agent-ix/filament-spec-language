@@ -3,13 +3,13 @@
 
 use std::collections::BTreeSet;
 
-use fsl_eval::simulation::SubjectSystem;
 use fsl_eval::simulation::protocol::{ProtocolSystem, Sc, StepKind};
+use fsl_eval::simulation::SubjectSystem;
 use ix_trace_rs::trace;
 use serde_json::Value as Json;
 
 use crate::fill::{contracts, json_of, protocol};
-use crate::protocol_compensation::{REFUND, entries, explore, key_json, pay, pay_run, refund};
+use crate::protocol_compensation::{entries, explore, key_json, pay, pay_run, refund, REFUND};
 use crate::protocol_system::Case;
 
 fn attempt_outcomes(reached: &[crate::fill::Reached]) -> BTreeSet<String> {

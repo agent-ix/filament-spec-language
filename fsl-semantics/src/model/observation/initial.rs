@@ -13,7 +13,7 @@ use fsl_foundation::diagnostic::Code;
 use super::document::{
     admit_initial_populations, map_environment_refusal, read_document, DocumentKind,
 };
-use super::helpers::object_reference;
+use super::helpers::{object_reference, object_reference_with_universe};
 use super::relationships::{admit_supplied_extents, model_facts};
 use super::{
     check_model_any, fault, refuse, view_of, AdmissionFailure, AnchorKind, DocumentRef, ModelView,
@@ -185,11 +185,14 @@ pub(crate) fn observe_state(
     types: &TypeEnvironment,
     state: &ModelState,
     identity: DocumentRef,
+    facts: Option<&super::ModelFacts>,
 ) -> Result<Observation, AdmissionFailure> {
     let mut objects = Vec::new();
     let mut completeness = BTreeMap::new();
     let mut sizes = BTreeMap::new();
     let mut listed = BTreeMap::new();
+    let mut universes: BTreeMap<filament_exact::EffectiveId, filament_exact::UniverseId> =
+        BTreeMap::new();
     for (population, members) in &state.populations {
         completeness.insert(population.node.clone(), true);
         sizes.insert(
@@ -217,7 +220,18 @@ pub(crate) fn observe_state(
                 };
                 slots.push((attribute.field().name(), slot));
             }
-            let reference = object_reference(views, effective, key)?;
+            let reference = match universes.get(&effective) {
+                Some(universe) => {
+                    object_reference_with_universe(effective.clone(), key, universe.clone())?
+                }
+                None => {
+                    let universe = super::population_universe(views, effective.clone())?;
+                    let reference =
+                        object_reference_with_universe(effective.clone(), key, universe.clone())?;
+                    universes.insert(effective, universe);
+                    reference
+                }
+            };
             references.push(reference.clone());
             objects.push((reference, slots));
         }
@@ -250,12 +264,15 @@ pub(crate) fn observe_state(
     }
     let closure =
         ObjectClosure::new(types, closure_objects, &tolerated).map_err(map_environment_refusal)?;
-    let extents = admit_supplied_extents(
-        types,
-        model_facts(views, types)?,
-        state.extents.clone(),
-        &completeness,
-    )?;
+    let generated_facts;
+    let facts = match facts {
+        Some(facts) => facts,
+        None => {
+            generated_facts = model_facts(views, types)?;
+            &generated_facts
+        }
+    };
+    let extents = admit_supplied_extents(types, facts, state.extents.clone(), &completeness)?;
     Ok(Observation {
         identity,
         environment: ObjectEnvironment::new(closure)

@@ -5,13 +5,13 @@
 //! carries the FR-621 item members.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    Workspace, analyze, below_three, bounded, counter_request, counter_request_with, label,
-    request_members,
+    analyze, below_three, bounded, counter_request, counter_request_with, label, request_members,
+    Workspace,
 };
-use crate::counter::{CONTRACT, unit_text};
+use crate::counter::{unit_text, CONTRACT};
 
 /// FR-620-AC-1, AC-2: the admitted item is echoed as its FR-331 request item,
 /// and that echo, written back as a document item, reads to an equal item.

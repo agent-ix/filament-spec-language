@@ -11,7 +11,7 @@
 use filament_exact::{Cancel, Meter};
 use fsl_analyze::analyze::ProtocolItem;
 use fsl_analyze::model_check::{
-    ModelCheckRequest, ProtocolCheckRequest, check_model, check_protocol,
+    check_model, check_protocol, ModelCheckRequest, ProtocolCheckRequest,
 };
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ProtocolSubject};
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimState};
@@ -20,18 +20,18 @@ use fsl_eval::simulation::protocol::{
 };
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_eval::temporal::{
-    AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition, TemporalTrace,
-    evaluate_at,
+    evaluate_at, AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
+    TemporalTrace,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
+    check_protocol_closure, replay_protocol_trace_with_temporal_selections, settle_protocol_check,
     CertificateLocus, CertificateRejection, CertificateRule, Certification, ClauseIdentity,
     ClosureCertificate, IncompleteCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
     ModelCheckOutcome, ModelCheckRecord, ModelTraceSubject, ProductStateRef, ProofBasis,
     ProofCertificate, ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits, ResultLabel,
-    TemporalCertificateCheck, TemporalCounterexample, TerminalValue, check_protocol_closure,
-    replay_protocol_trace_with_temporal_selections, settle_protocol_check,
+    TemporalCertificateCheck, TemporalCounterexample, TerminalValue,
 };
 use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId};
 use fsl_semantics::model::observation::DocumentRef;
@@ -39,8 +39,8 @@ use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
 use crate::fill::{
-    Documents, Reached, attempt, contracts, document, fill_unit, instance, model_subject, package,
-    protocol, reachable, sc_system, subject, unit_text, universe, v,
+    attempt, contracts, document, fill_unit, instance, model_subject, package, protocol, reachable,
+    sc_system, subject, unit_text, universe, v, Documents, Reached,
 };
 use crate::model_settle_support::{envelope_at, request};
 use crate::protocol_compensation::pay;
@@ -293,7 +293,7 @@ impl Case {
 #[trace("TC-770", "FR-286-AC-14")]
 #[test]
 fn a_refuted_protocol_clause_carries_its_spelled_counterexample() {
-    use fsl_analyze::analyze::{Engines, analyze_items, protocol_item, split_records};
+    use fsl_analyze::analyze::{analyze_items, protocol_item, split_records, Engines};
     use fsl_foundation::RequestIndex;
     use fsl_replay::TerminalValue;
 
@@ -340,7 +340,7 @@ fn a_refuted_protocol_clause_carries_its_spelled_counterexample() {
 /// claim, `analyze` would refuse it `inapplicable-kind`.
 #[test]
 fn a_protocol_clause_item_is_settled_by_en1_not_refused() {
-    use fsl_analyze::analyze::{Engines, Settlement, analyze_items, protocol_item};
+    use fsl_analyze::analyze::{analyze_items, protocol_item, Engines, Settlement};
     use fsl_foundation::RequestIndex;
 
     let case = repaired_fill("eventually[0,2] holds(k.v >= 2)");
@@ -992,11 +992,9 @@ fn a_closure_with_a_fair_uncounted_cycle_is_rejected_as_a_proof() {
         .filter(|s| owes_interval(s))
         .collect();
     // The initial product state owes the interval too, and is off the cycle.
-    assert!(
-        owing
-            .iter()
-            .any(|state| !cycle.contains(&state.model_state))
-    );
+    assert!(owing
+        .iter()
+        .any(|state| !cycle.contains(&state.model_state)));
     let expected = owing
         .iter()
         .filter(|state| cycle.contains(&state.model_state))
@@ -1073,12 +1071,10 @@ fn a_cycle_that_takes_a_counted_step_is_not_a_zero_progress_refutation() {
         panic!("{:?}", outcome.stats());
     };
     assert!(counterexample.lasso.is_none(), "{counterexample:?}");
-    assert!(
-        counterexample
-            .prefix
-            .iter()
-            .all(|step| step.transition.counts())
-    );
+    assert!(counterexample
+        .prefix
+        .iter()
+        .all(|step| step.transition.counts()));
     assert_eq!(case.label("P", &letters, &outcome), ResultLabel::Refuted);
 }
 
@@ -1315,8 +1311,8 @@ fn walked_before_violation(
     reads: &[fn(i64) -> bool],
 ) -> (ClosureCertificate, fsl_eval::automaton::AutomatonStateKey) {
     use fsl_eval::automaton::{
-        Atom, ContextBinding, Letter, Monitor, SafetyStates, StateContext, SubjectKind,
-        translate_counted,
+        translate_counted, Atom, ContextBinding, Letter, Monitor, SafetyStates, StateContext,
+        SubjectKind,
     };
     let subject = case.subject(protocol);
     let system = sc_system(&subject).with_cycle_keys(std::collections::BTreeSet::new());
@@ -1524,9 +1520,13 @@ fn a_past_tp3_clause_over_the_repaired_fill_keys_distance_history() {
             certification: Certification::Certified,
         }
     );
-    assert!(certificate.states.iter().any(|state| {
-        String::from_utf8_lossy(state.automaton_state.as_bytes()).contains("distance-history")
-    }));
+    assert!(certificate
+        .states
+        .iter()
+        .any(
+            |state| String::from_utf8_lossy(state.automaton_state.as_bytes())
+                .contains("distance-history")
+        ));
 
     let distances: std::collections::BTreeSet<Vec<u64>> =
         certificate.states.iter().map(bucket_distances).collect();

@@ -13,13 +13,13 @@ use std::collections::{BTreeSet, VecDeque};
 
 use filament_contract_model::ClockConfiguration;
 use filament_exact::{Cancel, FieldValue, Value};
-use fsl_analyze::model_check::{ModelCheckRefusal, ProtocolCheckRequest, check_protocol};
+use fsl_analyze::model_check::{check_protocol, ModelCheckRefusal, ProtocolCheckRequest};
 use fsl_eval::simulation::protocol::{
-    AnchorName, ClaimReads, PathStep, ProtocolLocation, ProtocolState, ProtocolSystem,
-    ProtocolTransition, RegistrationKey, RestKind, Sc, StepKind, ThreadPath, WaitCause,
-    protocol_domains, visible,
+    protocol_domains, visible, AnchorName, ClaimReads, PathStep, ProtocolLocation, ProtocolState,
+    ProtocolSystem, ProtocolTransition, RegistrationKey, RestKind, Sc, StepKind, ThreadPath,
+    WaitCause,
 };
-use fsl_eval::simulation::{Footprint, Location, SubjectSystem, independent};
+use fsl_eval::simulation::{independent, Footprint, Location, SubjectSystem};
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_package::TemporalClockSelection;
 use fsl_replay::{
@@ -28,11 +28,11 @@ use fsl_replay::{
     TemporalCounterexample,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 use crate::fill::{
-    PROTOCOL_PROFILE, Reached, contracts, json_of, key, package_with, protocol, reachable,
-    sc_system,
+    contracts, json_of, key, package_with, protocol, reachable, sc_system, Reached,
+    PROTOCOL_PROFILE,
 };
 use crate::protocol_system::Case;
 
@@ -433,11 +433,9 @@ fn pay_reaches_the_states_of_its_table_and_compensation_outcomes() {
         let json = identity(system, cattempt);
         assert_eq!(json["step"], "cattempt");
         assert_eq!(json["template"], TEMPLATE);
-        assert!(
-            json["operation"]
-                .as_str()
-                .is_some_and(|operation| operation.contains("Cell/dec"))
-        );
+        assert!(json["operation"]
+            .as_str()
+            .is_some_and(|operation| operation.contains("Cell/dec")));
         assert_eq!(
             json["registration"],
             json!({"type": "registration", "template": TEMPLATE,
@@ -821,14 +819,12 @@ fn compensation_steps_read_and_write_their_registrations() {
             }
             let ending = footprint_at(system, reached, at, cend);
             assert!(ending.writes.contains(&ctl(&compensation(0))));
-            assert!(
-                ending
-                    .writes
-                    .contains(&Location::Protocol(ProtocolLocation::Registration {
-                        instance: 0,
-                        key: first.clone(),
-                    }))
-            );
+            assert!(ending
+                .writes
+                .contains(&Location::Protocol(ProtocolLocation::Registration {
+                    instance: 0,
+                    key: first.clone(),
+                })));
             let activation = footprint_at(system, reached, at, activating);
             assert!(activation.reads.contains(&ctl(&compensation(0))));
             assert!(!independent(&ending, &activation));

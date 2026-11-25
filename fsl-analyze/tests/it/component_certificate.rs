@@ -17,29 +17,29 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use filament_exact::{Cancel, CancelCause, Meter, ScalarLimits};
-use fsl_analyze::model_check::{ModelCheckRequest, check_model};
+use fsl_analyze::model_check::{check_model, ModelCheckRequest};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_replay::{
-    CertificateLocus, CertificateRejection, CertificateRequest, CertificateRule, Certification,
-    ClosureCertificate, ClosureRefusal, Component, ComponentCertificate, ComponentWitness,
-    Execution, IncompleteCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
-    ModelCheckOutcome, ProductStateRef, ProofBasis, ProofCertificate, ResultLabel, RunStats,
-    SettlementBasis, SmtEncodingLimits, TemporalCertificateCheck, TerminalValue, check_closure,
-    check_components, settle_model_check,
+    check_closure, check_components, settle_model_check, CertificateLocus, CertificateRejection,
+    CertificateRequest, CertificateRule, Certification, ClosureCertificate, ClosureRefusal,
+    Component, ComponentCertificate, ComponentWitness, Execution, IncompleteCause, ModelCheckItem,
+    ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ProductStateRef, ProofBasis,
+    ProofCertificate, ResultLabel, RunStats, SettlementBasis, SmtEncodingLimits,
+    TemporalCertificateCheck, TerminalValue,
 };
 use fsl_semantics::check::{FormulaNodeId, TemporalClauseNode};
 use ix_trace_rs::trace;
 use serde_json::json;
 
 use crate::counter::{UNLIMITED, ZERO};
-use crate::example_units::{EACH, config, decide, reaches_two};
+use crate::example_units::{config, decide, reaches_two, EACH};
 use crate::liveness::{counter, is_three};
 use crate::por_world::{
-    Atom, Fixture, Obj, Temporal, field, integer, level, number, object_type, operation, type_ref,
-    writes,
+    field, integer, level, number, object_type, operation, type_ref, writes, Atom, Fixture, Obj,
+    Temporal,
 };
 use crate::units::World;
 
@@ -211,6 +211,52 @@ fn an_altered_certificate_is_rejected_at_the_rule_the_alteration_breaks() {
             CertificateRule::WitnessFails,
             &terminal.components[last].states[0]
         )
+    );
+}
+
+/// A transposition of two components in the weakly fair finite `Counter`
+/// liveness certificate creates a backward edge. The current core rejection
+/// locates that edge at its source state, without retaining the transition
+/// that made the edge backward.
+#[trace("TC-526")]
+#[test]
+fn swapping_counter_components_reports_the_source_of_a_backward_edge() {
+    let fixture = counter(
+        crate::counter::document(false),
+        "fair weak M::Counter::inc;",
+        "always eventually holds(c.value = 3)",
+    );
+    let (certificate, _) = fixture.certified(is_three);
+    let letters = fixture.letters(is_three);
+    let request = fixture.certificate_request(&letters, UNLIMITED);
+    let backward = (0..certificate.components.len())
+        .flat_map(|left| (left + 1..certificate.components.len()).map(move |right| (left, right)))
+        .find_map(|(left, right)| {
+            let mut swapped = certificate.clone();
+            swapped.components.swap(left, right);
+            match check_components(
+                &request,
+                &swapped,
+                &ModelCheckLimits::default(),
+                &Cancel::new(),
+            )
+            .expect("the request is checked")
+            {
+                TemporalCertificateCheck::Rejected(CertificateRejection {
+                    rule: CertificateRule::BackwardEdge,
+                    at: CertificateLocus::ProductState(at),
+                }) => Some((swapped, at)),
+                _ => None,
+            }
+        })
+        .expect("swapping two components out of topological order is rejected");
+    let (swapped, at) = backward;
+    assert!(
+        swapped
+            .components
+            .iter()
+            .any(|component| component.states.contains(&at)),
+        "the current cause names the backward edge's source state"
     );
 }
 
@@ -936,19 +982,15 @@ fn a_guarded_each_activation_has_its_own_acceptance_set_in_the_certificate() {
         "c.versionNumber = 7",
     );
     let (never, _) = guarded_proof(&unmet);
-    assert!(
-        never
-            .components
-            .iter()
-            .all(|component| component.witness == ComponentWitness::Trivial
-                || component.witness == MISSING)
-    );
-    assert!(
-        never
-            .components
-            .iter()
-            .any(|component| component.witness == MISSING)
-    );
+    assert!(never
+        .components
+        .iter()
+        .all(|component| component.witness == ComponentWitness::Trivial
+            || component.witness == MISSING));
+    assert!(never
+        .components
+        .iter()
+        .any(|component| component.witness == MISSING));
     let accepts_never = with_production_letters(&unmet, |production| production.check(&never));
     assert_eq!(accepts_never, ACCEPTED);
 }

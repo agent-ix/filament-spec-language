@@ -27,7 +27,7 @@ use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId, PackageDeclarat
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 use crate::counter::UNLIMITED;
 
@@ -40,7 +40,7 @@ mod config_version;
     unused_imports,
     reason = "only the model-check integration binary uses this fixture export"
 )]
-pub(crate) use config_version::{PACKAGE_IDENTITY as CONFIG, unit_text as shipped_unit_text};
+pub(crate) use config_version::{unit_text as shipped_unit_text, PACKAGE_IDENTITY as CONFIG};
 
 /// A domain package and where its objects live.
 pub(crate) struct Domain {

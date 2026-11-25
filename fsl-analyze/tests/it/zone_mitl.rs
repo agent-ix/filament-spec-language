@@ -9,11 +9,11 @@ use fsl_replay::{CertificateCheckLimits, ZoneCertificateVerdict};
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use ix_trace_rs::trace;
 
-use crate::timed_world::{World, document_unbounded};
+use crate::timed_world::{document_unbounded, World};
 use crate::zone_replay::{replay, reproduced};
 use crate::zone_search::{
-    Outcome, SUBJECT, TIMED, check, claim, delays, operations, proved, rpc_claim, rpc_world,
-    violated,
+    check, claim, delays, operations, proved, rpc_claim, rpc_world, violated, Outcome, SUBJECT,
+    TIMED,
 };
 
 /// ADR-026 §11's `Settles` over `Rpc` with deadline `t`, its `eventually`
@@ -306,16 +306,16 @@ fn open_upper_intervals_are_decided_by_zone_search() {
 
 mod interval_boundaries {
     use super::*;
-    use crate::timed_world::{DENSE, PACKAGE, document, unit_text, world};
+    use crate::timed_world::{document, unit_text, world, DENSE, PACKAGE};
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-    use fsl_analyze::model_check::{ModelCheckRequest, check_model};
+    use fsl_analyze::model_check::{check_model, ModelCheckRequest};
     use fsl_eval::model_subject::ModelSubject;
     use fsl_eval::temporal::TemporalOutcome;
     use fsl_foundation::bound::InvalidTimedInterval;
     use fsl_foundation::diagnostic::Code;
     use fsl_foundation::{SourceIdentity, Span};
     use fsl_replay::{
-        ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelTraceEnd, evaluate_model_trace,
+        evaluate_model_trace, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelTraceEnd,
     };
     use fsl_semantics::check::{CheckCause, PackageDeclarations, TemporalCause};
     use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -656,13 +656,7 @@ temporal Projection using inf over (c: M::Call) clock \"model-steps\" on origin 
             ("(2 ms, 2 ms]", InvalidTimedInterval::EmptyOpenEnd),
         ] {
             let model = document(&["x"], &[]);
-            let text = unit_text(
-                PACKAGE,
-                TIMED,
-                &format!(
-                    "{DENSE}temporal Bad using tt over (c: M::Call) clock \"model-time\" on origin {{ eventually{interval} holds(c.phase = 1) }}"
-                ),
-            );
+            let text = unit_text(PACKAGE,TIMED,&format!("{DENSE}temporal Bad using tt over (c: M::Call) clock \"model-time\" on origin {{ eventually{interval} holds(c.phase = 1) }}"));
             let parsed = fsl_cst::parse(
                 SourceIdentity::new("test", "zone-interval-refusal"),
                 "zone-interval.native",

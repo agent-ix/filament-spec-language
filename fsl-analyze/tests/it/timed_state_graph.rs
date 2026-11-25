@@ -5,9 +5,9 @@
 //! that replays and a zone certificate.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{Run, Workspace, analyze, label, request_over};
+use crate::analyze_cli_support::{analyze, label, request_over, Run, Workspace};
 use crate::analyze_family_support::{rpc_snapshot, rpc_unit};
 
 const CLAIMS: &str = "possible ReplyPossible using v over (c: M::Call) { c.phase = 2 }\n\

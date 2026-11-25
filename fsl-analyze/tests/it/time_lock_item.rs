@@ -9,7 +9,7 @@ use fsl_route::request::{ExtentClassification, ItemKind, RequestItem};
 use fsl_semantics::check::Capability;
 use ix_trace_rs::trace;
 
-use crate::counter::{CONTRACT, Documents, PACKAGE, document, package, timed_package};
+use crate::counter::{document, package, timed_package, Documents, CONTRACT, PACKAGE};
 use crate::derived_request::derived_items;
 
 const TIMED: &str = "dimension Time;\nunit s : Time = rational(1, 1);\n\

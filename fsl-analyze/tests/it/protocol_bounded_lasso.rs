@@ -21,16 +21,16 @@ use fsl_eval::simulation::model::ExpansionLimits;
 use fsl_eval::simulation::protocol::{ProtocolTransition, StepKind};
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_eval::temporal::{
-    AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition, TemporalRefusal,
-    TemporalTrace, evaluate_at,
+    evaluate_at, AtomReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
+    TemporalRefusal, TemporalTrace,
 };
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
-    ClosureRule, ClosureStutter, CounterexampleKind, DisagreementCause, Lasso, ModelCheckOutcome,
-    ModelStep, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject,
-    ModelTraceValue, ProtocolTraceSubject, ReplayLimits, ReplayRefusal, StepSite,
-    TemporalCounterexample, replay_protocol_trace_with_temporal_selections,
+    replay_protocol_trace_with_temporal_selections, ClosureRule, ClosureStutter,
+    CounterexampleKind, DisagreementCause, Lasso, ModelCheckOutcome, ModelStep, ModelTraceRefusal,
+    ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject, ModelTraceValue,
+    ProtocolTraceSubject, ReplayLimits, ReplayRefusal, StepSite, TemporalCounterexample,
 };
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
@@ -38,7 +38,7 @@ use ix_trace_rs::trace;
 use crate::counter::UNLIMITED;
 use crate::fill::{attempt, contracts, document, instance, protocol, universe};
 use crate::model_settle_support::{envelope_at, request};
-use crate::protocol_counted_steps::{Case, CellV, claim, closure_check_over, tp3};
+use crate::protocol_counted_steps::{claim, closure_check_over, tp3, Case, CellV};
 
 /// A `repeat` around a `parallel` of two empty branches: the loop is `fork`
 /// then `join`.
@@ -520,11 +520,9 @@ fn an_unfair_zero_counted_lasso_refuses_naming_the_scheduler_constraint() {
         "the adverse identity-reading closure rejects before scheduler fairness"
     );
     assert!(payload.fairness.is_empty(), "no scheduler constraint");
-    assert!(
-        payload.prefix[lasso.entry..]
-            .iter()
-            .all(|step| !step.transition.counts())
-    );
+    assert!(payload.prefix[lasso.entry..]
+        .iter()
+        .all(|step| !step.transition.counts()));
     assert_eq!(
         payload.prefix[lasso.entry..]
             .iter()
@@ -1032,8 +1030,8 @@ fn loop_received_message_ordinals_canonicalize_and_en1_closes() {
 #[test]
 fn echo_unread_claim_has_a_finite_checked_cycle_closure() {
     use fsl_replay::{
-        ModelCheckItem, ModelCheckLimits, ProofCertificate, ProtocolCertificateRequest,
-        TemporalCertificateCheck, check_protocol_closure,
+        check_protocol_closure, ModelCheckItem, ModelCheckLimits, ProofCertificate,
+        ProtocolCertificateRequest, TemporalCertificateCheck,
     };
     let case = echo_infinite("scheduling adversarial;", "always holds(k.v = 0)");
     let outcome = case.check("Echo", &CellV(is_zero));

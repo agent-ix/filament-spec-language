@@ -9,7 +9,7 @@ use fsl_semantics::model::domain_package::{
     NativeValueType, OperationEffect, OperationMemberRecord, PopulationRecord, ProcessRecord,
     ProcessStepKind, ProcessStepRecord, ValueTypeRef,
 };
-use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
+use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
 use ix_trace_rs::trace;
 
 fn flow_process_model() -> fsl_semantics::model::intake::SelectedModel {

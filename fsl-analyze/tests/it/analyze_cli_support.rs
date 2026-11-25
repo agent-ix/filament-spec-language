@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#![allow(dead_code, reason = "shared fixture support spans split integration test binaries")]
+#![allow(
+    dead_code,
+    reason = "shared fixture support spans split integration test binaries"
+)]
 //! Shared harness for the `native-analyze/1` stubs (FR-620 to FR-636): writes
 //! a request document and its files into a fresh directory, hands it to the
 //! in-process command adapter (`fsl_command::command::analyze`) with an FSpec
@@ -10,9 +13,9 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use crate::counter::{CONTRACT, clause_text, document, unit_text};
+use crate::counter::{clause_text, document, unit_text, CONTRACT};
 
 /// One command-adapter outcome: its exit code and its document bytes.
 pub(crate) struct Run {
@@ -260,7 +263,8 @@ pub(crate) fn counter_request(ws: &Workspace, body: &str, items: Value) -> PathB
 /// FR-627's staying Counter: `setTo(n: Int[0, 3])` is enabled only at
 /// `value = 0` with `n = 0`, a self-loop. A behaviour may take it forever
 /// while `inc` stays enabled, so only fairness on `inc` forces `value = 3`.
-pub(crate) const STAY: &str = "pre Stay using v on M::Counter::setTo { self.value = 0 and n = 0 }\n\
+pub(crate) const STAY: &str =
+    "pre Stay using v on M::Counter::setTo { self.value = 0 and n = 0 }\n\
      post Keeps using v on M::Counter::setTo { self.value = n }\n";
 
 /// [`request_over`] for the staying Counter (the contract, [`STAY`] and

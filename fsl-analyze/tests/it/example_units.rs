@@ -20,10 +20,10 @@ use filament_exact::{
     Cancel, CancelCause, Incomplete, Meter, ObjectId, ObjectReference, ScalarLimits,
 };
 use filament_semantic_value::checking::CheckMode;
-use fsl_analyze::model_check::{ModelCheckRefusal, ModelCheckRequest, check_model};
+use fsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_replay::{
     CounterexampleKind, IncompleteCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
@@ -34,9 +34,9 @@ use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::declared_type_universe_for;
 use ix_trace_rs::trace;
 
-use crate::counter::{UNLIMITED, ZERO, document};
+use crate::counter::{document, UNLIMITED, ZERO};
 use crate::liveness::{counter, is_zero};
-use crate::units::{Atoms, Domain, World, clause, config_object, health, shipped_unit_text, unit};
+use crate::units::{clause, config_object, health, shipped_unit_text, unit, Atoms, Domain, World};
 
 pub(crate) const FORMULA: &str = "always eventually holds(c.versionNumber = 2)";
 pub(crate) const WHOLE: &str = "fair weak Config::ConfigVersion::attemptUpdate;";
@@ -226,12 +226,10 @@ fn without_granularity_the_loop_is_three_steps_of_the_other_object() {
     assert_eq!((lasso.entry, lasso.terminal_stutter), (0, false));
     assert_eq!(counterexample.len(), 3);
     let looping = receiver(&counterexample.prefix[0]);
-    assert!(
-        counterexample
-            .prefix
-            .iter()
-            .all(|step| receiver(step) == looping)
-    );
+    assert!(counterexample
+        .prefix
+        .iter()
+        .all(|step| receiver(step) == looping));
     let bound = counterexample
         .over_binding
         .as_ref()

@@ -8,7 +8,7 @@ use filament_exact::Cancel;
 use filament_semantic_value::catalog::{CatalogCode, CatalogCoded};
 use fsl_analyze::analyze::document::Negotiate;
 use fsl_analyze::analyze::{AnalyzeLimits, ClaimItem, Diagnostic, Engine, Engines};
-use fsl_analyze::plan::{PlanInputs, PlanRefusal, PlanResult, PlanStatus, execute_plan};
+use fsl_analyze::plan::{execute_plan, PlanInputs, PlanRefusal, PlanResult, PlanStatus};
 use fsl_foundation::diagnostic::StageFailure;
 use fsl_package::verification_plan::{VerificationPlan, VerificationPlanRefusal};
 use fsl_route::routing::Disposition;
@@ -1001,11 +1001,8 @@ fn release_dispatches_tested_to_the_model_based_test_entry_and_negotiates_safe_o
     .expect("Release runs")
     .into_value();
     assert_eq!(*negotiate.calls.borrow(), [0], "only `safe` is negotiated");
-    let [
-        (safe, safe_step),
-        (tested, tested_step),
-        (timely, timely_step),
-    ] = outcome.dispositions.as_slice()
+    let [(safe, safe_step), (tested, tested_step), (timely, timely_step)] =
+        outcome.dispositions.as_slice()
     else {
         panic!("one disposition per node: {:?}", outcome.dispositions);
     };

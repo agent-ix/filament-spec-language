@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#![allow(dead_code, reason = "shared model fixture support spans split integration test binaries")]
+#![allow(
+    dead_code,
+    reason = "shared model fixture support spans split integration test binaries"
+)]
 //! Model subjects for the EN-1 safety tests (`crate::model_check_safety`):
 //! a domain package with one population, a native unit selecting it as `M`
 //! with its contracts and temporal clauses, the initial snapshots, and the
@@ -17,10 +20,10 @@ use filament_exact::{Meter, ScalarLimits, Value};
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::automaton::translate;
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ModelSubject};
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimState, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_foundation::SourceIdentity;
 use fsl_package::CheckedPackage;
@@ -29,7 +32,7 @@ use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId, PackageDeclarat
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 type Population<'a> = (&'a str, &'a str, &'a [(&'a str, Json)]);
 

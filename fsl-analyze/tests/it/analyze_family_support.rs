@@ -8,7 +8,7 @@ pub(crate) fn rpc_unit(t: u32, claim: &str) -> String {
 }
 
 pub(crate) fn rpc_unit_with(t: u32, reply: &str, timeout: &str, claim: &str) -> String {
-    use crate::timed_world::{DENSE, PACKAGE, unit_text};
+    use crate::timed_world::{unit_text, DENSE, PACKAGE};
     let body = format!(
         "{DENSE}pre SendIdle using v on M::Call::send {{ self.phase = 0 }}\n\
          post Send using v on M::Call::send {{ self.phase = 1 and self.inflight and not self.late and self.x = 0 ms }}\n\

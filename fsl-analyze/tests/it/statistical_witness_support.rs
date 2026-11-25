@@ -9,8 +9,8 @@ use filament_exact::Cancel;
 use fsl_analyze::statistical::witness_reader;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_replay::statistical::{
-    SampledWitness, SampledWitnessRefusal, SampledWitnessReplay, StatisticalProvenance,
-    WitnessReplay, replay_sampled_witness,
+    replay_sampled_witness, SampledWitness, SampledWitnessRefusal, SampledWitnessReplay,
+    StatisticalProvenance, WitnessReplay,
 };
 use fsl_semantics::check::ProbScheduler;
 

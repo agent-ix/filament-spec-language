@@ -14,17 +14,17 @@ use fsl_eval::automaton::translate;
 use fsl_eval::model_subject::{ProtocolSubject, RoleBinding};
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{
-    AnchorName, ClaimReads, MemoryModel, ParallelInstance, ProtocolLocation, ProtocolState,
-    ProtocolSystem, ProtocolTransition, ReachRefusal, Sc, StepKind, ThreadPath, visible,
+    visible, AnchorName, ClaimReads, MemoryModel, ParallelInstance, ProtocolLocation,
+    ProtocolState, ProtocolSystem, ProtocolTransition, ReachRefusal, Sc, StepKind, ThreadPath,
 };
-use fsl_eval::simulation::{Footprint, Limit, Location, TransitionSystem, independent};
+use fsl_eval::simulation::{independent, Footprint, Limit, Location, TransitionSystem};
 use fsl_package::CheckedPackage;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
 use crate::fill::{
-    Documents, PACKAGE, Reached, attempt, contracts, fill_unit, instance, key, model_subject,
-    package, protocol, reachable, sc_system, source_memory,
+    attempt, contracts, fill_unit, instance, key, model_subject, package, protocol, reachable,
+    sc_system, source_memory, Documents, Reached, PACKAGE,
 };
 use crate::protocol_compensation as compensation;
 use crate::protocol_roles as roles;

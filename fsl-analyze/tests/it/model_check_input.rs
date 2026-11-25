@@ -3,13 +3,13 @@
 //! source route from the source package and on the package route once from
 //! a `BarePackage`'s admitted nodes and handoff supply.
 
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{ModelCheckInput, ModelSystem, PackageModelInput};
+use fsl_eval::simulation::TransitionSystem;
 use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits, V2ReadLimits};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use ix_trace_rs::trace;
 
-use crate::counter::{CONTRACT, Documents, UNLIMITED, document, package_with_clauses, subject};
+use crate::counter::{document, package_with_clauses, subject, Documents, CONTRACT, UNLIMITED};
 
 const DIRECT_DENSE: &str =
     "dimension Time;\nunit ms : Time = rational(1, 1);\ntime M dense unit ms;\n";
@@ -103,13 +103,11 @@ fn package_direct_dense_clocks_preserve_initial_and_delay_identity() {
     let bytes_initial = bytes.initial();
     assert_eq!(source_initial.len(), 1);
     assert_eq!(source_initial[0].clocks().values().len(), 2);
-    assert!(
-        source_initial[0]
-            .clocks()
-            .values()
-            .iter()
-            .all(Rational::is_zero)
-    );
+    assert!(source_initial[0]
+        .clocks()
+        .values()
+        .iter()
+        .all(Rational::is_zero));
     assert_eq!(source_initial[0].clocks(), bytes_initial[0].clocks());
     let delay = Rational::new(Integer::from(3_i64), Integer::from(2_i64)).expect("delay");
     let source_delayed = source
@@ -195,7 +193,7 @@ fn package_direct_dense_reader_refuses_derived_units_and_timed_guards() {
 #[trace("FR-850", "FR-940-AC-6")]
 #[test]
 fn package_direct_dense_model_items_match_source_cli_results() {
-    use crate::analyze_cli_support::{Workspace, analyze, label, package_selection, request_over};
+    use crate::analyze_cli_support::{analyze, label, package_selection, request_over, Workspace};
     use serde_json::json;
     let body =
         format!("{DIRECT_DENSE}possible Yes using v {{ true }}\npossible No using v {{ false }}\n");
@@ -247,8 +245,8 @@ fn package_direct_dense_model_items_match_source_cli_results() {
 #[test]
 fn dense_replay_rejects_incomplete_certificate_coverage() {
     use filament_exact::{Cancel, Integer};
-    use fsl_analyze::zone_check::{ZoneCheckLimits, explore_timed_state_graph};
-    use fsl_eval::simulation::model::{DEFAULT_MAX_CLOCKS, TimedSystem};
+    use fsl_analyze::zone_check::{explore_timed_state_graph, ZoneCheckLimits};
+    use fsl_eval::simulation::model::{TimedSystem, DEFAULT_MAX_CLOCKS};
     use fsl_replay::{GraphEvidence, ModelPath, ReplayRefusal, TrapClosure};
     use fsl_route::deadlock::{ItemObligation, ObligationKind};
     let world = crate::timed_world::world(
@@ -854,11 +852,9 @@ fn the_source_route_input_reads_the_source_package() {
         .collect();
     assert_eq!(names, checked);
     assert_eq!(names.len(), 2);
-    assert!(
-        input
-            .source_package()
-            .is_some_and(|source| std::ptr::eq(source, &package))
-    );
+    assert!(input
+        .source_package()
+        .is_some_and(|source| std::ptr::eq(source, &package)));
 }
 
 /// FR-940, FR-850 (QSL-2425): over a Counter package whose domain package
@@ -871,7 +867,7 @@ fn the_source_route_input_reads_the_source_package() {
 #[trace("TC-2410", "FR-850-AC-2")]
 #[test]
 fn the_model_checker_decides_a_package_form_clause_as_its_source_form() {
-    use fsl_analyze::model_check::{ModelCheckRequest, check_model};
+    use fsl_analyze::model_check::{check_model, ModelCheckRequest};
     use fsl_replay::{ModelCheckItem, ModelCheckLimits};
     let model = document(false);
     let (package, _) = package_with_clauses(
@@ -964,7 +960,7 @@ fn the_model_checker_decides_a_package_form_clause_as_its_source_form() {
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 fn the_model_checker_decides_deadlock_freedom_over_the_package_route_as_over_source() {
-    use fsl_analyze::model_check::{ModelCheckRequest, check_model};
+    use fsl_analyze::model_check::{check_model, ModelCheckRequest};
     use fsl_replay::{ModelCheckItem, ModelCheckLimits};
     let mut verdicts = Vec::new();
     for model in [document(false), still_document()] {
@@ -1022,7 +1018,7 @@ fn the_model_checker_decides_deadlock_freedom_over_the_package_route_as_over_sou
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 fn a_package_route_deadlock_settles_and_replays_as_the_source_deadlock() {
-    use crate::model_world::{Clause, INFINITE, World, still_counter};
+    use crate::model_world::{still_counter, Clause, World, INFINITE};
     let world = World::new(
         still_counter(),
         "",
@@ -1046,7 +1042,7 @@ fn a_package_route_deadlock_settles_and_replays_as_the_source_deadlock() {
 #[trace("TC-539", "FR-128-AC-6")]
 #[test]
 fn a_package_route_undefined_terminal_replays_as_the_source_undefined_terminal() {
-    use crate::model_world::{Clause, INFINITE, World, counter};
+    use crate::model_world::{counter, Clause, World, INFINITE};
     let world = World::with_kernel_functions(
         counter(),
         &format!("{CONTRACT}terminal Done using v on M when {{ q(3 - self.value) = 0 }};\n"),
@@ -1067,8 +1063,8 @@ fn a_package_route_undefined_terminal_replays_as_the_source_undefined_terminal()
 fn deadlock_parity(world: &crate::model_world::World, settles: &str) -> String {
     use filament_exact::Cancel;
     use fsl_analyze::analyze::{
-        AnalyzeLimits, Engine, Engines, PackageDeadlockSubject, RunInput, TemporalItem,
-        analyze_items, deadlock_model_item, derived_model_item,
+        analyze_items, deadlock_model_item, derived_model_item, AnalyzeLimits, Engine, Engines,
+        PackageDeadlockSubject, RunInput, TemporalItem,
     };
     use fsl_route::request::{DerivedLimits, ItemKind};
     let written = crate::derived_request::written(
@@ -1150,7 +1146,7 @@ fn deadlock_parity(world: &crate::model_world::World, settles: &str) -> String {
 
 /// The Counter world under `body`, with one clause and one counter at 0.
 fn counter_with(body: &str) -> crate::model_world::World {
-    use crate::model_world::{Clause, INFINITE, World, counter};
+    use crate::model_world::{counter, Clause, World, INFINITE};
     World::new(
         counter(),
         body,
@@ -1190,7 +1186,7 @@ fn a_package_route_deadlock_item_joins_a_terminal_declaration_as_the_source_does
 fn a_package_route_run_over_another_terminal_declaration_is_refused_as_the_source_is() {
     use fsl_analyze::analyze::DerivedItemMismatch;
     use fsl_analyze::analyze::{
-        AnalyzeLimits, PackageDeadlockSubject, TemporalItem, derived_model_item,
+        derived_model_item, AnalyzeLimits, PackageDeadlockSubject, TemporalItem,
     };
     use fsl_route::request::{DerivedLimits, ItemKind};
 

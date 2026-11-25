@@ -14,14 +14,14 @@ use fsl_analyze::model_check::{RequestRefusal, SubjectContext};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_foundation::bound::{DomainKey, DomainKind, FiniteBound, ProofBound};
 use fsl_foundation::{BackendId, RequestIndex};
-use fsl_replay::{SubjectIdentity, TerminalRecord, node_occurrence};
+use fsl_replay::{node_occurrence, SubjectIdentity, TerminalRecord};
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::model_request::ModelRequest;
 use fsl_route::request::ExtentClassification;
 use ix_trace_rs::trace;
 
-use crate::counter::{UNLIMITED, document, key, subject};
-use crate::liveness::{Fixture, counter};
+use crate::counter::{document, key, subject, UNLIMITED};
+use crate::liveness::{counter, Fixture};
 
 fn reaches_two() -> Fixture {
     counter(

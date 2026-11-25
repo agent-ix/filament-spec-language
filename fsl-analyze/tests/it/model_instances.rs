@@ -730,12 +730,14 @@ fn hyper_parameters_read_the_held_most_specific_type_or_absent_key() {
         )
         .expect_err("an unrelated type has no overlapping population");
     assert!(
-        refusal.iter().any(|refusal| matches!(
-            refusal.cause.as_ref(),
-            CheckCause::Hyper(cause)
-                if matches!(cause.as_ref(), HyperCause::UnresolvedPopulation { parameter, .. }
-                    if parameter == "v")
-        )),
+        refusal
+            .iter()
+            .any(|refusal| matches!(
+                refusal.cause.as_ref(),
+                CheckCause::Hyper(cause)
+                    if matches!(cause.as_ref(), HyperCause::UnresolvedPopulation { parameter, .. }
+                        if parameter == "v")
+            )),
         "the unrelated parameter keeps its typed unresolved-population refusal: {refusal:?}"
     );
 }
@@ -913,17 +915,15 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
         ],
     );
     let (agreeing_package, _) = agreeing.clause("Animal");
-    assert!(
-        ModelSystem::new(
-            agreeing
-                .subject(
-                    &agreeing_package,
-                    universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
-                )
-                .simulation,
-        )
-        .is_ok()
-    );
+    assert!(ModelSystem::new(
+        agreeing
+            .subject(
+                &agreeing_package,
+                universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
+            )
+            .simulation,
+    )
+    .is_ok());
     assert_eq!(
         agreeing.instances(
             "Animal",

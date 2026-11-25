@@ -15,32 +15,33 @@
 
 use std::collections::BTreeSet;
 
-use fsl_analyze::model_check::{ProtocolCheckRequest, SubjectContext, check_protocol};
+use fsl_analyze::model_check::{check_protocol, ProtocolCheckRequest, SubjectContext};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ProtocolSubject};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 
 use filament_exact::{Cancel, Meter};
-use fsl_eval::simulation::Location;
 use fsl_eval::simulation::protocol::{
-    InstanceAccess, MemoryModel, MemorySelection, ProtocolRefusal, ProtocolSystem,
-    ProtocolTransition, RestKind, ThreadPath, WeakAccesses, classify_accesses,
+    classify_accesses, InstanceAccess, MemoryModel, MemorySelection, ProtocolRefusal,
+    ProtocolSystem, ProtocolTransition, RestKind, ThreadPath, WeakAccesses,
 };
+use fsl_eval::simulation::Location;
 use fsl_eval::temporal::AtomReading;
-use fsl_foundation::MemoryModelName;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::MemoryModelName;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord, ModelTraceReplayResult,
-    ModelTraceSubject, ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits,
-    ReplayRefusal, TemporalCounterexample, replay_protocol_trace, settle_protocol_check,
+    replay_protocol_trace, settle_protocol_check, ModelCheckItem, ModelCheckLimits,
+    ModelCheckOutcome, ModelCheckRecord, ModelTraceReplayResult, ModelTraceSubject,
+    ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits, ReplayRefusal,
+    TemporalCounterexample,
 };
 use fsl_route::model_request::ModelRequest;
 use fsl_semantics::check::{AccessClass, FormulaNodeId};
 
 use crate::fill::Reached;
 use crate::litmus::{
-    Documents, PROTOCOL_PROFILE, attempt, core, document, field, key, package,
-    protocol_profiled_package, sb_unit, unit_text_with,
+    attempt, core, document, field, key, package, protocol_profiled_package, sb_unit,
+    unit_text_with, Documents, PROTOCOL_PROFILE,
 };
 use crate::model_settle_support::{envelope_at, request};
 

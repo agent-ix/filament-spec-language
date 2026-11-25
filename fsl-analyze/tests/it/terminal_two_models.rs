@@ -7,14 +7,14 @@
 use filament_exact::Cancel;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_analyze::analyze::{
-    AnalyzeLimits, PackageDeadlockSubject, RunInput, SourceProvision, SubjectBinding, TemporalItem,
-    deadlock_model_item,
+    deadlock_model_item, AnalyzeLimits, PackageDeadlockSubject, RunInput, SourceProvision,
+    SubjectBinding, TemporalItem,
 };
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimulationRequest, ModelSystem, PackageModelInput, PopulationUniverse,
     TerminalClass,
 };
+use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits, V2ReadLimits};
 use fsl_route::request::ItemKind;
@@ -25,8 +25,8 @@ use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
 use crate::hyper_world::{
-    Vault, declarations, document, key, other_document, other_key, snapshot,
-    unit_text_with_functions,
+    declarations, document, key, other_document, other_key, snapshot, unit_text_with_functions,
+    Vault,
 };
 
 /// Each vault steps once to `l = i` while `l = 0`, so it is terminal at `l = 1`.
@@ -473,7 +473,7 @@ fn an_undefined_terminal_of_two_models_runs_and_replays_as_on_the_source_route()
 
 /// The Counter unit selecting `test/counter` as `M` and as `N`, with `body`.
 fn two_aliases(body: &str) -> (CheckedPackage, fsl_semantics::model::intake::PackageInput) {
-    use crate::counter::{PACKAGE, document, unit_text_in};
+    use crate::counter::{document, unit_text_in, PACKAGE};
     let doc = document(false);
     let text = unit_text_in(PACKAGE, body).replace(
         "model M = \"test/counter\";",
@@ -1087,7 +1087,7 @@ fn the_deadlock_item_is_written_for_the_subjects_own_identities() {
 /// (`derived_model_item` and `analyze_items`), on the source route and on the
 /// package route.
 fn settled_records(world: &Two) -> [fsl_analyze::analyze::AnalyzeRecord; 2] {
-    use fsl_analyze::analyze::{Engines, analyze_items, derived_model_item};
+    use fsl_analyze::analyze::{analyze_items, derived_model_item, Engines};
     use fsl_route::deadlock::ModelStateGraphItem;
 
     let selection = world
@@ -1216,7 +1216,7 @@ fn a_vault_only_deadlock_item_proves_with_an_admitted_certificate_on_both_routes
 #[trace("TC-519", "FR-124-AC-12")]
 #[test]
 fn an_uncovered_identitys_invariant_is_refused_and_its_snapshot_admitted() {
-    use fsl_analyze::model_check::{ModelCheckRefusal, ModelCheckRequest, check_model};
+    use fsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
     use fsl_eval::model_subject::ModelSubject;
     use fsl_replay::{InvariantClause, ModelCheckItem, ModelCheckLimits};
 
@@ -1270,7 +1270,7 @@ fn an_uncovered_identitys_invariant_is_refused_and_its_snapshot_admitted() {
 /// `items`, or over FR-620's default items when there are none.
 fn settled_items(world: &Two, items: Option<serde_json::Value>) -> Vec<serde_json::Value> {
     use fsl_analyze::analyze::document::{
-        AnalyzeRun, ItemSelection, SubjectSelection, resolve_items, settle_run,
+        resolve_items, settle_run, AnalyzeRun, ItemSelection, SubjectSelection,
     };
     let engines = fsl_analyze::analyze::Engines::fsl().expect("the manifests register");
     let mut registry = fsl_route::Registry::new();

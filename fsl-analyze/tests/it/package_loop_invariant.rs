@@ -3,10 +3,10 @@
 
 use fsl_foundation::source::SourceLabel;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    HANDOFF, Run, Workspace, analyze, label, package_selection_named, request_over,
+    analyze, label, package_selection_named, request_over, Run, Workspace, HANDOFF,
 };
 
 fn request(
@@ -169,7 +169,7 @@ fn literal_loop_invariant_source_evaluator_has_no_charges() {
     use filament_exact::{Meter, ScalarLimits};
     use fsl_eval::simulation::model::ModelEvaluator;
     use fsl_semantics::model::accounting::ModelNormalizationLimits;
-    use fsl_semantics::model::observation::{ObservationLimits, admit_trace_snapshot};
+    use fsl_semantics::model::observation::{admit_trace_snapshot, ObservationLimits};
     for invariant in ["true", "false"] {
         let ws = Workspace::new(&format!("literal-loop-charges-{invariant}"));
         let path = request(&ws, invariant, "1", "true", "loop-invariant");

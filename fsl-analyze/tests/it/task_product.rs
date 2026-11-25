@@ -3,20 +3,20 @@
 
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_analyze::zone_check::{
-    TaskProductSearchLimits, TaskProductSearchOutcome, TaskProductSearchStop, check_task_product,
-    check_task_product_with_cancel,
+    check_task_product, check_task_product_with_cancel, TaskProductSearchLimits,
+    TaskProductSearchOutcome, TaskProductSearchStop,
 };
 use fsl_eval::simulation::model::{
     TaskProductSystem, TaskProductTrace, TaskProductTraceStep, TaskProductTransition,
     TaskTransitionAction, TimedSystem,
 };
 use fsl_replay::{
-    CounterexampleKind, Lasso, ModelStep, TaskQueueBound, TemporalCounterexample,
-    task_temporal_wire,
+    task_temporal_wire, CounterexampleKind, Lasso, ModelStep, TaskQueueBound,
+    TemporalCounterexample,
 };
 use ix_trace_rs::trace;
 
-use crate::timed_world::{DENSE, document, world};
+use crate::timed_world::{document, world, DENSE};
 
 fn world_with_task(work: u32, deadline: u32) -> crate::timed_world::World {
     world_with_task_bounds(work, work, deadline)
@@ -229,12 +229,10 @@ fn fixed_work_release_completes_or_emits_a_deadline_miss() {
             },
         ],
     };
-    assert!(
-        product
-            .replay_trace(&trace)
-            .expect("the derived miss replays")
-            .deadline_missed()
-    );
+    assert!(product
+        .replay_trace(&trace)
+        .expect("the derived miss replays")
+        .deadline_missed());
     let counterexample = TemporalCounterexample {
         initial_state: 0,
         prefix: vec![
@@ -352,12 +350,10 @@ fn task_product_replay_rejects_a_tampered_miss_identity() {
             },
         ],
     };
-    assert!(
-        product
-            .replay_trace(&trace)
-            .expect("exact prefix replays")
-            .deadline_missed()
-    );
+    assert!(product
+        .replay_trace(&trace)
+        .expect("exact prefix replays")
+        .deadline_missed());
     let after_miss = product
         .delay(&missed.state, &crate::zone_search::exact(1, 1))
         .expect("the latched miss does not stop later scheduler behavior")
@@ -371,12 +367,10 @@ fn task_product_replay_rejects_a_tampered_miss_identity() {
         completed.state.deadline_missed(),
         "the first miss stays latched"
     );
-    assert!(
-        product
-            .scheduler_steps(&completed.state)
-            .iter()
-            .all(|step| step.identity.action != TaskTransitionAction::DeadlineMiss)
-    );
+    assert!(product
+        .scheduler_steps(&completed.state)
+        .iter()
+        .all(|step| step.identity.action != TaskTransitionAction::DeadlineMiss));
 
     for field in ["deadline", "demand", "priority"] {
         let mut tampered = trace.clone();
@@ -987,12 +981,10 @@ fn hi_activation_on_mode_entry_starts_in_hi_phase() {
             fsl_eval::simulation::model::AllowancePhase::Hi
         ]
     );
-    assert!(
-        product
-            .scheduler_steps(&activation.state)
-            .iter()
-            .all(|step| step.identity.action != TaskTransitionAction::BudgetChange)
-    );
+    assert!(product
+        .scheduler_steps(&activation.state)
+        .iter()
+        .all(|step| step.identity.action != TaskTransitionAction::BudgetChange));
 }
 
 /// FR-249-AC-15: a source operation does not enter HI or change a HI job's
@@ -1031,12 +1023,10 @@ fn no_mode_declaration_never_emits_budget_changes() {
         source_step.state.criticality_mode(),
         fsl_eval::simulation::model::CriticalityMode::Lo
     );
-    assert!(
-        product
-            .scheduler_steps(&source_step.state)
-            .iter()
-            .all(|step| step.identity.action != TaskTransitionAction::BudgetChange)
-    );
+    assert!(product
+        .scheduler_steps(&source_step.state)
+        .iter()
+        .all(|step| step.identity.action != TaskTransitionAction::BudgetChange));
 }
 
 /// FR-249-AC-1: S3's checked task declarations lower into the timed product
@@ -1390,12 +1380,10 @@ fn tampered_task_steps_refuse_at_their_member() {
     let timed = TimedSystem::new(&model, "M").expect("dense timed model");
     let product = TaskProductSystem::new(timed, "TwoFp").expect("checked task product");
     let original = refutation_of(&product);
-    assert!(
-        original
-            .prefix
-            .iter()
-            .all(|step| step.transition != fsl_replay::TaskProductTransition::TerminalStutter)
-    );
+    assert!(original
+        .prefix
+        .iter()
+        .all(|step| step.transition != fsl_replay::TaskProductTransition::TerminalStutter));
     fsl_replay::replay_task_product_trace(&product, &original)
         .expect("the untampered counterexample replays");
 

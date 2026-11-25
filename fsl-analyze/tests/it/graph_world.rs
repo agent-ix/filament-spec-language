@@ -35,10 +35,10 @@ use fsl_semantics::check::{CheckedStateGraphClaim, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{
-    DocumentRef, ObservationLimits, declared_type_universe_for,
+    declared_type_universe_for, DocumentRef, ObservationLimits,
 };
-use fsl_semantics::value::{DefinitionRole, admit_integer_division};
-use serde_json::{Value as Json, json};
+use fsl_semantics::value::{admit_integer_division, DefinitionRole};
+use serde_json::{json, Value as Json};
 
 use crate::counter::UNLIMITED;
 
@@ -385,6 +385,11 @@ impl World {
         &self.packages
     }
 
+    /// The original unit bytes keyed by the package graph's declared source.
+    pub(crate) fn source_provision(&self) -> fsl_analyze::analyze::SourceProvision {
+        fsl_analyze::analyze::SourceProvision::single(self.package.graph().source(), &self.source)
+    }
+
     /// Recompile and replay one state-graph witness through FR-170.
     pub(crate) fn replay_witness(
         &self,
@@ -580,7 +585,8 @@ pub(crate) fn symmetric_config_version() -> Model {
 }
 
 /// §7.1's contract.
-pub(crate) const CONFIG_CONTRACT: &str = "post Advance using v on Config::ConfigVersion::attemptUpdate { \
+pub(crate) const CONFIG_CONTRACT: &str =
+    "post Advance using v on Config::ConfigVersion::attemptUpdate { \
      (pre(self.versionNumber) < 2 and self.versionNumber = pre(self.versionNumber) + 1) or \
      (pre(self.versionNumber) = 2 and self.versionNumber = 0) }\n";
 

@@ -15,7 +15,7 @@ use fsl_semantics::check::CheckedRefinement;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
-use crate::refinement_aux::{World as AuxWorld, Unit, UNLIMITED as AUX_UNLIMITED};
+use crate::refinement_aux::{Unit, World as AuxWorld, UNLIMITED as AUX_UNLIMITED};
 
 fn check_aux(world: &AuxWorld<'_>) -> RefinementOutcome {
     run(

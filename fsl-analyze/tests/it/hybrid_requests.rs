@@ -24,9 +24,9 @@ use fsl_foundation::SourceIdentity;
 use fsl_replay::{ExactReplay, HybridReplayMeter};
 use fsl_semantics::check::ModeIndex;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{Run, Workspace, analyze_with_providers};
+use crate::analyze_cli_support::{analyze_with_providers, Run, Workspace};
 
 /// FR-447's `Braking` without `t`; `claims` follow the declaration.
 pub(crate) fn braking(claims: &str) -> String {
@@ -458,7 +458,7 @@ fn hybrid_replay_request_for(
         dependencies: Vec::new(),
         replay_target: fsl_replay::RequestTargetWire::state_clause(
             fsl_replay::QualifiedName::new(vec![
-                filament_exact::Identifier::new(claim).expect("the claim name is an identifier"),
+                filament_exact::Identifier::new(claim).expect("the claim name is an identifier")
             ])
             .expect("the claim name is qualified"),
         ),

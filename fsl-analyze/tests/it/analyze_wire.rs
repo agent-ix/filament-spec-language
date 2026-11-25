@@ -10,8 +10,8 @@ use ix_trace_rs::trace;
 use serde_json::json;
 
 use crate::analyze_cli_support::{
-    Workspace, analyze, below_three, bounded, counter_request, counter_request_with,
-    request_members,
+    analyze, below_three, bounded, counter_request, counter_request_with, request_members,
+    Workspace,
 };
 
 /// FR-620-AC-3: a request with neither `program` nor `package`, and an item

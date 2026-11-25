@@ -57,6 +57,7 @@ mod protocol_composition;
 mod protocol_counted_support;
 mod protocol_item_bounds;
 mod provider_external_contract;
+mod provider_test_support;
 mod provision_contract;
 #[path = "../../../tests/support/published_fspec.rs"]
 pub(crate) mod published_fspec;

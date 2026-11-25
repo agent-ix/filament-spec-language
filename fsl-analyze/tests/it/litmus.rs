@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#![allow(dead_code, reason = "shared fixture support spans split integration test binaries")]
+#![allow(
+    dead_code,
+    reason = "shared fixture support spans split integration test binaries"
+)]
 //! ADR-025 §10's store-buffering model as a fixture: the `test/litmus`
 //! domain package, a population `cells` of `Cell` (fields `id`, `v` and `w`,
 //! each `Int[0, 3]`) with operations `set` (`v`), `add` (`v`) and `both`
@@ -31,7 +34,7 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 use crate::counter::UNLIMITED;
 
@@ -583,7 +586,8 @@ pub(crate) const NO_BOTH_ZERO: &str = "temporal NoBothZero using t0 over (k: M::
      \"model-steps\" on origin { always holds(not (k.r1 = 0 and k.r2 = 0)) }\n";
 
 /// The bounded event-position form used by fixtures that also await.
-pub(crate) const NO_BOTH_ZERO_BOUNDED: &str = "temporal NoBothZero using t0 over (k: M::Core) clock \
+pub(crate) const NO_BOTH_ZERO_BOUNDED: &str =
+    "temporal NoBothZero using t0 over (k: M::Core) clock \
      \"model-steps\" on origin { always[0,1] holds(not (k.r1 = 0 and k.r2 = 0)) }\n";
 
 /// The `SB` unit over `run`, with the claim.

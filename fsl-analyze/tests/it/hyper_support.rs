@@ -7,12 +7,12 @@
 
 use filament_exact::{Charge, ChargePoint, Meter};
 use fsl_eval::hyper::{MatchReading, ParameterBinding, StepLabel, StepMatch};
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::TransitionSystem;
 use fsl_replay::{HyperCounterexample, HyperOutcome, HyperStep};
 
 use crate::counter::ZERO;
-use crate::hyper_world::{World, high, low};
+use crate::hyper_world::{high, low, World};
 /// The counterexample of a violated run.
 pub(crate) fn refuted(outcome: HyperOutcome) -> HyperCounterexample {
     match outcome {

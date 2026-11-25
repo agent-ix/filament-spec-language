@@ -15,14 +15,14 @@ use std::collections::BTreeMap;
 use filament_exact::{Cancel, Meter};
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use fsl_analyze::model_check::{
-    ModelCheckRefusal, ProtocolCheckRequest, check_protocol, check_protocol_constrained,
+    check_protocol, check_protocol_constrained, ModelCheckRefusal, ProtocolCheckRequest,
 };
-use fsl_eval::fairness::{EdgeLabel, Identity, LassoFairness, LoopStep, check_loop};
+use fsl_eval::fairness::{check_loop, EdgeLabel, Identity, LassoFairness, LoopStep};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::protocol::{
-    FairnessOrigin, MemoryModel, MemorySelection, ProtocolFairness, ProtocolState, ProtocolSystem,
-    ProtocolTarget, ProtocolTransition, Ra, Sc, StepKind, Tso, protocol_constraints,
+    protocol_constraints, FairnessOrigin, MemoryModel, MemorySelection, ProtocolFairness,
+    ProtocolState, ProtocolSystem, ProtocolTarget, ProtocolTransition, Ra, Sc, StepKind, Tso,
 };
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_eval::temporal::AtomReading;
@@ -30,19 +30,19 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{Code, MemoryModelName, SourceIdentity};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    CertificateRule, ClosureRefusal, ComponentCertificate, CounterexampleKind, Lasso, MemoryBound,
-    MemoryBoundMember, MemoryCause, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelStep,
-    ModelTraceRefusal, ModelTraceSubject, ProofCertificate, ProtocolCertificateRequest,
-    ProtocolTraceSubject, ReductionCause, ReplayLimits, ReplayRefusal, TemporalCertificateCheck,
-    TemporalCounterexample, check_protocol_closure, check_protocol_components,
-    replay_protocol_trace, settle_protocol_check,
+    check_protocol_closure, check_protocol_components, replay_protocol_trace,
+    settle_protocol_check, CertificateRule, ClosureRefusal, ComponentCertificate,
+    CounterexampleKind, Lasso, MemoryBound, MemoryBoundMember, MemoryCause, ModelCheckItem,
+    ModelCheckLimits, ModelCheckOutcome, ModelStep, ModelTraceRefusal, ModelTraceSubject,
+    ProofCertificate, ProtocolCertificateRequest, ProtocolTraceSubject, ReductionCause,
+    ReplayLimits, ReplayRefusal, TemporalCertificateCheck, TemporalCounterexample,
 };
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
 
 use crate::litmus::{
-    Documents, attempt, contracts, core, document, field, package, protocol, protocol_with, sb_run,
-    unit_text,
+    attempt, contracts, core, document, field, package, protocol, protocol_with, sb_run, unit_text,
+    Documents,
 };
 use crate::model_settle::{envelope_at, request};
 use crate::weak_memory::select;
@@ -1003,7 +1003,8 @@ fn a_false_liveness_claim_with_a_cut_store_is_refuted_by_a_replayable_lasso() {
     let cut = unit
         .check(&unit.tso(), Some(1))
         .expect("the subject checks");
-    let ModelCheckOutcome::Violated { counterexample, .. } = cut else {
+    let ModelCheckOutcome::Violated { counterexample, .. } = cut
+    else {
         panic!("{cut:?}");
     };
     assert!(counterexample.lasso.is_some());

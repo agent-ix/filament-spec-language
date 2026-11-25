@@ -12,12 +12,12 @@ use std::collections::BTreeMap;
 use filament_exact::{Cancel, CancelCause, Integer, Rational, ScalarLimits};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_analyze::plan_search::{
-    CertificateKind, CertificateOutcome, CertificateRule, Direction, MonitorStep, ObjectiveKind,
-    PlanFault, PlanLengths, PlanLimit, PlanResult, PlanRules, PlanSearchError, PlanSearchLimits,
-    PlanSearchRequest, PlanStatus, PlanStep, PlanStopCause, PlanView, RuleStop, search,
+    search, CertificateKind, CertificateOutcome, CertificateRule, Direction, MonitorStep,
+    ObjectiveKind, PlanFault, PlanLengths, PlanLimit, PlanResult, PlanRules, PlanSearchError,
+    PlanSearchLimits, PlanSearchRequest, PlanStatus, PlanStep, PlanStopCause, PlanView, RuleStop,
 };
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
+use fsl_eval::simulation::TransitionSystem;
 use ix_trace_rs::trace;
 use serde_json::json;
 
@@ -627,12 +627,10 @@ fn the_empty_plan_and_a_general_objective() {
     )
     .unwrap();
     assert_eq!(result.status, PlanStatus::Optimal);
-    assert!(
-        result
-            .plan
-            .as_ref()
-            .is_some_and(|plan| plan.steps.is_empty())
-    );
+    assert!(result
+        .plan
+        .as_ref()
+        .is_some_and(|plan| plan.steps.is_empty()));
     assert_eq!(result.objective, Some(integer(0)));
 
     let mut rules = Counter::new(&world, &system, 8);
@@ -1074,8 +1072,8 @@ fn source_policy_world(start: &[(&str, serde_json::Value)]) -> World {
 fn source_policy_reads_share_the_request_work_counter() {
     use filament_exact::{LimitKind, Meter};
     use fsl_analyze::plan_source::SourcePlan;
+    use fsl_eval::simulation::model::{read_clause, ClauseReading};
     use fsl_eval::simulation::TransitionSystem;
-    use fsl_eval::simulation::model::{ClauseReading, read_clause};
 
     let world = source_policy_world(&[("c", json!({"value": {"integer": "0"}}))]);
     let system = world_system(&world);
@@ -1134,8 +1132,8 @@ fn source_policy_reads_share_the_request_work_counter() {
 #[trace("FR-1011-AC-2", "FSpec-FR-801-AC-2")]
 fn source_policy_instances_share_the_request_work_counter() {
     use filament_exact::{LimitKind, Meter};
+    use fsl_eval::simulation::model::{read_clause, ClauseReading};
     use fsl_eval::simulation::TransitionSystem;
-    use fsl_eval::simulation::model::{ClauseReading, read_clause};
 
     let both = source_policy_world(&[
         ("c", json!({"value": {"integer": "0"}})),
@@ -1194,8 +1192,8 @@ fn source_policy_instances_share_the_request_work_counter() {
 fn source_policy_acceptance_requires_closed_truth_and_preserves_vacuity() {
     use filament_exact::Meter;
     use fsl_analyze::plan_source::SourcePlan;
+    use fsl_eval::simulation::model::{read_clause, ClauseReading};
     use fsl_eval::simulation::TransitionSystem;
-    use fsl_eval::simulation::model::{ClauseReading, read_clause};
 
     for empty in [false, true] {
         let objects = if empty {
@@ -1426,17 +1424,8 @@ fn finite_reference_arguments_drain_two_servers_and_survive_replay() {
     let mut inconsistent = plan.clone();
     inconsistent.steps[0] = PlanStep::new(forged, plan.steps[0].outcome_ordinal());
     rules.begin_replay();
-    assert!(
-        replay::replay(
-            &system,
-            &mut rules,
-            &inconsistent,
-            PlanLengths::new(0, 2).unwrap(),
-            ObjectiveKind::StepSum
-        )
-        .is_err(),
-        "another server argument violates drain's receiver-equality contract and the recorded transition"
-    );
+    assert!(replay::replay(&system, &mut rules, &inconsistent, PlanLengths::new(0, 2).unwrap(), ObjectiveKind::StepSum).is_err(),
+        "another server argument violates drain's receiver-equality contract and the recorded transition");
 }
 
 /// Canonical argument order is parameter-major, using the enum's admitted
@@ -1611,11 +1600,8 @@ fn finite_reference_arguments_over_an_empty_population_have_no_invocations() {
     let robots = [("r", json!({}))];
     let world = finite_argument_world(
         "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; object Server {} object Robot { operation choose(s: Server); } population servers: Server; population robots: Robot;",
-        "Robot",
-        "robots",
-        "bound EmptyServers on M::servers [0]\ntype Lengths = Int[1,1]; synthesis Reach using t grammar M::Robot domain Lengths satisfies { true };",
-        &[("servers", "Server", &[]), ("robots", "Robot", &robots)],
-    );
+        "Robot", "robots", "bound EmptyServers on M::servers [0]\ntype Lengths = Int[1,1]; synthesis Reach using t grammar M::Robot domain Lengths satisfies { true };",
+        &[("servers","Server",&[]),("robots","Robot",&robots)]);
     let system = ModelSystem::new(
         world
             .subject_populations(&[("servers", &[]), ("robots", &["r"])], UNLIMITED)
@@ -1675,15 +1661,7 @@ fn finite_reference_arguments_preserve_subtypes_and_canonical_identity_order() {
     let foreign = [("q", json!({}))];
     let world = finite_argument_world(
         "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; object Base { operation select(target: Base); } object Child extends Base {} object Foreign {} population children: Child; population foreign: Foreign; population bases: Base;",
-        "Base",
-        "bases",
-        "",
-        &[
-            ("children", "Child", &children),
-            ("foreign", "Foreign", &foreign),
-            ("bases", "Base", &bases),
-        ],
-    );
+        "Base","bases","", &[("children","Child",&children),("foreign","Foreign",&foreign),("bases","Base",&bases)]);
     let system = ModelSystem::new(
         world
             .subject_populations(
@@ -1838,18 +1816,13 @@ fn finite_reference_arguments_exclude_objects_deleted_by_an_earlier_step() {
 fn finite_argument_retention_denies_the_exact_named_occurrence_bound() {
     use filament_exact::LimitKind;
     use fsl_analyze::plan_source::SourcePlan;
-    use fsl_eval::simulation::ExpansionLimit;
     use fsl_eval::simulation::model::{
         NativeCandidateControl as Control, NativeCandidateEvent as Event,
     };
+    use fsl_eval::simulation::ExpansionLimit;
     let robots = [("a", json!({}))];
-    let world = finite_argument_world(
-        "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; enum Cell { c0, c1 } object Robot { operation move(r: Robot, c: Cell); } population robots: Robot;",
-        "Robot",
-        "robots",
-        "type Lengths = Int[1,1]; synthesis Reach using t grammar M::Robot domain Lengths satisfies { true };",
-        &[("robots", "Robot", &robots)],
-    );
+    let world=finite_argument_world("language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; enum Cell { c0, c1 } object Robot { operation move(r: Robot, c: Cell); } population robots: Robot;",
+        "Robot","robots","type Lengths = Int[1,1]; synthesis Reach using t grammar M::Robot domain Lengths satisfies { true };",&[("robots","Robot",&robots)]);
     let system = ModelSystem::new(
         world
             .subject_populations(&[("robots", &["a"])], UNLIMITED)
@@ -1912,8 +1885,7 @@ fn finite_argument_retention_denies_the_exact_named_occurrence_bound() {
 fn finite_payload_world() -> World {
     native_plan_world(
         "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,0]; enum Cell { c0 } object Counter { number: ValueRange; operation move(r: Counter, c: Cell); } population counters: Counter;",
-        "",
-        &[("c", json!({"number":{"integer":"0"}}))],
+        "", &[("c",json!({"number":{"integer":"0"}}))],
     )
 }
 
@@ -2013,7 +1985,7 @@ fn finite_payload_replay_and_checker_preserve_retention_stops() {
     use fsl_eval::simulation::model::{
         NativeCandidateControl as Control, NativeCandidateEvent as Event,
     };
-    use std::sync::{Arc, Mutex, atomic::Ordering};
+    use std::sync::{atomic::Ordering, Arc, Mutex};
     let world = finite_payload_world();
     let system = world_system(&world);
     system.begin_plan_replay(UNLIMITED);
@@ -2203,8 +2175,7 @@ fn native_invocation_gate_precedes_contract_evaluation() {
     let world = native_plan_world(
         "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,3]; object Counter { number: ValueRange; operation apply(): Boolean modifies self.number; } population counters: Counter;",
         "post Applied using v on M::Counter::apply { convert<Integer>(self.number) = pre(self.number) + 1 }\n",
-        &[("c", json!({"number":{"integer":"0"}}))],
-    );
+        &[("c", json!({"number":{"integer":"0"}}))]);
     let system = world_system(&world);
     system.share_evaluation_meter(UNLIMITED);
     let mut began = 0;
@@ -2242,9 +2213,7 @@ fn rejected_native_frame_trials_do_not_become_extra_invocations() {
     };
     let mut charges = Vec::new();
     for upper in [1, 3] {
-        let model = format!(
-            "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,{upper}]; object Counter {{ number: ValueRange; operation apply(): Boolean modifies self.number; }} population counters: Counter;"
-        );
+        let model = format!("language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,{upper}]; object Counter {{ number: ValueRange; operation apply(): Boolean modifies self.number; }} population counters: Counter;");
         let world = native_plan_world(
             &model,
             "post Applied using v on M::Counter::apply { self.number = 1 }\n",
@@ -2294,12 +2263,7 @@ fn native_invocations_follow_operation_receiver_and_typed_argument_order() {
     };
     let world = native_plan_world(
         "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,0]; type ArgumentRange = Int[2,10]; object Counter { number: ValueRange; operation zeta(amount: ArgumentRange); operation alpha(amount: ArgumentRange); } population counters: Counter;",
-        "",
-        &[
-            ("9", json!({"number":{"integer":"0"}})),
-            ("10", json!({"number":{"integer":"0"}})),
-        ],
-    );
+        "", &[("9",json!({"number":{"integer":"0"}})),("10",json!({"number":{"integer":"0"}}))]);
     let system = ModelSystem::new(world.subject(&["9", "10"], UNLIMITED).simulation)
         .expect("both native receivers admit");
     let mut invocations = Vec::new();
@@ -2353,14 +2317,12 @@ fn native_outcomes_keep_all_results_in_result_then_state_order() {
         NativeCandidateControl, NativeCandidateEvent, NativeCandidateVisit,
     };
     for (declaration, field) in [("", "Int[0,2]"), ("type Amount = Int[0,2];", "Amount")] {
-        let model = format!(
-            "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; {declaration} object Counter {{ number: {field}; operation choose(): Boolean modifies self.number; }} population counters: Counter;"
-        );
+        let model = format!("language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; {declaration} object Counter {{ number: {field}; operation choose(): Boolean modifies self.number; }} population counters: Counter;");
         let world = native_plan_world(
-            &model,
-            "post Chosen using v on M::Counter::choose { (not result and self.number >= 1) or (result and self.number <= 1) }\n",
-            &[("c", json!({"number":{"integer":"0"}}))],
-        );
+        &model,
+        "post Chosen using v on M::Counter::choose { (not result and self.number >= 1) or (result and self.number <= 1) }\n",
+        &[("c", json!({"number":{"integer":"0"}}))],
+    );
         let types = world.package.graph().scope().types();
         let counter = types
             .object_types()
@@ -2418,9 +2380,7 @@ fn inline_integer_initial_values_refuse_outside_the_declared_interval() {
     for initial in [-1, 3] {
         let mut causes = Vec::new();
         for (declaration, field) in [("", "Int[0,2]"), ("type Amount = Int[0,2];", "Amount")] {
-            let model = format!(
-                "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; {declaration} object Counter {{ number: {field}; operation choose(): Boolean modifies self.number; }} population counters: Counter;"
-            );
+            let model = format!("language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; {declaration} object Counter {{ number: {field}; operation choose(): Boolean modifies self.number; }} population counters: Counter;");
             let world = native_plan_world(
                 &model,
                 "",
@@ -2452,8 +2412,7 @@ fn native_replay_and_certificate_bind_each_multiple_outcome_ordinal() {
     let world = native_plan_world(
         "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,2]; object Counter { number: ValueRange; operation choose(): Boolean modifies self.number; } population counters: Counter;",
         "post Chosen using v on M::Counter::choose { (not result and self.number >= 1) or (result and self.number <= 1) }\n",
-        &[("c", json!({"number":{"integer":"0"}}))],
-    );
+        &[("c",json!({"number":{"integer":"0"}}))]);
     let system = world_system(&world);
     let mut rules = Counter::new(&world, &system, 2);
     rules.value_field = "number";
@@ -2539,8 +2498,7 @@ fn native_replay_refuses_single_outcome_ordinals_and_wrong_receivers() {
     let world = native_plan_world(
         "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,1]; object Counter { number: ValueRange; operation settle() modifies self.number; } object Other { number: ValueRange; } population counters: Counter;",
         "post Settles using v on M::Counter::settle { self.number = 1 }\n",
-        &[("c", json!({"number":{"integer":"0"}}))],
-    );
+        &[("c",json!({"number":{"integer":"0"}}))]);
     let system = world_system(&world);
     let mut rules = Counter::new(&world, &system, 1);
     rules.value_field = "number";
@@ -2609,15 +2567,13 @@ fn native_replay_refuses_single_outcome_ordinals_and_wrong_receivers() {
 #[trace("FSpec-FR-801", "FR-1011-AC-2")]
 fn native_outcome_collection_names_its_retained_value_limit() {
     use filament_exact::LimitKind;
-    use fsl_eval::simulation::ExpansionLimit;
     use fsl_eval::simulation::model::{
         NativeCandidateControl, NativeCandidateEvent, NativeCandidateVisit,
     };
+    use fsl_eval::simulation::ExpansionLimit;
     let world = native_plan_world(
         "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type ValueRange = Int[0,1]; object Counter { number: ValueRange; operation choose(): Boolean modifies self.number; } population counters: Counter;",
-        "",
-        &[("c", json!({"number":{"integer":"0"}}))],
-    );
+        "", &[("c",json!({"number":{"integer":"0"}}))]);
     let collect = |bound| {
         let system = world_system(&world);
         system.share_evaluation_meter(ScalarLimits {
@@ -2804,10 +2760,8 @@ fn lambda_objective_world(objective: &str, types: &str) -> World {
 fn lambda_objective_world_for_goal(objective: &str, types: &str, goal: &str) -> World {
     native_plan_world(
         "language \"ix:native\" edition \"1-draft\"; domain \"test/native-plan\"; type Amount = Int[0,3]; object Counter { number: Amount; operation inc() modifies self.number; } population counters: Counter;",
-        &format!(
-            "{types}\npost Inc using v on M::Counter::inc {{ (pre(self.number) = 0 and self.number = 1) or (pre(self.number) = 1 and self.number = 2) or (pre(self.number) = 2 and self.number = 3) }}\ntype Lengths = Int[0,3]; synthesis Reach using v grammar M::Counter domain Lengths {objective} satisfies {{ {goal} }};"
-        ),
-        &[("c", json!({"number":{"integer":"0"}}))],
+        &format!("{types}\npost Inc using v on M::Counter::inc {{ (pre(self.number) = 0 and self.number = 1) or (pre(self.number) = 1 and self.number = 2) or (pre(self.number) = 2 and self.number = 3) }}\ntype Lengths = Int[0,3]; synthesis Reach using v grammar M::Counter domain Lengths {objective} satisfies {{ {goal} }};"),
+        &[("c",json!({"number":{"integer":"0"}}))],
     )
 }
 
@@ -3125,17 +3079,10 @@ fn policy_diamond_world(formula: &str, unit_contracts: bool) -> World {
     } else {
         ""
     };
-    native_plan_world_with_clauses(
-        POLICY_DIAMOND_MODEL,
-        &format!(
-            "{contracts}\ntype Lengths = Int[0,3]; synthesis Reach using t grammar M::Counter domain Lengths satisfies {{ forall(c in Reach.final.counters: c.number = 4) }};\n"
-        ),
-        &[model_world::Clause {
-            activation: "on origin",
-            formula,
-        }],
-        &[("c", json!({"number":{"integer":"0"}}))],
-    )
+    native_plan_world_with_clauses(POLICY_DIAMOND_MODEL,
+        &format!("{contracts}\ntype Lengths = Int[0,3]; synthesis Reach using t grammar M::Counter domain Lengths satisfies {{ forall(c in Reach.final.counters: c.number = 4) }};\n"),
+        &[model_world::Clause { activation: "on origin", formula }],
+        &[("c", json!({"number":{"integer":"0"}}))])
 }
 
 /// Inline requires disable operations before their states, and inline ensures
@@ -3250,8 +3197,7 @@ fn imported_operation_contracts_bind_inherited_arguments_and_result() {
     use fsl_eval::simulation::model::{
         NativeCandidateControl as Control, NativeCandidateEvent as Event,
     };
-    let world = finite_argument_world(
-        r#"language "ix:native" edition "1-draft";
+    let world = finite_argument_world(r#"language "ix:native" edition "1-draft";
 domain "test/native-plan";
 type Amount = Int[0,1];
 object Base {
@@ -3268,19 +3214,10 @@ object Counter extends Base {
   }
 }
 population counters: Counter;
-"#,
-        "Counter",
-        "counters",
+"#, "Counter", "counters",
         "pre UnitArgument using v on M::Counter::choose { amount >= 0 }\npost UnitResult using v on M::Counter::choose { result }",
-        &[(
-            "counters",
-            "Counter",
-            &[
-                ("c", json!({"number":{"integer":"0"}})),
-                ("d", json!({"number":{"integer":"0"}})),
-            ],
-        )],
-    );
+        &[("counters", "Counter", &[("c", json!({"number":{"integer":"0"}})),
+            ("d", json!({"number":{"integer":"0"}}))])]);
     let system = ModelSystem::new(
         world
             .subject_populations(&[("counters", &["c", "d"])], UNLIMITED)
@@ -3689,10 +3626,7 @@ fn positive_source_policy_instances_preserve_order_vacuity_and_original_denials(
         let world = native_plan_world_with_clauses(
             POLICY_DIAMOND_MODEL,
             "type Lengths = Int[0,1]; synthesis Reach using t grammar M::Counter domain Lengths satisfies { true };",
-            &[model_world::Clause {
-                activation: "on origin",
-                formula: "always holds(c.number >= 0)",
-            }],
+            &[model_world::Clause { activation: "on origin", formula: "always holds(c.number >= 0)" }],
             &start,
         );
         let keys: Vec<_> = start.iter().map(|(key, _)| *key).collect();

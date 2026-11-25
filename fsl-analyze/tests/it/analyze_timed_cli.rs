@@ -9,16 +9,16 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use filament_exact::{Cancel, Meter, Undefined};
-use fsl_analyze::model_check::digital::{DigitalLimits, DigitalRequest, check_digital};
+use fsl_analyze::model_check::digital::{check_digital, DigitalLimits, DigitalRequest};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelSimState, TimedSystem};
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_replay::{CounterexampleKind, ModelCheckOutcome};
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{Workspace, analyze, label, request_over};
+use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
 use crate::analyze_family_cli::{rpc_snapshot, rpc_unit, rpc_unit_with};
 
 /// ADR-026 section 11's `Settles`: every `Waiting` position is followed within

@@ -208,7 +208,9 @@ fn has_reachable_non_atomic_access<M: MemoryModel>(
     selection: &[MemorySelection],
     memory: M,
 ) -> bool {
-    let system = case.concrete_system(selection, memory).expect("protocol system");
+    let system = case
+        .concrete_system(selection, memory)
+        .expect("protocol system");
     let mut queue: VecDeque<_> = system.try_initial().expect("initial states settle").into();
     let mut seen = BTreeSet::new();
     while let Some(state) = queue.pop_front() {

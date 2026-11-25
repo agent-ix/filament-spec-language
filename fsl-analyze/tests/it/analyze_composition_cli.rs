@@ -20,11 +20,11 @@
 use std::path::PathBuf;
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    Workspace, analyze, analyze_with_providers, assert_no_nested_node_ids, counter_snapshot, label,
-    package_selection, request_members,
+    analyze, analyze_with_providers, assert_no_nested_node_ids, counter_snapshot, label,
+    package_selection, request_members, Workspace,
 };
 use crate::counter::{clause_text, document};
 
@@ -283,7 +283,7 @@ impl fsl_analyze::provider::ExternalProvider for Recording {
             .lock()
             .expect("the record lock")
             .push(serde_json::to_value(request).expect("the request serializes"));
-        (self.1.0)(request)
+        (self.1 .0)(request)
     }
 }
 
@@ -685,11 +685,9 @@ fn a_caller_may_only_restate_the_derived_premise_keys() {
     for name in ["Sys", "SysAG"] {
         let plain = analyze(&request(&ws, &system(), json!([composition(name)])));
         let path = request_with_raw_premises(&ws, name, &raw);
-        assert!(
-            std::fs::read_to_string(&path)
-                .expect("reads")
-                .contains(&raw)
-        );
+        assert!(std::fs::read_to_string(&path)
+            .expect("reads")
+            .contains(&raw));
         let run = analyze(&path);
         let (plain, run) = (plain.document(), run.document());
         assert_eq!(plain["items"], run["items"], "{name}");
@@ -1553,18 +1551,15 @@ fn a_package_item_naming_a_composition_is_refused() {
     // Each compile writes its own handoff directory, so each name gets its
     // own workspace.
     for (name, detail) in [
-        (
-            "Sys",
-            "items[0] composition owning execution is pending missing native before-work permission",
-        ),
-        (
-            "Typo",
-            "items[0] names the unnamed-claim family, which has no package form yet",
-        ),
+        ("Sys", "items[0] composition owning execution is pending missing native before-work permission"),
+        ("Typo", "items[0] names the unnamed-claim family, which has no package form yet"),
     ] {
         let ws = Workspace::new(&format!("compose-package-named-{name}"));
         let path = request_for(&ws, &system(), BOUNDED, Some(json!([composition(name)])));
-        assert_package_pending(&analyze(&package_handoff(&ws, &path)), detail);
+        assert_package_pending(
+            &analyze(&package_handoff(&ws, &path)),
+            detail,
+        );
     }
 }
 

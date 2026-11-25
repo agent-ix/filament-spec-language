@@ -19,7 +19,6 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::Value;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::model_subject::{ModelInstance, ModelSubject, ProtocolSubject, RoleBinding};
-use fsl_eval::simulation::SubjectSystem;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimState, ModelSimulationRequest, ModelSystem, PopulationUniverse,
     TerminalClass,
@@ -28,13 +27,14 @@ use fsl_eval::simulation::protocol::{
     MemoryModel, ProtocolState, ProtocolSystem, Ra, Reachable, ReachedState, ResolvedMemory, Sc,
     StepKind, Tso,
 };
+use fsl_eval::simulation::SubjectSystem;
 use fsl_foundation::SourceIdentity;
 use fsl_package::{CheckedPackage, ClockConfiguration, TemporalClockSelection};
 use fsl_semantics::check::{PackageDeclarations, TemporalProfile};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 use crate::counter::UNLIMITED;
 

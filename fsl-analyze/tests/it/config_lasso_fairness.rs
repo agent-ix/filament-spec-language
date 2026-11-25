@@ -14,12 +14,12 @@ use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity,
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
-    ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject, ModelTraceValue, ReplayLimits,
-    ReplayRefusal, TemporalCounterexample, replay_model_trace,
+    replay_model_trace, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject,
+    ModelTraceValue, ReplayLimits, ReplayRefusal, TemporalCounterexample,
 };
 use ix_trace_rs::trace;
 
-use crate::example_units::{EACH, Versions, WHOLE, config, decide, receiver, violated};
+use crate::example_units::{config, decide, receiver, violated, Versions, EACH, WHOLE};
 use crate::model_settle::{envelope_at, request};
 use crate::units::World;
 

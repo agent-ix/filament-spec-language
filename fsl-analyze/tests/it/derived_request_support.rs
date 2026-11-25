@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#![allow(dead_code, reason = "shared fixture support spans split integration test binaries")]
+#![allow(
+    dead_code,
+    reason = "shared fixture support spans split integration test binaries"
+)]
 //! Shared derived-request helpers used by integration test targets.
 
-use crate::counter::{CONTRACT, clause_text};
-use fsl_analyze::analyze::{AnalyzeItem, AnalyzeRecord, ModelItem, derived_model_item};
-use fsl_analyze::model_check::SubjectContext;
+use crate::counter::{clause_text, CONTRACT};
+use fsl_analyze::analyze::{derived_model_item, AnalyzeItem, AnalyzeRecord, ModelItem};
 use fsl_analyze::model_check::manifest as en1;
+use fsl_analyze::model_check::SubjectContext;
 use fsl_analyze::zone_check::manifest as en6;
 use fsl_eval::model_subject::ModelSubject;
 use fsl_replay::SubjectIdentity;

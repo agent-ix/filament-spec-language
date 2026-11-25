@@ -4,9 +4,9 @@
 //! refuted by a finite-prefix counterexample that replays.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{Workspace, analyze, counter_request, label};
+use crate::analyze_cli_support::{analyze, counter_request, label, Workspace};
 
 const AT_MOST_THREE: &str =
     "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n";

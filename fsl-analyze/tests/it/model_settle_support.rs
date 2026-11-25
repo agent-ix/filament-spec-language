@@ -6,20 +6,20 @@
 //! Shared model replay helpers used by integration test targets.
 
 use crate::counter::{
-    Documents, Letters, UNLIMITED, document, package_with_mode, subject, unit_text, universe,
+    document, package_with_mode, subject, unit_text, universe, Documents, Letters, UNLIMITED,
 };
 use filament_exact::{Cancel, Identifier, NodeKey, Origin, Role};
 use filament_semantic_value::checking::CheckMode;
-use fsl_analyze::model_check::{ModelCheckRequest, check_model};
-use fsl_eval::simulation::SubjectTransition;
+use fsl_analyze::model_check::{check_model, ModelCheckRequest};
 use fsl_eval::simulation::model::ExpansionLimits;
+use fsl_eval::simulation::SubjectTransition;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    CertificateRequest, EnvelopeSource, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome,
-    ModelTraceReplayResult, ModelTraceSubject, QualifiedName, ReplayLimits, ReplayRefusal,
-    ReplayRequestWire, ReplaySource, StateEnvironment, TemporalCounterexample, Witness,
-    WitnessEnvelope, WitnessPacket, replay_model_trace,
+    replay_model_trace, CertificateRequest, EnvelopeSource, ModelCheckItem, ModelCheckLimits,
+    ModelCheckOutcome, ModelTraceReplayResult, ModelTraceSubject, QualifiedName, ReplayLimits,
+    ReplayRefusal, ReplayRequestWire, ReplaySource, StateEnvironment, TemporalCounterexample,
+    Witness, WitnessEnvelope, WitnessPacket,
 };
 
 /// Typed allocator boundary failure, without forcing host OOM or mocking a run.

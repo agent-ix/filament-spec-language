@@ -9,26 +9,26 @@
 use std::collections::BTreeMap;
 
 use filament_exact::Cancel;
-use fsl_analyze::model_check::{ProtocolCheckRequest, check_protocol};
+use fsl_analyze::model_check::{check_protocol, ProtocolCheckRequest};
 use fsl_eval::model_subject::{ProtocolSubject, RoleBinding};
-use fsl_eval::simulation::SubjectSystem;
 use fsl_eval::simulation::model::ExpansionLimits;
 use fsl_eval::simulation::protocol::{ProtocolTransition, StepKind};
+use fsl_eval::simulation::SubjectSystem;
 use fsl_foundation::diagnostic::Code;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    ModelCheckItem, ModelCheckLimits, ModelTraceSubject, ProtocolTraceSubject, ReplayLimits,
-    ReplayRefusal, replay_protocol_trace,
+    replay_protocol_trace, ModelCheckItem, ModelCheckLimits, ModelTraceSubject,
+    ProtocolTraceSubject, ReplayLimits, ReplayRefusal,
 };
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 use crate::counter::Letters;
 use crate::fill::{
-    Documents, PACKAGE, attempt, contracts, document, instance, json_of, model_subject,
-    package_over, protocol, reachable, sc_system, source_memory, unit_text_with, universe,
+    attempt, contracts, document, instance, json_of, model_subject, package_over, protocol,
+    reachable, sc_system, source_memory, unit_text_with, universe, Documents, PACKAGE,
 };
 use crate::model_settle_support::{envelope_at, protocol_anchor, request};
 use crate::protocol_system::violated;

@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#![allow(dead_code, reason = "shared fixture support spans split integration test binaries")]
+#![allow(
+    dead_code,
+    reason = "shared fixture support spans split integration test binaries"
+)]
 //! The probabilistic models of FR-196's tests (TC-631, TC-641, TC-630): each
 //! a `test/<name>` domain package with one object type in one population
 //! over the universe `{<key>}`, a unit selecting it as `M` that writes its
@@ -28,7 +31,7 @@ use fsl_semantics::check::{
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 /// Cancel a request at its first dense elimination poll, after row conversion.
 pub(crate) fn assert_dense_elimination_cancelled(request: ProductRequest<'_>) {
@@ -1079,32 +1082,19 @@ pub(crate) fn fair_bounds_w(extra: &str) -> Model {
             ("f", BOOLEAN.to_owned()),
         ],
         operations: vec![
-            Operation {
-                name: "wait",
-                parameters: vec![],
-                modifies: vec!["s"],
-                deletes: false,
-            },
-            Operation {
-                name: "go",
-                parameters: vec![("success", BOOLEAN.to_owned())],
-                modifies: vec!["s", "g", "f"],
-                deletes: false,
-            },
+            Operation { name: "wait", parameters: vec![], modifies: vec!["s"], deletes: false },
+            Operation { name: "go", parameters: vec![("success", BOOLEAN.to_owned())], modifies: vec!["s", "g", "f"], deletes: false },
         ],
-        body: format!(
-            concat!(
-                "pre WaitAtS using v on M::W::wait {{ self.s }}\n",
-                "post Waited using v on M::W::wait {{ self.s = true }}\n",
-                "pre GoAtS using v on M::W::go {{ self.s }}\n",
-                "post Went using v on M::W::go {{ self.s = false and self.g = success and self.f = not success }}\n",
-                "random W::go(success) ~ {{ true: 1, false: 1 }};\n",
-                "terminal Stop using v on M when {{ self.g or self.f }};\n",
-                "workload Equal on M {{ weight W::wait = 1; weight W::go = 1; }}\n",
-                "{}"
-            ),
-            extra
-        ),
+        body: format!(concat!(
+            "pre WaitAtS using v on M::W::wait {{ self.s }}\n",
+            "post Waited using v on M::W::wait {{ self.s = true }}\n",
+            "pre GoAtS using v on M::W::go {{ self.s }}\n",
+            "post Went using v on M::W::go {{ self.s = false and self.g = success and self.f = not success }}\n",
+            "random W::go(success) ~ {{ true: 1, false: 1 }};\n",
+            "terminal Stop using v on M when {{ self.g or self.f }};\n",
+            "workload Equal on M {{ weight W::wait = 1; weight W::go = 1; }}\n",
+            "{}"
+        ), extra),
         initial: json!({"s": {"boolean": true}, "g": {"boolean": false}, "f": {"boolean": false}}),
     }
 }
@@ -1126,36 +1116,11 @@ pub(crate) fn fair_drift(extra: &str) -> Model {
             ("f", BOOLEAN.to_owned()),
         ],
         operations: vec![
-            Operation {
-                name: "wait",
-                parameters: vec![],
-                modifies: vec!["s"],
-                deletes: false,
-            },
-            Operation {
-                name: "go",
-                parameters: vec![],
-                modifies: vec!["s", "g"],
-                deletes: false,
-            },
-            Operation {
-                name: "drift",
-                parameters: vec![],
-                modifies: vec!["s", "u"],
-                deletes: false,
-            },
-            Operation {
-                name: "loop",
-                parameters: vec![],
-                modifies: vec!["u"],
-                deletes: false,
-            },
-            Operation {
-                name: "fail",
-                parameters: vec![],
-                modifies: vec!["s", "f"],
-                deletes: false,
-            },
+            Operation { name: "wait", parameters: vec![], modifies: vec!["s"], deletes: false },
+            Operation { name: "go", parameters: vec![], modifies: vec!["s", "g"], deletes: false },
+            Operation { name: "drift", parameters: vec![], modifies: vec!["s", "u"], deletes: false },
+            Operation { name: "loop", parameters: vec![], modifies: vec!["u"], deletes: false },
+            Operation { name: "fail", parameters: vec![], modifies: vec!["s", "f"], deletes: false },
         ],
         body: format!(
             "pre WaitAtS using v on M::W::wait {{ self.s }}\n\

@@ -12,7 +12,7 @@ use fsl_eval::simulation::model::{
     TaskTransitionIdentity, TimedSystem,
 };
 
-use crate::timed_world::{DENSE, World, world};
+use crate::timed_world::{world, World, DENSE};
 
 fn sources(set: &str, tasks: &[&str]) -> String {
     tasks
@@ -563,12 +563,10 @@ fn the_automaton_exposes_clocks_subtractions_diagonals_and_templates() {
         .collect();
     assert_eq!(&names[automaton.source_clocks()..], aux.as_slice());
     assert!(!automaton.diagonals().is_empty());
-    assert!(
-        automaton
-            .diagonals()
-            .iter()
-            .all(|d| d.left != 0 && d.right != 0)
-    );
+    assert!(automaton
+        .diagonals()
+        .iter()
+        .all(|d| d.left != 0 && d.right != 0));
 
     let (mut location, mut v) = automaton.initial().expect("initial").remove(0);
     // Activate t1 then t2 at time zero (one source edge each).
@@ -602,14 +600,12 @@ fn the_automaton_exposes_clocks_subtractions_diagonals_and_templates() {
         .fire(&dispatch, &v)
         .expect("fire")
         .expect("enabled");
-    assert!(
-        dispatch
-            .target
-            .control()
-            .jobs
-            .iter()
-            .any(|job| job.phase == JobPhase::Running)
-    );
+    assert!(dispatch
+        .target
+        .control()
+        .jobs
+        .iter()
+        .any(|job| job.phase == JobPhase::Running));
 }
 
 /// Lowering-only test, not certified: release jitter has no concrete oracle

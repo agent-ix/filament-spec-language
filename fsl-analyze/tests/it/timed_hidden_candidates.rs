@@ -8,21 +8,21 @@
 
 use filament_exact::{Cancel, Integer};
 use fsl_analyze::zone_check::{
-    TimedLivenessHalf, TimedLivenessOutcome, TimedRefinementUndecided, TimedSafetyOutcome,
-    ZoneCheckLimits, ZoneUndecided, certificate_item, check_timed_refinement,
-    settle_timed_refinement,
+    certificate_item, check_timed_refinement, settle_timed_refinement, TimedLivenessHalf,
+    TimedLivenessOutcome, TimedRefinementUndecided, TimedSafetyOutcome, ZoneCheckLimits,
+    ZoneUndecided,
 };
 use fsl_replay::{
-    CertEdge, CertificateCheckLimits, CertificateRule, Certification, CertifiedItem,
-    DivergentTarget, InconclusiveCause, ProofBasis, RefinementFailure, RefinementTraceSettlement,
-    SilentMove, Taken, TemporalCounterexample, TerminalValue, ZoneCertificate,
-    ZoneCertificateRequest, ZoneCertificateVerdict, check_zone_certificate,
+    check_zone_certificate, CertEdge, CertificateCheckLimits, CertificateRule, Certification,
+    CertifiedItem, DivergentTarget, InconclusiveCause, ProofBasis, RefinementFailure,
+    RefinementTraceSettlement, SilentMove, Taken, TemporalCounterexample, TerminalValue,
+    ZoneCertificate, ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 use fsl_route::deadlock::ItemObligation;
 use ix_trace_rs::trace;
 
 use crate::timed_refinement::{obligation, refinement, replay, safety_request, the_refinement};
-use crate::timed_world::{DENSE, Refining, document, refining, renamed_package, wire_field};
+use crate::timed_world::{document, refining, renamed_package, wire_field, Refining, DENSE};
 
 type Certificate = ZoneCertificate<ItemObligation<&'static str>>;
 

@@ -9,9 +9,8 @@
 use filament_exact::{Cancel, Origin, Role};
 use filament_semantic_value::catalog::{CatalogCode, Category};
 use fsl_analyze::analyze::{
-    AnalyzeLimits, AnalyzeRequest, ClaimItem, ClauseLimits, Counterexample, Engines,
+    analyze, AnalyzeLimits, AnalyzeRequest, ClaimItem, ClauseLimits, Counterexample, Engines,
     ItemCounterexample, ItemForm, ItemOptions, NegotiatedItem, SubjectBinding, TemporalItem,
-    analyze,
 };
 use fsl_analyze::provider;
 use fsl_eval::simulation::Limits;
@@ -22,13 +21,13 @@ use fsl_replay::{
     DeclineCode, IncompleteCause, ModelCheckLimit, ProofRefusalCause, TerminalRecord,
     TerminalValue, UnavailabilityCause,
 };
-use fsl_route::{Candidate, request::ExtentClassification, routing::Disposition};
+use fsl_route::{request::ExtentClassification, routing::Disposition, Candidate};
 use fsl_semantics::check::Capability;
 use ix_trace_rs::trace;
 use serde_json::json;
 
 use crate::counter::CONTRACT;
-use crate::model_world::{self, Clause, Domain, INFINITE, World};
+use crate::model_world::{self, Clause, Domain, World, INFINITE};
 
 fn world(domain: Domain) -> World {
     World::new(

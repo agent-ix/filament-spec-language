@@ -19,9 +19,9 @@ use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
-use crate::fill::{self, Documents, PACKAGE, Reached};
+use crate::fill::{self, Documents, Reached, PACKAGE};
 
 struct Fixture {
     model: Vec<u8>,
@@ -296,9 +296,7 @@ fn has_step(graph: &[Reached], kind: StepKind) -> bool {
 }
 
 fn attempt(related: &str, constraint: &str) -> String {
-    format!(
-        "attempt Tx by w on M::Cell::flag contracts [FlagPost] as (worked: Boolean) {related} {{ {constraint} }};"
-    )
+    format!("attempt Tx by w on M::Cell::flag contracts [FlagPost] as (worked: Boolean) {related} {{ {constraint} }};")
 }
 
 fn attempt_fixture(captures: &str, run: &str, owns: bool) -> Fixture {
@@ -367,19 +365,15 @@ fn sc_attempt_correlation_preserves_candidate_results_poststates_and_both_end_re
         for system in [&source, &native] {
             let reached = fill::reachable(system);
             let (_, at, _) = step(&reached, StepKind::Attempt);
-            assert!(
-                system
-                    .binders(&reached[at].state)
-                    .expect("binders")
-                    .iter()
-                    .any(|(node, _)| node == "Main/First")
-            );
-            assert!(
-                !system
-                    .capture_bytes(&reached[at].state)
-                    .expect("captures")
-                    .is_empty()
-            );
+            assert!(system
+                .binders(&reached[at].state)
+                .expect("binders")
+                .iter()
+                .any(|(node, _)| node == "Main/First"));
+            assert!(!system
+                .capture_bytes(&reached[at].state)
+                .expect("captures")
+                .is_empty());
         }
     });
     assert!(!has_step(
@@ -537,17 +531,9 @@ fn false_send_and_receive_premises_disable_only_their_candidate() {
 fn correlation_only_capture_and_prior_binder_reads_remain_live_after_an_earlier_step() {
     let run = format!(
         "send First via spare as (prior: Boolean) {{ prior }}; check Between using v {{ true }}; {}",
-        controls(
-            "related by Owns ((if prior then saved else k), saved)",
-            "related by Owns (saved, (if prior then saved else k))"
-        )
+        controls("related by Owns ((if prior then saved else k), saved)", "related by Owns (saved, (if prior then saved else k))")
     );
-    let fixture = Fixture::with_channels(
-        "capture saved: Reference<M::Cell> = k;",
-        "channel spare from w to w carries Boolean ordering unordered delivery exactly-once-premise capacity 1 overflow block;",
-        &run,
-        true,
-    );
+    let fixture = Fixture::with_channels("capture saved: Reference<M::Cell> = k;", "channel spare from w to w carries Boolean ordering unordered delivery exactly-once-premise capacity 1 overflow block;", &run, true);
     let graph = fixture.graph();
     let prior = graph
         .iter()
@@ -644,11 +630,7 @@ fn missing_authored_carrier_is_typed_unavailable_but_empty_legacy_group_executes
 #[trace("FR-940-AC-6", "FR-731-AC-1")]
 #[test]
 fn correlated_recommend_remains_named_unsupported() {
-    let fixture = Fixture::new(
-        "",
-        "recommend Work by w on M::Cell::touch contracts [] as (advice: Boolean) related by Other (k, k) { true };",
-        true,
-    );
+    let fixture = Fixture::new("", "recommend Work by w on M::Cell::touch contracts [] as (advice: Boolean) related by Other (k, k) { true };", true);
     fixture.with_routes(true, |_, native| {
         assert!(matches!(
             PackageProtocolProgram::new(&native.model.simulation.input, "P", &[]),
@@ -867,7 +849,7 @@ fn sc_attempt_replay_preserves_authored_alias_order_and_failure_precedence() {
 #[trace("FR-731-AC-1", "FR-940-AC-6")]
 #[test]
 fn sc_attempt_package_analysis_executes_after_source_removal() {
-    use crate::analyze_cli_support::{Workspace, analyze, label, package_selection, request_over};
+    use crate::analyze_cli_support::{analyze, label, package_selection, request_over, Workspace};
     let fixture = attempt_fixture("", &attempt("related by Owns (k, k)", "true"), true);
     let ws = Workspace::new("attempt-correlation-source-absent");
     let request = request_over(
@@ -946,20 +928,16 @@ fn replay_reports_first_authored_alias_including_repeated_canonical_premises() {
                 .collect::<Vec<_>>(),
             vec![("owns", 0), ("Owns", 1), ("owns", 2)]
         );
-        assert!(
-            clauses
-                .iter()
-                .all(|row| row.canonical_index == clauses[0].canonical_index)
-        );
+        assert!(clauses
+            .iter()
+            .all(|row| row.canonical_index == clauses[0].canonical_index));
     });
     let valid = witness(&passing);
     assert_eq!(valid.prefix[0].transition.kind(), StepKind::Send);
-    assert!(
-        valid
-            .prefix
-            .iter()
-            .any(|step| step.transition.kind() == StepKind::Receive)
-    );
+    assert!(valid
+        .prefix
+        .iter()
+        .any(|step| step.transition.kind() == StepKind::Receive));
     replay_both(&passing, valid.clone(), ReplayExpectation::Reproduced);
     let failing = Fixture::new("", &run, false);
     let mut forged = witness(&failing);

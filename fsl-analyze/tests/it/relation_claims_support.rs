@@ -9,16 +9,17 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, PopulationUniverse};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckedHyper, CheckedModelRelation, check_hyper_clauses};
+use fsl_semantics::check::{check_hyper_clauses, CheckedHyper, CheckedModelRelation};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
-use fsl_semantics::model::intake::{PackageInput, package_input};
+use fsl_semantics::model::intake::{package_input, PackageInput};
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef, ObservationLimits};
 use serde_json::Value as Json;
 
 use crate::counter::UNLIMITED;
 use crate::hyper_world::{self, Vault};
 
-pub(crate) const DETERMINISTIC: &str = "relation Det using v over (x: V::Vault::step, y: V::Vault::step) \
+pub(crate) const DETERMINISTIC: &str =
+    "relation Det using v over (x: V::Vault::step, y: V::Vault::step) \
     { x.i = y.i and pre(x.self.h) = pre(y.self.h) implies x.self.l = y.self.l }";
 
 pub(crate) fn package_and_relation(

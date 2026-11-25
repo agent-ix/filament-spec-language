@@ -7,10 +7,10 @@
 
 use fsl_semantics::model::intake::meaning;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    HANDOFF, Run, Workspace, analyze, label, package_selection, request_over,
+    analyze, label, package_selection, request_over, Run, Workspace, HANDOFF,
 };
 
 const PACKAGE: &str = "test/machine";

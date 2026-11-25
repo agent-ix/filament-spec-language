@@ -7,17 +7,17 @@
 use filament_exact::{Cancel, Integer, Value};
 use filament_semantic_value::catalog::{CatalogCode, UndefinedReason};
 use fsl_analyze::statistical::{
-    DEFAULT_MAX_WITNESSES, StatisticalRequest, check_statistical, witness_reader,
+    check_statistical, witness_reader, StatisticalRequest, DEFAULT_MAX_WITNESSES,
 };
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{ModelSystem, TransitionId};
-use fsl_eval::simulation::{SampledDisagreement, sample_probabilistic};
+use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::{sample_probabilistic, SampledDisagreement};
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::selection::DefinitionRef;
 use fsl_replay::statistical::{
-    SampledParity, SampledWitness, SampledWitnessRefusal, SampledWitnessReplay, StatisticalLimits,
-    StatisticalMethod, StatisticalOutcome, StatisticalProvenance, StatisticalVerdict,
-    WitnessReplay, WitnessValue, replay_sampled_witness,
+    replay_sampled_witness, SampledParity, SampledWitness, SampledWitnessRefusal,
+    SampledWitnessReplay, StatisticalLimits, StatisticalMethod, StatisticalOutcome,
+    StatisticalProvenance, StatisticalVerdict, WitnessReplay, WitnessValue,
 };
 use fsl_replay::{CounterexampleKind, UndefinedLocus};
 use fsl_semantics::check::ProbScheduler;
@@ -531,7 +531,7 @@ fn witnesses_replay_over_a_subject_whose_package_s4_refuses() {
 #[test]
 fn the_provider_entry_serves_a_package_s4_refuses_to_emit() {
     use fsl_analyze::statistical::manifest::BACKEND_ID;
-    use fsl_analyze::statistical::provider::{RoutedItem, serve_items};
+    use fsl_analyze::statistical::provider::{serve_items, RoutedItem};
     use fsl_foundation::RequestIndex;
     use fsl_replay::TerminalValue;
 

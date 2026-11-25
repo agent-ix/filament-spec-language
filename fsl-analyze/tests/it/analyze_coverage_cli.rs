@@ -4,11 +4,11 @@
 //! (`$FSL_BIN`) from source plus a `native-analyze/1` request.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    Workspace, analyze, below_three, bounded, clause, counter_request, counter_request_with, label,
-    litmus_request, request_members,
+    analyze, below_three, bounded, clause, counter_request, counter_request_with, label,
+    litmus_request, request_members, Workspace,
 };
 
 /// FR-621-AC-4: every category and record result is a registered kind.
@@ -258,12 +258,9 @@ fn release_acquire_races_and_selections() {
 #[test]
 fn copy_swap_and_witness_budget() {
     use crate::hyper_world::{
-        EQUAL_INPUTS, STARTS, Vault, non_interference, request_files_over_starts,
+        non_interference, request_files_over_starts, Vault, EQUAL_INPUTS, STARTS,
     };
-    let declaration = format!(
-        "{}\nhyper Opaque using inf over behaviours (v: V::Vault) forall trace a of V exists trace b of V {{ always holds(v.l @ a = v.l @ b) }}",
-        non_interference(EQUAL_INPUTS)
-    );
+    let declaration = format!("{}\nhyper Opaque using inf over behaviours (v: V::Vault) forall trace a of V exists trace b of V {{ always holds(v.l @ a = v.l @ b) }}", non_interference(EQUAL_INPUTS));
     let (unit, model, snapshots) =
         request_files_over_starts(Vault::Secure, false, &STARTS, &declaration);
     let ws = Workspace::new("cov-hyper");
@@ -330,11 +327,10 @@ fn digital_clocks_agree_and_the_clock_budget_stops() {
     ));
     assert_eq!(run.exit, 20);
     assert_eq!(run.document()["diagnostics"][0]["code"], "invalid-request");
-    assert!(
-        run.document()
-            .to_string()
-            .contains("temporal.limits.max_clocks")
-    );
+    assert!(run
+        .document()
+        .to_string()
+        .contains("temporal.limits.max_clocks"));
 }
 
 /// FR-633-AC-3: EDF proves `Ctl` in closed form.
@@ -370,11 +366,9 @@ fn simulation_budget_and_seeded_sampling() {
     assert_eq!(stopped["cause"]["limit"], "max_states");
     assert_eq!(stopped["cause"]["setting"], "explore.states");
     assert_eq!(stopped["cause"]["value"], 2);
-    assert!(
-        stopped["frontier"]
-            .as_array()
-            .is_some_and(|frontier| !frontier.is_empty())
-    );
+    assert!(stopped["frontier"]
+        .as_array()
+        .is_some_and(|frontier| !frontier.is_empty()));
     let second = analyze(&path);
     let sampled = |run: &crate::analyze_cli_support::Run| -> Value { run.item(1) };
     assert_eq!(sampled(&first), sampled(&second));

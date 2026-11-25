@@ -7,23 +7,23 @@
 //! subject.
 
 use filament_exact::{Cancel, Meter};
-use fsl_analyze::model_check::{ModelCheckRefusal, ModelCheckRequest, check_model};
+use fsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSystem};
 use fsl_eval::temporal::{CaptureReading, UndefinedCause};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
-    CertificateRequest, CertificateRule, CounterexampleKind, DisagreementCause, ModelCheckItem,
-    ModelCheckLimits, ModelCheckOutcome, ModelTraceSettlement, ModelTraceSubject, ModelTraceValue,
-    ReplayLimits, SmtEncodingLimits, TemporalCertificateCheck, TemporalCounterexample,
-    UndefinedEvaluation, UndefinedLocus, check_closure, replay_model_trace,
+    check_closure, replay_model_trace, CertificateRequest, CertificateRule, CounterexampleKind,
+    DisagreementCause, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelTraceSettlement,
+    ModelTraceSubject, ModelTraceValue, ReplayLimits, SmtEncodingLimits, TemporalCertificateCheck,
+    TemporalCounterexample, UndefinedEvaluation, UndefinedLocus,
 };
 use ix_trace_rs::trace;
 use serde_json::json;
 
 use crate::counter::{CONTRACT, UNLIMITED};
 use crate::model_settle::{envelope_at, request};
-use crate::model_world::{self, BOUNDED, Clause, INFINITE, World};
+use crate::model_world::{self, Clause, World, BOUNDED, INFINITE};
 
 fn world(profile: &str, activation: &str, formula: &str) -> World {
     world_from(profile, activation, formula, 0)

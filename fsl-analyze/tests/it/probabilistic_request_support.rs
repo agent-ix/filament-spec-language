@@ -5,8 +5,8 @@ use fsl_analyze::statistical::manifest;
 use fsl_foundation::bound::DomainKind;
 use fsl_route::request::RequirementItem;
 use fsl_route::{
-    Candidate, CandidateOutcome, EvidenceKind, ManifestMembers, Mode, ProviderOrigin, Registry,
-    descriptor_from_manifest,
+    descriptor_from_manifest, Candidate, CandidateOutcome, EvidenceKind, ManifestMembers, Mode,
+    ProviderOrigin, Registry,
 };
 use fsl_semantics::check::Capability;
 

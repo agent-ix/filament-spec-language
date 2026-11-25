@@ -6,21 +6,21 @@ use filament_contract_model::{
     CheckedNodeId, CheckedPackageDispatchResult, CheckedPackageReadLimits, CheckedPackageV2,
 };
 use fsl_analyze::protocol_analysis::{
-    ProjectionOutcome, ProjectionRefusal, ProjectionRequest, project, unsupported_construct,
+    project, unsupported_construct, ProjectionOutcome, ProjectionRefusal, ProjectionRequest,
 };
 use fsl_package::protocol_view::clause_activation_trigger;
 use fsl_replay::protocol_analysis::{
-    AnalysisOutcome, AssessedRootDraft, CapacityPremise, ChoiceBasis, DecisionOwner,
-    GlobalStructure, InconclusiveCause, JoinPolicy, LocalEventKind, OutstandingPolicy,
-    ProjectionBoundsDraft, ProjectionCounterexample, ProjectionDecision, ProjectionWitness,
-    ProtocolAnalysisEvidence, ProtocolAnalysisKey, RunBudget, UnsupportedSlug, WalkDisagreement,
-    replay_projection_counterexample,
+    replay_projection_counterexample, AnalysisOutcome, AssessedRootDraft, CapacityPremise,
+    ChoiceBasis, DecisionOwner, GlobalStructure, InconclusiveCause, JoinPolicy, LocalEventKind,
+    OutstandingPolicy, ProjectionBoundsDraft, ProjectionCounterexample, ProjectionDecision,
+    ProjectionWitness, ProtocolAnalysisEvidence, ProtocolAnalysisKey, RunBudget, UnsupportedSlug,
+    WalkDisagreement,
 };
 use fsl_replay::spine::replay_protocol_analysis;
 use fsl_replay::{DecidingElement, ModelCheckLimit, ObservationIdentity, ReplaySource};
 use ix_trace_rs::trace;
 
-use crate::fill::{PACKAGE, document, package};
+use crate::fill::{document, package, PACKAGE};
 use crate::fixture_ids::{effective_id, universe_id};
 
 const MEMBERS: &str = "role Buyer on M::Cell;\nrole Seller on M::Cell;\nrole Warehouse on M::Cell;\n\
@@ -290,13 +290,11 @@ fn distinct_first_receive_types_from_one_peer_distinguish_the_branches() {
             peer: named(&package, "Seller")
         }
     );
-    assert!(
-        found
-            .local_graph
-            .events
-            .iter()
-            .any(|event| event.kind == LocalEventKind::ExternalChoice)
-    );
+    assert!(found
+        .local_graph
+        .events
+        .iter()
+        .any(|event| event.kind == LocalEventKind::ExternalChoice));
 }
 
 /// FR-570-AC-6 (step 3, third variant): an earlier message the role sent,
@@ -320,13 +318,11 @@ fn an_earlier_message_whose_payload_the_decision_reads_carries_the_outcome() {
     ));
     // The owner holds an internal choice.
     let owner = witness(run(&package, "Seller"));
-    assert!(
-        owner
-            .local_graph
-            .events
-            .iter()
-            .any(|event| event.kind == LocalEventKind::InternalChoice)
-    );
+    assert!(owner
+        .local_graph
+        .events
+        .iter()
+        .any(|event| event.kind == LocalEventKind::InternalChoice));
 }
 
 /// FR-570-AC-6 (step 3, fourth variant): a `decision` message of one type in
@@ -1011,7 +1007,8 @@ fn a_timed_await_package_is_admitted_at_its_binding_row() {
                 "",
                 &format!(
                     "sequence Main {{ event Start by w as (start: Boolean) {{ true }}; await Wait after Start using t0 clock \"c\" within [0,1] match event Seen by w as (seen: Boolean) {{ true }}; then {} timeout {} }}",
-                    "sequence Fine { }", "sequence Late { }",
+                    "sequence Fine { }",
+                    "sequence Late { }",
                 ),
                 "d",
             )),
@@ -1099,7 +1096,8 @@ fn a_timed_await_projects_through_the_clock() {
                 "",
                 &format!(
                     "sequence Main {{ event Start by w as (start: Boolean) {{ true }}; await Wait after Start using t0 clock \"c\" within [0,1] match event Seen by w as (seen: Boolean) {{ true }}; then {} timeout {} }}",
-                    "sequence Fine { }", "sequence Late { }",
+                    "sequence Fine { }",
+                    "sequence Late { }",
                 ),
                 "d",
             )),
@@ -1246,21 +1244,17 @@ fn local_graphs_with_a_choice_equal_the_global_structure() {
     let merged = worked(PICK, PICK2, "");
     assert_graph_equals_structure(&merged, &["Buyer", "Seller", "Warehouse"]);
     let seller = witness(run(&distinguished, "Seller"));
-    assert!(
-        seller
-            .local_graph
-            .events
-            .iter()
-            .any(|event| event.kind == LocalEventKind::InternalChoice)
-    );
+    assert!(seller
+        .local_graph
+        .events
+        .iter()
+        .any(|event| event.kind == LocalEventKind::InternalChoice));
     let warehouse = witness(run(&distinguished, "Warehouse"));
-    assert!(
-        warehouse
-            .local_graph
-            .events
-            .iter()
-            .any(|event| event.kind == LocalEventKind::ExternalChoice)
-    );
+    assert!(warehouse
+        .local_graph
+        .events
+        .iter()
+        .any(|event| event.kind == LocalEventKind::ExternalChoice));
 }
 
 /// PA-14: comparing the runs of nested alternatives is charged to
@@ -1597,9 +1591,9 @@ fn a_bounded_spawn_projects_to_one_local_role_class() {
 fn protocol_counterexample_outcomes_keep_both_projection_decisions() {
     use filament_exact::Cancel;
     use fsl_analyze::analyze::{
-        Counterexample, Engines, analyze_document, analyze_items, split_records,
+        analyze_document, analyze_items, split_records, Counterexample, Engines,
     };
-    use fsl_analyze::protocol_analysis::{ProtocolAnalysisArtifact, projection_item};
+    use fsl_analyze::protocol_analysis::{projection_item, ProtocolAnalysisArtifact};
     use fsl_foundation::RequestIndex;
     use fsl_replay::protocol_analysis::ProtocolAnalysisCounterexample;
     use serde_json::json;

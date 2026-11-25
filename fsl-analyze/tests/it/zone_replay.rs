@@ -12,10 +12,10 @@ use filament_exact::{Cancel, Rational, Undefined};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::fairness::FairnessKind;
 use fsl_analyze::zone_check::{
-    ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRecord, ZoneItem, ZoneStats, settle_zone_check,
+    settle_zone_check, ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRecord, ZoneItem, ZoneStats,
 };
-use fsl_eval::simulation::Limits;
 use fsl_eval::simulation::model::{TimedState, TimedSystem};
+use fsl_eval::simulation::Limits;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::diagnostic::Code;
 use fsl_replay::{
@@ -29,10 +29,10 @@ use fsl_replay::{
 use fsl_semantics::family::UnsupportedItem;
 use ix_trace_rs::trace;
 
-use crate::timed_world::{DENSE, World, document, world};
+use crate::timed_world::{document, world, World, DENSE};
 use crate::zone_search::{
-    INFINITE, Outcome, TIMED, claim, delays, exact, lock, operations, retried_at, rpc, rpc_variant,
-    short_of_data_claim, stall, stall_resetting, ticker, time_lock_item, violated, windowed,
+    claim, delays, exact, lock, operations, retried_at, rpc, rpc_variant, short_of_data_claim,
+    stall, stall_resetting, ticker, time_lock_item, violated, windowed, Outcome, INFINITE, TIMED,
 };
 
 mod replay_boundary_cases;
@@ -1536,12 +1536,10 @@ fn trapped_valuations_of_every_shape_are_found() {
     );
     let found = reproduced_time_lock(&ticks);
     assert_eq!(found.prefix.len(), 1);
-    assert!(
-        found.prefix[0]
-            .transition
-            .operation()
-            .contains("Call/work\"")
-    );
+    assert!(found.prefix[0]
+        .transition
+        .operation()
+        .contains("Call/work\""));
 }
 
 /// FR-240's order: at one node a local time-lock comes before a non-local

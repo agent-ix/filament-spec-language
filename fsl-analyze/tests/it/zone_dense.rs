@@ -7,11 +7,11 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::model_check::admit;
 use fsl_analyze::zone_check::{
-    Bound, Dbm, ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRefusal, ZoneItem, ZoneReduction,
-    canonical_symbolic_state, settle_zone_check,
+    canonical_symbolic_state, settle_zone_check, Bound, Dbm, ZoneCheckLimits, ZoneCheckOutcome,
+    ZoneCheckRefusal, ZoneItem, ZoneReduction,
 };
-use fsl_eval::simulation::Permutation;
 use fsl_eval::simulation::model::TimedSystem;
+use fsl_eval::simulation::Permutation;
 use fsl_foundation::ReductionKind;
 use fsl_replay::{
     AppliedReduction, CertificateCheckLimits, ComponentReason, CounterexampleKind,
@@ -22,13 +22,13 @@ use fsl_route::reductions::{Reductions, SymmetryDeclaration};
 use ix_trace_rs::trace;
 
 use crate::timed_world::{
-    DENSE, PACKAGE, World, document, ident, symmetric_document, world, world_armed,
+    document, ident, symmetric_document, world, world_armed, World, DENSE, PACKAGE,
 };
 use crate::zone_liveness::decide;
 use crate::zone_replay::{replay, reproduced};
 use crate::zone_search::{
-    INFINITE, check, claim_with, deadlock, deadlock_result, deadlock_with, delays, operations,
-    proved, time_lock_item_with, violated,
+    check, claim_with, deadlock, deadlock_result, deadlock_with, delays, operations, proved,
+    time_lock_item_with, violated, INFINITE,
 };
 
 /// The population of [`timers`].
@@ -175,11 +175,9 @@ fn symmetry_permutes_each_timer_with_its_clock() {
         panic!("expected a reduced proof, got {reduced:?}");
     };
     assert!(stored(&reduced) < stored(&plain), "{reduced:?} {plain:?}");
-    let [
-        AppliedReduction::Symmetry {
-            groups, stabiliser, ..
-        },
-    ] = reductions.as_slice()
+    let [AppliedReduction::Symmetry {
+        groups, stabiliser, ..
+    }] = reductions.as_slice()
     else {
         panic!("one applied symmetry: {reductions:?}");
     };

@@ -7,11 +7,11 @@
 //! text mode is tested in the driver repository.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    Workspace, analyze, below_three, bounded, clause, counter_request, label, litmus_request,
-    order_protocol,
+    analyze, below_three, bounded, clause, counter_request, label, litmus_request, order_protocol,
+    Workspace,
 };
 
 const DONE: &str = "terminal Done using v on M when { self.value = 3 };\n";
@@ -1006,12 +1006,10 @@ fn recording_item_references_require_a_provisioned_recording_document() {
         let document = run.document();
         assert_eq!(document["category"], "refusal");
         assert_eq!(document["diagnostics"][0]["code"], "invalid-request");
-        assert!(
-            document["diagnostics"][0]["message"]
-                .as_str()
-                .expect("diagnostic message")
-                .contains("/items/0/recording")
-        );
+        assert!(document["diagnostics"][0]["message"]
+            .as_str()
+            .expect("diagnostic message")
+            .contains("/items/0/recording"));
     };
 
     let missing_ws = Workspace::new("cli-recording-reference-missing");
@@ -1095,8 +1093,7 @@ fn caller_s1_diagnostics_moves_the_syntax_error_cut() {
     let broken: String = (0..150)
         .map(|n| format!("record R{n} {{ z: ; }}\n"))
         .collect();
-    let path =
-        crate::analyze_cli_support::counter_request(&ws, &broken, json!([{"claim": "Bounded"}]));
+    let path = crate::analyze_cli_support::counter_request(&ws, &broken, json!([{"claim": "Bounded"}]));
     let default = crate::analyze_cli_support::analyze(&path);
     let text = String::from_utf8_lossy(&default.stdout).into_owned();
     assert!(text.contains("cut after 100 syntax errors"), "{text}");
@@ -1111,16 +1108,8 @@ fn caller_s1_diagnostics_moves_the_syntax_error_cut() {
     let text = String::from_utf8_lossy(&widened.stdout).into_owned();
     assert!(!text.contains("diagnostic list was cut"), "{text}");
     assert_eq!(widened.exit, default.exit);
-    for operand in [
-        "s1.diagnostics=-1",
-        "s1.diagnostics=many",
-        "s1.diagnostics=",
-    ] {
+    for operand in ["s1.diagnostics=-1", "s1.diagnostics=many", "s1.diagnostics="] {
         let refusal = fsl_foundation::setting::parse_operands([operand]).unwrap_err();
-        assert_eq!(
-            refusal.cause,
-            fsl_foundation::UsageCause::NotAnInteger,
-            "{operand}"
-        );
+        assert_eq!(refusal.cause, fsl_foundation::UsageCause::NotAnInteger, "{operand}");
     }
 }

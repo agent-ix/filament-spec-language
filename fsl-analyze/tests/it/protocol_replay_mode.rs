@@ -6,10 +6,10 @@
 //! and a pair on a causal cycle is misordered.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    Run, Workspace, analyze, label, litmus_request, order_protocol, request_over,
+    analyze, label, litmus_request, order_protocol, request_over, Run, Workspace,
 };
 
 /// The order protocol of [`order_protocol`] with a second channel `Tell`
@@ -470,7 +470,7 @@ fn incremental_assessment_of_a_conforming_recording_ends_at_the_batch_verdict() 
 #[test]
 fn incremental_assessment_reports_a_violation_from_the_prefix_that_shows_it() {
     use fsl_analyze::protocol_analysis::recording::{
-        RecordingCause, RecordingVerdict, assess_recording, assess_recording_incrementally,
+        assess_recording, assess_recording_incrementally, RecordingCause, RecordingVerdict,
     };
     let package = crate::litmus::package_called("analysis-unit", &told_protocol());
     let bytes = told_recording([0, 1, 2, 3, 4, 5], json!([2, 1, 4, 5])).to_string();
@@ -644,7 +644,7 @@ fn package_of(source: &str) -> fsl_package::CheckedPackage {
 
 /// Assert `node` at `position` is `satisfied`.
 fn assert_enabled(source: &str, recording: &Value, node: &str, position: usize) {
-    use fsl_analyze::protocol_analysis::recording::{RecordingVerdict, assess_recording};
+    use fsl_analyze::protocol_analysis::recording::{assess_recording, RecordingVerdict};
     let package = package_of(source);
     let assessed = assess_recording(&package, recording.to_string().as_bytes()).expect("readable");
     let found = enabledness(&assessed, node, position);
@@ -655,7 +655,7 @@ fn assert_enabled(source: &str, recording: &Value, node: &str, position: usize) 
 /// Assert `node` at `position` is `violated`, cause `unexpected`.
 fn assert_unexpected(source: &str, recording: &Value, node: &str, position: usize) {
     use fsl_analyze::protocol_analysis::recording::{
-        RecordingCause, RecordingVerdict, assess_recording,
+        assess_recording, RecordingCause, RecordingVerdict,
     };
     let package = package_of(source);
     let assessed = assess_recording(&package, recording.to_string().as_bytes()).expect("readable");
@@ -985,7 +985,7 @@ fn a_step_after_a_repeat_needs_its_last_iteration() {
 #[trace("TC-2531", "FR-895-AC-21")]
 #[test]
 fn an_earlier_iteration_does_not_enable_a_step_after_the_repeat() {
-    use fsl_analyze::protocol_analysis::recording::{RecordingVerdict, assess_recording};
+    use fsl_analyze::protocol_analysis::recording::{assess_recording, RecordingVerdict};
     let source = repeat_then_protocol();
     let observations = json!([
         looped("send", "Placed", "Buyer", "m-1"),
@@ -2037,7 +2037,7 @@ fn many_label_protocol(labels: usize) -> String {
 #[trace("TC-2531", "FR-895-AC-34")]
 #[test]
 fn a_predicate_join_over_too_many_labels_is_refused_naming_the_bound() {
-    use fsl_analyze::protocol_analysis::recording::{MAX_PREDICATE_JOIN_LABELS, assess_recording};
+    use fsl_analyze::protocol_analysis::recording::{assess_recording, MAX_PREDICATE_JOIN_LABELS};
     assert_eq!(MAX_PREDICATE_JOIN_LABELS, 10);
     let empty = json!({
         "format": "filament.protocol-recording/1", "protocol": "Flow",
@@ -2074,7 +2074,7 @@ fn a_predicate_join_over_too_many_labels_is_refused_naming_the_bound() {
 #[trace("TC-2531", "FR-895-AC-35")]
 #[test]
 fn a_predicate_that_is_never_true_leaves_the_join_unreached() {
-    use fsl_analyze::protocol_analysis::recording::{RecordingVerdict, assess_recording};
+    use fsl_analyze::protocol_analysis::recording::{assess_recording, RecordingVerdict};
     let source = predicate_join_protocol("contradiction", "left and not left", "continue");
     let observations = json!([
         branch_event("left", "Left", "L"),

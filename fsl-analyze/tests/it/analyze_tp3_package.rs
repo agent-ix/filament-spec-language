@@ -6,12 +6,12 @@
 //! certificate on each route.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    Run, Workspace, analyze, counter_request, label, package_selection, request_over,
+    analyze, counter_request, label, package_selection, request_over, Run, Workspace,
 };
-use crate::counter::{CONTRACT, clause_text_on};
+use crate::counter::{clause_text_on, CONTRACT};
 
 /// `request`'s members run from source and, after the compile writes its
 /// handoff and the source is removed, from the package it selects.

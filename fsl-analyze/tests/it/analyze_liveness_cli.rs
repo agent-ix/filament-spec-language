@@ -9,11 +9,12 @@ use ix_trace_rs::trace;
 use serde_json::json;
 
 use crate::analyze_cli_support::{
-    Workspace, analyze, clause, counter_request, counter_snapshot, label, request_over,
+    analyze, clause, counter_request, counter_snapshot, label, request_over, Workspace,
 };
 use crate::counter::{clause_text, document_with_ranged_parameter, unit_text};
 
-const MUTEX: &str = "pre Free using v on M::Counter::setTo { self.value = 0 and n >= 1 and n <= 2 }\n\
+const MUTEX: &str =
+    "pre Free using v on M::Counter::setTo { self.value = 0 and n >= 1 and n <= 2 }\n\
     post Takes using v on M::Counter::setTo { self.value = n }\n\
     pre Held using v on M::Counter::inc { self.value != 0 }\n\
     post Frees using v on M::Counter::inc { self.value = 0 }\n";
