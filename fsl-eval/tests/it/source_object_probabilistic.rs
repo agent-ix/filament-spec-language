@@ -538,9 +538,11 @@ fn with_parameter_type(spelling: &str, support: Option<&str>) -> CheckedPackage 
 
 /// FR-740-AC-6: a parameter type the route rebuilds is the one S3's record
 /// holds, with its bounds, its layers and the object type it references, and
-/// the probabilistic model builds over it. A distribution's support is written
-/// as Boolean or integer literals, so only those types also declare the
-/// parameter random.
+/// the probabilistic model builds over it. The Boolean, integer, enum and
+/// `Quantity<ms>` rows also declare the parameter random. Of the others, S3
+/// refuses a string literal as a `Text` support and a reference as any
+/// support, the writer emits no `Decimal` distribution, and a record,
+/// `Option`, collection or map has no literal to write.
 #[trace("TC-3012", "FR-740-AC-6")]
 #[test]
 fn a_rebuilt_parameter_type_equals_s3s_with_its_bounds() {
@@ -553,7 +555,7 @@ fn a_rebuilt_parameter_type_equals_s3s_with_its_bounds() {
         ("Small", NUMBERS),
         ("Text[0, 8; nfc]", None),
         ("Decimal[0, 100; 2, 2; exact]", None),
-        ("Tier", None),
+        ("Tier", Some("Tier::Gold: 1, Tier::Standard: 3")),
         ("Point", None),
         ("Reference<O>", None),
         ("Option<Int[1, 3]>", None),
@@ -565,7 +567,7 @@ fn a_rebuilt_parameter_type_equals_s3s_with_its_bounds() {
         ("Map<String, Integer>[0, 4]", None),
         ("Option<Map<String, Int[1, 3]>[0, 2]>", None),
         ("Sequence<Map<String, Integer>[0, 2]>[0, 3]", None),
-        ("Quantity<ms>", None),
+        ("Quantity<ms>", Some("1 ms: 1, 3 ms: 3")),
         ("Option<Quantity<ms>>", None),
         ("Sequence<Quantity<ms>>[0, 2]", None),
         ("Quantity<ms^2>", None),
