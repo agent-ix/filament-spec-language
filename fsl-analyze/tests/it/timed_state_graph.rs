@@ -564,7 +564,7 @@ const BASE_POSSIBLE: &str = "possible AnyBase using v over (c: Base) { true }\n"
 /// FR-125 "Instancing": the zone route's state-graph evidence of
 /// `over (c: Base)` names the admitted `Derived`, and its replay and zone
 /// certificate accept that binding.
-#[trace("TC-520", "FR-125-AC-9")]
+#[trace("TC-520")]
 #[test]
 fn zone_state_graph_evidence_binds_the_admitted_member_type() {
     let item = settle_over_base(BASE_POSSIBLE, json!({"claim": "AnyBase"}));
@@ -581,7 +581,7 @@ fn zone_state_graph_evidence_binds_the_admitted_member_type() {
 /// FR-125 "Instancing": the digital-clocks route's state-graph evidence of
 /// `over (c: Base)` names the admitted `Derived`, and its replay accepts that
 /// binding.
-#[trace("TC-520", "FR-125-AC-9")]
+#[trace("TC-520")]
 #[test]
 fn digital_state_graph_evidence_binds_the_admitted_member_type() {
     let item = settle_over_base(

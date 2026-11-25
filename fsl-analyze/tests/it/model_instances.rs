@@ -2343,11 +2343,11 @@ fn state_graph_refuses_at_max_states_before_keying_the_later_initial_states() {
     assert_eq!(generated_initial_states() - generated_before, 0);
 }
 
-/// FR-172 Object parameters and FR-125 Instancing: `v: M::Lamp` resolves to
-/// `P1`, the one population that overlaps `Lamp`, so its instances are the
-/// keys of `P1`'s universe, held or not. `P1`'s other member type is `Dog`.
-/// `Q`, a population of `Dog`'s supertype `Animal`, does not overlap `Lamp`:
-/// it contributes no instance, and replay refuses its key.
+/// FR-172 Object parameters and FR-125 Instancing: `v: M::Thing` resolves to
+/// `P1`, the one population that overlaps `Thing` (through `Lamp`), so its
+/// instances are the keys of `P1`'s universe, held or not. `P1`'s other member
+/// type is `Dog`. `Q`, a population of `Dog`'s supertype `Animal`, does not
+/// overlap `Thing`: it contributes no instance, and replay refuses its key.
 #[test]
 fn hyper_instances_are_the_keys_of_the_resolved_population_alone() {
     let world = world(
@@ -2454,7 +2454,7 @@ fn the_admitted_lamp() -> Json {
 /// FR-125 "Instancing", FR-181: the HP-5 witness of `v: M::Thing` names the
 /// admitted `Lamp`, neither the declared type `Thing` nor the population's
 /// least member type `Dog`.
-#[trace("TC-520", "FR-125-AC-9")]
+#[trace("TC-520")]
 #[test]
 fn an_hp5_witness_binds_the_admitted_member_type() {
     let run = analyze_over_pets(
@@ -2474,7 +2474,7 @@ fn an_hp5_witness_binds_the_admitted_member_type() {
 
 /// FR-125 "Instancing": the state-graph evidence of `over (x: M::Thing)`
 /// names the admitted `Lamp`, not the declared `over` type.
-#[trace("TC-520", "FR-125-AC-9")]
+#[trace("TC-520")]
 #[test]
 fn state_graph_evidence_binds_the_admitted_member_type() {
     let run = analyze_over_pets(
