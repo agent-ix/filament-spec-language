@@ -13,6 +13,7 @@ use filament_exact::NodeKey;
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
+use ix_trace_rs::implements;
 
 use super::state::AnchorInput;
 use super::{Binder, Binders, Lowering, fault};
@@ -183,6 +184,7 @@ impl Lowering<'_> {
     /// type and located at the refinement. An absent option is an inline
     /// `literal` term; present options are `option_value` nodes around the
     /// recursively lowered payload.
+    #[implements("FR-901-AC-1")]
     fn history_initial(
         &mut self,
         value: &Value,
