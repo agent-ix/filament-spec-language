@@ -1053,7 +1053,7 @@ fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
         "F32" => vec![float_function(
             32,
             "nearest-even",
-            &format!("-{}", constant(operands[0])),
+            &format!("-{}", float_constant(32, operands[0])),
             float_expected(vector.expected),
         )],
         "F23" => {
