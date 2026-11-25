@@ -1520,6 +1520,7 @@ impl<'c> Builder<'_, '_, 'c> {
     /// A delay is not a predicate position (ADR-026 TS-3), so a single
     /// operator's event reads none and only its deadline clock moves. The
     /// nested monitor reads `truths` once at each instant a delay reaches.
+    #[implements("FR-204-AC-21")]
     fn delay_letters(&self, truths: &[bool]) -> Vec<Vec<bool>> {
         match self.form {
             Form::NestedDeadline(_) => vec![truths.to_vec()],

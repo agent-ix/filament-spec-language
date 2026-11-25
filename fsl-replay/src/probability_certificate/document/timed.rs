@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
+use ix_trace_rs::implements;
 use num_traits::Zero;
 use serde_json::{Value as JsonValue, json};
 
@@ -1644,6 +1645,7 @@ impl Watch<'_> {
     /// delay reaches, and an elapsed measure's reading cannot change while no
     /// discrete step happens.
     #[allow(clippy::too_many_arguments)]
+    #[implements("FR-204-AC-21")]
     fn delay(
         &self,
         system: &ModelSystem<'_>,
@@ -1676,6 +1678,7 @@ impl Watch<'_> {
     /// predicate position reached with no discrete step. The nested monitor
     /// has already read this instant on the delay that reached it.
     #[allow(clippy::too_many_arguments)]
+    #[implements("FR-204-AC-21")]
     fn idle_observation(
         &self,
         system: &ModelSystem<'_>,
@@ -1698,6 +1701,7 @@ impl Watch<'_> {
     /// `previous` being the phase before the move and `elapsed` the clock
     /// after it. A decided event stays decided.
     #[allow(clippy::too_many_arguments)]
+    #[implements("FR-204-AC-21")]
     fn observe(
         &self,
         system: &ModelSystem<'_>,
@@ -1809,6 +1813,7 @@ impl Watch<'_> {
 /// A bounded operator `previous` holds, or `root` before its first position,
 /// with its clock at `elapsed`: a pending one is decided once the clock is
 /// past its window.
+#[implements("FR-204-AC-21")]
 fn bounded_at(
     previous: Phase,
     root: fsl_eval::probabilistic::TimedOperatorState,
