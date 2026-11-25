@@ -736,7 +736,7 @@ fn tc_774_refusal_diagnostics_carry_the_table_codes() {
 const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile v = \"filament.value.complete/v1\";\n\
     function p using v(x: Int[0, 9]): Boolean pure { x > 3 }\n\
-    function q using v(y: Int[0, 9]): Integer pure { y + 1 }\n\
+    function q using v(x: Int[0, 9]): Integer pure { x + 1 }\n\
     function r using v(x: Int[0, 9]): Boolean pure { x + 1 > 3 }\n";
 
 struct Fixture {
