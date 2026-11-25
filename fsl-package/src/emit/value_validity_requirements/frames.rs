@@ -212,6 +212,13 @@ impl<'a> Walk<'a> {
                     let Some(&position) = self.index.get(id) else {
                         continue;
                     };
+                    // Function bodies and termination measures are walked by
+                    // their own package owner. A call's callee reference names
+                    // the declaration node; entering it here would misattribute
+                    // its occurrences to the caller's body or measure.
+                    if self.nodes[position].node_tag.as_ref() == "function" {
+                        continue;
+                    }
                     if !active.insert(position) {
                         continue;
                     }

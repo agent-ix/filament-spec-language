@@ -96,6 +96,7 @@ fn a_release_is_recorded_on_its_operation_and_a_second_task_is_allowed() {
 }
 
 #[trace("TC-704", "FR-249-AC-13")]
+#[trace("TC-3009", "FR-246-AC-5")]
 #[test]
 fn a_mode_switch_is_checked_in_source_order_and_requires_a_release_to_back_a_claim() {
     let graph = checked(
@@ -150,32 +151,39 @@ fn a_mode_switch_is_checked_in_source_order_and_requires_a_release_to_back_a_cla
 }
 
 #[trace("TC-704", "FR-249-AC-7")]
+#[trace("TC-3009", "FR-246-AC-5")]
 #[test]
 fn only_a_task_set_with_a_checked_release_requires_a_task_product() {
     let released = checked(
         "schedulable CtlFp on Ctl under fixed_priority;\n\
          release Ctl.a on ConfigVersion::attemptUpdate;",
     );
-    let claim = released
+    let release_claim = released
         .task_sets()
         .claims()
         .iter()
         .find(|claim| claim.task_set == "Ctl")
-        .and_then(|claim| claim.occurrence())
+        .expect("a schedulability claim");
+    let release_occurrence = release_claim
+        .occurrence()
         .expect("a keyed schedulability claim");
-    assert!(released.requirements()[&claim]
+    assert!(released.requirements()[&release_occurrence]
         .requirements()
         .task_product());
 
     let unreleased = checked("schedulable CtlFp on Ctl under fixed_priority;");
-    let claim = unreleased
+    let unbacked_claim = unreleased
         .task_sets()
         .claims()
         .iter()
         .find(|claim| claim.task_set == "Ctl")
-        .and_then(|claim| claim.occurrence())
+        .expect("a schedulability claim");
+    let unbacked_occurrence = unbacked_claim
+        .occurrence()
         .expect("a keyed schedulability claim");
-    assert!(!unreleased.requirements()[&claim]
+    assert_eq!(release_claim.node_id(), unbacked_claim.node_id());
+    assert_eq!(release_occurrence, unbacked_occurrence);
+    assert!(!unreleased.requirements()[&unbacked_occurrence]
         .requirements()
         .task_product());
 }

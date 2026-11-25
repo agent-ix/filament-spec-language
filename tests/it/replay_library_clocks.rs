@@ -7,12 +7,12 @@ use crate::command_harness::compile_file;
 use fsl_foundation::SourceIdentity;
 use fsl_package::{ClockSelectionCause, EmitRefusal};
 use fsl_replay::{
-    CompileRefusal, DependencyEntryWire, DependencyInput, QualifiedName, ReplayLimits,
-    ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource, RequestTargetWire,
-    StateEnvironment, SuppliedLibrary, call_site, replay,
+    call_site, replay, CompileRefusal, DependencyEntryWire, DependencyInput, QualifiedName,
+    ReplayLimits, ReplayPackage, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource,
+    RequestTargetWire, StateEnvironment, SuppliedLibrary,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -109,6 +109,14 @@ fn request(package: &Value, program: &str) -> ReplayRequestWire {
         &selected,
     )
     .expect("the program's call site resolves");
+    let emitted: Value =
+        serde_json::from_slice(&located.package).expect("call_site returns checked-package bytes");
+    assert_eq!(located.package_id.as_str(), PROGRAM_ID);
+    assert_eq!(emitted["name"], PROGRAM_ID);
+    assert_eq!(
+        located.package_id.as_str(),
+        emitted["name"].as_str().unwrap()
+    );
     ReplayRequestWire {
         certificate: None,
         package: canonical(package),
@@ -166,7 +174,13 @@ fn refused(package: &Value, program: &str, cause: ClockSelectionCause, pointer: 
     }
 }
 
-#[trace("TC-2213", "FR-640-AC-11", "FSpec-TC-1662", "FSpec-FR-323-AC-38")]
+#[trace(
+    "TC-2213",
+    "FR-640-AC-11",
+    "FSpec-TC-1662",
+    "FSpec-FR-323-AC-38",
+    "FR-121-AC-12"
+)]
 #[test]
 fn replay_recovers_a_library_only_clock_from_the_proving_package() {
     let directory = tempfile::tempdir().unwrap();

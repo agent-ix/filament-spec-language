@@ -996,6 +996,21 @@ fn corpus_collections() {
     println!("{report}");
 }
 
+/// FR-100-AC-4: a Boolean result crosses the run boundary in tagged form.
+#[trace("FR-100-AC-4")]
+#[test]
+fn unbounded_forall_run_result_uses_the_tagged_boolean_envelope() {
+    let directory = corpus_root().join("collections");
+    let stem = "r-unbounded-forall";
+    let program = directory.join(format!("{stem}.native"));
+    let expected: Expectation = serde_json::from_slice(
+        &std::fs::read(directory.join(format!("{stem}.expected.json"))).unwrap(),
+    )
+    .unwrap();
+    let actual = execute(&program, &expected).unwrap();
+    assert_eq!(mismatch(&program, &expected, &actual), None, "{stem}");
+}
+
 #[trace("TC-3064", "FR-680-AC-9")]
 #[test]
 fn two_path_guard_corpus() {

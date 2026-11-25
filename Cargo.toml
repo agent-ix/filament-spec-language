@@ -203,11 +203,16 @@ opt-level = 3
 [profile.dev.package.filament-exact]
 opt-level = 3
 
-# filament-observation depends on this repository's `fsl-foundation` through a
-# git dependency on `main`. Patching that source to the workspace member keeps
-# one `fsl-foundation` in the graph, so its canonical types are defined once.
+# Workspace crates and the CG dev-dependency both name FSL through this git
+# source. Patching these FSL packages to workspace members keeps one identity
+# for the typed request, evidence, and proof outcome in the cross-crate test.
 [patch."https://github.com/agent-ix/filament-spec-language"]
 fsl-foundation = { path = "fsl-foundation" }
+fsl-replay = { path = "fsl-replay" }
+fsl-package = { path = "fsl-package" }
+fsl-eval = { path = "fsl-eval" }
+fsl-semantics = { path = "fsl-semantics" }
+fsl-forms = { path = "fsl-forms" }
 
 
 # Protocol exploration (QSL-1438: the LT-16 litmus test) spends its time in
