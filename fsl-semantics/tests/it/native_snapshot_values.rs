@@ -3320,6 +3320,11 @@ fn an_invocation_of_an_operation_of_no_checked_type_refuses_the_untyped_slot() {
     assert_eq!(record.catalog.code(), Code::InvalidRuntimeInput.as_str());
     assert_eq!(record.catalog.cause(), "missing-member");
     assert_eq!(record.fields.get("field").map(String::as_str), Some("by"));
+    assert_eq!(record.fields.get("member").map(String::as_str), Some("by"));
+    assert_eq!(
+        record.fields.get("path").map(String::as_str),
+        Some("/parameters/by")
+    );
     let record = record_of(replay.invoke(
         "peek",
         Selected::Postcondition,

@@ -43,7 +43,7 @@ struct Fixture {
 
 impl Fixture {
     fn new(declaration: &str) -> Self {
-        let (package, source) = crate::value_validity::package_with_source(declaration);
+        let (package, source) = crate::value_validity_support::package_with_source(declaration);
         let claims = package
             .graph()
             .requirements()

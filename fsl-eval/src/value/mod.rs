@@ -19,8 +19,8 @@ pub(crate) use expression::{
     evaluate_hyper_holds_with_component_bindings, evaluate_model_relation_tuple,
 };
 pub use expression::{
-    evaluate_model_relation, evaluate_model_relation_transitions, ModelRelationEvaluation,
-    S6aRewardEvaluator,
+    convert_text_value, evaluate_model_relation, evaluate_model_relation_transitions,
+    ModelRelationEvaluation, S6aRewardEvaluator,
 };
 
 /// FSpec FR-144 canonical key order of two map keys. Float keys use their
@@ -86,19 +86,20 @@ pub use expression::{
     evaluate_activation_guard_at_absent_key, evaluate_bare_source_operation_clause,
     evaluate_capture, evaluate_closed_with_frame, evaluate_history_update, evaluate_join_predicate,
     evaluate_operation_contract, evaluate_plan_body, evaluate_plan_node, evaluate_protocol_slot,
-    evaluate_refinement_row, evaluate_reward, evaluate_state_predicate,
-    evaluate_state_predicate_at_absent_key, evaluate_state_predicate_with,
-    evaluate_terminal_predicate, input_refusal_code, refusal_record, supplied_stop_cause,
-    supplied_stop_code, undefined_contract_code, AdmittedEvaluationViewEvaluation,
-    ApplicationObservation, ApplicationObservationOptions, BareSourceOperationEvaluationFailure,
-    BinderCharges, ChargeAmounts, CheckedPackageEvaluation, ClauseEvaluation, ClauseRead,
-    ClauseSetEntry, ClauseSetEvaluation, ClauseSetOutcome, ComparisonReport, FrameEvaluation,
-    HoldsAtom, HoldsBinders, InvalidQualifiedName, InvocationBinding, ObservationIdentity,
-    OperationCharge, OperationLedger, PackageClosure, PackageTask, ProtocolReferenceOccurrence,
-    ProtocolSlot, ProtocolSlotEvaluation, ProtocolSuppliedValue, ProtocolSupply, QualifiedName,
-    RuntimeValuePath, Separation, SeparationStep, StopReport, SuppliedValue,
-    TruncatedOperationLedger, ValueInvariantEvaluation, ValueInvariantOutcome,
-    ValueInvariantResult, ValuePathStep, ValuePathSubject, WitnessClaim, BINDER_ACCOUNTING_VERSION,
+    evaluate_refinement_row, evaluate_reward, evaluate_source_operation_clause,
+    evaluate_state_predicate, evaluate_state_predicate_at_absent_key,
+    evaluate_state_predicate_with, evaluate_terminal_predicate, input_refusal_code, refusal_record,
+    supplied_stop_cause, supplied_stop_code, undefined_contract_code,
+    AdmittedEvaluationViewEvaluation, ApplicationObservation, ApplicationObservationOptions,
+    BareSourceOperationEvaluationFailure, BinderCharges, ChargeAmounts, CheckedPackageEvaluation,
+    ClauseEvaluation, ClauseRead, ClauseSetEntry, ClauseSetEvaluation, ClauseSetOutcome,
+    ComparisonReport, FrameEvaluation, HoldsAtom, HoldsBinders, InvalidQualifiedName,
+    InvocationBinding, ObservationIdentity, OperationCharge, OperationLedger, PackageClosure,
+    PackageTask, ProtocolReferenceOccurrence, ProtocolSlot, ProtocolSlotEvaluation,
+    ProtocolSuppliedValue, ProtocolSupply, QualifiedName, RuntimeValuePath, Separation,
+    SeparationStep, StopReport, SuppliedValue, TruncatedOperationLedger, ValueInvariantEvaluation,
+    ValueInvariantOutcome, ValueInvariantResult, ValuePathStep, ValuePathSubject, WitnessClaim,
+    BINDER_ACCOUNTING_VERSION,
 };
 pub use expression::{bare_evaluate_frame, PackageOperations, ProjectedReward};
 pub use expression::{

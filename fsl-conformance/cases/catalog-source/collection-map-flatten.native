@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function f using v(s: Sequence<Integer>[0,3]): Sequence<Integer>[0,3] pure { map(x in s: x+1) }
+function g using v(s: Sequence<Sequence<Integer>[0,2]>[0,2]): Sequence<Integer>[0,4] pure { flatten(s) }

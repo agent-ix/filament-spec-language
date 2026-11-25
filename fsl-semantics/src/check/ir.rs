@@ -569,6 +569,15 @@ impl CheckedBody {
         Self::new(nodes)
     }
 
+    /// Cut the body back to the node `root` and the nodes stored before it,
+    /// making `root` the root: a test's hand-built body, without the context
+    /// around `root` that discharged its obligations. Never shipped.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(in crate::check) fn cut_back_to(&mut self, root: NodeId) {
+        self.data.nodes.truncate(root.0 + 1);
+        self.data.lowered_integer.truncate(root.0 + 1);
+    }
+
     /// Process-local ownership, preserved by exact body clones. This token
     /// never participates in a structural graph identity.
     pub(in crate::check) fn identity(&self) -> &Arc<()> {

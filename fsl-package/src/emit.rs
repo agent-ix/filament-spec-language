@@ -20,19 +20,20 @@ use filament_contract_model::{
     CheckedAbstractionParameter, CheckedAbstractionPopulation, CheckedArtifactRef,
     CheckedCapability, CheckedCapabilityDisposition, CheckedComponentClause,
     CheckedCompositionComponent, CheckedCompositionPremise, CheckedDeclaration,
-    CheckedDependencyClockSelection, CheckedDependencySelection, CheckedDiagnosticsV2,
-    CheckedDimensionOperand, CheckedEffectiveId, CheckedEnvironmentEntry,
+    CheckedDeclaredNodeId, CheckedDependencyClockSelection, CheckedDependencySelection,
+    CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEffectiveId, CheckedEnvironmentEntry,
     CheckedEnvironmentSupplies, CheckedFairnessGranularity, CheckedFairnessKind,
     CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification, CheckedGuaranteeMeasure,
     CheckedGuaranteeProgress, CheckedJson, CheckedNodeId, CheckedNodeKind, CheckedNodeOwner,
     CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry,
     CheckedOperationAnchorBody, CheckedOriginalDeclarationId, CheckedPackageEvidence,
-    CheckedPackageLockV2, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
-    CheckedPackageV2, CheckedRational, CheckedRefinementStepRowRegion, CheckedScopedDeletion,
-    CheckedSelection, CheckedSelectionRole, CheckedSemanticGraphV2, CheckedSemanticNodeV2,
-    CheckedSourceMapEntry, CheckedSourceRef, CheckedSourceRegion, CheckedTerm, DimensionTerm,
-    LiteralKind, NominalBody, OperationBody, OperationBodyRow, ProtocolCorrelationProvenance,
-    ProtocolCorrelationRow, ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
+    CheckedPackageLockV2, CheckedPackageNodeRef, CheckedPackageSidecarsRef,
+    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedRational,
+    CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection, CheckedSelectionRole,
+    CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef,
+    CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody, OperationBody,
+    OperationBodyRow, ProtocolCorrelationProvenance, ProtocolCorrelationRow, ProtocolForm,
+    ScalarTypeForm, StateForm, ValueForm,
 };
 use serde::Deserialize;
 
@@ -58,7 +59,7 @@ use fsl_semantics::value::{
     native_diagnostics_catalog, DefinitionReference, DefinitionRole, HeaderLayer, Member,
     ModelRole, NodeOwner, TemporalRole,
 };
-use ix_trace_rs::string_edge;
+use ix_trace_rs::{implements, string_edge};
 
 use super::{CheckedPackage, EmittedPackage};
 use crate::checked::EmitLimits;
@@ -66,6 +67,9 @@ use crate::checked_v2::{
     CheckedClockConstraint, CheckedClockGuard, CheckedClockPlace, CheckedClockReset,
     CheckedConstraintTarget, CheckedGuardPart, CheckedResetTarget, CheckedTimeInvariant,
     CheckedTimedModel, CheckedUrgency, ClockComparison, TimedNodeMetadata,
+};
+use crate::source_operation::{
+    declared_source_operations, source_identity_segment, source_node_for_declaration,
 };
 use crate::wire_form::{OperationSuffix, WireForm};
 
@@ -2193,19 +2197,29 @@ impl<'g> Candidate<'g> {
     fn wire_node(
         &self,
         ids: &StructuralIds,
+        selected_models: &BTreeSet<&str>,
         function_modes: &dyn Fn(
             Option<usize>,
             &NodeKey,
         ) -> Option<filament_semantic_value::checking::CheckMode>,
     ) -> Result<CheckedSemanticNodeV2, EmitRefusal> {
         let node = self.node;
+        let dependencies = match node.nominal_payload() {
+            Some(NominalPayload::DimensionEquivalence(equivalence)) => equivalence
+                .dimensions()
+                .iter()
+                .filter(|operand| operand.package() == node.key().package())
+                .map(|operand| node_id(ids, operand))
+                .collect(),
+            _ => self.dependencies.clone(),
+        };
         Ok(CheckedSemanticNodeV2 {
             node_id: self.id.clone(),
             schema_version: GRAPH_V2.into(),
             node_tag: self.tag.as_wire().into(),
             semantic_form: node.semantic_form().into(),
             semantic_type: self.semantic_type.clone(),
-            dependencies: self.dependencies.clone(),
+            dependencies,
             occurrences: self
                 .occurrences
                 .iter()
@@ -2230,7 +2244,7 @@ impl<'g> Candidate<'g> {
             owner: node.owner().map(wire_owner),
             owner_model: node.owner_model().map(|key| node_id(ids, key)),
             check_mode: self.function_check_mode(function_modes)?,
-            body: checked_body(ids, node, self.tag)?,
+            body: checked_body(ids, node, self.tag, selected_models)?,
         })
     }
 }
@@ -2241,6 +2255,7 @@ fn checked_body(
     ids: &StructuralIds,
     node: &SemanticNode,
     tag: CheckedNodeTag,
+    selected_models: &BTreeSet<&str>,
 ) -> Result<CheckedTerm, EmitRefusal> {
     // A model-owned nominal node's values are read from the selected
     // document: its body is the empty aggregate (FR-322 "Model-owned
@@ -2249,7 +2264,7 @@ fn checked_body(
         node.nominal_payload(),
         matches!(node.owner(), Some(Owner::Model(_))),
     ) {
-        return nominal_term(ids, &node.key(), nominal);
+        return nominal_term(ids, &node.key(), nominal, selected_models);
     }
     let BodyTerm::Aggregate(aggregate) = node.body() else {
         return checked_term(ids, node.body());
@@ -2301,6 +2316,7 @@ fn nominal_term(
     ids: &StructuralIds,
     node: &NodeKey,
     payload: &NominalPayload,
+    selected_models: &BTreeSet<&str>,
 ) -> Result<CheckedTerm, EmitRefusal> {
     let body = match payload {
         NominalPayload::Enum(enumeration) => NominalBody::try_enum(
@@ -2329,25 +2345,34 @@ fn nominal_term(
             checked_rational(unit.offset()),
         ),
         NominalPayload::DimensionEquivalence(equivalence) => {
-            // A Local operand is a node of the importing package's own graph
-            // (FSpec FR-322-AC-299). A dimension of another package is a
-            // Package operand, which IR checks against a direct dependency
-            // selection; the emitter does not establish that selection here
-            // (QSL-1177 owns it), so it refuses rather than mint a foreign
-            // package into a Local id.
-            for operand in equivalence.dimensions() {
-                if operand.package() != node.package() {
-                    return Err(EmitRefusal::ForeignDimensionOperand {
+            // Foreign package operands are legal only when their package was
+            // selected by this checked graph. The IR reader authenticates the
+            // reference against the package's admitted model selections.
+            let [first, second] = equivalence.dimensions();
+            let [first, second] = [first, second].map(|operand| {
+                let id = node_id(ids, operand);
+                if operand.package() == node.package() {
+                    Ok(CheckedDimensionOperand::Local(id))
+                } else if selected_models.contains(operand.package()) {
+                    let declared = CheckedDeclaredNodeId::try_new(id).map_err(|_| {
+                        EmitRefusal::ForeignDimensionOperand {
+                            node: Box::new(node_id(ids, node)),
+                            operand: Box::new(node_id(ids, operand)),
+                        }
+                    })?;
+                    Ok(CheckedDimensionOperand::Package(CheckedPackageNodeRef {
+                        package: operand.package().into(),
+                        node: declared,
+                    }))
+                } else {
+                    Err(EmitRefusal::ForeignDimensionOperand {
                         node: Box::new(node_id(ids, node)),
                         operand: Box::new(node_id(ids, operand)),
-                    });
+                    })
                 }
-            }
+            });
             NominalBody::try_dimension_equivalence(
-                [
-                    CheckedDimensionOperand::Local(node_id(ids, &equivalence.dimensions()[0])),
-                    CheckedDimensionOperand::Local(node_id(ids, &equivalence.dimensions()[1])),
-                ],
+                [first?, second?],
                 checked_rational(equivalence.scale()),
             )
         }
@@ -5373,6 +5398,82 @@ fn refinement_node(
     ))
 }
 
+/// FR-322 "Operand index segments": the `node` of a refinement's external
+/// `{package, node}` key is a document-held id of that dependency's graph, so
+/// each operand it holds is written as the index segment of the operand's node
+/// there. A key whose path holds no operand is already in that form.
+fn write_external_keys(
+    ids: &StructuralIds,
+    package: &CheckedPackage,
+    limits: EmitLimits,
+    body: &mut CheckedTerm,
+) -> Result<(), EmitRefusal> {
+    use filament_contract_model::{
+        CheckedNodePathSegment as Segment, RefinementAbstractClass, RefinementKey,
+    };
+    let CheckedTerm::Refinement {
+        abstract_key,
+        protocol,
+        class_catalog,
+        ..
+    } = body
+    else {
+        return Ok(());
+    };
+    let mut written = vec![abstract_key.as_mut()];
+    written.extend(protocol.as_deref_mut());
+    for class in class_catalog
+        .iter_mut()
+        .flat_map(|catalog| &mut catalog.r#abstract)
+    {
+        if let RefinementAbstractClass::Declared {
+            node, binder_types, ..
+        } = class
+        {
+            written.push(node);
+            written.extend(binder_types);
+        }
+    }
+    let mut keys = ids.key_reader();
+    let mut graphs = BTreeMap::new();
+    for key in written {
+        let RefinementKey::External(external) = key else {
+            continue;
+        };
+        if !holds_segment(&external.node, |segment| {
+            matches!(segment, Segment::Node(_))
+        }) {
+            continue;
+        }
+        let library = fsl_semantics::library::LibraryName::new(&*external.package)
+            .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+        let graph = match graphs.entry(library) {
+            std::collections::btree_map::Entry::Occupied(held) => held.into_mut(),
+            std::collections::btree_map::Entry::Vacant(vacant) => {
+                let dependency = package
+                    .dependencies()
+                    .get(vacant.key())
+                    .ok_or(EmitRefusal::SourceMapInvariant)?;
+                // The dependency's own bytes, held to `limits.output_bytes`
+                // by `emit_checked`, give its graph order.
+                let emission = emit_checked(dependency, limits)?;
+                let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(
+                    emission.package().bytes(),
+                )
+                .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+                vacant.insert(graph)
+            }
+        };
+        let structural = keys
+            .key(&external.node)
+            .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+        external.node = graph
+            .wire_id(&structural)
+            .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+    }
+    Ok(())
+}
+
 /// `origin`'s role as FR-322 spells it.
 fn occurrence_role(node: &NodeKey, origin: &Origin) -> Result<CheckedOccurrenceRole, EmitRefusal> {
     crate::checked_v2::occurrence_role(origin.role().as_str()).ok_or_else(|| {
@@ -5918,7 +6019,7 @@ fn append_schedulability_claims(
         });
         let body = nominal
             .nominal_payload()
-            .map(|payload| nominal_term(ids, &nominal.key, payload))
+            .map(|payload| nominal_term(ids, &nominal.key, payload, &BTreeSet::new()))
             .transpose()?
             .ok_or(EmitRefusal::SourceMapInvariant)?;
         let node = CheckedSemanticNodeV2 {
@@ -7040,9 +7141,8 @@ pub fn emit_timed_models(
         &ForeignNodes::default(),
     )?;
     order_dependencies(&mut nodes, EmitRefusal::TimedModelWriterInvariant)?;
-    let mut meter = OutputMeter::new(limits);
     let (requirement_rows, path_condition_frames, renumbered) =
-        value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map, &mut meter)?;
+        value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     if let Some(data) = &mut checked_term_data {
         value_validity_requirements::ordinals::relabel_term_data(&renumbered, data);
     }
@@ -7612,6 +7712,11 @@ fn emit_package_nodes(
         .model_roots()
         .map(|(selection, _)| selection.identity.as_str())
         .collect();
+    let selected_dimension_packages: BTreeSet<&str> = graph
+        .model_selections()
+        .iter()
+        .map(|selection| selection.identity.as_str())
+        .collect();
     let omitted = omissions(
         ids,
         &candidates,
@@ -7715,18 +7820,23 @@ fn emit_package_nodes(
         .collect();
     let (mut source_map, mut sources) = source_map(&order, &regions)?;
     sources.extend(graph.sources().into_iter().map(source_artifact));
-    let wire_nodes = order
-        .iter()
-        .map(
-            |candidate| match denied().or_else(|| fault(&candidate.id)) {
-                Some(refusal) => Err(refusal),
-                None => candidate.wire_node(ids, &|index, key| match index {
-                    Some(index) => graph.function_check_mode(index),
-                    None => graph.probabilistic_model().reward_function_check_mode(key),
-                }),
-            },
-        )
-        .collect::<Result<Vec<_>, _>>()?;
+    let wire_nodes =
+        order
+            .iter()
+            .map(
+                |candidate| match denied().or_else(|| fault(&candidate.id)) {
+                    Some(refusal) => Err(refusal),
+                    None => {
+                        candidate.wire_node(ids, &selected_dimension_packages, &|index, key| {
+                            match index {
+                                Some(index) => graph.function_check_mode(index),
+                                None => graph.probabilistic_model().reward_function_check_mode(key),
+                            }
+                        })
+                    }
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()?;
     let mut nodes = wire_nodes;
     for node in &mut nodes {
         rewrite_source_keys_in_clock_place(node, &source_keys)?;
@@ -7742,7 +7852,8 @@ fn emit_package_nodes(
             .refinement_declaration_region(refinement)
             .filter(|region| region.start() < region.end())
             .ok_or(EmitRefusal::UnlocatedRefinementDeclaration)?;
-        let (node, entries, rows) = refinement_node(ids, graph, refinement, &region)?;
+        let (mut node, entries, rows) = refinement_node(ids, graph, refinement, &region)?;
+        write_external_keys(ids, package, limits, &mut node.body)?;
         step_rows.extend(rows);
         let insertion = nodes.partition_point(|existing| existing.node_id < node.node_id);
         nodes.insert(insertion, node.clone());
@@ -8062,12 +8173,9 @@ fn emit_package_nodes(
     }
     append_model_roots(
         ids,
-        graph.model_roots().zip(
-            graph
-                .model_root_locations()
-                .iter()
-                .map(|location| regions(location)),
-        ),
+        graph
+            .model_roots()
+            .zip(graph.model_root_locations().iter().map(&regions)),
         &mut nodes,
         &mut source_map,
     )?;
@@ -8092,8 +8200,7 @@ fn emit_package_nodes(
             .and_then(|candidate| candidate.expression_region(claim.origin().ordinal(), &regions))
             .or_else(|| graph.occurrence_region(claim.node().clone(), claim.origin()))
     };
-    // The meter charges the owner walks the renumbering makes, then every row
-    // section below.
+    // The meter charges the canonical rows that are written below.
     let mut meter = OutputMeter::new(limits);
     let value_validity = value_validity_requirements::append(
         ids,
@@ -8102,7 +8209,6 @@ fn emit_package_nodes(
         &mut source_map,
         &value_validity_region,
         &omitted_causes,
-        &mut meter,
     )?;
     omitted.extend(value_validity.omitted.iter().cloned());
     omitted.sort_by(|left, right| left.node.cmp(&right.node));
@@ -9144,77 +9250,32 @@ fn source_object_rows(
     Ok((selected, member_facts, operations))
 }
 
-fn source_node_for_declaration<'a>(
-    graph: &'a CheckedGraph,
-    declaration: &filament_checked::key::DeclarationKey,
-) -> Option<&'a SemanticNode> {
-    graph.semantic_graph().nodes().find(|node| {
-        graph.resolve_declaration(node.key()) == Some(declaration)
-            && matches!(node.owner(), Some(Owner::Source(_)))
-            && node.node_tag() == NodeTag::Model
-            && node.semantic_form() == "object_type"
-    })
-}
-
 /// FR-390 source-operation identity rows, for checked anchors whose declared
 /// operation belongs to a source object type.
+#[implements("FR-390-AC-70")]
 fn source_operation_rows(
     graph: &CheckedGraph,
     emitted: &HashMap<NodeKey, CheckedNodeId>,
 ) -> Result<Vec<filament_contract_model::SelectedSourceOperationRow>, EmitRefusal> {
-    use fsl_semantics::model::domain_package::DomainPackageRecord;
-
     let mut rows = Vec::new();
-    for package in graph.source_packages() {
-        for record in &package.records {
-            let DomainPackageRecord::OperationMember(operation) = record else {
-                continue;
-            };
-            let Some(object_name) =
-                source_identity_segment(&operation.owner.package, &operation.owner.node)
-            else {
-                continue;
-            };
-            let Some(operation_name) = operation
-                .key
-                .node
-                .strip_prefix(&format!("{}/", operation.owner.node))
-                .filter(|name| !name.is_empty() && !name.contains('/'))
-            else {
-                continue;
-            };
-            let Some(anchor) = graph.source_operation_anchor(&operation.owner, operation_name)
-            else {
-                continue;
-            };
-            let structural_node = emitted
-                .get(&anchor)
-                .cloned()
-                .ok_or(EmitRefusal::SourceMapInvariant)?;
-            let owner = source_node_for_declaration(graph, &operation.owner)
-                .and_then(|node| match node.owner() {
-                    Some(Owner::Source(owner)) => Some(owner),
-                    _ => None,
-                })
-                .ok_or(EmitRefusal::SourceMapInvariant)?;
-            rows.push(filament_contract_model::SelectedSourceOperationRow {
-                source_authority: owner.authority().into(),
-                source_identity: format!("{object_name}::{operation_name}").into(),
-                anchor_id: structural_node.clone(),
-                structural_node,
-            });
-        }
+    for operation in declared_source_operations(graph) {
+        let structural_node = emitted
+            .get(&operation.anchor)
+            .cloned()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let owner = operation
+            .owner(graph)
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        rows.push(filament_contract_model::SelectedSourceOperationRow {
+            source_authority: owner.authority().into(),
+            source_identity: format!("{}::{}", operation.type_name, operation.operation_name)
+                .into(),
+            anchor_id: structural_node.clone(),
+            structural_node,
+        });
     }
     rows.sort_by(|left, right| left.anchor_id.cmp(&right.anchor_id));
     Ok(rows)
-}
-
-/// The final authored segment in a declaration key's exact `ix://` identity.
-/// This parses the admitted key shape; it does not use a formatter or display.
-fn source_identity_segment<'a>(package: &str, identity: &'a str) -> Option<&'a str> {
-    identity
-        .strip_prefix(&format!("ix://{package}/"))
-        .filter(|segment| !segment.is_empty() && !segment.contains('/'))
 }
 
 /// FR-092 "Source tuple identity rows": one row per emitted source-owned
@@ -9868,7 +9929,7 @@ fn write_time_nominal(
         match (nominal.form, nominal.nominal_payload()) {
             (TimeNominalForm::Dimension, Some(payload @ NominalPayload::Dimension(_)))
             | (TimeNominalForm::Unit, Some(payload @ NominalPayload::Unit(_))) => {
-                nominal_term(ids, &nominal.key, payload)?
+                nominal_term(ids, &nominal.key, payload, &BTreeSet::new())?
             }
             _ => {
                 return Err(EmitRefusal::TimedModelWriterInvariant(
@@ -10241,6 +10302,7 @@ struct WrittenTemporalRows {
     refs: Vec<TemporalClauseRef>,
 }
 
+#[implements("FR-640-AC-15")]
 fn temporal_binding_rows(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
@@ -10523,29 +10585,25 @@ fn temporal_binding_rows(
             let Some(profile) = awaited.profile else {
                 continue;
             };
-            if !matches!(
-                profile,
-                TemporalProfile::EventPositionFalseExtension
-                    | TemporalProfile::FixedSampleFalseExtension
-                    | TemporalProfile::TimestampedEventFiniteWindow
-            ) {
+            if profile == TemporalProfile::InfiniteTrace {
                 continue;
             }
             let span = awaited.span;
             let key = (source.clone(), span.start, span.end, None);
-            let declaration_name = format!("await {}::{}", protocol.name, awaited.name);
             let Some(selection) = selected.remove(&key) else {
-                missing.push((
-                    MissingClockKind::Await,
-                    source.clone(),
-                    span,
-                    declaration_name,
-                ));
+                if profile != TemporalProfile::Timed {
+                    let name = format!("await {}::{}", protocol.name, awaited.name);
+                    missing.push((MissingClockKind::Await, source.clone(), span, name));
+                }
                 continue;
             };
             check_selected_definition(&source, span, profile, selection)?;
             let clock = &selection.clock;
             validate_temporal_clock(&source, span, awaited.clock.as_str(), clock)?;
+            // A `timed` protocol clock is checked and takes no row.
+            if profile == TemporalProfile::Timed {
+                continue;
+            }
             let node_key = keys
                 .nodes
                 .get(&awaited.node)
@@ -10581,8 +10639,8 @@ fn temporal_binding_rows(
     // FSpec FR-322-AC-305: a `compensate` node reads a clock too, so it is
     // keyed by its own node identity, named by the template's clock text,
     // and shares the one array with the clause rows. Its profile is the one
-    // its `using` alias selects; a node of a profile that is not a
-    // clock-configured one writes no row.
+    // its `using` alias selects; a `timed` template's selection is checked and
+    // takes no row, and an infinite-trace template reads no clock.
     let compensation_nodes: HashMap<Vec<&str>, &CheckedNodeId> = nodes
         .iter()
         .filter(|node| is_compensation_node(node))
@@ -10604,12 +10662,7 @@ fn temporal_binding_rows(
             let Some(profile) = template.temporal_profile else {
                 continue;
             };
-            if !matches!(
-                profile,
-                TemporalProfile::EventPositionFalseExtension
-                    | TemporalProfile::FixedSampleFalseExtension
-                    | TemporalProfile::TimestampedEventFiniteWindow
-            ) {
+            if profile == TemporalProfile::InfiniteTrace {
                 continue;
             }
             let path = [protocol.name.as_str(), "compensate", template.name.as_str()];
@@ -10620,17 +10673,23 @@ fn temporal_binding_rows(
             let span = template.span;
             let key = (source.clone(), span.start, span.end, None);
             let Some(selection) = selected.remove(&key) else {
-                missing.push((
-                    MissingClockKind::CompensationTemplate,
-                    source.clone(),
-                    span,
-                    format!("compensate template `{}::{}`", protocol.name, template.name),
-                ));
+                if profile != TemporalProfile::Timed {
+                    missing.push((
+                        MissingClockKind::CompensationTemplate,
+                        source.clone(),
+                        span,
+                        format!("compensate template `{}::{}`", protocol.name, template.name),
+                    ));
+                }
                 continue;
             };
             check_selected_definition(&source, span, profile, selection)?;
             let clock = &selection.clock;
             validate_temporal_clock(&source, span, template.clock.as_str(), clock)?;
+            // A `timed` protocol clock is checked and takes no row.
+            if profile == TemporalProfile::Timed {
+                continue;
+            }
             let node_key = key_of_id
                 .get(&declaration)
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
@@ -11220,6 +11279,7 @@ pub use clock_selection::{
 };
 mod body_locations;
 mod identity_rows;
+mod location_paths;
 mod monitor_plan;
 pub(crate) mod protocol_locations;
 pub use monitor_plan::{declaration_less_function_id, emit_monitor_plan_over, MonitorPlanWire};

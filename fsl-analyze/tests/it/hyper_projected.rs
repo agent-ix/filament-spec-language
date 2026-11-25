@@ -11,6 +11,7 @@
 //! Each counterexample is also read back by an oracle written here that
 //! re-executes its traces through the vault's `ModelSystem`.
 
+use crate::hyper_projected_support::{aligned, AGREE, IDLE, MID_OPERATION};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Charge, ChargePoint, Identifier, Meter, Undefined};
 use fsl_analyze::model_check::ModelCheckRefusal;
@@ -19,9 +20,9 @@ use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::Limits;
 use fsl_eval::temporal::AtomReading;
 use fsl_replay::{
-    BoundCovers, Code, HyperCounterexample, HyperCounterexampleKind, HyperOutcome, HyperStep,
-    IncompleteCause, ModelCheckLimit, ModelCheckLimits, ModelTraceRefusal, ReplayRefusal, StepMark,
-    UndecidedCause,
+    BoundCovers, Code, HyperCounterexample, HyperCounterexampleKind, HyperLocus, HyperOutcome,
+    HyperStep, IncompleteCause, ModelCheckLimit, ModelCheckLimits, ModelTraceRefusal,
+    ReplayRefusal, StepMark, UndecidedCause,
 };
 use fsl_semantics::check::{FormulaNodeId, OperationKey};
 use ix_trace_rs::trace;
@@ -29,30 +30,23 @@ use std::cell::RefCell;
 
 use crate::counter::ZERO;
 
-use crate::hyper::{input, positions, refuted, Exhausted, Refusing};
+use crate::hyper_support::{
+    input, inputs, positions, refuted, Exhausted, Refusing, KERNEL_MOD_FUNCTION,
+};
 use crate::hyper_world::{
     assert_hyper_division_refused_in, busy_of, high, input_of, key as hyper_key, low,
     non_interference, Vault, World, KEY,
 };
 use fsl_eval::temporal::UndefinedCause;
 
-/// `μ` matching the arguments of two `step` steps and nothing else: a `step`
-/// is matched against a `step` of equal input, and against any step that is
-/// not one.
-const AGREE: &str = "(if present(a.step.Vault::step.i) and present(b.step.Vault::step.i) \
-     then value(a.step.Vault::step.i) = value(b.step.Vault::step.i) else true)";
-
-/// The conjunct of FR-178-AC-5, which has no value where `a`'s step is
-/// `step(0)`.
+/// A conjunct that divides by `a`'s input inline, which S3 refuses.
 const INVERSE: &str = "(if present(a.step.Vault::step.i) \
      then 1 mod value(a.step.Vault::step.i) else 0) = 0";
 
-/// The vault's two idle initial states `(h, l, busy)`.
-pub(crate) const IDLE: [(i64, i64, i64); 2] = [(0, 0, 0), (1, 0, 0)];
-
-/// The secret-1 run caught mid-operation, `busy` already set: its first step
-/// is a `mix`.
-pub(crate) const MID_OPERATION: [(i64, i64, i64); 2] = [(0, 0, 0), (1, 0, 1)];
+/// The conjunct of FR-178-AC-5, which has no value where `a`'s step is
+/// `step(0)`: it calls [`KERNEL_MOD_FUNCTION`], so the Linked clause admits it.
+const KERNEL_INVERSE: &str = "(if present(a.step.Vault::step.i) \
+     then q(value(a.step.Vault::step.i)) else 0) = 0";
 
 /// Section 13's clause with `align skip { V::Vault::mix }` over the body
 /// `body` and the `match` conjuncts `conjuncts`.
@@ -68,17 +62,6 @@ fn aligned_over(body: &str, conjuncts: &[&str]) -> String {
 /// ADR-023 section 13's lockstep clause.
 fn lockstep() -> String {
     non_interference(&format!("match {{ {AGREE} }}"))
-}
-
-/// Section 13's clause with `align skip { V::Vault::mix }` and the `match`
-/// conjuncts `conjuncts`.
-pub(crate) fn aligned(conjuncts: &[&str]) -> String {
-    format!(
-        "hyper NonInterference using inf over behaviours (v: V::Vault) \
-         forall trace a of V forall trace b of V align skip {{ V::Vault::mix }} \
-         match {{ {} }} {{ always holds(v.l @ a = v.l @ b) }}",
-        [&[AGREE], conjuncts].concat().join(" and ")
-    )
 }
 
 fn run(world: &World) -> HyperOutcome {
@@ -349,6 +332,76 @@ fn a_projected_match_divisor_is_refused_before_skipping_moves() {
     );
 }
 
+/// FR-178-AC-5: AC-1's clause with a `match` conjunct that has no value where
+/// `a`'s step is `step(0)` is refuted by an `Undefined` counterexample, one
+/// unmarked path per variable ending at the first such joint visible step in
+/// breadth-first order, cause `division-by-zero`.
+#[trace("TC-603", "FR-178-AC-5")]
+#[test]
+fn an_undefined_match_ends_the_paths_at_the_first_such_visible_step() {
+    let world = World::busy_with_kernel_function(
+        Vault::Busy,
+        &IDLE,
+        &aligned(&[KERNEL_INVERSE]),
+        KERNEL_MOD_FUNCTION,
+    );
+    let counterexample = refuted(run(&world));
+    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
+        panic!(
+            "expected an undefined evaluation: {:?}",
+            counterexample.kind
+        );
+    };
+    assert_eq!(
+        undefined.cause,
+        UndefinedCause::Kernel(Undefined::DivisionByZero)
+    );
+    assert_eq!(undefined.locus, HyperLocus::Match { conjunct: 1 });
+    assert_eq!(undefined.position, 1);
+    assert_eq!(undefined.transition, None);
+    assert_eq!(undefined.state_keys.len(), 2);
+    assert_eq!(counterexample.trace_position, 1);
+    assert_eq!(counterexample.traces.len(), 2);
+    for (index, trace) in counterexample.traces.iter().enumerate() {
+        assert_eq!(trace.steps.len(), 1);
+        assert!(trace.marks.is_empty(), "an undefined path is unmarked");
+        assert_eq!(inputs(&counterexample, index), [0]);
+    }
+}
+
+/// FR-178-AC-9: AC-5's request with both runs starting mid-operation,
+/// `(1, 0, true)`, follows two skip moves, one for each run's `mix`, to the
+/// first such step. The paths are unmarked, each holds its `mix` and the
+/// visible `step(0)`, and `trace_position` and the evaluation are at the
+/// projected position 1, the number of visible steps, not at the three moves
+/// that reach it.
+#[trace("TC-603", "FR-178-AC-9")]
+#[test]
+fn an_undefined_match_after_skip_moves_is_at_the_projected_position() {
+    let world = World::busy_with_kernel_function(
+        Vault::Busy,
+        &[(1, 0, 1)],
+        &aligned(&[KERNEL_INVERSE]),
+        KERNEL_MOD_FUNCTION,
+    );
+    let counterexample = refuted(run(&world));
+    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
+        panic!(
+            "expected an undefined evaluation: {:?}",
+            counterexample.kind
+        );
+    };
+    assert_eq!(undefined.position, 1);
+    assert_eq!(counterexample.trace_position, 1);
+    for trace in &counterexample.traces {
+        assert!(trace.marks.is_empty(), "an undefined path is unmarked");
+        let kinds: Vec<_> = trace.steps.iter().map(is_mix).collect();
+        assert_eq!(kinds, [true, false]);
+    }
+    assert_eq!(inputs_after_mix(&counterexample, 0), 0);
+    assert_eq!(inputs_after_mix(&counterexample, 1), 0);
+}
+
 /// The input of trace `trace`'s `step`, the one after its `mix`.
 fn inputs_after_mix(counterexample: &HyperCounterexample, trace: usize) -> i64 {
     input(&counterexample.traces[trace].steps[1])
@@ -558,11 +611,22 @@ fn an_evaluator_that_runs_out_while_confirming_stops_the_item() {
     );
 }
 
-/// FR-495: the unproved divisor in the declared clause is refused, and the
-/// engine reports a rejection before a separately stubbed undefined match.
+/// The first product state in breadth-first order wins between an undefined
+/// `μ_U` and a rejecting monitor state (ADR-023 HV-8). Over idle starts with
+/// the body `always holds(v.l @ a = 0)`, `step(1)` rejects and `step(0)` is
+/// the visible move on which AC-5's conjunct has no value; `step(0)` is the
+/// canonically first move, so the undefined state is discovered first.
 fn assert_an_undefined_match_discovered_before_a_rejection_wins() {
-    let clause = aligned_over("always holds(v.l @ a = 0)", &[INVERSE]);
-    assert_hyper_division_refused_in(Vault::Busy, false, &clause, "value(a.step.Vault::step.i)");
+    let clause = aligned_over("always holds(v.l @ a = 0)", &[KERNEL_INVERSE]);
+    let world = World::busy_with_kernel_function(Vault::Busy, &IDLE, &clause, KERNEL_MOD_FUNCTION);
+    let counterexample = refuted(run(&world));
+    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
+        panic!(
+            "expected the undefined state first: {:?}",
+            counterexample.kind
+        );
+    };
+    assert_eq!(undefined.locus, HyperLocus::Match { conjunct: 1 });
 }
 
 /// A `μ_U` that has no value where `a`'s input is 1.
@@ -612,8 +676,9 @@ fn assert_a_rejection_discovered_before_an_undefined_match_wins() {
     assert_eq!(refuted(outcome).kind, HyperCounterexampleKind::Projected);
 }
 
-/// FR-178-AC-8: an unproved divisor is refused at S3, while the engine still
-/// reports a rejecting monitor state before the stub's undefined match.
+/// FR-178-AC-8: the first product state in breadth-first order decides
+/// between an undefined `μ_U` and a rejecting monitor state, whichever of the
+/// two it is.
 #[trace("TC-603", "FR-178-AC-8")]
 #[test]
 fn the_first_discovered_of_an_undefined_match_and_a_rejection_wins() {

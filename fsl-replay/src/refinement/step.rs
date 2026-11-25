@@ -25,7 +25,7 @@ use fsl_eval::simulation::model::{
     operation_identity_text, AbstractApplication, Judgement, ModelFinding, ModelSimState,
     ModelSystem, Rejection, ResolvedStep, RowReading,
 };
-use fsl_eval::simulation::protocol::ProtocolRefusal;
+use fsl_eval::simulation::protocol::{ProtocolRefusal, StepKind};
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop};
 use fsl_semantics::check::StepClass;
 use fsl_semantics::model::state::ModelState;
@@ -215,6 +215,30 @@ fn sorted_with_duplicate_candidates(
         .collect())
 }
 
+/// Coalesce equal hidden-state candidates for the untimed product while
+/// keeping every incoming path row pointed at the retained state.
+fn sorted_merged_candidates(
+    system: &ModelSystem<'_>,
+    states: impl IntoIterator<Item = ModelState>,
+    rows: &mut [CandidateStep],
+) -> Result<Vec<ModelState>, StepVerdict> {
+    let candidates = sorted(system, states)?;
+    let mut ordinals = std::collections::BTreeMap::<Vec<u8>, usize>::new();
+    for (ordinal, candidate) in candidates.iter().enumerate() {
+        let key = system
+            .state_key_of(candidate)
+            .map_err(|_| fault("candidate-state-encodes"))?
+            .0;
+        ordinals.insert(key, ordinal);
+    }
+    for row in rows {
+        row.post_candidate = *ordinals
+            .get(&row.post_state)
+            .ok_or_else(|| fault("candidate-post-ordinal"))?;
+    }
+    Ok(candidates)
+}
+
 fn assign_post_candidates(
     system: &ModelSystem<'_>,
     candidates: &[ModelState],
@@ -333,8 +357,46 @@ pub fn check_step(
         abstract_system,
         pre,
         step,
-        false,
+        StepProduct {
+            allow_protocol_node: false,
+            merge_candidate_states: false,
+        },
     )
+}
+
+/// FR-142: check a step in the untimed explicit-state model checker.
+///
+/// Equal hidden abstract states are one candidate in this product. Candidate
+/// step rows still retain every source-to-target path. Timed refinement uses
+/// [`check_step`] so equal states with distinct clock blocks remain separate.
+pub fn check_step_for_model(
+    refinement: &dyn RefinementRead,
+    concrete_system: &ModelSystem<'_>,
+    abstract_system: &ModelSystem<'_>,
+    pre: &RefinementPosition,
+    step: &ConcreteStep<'_>,
+) -> StepResult {
+    check_step_inner(
+        refinement,
+        concrete_system,
+        abstract_system,
+        pre,
+        step,
+        StepProduct {
+            allow_protocol_node: false,
+            merge_candidate_states: true,
+        },
+    )
+}
+
+/// How the product a step is checked in reads the abstract subject.
+#[derive(Clone, Copy)]
+struct StepProduct {
+    /// Whether a protocol-node row applies, which needs an abstract protocol
+    /// subject (FR-148).
+    allow_protocol_node: bool,
+    /// Whether equal hidden abstract states are one candidate (FR-142).
+    merge_candidate_states: bool,
 }
 
 fn check_step_inner(
@@ -343,7 +405,7 @@ fn check_step_inner(
     abstract_system: &ModelSystem<'_>,
     pre: &RefinementPosition,
     step: &ConcreteStep<'_>,
-    allow_protocol_node: bool,
+    product: StepProduct,
 ) -> StepResult {
     let mut abstract_successors = 0;
     let verdict = decide_step(
@@ -353,7 +415,7 @@ fn check_step_inner(
         pre,
         step,
         &mut abstract_successors,
-        allow_protocol_node,
+        product,
     );
     StepResult {
         verdict,
@@ -473,7 +535,10 @@ pub fn check_protocol_step(
         abstract_system,
         pre,
         step,
-        protocol_node,
+        StepProduct {
+            allow_protocol_node: protocol_node,
+            merge_candidate_states: false,
+        },
     );
     let StepVerdict::Passes { mut post, taken } = model_result.verdict else {
         if matches!(
@@ -570,7 +635,8 @@ pub fn check_protocol_step(
         };
         count = count.saturating_add(u64::try_from(expansion.successors.len()).unwrap_or(u64::MAX));
         for (transition, candidate) in expansion.successors {
-            let Some(application) = transition.application() else {
+            // FR-148: an operation's label is a step that applies it.
+            let Some(application) = transition.applied_application() else {
                 continue;
             };
             if !accepted.contains(application) {
@@ -1253,7 +1319,6 @@ pub(crate) fn protocol_class(
     system: &AbstractProtocolSystem<'_>,
     transition: &fsl_eval::simulation::protocol::ProtocolTransition,
 ) -> Option<String> {
-    use fsl_eval::simulation::protocol::StepKind;
     let protocol = &system.protocol().name;
     let member = transition
         .node()
@@ -1272,11 +1337,12 @@ pub(crate) fn protocol_class(
         }
         StepKind::Fork => format!("fork {protocol}::{}", member?),
         StepKind::Join => format!("join {protocol}::{}", member?),
-        StepKind::CAttempt => format!("{protocol}::{}", transition.template()?),
-        StepKind::CEnd => format!("cend {protocol}::{}", transition.template()?),
-        StepKind::CFail => format!("cfail {protocol}::{}", transition.template()?),
-        StepKind::CTimeout => format!("ctimeout {protocol}::{}", transition.template()?),
-        StepKind::CExpire => format!("cexpire {protocol}::{}", transition.template()?),
+        // A transition's template name already carries its protocol.
+        StepKind::CAttempt => transition.template()?.to_owned(),
+        StepKind::CEnd => format!("cend {}", transition.template()?),
+        StepKind::CFail => format!("cfail {}", transition.template()?),
+        StepKind::CTimeout => format!("ctimeout {}", transition.template()?),
+        StepKind::CExpire => format!("cexpire {}", transition.template()?),
         StepKind::Duplicate => format!("duplicate {protocol}::{}", transition.channel_queue()?.0),
         StepKind::Lose => format!("lose {protocol}::{}", transition.channel_queue()?.0),
         StepKind::Spawn => format!("spawn {protocol}::{}", transition.role_instance()?.0),
@@ -1341,8 +1407,12 @@ fn decide_step(
     pre: &RefinementPosition,
     step: &ConcreteStep<'_>,
     abstract_successors: &mut u64,
-    allow_protocol_node: bool,
+    product: StepProduct,
 ) -> StepVerdict {
+    let StepProduct {
+        allow_protocol_node,
+        merge_candidate_states,
+    } = product;
     let Some(before) = pre.abstract_states.first() else {
         return fault("a-position-holds-an-abstract-state");
     };
@@ -1593,7 +1663,9 @@ fn decide_step(
                     position: step.position,
                 });
             }
-            let next = match if hidden {
+            let next = match if hidden && merge_candidate_states {
+                sorted_merged_candidates(abstract_system, next, &mut candidate_steps)
+            } else if hidden {
                 sorted_with_duplicate_candidates(abstract_system, next, &candidate_steps)
             } else {
                 sorted(abstract_system, next)
@@ -1601,10 +1673,12 @@ fn decide_step(
                 Ok(next) => next,
                 Err(verdict) => return verdict,
             };
-            if let Err(verdict) =
-                assign_post_candidates(abstract_system, &next, &mut candidate_steps)
-            {
-                return verdict;
+            if hidden && !merge_candidate_states {
+                if let Err(verdict) =
+                    assign_post_candidates(abstract_system, &next, &mut candidate_steps)
+                {
+                    return verdict;
+                }
             }
             if stuttered {
                 return if hidden {
@@ -1641,10 +1715,13 @@ fn decide_step(
             judge_operation(
                 abstract_system,
                 (&pre.abstract_states, &mapped),
-                operation,
-                arguments,
+                AbstractCall {
+                    operation,
+                    arguments,
+                },
                 step,
                 abstract_successors,
+                merge_candidate_states,
                 pass_with_states,
             )
         }
@@ -2020,6 +2097,13 @@ struct Arguments {
     result: Option<Value>,
 }
 
+/// The call an abstract-operation row makes: the abstract operation it names
+/// and what it reads at the pre-state.
+struct AbstractCall<'a> {
+    operation: &'a DeclarationKey,
+    arguments: Arguments,
+}
+
 /// RS-4: the receiver and arguments of the abstract-operation row `row`,
 /// evaluated at the pre-state over the concrete step's receiver and
 /// arguments (FR-141 "Abstract-operation evaluation"), with the history
@@ -2349,19 +2433,23 @@ fn completions(
     Ok(states)
 }
 
-/// RS-4: the abstract operation `operation` over the evaluated `arguments`,
+/// RS-4: the abstract operation of `call` over its evaluated arguments,
 /// judged against each completion of the mapped post-state from each member
 /// of `pre_states`, with the calls the abstract system makes when it expands
 /// the member. The members after the step are the accepted completions.
 fn judge_operation(
     abstract_system: &ModelSystem<'_>,
     (pre_states, mapped): (&[ModelState], &MappedState),
-    operation: &DeclarationKey,
-    arguments: Arguments,
+    call: AbstractCall<'_>,
     step: &ConcreteStep<'_>,
     abstract_successors: &mut u64,
+    merge_candidate_states: bool,
     passes: impl FnOnce(Taken, Vec<ModelState>) -> StepVerdict,
 ) -> StepVerdict {
+    let AbstractCall {
+        operation,
+        arguments,
+    } = call;
     let completions = match completions(abstract_system, mapped) {
         Ok(completions) => completions,
         Err(verdict) => return verdict,
@@ -2428,6 +2516,8 @@ fn judge_operation(
     if !accepted.is_empty() {
         let next_result = if mapped.hidden.is_empty() {
             sorted(abstract_system, next)
+        } else if merge_candidate_states {
+            sorted_merged_candidates(abstract_system, next, &mut candidate_steps)
         } else {
             sorted_with_duplicate_candidates(abstract_system, next, &candidate_steps)
         };
@@ -2435,8 +2525,12 @@ fn judge_operation(
             (Ok(taken), Ok(next)) => (taken, next),
             (Err(verdict), _) | (_, Err(verdict)) => return verdict,
         };
-        if let Err(verdict) = assign_post_candidates(abstract_system, &next, &mut candidate_steps) {
-            return verdict;
+        if !mapped.hidden.is_empty() && !merge_candidate_states {
+            if let Err(verdict) =
+                assign_post_candidates(abstract_system, &next, &mut candidate_steps)
+            {
+                return verdict;
+            }
         }
         return if mapped.hidden.is_empty() {
             passes(Taken::Abstract(taken), next)

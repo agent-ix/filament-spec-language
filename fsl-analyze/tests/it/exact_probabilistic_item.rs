@@ -150,6 +150,53 @@ fn a_reachability_bound_that_holds_settles_proved_with_the_checked_certificate()
         .any(|entry| entry.value == ratio(24, 25)));
 }
 
+/// A product `max_states` cut short whose explored prefix settles nothing
+/// stops at that budget on the measure and long-run routes too: only a lower
+/// proof settles a partial product (FSpec FR-411 "Evidence on a partial
+/// product"), and these forms have none here.
+#[trace("TC-638", "FR-203")]
+#[test]
+fn a_partial_product_that_settles_nothing_stops_at_the_state_budget() {
+    let link = World::new(&prob_world::link(
+        "probabilistic Compared using ev on M over (m: M::Msg) under Even on origin \
+         { probability >= 0.5 [ steps from holds(true) until holds(m.delivered) within 2 <= 2 ] }\n\
+         probabilistic Mean using ev on M over (m: M::Msg) under Even on origin \
+         { mean of (fraction holds(m.delivered) over [0, 2]) >= 0.1 }\n",
+    ));
+    let service = World::new(&prob_world::service(
+        "probabilistic Weighted using inf on M over (s: M::Server) under Steady on origin \
+         { long_run_fraction holds(s.phase = 0) >= rational(1,2) }\n\
+         probabilistic Every using inf on M over (s: M::Server) under every scheduler on origin \
+         { long_run_fraction holds(s.phase = 0) >= rational(1,2) }",
+    ));
+    let mut wrong = Vec::new();
+    for (world, claim) in [
+        (&link, "Compared"),
+        (&link, "Mean"),
+        (&service, "Weighted"),
+        (&service, "Every"),
+    ] {
+        let record = settle(
+            world,
+            claim,
+            ModelCheckLimits {
+                limits: Limits::default().with_max_states(1),
+                ..ModelCheckLimits::default()
+            },
+        );
+        let stopped = TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::ExactProbMaxStates,
+            value: 1,
+            required: None,
+        });
+        if record.terminal().map(|terminal| terminal.value()) != Some(&stopped) {
+            wrong.push(format!("{claim}: {:?}", record.settlement));
+        }
+        assert!(record.exact_probabilistic.is_none(), "{claim}");
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
 #[trace("TC-763", "FR-281-AC-6")]
 #[test]
 fn a_state_budget_of_one_settles_incomplete() {
@@ -319,10 +366,9 @@ fn a_rejected_certificate_never_settles_proved() {
     let locus = CertificateLocus::ProbabilityProductState(expected.clone());
     let wire = serde_json::to_value(&locus).unwrap();
     // Encode the complete canonical octets independently of the locus serializer.
-    let expected_wire = serde_json::to_value(fsl_replay::CertificateLocus::ModelKey(
-        fsl_eval::simulation::StateKey::from_canonical_bytes(expected.as_bytes().to_vec()),
-    ))
-    .unwrap();
+    use base64::Engine as _;
+    let expected_wire =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(expected.as_bytes());
     assert_eq!(wire, serde_json::json!({"product_key": expected_wire}));
     let outcome = serde_json::to_value(fsl_replay::OutcomeItem::from_terminal(terminal)).unwrap();
     assert_eq!(outcome["result"], "inconclusive");
@@ -1489,8 +1535,7 @@ fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
         method,
         &fsl_replay::BoundsMethod::BackwardInduction { precision_bits: 64 }
     );
-    let fsl_replay::ExactBound::Finite(upper) = upper
-    else {
+    let fsl_replay::ExactBound::Finite(upper) = upper else {
         panic!("complete product interval has a finite upper endpoint");
     };
     let exact = ratio(9_999_999, 10_000_000)

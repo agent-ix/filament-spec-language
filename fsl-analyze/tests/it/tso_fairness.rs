@@ -44,8 +44,8 @@ use crate::litmus::{
     attempt, contracts, core, document, field, package, protocol, protocol_with, sb_run, unit_text,
     Documents,
 };
-use crate::model_settle::{envelope_at, request};
-use crate::weak_memory::select;
+use crate::model_settle_support::{envelope_at, request};
+use crate::weak_memory_support::select;
 
 /// `eventually holds(k.r1 = 1)`.
 const SETTLES: &str = "temporal Settles using t0 over (k: M::Core) clock \"model-steps\" \
@@ -1003,8 +1003,7 @@ fn a_false_liveness_claim_with_a_cut_store_is_refuted_by_a_replayable_lasso() {
     let cut = unit
         .check(&unit.tso(), Some(1))
         .expect("the subject checks");
-    let ModelCheckOutcome::Violated { counterexample, .. } = cut
-    else {
+    let ModelCheckOutcome::Violated { counterexample, .. } = cut else {
         panic!("{cut:?}");
     };
     assert!(counterexample.lasso.is_some());

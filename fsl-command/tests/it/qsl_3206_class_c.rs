@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! QSL-3206: the native-run/provider path emits the complete coll-cart source
-//! with the same source selection and identity used by the example request.
+//! with the source selection and identity used by the example request.
 
 use fsl_command::command::{self, RequestOverrides, RunLimits};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 const REQUEST: &str =
@@ -29,13 +29,13 @@ fn copy_example_fixture(directory: &Path) -> PathBuf {
         fixture_root.join("rules/values/collections/coll-cart.fsl"),
         &source,
     )
-    .expect("the complete example source copies");
+    .expect("the complete coll-cart source copies");
     request
 }
 
 /// The exact coll-cart request declares no libraries and one program source.
-/// The source contains the full example unit (nine functions calling prices),
-/// so the driver-equivalent provider path must admit exactly that one file.
+/// That file contains nine calls to prices(), so the provider path must admit
+/// exactly that source and preserve its shared call occurrences.
 #[test]
 #[trace("QSL-3206", "FSpec-FR-322")]
 fn driver_provider_run_emits_the_complete_coll_cart_example_unit() {
@@ -88,6 +88,6 @@ fn driver_provider_run_emits_the_complete_coll_cart_example_unit() {
     assert_eq!(
         admitted[0].text(),
         SOURCE,
-        "the entire example unit is loaded"
+        "the complete coll-cart unit is loaded"
     );
 }

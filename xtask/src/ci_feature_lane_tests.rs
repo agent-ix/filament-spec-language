@@ -362,7 +362,7 @@ fn aggregate_ci_disables_incremental_metadata_and_debug_symbols() {
     );
     assert_eq!(
         fs::read_to_string(recipe.directory.path().join("calls")).unwrap(),
-        "\trun\t--locked\t--package\txtask\t--\tpin-check\n\trun\t--locked\t--package\txtask\t--\tci\n",
+        "\trun\t--locked\t--package\txtask\t--\tparity\n\trun\t--locked\t--package\txtask\t--\tpin-check\n\trun\t--locked\t--package\txtask\t--\tci\n",
         "the optimization preserves the aggregate Cargo command"
     );
 }
@@ -560,6 +560,7 @@ fn aggregate_reaches_default_then_all_features_without_changing_recipe_order() {
     let other_checks = [
         "conformance",
         "check-no-committed-binaries",
+        "test-deep-measurements",
         "ci-clean-build",
         "seam-probe",
         "string-edge",

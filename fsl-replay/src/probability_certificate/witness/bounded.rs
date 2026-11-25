@@ -27,7 +27,7 @@ pub(super) fn replay(
     else {
         return Err(ExactProbabilityGraphError::UnsupportedClaimForm.into());
     };
-    let fair_unbounded_eventual = claim.fairness.len() > 0
+    let fair_unbounded_eventual = !claim.fairness.is_empty()
         && claim.scheduler == fsl_semantics::check::ProbScheduler::Every
         && *horizon == 0
         && matches!(

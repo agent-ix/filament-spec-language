@@ -21,7 +21,7 @@ use fsl_route::request::ExtentClassification;
 use ix_trace_rs::trace;
 
 use crate::counter::{document, key, subject, UNLIMITED};
-use crate::liveness::{counter, Fixture};
+use crate::liveness_support::{counter, Fixture};
 
 fn reaches_two() -> Fixture {
     counter(

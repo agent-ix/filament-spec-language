@@ -248,6 +248,33 @@ fn read<'a>(
     Ok(document)
 }
 
+/// Whether `bytes` are a `filament.simulation.state-key/v1` encoding: the
+/// RFC 8785 text of a model state in its outer envelope. It reads the bytes
+/// alone, so it says nothing of whether a subject has such a state.
+///
+/// # Errors
+///
+/// [`quire_canonical::ReadError::Allocation`] or
+/// [`quire_canonical::Error::Allocation`], as the latter, when memory runs
+/// out before the bytes are judged.
+pub(crate) fn is_model_state_key(bytes: &[u8]) -> Result<bool, quire_canonical::Error> {
+    let length = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let document = match quire_canonical::read(bytes, length) {
+        Ok(document) => document,
+        Err(quire_canonical::ReadError::Allocation { requested }) => {
+            return Err(quire_canonical::Error::Allocation { requested });
+        }
+        Err(_) => return Ok(false),
+    };
+    if !model_form(document.root()) {
+        return Ok(false);
+    }
+    // The canonical text of an input can be longer than the input itself, so
+    // the comparison, not a byte limit, decides.
+    let canonical = quire_canonical::to_vec(&document, quire_canonical::Limits::new(u64::MAX))?;
+    Ok(canonical == bytes)
+}
+
 // This is only the owner-defined outer model envelope. Typed state content and
 // actual state membership are independently rederived from ModelSystem.
 pub(super) fn model_form(node: NodeRef<'_>) -> bool {
@@ -412,8 +439,10 @@ fn nested_timed_formula_key(root: NodeRef<'_>, nested: NodeRef<'_>) -> bool {
         return false;
     };
     root_occurrence != nested_occurrence
-        && root_kind == "eventually"
-        && nested_kind == "always"
+        && matches!(
+            (root_kind, nested_kind),
+            ("eventually", "always") | ("always", "eventually")
+        )
         && nested_lower == nested_upper
 }
 
@@ -555,17 +584,6 @@ pub(super) fn admit_parts(
                 return Err(ProbabilityDocumentError::Malformed);
             }
         }
-        Node::Array(mut monitor) if monitor.len() == 4 => {
-            let tag = monitor.next().map(|part| part.node());
-            let horizon = monitor.next();
-            let observations = monitor.next().map(|part| part.node());
-            let phase = monitor.next().map(|part| part.node());
-            if !matches!(tag, Some(Node::String("timed-formula-trace")))
-                || !matches!((horizon, observations, phase), (Some(horizon), Some(observations), Some(phase)) if timed_formula_trace_key(horizon, observations.clone(), phase.clone()))
-            {
-                return Err(ProbabilityDocumentError::Malformed);
-            }
-        }
         _ => return Err(ProbabilityDocumentError::Unsupported),
     }
     if parts[6..]
@@ -575,50 +593,6 @@ pub(super) fn admit_parts(
         return Err(ProbabilityDocumentError::Unsupported);
     }
     Ok(())
-}
-
-fn timed_formula_trace_key(
-    horizon: NodeRef<'_>,
-    observations_node: Node<'_>,
-    phase: Node<'_>,
-) -> bool {
-    if canonical_count(horizon).is_none() {
-        return false;
-    }
-    let Node::Array(observations) = observations_node else {
-        return false;
-    };
-    let mut previous_time = None;
-    let mut value_count = None;
-    for observation in observations {
-        let Node::Array(mut parts) = observation.node() else {
-            return false;
-        };
-        if parts.len() != 2 {
-            return false;
-        }
-        let Some(time_node) = parts.next() else {
-            return false;
-        };
-        let Some(time) = canonical_count(time_node) else {
-            return false;
-        };
-        if previous_time.is_some_and(|previous| previous > time) {
-            return false;
-        }
-        previous_time = Some(time);
-        let Some(Node::Array(mut values)) = parts.next().map(|part| part.node()) else {
-            return false;
-        };
-        if value_count.is_some_and(|previous| previous != values.len()) {
-            return false;
-        }
-        value_count = Some(values.len());
-        if values.any(|part| !matches!(part.node(), Node::Bool(_))) {
-            return false;
-        }
-    }
-    matches!(phase, Node::String("pending" | "accept" | "reject"))
 }
 
 #[cfg(test)]

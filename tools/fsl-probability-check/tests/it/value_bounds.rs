@@ -8,8 +8,12 @@
 //! emits for the same model, with the values the criterion names.
 
 use super::bounded::{
-    document, mutate, replace_source_and_rebind, request_with, requests_with_mode, run,
+    document, mutate, replace_source_and_rebind, request_with, requests_offering,
+    requests_with_mode, run,
 };
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use filament_exact::{Integer, Rational};
+use fsl_analyze::analyze::Settlement;
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
 use serde_json::{Value, json};
@@ -60,6 +64,14 @@ fn link(op: &str, threshold: &str) -> String {
         terminal Stop using v on M when {{ self.attempts = 2 and not self.delivered }};\n{}",
         header(),
         claim(op, threshold)
+    )
+}
+
+/// AC-1's chain with its claim and its draws under the workload `Even`.
+fn link_under_even(op: &str, threshold: &str) -> String {
+    let chain = link(op, threshold).replace("under every scheduler", "under Even");
+    format!(
+        "{chain}workload Even on M {{ weight Msg::send_a = 1; weight Msg::send_b = 1; weight Msg::send_c = 1; }}\n"
     )
 }
 
@@ -310,6 +322,308 @@ fn cyclic_chain_bounds_are_checked_by_their_claim_side_role() {
         doc["policy"] = Value::Null;
     });
     rejected(&null_policy, "malformed", at_member("policy"));
+}
+
+/// AC-1's chain stopped at `max_states` 2 omits `f` before the edges of `g`.
+/// Its explored prefix bounds the value by `1/2`, which proves nothing for
+/// `>= rational(9,10)`, so the item stops naming `max_states` (FR-203): the
+/// completion's rows are ordered, and the solve reads them.
+#[trace("TC-638", "FR-203-AC-14")]
+#[test]
+fn a_partial_chain_that_settles_nothing_stops_at_max_states() {
+    let source = link_under_even(">=", "rational(9,10)");
+    let mut limits = ExactProbLimits::default();
+    limits.model.limits.max_states = 2;
+    let (requests, settlement) =
+        requests_with_mode(&source, SNAPSHOT, limits, domain().as_bytes(), false);
+    assert!(requests.is_empty(), "{requests:?}");
+    let fsl_analyze::analyze::Settlement::Terminal(record) = settlement else {
+        panic!("a stopped item settles terminal: {settlement:?}");
+    };
+    assert_eq!(
+        record.value(),
+        &fsl_replay::TerminalValue::Incomplete(fsl_replay::IncompleteCause::LimitReached {
+            limit: fsl_replay::ModelCheckLimit::ExactProbMaxStates,
+            value: 2,
+            required: None,
+        }),
+        "{record:?}"
+    );
+}
+
+/// FR-1042-AC-18: AC-1's chain with exploration stopped at `max_states` 2,
+/// which admits `s` and `g` and omits `f`. The `lower` document offering
+/// `7/16` at the ranked `s` proves `>= rational(2,5)` with no counterpart and
+/// the upper bound 1, and a separate checker accepts it, whether or not its
+/// own `max_states` admits the whole graph. Below the threshold, or under
+/// another identity, it proves nothing.
+#[trace("TC-3212", "FR-1042-AC-18")]
+#[test]
+fn a_partial_lower_over_the_cyclic_chain_proves_without_a_counterpart() {
+    let ratio = |n: i64, d: i64| Rational::new(Integer::from(n), Integer::from(d)).unwrap();
+    let (requests, settlement) = partial_chain(ratio(7, 16));
+    let [claim] = requests.as_slice() else {
+        panic!("one claim-side document and no counterpart: {settlement:?}");
+    };
+    let Settlement::Terminal(record) = settlement else {
+        panic!("the partial proof settles terminal: {settlement:?}");
+    };
+    let fsl_replay::TerminalValue::Proved {
+        basis:
+            fsl_replay::ProofBasis::ValueBounds {
+                lower,
+                upper: fsl_replay::ExactBound::Finite(upper),
+                exploration: fsl_replay::BoundsExploration::Partial,
+                ..
+            },
+        certification: fsl_replay::Certification::Certified,
+    } = record.value()
+    else {
+        panic!("a certified partial value-bounds proof: {record:?}");
+    };
+    assert_eq!(
+        (lower.value(), upper.value()),
+        (&ratio(7, 16), &ratio(1, 1))
+    );
+
+    let emitted = document(claim);
+    assert_eq!(emitted["kind"], "lower");
+    assert_eq!(claim["claim_side"], true);
+    let ranked: Vec<&Value> = emitted["ranking"]
+        .as_array()
+        .expect("the lower document's ranking")
+        .iter()
+        .filter(|row| row["rank"] != 0)
+        .collect();
+    let [row] = ranked.as_slice() else {
+        panic!("one ranked state: {emitted}");
+    };
+    assert_eq!(row["rank"], 1);
+    let s = row["state"].clone();
+    let initial = emitted["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|row| row["state"] == s)
+        .expect("a value at the initial key");
+    assert_eq!(emitted["values"][initial]["value"], rational(7, 16));
+
+    // The separate checker, first with room for the whole graph and then
+    // stopped where the analyzer was.
+    for request in [claim.clone(), within(claim, 2)] {
+        accepted(&request, rational(7, 16));
+
+        let lowered = mutate(&request, |doc| {
+            doc["values"][initial]["value"] = rational(1, 4);
+        });
+        rejected(&lowered, "threshold-missed", at_key(&s));
+
+        let other_identity = mutate(&request, |doc| {
+            let ordinal = doc["identity"]["ordinal"].as_u64().expect("an ordinal");
+            doc["identity"]["ordinal"] = json!(ordinal + 1);
+        });
+        refused(&other_identity, "conflicting_identity");
+    }
+
+    // Lowered below the threshold, the settlement refuses the proof too.
+    let (_, settlement) = partial_chain(ratio(1, 4));
+    let Settlement::Terminal(record) = settlement else {
+        panic!("a rejected document settles terminal: {settlement:?}");
+    };
+    assert!(
+        matches!(
+            record.value(),
+            fsl_replay::TerminalValue::Inconclusive(
+                fsl_replay::InconclusiveCause::CertificateRejected {
+                    rule: fsl_replay::CertificateRule::ThresholdMissed,
+                    ..
+                }
+            )
+        ),
+        "{record:?}"
+    );
+}
+
+/// One edit of a document, the rule that refuses it and the key it names.
+type FalseRow<'a> = (&'a dyn Fn(&mut Value), &'a str, &'a Value);
+
+/// FR-1042-AC-18, FSpec FR-412-AC-5: a document checked over its named states
+/// and their successors is refused wherever the whole-graph check refuses it,
+/// and reads nothing it does not name.
+#[trace("TC-3212", "FR-1042-AC-18", "FSpec-FR-412-AC-5")]
+#[test]
+fn a_partial_lower_checked_over_its_named_states_refuses_a_false_document() {
+    let (requests, settlement) =
+        partial_chain(Rational::new(Integer::from(7_i64), Integer::from(16_i64)).unwrap());
+    let [claim] = requests.as_slice() else {
+        panic!("one claim-side document: {settlement:?}");
+    };
+    let emitted = document(claim);
+    let g = emitted["objective"]["base"]["targets"][0].clone();
+    let s = emitted["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["state"].clone())
+        .find(|state| *state != g)
+        .expect("the initial key");
+    let exact = proof(&link_under_even(">=", "rational(2,5)"));
+    let f = document(&exact)["ranking"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["state"].clone())
+        .find(|state| *state != s && *state != g)
+        .expect("the rejecting terminal the partial document omits");
+    let narrow = within(claim, 2);
+    let wide = claim.clone();
+
+    // A value above the one-step value, a successor left out, no decreasing
+    // successor, and a rejecting state named to raise `s`.
+    let inflated = |doc: &mut Value| set(doc, "values", &s, "value", rational(5, 8));
+    let without_target = |doc: &mut Value| {
+        drop_row(doc, "values", &g);
+        drop_row(doc, "ranking", &g);
+    };
+    let unranked_progress = |doc: &mut Value| set(doc, "ranking", &s, "rank", json!(0));
+    let raised_failure = |doc: &mut Value| {
+        drop_row(doc, "values", &g);
+        drop_row(doc, "ranking", &g);
+        insert_row(doc, "values", json!({"state": f, "value": rational(1, 1)}));
+        insert_row(doc, "ranking", json!({"state": f, "rank": 0}));
+    };
+    let changes: [FalseRow; 4] = [
+        (&inflated, "inequality-fails", &s),
+        (&without_target, "rank-broken", &s),
+        (&unranked_progress, "rank-broken", &s),
+        (&raised_failure, "inequality-fails", &f),
+    ];
+    for (change, rule, at) in changes {
+        for request in [&narrow, &wide] {
+            rejected(&mutate(request, change), rule, at_key(at));
+        }
+    }
+
+    // Over the named states, a ranking row for an unnamed state is malformed,
+    // and more rows than `max_states` admits stop the check.
+    let ranked_unnamed = mutate(&narrow, |doc| {
+        drop_row(doc, "ranking", &g);
+        insert_row(doc, "ranking", json!({"state": f, "rank": 0}));
+    });
+    rejected(&ranked_unnamed, "malformed", at_member("ranking"));
+    let overfull = mutate(&narrow, |doc| {
+        insert_row(doc, "ranking", json!({"state": f, "rank": 0}));
+    });
+    stopped_at_max_states(&overfull, 2);
+
+    // Targets that are not the explored part's.
+    for targets in [json!([]), json!([s])] {
+        for request in [&narrow, &wide] {
+            let changed = mutate(request, |doc| {
+                doc["objective"]["base"]["targets"] = targets.clone();
+            });
+            refused(&changed, "objective mismatch");
+        }
+    }
+
+    // Without the initial key the named states reach nothing.
+    let without_initial = mutate(&narrow, |doc| {
+        drop_row(doc, "values", &s);
+        drop_row(doc, "ranking", &s);
+    });
+    stopped_at_max_states(&without_initial, 2);
+
+    // More names than `max_states` admits, and a document that is not the
+    // claim side, are not read over the named states.
+    stopped_at_max_states(&within(claim, 1), 1);
+    let mut counterpart = narrow.clone();
+    counterpart["claim_side"] = json!(false);
+    stopped_at_max_states(&counterpart, 2);
+}
+
+/// AC-1's chain under `Even` explored to `max_states` 2, offering `value` at
+/// the one undecided state `s`; `g` holds exactly 1.
+fn partial_chain(value: Rational) -> (Vec<Value>, Settlement) {
+    let mut limits = ExactProbLimits::default();
+    limits.model.limits.max_states = 2;
+    requests_offering(
+        &link_under_even(">=", "rational(2,5)"),
+        SNAPSHOT,
+        limits,
+        domain().as_bytes(),
+        &|certificate| {
+            assert_eq!(certificate.values.len(), 2, "the explored prefix");
+            let s = certificate
+                .values
+                .iter_mut()
+                .find(|entry| entry.value != Rational::from_integer(Integer::from(1_i64)))
+                .expect("the undecided initial state");
+            s.value = value.clone();
+        },
+    )
+}
+
+/// `request` checked under `max_states`.
+fn within(request: &Value, max_states: u64) -> Value {
+    let mut changed = request.clone();
+    changed["limits"]["states"] = json!(max_states);
+    changed
+}
+
+/// Set `member` of the `list` row at `state`.
+fn set(doc: &mut Value, list: &str, state: &Value, member: &str, value: Value) {
+    let row = doc[list]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| row["state"] == *state)
+        .expect("a row at the state");
+    row[member] = value;
+}
+
+fn drop_row(doc: &mut Value, list: &str, state: &Value) {
+    doc[list]
+        .as_array_mut()
+        .unwrap()
+        .retain(|row| row["state"] != *state);
+}
+
+/// Add `row` to `list`, keeping complete-key order.
+fn insert_row(doc: &mut Value, list: &str, row: Value) {
+    let rows = doc[list].as_array_mut().unwrap();
+    rows.push(row);
+    rows.sort_by_key(|row| {
+        URL_SAFE_NO_PAD
+            .decode(row["state"].as_str().expect("an encoded key"))
+            .expect("base64url")
+    });
+}
+
+fn refused(request: &Value, reason: &str) {
+    let (code, output) = run(request);
+    assert_eq!(code, 2, "{output}");
+    assert_eq!(output["status"], "refused", "{output}");
+    assert!(
+        output["reason"].as_str().unwrap().contains(reason),
+        "{output}"
+    );
+}
+
+fn unsupported(request: &Value) {
+    let (code, output) = run(request);
+    assert_eq!(code, 2, "{output}");
+    assert_eq!(output["status"], "unsupported", "{output}");
+}
+
+fn stopped_at_max_states(request: &Value, bound: u64) {
+    let (code, output) = run(request);
+    assert_eq!(code, 2, "{output}");
+    assert_eq!(output["status"], "stopped", "{output}");
+    assert_eq!(
+        output["limit"]["setting"], "exact_prob.max_states",
+        "{output}"
+    );
+    assert_eq!(output["limit"]["bound"], json!(bound), "{output}");
 }
 
 /// FR-1042-AC-21: a one-action cyclic MDP exceeds the rational budget but its
@@ -568,4 +882,294 @@ fn cyclic_mdp_bounds_check_hinted_and_selected_policies() {
         "malformed",
         at_member("policy"),
     );
+}
+
+/// An `eventually` chain with no cycle before its target, under `Even`:
+/// `send_b` takes `s` to the delivered `g` or the stopped terminal `f` with
+/// `1/2` each (value `1/2`). With `continues`, the model runs one `send_a`
+/// step past `g` to a terminal state; otherwise it stops there.
+fn acyclic(threshold: &str, continues: bool) -> String {
+    let (after, stop) = if continues {
+        ("self.delivered and self.attempts = 1", "self.attempts = 2")
+    } else {
+        ("false", "self.delivered or self.attempts = 2")
+    };
+    let chain = format!(
+        "{}\
+        pre A using v on M::Msg::send_a {{ {after} }}\n\
+        post A_done using v on M::Msg::send_a {{ self.attempts = 2 and self.delivered }}\n\
+        pre B using v on M::Msg::send_b {{ self.attempts = 0 and not self.delivered }}\n\
+        post BD using v on M::Msg::send_b {{ self.attempts - (if lost = 1 then 1 else 2) = 0 and self.delivered = (lost = 1) }}\n\
+        pre C using v on M::Msg::send_c {{ false }}\n\
+        post CD using v on M::Msg::send_c {{ self.attempts = 0 and not self.delivered }}\n\
+        random Msg::send_a(lost) ~ {{ 0: 1, 1: 1, 2: 1 }};\n\
+        random Msg::send_b(lost) ~ {{ 1: 1, 2: 1 }};\n\
+        random Msg::send_c(lost) ~ {{ 0: 1, 1: 1, 2: 1 }};\n\
+        terminal Stop using v on M when {{ {stop} }};\n{}",
+        header(),
+        claim(">=", threshold)
+    )
+    .replace("under every scheduler", "under Even");
+    format!(
+        "{chain}workload Even on M {{ weight Msg::send_a = 1; weight Msg::send_b = 1; weight Msg::send_c = 1; }}\n"
+    )
+}
+
+/// FR-1042 "Bases" and "Conditions": the acyclic `reachability/v1` base of an
+/// unbounded `eventually` under a workload takes `lower` and `upper`
+/// documents, checked like a chain's: every value, the threshold and the
+/// `lower` document's progress ranking.
+#[trace("TC-3151", "FR-1042-AC-25")]
+#[test]
+fn an_acyclic_eventual_base_takes_checked_bounds() {
+    let exact = proof(&acyclic("rational(2,5)", false));
+    assert_eq!(
+        document(&exact)["objective"]["profile"],
+        "filament.probability-objective/reachability/v1"
+    );
+    let keys = keys(&exact);
+    let s = &keys.s;
+
+    let lower = bound(&exact, "lower", &[(s, rational(7, 16))], None, true);
+    accepted(&lower, rational(7, 16));
+    let upper = bound(&exact, "upper", &[(s, rational(9, 16))], None, false);
+    accepted(&upper, rational(9, 16));
+
+    rejected(
+        &bound(&exact, "lower", &[(s, rational(5, 8))], None, true),
+        "inequality-fails",
+        at_key(s),
+    );
+    rejected(
+        &bound(&exact, "upper", &[(s, rational(7, 16))], None, false),
+        "inequality-fails",
+        at_key(s),
+    );
+    rejected(
+        &bound(&exact, "lower", &[(&keys.f, rational(1, 16))], None, true),
+        "inequality-fails",
+        at_key(&keys.f),
+    );
+    rejected(
+        &bound(&exact, "lower", &[(s, rational(3, 8))], None, true),
+        "threshold-missed",
+        at_key(s),
+    );
+    let unranked = edit(&lower, |doc| {
+        doc.as_object_mut().unwrap().remove("ranking");
+    });
+    rejected(&unranked, "malformed", at_member("ranking"));
+    let flat = edit(&lower, |doc| set(doc, "ranking", s, "rank", json!(0)));
+    rejected(&flat, "rank-broken", at_key(s));
+    // An unnamed successor counts as 0, so without `g` no successor of `s`
+    // shows progress.
+    let unnamed = edit(&lower, |doc| {
+        drop_row(doc, "values", &keys.g);
+        drop_row(doc, "ranking", &keys.g);
+    });
+    rejected(&unnamed, "rank-broken", at_key(s));
+}
+
+/// FR-1042 "Document", FSpec FR-411 "Evidence on a partial product": where
+/// `max_states` stops the explored model past a target but admits the graph
+/// that stops there, the `lower` document keeps the acyclic base, names that
+/// graph's states alone and proves without a counterpart.
+#[trace("TC-3151", "FR-1042-AC-25")]
+#[test]
+fn a_partial_lower_over_an_acyclic_eventual_names_only_the_stopped_graph() {
+    // `max_states` 3 admits `s`, `g` and `f` and omits the state past `g`.
+    // `max_states` 2 admits the initial state and one past it, where the
+    // target already holds initially and the graph is that one state.
+    let initially =
+        link_under_even(">=", "rational(2,5)").replace("holds(m.delivered)", "holds(true)");
+    for (source, max_states, rows, value) in [
+        (acyclic("rational(2,5)", true), 3, 3, rational(1, 2)),
+        (initially, 2, 1, rational(1, 1)),
+    ] {
+        let mut limits = ExactProbLimits::default();
+        limits.model.limits.max_states = max_states;
+        let (requests, settlement) =
+            requests_with_mode(&source, SNAPSHOT, limits, domain().as_bytes(), false);
+        let [claim] = requests.as_slice() else {
+            panic!("one claim-side document and no counterpart: {settlement:?}");
+        };
+        assert!(
+            matches!(&settlement, Settlement::Terminal(record) if matches!(
+                record.value(),
+                fsl_replay::TerminalValue::Proved {
+                    basis: fsl_replay::ProofBasis::ValueBounds {
+                        exploration: fsl_replay::BoundsExploration::Partial,
+                        ..
+                    },
+                    ..
+                }
+            )),
+            "{settlement:?}"
+        );
+        let emitted = document(claim);
+        assert_eq!(emitted["kind"], "lower");
+        assert_eq!(
+            emitted["objective"]["base"]["profile"],
+            "filament.probability-objective/reachability/v1"
+        );
+        assert_eq!(emitted["values"].as_array().map(Vec::len), Some(rows));
+        assert_eq!(emitted["ranking"].as_array().map(Vec::len), Some(rows));
+        accepted(claim, value);
+    }
+}
+
+/// The key of the one row of `exact`'s ranking that is not 0: the initial
+/// state of a product with one undecided state.
+fn ranked_key(exact: &Value) -> Value {
+    document(exact)["ranking"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["rank"] != 0)
+        .expect("one ranked undecided state")["state"]
+        .clone()
+}
+
+/// A key of value 0 in `exact`: a state a `lower` document may leave unnamed.
+fn zero_key(exact: &Value) -> Value {
+    document(exact)["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["value"] == rational(0, 1))
+        .expect("a state of value 0")["state"]
+        .clone()
+}
+
+/// [`link_under_even`] over the bounded event `eventually[0,1]`, whose exact
+/// value is `1/3`.
+fn one_step_under_even() -> String {
+    link_under_even(">=", "rational(1,4)")
+        .replace(
+            "filament.temporal.infinite-trace/v1",
+            "filament.temporal.event-position.false-extension/v1",
+        )
+        .replace("[ eventually ", "[ eventually[0,1] ")
+}
+
+/// FR-1042 "Document": over a graph that fits `max_states`, a `lower` naming a
+/// subset of its states ranks exactly those, over a cyclic, an acyclic and a
+/// bounded base alike.
+#[trace("TC-3151", "FR-1042-AC-26")]
+#[test]
+fn a_subset_lower_over_a_whole_graph_ranks_exactly_the_states_it_names() {
+    for (source, value) in [
+        (link_under_even(">=", "rational(2,5)"), rational(7, 16)),
+        (acyclic("rational(2,5)", false), rational(7, 16)),
+        (one_step_under_even(), rational(1, 3)),
+    ] {
+        let exact = proof(&source);
+        let s = ranked_key(&exact);
+        let unnamed = zero_key(&exact);
+        let full = bound(&exact, "lower", &[(&s, value.clone())], None, true);
+        accepted(&full, value.clone());
+
+        let ranked_unnamed = edit(&full, |doc| drop_row(doc, "values", &unnamed));
+        rejected(&ranked_unnamed, "malformed", at_member("ranking"));
+        let named_only = edit(&ranked_unnamed, |doc| drop_row(doc, "ranking", &unnamed));
+        accepted(&named_only, value);
+    }
+}
+
+/// Pins a known gap, not required behaviour: FR-1042 "Bases" admits
+/// `reachability/v1` under every scheduler as well as under a workload, and
+/// neither side offered for the claim under every scheduler is checked yet.
+#[test]
+fn an_acyclic_eventual_base_takes_no_bounds_under_every_scheduler() {
+    let source = acyclic("rational(2,5)", false)
+        .replace("under Even on origin", "under every scheduler on origin");
+    let exact = proof(&source);
+    assert_eq!(
+        document(&exact)["objective"]["profile"],
+        "filament.probability-objective/reachability/v1"
+    );
+    assert_eq!(document(&exact)["objective"]["optimization"], "minimum");
+    for (kind, claim_side) in [("lower", true), ("upper", false)] {
+        unsupported(&bound(&exact, kind, &[], None, claim_side));
+    }
+}
+
+/// A fair claim over the acyclic chain has its own base, so the
+/// `reachability/v1` bounds of the same model without fairness are refused as
+/// a changed base.
+#[trace("TC-3151", "FR-1042-AC-8")]
+#[test]
+fn an_acyclic_eventual_base_takes_no_bounds_for_a_fair_claim() {
+    let unfair = acyclic("rational(2,5)", false)
+        .replace("under Even on origin", "under every scheduler on origin");
+    let fair = unfair.replace(
+        "under every scheduler on origin",
+        "under every scheduler fair strong M::Msg::send_b on origin",
+    );
+    let base = proof(&unfair);
+    let fair_exact = proof(&fair);
+    assert_eq!(
+        document(&fair_exact)["objective"]["profile"],
+        "filament.probability-objective/cyclic-mdp-fair-eventual/v1"
+    );
+    for (kind, claim_side) in [("lower", true), ("upper", false)] {
+        let mut request = fair_exact.clone();
+        let offered = edit(&bound(&base, kind, &[], None, claim_side), |doc| {
+            doc["identity"] = document(&fair_exact)["identity"].clone();
+        });
+        request["certificate"] = offered["certificate"].clone();
+        request["claim_side"] = json!(claim_side);
+        refused(&request, "objective mismatch");
+    }
+}
+
+/// FR-1042 "Document": where `max_states` stops the explored model but admits
+/// the checker's graph, and the offered certificate leaves a state of that
+/// graph out, the analyzer's `lower` ranks the states it names alone.
+#[trace("TC-3151", "FR-1042-AC-26")]
+#[test]
+fn a_partial_lower_the_analyzer_writes_over_a_whole_graph_ranks_its_named_states() {
+    let mut limits = ExactProbLimits::default();
+    limits.model.limits.max_states = 3;
+    let (requests, settlement) = requests_offering(
+        &acyclic("rational(2,5)", true),
+        SNAPSHOT,
+        limits,
+        domain().as_bytes(),
+        &|certificate| {
+            let unnamed = certificate
+                .values
+                .iter()
+                .position(|row| row.value == Rational::from_integer(Integer::from(0_i64)))
+                .expect("a state of value 0");
+            certificate.values.remove(unnamed);
+        },
+    );
+    let [claim] = requests.as_slice() else {
+        panic!("one claim-side document and no counterpart: {settlement:?}");
+    };
+    let emitted = document(claim);
+    assert_eq!(emitted["values"].as_array().map(Vec::len), Some(2));
+    assert_eq!(emitted["ranking"].as_array().map(Vec::len), Some(2));
+    accepted(claim, rational(1, 2));
+}
+
+/// FR-1042 "Conditions": over a bounded base a subset `lower` carries each
+/// named state's remaining horizon, and no other rank.
+#[trace("TC-3151", "FR-1042-AC-26")]
+#[test]
+fn a_subset_bounded_lower_with_a_changed_rank_is_refused() {
+    let exact = proof(&one_step_under_even());
+    let s = ranked_key(&exact);
+    let unnamed = zero_key(&exact);
+    let full = bound(&exact, "lower", &[(&s, rational(1, 3))], None, true);
+    let subset = edit(&full, |doc| {
+        drop_row(doc, "values", &unnamed);
+        drop_row(doc, "ranking", &unnamed);
+    });
+    accepted(&subset, rational(1, 3));
+    for rank in [0, 2] {
+        let changed = edit(&subset, |doc| set(doc, "ranking", &s, "rank", json!(rank)));
+        rejected(&changed, "rank-broken", at_key(&s));
+    }
 }

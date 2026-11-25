@@ -14,13 +14,15 @@ use std::convert::Infallible;
 use std::rc::Rc;
 
 use filament_checked::key::DeclarationKey;
-use filament_exact::{Integer, ObjectReference, OrderingOperator, Value, ValueType};
+use filament_exact::{
+    IeeeValue, IeeeWidth, Integer, ObjectReference, OrderingOperator, Value, ValueType,
+};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::model::domain_package::OperationEffect;
 use fsl_semantics::model::observation::{
     AdmissionUsage, AdmittedObservations, Observation, SelfKind,
 };
-use fsl_semantics::model::population::{decide_frame, FrameDecision, FrameObject, FrameStop};
+use fsl_semantics::model::population::{FrameDecision, FrameObject, FrameStop, decide_frame};
 use fsl_semantics::model::state::{ModelState, StateField, StateObject};
 use quire_canonical::Limits as CanonicalLimits;
 
@@ -28,14 +30,14 @@ pub(super) mod judge;
 #[cfg(test)]
 mod narrowing_tests;
 
-use super::contracts::{conjunction, operation_conjunction, Conjunction};
+use super::contracts::{Conjunction, conjunction, operation_conjunction};
 use super::domain::{Domain, Odometer};
-use super::encode::{self, value_enc, values_equal, Typing};
+use super::encode::{self, Typing, value_enc, values_equal};
 use super::footprints::ReadCheck;
-use super::walk::{stop, Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk};
+use super::walk::{Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk, stop};
 use super::{
-    handler_anchor, identity_limits, state_document, Application, ClauseInfo, ClauseOutcome,
-    FieldChange, ModelFinding, ModelSystem, StepEffect, WrittenSlots, BROKEN, EXHAUSTED,
+    Application, BROKEN, ClauseInfo, ClauseOutcome, EXHAUSTED, FieldChange, ModelFinding,
+    ModelSystem, StepEffect, WrittenSlots, handler_anchor, identity_limits, state_document,
 };
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::Footprint;
@@ -922,6 +924,17 @@ impl Allowed {
                         .into_iter()
                         .collect(),
                     (Some(_), _) => Vec::new(),
+                    (None, Value::Float(target)) => (0..domain.len())
+                        .filter(|index| {
+                            domain.nth(*index).is_some_and(|candidate| {
+                                matches!(candidate, Value::Float(value)
+                                    if value.width() == target.width()
+                                        && (value.bits() == target.bits()
+                                            || (value.bits() & float_magnitude_mask(value.width()) == 0
+                                                && target.bits() & float_magnitude_mask(target.width()) == 0)))
+                            })
+                        })
+                        .collect(),
                     (None, Value::Integer(_)) if matches!(domain, Domain::SizeInteger { .. }) => {
                         domain.index_of(equal).into_iter().collect()
                     }
@@ -1041,6 +1054,16 @@ struct Delta {
     deleted: Vec<(DeclarationKey, String)>,
 }
 
+struct CompletionContext<'a> {
+    candidate: (ModelState, Vec<WrittenSlots>),
+    delta: &'a Delta,
+    post_references: &'a [ObjectReference],
+    budget: &'a mut Budget,
+    contract: &'a mut Vec<ContractFinding>,
+    successors: &'a mut Vec<Applied>,
+    result_independent: bool,
+}
+
 impl Run<'_, '_, '_> {
     fn effect(&self) -> &OperationEffect {
         self.application.declaration.effect()
@@ -1105,7 +1128,7 @@ impl Run<'_, '_, '_> {
             if types.is_empty() {
                 continue;
             }
-            let used = self.walk.state.state.populations.get(population);
+            let used = self.walk.state.state().populations.get(population);
             for key in keys {
                 if used.is_some_and(|objects| objects.contains_key(key)) {
                     continue;
@@ -1407,6 +1430,17 @@ impl Run<'_, '_, '_> {
                 let domain = self
                     .walk
                     .field_domain(&member.type_key, field, &post_references)
+                    .or_else(|| {
+                        let targets = plan.narrowing?.get(&field.name)?;
+                        let [Some(Value::Float(target))] = targets.equations.as_slice() else {
+                            return None;
+                        };
+                        let ValueType::Float(float_type) = &field.value_type else {
+                            return None;
+                        };
+                        (target.width() == float_type.width())
+                            .then(|| Domain::Listed(solved_float_values(*target)))
+                    })
                     .ok_or_else(|| stop(BROKEN))?;
                 // `None` marks a field whose targets send the whole
                 // application back to enumeration.
@@ -1466,15 +1500,15 @@ impl Run<'_, '_, '_> {
                 // a broken internal invariant.
                 return Err(stop(BROKEN));
             };
-            self.complete(
-                self.collection_writes(candidate, &delta)?,
-                &delta,
-                &post_references,
+            self.complete(CompletionContext {
+                candidate: self.collection_writes(candidate, &delta)?,
+                delta: &delta,
+                post_references: &post_references,
                 budget,
                 contract,
                 successors,
-                plan.result_independent,
-            )?;
+                result_independent: plan.result_independent,
+            })?;
             if plan.stop_after_first && successors.len() > initial {
                 return Ok(true);
             }
@@ -1492,7 +1526,7 @@ impl Run<'_, '_, '_> {
         dimensions: &[Dimension<'_>],
         digits: &[u128],
     ) -> Result<ModelState, ExpansionStop> {
-        let state = &self.walk.state.state;
+        let state = self.walk.state.state();
         let mut populations = state.populations.clone();
         for (population, key) in deleted {
             if let Some(objects) = populations.get_mut(*population) {
@@ -1569,7 +1603,7 @@ impl Run<'_, '_, '_> {
         candidate: &ModelState,
         touched: Option<&BTreeSet<&DeclarationKey>>,
     ) -> Result<Result<Delta, FrameRefused>, ExpansionStop> {
-        let pre = &self.walk.state.state;
+        let pre = self.walk.state.state();
         let empty = BTreeMap::new();
         let populations: BTreeSet<&DeclarationKey> = pre
             .populations
@@ -1708,7 +1742,7 @@ impl Run<'_, '_, '_> {
     /// one field, and the frame decision accepts or refuses it.
     fn writable_fields(&self) -> Result<WritableFields, ExpansionStop> {
         let system = self.walk.system;
-        let pre = &self.walk.state.state;
+        let pre = self.walk.state.state();
         let references = self.walk.references();
         let mut writable = BTreeSet::new();
         for row in &self.walk.rows {
@@ -1723,18 +1757,23 @@ impl Run<'_, '_, '_> {
                     .get(&row.population)
                     .and_then(|objects| objects.get(&row.key))
                     .and_then(|object| object.fields.get(&field.key));
-                // A field with no finite domain (an `Integer`, a string, an
-                // unbounded collection) is bounded by no frame that grants it,
-                // so it cannot be written here.
-                let Some(domain) = self.walk.value_domain(&field.value_type, &references) else {
-                    continue;
-                };
+                // A field with no finite domain is writable only when the
+                // frame accepts a direct float probe; solved candidates still
+                // come from the postcondition, not from this probe.
+                let domain = self.walk.value_domain(&field.value_type, &references);
                 let mut different: Option<Option<Value>> = None;
                 if field.optional && current.is_some() {
                     different = Some(None);
-                } else {
+                } else if let Some(domain) = domain {
                     for index in 0..domain.len().min(8) {
                         let value = domain.nth(index).ok_or_else(|| stop(BROKEN))?;
+                        if current.is_none_or(|held| !values_equal(held, &value)) {
+                            different = Some(Some(value));
+                            break;
+                        }
+                    }
+                } else {
+                    for value in float_probe_values(&field.value_type, current) {
                         if current.is_none_or(|held| !values_equal(held, &value)) {
                             different = Some(Some(value));
                             break;
@@ -1781,7 +1820,7 @@ impl Run<'_, '_, '_> {
         delta: &Delta,
     ) -> Result<StepEffect, ExpansionStop> {
         let system = self.walk.system;
-        let pre = &self.walk.state.state;
+        let pre = self.walk.state.state();
         let reference = |state: &ModelState, population: &DeclarationKey, key: &str| {
             state
                 .populations
@@ -2135,16 +2174,16 @@ impl Run<'_, '_, '_> {
     /// Pair `candidate` with each result and keep it as a successor when some
     /// pair's effective postcondition is true, its effect naming the
     /// collections `written`.
-    fn complete(
-        &self,
-        (candidate, written): (ModelState, Vec<WrittenSlots>),
-        delta: &Delta,
-        post_references: &[ObjectReference],
-        budget: &mut Budget,
-        contract: &mut Vec<ContractFinding>,
-        successors: &mut Vec<Applied>,
-        result_independent: bool,
-    ) -> Result<(), ExpansionStop> {
+    fn complete(&self, context: CompletionContext<'_>) -> Result<(), ExpansionStop> {
+        let CompletionContext {
+            candidate: (candidate, written),
+            delta,
+            post_references,
+            budget,
+            contract,
+            successors,
+            result_independent,
+        } = context;
         let mut effect = self.effect_of(&candidate, delta)?;
         effect.written = written;
         let plain = if self.walk.candidate_visitor.is_some() {
@@ -2291,6 +2330,53 @@ impl Run<'_, '_, '_> {
     }
 }
 
+/// Finite, directly solved values for a float assignment. Numeric equality
+/// admits both signed zero encodings, while nonzero values retain their exact
+/// IEEE representation.
+fn solved_float_values(value: filament_exact::IeeeValue) -> Vec<Value> {
+    if value.bits() & float_magnitude_mask(value.width()) != 0 {
+        return vec![Value::Float(value)];
+    }
+    match value.width() {
+        IeeeWidth::Binary32 => vec![
+            Value::Float(IeeeValue::binary32(0)),
+            Value::Float(IeeeValue::binary32(1 << 31)),
+        ],
+        IeeeWidth::Binary64 => vec![
+            Value::Float(IeeeValue::binary64(0)),
+            Value::Float(IeeeValue::binary64(1 << 63)),
+        ],
+    }
+}
+
+fn float_magnitude_mask(width: IeeeWidth) -> u64 {
+    match width {
+        IeeeWidth::Binary32 => 0x7fff_ffff,
+        IeeeWidth::Binary64 => 0x7fff_ffff_ffff_ffff,
+    }
+}
+
+/// Probe values used only to ask the frame decision whether a float field can
+/// change. Candidate values still come from the postcondition's solved value.
+fn float_probe_values(value_type: &ValueType, current: Option<&Value>) -> Vec<Value> {
+    let ValueType::Float(float_type) = value_type else {
+        return Vec::new();
+    };
+    let zero = match float_type.width() {
+        IeeeWidth::Binary32 => IeeeValue::binary32(0),
+        IeeeWidth::Binary64 => IeeeValue::binary64(0),
+    };
+    let one = match float_type.width() {
+        IeeeWidth::Binary32 => IeeeValue::binary32(0x3f80_0000),
+        IeeeWidth::Binary64 => IeeeValue::binary64(0x3ff0_0000_0000_0000),
+    };
+    let values = [Value::Float(zero), Value::Float(one)];
+    values
+        .into_iter()
+        .filter(|value| current.is_none_or(|held| !values_equal(held, value)))
+        .collect()
+}
+
 /// Bound the retained outcome collection before allocating another entry.
 /// This is one implicit sequence per invocation: its highwater size includes
 /// the sequence root, each state/population/object container, every field value
@@ -2303,7 +2389,7 @@ fn retain_outcome(walk: &Walk<'_, '_>, next: &Applied) -> Result<(), ExpansionSt
         for argument in &applied.arguments {
             count = count.add(&argument.occ());
         }
-        for objects in applied.state.state.populations.values() {
+        for objects in applied.state.state().populations.values() {
             count = count.add(&filament_exact::Integer::one());
             for object in objects.values() {
                 count = count.add(&filament_exact::Integer::one());

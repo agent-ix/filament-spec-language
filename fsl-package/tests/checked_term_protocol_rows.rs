@@ -179,6 +179,42 @@ fn refusal_path(refusal: &filament_contract_model::CheckedPackageRefusal) -> Opt
         .map(|path| path.as_str())
 }
 
+/// Replaces every value equal to `old` with `new`, returning how many it
+/// replaced.
+fn replace_value(value: &mut Value, old: &Value, new: &Value) -> usize {
+    if value == old {
+        *value = new.clone();
+        return 1;
+    }
+    match value {
+        Value::Array(items) => items
+            .iter_mut()
+            .map(|item| replace_value(item, old, new))
+            .sum(),
+        Value::Object(members) => members
+            .values_mut()
+            .map(|member| replace_value(member, old, new))
+            .sum(),
+        _ => 0,
+    }
+}
+
+/// Asserts the clause's path is `Flow` followed by one operand segment
+/// `{"operand": k}` whose operand-row entry is the graph index of `target`.
+fn assert_owner_operand_names(wire: &Value, target: &str) {
+    let nodes = wire["semantic_graph"]["nodes"].as_array().expect("nodes");
+    let clause = nodes
+        .iter()
+        .position(|node| node["semantic_form"] == "protocol_clause")
+        .expect("protocol clause position");
+    let path = &nodes[clause]["node_id"]["path"];
+    let slot = path[1]["operand"].as_u64().expect("an operand slot");
+    assert_eq!(path, &json!(["Flow", {"operand": slot}]));
+    let entry = &wire["semantic_graph"]["operand_rows"][clause][slot as usize];
+    let index = entry.as_u64().expect("a graph index row entry") as usize;
+    assert_eq!(&nodes[index], owner_model_node(wire, target));
+}
+
 fn protocol_owner_wire(over: &str, domain: &[u8]) -> Value {
     let package = checked(&owner_model_source(over), Some(domain));
     let emission = emit_checked(&package, EmitLimits::new(64 * 1024 * 1024))
@@ -186,10 +222,10 @@ fn protocol_owner_wire(over: &str, domain: &[u8]) -> Value {
     serde_json::from_slice(emission.package().bytes()).expect("the emitted JSON parses")
 }
 
-fn protocol_owner_refusal(
+fn protocol_owner_read(
     wire: &Value,
     domain: &[u8],
-) -> filament_contract_model::CheckedPackageRefusal {
+) -> filament_contract_model::CheckedPackageDispatchResult {
     let mut evidence = filament_contract_model::CheckedPackageEvidence::new();
     for feature in wire["lock"]["required_features"]
         .as_array()
@@ -201,16 +237,24 @@ fn protocol_owner_refusal(
         .insert_domain_package_document("test/orders", domain.to_vec())
         .expect("fixture model evidence is unique");
     let bytes = serde_json::to_vec(wire).expect("the mutated package serializes");
-    match filament_contract_model::read_checked_package(
+    filament_contract_model::read_checked_package(
         &bytes,
         filament_contract_model::CheckedPackageReadLimits::bounded(),
         &evidence,
-    ) {
+    )
+}
+
+fn protocol_owner_refusal(
+    wire: &Value,
+    domain: &[u8],
+) -> filament_contract_model::CheckedPackageRefusal {
+    match protocol_owner_read(wire, domain) {
         filament_contract_model::CheckedPackageDispatchResult::Refused(refusal) => refusal,
         other => panic!("the mutated package is refused: {other:?}"),
     }
 }
 
+#[trace("TC-1063", "FR-383-AC-27")]
 #[test]
 fn protocol_owner_edges_follow_object_types_reached_through_subjects() {
     let domain = choice_domain();
@@ -220,14 +264,21 @@ fn protocol_owner_edges_follow_object_types_reached_through_subjects() {
             owner_model_clause(&emitted).get("owner_model").is_none(),
             "non-object subject {over} has no owner edge"
         );
+        assert_eq!(
+            owner_model_clause(&emitted)["node_id"]["path"],
+            json!(["Flow"])
+        );
     }
     for over in ["Option<M::Node>", "Sequence<M::Node>", "M::Node"] {
         let emitted = protocol_owner_wire(over, &domain);
+        let owner = &owner_model_node(&emitted, "Node")["node_id"];
+        let clause = owner_model_clause(&emitted);
         assert_eq!(
-            owner_model_clause(&emitted)["owner_model"],
-            owner_model_node(&emitted, "Node")["node_id"],
+            &clause["owner_model"], owner,
             "the owner edge follows {over} to Node"
         );
+        assert!(clause["dependencies"].as_array().unwrap().contains(owner));
+        assert_owner_operand_names(&emitted, "Node");
     }
 
     let mut emitted = protocol_owner_wire("M::Node", &domain);
@@ -351,14 +402,70 @@ fn protocol_owner_edges_follow_object_types_reached_through_subjects() {
         refusal_path(&refusal),
         Some(format!("{clause_path}/owner_model").as_str())
     );
+    let locus = refusal
+        .locus
+        .expect("the stale owner refusal has a node locus");
+    assert_eq!(
+        graph
+            .key_of_value(&serde_json::to_value(&locus).unwrap())
+            .expect("the locus names a graph node"),
+        graph
+            .key_of_value(&emitted["semantic_graph"]["nodes"][clause_position]["node_id"])
+            .unwrap(),
+    );
+    assert_owner_operand_names(&emitted, "Node");
+
+    // The stale package with its row entry moved to the new target too, so
+    // that the edge, dependency and operand agree, is admitted. The ids the
+    // document itself holds name the operand by index and move with it.
+    let position_of = |name: &str| {
+        let target = owner_model_node(&emitted, name);
+        emitted["semantic_graph"]["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .position(|node| node == target)
+            .expect("the owner position")
+    };
+    let (node_position, other_position) = (position_of("Node"), position_of("Other"));
+    let clause_id = &emitted["semantic_graph"]["nodes"][clause_position]["node_id"];
+    let slot = clause_id["path"][1]["operand"]
+        .as_u64()
+        .expect("the owner operand slot") as usize;
+    let mut held = clause_id.clone();
+    held["path"][1] = json!({"node": node_position});
+    let mut moved_held = held.clone();
+    moved_held["path"][1] = json!({"node": other_position});
+    let mut moved = emitted.clone();
+    assert!(replace_value(&mut moved, &held, &moved_held) > 0);
+    moved["semantic_graph"]["operand_rows"][clause_position][slot] = json!(other_position);
+    assert_owner_operand_names(&moved, "Other");
+    let read = protocol_owner_read(&moved, &domain);
     assert!(
-        refusal.locus.is_some(),
-        "the stale owner refusal has a node locus"
+        matches!(
+            read,
+            filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(_)
+        ),
+        "{read:?}"
+    );
+
+    // The producer writes the same agreement for the new target.
+    let retargeted = protocol_owner_wire("M::Other", &domain);
+    let other = &owner_model_node(&retargeted, "Other")["node_id"];
+    assert_eq!(&owner_model_clause(&retargeted)["owner_model"], other);
+    assert_owner_operand_names(&retargeted, "Other");
+    let read = protocol_owner_read(&retargeted, &domain);
+    assert!(
+        matches!(
+            read,
+            filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(_)
+        ),
+        "{read:?}"
     );
 }
 
 #[path = "../../fsl-semantics/tests/support/variant_fields.rs"]
-#[allow(dead_code, unused_imports)]
+#[allow(unused_imports)]
 mod variant_fields;
 
 #[trace("TC-1063", "FR-383-AC-60")]

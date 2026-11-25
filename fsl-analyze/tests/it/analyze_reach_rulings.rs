@@ -92,7 +92,7 @@ fn digital_clocks_refuse_strict_constraints_and_intervals() {
     assert_eq!(declined["record"]["settled_by"], "result", "{declined}");
     assert_eq!(declined["record"]["backend"], "en-1", "{declined}");
 
-    let strict = crate::analyze_family_cli::rpc_unit(4, claim).replace(
+    let strict = crate::analyze_family_support::rpc_unit(4, claim).replace(
         "self.inflight and self.x >= 1 ms",
         "self.inflight and self.x > 1 ms",
     );
@@ -101,7 +101,7 @@ fn digital_clocks_refuse_strict_constraints_and_intervals() {
         &ws,
         &strict,
         &crate::zone_search::rpc_document(),
-        &[crate::analyze_family_cli::rpc_snapshot()],
+        &[crate::analyze_family_support::rpc_snapshot()],
         items("NoLateReply"),
     ));
     let declined = run.item(0);
@@ -279,7 +279,7 @@ fn state_graph_evidence_keys_loci_and_budget_stops() {
 
 /// The Counter document with every operation framed to its receiver
 /// (`modifies_receiver`): a step leaves every other counter's value as it was.
-fn receiver_framed_document() -> Vec<u8> {
+pub(super) fn receiver_framed_document() -> Vec<u8> {
     fn frame(value: &mut Value) -> usize {
         match value {
             Value::Object(members) => {
@@ -606,4 +606,42 @@ fn an_unknown_backend_wins_and_a_published_option_reaches_the_provider() {
     let text = run.item(0).to_string();
     assert!(text.contains("unknown-backend"), "{text}");
     assert!(!text.contains("unknown-option"), "{text}");
+}
+
+/// An undefined guard and an undefined `terminal when` predicate of the
+/// subject refute a state-graph item over a checked package, which replays
+/// their evidence from the same package bytes.
+#[trace("TC-612", "FR-170-AC-7")]
+#[test]
+fn a_package_state_graph_item_refutes_on_an_undefined_subject_expression() {
+    for (name, expression) in [
+        (
+            "guard",
+            "pre Guard using v on M::Counter::inc { r(2 - self.value) >= 0 }\n",
+        ),
+        (
+            "terminal",
+            "terminal Done using v on M when { r(3 - self.value) = 1 };\n",
+        ),
+    ] {
+        let body = format!(
+            "function r using v(x: Integer): Integer pure {{ 1 div x }}\n{expression}\
+             possible ReachThree using v over (c: M::Counter) {{ c.value = 3 }}\n"
+        );
+        let ws = Workspace::new(&format!("rulings-undefined-{name}"));
+        let run = analyze(&kernel_package_request(
+            &ws,
+            &body,
+            json!([{"claim": "ReachThree"}]),
+        ));
+        let item = run.item(0);
+        assert_eq!(label(&item), "refuted", "{name}: {item}");
+        let place = find(&item, "where").expect("the undefined arm's where");
+        assert!(place.get("predicate").is_none(), "{name}: {place}");
+        assert_eq!(
+            place.get("transition").is_some(),
+            name == "guard",
+            "{name}: {place}"
+        );
+    }
 }

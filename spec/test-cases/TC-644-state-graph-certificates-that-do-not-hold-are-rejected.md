@@ -15,12 +15,12 @@ broken or missing rank, an undefined predicate, an undefined contract
 conjunction, a broken count and a broken order, each settling `CertificateRejected{rule, at}`, and a check that a
 limit stops.
 
-Scope: FR-169-AC-10, FR-169-AC-11, FR-169-AC-15.
+Scope: FR-169-AC-10, FR-169-AC-11, FR-169-AC-15, FR-169-AC-18.
 
 ## Test Procedure
 
 Fixtures: TC-643's `ReachesTwo` and sequenced `InOneWay` certificates;
-FR-168-AC-5's item; §7.3's unsequenced job; TC-592's guarded subject (FR-167-AC-2).
+FR-168-AC-5's item; §7.3's unsequenced job; FR-169-AC-11's guarded subject.
 
 1. Check `ReachesTwo`'s certificate with `(2, 2)` removed, with the rank of
    `(1, 0)` set to 2, and with `(0, 0)` unranked.
@@ -29,7 +29,7 @@ FR-168-AC-5's item; §7.3's unsequenced job; TC-592's guarded subject (FR-167-AC
 3. Check an `InOneWay` certificate over the unsequenced job with every
    count 1, and the sequenced certificate with its order reversed.
 4. Check `ReachesTwo`'s certificate with `max_states` 2.
-5. Check a hand-built certificate of TC-592's guarded subject's 3 states, ranked 2, 1
+5. Check a hand-built certificate of FR-169-AC-11's guarded subject's 3 states, ranked 2, 1
    and 0 for `ReachesTwo`, over the guarded subject, and over the same
    subject without the guard.
 6. Settle each step's result.
@@ -39,9 +39,13 @@ FR-168-AC-5's item; §7.3's unsequenced job; TC-592's guarded subject (FR-167-AC
    `(9, 1, 0)` added; then check TC-643's `ReachesTwo` and sequenced
    `InOneWay` certificates as the engine returns them, whose list of the
    other form is empty; settle each.
+8. Check a hand-built certificate of FR-169-AC-18's counter with each of
+   its `terminal when` variants.
 
 Tag the tests `#[trace("TC-644", "FR-169-AC-10")]`,
-`#[trace("TC-644", "FR-169-AC-11")]` or `#[trace("TC-644", "FR-169-AC-15")]`.
+`#[trace("TC-644", "FR-169-AC-11")]`,
+`#[trace("TC-644", "FR-169-AC-15")]` or
+`#[trace("TC-644", "FR-169-AC-18")]`.
 
 ## Expected Results
 
@@ -63,3 +67,6 @@ Tag the tests `#[trace("TC-644", "FR-169-AC-10")]`,
   two and at `Entry { index: 9 }` for the third, with no successor
   recomputed, each settling `inconclusive`, `CertificateRejected{Malformed,
   at}`, never `proved`; the two engine certificates are accepted.
+- Step 8: `BadState` at `value = 3` for the undefined, refused and
+  refused-beside-undefined variants; accepted for the true and the false
+  one.

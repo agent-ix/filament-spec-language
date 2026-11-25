@@ -32,6 +32,7 @@ use fsl_replay::{
 use fsl_route::reductions::Reductions;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
+use serde_json::{json, Value};
 
 use crate::counter::{
     document, document_with_ranged_parameter, instance, package_with_clauses,
@@ -70,14 +71,88 @@ fn world_with(document: Vec<u8>, body: &str, starts: &[&[(&str, i64)]]) -> World
     world_in_mode(document, body, starts, CheckMode::Linked)
 }
 
-fn temporal_worker_fixture(formula: &str) -> crate::liveness::Fixture {
-    crate::liveness::fixture(
-        document(false),
+fn temporal_worker_fixture(formula: &str) -> crate::liveness_support::Fixture {
+    temporal_worker_fixture_with_starts(formula, &[("a", 0), ("b", 0), ("c", 0)])
+}
+
+fn temporal_worker_fixture_with_starts(
+    formula: &str,
+    starts: &[(&'static str, i64)],
+) -> crate::liveness_support::Fixture {
+    // The expected counter path is monotone for each object. The shared
+    // counter document's type-wide `modifies value` frame also permits an
+    // operation on one receiver to change every other counter, so this
+    // fixture scopes the write to the receiver it invokes.
+    crate::liveness_support::fixture(
+        crate::analyze_reach_rulings::receiver_framed_document(),
         CONTRACT,
         "",
         formula,
-        &[("a", 0), ("b", 0), ("c", 0)],
+        starts,
     )
+}
+
+fn large_lasso_worker_fixture(formula: &str) -> crate::liveness_support::Fixture {
+    let mut document: Value =
+        serde_json::from_slice(&crate::analyze_reach_rulings::receiver_framed_document())
+            .expect("receiver-framed counter document");
+    let types = document["types"].as_array_mut().expect("model types");
+    let level = types
+        .iter_mut()
+        .find(|model_type| model_type["identity"] == "ix://test/counter/Level")
+        .expect("counter value type");
+    let upper = level["constraints"]
+        .as_array_mut()
+        .expect("level constraints")
+        .iter_mut()
+        .find(|constraint| constraint["keyword"] == "max")
+        .expect("upper level bound");
+    upper["operands"]["value"] = json!("16");
+
+    let counter = types
+        .iter_mut()
+        .find(|model_type| model_type["identity"] == "ix://test/counter/Counter")
+        .expect("counter object type");
+    let mut phase = counter["fields"][0].clone();
+    let phase_identity = "ix://test/counter/Counter/phase";
+    phase["identity"] = json!(phase_identity);
+    phase["name"] = json!("phase");
+    phase["origin"]["generated"]["generatorIdentity"] = json!(phase_identity);
+    phase["origin"]["generated"]["inputIdentities"] = json!([phase_identity]);
+    counter["fields"]
+        .as_array_mut()
+        .expect("counter fields")
+        .push(phase);
+    let inc = counter["operations"]
+        .as_array_mut()
+        .expect("counter operations")
+        .iter_mut()
+        .find(|operation| operation["name"] == "inc")
+        .expect("counter increment");
+    inc["frame"]["modifies_receiver"]
+        .as_array_mut()
+        .expect("receiver frame")
+        .push(json!(phase_identity));
+
+    let mut fixture = crate::liveness_support::fixture(
+        document.to_string().into_bytes(),
+        CONTRACT,
+        "",
+        formula,
+        &[("a", 0)],
+    );
+    for snapshot in fixture.documents.snapshots.values_mut() {
+        let mut snapshot_document: Value =
+            serde_json::from_slice(snapshot).expect("counter initialization snapshot");
+        for object in snapshot_document["populations"][0]["objects"]
+            .as_array_mut()
+            .expect("counter snapshot objects")
+        {
+            object["fields"]["phase"] = json!({"integer": "0"});
+        }
+        *snapshot = snapshot_document.to_string().into_bytes();
+    }
+    fixture
 }
 
 /// [`world_with`] checked under `mode`: a unit whose divisor may be zero is
@@ -129,12 +204,22 @@ fn run_in(
         package,
         keys,
         item,
-        max_depth,
-        limits,
-        meter,
-        1,
-        Reductions::default(),
+        WorkerConfig {
+            max_depth,
+            limits,
+            meter,
+            workers: 1,
+            reductions: Reductions::default(),
+        },
     )
+}
+
+struct WorkerConfig {
+    max_depth: Option<usize>,
+    limits: ModelCheckLimits,
+    meter: ScalarLimits,
+    workers: usize,
+    reductions: Reductions,
 }
 
 fn run_in_with_workers(
@@ -142,12 +227,15 @@ fn run_in_with_workers(
     package: &CheckedPackage,
     keys: &[&str],
     item: ModelCheckItem<'_>,
-    max_depth: Option<usize>,
-    limits: ModelCheckLimits,
-    meter: ScalarLimits,
-    workers: usize,
-    reductions: Reductions,
+    config: WorkerConfig,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
+    let WorkerConfig {
+        max_depth,
+        limits,
+        meter,
+        workers,
+        reductions,
+    } = config;
     check_model(
         ModelCheckRequest {
             workers,
@@ -183,11 +271,13 @@ fn run_with_workers(
         world,
         keys,
         item,
-        max_depth,
-        limits,
-        meter,
-        workers,
-        Reductions::default(),
+        WorkerConfig {
+            max_depth,
+            limits,
+            meter,
+            workers,
+            reductions: Reductions::default(),
+        },
     )
 }
 
@@ -195,27 +285,13 @@ fn run_with_workers_and_reductions(
     world: &World,
     keys: &[&str],
     item: ModelCheckItem<'_>,
-    max_depth: Option<usize>,
-    limits: ModelCheckLimits,
-    meter: ScalarLimits,
-    workers: usize,
-    reductions: Reductions,
+    config: WorkerConfig,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
-    run_in_with_workers(
-        world,
-        &world.package,
-        keys,
-        item,
-        max_depth,
-        limits,
-        meter,
-        workers,
-        reductions,
-    )
+    run_in_with_workers(world, &world.package, keys, item, config)
 }
 
 fn run_temporal_fixture_with_workers(
-    fixture: &crate::liveness::Fixture,
+    fixture: &crate::liveness_support::Fixture,
     atom: fn(i64) -> Option<bool>,
     limits: ModelCheckLimits,
     workers: usize,
@@ -278,7 +354,9 @@ fn certificate_bytes(outcome: &ModelCheckOutcome) -> Vec<u8> {
 #[trace("TC-1417", "FR-126-AC-20")]
 #[test]
 fn workers_preserve_counter_lassos_certificates_and_state_limit() {
-    let violated_fixture = temporal_worker_fixture("always eventually holds(c.value = 0)");
+    // The phase field gives this single-receiver lasso a large reachable
+    // product while preserving its exact value path and terminal entry.
+    let violated_fixture = large_lasso_worker_fixture("always eventually holds(c.value = 0)");
     let mut violation = None;
     for workers in [1, 2, 4, 64] {
         let outcome = run_temporal_fixture_with_workers(
@@ -289,15 +367,21 @@ fn workers_preserve_counter_lassos_certificates_and_state_limit() {
         )
         .expect("the worker request is admitted");
         let counterexample = violated(&outcome).clone();
-        assert_eq!(violated_fixture.values(&counterexample, "a"), [0, 1, 2, 3]);
+        let values = violated_fixture.values(&counterexample, "a");
+        assert_eq!(values, [0, 1, 2, 3], "workers={workers}");
         assert_eq!(
-            counterexample.lasso.as_ref().map(|lasso| lasso.entry),
-            Some(3)
+            counterexample
+                .lasso
+                .as_ref()
+                .map(|lasso| lasso.terminal_stutter),
+            Some(true)
         );
-        assert!(counterexample
+        let entry = counterexample
             .lasso
             .as_ref()
-            .is_some_and(|lasso| lasso.terminal_stutter));
+            .expect("the lasso is recorded")
+            .entry;
+        assert_eq!(entry, 3, "workers={workers}");
         let stats = outcome.stats();
         if let Some((expected, expected_stats)) = &violation {
             assert_eq!(&counterexample, expected, "workers={workers}");
@@ -422,19 +506,23 @@ fn model_safety_worker_modes_preserve_results() {
     }
 
     let reduced_world = self::world("", &[&[("a", 0), ("b", 0), ("c", 0)]]);
-    let mut reductions = Reductions::default();
-    reductions.partial_order = true;
+    let reductions = Reductions {
+        partial_order: true,
+        ..Reductions::default()
+    };
     let mut expected_reduced = None;
     for workers in [1, 2, 4, 64] {
         let outcome = run_with_workers_and_reductions(
             &reduced_world,
             &["a", "b", "c"],
             ModelCheckItem::DeadlockFreedom,
-            None,
-            ModelCheckLimits::default(),
-            UNLIMITED,
-            workers,
-            reductions.clone(),
+            WorkerConfig {
+                max_depth: None,
+                limits: ModelCheckLimits::default(),
+                meter: UNLIMITED,
+                workers,
+                reductions: reductions.clone(),
+            },
         )
         .expect("the reduced worker request is admitted");
         if let Some(expected) = &expected_reduced {

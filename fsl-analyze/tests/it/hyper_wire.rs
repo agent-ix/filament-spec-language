@@ -43,14 +43,18 @@ fn analyze_hyper_single_existential_holds_and_refutes() {
     }
 }
 
+/// The Counter's state at `value = 3` has no successor; intending it lets a
+/// hyper item's derived deadlock-freedom item hold.
+const COUNTER_DONE: &str = "terminal Done using v on M when { self.value = 3 };\n";
+
 #[trace("TC-2957", "FR-1000-AC-8")]
 #[test]
 fn analyze_hyper_hf_binds_a_fixed_reference_across_copies() {
-    let body = "hyper HF using t0 over behaviours (c: M::Counter) forall trace a of M forall trace b of M { always holds(c.value @ a <= 3 or c.value @ b <= 3 or c = M::Counter#\"a\") }";
+    let body = format!("{COUNTER_DONE}hyper HF using t0 over behaviours (c: M::Counter) forall trace a of M forall trace b of M {{ always holds(c.value @ a <= 3 or c.value @ b <= 3 or c = M::Counter#\"a\") }}");
     let ws = Workspace::new("hyper-wire-fixed-reference");
     let run = analyze(&crate::analyze_cli_support::counter_request(
         &ws,
-        body,
+        &body,
         json!([{"claim": "HF"}]),
     ));
     assert_eq!(run.exit, 0, "{}", run.document());
@@ -90,11 +94,11 @@ fn a_package_hyper_item_does_not_fall_back_to_source() {
     use crate::analyze_cli_support::{
         counter_request, package_selection, request_members, HANDOFF,
     };
-    let body = "hyper Equal using t0 over behaviours (c: M::Counter) \
-        forall trace a of M forall trace b of M { always holds(c.value @ a <= 3 and c.value @ b <= 3) }";
+    let body = format!("{COUNTER_DONE}hyper Equal using t0 over behaviours (c: M::Counter) \
+        forall trace a of M forall trace b of M {{ always holds(c.value @ a <= 3 and c.value @ b <= 3) }}");
     let ws = Workspace::new("hyper-wire-package-source-free");
     let items = json!([{"claim": "Equal"}]);
-    let source = analyze(&counter_request(&ws, body, items.clone()));
+    let source = analyze(&counter_request(&ws, &body, items.clone()));
     assert_eq!(source.exit, 0, "{}", source.document());
     assert_eq!(label(&source.item(0)), "proved");
     let (members, _) = package_selection(&ws, &request_members(Some(items)));
@@ -153,8 +157,12 @@ fn analyze_hyper_projected_holds_and_refutes() {
         (Vault::Busy, "proved", 0),
         (Vault::BusyLeaky, "refuted", 10),
     ] {
-        let (unit, model, snapshots) =
-            request_files_over_starts(vault, false, &STARTS, &crate::hyper_projected::aligned(&[]));
+        let (unit, model, snapshots) = request_files_over_starts(
+            vault,
+            false,
+            &STARTS,
+            &crate::hyper_projected_support::aligned(&[]),
+        );
         let ws = Workspace::new(&format!("hyper-wire-projected-{expected}"));
         let run = analyze(&request_over(
             &ws,
@@ -245,7 +253,11 @@ fn analyze_hyper_outside_the_admitted_forms_is_a_typed_refusal() {
     assert_eq!(label(&run.item(0)), "unsupported", "{}", run.document());
     assert_eq!(
         run.item(0)["record"]["diagnostic"]["code"],
-        "unsupported_construct"
+        "unsupported_projection"
+    );
+    assert_eq!(
+        run.item(0)["record"]["diagnostic"]["cause"],
+        "unsupported-requested-capability"
     );
     assert!(
         run.item(0)["counterexample"].is_null(),

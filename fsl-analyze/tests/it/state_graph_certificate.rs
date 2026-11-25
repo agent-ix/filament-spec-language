@@ -20,16 +20,17 @@ use fsl_eval::simulation::model::ModelSimState;
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::TransitionSystem;
 use fsl_replay::{
-    check_state_graph, CertificateLocus, CertificateRejection, CertificateRule, IncompleteCause,
-    ModelCheckLimit, ModelCheckLimits, StateGraphCertificate, StateGraphCertificateRequest,
-    StateGraphOutcome, TemporalCertificateCheck,
+    check_state_graph, CertificateLocus, CertificateRejection, CertificateRule, ClosureRefusal,
+    IncompleteCause, ModelCheckLimit, ModelCheckLimits, StateGraphCertificate,
+    StateGraphCertificateRequest, StateGraphOutcome, TemporalCertificateCheck,
 };
 use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
 use crate::graph_world::{
-    config_kernel_world, config_kernel_world_over, config_world, fork_kernel_world, fork_world,
-    game_world, job_world, World, DIVIDES, REACHES_TWO,
+    config_kernel_world, config_kernel_world_over, config_version, config_world,
+    counter_kernel_world, fork_kernel_world, fork_world, game_world, job_world, World,
+    CONFIG_CONTRACT, DIVIDES, REACHES_TWO,
 };
 use crate::state_graph::{no_samples, reachable, run, system, AB};
 
@@ -411,7 +412,10 @@ fn malformed_state_graph_certificate_members_have_typed_loci() {
     let second = usize::try_from(descending.ranks[1].0).expect("rank index");
     assert_eq!(
         check_reaches(&descending),
-        rejected(CertificateRule::Malformed, certificate.closure[second].clone())
+        rejected(
+            CertificateRule::Malformed,
+            certificate.closure[second].clone()
+        )
     );
 
     let world = job_world(true, false);
@@ -447,7 +451,14 @@ fn certificates_reject_the_other_forms_list_and_accept_an_empty_one() {
     let mut wrong_counts = certificate.clone();
     wrong_counts.counts.push((0, 1, 0));
     assert_eq!(
-        check(&world, AB, "ReachesTwo", over.clone(), &wrong_counts, &ModelCheckLimits::default()),
+        check(
+            &world,
+            AB,
+            "ReachesTwo",
+            over.clone(),
+            &wrong_counts,
+            &ModelCheckLimits::default()
+        ),
         rejected(CertificateRule::Malformed, certificate.closure[0].clone())
     );
     let mut missing_count_entry = certificate.clone();
@@ -457,7 +468,7 @@ fn certificates_reject_the_other_forms_list_and_accept_an_empty_one() {
             &world,
             AB,
             "ReachesTwo",
-            over,
+            over.clone(),
             &missing_count_entry,
             &ModelCheckLimits::default()
         ),
@@ -467,7 +478,14 @@ fn certificates_reject_the_other_forms_list_and_accept_an_empty_one() {
         })
     );
     assert_eq!(
-        check(&world, AB, "ReachesTwo", None, &certificate, &ModelCheckLimits::default()),
+        check(
+            &world,
+            AB,
+            "ReachesTwo",
+            over,
+            &certificate,
+            &ModelCheckLimits::default()
+        ),
         TemporalCertificateCheck::Accepted
     );
 
@@ -842,4 +860,94 @@ fn an_undefined_guard_at_a_reached_state_rejects_bad_state() {
     let (guarded, two) = checked(GUARD);
     assert_eq!(guarded, rejected(CertificateRule::BadState, two));
     assert_eq!(checked("").0, TemporalCertificateCheck::Accepted);
+}
+
+/// FR-169-AC-18: a hand-built certificate of the 4 states of a counter that
+/// stops at 3, ranked 3, 2, 1 and 0 for `AtThree`, is rejected `BadState` at
+/// `value = 3` when `terminal when` is undefined there, refused there, or
+/// both; with a predicate that has a value there, true or false, it is
+/// accepted.
+#[trace("TC-644", "FR-169-AC-18")]
+#[test]
+fn a_terminal_predicate_without_a_value_rejects_bad_state() {
+    const UNDEFINED: &str = "terminal Done using v on C when { remainder(3 - self.value) = 0 };\n";
+    const REFUSED: &str = "terminal Done using v on C when { narrow(self.value) = 0 };\n";
+    const BESIDE: &str = "terminal Stop using v on N when { remainder(3 - self.value) = 0 };\n";
+    let checked = |terminals: &str| {
+        let world = counter_kernel_world(
+            "model N = \"test/counter\";\n",
+            &format!(
+                "{terminals}possible AtThree using v over (c: C::Counter) {{ c.value = 3 }}\n"
+            ),
+        );
+        let states = reachable(&world, &["c"]).0;
+        assert_eq!(states.len(), 4);
+        let at = |value| {
+            state_where(&world, &["c"], |state| {
+                world.value(state, "c", "value") == value
+            })
+        };
+        let ranks = BTreeMap::from([(at(0), 3), (at(1), 2), (at(2), 1), (at(3), 0)]);
+        let certificate = with_ranks(states.keys().cloned().collect(), &ranks);
+        let result = check(
+            &world,
+            &["c"],
+            "AtThree",
+            Some(world.reference("c")),
+            &certificate,
+            &ModelCheckLimits::default(),
+        );
+        (result, at(3))
+    };
+    for terminals in [
+        UNDEFINED.to_owned(),
+        REFUSED.to_owned(),
+        format!("{REFUSED}{BESIDE}"),
+    ] {
+        let (result, three) = checked(&terminals);
+        assert_eq!(
+            result,
+            rejected(CertificateRule::BadState, three),
+            "{terminals}"
+        );
+    }
+    for terminals in [
+        "terminal Done using v on C when { self.value = 3 };\n",
+        "terminal Done using v on C when { false };\n",
+    ] {
+        assert_eq!(
+            checked(terminals).0,
+            TemporalCertificateCheck::Accepted,
+            "{terminals}"
+        );
+    }
+}
+
+/// FR-125-AC-13: over a subject with no initial state an `over` claim has no
+/// instance either; the checker refuses `NoInitialState`, never
+/// `NoInstance`.
+#[trace("TC-520", "FR-125-AC-13")]
+#[test]
+fn the_checker_refuses_no_initial_state_before_no_instance() {
+    let (over, certificate) = reaches_two(&config_world(REACHES_TWO, &[(0, 0)]));
+    let empty = World::new(
+        config_version(),
+        &format!("{CONFIG_CONTRACT}{REACHES_TWO}"),
+        &[],
+    );
+    let request = StateGraphCertificateRequest {
+        subject: empty.subject(AB, UNLIMITED),
+        claim: empty.claim("ReachesTwo"),
+        over,
+    };
+    let checked = check_state_graph(
+        &request,
+        &certificate,
+        &ModelCheckLimits::default(),
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(checked, Err(ClosureRefusal::NoInitialState)),
+        "{checked:?}"
+    );
 }

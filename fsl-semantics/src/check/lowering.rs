@@ -33,6 +33,7 @@ use filament_checked::node::{
     Arithmetic, CaseArm, CheckedLiteral, Connective, IntegerDivisionOperator, NodeKind,
     OrderedKind, RecordField, RecordSlot, Visit,
 };
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, hash_map};
 use std::fmt;
 use std::ops::ControlFlow;
@@ -1252,6 +1253,35 @@ pub(crate) fn require_admitted(
         NodeRef::Admitted(key) => Ok(key),
         NodeRef::Pending(_) => Err(fault(location, KeyFault::UnresolvedDraft)),
     }
+}
+
+/// A declared node's structural key (FSpec FR-322 "Structural node
+/// identity"): the declaration's segments and, for a node with an
+/// `owner_model` (a `protocol_clause` alone), one final operand naming that
+/// node (FSpec FR-322 "Protocol clause owner identity").
+#[implements("FR-383-AC-26", "FR-383-AC-27")]
+fn declaration_key(
+    package_name: &str,
+    names: &[Identifier],
+    owner_model: Option<&NodeKey>,
+    ordinal: u64,
+) -> Result<NodeKey, filament_exact::InvalidNodeKey> {
+    use filament_exact::PathSegment;
+    let len = names
+        .len()
+        .saturating_add(usize::from(owner_model.is_some()));
+    let mut path = Vec::new();
+    path.try_reserve_exact(len)
+        .map_err(|_| filament_exact::InvalidNodeKey::Allocation {
+            requested: len.saturating_mul(std::mem::size_of::<PathSegment>()),
+        })?;
+    path.extend(
+        names
+            .iter()
+            .map(|name| PathSegment::Text(name.as_str().to_owned())),
+    );
+    path.extend(owner_model.cloned().map(PathSegment::Node));
+    super::structural_node_key(package_name, path, ordinal)
 }
 
 /// The declared structural key of a step-relation node, which is built
@@ -2750,8 +2780,9 @@ impl<'a> Lowering<'a> {
     }
 
     /// The structural key of an unpended `content`: equal content is one
-    /// node; a declared node is keyed by its declaration's path, any other
-    /// by its closed tag and semantic form alone. Repeats of one path take
+    /// node; a declared node is keyed by its declaration's path (and its
+    /// `owner_model`, [`declaration_key`]), any other by its closed tag and
+    /// semantic form alone. Repeats of one path take
     /// the next unused ordinal, so a key's size never depends on how deep
     /// its operands nest (QSL-381: no depth cap, and a key that nested its
     /// operands' keys would cost memory quadratic in a chain's depth).
@@ -2771,11 +2802,7 @@ impl<'a> Lowering<'a> {
         };
         let operands = derived_operands(content);
         let key = self.mint_key(location, |ordinal| match &content.declaration {
-            Some(names) => super::declared_node_key(
-                package.clone(),
-                names.iter().map(|name| name.as_str().to_owned()).collect(),
-                ordinal,
-            ),
+            Some(names) => declaration_key(&package, names, content.owner_model.as_ref(), ordinal),
             None => super::derived_node_key(
                 &package,
                 content.node_tag,
@@ -2817,10 +2844,12 @@ impl<'a> Lowering<'a> {
     }
 
     /// The admitted keys of one recursion group's members, in member order.
-    /// A declared member is keyed by its declaration's path; any other
-    /// member by the anchor's (least declared member's) path with no
-    /// operand, the producer's ordinal telling the members apart. A group
+    /// A declared member is keyed by its [`declaration_key`]; any other
+    /// member takes the sole declared member's path, or, among several, the
+    /// anchor's (least declared member's) declaration segments with no
+    /// operand; the producer's ordinal tells the members apart. A group
     /// with no declared member has no anchor, which is an internal fault.
+    #[implements("FR-383-AC-24")]
     fn admitted_group_keys(
         &mut self,
         members: &[&Draft],
@@ -2831,11 +2860,7 @@ impl<'a> Lowering<'a> {
         for draft in members {
             keys.push(match &draft.content.declaration {
                 Some(names) => Some(self.mint_key(&draft.location, |ordinal| {
-                    super::declared_node_key(
-                        package.clone(),
-                        names.iter().map(|name| name.as_str().to_owned()).collect(),
-                        ordinal,
-                    )
+                    declaration_key(&package, names, draft.content.owner_model.as_ref(), ordinal)
                 })?),
                 None => None,
             });
@@ -2844,26 +2869,24 @@ impl<'a> Lowering<'a> {
         // not depend on the order the members are declared in. The pinned
         // reader (filament-contract-model `validate_recursion`) requires every
         // undeclared member's path to equal the sole declared member's path.
-        let anchor_path: Vec<String> = keys
+        let anchor = keys
             .iter()
-            .flatten()
-            .min()
-            .ok_or_else(|| fault(location, KeyFault::InvalidGroup))?
-            .view()
-            .path()
-            .map(|segment| match segment {
-                filament_exact::PathSegmentView::Text(text) => Ok(text.to_owned()),
-                filament_exact::PathSegmentView::Node(_) => {
-                    Err(fault(location, KeyFault::InvalidGroup))
-                }
+            .zip(members)
+            .filter_map(|(key, draft)| {
+                Some((key.as_ref()?, draft.content.declaration.as_deref()?, draft))
             })
-            .collect::<Result<_, _>>()?;
+            .min_by(|left, right| left.0.cmp(right.0));
+        let (_, anchor_names, anchor) =
+            anchor.ok_or_else(|| fault(location, KeyFault::InvalidGroup))?;
+        let anchor_owner = (keys.iter().flatten().count() == 1)
+            .then_some(anchor.content.owner_model.as_ref())
+            .flatten();
         let mut admitted = Vec::with_capacity(members.len());
-        for (draft, key) in members.iter().zip(keys) {
+        for (draft, key) in members.iter().zip(&keys) {
             admitted.push(match key {
-                Some(key) => key,
+                Some(key) => key.clone(),
                 None => self.mint_key(&draft.location, |ordinal| {
-                    super::declared_node_key(package.clone(), anchor_path.clone(), ordinal)
+                    declaration_key(&package, anchor_names, anchor_owner, ordinal)
                 })?,
             });
         }
@@ -2919,6 +2942,11 @@ impl<'a> Lowering<'a> {
     /// A text literal typed at the builtin text scalar node (T3).
     fn text_literal(&mut self, value: &str, location: &Location) -> Result<LeafTerm, CheckRefusal> {
         let text = self.scalar("text", location)?;
+        // Generated type metadata can be the only use of the builtin Text
+        // scalar in an expression-only unit; root it at that source use.
+        if !self.occurrences.has(text.clone()) {
+            self.record(text.clone(), OccurrenceRole::Generated, location.clone());
+        }
         Ok(LeafTerm::literal(
             text,
             LiteralValue::Text(value.to_owned()),
@@ -2970,7 +2998,15 @@ impl<'a> Lowering<'a> {
                 self.composites_open.remove(&declaration);
             }
         }
-        built
+        let node = built?;
+        if matches!(value_type, ValueType::Float(_)) {
+            if let Some(key) = node.admitted() {
+                if !self.occurrences.has(key.clone()) {
+                    self.record(key.clone(), OccurrenceRole::Generated, location.clone());
+                }
+            }
+        }
+        Ok(node)
     }
 
     /// [`Self::type_node`] for a type that names no pending handle: the
@@ -7425,8 +7461,8 @@ impl<'a> Lowering<'a> {
     }
 
     /// The literal term of `value` typed at `declared`, located at
-    /// `location`: the one value-to-literal decision a checked literal node
-    /// and a refinement history row's initial value both use.
+    /// `location`: a `literal` node, or an enum member's `enum_value` node.
+    #[implements("FR-093-AC-33", "FR-093-AC-50")]
     pub(super) fn literal_at(
         &mut self,
         location: &Location,
@@ -7434,7 +7470,49 @@ impl<'a> Lowering<'a> {
         declared: &ValueType,
         scalar: Option<&'static str>,
     ) -> Result<LeafTerm, CheckRefusal> {
-        let literal = match value {
+        if let Value::Enum(member) = value {
+            // FR-093: the enum member's FSpec `enum_value` node, whose
+            // key is its `VariantId` (ADR-013 O-14). A model variant
+            // type's nodes are built where it is first named, here.
+            self.type_ref(declared, location)?;
+            let variant = member.variant();
+            let key = crate::value::enumeration::enum_value_key_in(
+                &self.package_name,
+                variant.owner(),
+                variant.case(),
+            )
+            .map_err(|_| {
+                fault(
+                    location,
+                    KeyFault::InvalidMemberKey(variant.owner().clone()),
+                )
+            })?;
+            self.record(key.clone(), OccurrenceRole::Expression, location.clone());
+            return Ok(LeafTerm::reference_node(key.into()));
+        }
+        let literal = Self::literal_value(location, value, scalar)?;
+        let semantic_type = match scalar {
+            Some(form) => NodeRef::from(self.scalar(form, location)?),
+            None => self.type_ref(declared, location)?,
+        };
+        self.value_node_at(
+            location,
+            "literal",
+            semantic_type.clone(),
+            BodyTerm::literal_node(semantic_type, literal),
+        )
+    }
+
+    /// The `literal` term value of `value`: the one value-to-literal decision
+    /// a checked literal node and a refinement history row's inline initial
+    /// both use.
+    #[implements("FR-093-AC-33", "FR-093-AC-50")]
+    pub(super) fn literal_value(
+        location: &Location,
+        value: &Value,
+        scalar: Option<&'static str>,
+    ) -> Result<LiteralValue, CheckRefusal> {
+        Ok(match value {
             Value::Boolean(value) => LiteralValue::Boolean(*value),
             Value::Integer(value) => LiteralValue::Integer(value.clone()),
             Value::Rational(value) => LiteralValue::Rational(value.clone()),
@@ -7445,26 +7523,7 @@ impl<'a> Lowering<'a> {
                 }
                 filament_exact::IeeeWidth::Binary64 => LiteralValue::Float64Bits(value.bits()),
             },
-            Value::Enum(member) => {
-                // FR-093: the enum member's FSpec `enum_value` node, whose
-                // key is its `VariantId` (ADR-013 O-14). A model variant
-                // type's nodes are built where it is first named, here.
-                self.type_ref(declared, location)?;
-                let variant = member.variant();
-                let key = crate::value::enumeration::enum_value_key_in(
-                    &self.package_name,
-                    variant.owner(),
-                    variant.case(),
-                )
-                .map_err(|_| {
-                    fault(
-                        location,
-                        KeyFault::InvalidMemberKey(variant.owner().clone()),
-                    )
-                })?;
-                self.record(key.clone(), OccurrenceRole::Expression, location.clone());
-                return Ok(LeafTerm::reference_node(key.into()));
-            }
+            Value::Enum(member) => LiteralValue::Enum(member.variant().case().to_owned()),
             // FR-093-AC-33: a quantity literal is a `quantity` literal typed
             // by its unit's node; the magnitude is already reduced.
             Value::Quantity(quantity) => LiteralValue::Quantity(quantity.magnitude().clone()),
@@ -7492,17 +7551,7 @@ impl<'a> Lowering<'a> {
             // bare `text` scalar (IR joins the two).
             Value::String(value) if scalar == Some("text") => LiteralValue::Text(value.clone()),
             Value::String(value) => LiteralValue::String(value.clone()),
-        };
-        let semantic_type = match scalar {
-            Some(form) => NodeRef::from(self.scalar(form, location)?),
-            None => self.type_ref(declared, location)?,
-        };
-        self.value_node_at(
-            location,
-            "literal",
-            semantic_type.clone(),
-            BodyTerm::literal_node(semantic_type, literal),
-        )
+        })
     }
 
     fn unbuilt_map_literal(location: &Location) -> CheckRefusal {
@@ -7955,8 +8004,9 @@ fn is_map(content: &NodeContent) -> bool {
 /// key). A `reference`, `option` or collection type names its target; a
 /// compound unit names each `(unit, exponent)` term. A value, expression,
 /// temporal, hybrid or bounded-domain node names what its body walks: binding
-/// names, a literal's type node and text, referenced nodes, an application's operation identity, a
-/// fairness member's declaration and name, its laws' definition identities,
+/// names, a literal's type node and text, referenced nodes, an application's operation identity, its
+/// member's operands (declaring node, name, population, alias or interval,
+/// as the member kind has them), its laws' definition identities,
 /// its operator and result type, and last the node's semantic type. Every
 /// other derived node has no operands: equal content is one node, and a
 /// repeat of its path takes the next producer ordinal. Expression and temporal
@@ -8432,25 +8482,75 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
                     interval: Some(interval),
                 }) => walk.text(&interval_spelling(*interval)),
                 Some(Member::TimedInterval(timed)) => walk.text(&timed_interval_spelling(timed)),
-                // FSpec FR-322 "Named type arguments": an alias is part of
-                // the application's identity, after the declaration operand.
-                Some(Member::TypeArgument {
+                // FSpec FR-322 "Named type arguments": the declaration is the
+                // member's operand, and an alias follows it.
+                Some(Member::TypeArgument { declaration, alias }) => {
+                    walk.push(PathSegment::Node(declaration.clone()));
+                    if let Some(alias) = alias {
+                        walk.text(&alias.node);
+                    }
+                }
+                // FSpec FR-322: a model member is named by its declaring node
+                // and its name, and a history read's path holds both.
+                Some(
+                    Member::Operation { declaration, name } | Member::History { declaration, name },
+                ) => {
+                    walk.push(PathSegment::Node(declaration.clone()));
+                    walk.text(name.as_str());
+                }
+                // FSpec FR-322 "Population link of a `reaches`": the end is
+                // named by the relationship node and its role, and the
+                // population follows when present. `destination_type` is no
+                // operand: its node may be absent from the graph.
+                Some(Member::RelationshipEnd {
                     declaration,
-                    alias: Some(alias),
+                    name,
+                    destination_type: _,
+                    population,
                 }) => {
                     walk.push(PathSegment::Node(declaration.clone()));
-                    walk.text(&alias.node);
+                    walk.text(name.as_str());
+                    if let Some(population) = population {
+                        walk.push(PathSegment::Node(population.clone()));
+                    }
                 }
+                // FSpec FR-322 states no path spelling for a position index,
+                // so the declaration is the only operand of a position.
+                Some(
+                    Member::Position {
+                        declaration,
+                        position: _,
+                    }
+                    | Member::Element { declaration },
+                ) => walk.push(PathSegment::Node(declaration.clone())),
+                // FSpec FR-322: an operator name is a string operand.
+                Some(Member::ProfileOperator { operator }) => walk.text(operator.as_str()),
+                // FSpec FR-322: a field member's operands are its declaring
+                // node and its field name, so two fields are two nodes.
                 Some(Member::Field {
-                    explicit_deref: Some(explicit_deref),
-                    ..
+                    declaration,
+                    name,
+                    explicit_deref,
+                    population,
                 }) => {
+                    walk.push(PathSegment::Node(declaration.clone()));
+                    walk.text(name.as_str());
                     // FR-322 read_form is a checked semantic distinction,
                     // so equal operands and result types must not alias its
                     // bare and explicit source forms under one node key.
-                    walk.text(if *explicit_deref { "true" } else { "false" });
+                    if let Some(explicit_deref) = explicit_deref {
+                        walk.text(if *explicit_deref { "true" } else { "false" });
+                    }
+                    // FSpec FR-322 "Population link of a `reaches`": the
+                    // population is part of the path when present.
+                    if let Some(population) = population {
+                        walk.push(PathSegment::Node(population.clone()));
+                    }
                 }
-                _ => {}
+                // A state clause's path is built by `derived_operands`, and an
+                // unbounded temporal operator contributes no interval operand.
+                Some(Member::StateClause { .. } | Member::TemporalInterval { interval: None })
+                | None => {}
             }
             for law in operation.laws() {
                 walk.text(&law.definition.identity);

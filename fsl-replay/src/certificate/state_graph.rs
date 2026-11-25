@@ -10,13 +10,17 @@
 //! applies its rules in this order and rejects at the first failing state in
 //! certificate order (ascending state key):
 //!
-//! 1. `Malformed`: the closure is not strictly ascending in the state-key
-//!    domain, or a rank or count entry is unsorted, duplicated, names no
-//!    closure state or counts above 2, before any recomputation;
+//! 1. `Malformed`, before any recomputation: a closure entry is not a
+//!    `filament.simulation.state-key/v1` encoding or is not strictly greater
+//!    than the one before it, or a rank or count entry is unsorted,
+//!    duplicated, names no closure state, counts above 2 or belongs to the
+//!    list the claim's form does not carry;
 //! 2. `InitialMissing`: an initial state is not in the closure;
 //! 3. `SuccessorMissing`: a closure state the checker reached has a successor
 //!    outside the closure; `BadState`: its expansion evaluated a contract
-//!    conjunction undefined or refused, so its successors are not known;
+//!    conjunction undefined or refused, so its successors are not known, or
+//!    it has no successor and FR-124 classifies it undefined or undecided,
+//!    its `terminal when` predicates having no value there;
 //! 4. `PredicateUndefined`: a claim predicate is undefined or refused at a
 //!    reached state;
 //! 5. by form: `possible` and `always possible` check ranks (`RankMissing`,
@@ -37,11 +41,12 @@
 //! only refutes a `from` node and so is never trusted for acceptance. That
 //! lets a cycle of `H` that no `from` node reaches be certified.
 
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Cancel, ObjectReference, ValueType};
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::{ModelSimState, ModelSystem, PredicateReading};
+use fsl_eval::simulation::model::{ModelSimState, ModelSystem, PredicateReading, TerminalClass};
 use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_semantics::check::{CheckedStateGraphClaim, PredicateRole, StateGraphForm};
 
@@ -51,6 +56,8 @@ use crate::certificate::check::{
 use crate::certificate::closure::{CertificateRejection, ClosureRefusal, TemporalCertificateCheck};
 use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits};
+use crate::probability_certificate::is_model_state_key;
+use crate::proof_result::IncompleteCause;
 
 /// FR-169's state-graph certificate of one item instance.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -95,16 +102,21 @@ pub fn check_state_graph(
     limits: &ModelCheckLimits,
     cancel: &Cancel,
 ) -> Result<TemporalCertificateCheck, ClosureRefusal> {
-    if let Some(rejection) = malformed(certificate) {
-        return Ok(TemporalCertificateCheck::Rejected(rejection));
+    let shape = malformed(certificate, Carried::of(request.claim.form()), cancel);
+    if shape.is_err() {
+        return finish(shape);
     }
     let simulation = request.subject.simulation.clone();
     let budgets = Budgets::of(&simulation);
     let system = admit(simulation)?;
-    let over = bound_over(request, &system)?;
-    if system.initial().is_empty() {
-        return Err(ClosureRefusal::NoInitialState);
-    }
+    // FR-125 Instancing orders the refusals: an unbounded root (`admit`, and
+    // `bound_over`'s instancing), then no initial state, then no instance.
+    let over = match bound_over(request, &system) {
+        Ok(_) | Err(ClosureRefusal::NoInstance) if system.initial().is_empty() => {
+            return Err(ClosureRefusal::NoInitialState);
+        }
+        over => over?,
+    };
     let predicates = predicates(request.claim.form());
     let check = Check {
         system: &system,
@@ -164,18 +176,39 @@ fn predicates(form: &StateGraphForm) -> Vec<PredicateRole> {
         .collect()
 }
 
-/// The first `Malformed` entry: closure order and domain, then ranks, then
-/// counts.
-fn malformed(certificate: &StateGraphCertificate) -> Option<CertificateRejection> {
-    let reject = |at| CertificateRejection {
-        rule: CertificateRule::Malformed,
-        at,
-    };
+/// The one entry list a certificate carries, by its claim's form.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Carried {
+    /// `possible` and `always possible`.
+    Ranks,
+    /// `unique path`.
+    Counts,
+}
+
+impl Carried {
+    const fn of(form: &StateGraphForm) -> Self {
+        match form {
+            StateGraphForm::Possible { .. } | StateGraphForm::AlwaysPossible { .. } => Self::Ranks,
+            StateGraphForm::UniquePath { .. } => Self::Counts,
+        }
+    }
+}
+
+/// Stop at the first `Malformed` entry, reading the certificate once: closure
+/// domain and order, then ranks, then counts, polling `cancel` at every
+/// closure state. Every entry of the list not `carried` is malformed.
+fn malformed(certificate: &StateGraphCertificate, carried: Carried, cancel: &Cancel) -> Step<()> {
     let mut previous: Option<&StateKey> = None;
     for state in &certificate.closure {
+        poll(cancel)?;
+        let encoded = is_model_state_key(state.as_bytes()).map_err(|_| {
+            Halt::Check(TemporalCertificateCheck::Stopped(
+                IncompleteCause::ResourceExhausted,
+            ))
+        })?;
         let ordered = previous.is_none_or(|before| before < state);
-        if !ordered {
-            return Some(reject(CertificateLocus::ModelKey(state.clone())));
+        if !encoded || !ordered {
+            return Err(reject(CertificateRule::Malformed, state.clone()));
         }
         previous = Some(state);
     }
@@ -196,18 +229,23 @@ fn malformed(certificate: &StateGraphCertificate) -> Option<CertificateRejection
         .iter()
         .map(|(index, count, _)| (*index, *count > 2))
         .collect::<Vec<_>>();
-    for section in [indices, counted] {
+    for (list, section) in [(Carried::Ranks, indices), (Carried::Counts, counted)] {
         let mut previous: Option<u64> = None;
         for (index, over) in section {
             let in_range = usize::try_from(index).is_ok_and(|at| at < certificate.closure.len());
             let ordered = previous.is_none_or(|before| before < index);
-            if !in_range || !ordered || over {
-                return Some(reject(entry(index)));
+            if list != carried || !in_range || !ordered || over {
+                return Err(Halt::Check(TemporalCertificateCheck::Rejected(
+                    CertificateRejection {
+                        rule: CertificateRule::Malformed,
+                        at: entry(index),
+                    },
+                )));
             }
             previous = Some(index);
         }
     }
-    None
+    Ok(())
 }
 
 fn reject(rule: CertificateRule, at: StateKey) -> Halt {
@@ -313,6 +351,7 @@ impl Check<'_, '_> {
     /// Every closure state reachable from `initial`, expanded, checking
     /// `SuccessorMissing` then `BadState` at the first failing state in
     /// certificate order.
+    #[implements("FR-169-AC-11", "FR-169-AC-18")]
     fn explore(
         &self,
         initial: &BTreeMap<StateKey, ModelSimState>,
@@ -348,6 +387,19 @@ impl Check<'_, '_> {
                 finding.undefined_contract().is_some() || finding.is_refused_contract()
             }) {
                 bad.insert(at.clone());
+            } else if expansion.successors.is_empty() {
+                // FR-124: `terminal when` is read where no transition is
+                // enabled, and must have a value there.
+                let class = self
+                    .system
+                    .terminal_class(&state, false)
+                    .map_err(|stop| self.halt(&stop))?;
+                if matches!(
+                    class,
+                    TerminalClass::Undefined { .. } | TerminalClass::Undecided { .. }
+                ) {
+                    bad.insert(at.clone());
+                }
             }
             let mut successors = Vec::with_capacity(expansion.successors.len());
             for (_, next) in expansion.successors {
@@ -520,9 +572,34 @@ mod tests {
 
     use super::*;
 
+    /// A state-key envelope ordered by `byte`, its first member.
     fn key(byte: u8) -> StateKey {
-        let bytes = serde_json::to_vec(&byte).expect("the fixture state encodes");
-        StateKey::from_canonical_bytes(bytes)
+        StateKey::from_canonical_bytes(
+            format!(
+                "{{\"bounds\":{byte},\"control\":0,\"memory\":0,\"observations\":0,\
+                 \"queues\":0,\"roles\":0,\"semantic\":0,\"type\":\"simulation-state\"}}"
+            )
+            .into_bytes(),
+        )
+    }
+
+    /// The `Malformed` rule and locus `certificate` is rejected at, as a
+    /// certificate carrying the `carried` list.
+    fn at(
+        carried: Carried,
+        certificate: StateGraphCertificate,
+    ) -> Option<(CertificateRule, CertificateLocus)> {
+        match finish(malformed(&certificate, carried, &Cancel::new())) {
+            Ok(TemporalCertificateCheck::Accepted) => None,
+            Ok(TemporalCertificateCheck::Rejected(rejection)) => {
+                Some((rejection.rule, rejection.at))
+            }
+            other => panic!("the shape check neither stops nor refuses: {other:?}"),
+        }
+    }
+
+    fn malformed_at(locus: CertificateLocus) -> Option<(CertificateRule, CertificateLocus)> {
+        Some((CertificateRule::Malformed, locus))
     }
 
     /// FR-169's `Malformed` rule, applied before any recomputation: an
@@ -532,55 +609,131 @@ mod tests {
     #[test]
     fn malformed_entries_reject_before_recomputation() {
         let closure = vec![key(1), key(2)];
-        let at = |certificate: StateGraphCertificate| {
-            malformed(&certificate).map(|rejection| (rejection.rule, rejection.at))
-        };
-        let malformed_at = |locus| Some((CertificateRule::Malformed, locus));
         assert_eq!(
-            at(StateGraphCertificate {
-                closure: vec![key(2), key(1)],
-                ..StateGraphCertificate::default()
-            }),
+            at(
+                Carried::Ranks,
+                StateGraphCertificate {
+                    closure: vec![key(2), key(1)],
+                    ..StateGraphCertificate::default()
+                }
+            ),
             malformed_at(CertificateLocus::ModelKey(key(1)))
         );
         assert_eq!(
-            at(StateGraphCertificate {
-                closure: vec![key(1), key(1)],
-                ..StateGraphCertificate::default()
-            }),
+            at(
+                Carried::Ranks,
+                StateGraphCertificate {
+                    closure: vec![key(1), key(1)],
+                    ..StateGraphCertificate::default()
+                }
+            ),
             malformed_at(CertificateLocus::ModelKey(key(1)))
         );
         assert_eq!(
-            at(StateGraphCertificate {
-                closure: closure.clone(),
-                ranks: vec![(0, 1), (2, 0)],
-                counts: Vec::new(),
-            }),
+            at(
+                Carried::Ranks,
+                StateGraphCertificate {
+                    closure: closure.clone(),
+                    ranks: vec![(0, 1), (2, 0)],
+                    counts: Vec::new(),
+                }
+            ),
             malformed_at(CertificateLocus::Entry { index: 2 })
         );
         assert_eq!(
-            at(StateGraphCertificate {
-                closure: closure.clone(),
-                ranks: vec![(1, 0), (0, 1)],
-                counts: Vec::new(),
-            }),
+            at(
+                Carried::Ranks,
+                StateGraphCertificate {
+                    closure: closure.clone(),
+                    ranks: vec![(1, 0), (0, 1)],
+                    counts: Vec::new(),
+                }
+            ),
             malformed_at(CertificateLocus::ModelKey(key(1)))
         );
         assert_eq!(
-            at(StateGraphCertificate {
-                closure: closure.clone(),
-                ranks: Vec::new(),
-                counts: vec![(1, 3, 0)],
-            }),
+            at(
+                Carried::Counts,
+                StateGraphCertificate {
+                    closure: closure.clone(),
+                    ranks: Vec::new(),
+                    counts: vec![(1, 3, 0)],
+                }
+            ),
             malformed_at(CertificateLocus::ModelKey(key(2)))
         );
         assert_eq!(
-            at(StateGraphCertificate {
-                closure,
-                ranks: vec![(0, 1), (1, 0)],
-                counts: vec![(0, 1, 1), (1, 2, 0)],
-            }),
+            at(
+                Carried::Ranks,
+                StateGraphCertificate {
+                    closure: closure.clone(),
+                    ranks: vec![(0, 1), (1, 0)],
+                    counts: Vec::new(),
+                }
+            ),
             None
         );
+        assert_eq!(
+            at(
+                Carried::Counts,
+                StateGraphCertificate {
+                    closure,
+                    ranks: Vec::new(),
+                    counts: vec![(0, 1, 1), (1, 2, 0)],
+                }
+            ),
+            None
+        );
+    }
+
+    /// FR-169-AC-15: an entry of the list the claim's form does not carry
+    /// rejects at the state its index names, after the carried list's
+    /// entries and, for `unique path`, before the counts.
+    #[trace("TC-644", "FR-169-AC-15")]
+    #[test]
+    fn the_other_forms_list_is_malformed_in_stored_order() {
+        let both = || StateGraphCertificate {
+            closure: vec![key(1), key(2)],
+            ranks: vec![(1, 0)],
+            counts: vec![(0, 1, 1)],
+        };
+        assert_eq!(
+            at(Carried::Ranks, both()),
+            malformed_at(CertificateLocus::ModelKey(key(1)))
+        );
+        assert_eq!(
+            at(Carried::Counts, both()),
+            malformed_at(CertificateLocus::ModelKey(key(2)))
+        );
+        assert_eq!(
+            at(
+                Carried::Ranks,
+                StateGraphCertificate {
+                    ranks: vec![(2, 0)],
+                    ..both()
+                }
+            ),
+            malformed_at(CertificateLocus::Entry { index: 2 })
+        );
+    }
+
+    /// FR-169-AC-14: a closure entry that is not a state-key encoding
+    /// rejects at that entry, whatever its order: bytes that are no JSON,
+    /// JSON that is no model state, and a model state not in RFC 8785 text.
+    #[trace("TC-1197", "FR-169-AC-14")]
+    #[test]
+    fn a_closure_entry_that_is_no_state_key_is_malformed() {
+        let spaced = [b" ".as_slice(), key(2).as_bytes()].concat();
+        for bytes in [b"not-a-state-key".to_vec(), b"2".to_vec(), spaced] {
+            let entry = StateKey::from_canonical_bytes(bytes);
+            let certificate = StateGraphCertificate {
+                closure: vec![entry.clone(), key(3)],
+                ..StateGraphCertificate::default()
+            };
+            assert_eq!(
+                at(Carried::Ranks, certificate),
+                malformed_at(CertificateLocus::ModelKey(entry))
+            );
+        }
     }
 }

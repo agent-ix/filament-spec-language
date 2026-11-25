@@ -496,6 +496,56 @@ fn outcome_text(
             writer.unit(|| format!("  hint: {hint}\n"))?;
         }
     }
+    #[cfg(feature = "quire-extraction")]
+    if let Some(report) = document.native_fences() {
+        for (index, fence) in report.fences.iter().enumerate() {
+            writer.unit(|| {
+                format!(
+                    "item {index}: checked ({}){} first-line {}\n",
+                    fence.category.as_str(),
+                    fence
+                        .clause
+                        .as_deref()
+                        .map_or_else(String::new, |clause| format!(" clause {clause}")),
+                    fence.first_line
+                )
+            })?;
+            if let Some(actual) = fence.actual {
+                writer.unit(|| format!("  actual: {actual}\n"))?;
+            }
+            for diagnostic in &fence.diagnostics {
+                let diagnostic_wire = serde_json::to_value(&diagnostic.diagnostic)
+                    .map_err(|_| fault("native-fence diagnostic serialization failed"))?;
+                let region = diagnostic
+                    .original_regions
+                    .first()
+                    .or_else(|| diagnostic.diagnostic.locus());
+                writer.unit(|| {
+                    format!(
+                        "{}: {}: {}\n",
+                        native_fence_locus_prefix(region),
+                        diagnostic.diagnostic.code(),
+                        diagnostic.diagnostic.message()
+                    )
+                })?;
+                if let Some(cause) = diagnostic.diagnostic.cause() {
+                    writer.unit(|| format!("  cause: {cause}\n"))?;
+                }
+                if let Some(label) = diagnostic_wire
+                    .get("label")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    writer.unit(|| format!("  label: {label}\n"))?;
+                }
+                if let Some(hint) = diagnostic_wire
+                    .get("hint")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    writer.unit(|| format!("  hint: {hint}\n"))?;
+                }
+            }
+        }
+    }
     for (index, item) in document.items().iter().enumerate() {
         writer.try_unit(|| {
             let item_wire = wire
@@ -594,6 +644,24 @@ fn outcome_text(
         writer.unit(|| format!("result: {kind}{suffix}\n"))?;
     }
     Ok(())
+}
+
+#[cfg(feature = "quire-extraction")]
+fn native_fence_locus_prefix(locus: Option<&fsl_replay::OutcomeLocus>) -> String {
+    match locus {
+        Some(fsl_replay::OutcomeLocus::Located { file, span }) => {
+            format!("{}:{}:{}", file, span.start.line, span.start.column)
+        }
+        Some(fsl_replay::OutcomeLocus::ImportedLocated { file, span, .. }) => {
+            format!("{}:{}:{}", file, span.start.line, span.start.column)
+        }
+        Some(fsl_replay::OutcomeLocus::Region {
+            source,
+            start,
+            end,
+        }) => format!("{}:{}-{}", source_label(source), start, end),
+        Some(_) | None => String::from("<no-source>"),
+    }
 }
 
 /// The witness line of a refuted item: each operand value beside the source
@@ -1351,6 +1419,7 @@ where
 fn open_cause_label(cause: fsl_replay::OpenCause) -> &'static str {
     match cause {
         fsl_replay::OpenCause::MaxDepth => "max_depth",
+        fsl_replay::OpenCause::ConstraintBoundary => "constraint_boundary",
         fsl_replay::OpenCause::UndecidedSuccessor => "undecided_successor",
         fsl_replay::OpenCause::NotExpanded => "not_expanded",
     }
@@ -1710,6 +1779,95 @@ mod tests {
         .value()
         .as_str()
         .to_owned()
+    }
+
+    #[cfg(feature = "quire-extraction")]
+    fn native_fence(
+        document: &fsl_foundation::source::SourceIdentity,
+        path: &str,
+        clause: &str,
+        first_line: usize,
+        category: Category,
+        diagnostics: Vec<fsl_replay::spine::NativeFenceDiagnostic>,
+        actual: Option<usize>,
+    ) -> fsl_replay::spine::NativeFenceResult {
+        fsl_replay::spine::NativeFenceResult {
+            document: document.clone(),
+            path: path.to_owned(),
+            clause: Some(clause.to_owned()),
+            body: fsl_foundation::source::SourceIdentity::new(
+                "docs",
+                format!("{path}#{clause}"),
+            ),
+            first_line,
+            category,
+            diagnostics,
+            actual,
+        }
+    }
+
+    #[cfg(feature = "quire-extraction")]
+    fn native_fence_document(
+        fences: Vec<fsl_replay::spine::NativeFenceResult>,
+    ) -> OutcomeDocument {
+        OutcomeDocument::from_native_fences(&fsl_replay::spine::NativeFenceReport { fences })
+    }
+
+    #[cfg(feature = "quire-extraction")]
+    fn broken_fence() -> fsl_replay::spine::NativeFenceResult {
+        use fsl_foundation::source::{SourceIdentity, SourceLabel};
+        use fsl_replay::spine::{NativeFenceDiagnostic, NativeFenceUnit};
+
+        let document = SourceIdentity::new("docs", "spec.md");
+        let body = SourceIdentity::new("docs", "spec.md#Broken");
+        let unit = NativeFenceUnit {
+            document: document.clone(),
+            path: String::from("spec.md"),
+            clause: Some(String::from("Broken")),
+            body: body.clone(),
+        };
+        let diagnostic = NativeFenceDiagnostic {
+            unit,
+            diagnostic: fsl_replay::OutcomeDiagnostic::new(
+                Some("type-mismatch"),
+                "ill_typed",
+                Some(fsl_replay::OutcomeLocus::Region {
+                    source: fsl_foundation::source::provenance::RawSourceRef::new(
+                        "docs",
+                        "spec.md#Broken",
+                    )
+                    .expect("valid test source identity"),
+                    start: 0,
+                    end: 1,
+                }),
+                "payload has the wrong type",
+            )
+            .with_source_label(Some(SourceLabel::Identity)),
+            original_regions: vec![fsl_replay::OutcomeLocus::Located {
+                file: String::from("spec.md"),
+                span: fsl_foundation::LocatedSpan {
+                    start: fsl_foundation::Position {
+                        byte: 64,
+                        line: 7,
+                        column: 9,
+                    },
+                    end: fsl_foundation::Position {
+                        byte: 65,
+                        line: 7,
+                        column: 10,
+                    },
+                },
+            }],
+        };
+        native_fence(
+            &document,
+            "spec.md",
+            "Broken",
+            12,
+            Category::Refusal,
+            vec![diagnostic],
+            None,
+        )
     }
 
     fn render_default<S, T, F>(view: &View<'_, S, T, F>, form: RenderForm) -> Rendered
@@ -2693,6 +2851,134 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "quire-extraction")]
+    #[test]
+    #[trace("TC-2455", "FR-865-AC-25")]
+    fn text_outcome_renders_native_fence_items_and_diagnostics_in_report_order() {
+        use fsl_foundation::source::SourceIdentity;
+        use fsl_replay::spine::{NativeFenceDiagnostic, NativeFenceUnit};
+
+        let document_id = SourceIdentity::new("docs", "spec.md");
+        let broken = broken_fence();
+        let repeated_body = SourceIdentity::new("docs", "spec.md#Repeated");
+        let repeated = native_fence(
+            &document_id,
+            "spec.md",
+            "Repeated",
+            20,
+            Category::Refusal,
+            vec![NativeFenceDiagnostic {
+                unit: NativeFenceUnit {
+                    document: document_id.clone(),
+                    path: String::from("spec.md"),
+                    clause: Some(String::from("Repeated")),
+                    body: repeated_body,
+                },
+                diagnostic: fsl_replay::OutcomeDiagnostic::new(
+                    None,
+                    "invalid-request",
+                    None,
+                    "the clause heading names multiple fences",
+                ),
+                original_regions: Vec::new(),
+            }],
+            Some(2),
+        );
+        let document = native_fence_document(vec![
+            native_fence(
+                &document_id,
+                "spec.md",
+                "Healthy",
+                4,
+                Category::Success,
+                Vec::new(),
+                None,
+            ),
+            broken,
+            repeated,
+        ]);
+
+        let text = text_of(&document, &RenderSources::from_sources([]));
+        assert_eq!(
+            text,
+            concat!(
+                "check: refusal (exit 20) at stage packaging\n",
+                "item 0: checked (success) clause Healthy first-line 4\n",
+                "item 1: checked (refusal) clause Broken first-line 12\n",
+                "spec.md:7:9: ill_typed: payload has the wrong type\n",
+                "  cause: type-mismatch\n",
+                "  label: identity\n",
+                "  hint: Give the expression a value of the required type.\n",
+                "item 2: checked (refusal) clause Repeated first-line 20\n",
+                "  actual: 2\n",
+                "<no-source>: invalid-request: the clause heading names multiple fences\n",
+            )
+        );
+    }
+
+    #[cfg(feature = "quire-extraction")]
+    #[test]
+    #[trace("TC-783", "FR-298-AC-12")]
+    fn native_fence_text_output_limit_fails_on_the_final_hint_line() {
+        let document = native_fence_document(vec![broken_fence()]);
+        let sources = RenderSources::from_sources([]);
+        let complete = render_outcome(
+            &document,
+            RenderForm::Text,
+            &sources,
+            RenderLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("the default output bound admits a fence result")
+        .value()
+        .as_str()
+        .to_owned();
+        assert!(
+            complete.ends_with("  hint: Give the expression a value of the required type.\n"),
+            "{complete}"
+        );
+
+        let byte_count = complete.len();
+        let mut charged = 0;
+        let failure = render_outcome_observed(
+            &document,
+            RenderForm::Text,
+            &sources,
+            RenderLimits {
+                output_bytes: byte_count - 1,
+            },
+            &Cancel::new(),
+            &mut |charges| charged = charges,
+        )
+        .expect_err("one byte below the complete output refuses without a partial result");
+        assert_eq!(failure.category(), Category::Incomplete);
+        assert_eq!(failure.category().exit_code(), 22);
+        let StageFailure::Limit(limit) = failure else {
+            panic!("the final hint line exceeds the render byte limit");
+        };
+        assert_eq!(limit.kind(), LimitKind::InputBytes);
+        assert_eq!(limit.setting(), Setting::RenderOutputBytes);
+        assert_eq!(limit.setting().name(), "render.output_bytes");
+        assert_eq!(limit.configured_bound(), byte_count as u64 - 1);
+        assert_eq!(limit.actual(), byte_count as u128);
+        assert_eq!(charged, complete.lines().count() - 1);
+
+        let exact = render_outcome(
+            &document,
+            RenderForm::Text,
+            &sources,
+            RenderLimits {
+                output_bytes: byte_count,
+            },
+            &Cancel::new(),
+        )
+        .expect("the exact byte bound admits every line")
+        .value()
+        .as_str()
+        .to_owned();
+        assert_eq!(exact, complete);
+    }
+
     #[test]
     #[trace("TC-2455", "FR-865-AC-2")]
     fn text_outcome_renders_monitor_item_category_clause_and_inner_cause() {
@@ -2746,7 +3032,15 @@ mod tests {
             0,
         )
         .expect("type key is valid");
-        let field = |ordinal| {
+        let record_type = filament_exact::NodeKey::new(
+            "paid-short",
+            vec![filament_exact::PathSegment::Text(
+                "composite_type".to_owned(),
+            )],
+            0,
+        )
+        .expect("record key is valid");
+        let field = |name: &str| {
             filament_exact::NodeKey::new(
                 "paid-short",
                 vec![
@@ -2754,16 +3048,19 @@ mod tests {
                     filament_exact::PathSegment::Text("query".to_owned()),
                     filament_exact::PathSegment::Node(receiver.clone()),
                     filament_exact::PathSegment::Text("filament.op.record.project".to_owned()),
+                    filament_exact::PathSegment::Node(record_type.clone()),
+                    filament_exact::PathSegment::Text(name.to_owned()),
                     filament_exact::PathSegment::Text("false".to_owned()),
                     filament_exact::PathSegment::Text("query".to_owned()),
                     filament_exact::PathSegment::Node(int_type.clone()),
+                    filament_exact::PathSegment::Node(int_type.clone()),
                 ],
-                ordinal,
+                0,
             )
             .expect("field key is valid")
         };
-        let charged = field(0);
-        let total = field(1);
+        let charged = field("charged");
+        let total = field("total");
         let comparison = filament_exact::NodeKey::new(
             "paid-short",
             vec![

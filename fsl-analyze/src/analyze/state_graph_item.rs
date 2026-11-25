@@ -291,11 +291,12 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         }
         None => vec![None],
     };
-    if instances.is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
-    }
+    // FR-125 Instancing: no initial state settles before no instance.
     if timed.initial().is_empty() {
         return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInitialState);
+    }
+    if instances.is_empty() {
+        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
     }
     let graph = match fsl_replay::explore_digital_state_graph(
         &timed,
@@ -1053,11 +1054,12 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         }
         None => vec![None],
     };
-    if instances.is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
-    }
+    // FR-125 Instancing: no initial state settles before no instance.
     if timed.initial().is_empty() {
         return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInitialState);
+    }
+    if instances.is_empty() {
+        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
     }
     let graph = match explore_timed_state_graph(
         &timed,

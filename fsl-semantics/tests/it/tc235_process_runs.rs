@@ -5,7 +5,9 @@
 //!
 //! Every run compares the typed result: refusal code, cause tag, refused node,
 //! member path (or the reader's document pointer where the cause carries one)
-//! and the exact `normalize.record` charge count. Detail text is never read.
+//! and, for a run intake reads, the exact `normalize.record` charge count. A
+//! run the semantic-IR reader refuses ends intake and charges nothing.
+//! Detail text is never read.
 
 use super::*;
 
@@ -129,6 +131,13 @@ fn assert_refused(document: &Value, charges: usize, expected: &[Seen]) {
     assert_eq!(actual, expected);
 }
 
+/// The semantic-IR reader refuses `document` with exactly `expected`, in
+/// order.
+fn assert_intake_refused(document: &Value, expected: &[Seen]) {
+    let actual: Vec<_> = intake_refusals(document).iter().map(seen).collect();
+    assert_eq!(actual, expected);
+}
+
 /// `document` admits and normalizes after exactly `charges` charges.
 fn admitted(document: &Value, charges: usize) -> DomainPackage {
     let package = read_k2(document).expect("the run's package reads");
@@ -203,14 +212,16 @@ fn relationship(owner: &str, name: &str, target: &str) -> Value {
 /// existing binder test pins the node, charge count and the two runs whose
 /// cause carries the path).
 ///
-/// Mutation used (derived by reading `model/normalize.rs`, not executed), one
-/// per run: removing the process `identity_fields` emptiness refusal admits
-/// run 1 so `normalized_refusals` panics on the `Refused` let-else; moving the
+/// Runs 1, 3 and 6 are refused by the semantic-IR reader; runs 2, 4 and 5 at
+/// normalization.
+///
+/// Mutation used (derived by reading `model/normalize.rs` and `intake.rs`, not
+/// executed), one per run: letting intake read past a reader refusal panics
+/// the `expect_err` inside `intake_refusals` for runs 1, 3 and 6; moving the
 /// empty-`steps` refusal off `TypeDefinition.steps` flips run 2's member
-/// path; removing the duplicate-step refusal admits run 3; removing the
-/// non-event `consumes` refusal admits run 4 and removing the `emits` event
-/// check admits run 5; dropping the reader's missing-name mapping flips run
-/// 6's code to `invalid_model_binding`.
+/// path; removing the non-event `consumes` refusal admits run 4 and removing
+/// the `emits` event check admits run 5; dropping the reader's missing-name
+/// mapping flips run 6's code to `invalid_model_binding`.
 #[trace("FSpec-TC-235", "FSpec-FR-208-AC-6", "FSpec-FR-208-AC-10")]
 #[test]
 fn tc235_m07_every_process_refusal_names_its_typed_member_path() {
@@ -218,9 +229,8 @@ fn tc235_m07_every_process_refusal_names_its_typed_member_path() {
 
     let mut document = k2();
     type_named_mut(&mut document, "Fulfilment")["identityFields"] = json!([]);
-    assert_refused(
+    assert_intake_refused(
         &document,
-        21,
         &[malformed(&fulfilment, "TypeDefinition.identityFields")],
     );
 
@@ -244,9 +254,8 @@ fn tc235_m07_every_process_refusal_names_its_typed_member_path() {
             "emits": [],
             "origin": origin("Fulfilment/reserve_stock"),
         }));
-    assert_refused(
+    assert_intake_refused(
         &document,
-        21,
         &[conflicting(&fulfilment, "TypeDefinition.steps[3]")],
     );
 
@@ -274,9 +283,8 @@ fn tc235_m07_every_process_refusal_names_its_typed_member_path() {
     let mut document = k2();
     type_named_mut(&mut document, "Fulfilment")["steps"][1]["emits"] = json!([id("StockReserved")]);
     let at = position_of_type(&document, "Fulfilment");
-    assert_refused(
+    assert_intake_refused(
         &document,
-        21,
         &[missing(
             &fulfilment,
             &id("StockReserved"),
@@ -331,8 +339,9 @@ fn tc235_m07_process_operation_and_invariant_bind_to_the_process() {
 /// `model/normalize.rs`, not executed): admitting an event, state-machine,
 /// process, persistence or namespace `typeRef` flips each of runs 1-5 to an
 /// admitted package, so `normalized_refusals` panics; treating a record value
-/// type as a wrong meaning flips the control to a refusal. Dropping the
-/// object-type `supertypes` meaning check admits run 6.
+/// type as a wrong meaning flips the control to a refusal. The semantic-IR
+/// reader refuses run 6, so letting intake read past that refusal panics the
+/// `expect_err` inside `intake_refusals`.
 #[trace("FSpec-TC-235", "FSpec-FR-208-AC-9")]
 #[test]
 fn tc235_m10_field_and_supertype_references_name_object_or_value_types_only() {
@@ -376,9 +385,8 @@ fn tc235_m10_field_and_supertype_references_name_object_or_value_types_only() {
     let document = mutate_k2(|document| {
         type_named_mut(document, "Order")["supertypes"] = json!([id("OrderManagement")]);
     });
-    assert_refused(
+    assert_intake_refused(
         &document,
-        21,
         &[malformed(&id("Order"), "TypeDefinition.supertypes[0]")],
     );
 }

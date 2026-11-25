@@ -85,8 +85,9 @@ sources:
 A compile also takes the optional **refinement internals** input, a JSON
 value for the unit and one for each supplied library, which FSpec FR-375 names
 (FR-099). It is carried unchanged to S3, which owns every refusal of its
-content (FR-147); it is part of the refinement node's identity, so replay
-carries it in the package reference beside `dependencies`.
+content (FR-147); its resolved list is part of the refinement node's body and
+not of its node key (FSpec FR-375), so replay carries the input in the package
+reference beside `dependencies`.
 
 The **S4 source resolution** is the spine step between S2 and E3 that turns
 the unit's imports into what E3 and E4 admit. It runs beside I1 and its own
@@ -94,9 +95,10 @@ refusals report stage `intake`. It visits each `import` of the unit, in
 source order, and of each library it compiles, depth first, and applies
 these steps to each import in this order:
 
-1. **Cycle.** When the import's identity names a library whose compile is
-   in progress, the compile refuses `invalid_package`/`definition-cycle`,
-   naming the identity path. This check runs before any other step.
+1. **Cycle.** When the import's identity names the unit's own package, or a
+   library whose compile is in progress, the compile refuses
+   `invalid_package`/`definition-cycle`, naming the identity path. This check
+   runs before any other step.
 2. **Reuse.** An import of an identity an earlier import in the closure
    named reuses that import's library once its compile has completed, and
    skips steps 3 to 5. One library is supplied per identity, so every

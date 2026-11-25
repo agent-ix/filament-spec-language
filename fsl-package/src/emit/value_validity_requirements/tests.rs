@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Scalar requirement facts survive emission and strict native admission.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use filament_contract_model::{
     CapabilityKind, CheckedPackageReadLimits, CheckedPackageV2, CheckedPackageV2ReadResult,
-    ValueValidityRecord,
+    CheckedTerm, ValueValidityRecord,
 };
 use fsl_semantics::check::wire_id::WireGraph;
 use ix_trace_rs::trace;
 
+use crate::emit::{emit_checked, Emission};
 use crate::CheckedPackage;
-use crate::emit::{Emission, emit_checked};
 
 const GUARDED: &str = "function Guarded using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x * 2 }";
 
@@ -192,19 +192,15 @@ fn both_guard_holds_outcomes_survive_native_admission() {
 fn unguarded_record_keeps_an_empty_path_condition() {
     let (package, _, admitted, records) =
         emitted_records("function Plain using v(x: Int[0, 9]): Integer pure { x + 1 }");
-    assert!(
-        package
-            .graph()
-            .requirements()
-            .values()
-            .all(|source| source.path_condition().is_empty())
-    );
-    assert!(
-        records
-            .iter()
-            .all(|record| record.path_condition_frame.is_none()
-                && admitted.path_condition(record).is_empty())
-    );
+    assert!(package
+        .graph()
+        .requirements()
+        .values()
+        .all(|source| source.path_condition().is_empty()));
+    assert!(records
+        .iter()
+        .all(|record| record.path_condition_frame.is_none()
+            && admitted.path_condition(record).is_empty()));
     assert!(admitted.path_condition_frames().is_empty());
 }
 
@@ -290,6 +286,155 @@ fn nested_guards_share_every_prefix_in_one_table() {
         [None, Some(0), Some(1)],
         "`>=`, then `+` and `<` each one frame"
     );
+}
+
+/// One admitted record as its application occurrence and its guard chain,
+/// outermost first, each guard as `(guard node's semantic form, occurrence,
+/// holds)`.
+type AdmittedChain = (u64, Vec<(String, u64, bool)>);
+
+/// The emission of `declarations` and its records as the strict reader admits
+/// them, in ascending order.
+fn admitted_chains(declarations: &str) -> (Emission, Vec<AdmittedChain>) {
+    let (_, emission, admitted, records) = emitted_records(declarations);
+    let nodes = crate::emit::tests::typed_nodes(&emission);
+    let mut chains = records
+        .iter()
+        .map(|record| {
+            let chain = admitted
+                .path_condition(record)
+                .iter()
+                .map(|guard| {
+                    let node = nodes
+                        .iter()
+                        .find(|node| &node.node_id == guard.guard)
+                        .expect("the guard node is written");
+                    (
+                        node.semantic_form.to_string(),
+                        guard.occurrence,
+                        guard.holds,
+                    )
+                })
+                .collect();
+            (record.occurrence, chain)
+        })
+        .collect::<Vec<_>>();
+    chains.sort();
+    (emission, chains)
+}
+
+/// FSpec FR-825 "Shared path-condition frames": the branch or right operand a
+/// literal guard decides away is walked like any other, so each record there
+/// cites the frame of the literal with the outcome that reaches it.
+#[test]
+fn a_record_a_literal_guard_decides_away_cites_the_literals_frame() {
+    for (declarations, holds, records) in [
+        (
+            "function f using v(x: Integer): Integer pure { if true then x else x + x }",
+            false,
+            1,
+        ),
+        (
+            "function f using v(x: Integer): Integer pure { if false then x + x else x }",
+            true,
+            1,
+        ),
+        (
+            "function f using v(x: Integer): Boolean pure { false and x + x > 0 }",
+            true,
+            2,
+        ),
+        (
+            "function f using v(x: Integer): Boolean pure { true or x + x > 0 }",
+            false,
+            2,
+        ),
+        (
+            "function f using v(x: Integer): Boolean pure { false implies x + x > 0 }",
+            true,
+            2,
+        ),
+        (
+            "function f using v(x: Integer): Integer pure { if true then x else if x > 0 then x else 0 }",
+            false,
+            1,
+        ),
+    ] {
+        let (emission, chains) = admitted_chains(declarations);
+        assert_eq!(
+            chains,
+            vec![(0, vec![("literal".to_owned(), 0, holds)]); records],
+            "{declarations}"
+        );
+        assert_eq!(
+            wire_frames(&emission),
+            (vec![(None, holds)], vec![Some(0); records]),
+            "{declarations}"
+        );
+    }
+}
+
+/// FSpec FR-825: both branches of a literal `if` keep their own frame, here
+/// over the two occurrences of one shared `x + 1`.
+#[test]
+fn both_branches_of_a_literal_if_hold_their_own_frame() {
+    let (emission, chains) = admitted_chains(
+        "function f using v(x: Integer): Integer pure { if true then x + 1 else x + 1 }",
+    );
+    assert_eq!(
+        chains,
+        [
+            (0, vec![("literal".to_owned(), 0, true)]),
+            (1, vec![("literal".to_owned(), 0, false)]),
+        ]
+    );
+    assert_eq!(
+        wire_frames(&emission),
+        (vec![(None, true), (None, false)], vec![Some(0), Some(1)])
+    );
+}
+
+/// FSpec FR-825: a node read inside a branch that holds no record still
+/// takes its occurrence ordinal, a branch behind a literal guard included, so
+/// a later guard read and a later record name the next one.
+#[test]
+fn reads_behind_a_literal_guard_advance_later_ordinals() {
+    let under_p = || vec![("parameter".to_owned(), 1, true)];
+    for (declarations, expected) in [
+        (
+            "function f using v(p: Boolean, x: Integer): Integer pure { (if true then 0 else (if p then 1 else 2)) + (if p then x + 1 else x) }",
+            vec![(0, vec![]), (0, under_p())],
+        ),
+        (
+            "function f using v(p: Boolean, x: Integer): Integer pure { (if false then (if p then 1 else 2) else 0) + (if p then x + 1 else x) }",
+            vec![(0, vec![]), (0, under_p())],
+        ),
+        (
+            "function f using v(p: Boolean, x: Integer): Boolean pure { (false and (if p then true else false)) or (if p then x + 1 > 0 else true) }",
+            vec![
+                (
+                    0,
+                    vec![
+                        ("binary".to_owned(), 0, false),
+                        ("parameter".to_owned(), 1, true),
+                    ],
+                );
+                2
+            ],
+        ),
+        (
+            "function f using v(p: Boolean): Integer pure { if true then 0 else (if p then 1 else 2) }\n\
+             function g using v(p: Boolean, x: Integer): Integer pure { if p then x + 1 else x }",
+            vec![(0, under_p())],
+        ),
+        (
+            "function f using v(x: Integer): Integer pure { if true then 0 else g(x) }\n\
+             function g using v(x: Integer): Integer pure { x + 1 }",
+            vec![(1, vec![])],
+        ),
+    ] {
+        assert_eq!(admitted_chains(declarations).1, expected, "{declarations}");
+    }
 }
 
 /// FSpec FR-825 package order over hand-built rows: claim key first, then
@@ -635,4 +780,259 @@ fn records_of_a_shared_application_follow_the_owner_walk() {
         .map(|occurrence| occurrence.ordinal)
         .collect();
     assert_eq!(expressions, [0, 1]);
+}
+
+/// FSpec FR-322 "Expression occurrence ordinals", FSpec FR-825-AC-11: mutual
+/// recursive functions reuse the same bounded decrement and guard shape.
+/// Their guarded range records must still emit and pass strict admission.
+#[trace("FSpec-FR-825-AC-11", "FSpec-FR-322", "FR-062-AC-17")]
+#[test]
+fn bounded_mutual_recursion_emits_guarded_range_records() {
+    let declarations = "function a using v(n: Int[0, 9]): Integer pure decreases(n) { if n > 0 then b(n - 1) else 0 }\n\
+         function b using v(n: Int[0, 9]): Integer pure decreases(n) { if n > 0 then a(n - 1) else 0 }\n";
+    let (package, emission, admitted, records) = emitted_records(declarations);
+    let wire: serde_json::Value = serde_json::from_slice(emission.package().bytes()).unwrap();
+    let identities = WireGraph::of_package_value(&wire).expect("the emitted graph has identities");
+    let subtraction_node = crate::emit::tests::typed_nodes(&emission)
+        .iter()
+        .find(|node| {
+            matches!(
+                &node.body,
+                CheckedTerm::Application { operation, .. }
+                    if operation.identity() == Some("filament.op.integer.sub")
+            )
+        })
+        .expect("the shared decrement application is emitted")
+        .node_id
+        .clone();
+    let subtraction_node = serde_json::to_value(subtraction_node).unwrap();
+    let decrement_records: Vec<_> = records
+        .iter()
+        .filter(|record| serde_json::to_value(&record.application).unwrap() == subtraction_node)
+        .collect();
+    assert_eq!(decrement_records.len(), 2, "one decrement record per owner");
+    assert_eq!(
+        decrement_records[0].application,
+        decrement_records[1].application
+    );
+    let owner_a = identities
+        .wire_value(
+            &package
+                .graph()
+                .function_identity("a")
+                .expect("function a has an identity"),
+        )
+        .expect("function a is emitted");
+    let owner_b = identities
+        .wire_value(
+            &package
+                .graph()
+                .function_identity("b")
+                .expect("function b has an identity"),
+        )
+        .expect("function b is emitted");
+    let record_a = decrement_records
+        .iter()
+        .find(|record| serde_json::to_value(&record.owner).unwrap() == owner_a)
+        .expect("function a has a bounded decrement record");
+    let record_b = decrement_records
+        .iter()
+        .find(|record| serde_json::to_value(&record.owner).unwrap() == owner_b)
+        .expect("function b has a bounded decrement record");
+    assert_eq!(record_a.application, record_b.application);
+    assert_eq!(record_a.occurrence, 1, "a names its root-body visit");
+    assert_eq!(record_b.occurrence, 3, "b names its root-body visit");
+
+    for (name, record) in [("a", record_a), ("b", record_b)] {
+        let source = package
+            .graph()
+            .requirements()
+            .iter()
+            .find(|(claim, source)| {
+                source.owner() == Some(name)
+                    && identities.wire_value(claim.node()).ok().as_ref()
+                        == Some(&serde_json::to_value(&record.application).unwrap())
+            })
+            .map(|(_, source)| source)
+            .expect("the owner has its checked requirement");
+        assert_eq!(source.path_condition().len(), 1);
+        let actual = chain(&admitted, record);
+        assert_eq!(actual.len(), 1, "{name} has exactly one frame guard");
+        assert!(actual[0].1, "{name}'s decrement is under the true branch");
+        assert_eq!(actual, source_chain(&identities, source));
+    }
+
+    // The reader visits the shared application under b while walking a, then
+    // under a while walking b. Those synthetic slots retain the source region
+    // of the syntax they repeat and keep the root-owner claims at ordinals 1/3.
+    let application = serde_json::to_value(&record_a.application).unwrap();
+    let mut regions = BTreeMap::<u64, serde_json::Value>::new();
+    for entry in wire["source_map"].as_array().expect("source map") {
+        if entry["node_id"] == application && entry["role"] == "expression" {
+            let ordinal = entry["ordinal"].as_u64().expect("expression ordinal");
+            assert!(regions.insert(ordinal, entry["regions"].clone()).is_none());
+        }
+    }
+    assert_eq!(regions.keys().copied().collect::<Vec<_>>(), [0, 1, 2, 3]);
+    assert_eq!(
+        regions[&0], regions[&3],
+        "the transitive b slot clones b's region"
+    );
+    assert_eq!(
+        regions[&1], regions[&2],
+        "the transitive a slot clones a's region"
+    );
+    assert_ne!(
+        regions[&0], regions[&1],
+        "a and b retain distinct source regions"
+    );
+    let source_prefix = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n";
+    let source_a_start =
+        source_prefix.len() as u64 + declarations.find("n - 1").expect("a decrement") as u64;
+    let source_b_start =
+        source_prefix.len() as u64 + declarations.rfind("n - 1").expect("b decrement") as u64;
+    let region_start =
+        |regions: &serde_json::Value| regions[0]["start"].as_u64().expect("source region start");
+    assert_eq!(region_start(&regions[&1]), source_a_start);
+    assert_eq!(region_start(&regions[&3]), source_b_start);
+}
+
+/// FSpec FR-322 and FSpec FR-825-AC-11: repeated structurally equal uses keep the
+/// source region belonging to each lexical occurrence through transitive walks.
+#[trace("FSpec-FR-825-AC-11", "FSpec-FR-322", "FR-062-AC-17")]
+#[test]
+fn mutual_recursion_preserves_repeated_syntax_owner_regions() {
+    let declarations = "function a using v(n: Int[0, 9]): Integer pure decreases(n) { if n > 0 then b(n - 1) + b(n - 1) else 0 }\n\
+         function b using v(n: Int[0, 9]): Integer pure decreases(n) { if n > 0 then a(n - 1) + a(n - 1) else 0 }\n";
+    let (package, emission, admitted, records) = emitted_records(declarations);
+    let wire: serde_json::Value = serde_json::from_slice(emission.package().bytes()).unwrap();
+    let identities = WireGraph::of_package_value(&wire).expect("the emitted graph has identities");
+    let subtraction_node = crate::emit::tests::typed_nodes(&emission)
+        .iter()
+        .find(|node| {
+            matches!(
+                &node.body,
+                CheckedTerm::Application { operation, .. }
+                    if operation.identity() == Some("filament.op.integer.sub")
+            )
+        })
+        .expect("the shared decrement application is emitted")
+        .node_id
+        .clone();
+    let subtraction_node = serde_json::to_value(subtraction_node).unwrap();
+    let decrements: Vec<_> = records
+        .iter()
+        .filter(|record| serde_json::to_value(&record.application).unwrap() == subtraction_node)
+        .collect();
+    assert_eq!(
+        decrements.len(),
+        4,
+        "both source uses survive for both owners"
+    );
+
+    let owner_a = identities
+        .wire_value(
+            &package
+                .graph()
+                .function_identity("a")
+                .expect("function a has an identity"),
+        )
+        .expect("function a is emitted");
+    let owner_b = identities
+        .wire_value(
+            &package
+                .graph()
+                .function_identity("b")
+                .expect("function b has an identity"),
+        )
+        .expect("function b is emitted");
+    let mut a_ordinals: Vec<_> = decrements
+        .iter()
+        .filter(|record| serde_json::to_value(&record.owner).unwrap() == owner_a)
+        .map(|record| record.occurrence)
+        .collect();
+    let mut b_ordinals: Vec<_> = decrements
+        .iter()
+        .filter(|record| serde_json::to_value(&record.owner).unwrap() == owner_b)
+        .map(|record| record.occurrence)
+        .collect();
+    a_ordinals.sort_unstable();
+    b_ordinals.sort_unstable();
+    assert_eq!(
+        a_ordinals,
+        [2, 5],
+        "a's claims name its two root-body visits"
+    );
+    assert_eq!(
+        b_ordinals,
+        [8, 11],
+        "b's claims name its two root-body visits"
+    );
+
+    for (name, owner) in [("a", owner_a), ("b", owner_b)] {
+        let decrement_application = serde_json::to_value(&decrements[0].application).unwrap();
+        let source = package
+            .graph()
+            .requirements()
+            .iter()
+            .find(|(claim, source)| {
+                source.owner() == Some(name)
+                    && identities.wire_value(claim.node()).ok().as_ref()
+                        == Some(&decrement_application)
+            })
+            .map(|(_, source)| source)
+            .expect("the owner has a checked decrement requirement");
+        assert_eq!(source.path_condition().len(), 1);
+        for record in decrements
+            .iter()
+            .filter(|record| serde_json::to_value(&record.owner).unwrap() == owner)
+        {
+            let actual = chain(&admitted, record);
+            assert_eq!(actual.len(), 1, "{name} has one guard per decrement");
+            assert!(actual[0].1, "{name}'s decrement is under the true branch");
+            assert_eq!(actual, source_chain(&identities, source));
+        }
+    }
+
+    let application = serde_json::to_value(&decrements[0].application).unwrap();
+    let mut regions = BTreeMap::<u64, serde_json::Value>::new();
+    for entry in wire["source_map"].as_array().expect("source map") {
+        if entry["node_id"] == application && entry["role"] == "expression" {
+            let ordinal = entry["ordinal"].as_u64().expect("expression ordinal");
+            assert!(regions.insert(ordinal, entry["regions"].clone()).is_none());
+        }
+    }
+    assert_eq!(
+        regions.keys().copied().collect::<Vec<_>>(),
+        (0..12).collect::<Vec<_>>()
+    );
+    let source_prefix = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n";
+    let source_starts: Vec<u64> = declarations
+        .match_indices("n - 1")
+        .map(|(start, _)| source_prefix.len() as u64 + start as u64)
+        .collect();
+    assert_eq!(source_starts.len(), 4);
+    let region_start =
+        |regions: &serde_json::Value| regions[0]["start"].as_u64().expect("source region start");
+    let actual_starts: Vec<u64> = (0..12)
+        .map(|ordinal| region_start(&regions[&ordinal]))
+        .collect();
+    assert_eq!(
+        actual_starts,
+        [
+            source_starts[2],
+            source_starts[3],
+            source_starts[0],
+            source_starts[2],
+            source_starts[3],
+            source_starts[1],
+            source_starts[0],
+            source_starts[1],
+            source_starts[2],
+            source_starts[0],
+            source_starts[1],
+            source_starts[3],
+        ],
+        "synthetic slots copy the matching lexical occurrence's region"
+    );
 }

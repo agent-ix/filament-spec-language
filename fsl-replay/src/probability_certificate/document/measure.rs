@@ -94,6 +94,14 @@ struct Plan<'a> {
     strict: bool,
 }
 
+pub(super) struct CheckOptions<'a> {
+    pub(super) partial_lower: bool,
+    pub(super) bound_side: Option<super::SubsystemBoundKind>,
+    pub(super) role: super::CertificateRole,
+    pub(super) limits: ProbabilityDocumentLimits,
+    pub(super) cancel: &'a Cancel,
+}
+
 pub(in crate::probability_certificate) fn ordered(
     operator: filament_exact::OrderingOperator,
     left: &Rational,
@@ -2071,135 +2079,6 @@ fn check_value_bits(value: &Rational, bits: u64) -> Result<(), ProbabilityDocume
     Ok(())
 }
 
-#[cfg(test)]
-mod partial_lower_tests {
-    use super::*;
-
-    fn limits() -> ProbabilityDocumentLimits {
-        ProbabilityDocumentLimits {
-            bytes: 1_000_000,
-            storage_bytes: 8_000_000,
-            states: 100,
-            edges: 100,
-            scalar_bits: 128,
-            accounting: crate::AccountingLimits::default().0,
-        }
-    }
-
-    #[test]
-    fn unnamed_shifted_successor_uses_negative_level() {
-        let root = ProbabilityProductKey::from_canonical_bytes(vec![1]);
-        let retained = ProbabilityProductKey::from_canonical_bytes(vec![2]);
-        let omitted = ProbabilityProductKey::from_canonical_bytes(vec![3]);
-        let half = Rational::new(Integer::one(), Integer::from(2_i64)).unwrap();
-        let mut states = BTreeMap::new();
-        states.insert(
-            root.clone(),
-            State {
-                terminal: None,
-                activation_terminal: None,
-                rank: 1,
-                choices: vec![vec![
-                    ProbabilityEdge {
-                        target: retained.clone(),
-                        probability: half.clone(),
-                    },
-                    ProbabilityEdge {
-                        target: omitted.clone(),
-                        probability: half,
-                    },
-                ]],
-                actions: vec![None],
-                activated: true,
-            },
-        );
-        states.insert(
-            retained.clone(),
-            State {
-                terminal: Some(super::super::rational(0)),
-                activation_terminal: None,
-                rank: 0,
-                choices: Vec::new(),
-                actions: Vec::new(),
-                activated: true,
-            },
-        );
-        states.insert(
-            omitted,
-            State {
-                terminal: Some(super::super::rational(0)),
-                activation_terminal: None,
-                rank: 0,
-                choices: Vec::new(),
-                actions: Vec::new(),
-                activated: true,
-            },
-        );
-        let graph = Graph {
-            initial: root.clone(),
-            initials: vec![(0, root.clone())],
-            states,
-        };
-        let mut document = MeasureProbabilityDocument {
-            identity: ObligationIdentity::new(
-                filament_exact::NodeKey::new(
-                    "partial",
-                    vec![filament_exact::PathSegment::Text("lower".into())],
-                    0,
-                )
-                .unwrap(),
-                None,
-                0,
-            ),
-            payoff: MeasurePayoffKind::Shifted,
-            values: vec![ExactProbabilityValue {
-                state: root.clone(),
-                value: Rational::new(Integer::from(-1_i64), Integer::from(5_i64)).unwrap(),
-            }],
-            ranking: vec![(root.clone(), 1)],
-            objective: Objective {
-                kind: "steps",
-                window: 1,
-                reward: None,
-                comparison: Some(MeasureComparison::Lt),
-                threshold: None,
-                level: Some(Rational::new(Integer::from(2_i64), Integer::from(5_i64)).unwrap()),
-                optimization: ProbabilityObjective::Minimum,
-                fairness: Vec::new(),
-            },
-            conditional: None,
-        };
-        let floor = document.objective.level.as_ref().unwrap().neg();
-        let mut meter = filament_exact::Meter::new(limits().accounting);
-        let result = checked_values(
-            &document,
-            &graph,
-            limits(),
-            &Cancel::new(),
-            &mut meter,
-            Some(&floor),
-        )
-        .unwrap();
-        assert!(
-            matches!(result, Ok(values) if values.get(&root) == Some(&document.values[0].value))
-        );
-        document.values[0].value = Rational::from_integer(Integer::zero());
-        let mut meter = filament_exact::Meter::new(limits().accounting);
-        let result = checked_values(
-            &document,
-            &graph,
-            limits(),
-            &Cancel::new(),
-            &mut meter,
-            Some(&floor),
-        )
-        .unwrap();
-        assert!(matches!(
-            result,
-            Err(ExactProbabilityCertificateCheck::Rejected(_))
-        ));
-    }
-}
 fn action_sum(
     choice: &[ProbabilityEdge],
     values: &BTreeMap<ProbabilityProductKey, Rational>,
@@ -2329,12 +2208,15 @@ pub(super) fn check(
     claims: &[CheckedProbabilisticClaim],
     item: &ObligationIdentity,
     bytes: &[u8],
-    partial_lower: bool,
-    bound_side: Option<super::SubsystemBoundKind>,
-    role: super::CertificateRole,
-    limits: ProbabilityDocumentLimits,
-    cancel: &Cancel,
+    options: CheckOptions<'_>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    let CheckOptions {
+        partial_lower,
+        bound_side,
+        role,
+        limits,
+        cancel,
+    } = options;
     let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
     let mut storage = 0;
     let document = match decode_measure_probability_certificate(
@@ -2704,7 +2586,6 @@ pub(super) fn check(
     }
     Ok(acceptance(&document, value, side, bytes))
 }
-#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 fn check_value_bounds(
     document: &MeasureProbabilityDocument,
@@ -3236,4 +3117,167 @@ pub(in crate::probability_certificate) fn check_mean_refutation(
     }
     poll(cancel)?;
     Ok(MeanRefutationCheck::Accepted)
+}
+
+#[cfg(test)]
+mod partial_lower_tests {
+    use super::*;
+
+    fn limits() -> ProbabilityDocumentLimits {
+        ProbabilityDocumentLimits {
+            bytes: 1_000_000,
+            storage_bytes: 8_000_000,
+            states: 100,
+            edges: 100,
+            scalar_bits: 128,
+            accounting: crate::AccountingLimits::default().0,
+        }
+    }
+
+    #[test]
+    fn unnamed_shifted_successor_uses_negative_level() {
+        let root = ProbabilityProductKey::from_canonical_bytes(vec![1]);
+        let retained = ProbabilityProductKey::from_canonical_bytes(vec![2]);
+        let omitted = ProbabilityProductKey::from_canonical_bytes(vec![3]);
+        let half = Rational::new(Integer::one(), Integer::from(2_i64)).unwrap();
+        let mut states = BTreeMap::new();
+        states.insert(
+            root.clone(),
+            State {
+                terminal: None,
+                activation_terminal: None,
+                rank: 1,
+                choices: vec![vec![
+                    ProbabilityEdge {
+                        target: retained.clone(),
+                        probability: half.clone(),
+                    },
+                    ProbabilityEdge {
+                        target: omitted.clone(),
+                        probability: half,
+                    },
+                ]],
+                actions: vec![None],
+                activated: true,
+            },
+        );
+        states.insert(
+            retained.clone(),
+            State {
+                terminal: Some(super::super::rational(0)),
+                activation_terminal: None,
+                rank: 0,
+                choices: Vec::new(),
+                actions: Vec::new(),
+                activated: true,
+            },
+        );
+        states.insert(
+            omitted,
+            State {
+                terminal: Some(super::super::rational(0)),
+                activation_terminal: None,
+                rank: 0,
+                choices: Vec::new(),
+                actions: Vec::new(),
+                activated: true,
+            },
+        );
+        let graph = Graph {
+            initial: root.clone(),
+            initials: vec![(0, root.clone())],
+            states,
+        };
+        let mut document = MeasureProbabilityDocument {
+            identity: ObligationIdentity::new(
+                filament_exact::NodeKey::new(
+                    "partial",
+                    vec![filament_exact::PathSegment::Text("lower".into())],
+                    0,
+                )
+                .unwrap(),
+                None,
+                0,
+            ),
+            payoff: MeasurePayoffKind::Shifted,
+            // `retained` is named at its decided value 0; `omitted` is not
+            // named, so it counts as `-level` (FR-1042 "Document").
+            values: vec![
+                ExactProbabilityValue {
+                    state: root.clone(),
+                    value: Rational::new(Integer::from(-1_i64), Integer::from(5_i64)).unwrap(),
+                },
+                ExactProbabilityValue {
+                    state: retained.clone(),
+                    value: Rational::from_integer(Integer::zero()),
+                },
+            ],
+            ranking: vec![(root.clone(), 1), (retained.clone(), 0)],
+            objective: Objective {
+                kind: "steps",
+                window: 1,
+                reward: None,
+                comparison: Some(MeasureComparison::Lt),
+                threshold: None,
+                level: Some(Rational::new(Integer::from(2_i64), Integer::from(5_i64)).unwrap()),
+                optimization: ProbabilityObjective::Minimum,
+                fairness: Vec::new(),
+            },
+            conditional: None,
+        };
+        let floor = document.objective.level.as_ref().unwrap().neg();
+        let mut meter = filament_exact::Meter::new(limits().accounting);
+        let result = checked_values(
+            &document,
+            &graph,
+            limits(),
+            &Cancel::new(),
+            &mut meter,
+            Some(&floor),
+        )
+        .unwrap();
+        assert!(
+            matches!(result, Ok(values) if values.get(&root) == Some(&document.values[0].value))
+        );
+        document.values[0].value = Rational::from_integer(Integer::zero());
+        let mut meter = filament_exact::Meter::new(limits().accounting);
+        let result = checked_values(
+            &document,
+            &graph,
+            limits(),
+            &Cancel::new(),
+            &mut meter,
+            Some(&floor),
+        )
+        .unwrap();
+        assert!(matches!(
+            result,
+            Err(ExactProbabilityCertificateCheck::Rejected(_))
+        ));
+        // With `retained` unnamed too, both successors count as `-level`, so
+        // `-1/5` is no longer below the sum.
+        document.values.truncate(1);
+        document.ranking.truncate(1);
+        document.values[0].value =
+            Rational::new(Integer::from(-1_i64), Integer::from(5_i64)).unwrap();
+        let mut meter = filament_exact::Meter::new(limits().accounting);
+        let result = checked_values(
+            &document,
+            &graph,
+            limits(),
+            &Cancel::new(),
+            &mut meter,
+            Some(&floor),
+        )
+        .unwrap();
+        assert!(matches!(
+            result,
+            Err(ExactProbabilityCertificateCheck::Rejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::InequalityFails,
+                    ..
+                }
+            ))
+        ));
+    }
 }

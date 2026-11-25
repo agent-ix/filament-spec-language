@@ -26,6 +26,7 @@ mod decide;
 mod explore;
 mod sample;
 
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{Cancel, ObjectReference, ValueType};
@@ -39,8 +40,8 @@ use fsl_eval::simulation::{
 use fsl_foundation::selection::DefinitionRef;
 use fsl_replay::ReplayRefusal;
 use fsl_replay::{
-    settle_state_graph, AppliedReduction, GraphReplayResult, IncompleteCause, ModelCheckLimit,
-    ModelCheckLimits, ModelCheckOutcome, OpenCause, Proviso, ReachedLimit, RunEnd,
+    settle_state_graph, AppliedReduction, GraphReplayResult, GraphUndefined, IncompleteCause,
+    ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, OpenCause, Proviso, ReachedLimit, RunEnd,
     StateGraphInstanceOutcome, StateGraphMethod, StateGraphOutcome, StateGraphRecord,
     DEFAULT_WITNESS_SEED,
 };
@@ -195,6 +196,9 @@ pub struct ExploredStateGraph {
     /// The node of each initial state of the subject, by its index in the
     /// subject's initial list.
     initial: Vec<NodeIndex>,
+    /// The first node in discovery order where one of the subject's own
+    /// expressions is undefined (FR-168), with where and why.
+    subject_undefined: Option<(NodeIndex, GraphUndefined)>,
 }
 
 impl ExploredStateGraph {
@@ -236,8 +240,10 @@ pub struct StateGraphRun {
     /// requested.
     pub graph: ExploredStateGraph,
     /// Each item's decisions in request order. Instances have one decision
-    /// each; an item with no instances has one item-level `NoInstance`
-    /// marker, not a per-instance decision (FR-125).
+    /// each. Over a subject with no initial state every item has one
+    /// item-level `NoInitialState` marker; otherwise an item with no
+    /// instances has one item-level `NoInstance` marker. Neither marker is a
+    /// per-instance decision (FR-125).
     pub items: Vec<Vec<StateGraphInstanceOutcome>>,
     /// The deadlock-freedom item's outcome, when the request asked for it.
     pub deadlock: Option<ModelCheckOutcome>,
@@ -513,6 +519,7 @@ pub(super) fn cancelled(cancel: &Cancel) -> Option<Halt> {
 ///
 /// [`ModelCheckRefusal`] when the subject does not admit, a root is
 /// unbounded, or an identity cannot be encoded; nothing is decided then.
+#[implements("FR-167-AC-7")]
 pub fn check_state_graph(
     request: StateGraphRequest<'_>,
     cancel: &Cancel,
@@ -526,33 +533,23 @@ pub fn check_state_graph(
     let system = ModelSystem::new(request.subject.simulation)
         .map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS).map_err(bounds_refusal)?;
-    let views = instances(&request.items, &system)?;
-    if views.iter().all(Vec::is_empty) && !request.deadlock_freedom {
-        return Ok(StateGraphRun {
-            graph: explore::empty(RunEnd::Completed),
-            items: views.iter().map(|_| vec![no_instance()]).collect(),
-            deadlock: None,
-            seed,
-        });
+    // FR-158 "Resolution": before any expansion.
+    if let Some(name) = &request.reductions.constraint {
+        if !system.has_constraint(name) {
+            return Err(ModelCheckRefusal::UnknownConstraint { name: name.clone() });
+        }
     }
+    let views = instances(&request.items, &system)?;
+    // FR-125 Instancing orders the outcomes `requires-bound` (both checks
+    // above), `no-initial-state`, then `no-instance`: a subject with no
+    // initial state admits no key either.
     if no_initial {
         return Ok(StateGraphRun {
             graph: explore::empty(RunEnd::Completed),
-            items: views
+            items: request
+                .items
                 .iter()
-                .map(|item| {
-                    if item.is_empty() {
-                        return vec![no_instance()];
-                    }
-                    item.iter()
-                        .map(|view| StateGraphInstanceOutcome {
-                            over: view.over.clone(),
-                            outcome: StateGraphOutcome::NoInitialState,
-                            sampled: Vec::new(),
-                            walks_stopped: 0,
-                        })
-                        .collect()
-                })
+                .map(|_| vec![no_initial_state()])
                 .collect(),
             deadlock: request
                 .deadlock_freedom
@@ -560,6 +557,14 @@ pub fn check_state_graph(
                     cause: fsl_replay::UndecidedCause::NoInitialState,
                     stats: fsl_replay::RunStats::default(),
                 }),
+            seed,
+        });
+    }
+    if views.iter().all(Vec::is_empty) && !request.deadlock_freedom {
+        return Ok(StateGraphRun {
+            graph: explore::empty(RunEnd::Completed),
+            items: views.iter().map(|_| vec![no_instance()]).collect(),
+            deadlock: None,
             seed,
         });
     }
@@ -590,6 +595,7 @@ pub fn check_state_graph(
                             },
                             sampled: Vec::new(),
                             walks_stopped: 0,
+                            boundary_states: 0,
                         })
                         .collect()
                 })
@@ -681,7 +687,7 @@ pub fn check_state_graph(
             reads,
             &por_instances,
             &[],
-            None,
+            request.reductions.constraint.as_deref(),
         )?)
     } else {
         None
@@ -693,6 +699,7 @@ pub fn check_state_graph(
         cancel,
         budgets,
         views: &views,
+        constraint: request.reductions.constraint.as_deref(),
         deadlock_freedom: request.deadlock_freedom,
         por: por.as_ref(),
         declared_symmetry: &declared_symmetry,
@@ -718,6 +725,7 @@ pub fn check_state_graph(
                         },
                         sampled: Vec::new(),
                         walks_stopped: 0,
+                        boundary_states: 0,
                     })
                     .collect());
             }
@@ -757,6 +765,7 @@ pub fn check_state_graph(
                         outcome,
                         sampled: sampled.witnesses(view).to_vec(),
                         walks_stopped: sampled.stopped(view),
+                        boundary_states: explored.graph.boundary_states(),
                     })
                 })
                 .collect::<Result<Vec<_>, ModelCheckRefusal>>()
@@ -971,6 +980,7 @@ fn stopped_before_exploring(
                         },
                         sampled: Vec::new(),
                         walks_stopped: 0,
+                        boundary_states: 0,
                     })
                     .collect()
             })
@@ -985,6 +995,17 @@ fn stopped_before_exploring(
     }
 }
 
+/// The item-level FR-125 outcome over a subject with no initial state.
+fn no_initial_state() -> StateGraphInstanceOutcome {
+    StateGraphInstanceOutcome {
+        over: None,
+        outcome: StateGraphOutcome::NoInitialState,
+        sampled: Vec::new(),
+        walks_stopped: 0,
+        boundary_states: 0,
+    }
+}
+
 /// An item-level FR-125 outcome when no universe key instantiates its claim.
 fn no_instance() -> StateGraphInstanceOutcome {
     StateGraphInstanceOutcome {
@@ -992,5 +1013,6 @@ fn no_instance() -> StateGraphInstanceOutcome {
         outcome: StateGraphOutcome::NoInstance,
         sampled: Vec::new(),
         walks_stopped: 0,
+        boundary_states: 0,
     }
 }

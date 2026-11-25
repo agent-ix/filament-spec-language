@@ -44,6 +44,7 @@ filament-checked = { workspace = true }
 filament-semantic-value = { workspace = true }
 # ADR-011 §6.1 layer E: the evaluation interface and result vocabulary (FR-401).
 filament-eval = { workspace = true }
+filament-walk = { workspace = true }
 thiserror = "2.0.20"
 sha2 = "0.10.9"
 # The closed-form checker rounds exact rationals to integers.
@@ -52,7 +53,7 @@ num-integer = "0.1.47"
 num-traits = "0.2.19"
 # FR-269: the deciding element is written through the shared canonical writer
 # and read through the shared reader, so a value of any depth round-trips.
-quire-canonical = { workspace = true }
+quire-canonical = { workspace = true, features = ["serde_json"] }
 # FR-338: a product-state locus carries its automaton key's octets as
 # FR-331's base64url transport.
 base64 = "0.22"

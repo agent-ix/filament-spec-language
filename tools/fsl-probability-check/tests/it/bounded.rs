@@ -7,7 +7,9 @@ use std::process::{Command, Stdio};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Integer, Rational};
-use fsl_analyze::analyze::{Engines, Settlement, analyze_items, exact_probabilistic_item};
+use fsl_analyze::analyze::{
+    Engines, Settlement, analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered,
+};
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, PopulationUniverse};
@@ -179,6 +181,33 @@ pub(super) fn requests_with_mode(
     domain: &[u8],
     kernel: bool,
 ) -> (Vec<Value>, Settlement) {
+    requests_for(source, snapshot, exact, domain, kernel, None)
+}
+
+/// The solver's certificate, altered before the core's checker sees it.
+type Tamper<'a> = &'a dyn Fn(&mut fsl_replay::ExactProbabilityCertificate);
+
+/// [`requests_with_mode`] over the certificate `offered` leaves in place of
+/// the solver's: the settlement and the documents are the analyzer's own for
+/// the offered values.
+pub(super) fn requests_offering(
+    source: &str,
+    snapshot: &[u8],
+    exact: ExactProbLimits,
+    domain: &[u8],
+    offered: Tamper<'_>,
+) -> (Vec<Value>, Settlement) {
+    requests_for(source, snapshot, exact, domain, false, Some(offered))
+}
+
+fn requests_for(
+    source: &str,
+    snapshot: &[u8],
+    exact: ExactProbLimits,
+    domain: &[u8],
+    kernel: bool,
+    offered: Option<Tamper<'_>>,
+) -> (Vec<Value>, Settlement) {
     let identity = SourceIdentity::new("test", "bounded-certificate-source");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
@@ -253,21 +282,19 @@ pub(super) fn requests_with_mode(
         }
     }
     let engines = Engines::fsl().unwrap();
-    let mut records = analyze_items(
-        &engines,
-        vec![exact_probabilistic_item(
-            RequestIndex::new(0),
-            ProductRequest {
-                subject: ModelSubject {
-                    simulation,
-                    proof_bounds: Vec::new(),
-                },
-                claim,
-                limits: exact,
-            },
-        )],
-        &cancel,
-    );
+    let request = ProductRequest {
+        subject: ModelSubject {
+            simulation,
+            proof_bounds: Vec::new(),
+        },
+        claim,
+        limits: exact,
+    };
+    let item = match offered {
+        Some(offered) => exact_probabilistic_item_tampered(RequestIndex::new(0), request, offered),
+        None => exact_probabilistic_item(RequestIndex::new(0), request),
+    };
+    let mut records = analyze_items(&engines, vec![item], &cancel);
     let record = records.remove(0);
     let Some(terminal) = record.terminal() else {
         return (Vec::new(), record.settlement);
@@ -530,7 +557,7 @@ pub(super) fn kernel_proof(source: &str, snapshot: &[u8]) -> Value {
     request.unwrap_or_else(|| panic!("Kernel fixture carries no proof: {settlement:?}"))
 }
 
-fn document_limits(request: &Value) -> fsl_replay::ProbabilityDocumentLimits {
+pub(super) fn document_limits(request: &Value) -> fsl_replay::ProbabilityDocumentLimits {
     fsl_replay::ProbabilityDocumentLimits {
         bytes: request["limits"]["bytes"].as_u64().unwrap(),
         storage_bytes: request["limits"]["storage_bytes"].as_u64().unwrap(),
@@ -1409,9 +1436,11 @@ fn replace_source_and_rebind_with_mode(
     let mut certified: Value =
         serde_json::from_str(request["certificate"].as_str().unwrap()).unwrap();
     if certified["objective"]["profile"] == "filament.probability-objective/on-each-reachability/v1"
+        || certified["objective"]["base"]["profile"]
+            == "filament.probability-objective/finite-horizon-measure/v1"
     {
-        // An `on each` document carries no formula or key to rebind: only
-        // its identity names the claim.
+        // An `on each` document and bounds over a bounded measure carry no
+        // formula or key to rebind: only the identity names the claim.
         certified["identity"] = identity.clone();
         for part in ["numerator", "denominator"] {
             if !certified["conditional"][part].is_null() {

@@ -50,14 +50,16 @@ use crate::refinement::RefinementRead;
 use crate::refinement::{
     abstract_classes, candidate_edge_target_ordinal, candidate_lasso_has_fair_run, check_initial,
     check_protocol_initial, check_protocol_state_relations, check_protocol_step, check_step,
-    initial_history, loop_segments, map_state, row_clock_step, step_history, stop_verdict,
-    AssumptionSide, AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep,
-    ConcreteStep, InvariantReading, ProtocolAssumptionReason, ProtocolAssumptionWitness,
-    ProtocolRelationError, ProtocolStateRelation, RefinementFailure, RefinementPosition,
-    RefinementSystems, RowClockStep, StepVerdict, Taken,
+    check_step_for_model, initial_history, loop_segments, map_state, row_clock_step, step_history,
+    stop_verdict, AssumptionSide, AssumptionTarget, CandidateFairHop, CandidateFairState,
+    CandidateFairStep, ConcreteStep, InvariantReading, ProtocolAssumptionReason,
+    ProtocolAssumptionWitness, ProtocolRelationError, ProtocolStateRelation, RefinementFailure,
+    RefinementPosition, RefinementSystems, RowClockStep, StepVerdict, Taken,
 };
 use crate::result::DisagreementCause;
 use crate::timed::explore::{explore, widen, Closure};
+
+type TimedPosition = (usize, Vec<u8>, Vec<ModelTransition>);
 
 /// FR-145's settlement of a refinement counterexample's replay.
 #[derive(Clone, Debug)]
@@ -301,6 +303,15 @@ pub fn replay_protocol_assumption_witness(
             Ok(ProtocolAssumptionReplaySettlement::Reproduced)
         }
         ProtocolAssumptionReason::RelationUndetermined => {
+            // No loop confirms a memberless `each` identity here, so only a
+            // forged witness carries one.
+            if witness.identities.iter().any(|identity| {
+                identity.granularity == FairnessGranularity::Each && identity.selected.is_none()
+            }) {
+                return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
+                    disagreement(Category::Success),
+                ));
+            }
             if witness.path.loop_entry.is_some() {
                 return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
                     disagreement(Category::Success),
@@ -346,7 +357,11 @@ fn assumption_sources_match(
     identities: &[crate::refinement::AssumptionIdentity],
 ) -> Result<bool, ReplayRefusal> {
     for identity in identities {
-        if identity.granularity == filament_semantic_value::fairness::FairnessGranularity::Each
+        // An implementation `each` identity always names its member. A
+        // specification one may name none: `assumption_lasso_matches`
+        // confirms the class has no member on the loop.
+        if identity.side == AssumptionSide::Implementation
+            && identity.granularity == FairnessGranularity::Each
             && identity.selected.is_none()
         {
             return Ok(false);
@@ -648,6 +663,22 @@ fn assumption_lasso_matches(
                     let expansion = protocol
                         .successors(state)
                         .map_err(|_| fault("assumption-replay-protocol-lasso-expands"))?;
+                    // An `each` identity naming no member is vacuous only
+                    // while no loop step or successor belongs to its class.
+                    if identity.granularity == FairnessGranularity::Each
+                        && identity.selected.is_none()
+                        && (expansion
+                            .successors
+                            .iter()
+                            .any(|(transition, _)| assumption.class_of(transition).is_some())
+                            || transitions.get(index).is_some_and(|(_, edge)| {
+                                edge.as_ref().is_some_and(|transition| {
+                                    assumption.class_of(transition).is_some()
+                                })
+                            }))
+                    {
+                        return Ok(false);
+                    }
                     enabled.push(expansion.successors.iter().any(|(transition, _)| {
                         assumption.class_of(transition).is_some_and(|class| {
                             identity.granularity
@@ -736,7 +767,7 @@ pub fn replay_refinement_trace(
     if let Some(lasso) = payload.lasso.as_ref() {
         close_loop(&systems.concrete, &positions, lasso.clone())?;
     }
-    settle_positions(refinement, systems, payload, recorded, &positions)
+    settle_positions(refinement, systems, payload, recorded, &positions, true)
 }
 
 /// FSpec FR-430: replay `payload`, a refinement counterexample of
@@ -824,7 +855,7 @@ fn replay_refinement_trace_with_time_source(
             _ => RefinementTraceSettlement::Inconclusive(disagreement(Category::Success)),
         });
     }
-    let settlement = settle_positions(refinement, systems, payload, recorded, &positions)?;
+    let settlement = settle_positions(refinement, systems, payload, recorded, &positions, false)?;
     let RefinementTraceSettlement::Reproduced { failure, .. } = &settlement else {
         return Ok(settlement);
     };
@@ -1099,6 +1130,7 @@ fn settle_positions(
     payload: &TemporalCounterexample,
     recorded: &RefinementFailure,
     positions: &[Position],
+    merge_candidate_states: bool,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
     let mut mapped = Vec::new();
     let mut previous: Option<RefinementPosition> = None;
@@ -1130,7 +1162,12 @@ fn settle_positions(
                         .verdict
                     }
                     None => {
-                        check_step(
+                        let check = if merge_candidate_states {
+                            check_step_for_model
+                        } else {
+                            check_step
+                        };
+                        check(
                             refinement,
                             &systems.concrete,
                             &systems.abstract_system,
@@ -1287,6 +1324,7 @@ fn settle_positions(
             positions,
             trail,
             taken_by,
+            mapped,
         };
         return replay_lasso(
             refinement,
@@ -1295,7 +1333,7 @@ fn settle_positions(
             lasso.clone(),
             walk,
             found,
-            mapped,
+            merge_candidate_states,
         );
     }
     Ok(match found {
@@ -1409,6 +1447,8 @@ struct Walk<'p> {
     trail: Vec<RefinementPosition>,
     /// The abstract steps the step leaving each position took.
     taken_by: Vec<Taken>,
+    /// The abstract state each position maps to, as far as the checks ran.
+    mapped: Vec<ModelState>,
 }
 
 /// The settlement of a lasso whose prefix and loop `check_step` has run along:
@@ -1420,7 +1460,7 @@ fn replay_lasso(
     lasso: Lasso,
     mut walk: Walk<'_>,
     found: Found,
-    mapped: Vec<ModelState>,
+    merge_candidate_states: bool,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
     match found {
         Found::Nothing => {}
@@ -1449,7 +1489,12 @@ fn replay_lasso(
         let (Some(last), Some(position)) = (walk.trail.last(), walk.positions.last()) else {
             return Err(fault("a-lasso-has-a-position"));
         };
-        let verdict = check_step(
+        let check = if merge_candidate_states {
+            check_step_for_model
+        } else {
+            check_step
+        };
+        let verdict = check(
             refinement,
             &systems.concrete,
             &systems.abstract_system,
@@ -1610,7 +1655,7 @@ fn replay_lasso(
             // run along the loop, FR-900 "Delay"); the step's rows leave the
             // last, from the candidates alive there, to those alive when the
             // next delay starts.
-            let mut timed_positions: Vec<Vec<(usize, Vec<u8>, Vec<ModelTransition>)>> = Vec::new();
+            let mut timed_positions: Vec<Vec<TimedPosition>> = Vec::new();
             let mut timed_rows: Vec<Vec<CandidateRow>> = Vec::new();
             for (index, step_segments) in segments.iter().enumerate() {
                 let known: Vec<(usize, &Vec<u8>)> = positions[index]
@@ -1922,7 +1967,7 @@ fn replay_lasso(
                     .refinement
                     .clone()
                     .ok_or_else(|| fault("a-lasso-names-a-failure"))?,
-                mapped,
+                mapped: walk.mapped,
             }
         }
         (Some(RefinementFailure::HiddenUnfair { .. }), true, _) => {
@@ -1931,7 +1976,7 @@ fn replay_lasso(
                     .refinement
                     .clone()
                     .ok_or_else(|| fault("a-lasso-names-a-failure"))?,
-                mapped,
+                mapped: walk.mapped,
             }
         }
         (Some(RefinementFailure::AbstractUnfair { .. }), true, unfair_loop)
@@ -1942,7 +1987,7 @@ fn replay_lasso(
                     .refinement
                     .clone()
                     .ok_or_else(|| fault("a-lasso-names-a-failure"))?,
-                mapped,
+                mapped: walk.mapped,
             }
         }
         (_, true, _) => RefinementTraceSettlement::Inconclusive(disagreement(Category::Violation)),
@@ -2364,7 +2409,7 @@ fn protocol_hidden_graph(
                             rows.push((
                                 pre_candidate,
                                 pre.clone(),
-                                transition.application().cloned(),
+                                transition.applied_application().cloned(),
                                 post,
                                 None,
                                 Vec::new(),
@@ -2385,7 +2430,7 @@ fn protocol_hidden_graph(
                         let first = trace
                             .transitions
                             .first()
-                            .and_then(|step| step.application().cloned());
+                            .and_then(|step| step.applied_application().cloned());
                         // The configuration each later step leaves is the one
                         // the step before it reached.
                         let mut hops = Vec::new();
@@ -2401,7 +2446,7 @@ fn protocol_hidden_graph(
                                     return Ok(ProtocolHiddenGraph::Settled(settlement));
                                 }
                             };
-                            hops.push((enabled, step.application().cloned()));
+                            hops.push((enabled, step.applied_application().cloned()));
                         }
                         rows.push((pre_candidate, pre.clone(), first, post, None, hops));
                     }
@@ -2486,4 +2531,133 @@ fn abstract_enabled(
         );
     }
     Ok(Enabledness::Enabled(enabled))
+}
+
+#[cfg(test)]
+#[path = "../../../tests/support/refinement_cas.rs"]
+mod cas_fixture;
+
+#[cfg(test)]
+mod tests {
+    use fsl_eval::model_subject::ModelInstance;
+    use fsl_eval::simulation::protocol::StepKind;
+    use ix_trace_rs::trace;
+
+    use super::cas_fixture::{failing_compensation, key, SPEC, UNLIMITED};
+    use super::*;
+    use crate::refinement::open_protocol_systems;
+
+    /// One concrete step of [`failing_compensation`]: in the candidate graph
+    /// replay rebuilds, the rows apply `add` and never `inc`, whose
+    /// compensation attempt fails along them while `inc` stays enabled.
+    #[trace("TC-657", "FR-212-AC-5")]
+    #[test]
+    fn the_replay_candidate_graph_applies_no_failed_compensation_attempt() {
+        let world = failing_compensation();
+        let systems = open_protocol_systems(
+            world.refinement(),
+            &world.concrete_request(UNLIMITED),
+            world.package(),
+            vec![world.abstract_initial()],
+            ModelInstance {
+                population: key(SPEC, "counters"),
+                key: "c".to_owned(),
+            },
+            &[],
+        )
+        .expect("the compensating protocol opens");
+        let protocol = systems.abstract_protocol.as_ref().expect("a protocol side");
+        let state = systems.concrete.initial_states()[0].clone();
+        let StepVerdict::Passes { post: initial, .. } = check_protocol_initial(
+            world.refinement(),
+            &systems.concrete,
+            &systems.abstract_system,
+            protocol,
+            0,
+            state.state(),
+        )
+        .expect("initial states settle")
+        .verdict
+        else {
+            panic!("the root maps");
+        };
+        let (transition, post) = systems
+            .concrete
+            .successors(&state)
+            .expect("the concrete state expands")
+            .successors
+            .into_iter()
+            .next()
+            .expect("bump is enabled");
+        let StepVerdict::Passes { post: after, taken } = check_protocol_step(
+            world.refinement(),
+            &systems.concrete,
+            &systems.abstract_system,
+            protocol,
+            &initial,
+            &ConcreteStep {
+                position: 1,
+                transition: Some(&transition),
+                post: &post,
+            },
+        )
+        .verdict
+        else {
+            panic!("bump passes");
+        };
+
+        let Taken::ProtocolTraces(paths) = taken.as_ref().clone() else {
+            panic!("bump takes protocol traces");
+        };
+
+        let ProtocolHiddenGraph::Built(_, steps) =
+            protocol_hidden_graph(protocol, &[*initial, *after], &[*taken])
+                .expect("the candidate graph rebuilds")
+        else {
+            panic!("the candidate graph is built");
+        };
+        let fairness: Vec<_> = world
+            .refinement()
+            .abstract_operation_fairness()
+            .cloned()
+            .collect();
+        let classes = abstract_classes(&systems.abstract_system, &fairness, &[])
+            .expect("both constraints name declared operations");
+        let [add, inc] = classes.as_slice() else {
+            panic!("one class per constraint: {classes:?}");
+        };
+        let rows: Vec<_> = steps.iter().flatten().collect();
+        let mut failed = 0;
+        for path in paths.iter().filter(|path| {
+            path.transitions
+                .iter()
+                .any(|step| step.kind() == StepKind::CFail)
+        }) {
+            let end = path.candidate_keys.last().unwrap_or(&path.start_key);
+            assert!(
+                rows.iter().any(|row| row.1 == path.start_key
+                    && row.3 == *end
+                    && row.5.len() + 1 == path.transitions.len()),
+                "a path that fails the compensation of inc has no row"
+            );
+            failed += 1;
+        }
+        assert!(failed > 0, "some path fails the compensation of inc");
+        let applied: Vec<&ModelTransition> = rows
+            .iter()
+            .flat_map(|row| {
+                row.2
+                    .iter()
+                    .chain(row.5.iter().filter_map(|hop| hop.1.as_ref()))
+            })
+            .collect();
+        assert!(applied.iter().any(|taken| add.covers(taken)), "{applied:?}");
+        assert!(
+            !applied.iter().any(|taken| inc.covers(taken)),
+            "{applied:?}"
+        );
+        assert!(rows
+            .iter()
+            .any(|row| row.5.iter().any(|hop| inc.is_enabled_in(&hop.0))));
+    }
 }

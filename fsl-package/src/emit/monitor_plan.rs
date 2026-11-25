@@ -142,12 +142,13 @@ fn rename_bindings(body: &mut CheckedTerm, renames: &[(&str, &str)]) {
 
 /// Rename the field of every field projection (`filament.op.record.project`)
 /// of a renamed record in `body`. The operation record is read-only in the
-/// typed model, so the body goes through its wire form.
+/// typed model, so the body goes through its wire form. Returns whether
+/// `body` changed.
 fn rename_projections(
     body: &mut CheckedTerm,
     renamed_types: &BTreeSet<CheckedNodeId>,
     renames: &[(&str, &str)],
-) -> Result<(), EmitRefusal> {
+) -> Result<bool, EmitRefusal> {
     fn visit(
         value: &mut serde_json::Value,
         declarations: &[serde_json::Value],
@@ -192,11 +193,12 @@ fn rename_projections(
         .map(|id| serde_json::to_value(id).map_err(|_| invariant("a node id is JSON")))
         .collect::<Result<Vec<_>, _>>()?;
     let mut wire = serde_json::to_value(&*body).map_err(|_| invariant("a body is JSON"))?;
-    if visit(&mut wire, &declarations, renames) {
-        *body = serde_json::from_value(wire)
-            .map_err(|_| invariant("a renamed body is a checked term"))?;
+    if !visit(&mut wire, &declarations, renames) {
+        return Ok(false);
     }
-    Ok(())
+    *body =
+        serde_json::from_value(wire).map_err(|_| invariant("a renamed body is a checked term"))?;
+    Ok(true)
 }
 
 /// Replace every reference to a node id, and the node's own id, and its
@@ -426,11 +428,20 @@ fn emit_monitor_plan(
         rename_bindings(&mut nodes[at].body, plan.renames);
         renamed_types.insert(nodes[at].node_id.clone());
     }
+    // A derived node's path spells the field names its body holds, so a
+    // renamed projection is re-keyed as a renamed record value is.
+    let mut changes = Vec::new();
     for node in nodes.iter_mut() {
-        rename_projections(&mut node.body, &renamed_types, plan.renames)?;
+        if rename_projections(&mut node.body, &renamed_types, plan.renames)?
+            && node.declaration.is_none()
+        {
+            let new = renamed_id(&node.node_id, plan.renames);
+            if new != node.node_id {
+                changes.push((node.node_id.clone(), new));
+            }
+        }
     }
     let mut all_changes: Vec<(CheckedNodeId, CheckedNodeId)> = Vec::new();
-    let mut changes = Vec::new();
     for node in nodes.iter_mut() {
         if WireForm::from_wire(&node.semantic_form) == Some(WireForm::RecordValue)
             && renamed_types.contains(&node.semantic_type)
@@ -1356,13 +1367,11 @@ pub(super) fn finish(
 ) -> Result<Emission, EmitRefusal> {
     let lock = base.lock().clone();
     super::order_dependencies(&mut nodes, invariant)?;
-    let mut meter = super::OutputMeter::new(limits);
     let (requirement_rows, path_condition_frames, renumbered) =
         super::value_validity_requirements::carry_rows(
             base,
             &mut nodes,
             &mut source_map,
-            &mut meter,
         )?;
     let operand_rows = super::write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {

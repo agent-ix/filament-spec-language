@@ -438,6 +438,7 @@ fn closure(
 /// holds every one of the 16 reachable model states under each of the two
 /// instances' carried root, and the core checker accepts it.
 #[trace("TC-525")]
+#[trace("TC-764", "FR-282-AC-5")]
 #[test]
 fn a_proved_invariant_carries_a_certificate_the_core_accepts() {
     let world = world(CONTRACT, &[("a", 0), ("b", 0)]);
@@ -462,6 +463,7 @@ fn a_proved_invariant_carries_a_certificate_the_core_accepts() {
 /// `SuccessorMissing` at that product state, and with the initial (0, 0)
 /// removed, `InitialMissing` at it.
 #[trace("TC-525")]
+#[trace("TC-764", "FR-282-AC-5")]
 #[test]
 fn a_certificate_missing_a_reached_state_is_rejected_at_it() {
     let world = world(CONTRACT, &[("a", 0), ("b", 0)]);
@@ -528,10 +530,11 @@ fn a_deadlock_is_bad_for_the_deadlock_item_alone() {
 }
 
 /// FR-338-AC-3's `ContractUndetermined` vector, over the Counter subject with
-/// `pre CanInc { 6 mod (2 - self.value) >= 0 }`: a certificate for `always holds(true)` holding values 0
-/// to 2 is rejected `BadState` at value 2, whose expansion evaluates the
-/// precondition undefined. An atom that is undefined or false at a reached
-/// state is `BadState` there under the rejecting state.
+/// `pre CanInc { odd_value(self.value) }`, `odd_value` a Kernel-checked
+/// function: a certificate for `always holds(true)` holding values 0 to 2 is
+/// rejected `BadState` at value 2, whose expansion evaluates the precondition
+/// undefined. An atom that is undefined or false at a reached state is
+/// `BadState` there under the rejecting state.
 #[trace("TC-525", "FR-338-AC-3")]
 #[test]
 fn an_undetermined_contract_or_a_failing_atom_is_a_bad_state() {
@@ -2145,7 +2148,7 @@ fn hyper_product_rejection_and_checker_stop_never_settle_certified() {
 
 /// Closure failure precedes a rejecting monitor member, even when that
 /// rejecting member is initial and is visited before the missing successor.
-#[trace("TC-646", "FR-163-AC-2")]
+#[trace("TC-646", "FR-163-AC-2", "FR-282-AC-8")]
 #[test]
 fn hyper_product_closure_is_checked_before_a_projected_violation() {
     use crate::hyper_world::{instance, Vault, World};
@@ -2157,10 +2160,14 @@ fn hyper_product_closure_is_checked_before_a_projected_violation() {
         check_product_closure, product_state_key, ProductClosureCertificate, ProductClosureRequest,
     };
 
-    let declaration = crate::hyper_projected::aligned(&[])
+    let declaration = crate::hyper_projected_support::aligned(&[])
         .replace("v.l", "v.h")
         .replace("v.h @ a = v.h @ b", "v.h @ a != v.h @ b");
-    let world = World::busy(Vault::Busy, &crate::hyper_projected::IDLE, &declaration);
+    let world = World::busy(
+        Vault::Busy,
+        &crate::hyper_projected_support::IDLE,
+        &declaration,
+    );
     let subject = world.subject();
     let system = ModelSystem::new(subject.simulation.clone()).expect("subject");
     let systems = vec![&system; world.clause.quantifiers().len()];
@@ -2225,14 +2232,46 @@ fn hyper_product_closure_is_checked_before_a_projected_violation() {
         .iter()
         .map(|state| product_state_key(&product.key(state)).expect("initial key"))
         .collect::<std::collections::BTreeSet<_>>();
+    let missing_target = product
+        .initial()
+        .iter()
+        .flat_map(|state| {
+            product
+                .successors(state)
+                .expect("an initial product state expands")
+                .successors
+        })
+        .map(|(_, next)| product_state_key(&product.key(&next)).expect("a successor key"))
+        .find(|key| !initial.contains(key))
+        .expect("the fixture has a successor outside its initial set");
     assert!(
         product_members(&proof).len() > initial.len(),
         "the product has non-initial successors"
     );
     product_members_mut(&mut proof).retain(|key| initial.contains(key));
-    assert!(
-        matches!(check_product_closure(&request, &proof, &limits, &cancel).expect("check"),
-        fsl_replay::ProductClosureCheck::Rejected(rejection) if rejection.rule == CertificateRule::SuccessorMissing)
+    let fsl_replay::ProductClosureCheck::Rejected(rejection) =
+        check_product_closure(&request, &proof, &limits, &cancel).expect("check")
+    else {
+        panic!("a missing product successor is rejected");
+    };
+    assert_eq!(rejection.rule, CertificateRule::SuccessorMissing);
+    assert_eq!(
+        rejection.at,
+        CertificateLocus::HyperProductState(missing_target.0.clone()),
+        "FR-282-AC-8 names the exact absent target product key"
+    );
+    let wire = serde_json::to_value(&rejection.at).expect("the missing target locus serializes");
+    // FR-331's locus spells each component's state key as a State `{key}`.
+    let mut expected =
+        serde_json::to_value(&missing_target).expect("the missing target key serializes");
+    for state in expected["states"].as_array_mut().expect("component keys") {
+        *state = serde_json::json!({"key": state.take()});
+    }
+    assert_eq!(wire, expected);
+    crate::provider_schema_support::assert_valid(
+        &crate::provider_schema_support::provider_definition("HyperProductStateLocus"),
+        &wire,
+        "the missing target locus",
     );
 }
 
@@ -2339,4 +2378,25 @@ fn product_members_mut(
         fsl_replay::ProductClosure::Product(states) => states,
         fsl_replay::ProductClosure::Relation(_) => panic!("expected a temporal product"),
     }
+}
+
+/// FR-125-AC-13: over a subject with no initial state a clause has no
+/// instance either; the checker refuses `NoInitialState`, never
+/// `NoInstance`.
+#[trace("TC-520", "FR-125-AC-13")]
+#[test]
+fn a_clause_over_no_initial_state_is_refused_before_no_instance() {
+    let mut world = world(CONTRACT, &[("c", 0)]);
+    world.initial.clear();
+    let invariant = world.invariant("always holds(c.value <= 3)", |v| Some(v <= 3));
+    let checked = check_closure(
+        &invariant.request(&world, UNLIMITED),
+        &ClosureCertificate { states: Vec::new() },
+        &ModelCheckLimits::default(),
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(checked, Err(ClosureRefusal::NoInitialState)),
+        "{checked:?}"
+    );
 }

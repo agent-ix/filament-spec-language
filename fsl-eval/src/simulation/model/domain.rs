@@ -5,8 +5,8 @@
 
 use filament_exact::{
     from_admitted, from_admitted_slots, ClockPlaceReference, CollectionKind, CollectionType,
-    EnumMember, FieldValue, Integer, NodeKey, ObjectReference, OptionValue, Presence, TextType,
-    UnionMember, UnionValue, Value, ValueType,
+    EnumMember, FieldValue, Integer, NodeKey, ObjectId, ObjectReference, OptionValue, Presence,
+    TextType, UnionMember, UnionValue, Value, ValueType,
 };
 use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, TypeEnvironment, UnionMemberDeclaration,
@@ -17,6 +17,17 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 /// Selector maxima authenticated by a timed subject's live-clock bound.
 pub(super) type ClockSelectorMaxima = BTreeMap<NodeKey, Vec<u64>>;
+
+/// Adapt a validated clock-place value to the common Reference domain form.
+pub(super) fn clock_reference_as_object(
+    reference: &ClockPlaceReference,
+) -> Option<ObjectReference> {
+    Some(ObjectReference::new(
+        reference.universe().clone(),
+        fsl_semantics::check::clock_reference_target(),
+        ObjectId::new(reference.text()).ok()?,
+    ))
+}
 
 /// Each record type's slot indices in declaration order, the first the most
 /// significant component of its enumerated domain (FR-120, FR-215). A record
@@ -601,22 +612,16 @@ impl Domain {
                 &mut Vec::new(),
             )
             .map(|space| Self::Space(Box::new(space))),
-            // FR-106 "Clock-reference domains": the candidates are the declared
-            // clock-place identities of the admitted owners, supplied among
-            // `objects` by the model system, never derived from an owner.
+            // FR-106 "Clock-reference domains": use the exact candidates the
+            // model system admitted and derived, never ordinary object values.
             ValueType::Reference(target)
                 if fsl_semantics::model::clock_reference::is_clock_type(target) =>
             {
                 Some(Self::Reference(
-                    objects
+                    clock_references
                         .iter()
-                        .filter(|object| {
-                            fsl_semantics::model::clock_reference::is_clock_type(
-                                object.object_type(),
-                            )
-                        })
-                        .cloned()
-                        .collect(),
+                        .map(clock_reference_as_object)
+                        .collect::<Option<Vec<_>>>()?,
                 ))
             }
             ValueType::ClockReference => Some(Self::ClockReference(clock_references.to_vec())),
@@ -1776,23 +1781,22 @@ mod tests {
     use ix_trace_rs::trace;
     use unicode_normalization::UnicodeNormalization;
 
+    use super::super::encode::{value_enc, Enc, Typing};
     use super::*;
 
     fn types() -> TypeEnvironment {
         TypeEnvironment::new([], []).expect("an empty environment admits")
     }
 
+    /// `value`'s typed canonical form over the declarations `types`.
+    fn typed(value: &Value, types: &TypeEnvironment) -> Enc {
+        value_enc(value, Typing::with_variants(types, &[]))
+    }
+
     fn int(lower: i64, upper: i64) -> ValueType {
         ValueType::Int(
             IntegerInterval::new(Integer::from(lower), Integer::from(upper)).expect("nonempty"),
         )
-    }
-
-    fn value_type_target(value_type: &ValueType) -> filament_exact::EffectiveId {
-        match value_type {
-            ValueType::Reference(target) => target.clone(),
-            other => panic!("expected a reference type, got {other:?}"),
-        }
     }
 
     fn integer(value: &Value) -> String {
@@ -1805,7 +1809,7 @@ mod tests {
     /// A clock-reference domain holds exactly the supplied declared-place
     /// identities, never an owner object; ordinary object references still
     /// enumerate their actual owners.
-    #[trace("TC-3084", "FR-1040-AC-8")]
+    #[trace("TC-3084", "FR-106-AC-80")]
     #[test]
     fn clock_reference_domains_hold_exactly_the_supplied_place_identities() {
         use filament_semantic_value::checking::{CheckMode, CheckingLimits};
@@ -1891,9 +1895,10 @@ mod tests {
             .expect("checked native clock reference target")
             .key();
         let value_type = ValueType::Reference(target);
-        let owners_only = Domain::of_bounded(
+        let owners_only = Domain::of_bounded_with_clock_references(
             &value_type,
             &references,
+            &[],
             graph.scope().types(),
             &RecordOrders::new(),
             None,
@@ -1904,28 +1909,34 @@ mod tests {
             0,
             "an owner object is never a clock-place identity"
         );
-        let place = |name: &str| {
-            ObjectReference::new(
-                c1.universe().clone(),
-                value_type_target(&value_type),
-                filament_exact::ObjectId::new(name).expect("place id"),
-            )
-        };
-        let candidates = [c1.clone(), place("place-a"), c2.clone(), place("place-b")];
-        let supplied = Domain::of_bounded(
+        let clock_places = ["place-a", "place-b"].map(|name| {
+            let Value::ClockReference(fixture) =
+                crate::test_clock_reference::clock_reference_of(name)
+            else {
+                panic!("a canonical clock-place fixture")
+            };
+            ClockPlaceReference::new(c1.universe().clone(), fixture.text())
+                .expect("a supplied canonical clock-place identity")
+        });
+        let candidates = [c1.clone(), c2.clone()];
+        let supplied = Domain::of_bounded_with_clock_references(
             &value_type,
             &candidates,
+            &clock_places,
             graph.scope().types(),
             &RecordOrders::new(),
             None,
         )
         .expect("a clock reference domain is finite");
         assert_eq!(supplied.len(), 2);
-        for (index, name) in [(0, "place-a"), (1, "place-b")] {
+        for (index, expected) in [(0, &clock_places[0]), (1, &clock_places[1])] {
             let Some(Value::Reference(actual)) = supplied.nth(index) else {
                 panic!("a clock reference candidate");
             };
-            assert_eq!(actual, place(name));
+            assert_eq!(
+                actual,
+                super::clock_reference_as_object(expected).expect("place adapts")
+            );
         }
         assert!(supplied.nth(2).is_none());
         let ordinary = Domain::of(
@@ -1947,7 +1958,7 @@ mod tests {
 
     /// A supplied clock identity enumerates through optional values, collections,
     /// records, tuples and union cases, and the domain size is exact.
-    #[trace("TC-3084", "FR-1040-AC-8")]
+    #[trace("TC-3084", "FR-106-AC-80")]
     #[test]
     fn clock_reference_domains_enumerate_through_nested_carriers() {
         use filament_semantic_value::declaration::{FieldDeclaration, ObjectTypeDeclaration};
@@ -1962,6 +1973,14 @@ mod tests {
             target.clone(),
             filament_exact::ObjectId::new("place-a").expect("place id"),
         );
+        let Value::ClockReference(fixture) =
+            crate::test_clock_reference::clock_reference_of("place-a")
+        else {
+            panic!("a canonical clock-place fixture")
+        };
+        let clock_place = ClockPlaceReference::new(place.universe().clone(), fixture.text())
+            .expect("a supplied canonical clock-place identity");
+        let expected_place = super::clock_reference_as_object(&clock_place).expect("place adapts");
         let record = crate::test_ids::node_key([21]);
         let tuple = crate::test_ids::node_key([22]);
         let union = crate::test_ids::node_key([23]);
@@ -2020,9 +2039,10 @@ mod tests {
             (ValueType::Composite(tuple), 2),
             (ValueType::Composite(union), 3),
         ] {
-            let domain = Domain::of(
+            let domain = Domain::of_with_clock_references(
                 &value_type,
-                std::slice::from_ref(&place),
+                &[],
+                std::slice::from_ref(&clock_place),
                 &types,
                 &RecordOrders::new(),
             )
@@ -2033,7 +2053,7 @@ mod tests {
             while let Some(value) = domain.nth(seen) {
                 seen += 1;
                 if let Value::Reference(reference) = value {
-                    assert_eq!(reference, place);
+                    assert_eq!(reference, expected_place);
                 }
             }
             assert_eq!(seen, size);
@@ -2201,12 +2221,7 @@ mod tests {
         let all = values(outer, &mut charged);
         let distinct: std::collections::BTreeSet<String> = all
             .iter()
-            .map(|value| {
-                format!(
-                    "{:?}",
-                    super::super::encode::typed_value_enc(value, &types, &[])
-                )
-            })
+            .map(|value| format!("{:?}", typed(value, &types)))
             .collect();
         assert_eq!(distinct.len(), 12);
     }
@@ -2247,7 +2262,7 @@ mod tests {
         .expect("a finite domain");
         assert_eq!(values.len(), 2 + 4 + 1);
         let written = quire_canonical::to_vec(
-            &super::super::encode::typed_value_enc(&values[1], &types, &[]),
+            &typed(&values[1], &types),
             quire_canonical::Limits::new(u64::MAX),
         )
         .expect("encodes");
@@ -2409,7 +2424,7 @@ mod tests {
         .expect("a finite domain")
         .remove(0);
         let written = quire_canonical::to_vec(
-            &super::super::encode::typed_value_enc(&first, &types, &[]),
+            &typed(&first, &types),
             quire_canonical::Limits::new(u64::MAX),
         )
         .expect("encodes");

@@ -1,12 +1,12 @@
 ---
 id: TC-804
-title: "The abstraction relation is emitted as a v2 node and enters the package_id"
+title: "The abstraction relation is emitted as a v2 node of the checked package"
 type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-306
     type: verifies
 ---
-# TC-804: The abstraction relation is emitted as a v2 node and enters the package_id
+# TC-804: The abstraction relation is emitted as a v2 node of the checked package
 
 ## Description
 
@@ -23,5 +23,7 @@ Scope: FR-306-AC-1, FR-306-AC-2.
 
 1. Exactly one relation node; its keys and binding values equal the
    in-process `CheckedAbstractionRelation`'s.
-2. The unchanged recompile gives the same `package_id`; the changed one
-   gives a different `package_id`.
+2. The unchanged recompile gives an equal relation node id and body. The
+   changed one gives an equal relation node id and a body whose `objects`
+   entry holds the new `RustField` where the first holds the old one, and
+   reads back.

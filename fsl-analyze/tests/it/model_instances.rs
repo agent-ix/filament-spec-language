@@ -19,8 +19,8 @@ use filament_exact::{Cancel, Meter};
 use filament_semantic_value::catalog::{UndefinedReason, UndefinedRecord};
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_analyze::model_check::{
-    ModelCheckRefusal, ModelCheckRequest, StateGraphItem, StateGraphRequest, check_model,
-    check_state_graph,
+    ModelCheckRefusal, ModelCheckRequest, SingleExistentialRequest, StateGraphItem,
+    StateGraphRequest, check_model, check_single_existential, check_state_graph,
 };
 use fsl_eval::hyper::{CheckedHyperLetters, HyperLetters, ParameterBinding};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ModelSubject};
@@ -36,6 +36,10 @@ use fsl_package::CheckedPackage;
 use fsl_replay::{CertificateRequest, ClosureCertificate, ClosureRefusal, check_closure};
 use fsl_replay::{CounterexampleKind, ModelCheckItem, ModelCheckLimits};
 use fsl_replay::{ModelCheckOutcome, UndecidedCause};
+use fsl_replay::{
+    ProductClosureClause, ProductClosureRefusal, ProductClosureRequest, ResultLabel,
+    StateGraphMethod, settle_existential,
+};
 use fsl_semantics::check::{
     CheckCause, CheckedTemporalClause, FormulaNode, FormulaNodeId, HyperCause,
 };
@@ -70,12 +74,21 @@ fn object_type(name: &str, supertypes: &[&str]) -> Json {
     let identity = ident(name);
     let fields: Vec<Json> = if name == "Animal" {
         let age = ident("Animal/age");
-        vec![json!({
-            "identity": age, "name": "age", "typeRef": ident("Level"),
-            "presence": "required", "nullable": false, "defaultKind": "none",
-            "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
-            "origin": origin(&age),
-        })]
+        let weight = ident("Animal/weight");
+        vec![
+            json!({
+                "identity": age, "name": "age", "typeRef": ident("Level"),
+                "presence": "required", "nullable": false, "defaultKind": "none",
+                "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+                "origin": origin(&age),
+            }),
+            json!({
+                "identity": weight, "name": "weight", "typeRef": "ix://filament/native/Float64",
+                "presence": "required", "nullable": false, "defaultKind": "none",
+                "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+                "origin": origin(&weight),
+            }),
+        ]
     } else {
         Vec::new()
     };
@@ -188,7 +201,10 @@ fn world(populations: &[(&str, &[&str])], held: &[Held<'_>]) -> World {
                 .iter()
                 .map(|(key, type_name)| {
                     let fields = if matches!(*type_name, "Animal" | "Dog" | "Cat") {
-                        json!({"age": {"integer": "5"}})
+                        json!({
+                            "age": {"integer": "5"},
+                            "weight": {"kind": "float64", "bits": "3ff0000000000000"}
+                        })
                     } else {
                         json!({})
                     };
@@ -815,8 +831,9 @@ fn an_unbounded_admitting_population_requires_a_bound_and_no_key_is_no_instance(
 /// FR-125-AC-13: instancing exits before exploration in the specified order.
 /// An unbounded overlapping population requires a universe even with no
 /// initial state; bounded empty initials report NoInitialState; conflicting
-/// same-key types refuse before any instance is formed; agreeing types admit;
-/// and a bounded subject with no admitted key reports NoInstance.
+/// same-key types refuse before any instance is formed; equal records for a
+/// clock-free agreeing type admit; differing records refuse; and a bounded
+/// subject with no admitted key reports NoInstance.
 #[trace("TC-520", "FR-125-AC-13")]
 #[test]
 fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
@@ -864,7 +881,10 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
                     {"population": ident("animals"), "complete": true, "objects": []},
                     {"population": ident("dogs"), "complete": true,
                      "objects": [{"key": "c", "type": ident("Dog"),
-                                 "fields": {"age": {"integer": "5"}}}]}
+                                 "fields": {
+                                     "age": {"integer": "5"},
+                                     "weight": {"kind": "float64", "bits": "3ff0000000000000"}
+                                 }}]}
                 ]
             })
             .to_string()
@@ -915,15 +935,17 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
         ],
     );
     let (agreeing_package, _) = agreeing.clause("Animal");
-    assert!(ModelSystem::new(
-        agreeing
-            .subject(
-                &agreeing_package,
-                universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
-            )
-            .simulation,
-    )
-    .is_ok());
+    assert!(
+        ModelSystem::new(
+            agreeing
+                .subject(
+                    &agreeing_package,
+                    universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
+                )
+                .simulation,
+        )
+        .is_ok()
+    );
     assert_eq!(
         agreeing.instances(
             "Animal",
@@ -951,6 +973,64 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
         ),
         Ok(ModelCheckOutcome::Holds { stats, .. }) if stats.product_states == 1
     ));
+
+    let mut differing = self::world(
+        &[("animals", &["Animal"]), ("moreAnimals", &["Animal"])],
+        &[
+            ("animals", &[("c", "Animal")]),
+            ("moreAnimals", &[("c", "Animal")]),
+        ],
+    );
+    let identity = differing.initial[0].clone();
+    let mut snapshot: Json = serde_json::from_slice(
+        differing
+            .snapshots
+            .get(&identity)
+            .expect("initial snapshot"),
+    )
+    .expect("snapshot JSON");
+    snapshot["populations"][1]["objects"][0]["fields"]["age"] = json!({"integer": "6"});
+    differing.snapshots.insert(
+        identity,
+        serde_json::to_vec(&snapshot).expect("snapshot JSON"),
+    );
+    let (differing_package, _) = differing.clause("Animal");
+    let refusal = ModelSystem::new(
+        differing
+            .subject(
+                &differing_package,
+                universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
+            )
+            .simulation,
+    )
+    .err()
+    .expect("same-key records with different values are not coalesced");
+    let AdmissionFailure::Refused(record) = refusal else {
+        panic!("unequal shared records retain the typed refusal: {refusal:?}");
+    };
+    assert_eq!(record.catalog.code(), "unknown_required_feature");
+    assert_eq!(record.catalog.cause(), "unsupported-feature");
+    assert_eq!(
+        record.fields.get("reason").map(String::as_str),
+        Some("population-qualified-object-identity")
+    );
+
+    // `Other` is in no hierarchy with `Animal`, so its `c` is another object
+    // universe's object and no conflict.
+    let unrelated = self::world(
+        &[("animals", &["Animal"]), ("others", &["Other"])],
+        &[
+            ("animals", &[("c", "Animal")]),
+            ("others", &[("c", "Other")]),
+        ],
+    );
+    assert_eq!(
+        unrelated.instances(
+            "Animal",
+            universes(&[("animals", &["c"]), ("others", &["c"])])
+        ),
+        Ok(vec![instance("animals", "c")])
+    );
     let no_key = self::world(&[("animals", &["Animal"])], &[("animals", &[])]);
     let no_key_result = no_key.run("Animal", universes(&[("animals", &["c"])]), true);
     assert!(
@@ -962,6 +1042,50 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
             }) if stats.product_states == 0
         ),
         "{no_key_result:?}"
+    );
+}
+
+#[trace("TC-520", "FR-125-AC-13")]
+#[test]
+fn model_instancing_compares_shared_float_fields_by_wire_bits() {
+    let populations = &[("left", &["Animal"][..]), ("right", &["Animal"][..])];
+    let held = &[
+        ("left", &[("c", "Animal")][..]),
+        ("right", &[("c", "Animal")][..]),
+    ];
+    let bounded_universes = || universes(&[("left", &["c"]), ("right", &["c"])]);
+
+    let agreeing = world(populations, held);
+    let (package, _) = agreeing.clause("Animal");
+    assert!(ModelSystem::new(agreeing.subject(&package, bounded_universes()).simulation).is_ok());
+
+    let mut differing = world(populations, held);
+    let identity = differing.initial[0].clone();
+    let mut snapshot: Json = serde_json::from_slice(
+        differing
+            .snapshots
+            .get(&identity)
+            .expect("initial snapshot"),
+    )
+    .expect("snapshot JSON");
+    snapshot["populations"][1]["objects"][0]["fields"]["weight"]["bits"] =
+        json!("3ff0000000000001");
+    differing.snapshots.insert(
+        identity,
+        serde_json::to_vec(&snapshot).expect("snapshot JSON"),
+    );
+    let (package, _) = differing.clause("Animal");
+    let refusal = ModelSystem::new(differing.subject(&package, bounded_universes()).simulation)
+        .err()
+        .expect("different Float64 bit patterns are not identical records");
+    let AdmissionFailure::Refused(record) = refusal else {
+        panic!("different Float64 records retain the typed refusal: {refusal:?}");
+    };
+    assert_eq!(record.catalog.code(), "unknown_required_feature");
+    assert_eq!(record.catalog.cause(), "unsupported-feature");
+    assert_eq!(
+        record.fields.get("reason").map(String::as_str),
+        Some("population-qualified-object-identity")
     );
 }
 
@@ -2215,4 +2339,78 @@ fn state_graph_refuses_at_max_states_before_keying_the_later_initial_states() {
     );
     assert_eq!(fsl_analyze::model_check::keyed_initial_states() - before, 0);
     assert_eq!(generated_initial_states() - generated_before, 0);
+}
+
+/// FR-172 Object parameters and FR-125 Instancing: `v: M::Lamp` resolves to
+/// `P1`, the one population that overlaps `Lamp`, so its instances are the
+/// keys of `P1`'s universe, held or not. `P1`'s other member type is `Dog`.
+/// `Q`, a population of `Dog`'s supertype `Animal`, does not overlap `Lamp`:
+/// it contributes no instance, and replay refuses its key.
+#[test]
+fn hyper_instances_are_the_keys_of_the_resolved_population_alone() {
+    let world = world(
+        &[("P1", &["Dog", "Lamp"]), ("Q", &["Animal"])],
+        &[("P1", &[("l", "Lamp")]), ("Q", &[("a", "Animal")])],
+    );
+    let body = "hyper H using t0 over behaviours (v: M::Lamp) \
+        exists trace a of M { always holds((v = v) @ a) }\n";
+    let graph = declarations_in(PACKAGE, &world.document, body)
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("the hyper clause checks: {refusals:?}"));
+    let package = CheckedPackage::link(graph);
+    let [clause] = package.graph().hyper_clauses() else {
+        panic!("one hyper clause");
+    };
+    let both = || universes(&[("P1", &["l", "spare"]), ("Q", &["a", "b"])]);
+    let limits = ModelCheckLimits::default();
+    let system =
+        ModelSystem::new(world.subject(&package, both()).simulation).expect("the subject admits");
+    let letters =
+        CheckedHyperLetters::new(&package, clause, vec![&system]).expect("the letters build");
+    let run = check_single_existential(
+        SingleExistentialRequest {
+            clause,
+            subject: world.subject(&package, both()),
+            letters: &letters,
+            limits,
+            max_depth: None,
+            seed: None,
+            meter: UNLIMITED,
+        },
+        &Cancel::new(),
+    )
+    .expect("the HP-5 run is not refused");
+    let bound = |key: &str| vec![("v".to_owned(), key.to_owned())];
+    let listed: Vec<_> = run
+        .instances
+        .iter()
+        .map(|decided| decided.instance.clone())
+        .collect();
+    assert_eq!(listed, [bound("l"), bound("spare")]);
+
+    let subjects = [world.subject(&package, both())];
+    let request = ProductClosureRequest {
+        package: &package,
+        clause: ProductClosureClause::Hyper(clause),
+        subjects: &subjects,
+        meter: UNLIMITED,
+    };
+    let method = StateGraphMethod {
+        limits,
+        max_depth: None,
+        seed: 0,
+    };
+    let held = settle_existential(&request, &run.instances[0], &method, &Cancel::new())
+        .expect("replay binds the key the engine listed");
+    assert_eq!(held.record.label, ResultLabel::Proved);
+    let mut foreign = run.instances[0].clone();
+    foreign.instance = bound("a");
+    assert!(matches!(
+        settle_existential(&request, &foreign, &method, &Cancel::new()),
+        Err(ProductClosureRefusal::Input("HP-5-instance"))
+    ));
 }

@@ -298,7 +298,10 @@ impl FamilyContract for StateModelFamily {
                         }
                         (None, []) => {
                             // FR-056-AC-43: a field declared with no checked
-                            // type is refused where it is used.
+                            // type is refused where it is used. Any other
+                            // absent field, after `deref` or not, is
+                            // `ill_typed`/`type-mismatch` keeping its owner,
+                            // spelling and token span (FR-363).
                             return Err(
                                 match scope.untyped_member(object, field, UntypedKind::Field) {
                                     Some(untyped) => refuse(location, untyped_cause(untyped)),

@@ -40,6 +40,7 @@ mod protocol_saga_route;
 #[cfg(feature = "checked-handoff")]
 mod protocol_source_routes;
 mod refinement_source_routes;
+mod scale_and_runtime_measurements;
 mod source_corpus;
 
 #[cfg(feature = "checked-handoff")]
@@ -129,6 +130,7 @@ mod checked_handoff_realizability;
 mod checked_views;
 mod compound_quantity_types;
 mod fairness_item_path;
+mod hybrid_class_recursion;
 mod hybrid_request_items;
 mod layer_crate_reexports;
 mod lifecycle_boundaries;

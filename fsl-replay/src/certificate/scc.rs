@@ -697,7 +697,7 @@ mod tests {
     /// take; the accepting components listed before the component that
     /// reaches them; one state in two components; and a `Trivial` witness
     /// over a state with a self-edge.
-    #[trace("TC-526", "FR-339-AC-2")]
+    #[trace("TC-526", "FR-339-AC-2", "FR-282-AC-6")]
     #[test]
     fn a_tampered_partition_is_rejected_at_its_locus() {
         let example = example();

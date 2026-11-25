@@ -152,13 +152,13 @@ impl Tso {
         post: ModelSimState,
     ) -> Written<TsoComponent> {
         let Some(buffer) = component.buffers.get(thread) else {
-            return Written::Applied(post, component.clone());
+            return Written::Applied(Box::new(post), component.clone());
         };
         if locked(access.class, access.ordering) {
             if !buffer.is_empty() {
                 return Written::Disabled;
             }
-            return Written::Applied(post, component.clone());
+            return Written::Applied(Box::new(post), component.clone());
         }
         match (access.class, access.shared) {
             (AccessClass::Store, Some(shared)) => {
@@ -179,9 +179,9 @@ impl Tso {
                         race: RaceMap::new(),
                     });
                 }
-                Written::Applied(model, next)
+                Written::Applied(Box::new(model), next)
             }
-            _ => Written::Applied(unbuffered(pre, post, buffer), component.clone()),
+            _ => Written::Applied(Box::new(unbuffered(pre, post, buffer)), component.clone()),
         }
     }
 }

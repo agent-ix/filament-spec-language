@@ -283,10 +283,12 @@ fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() 
     };
     assert_eq!(anchor_body.execution_point, None, "a no-point anchor");
     let anchored = anchor_body.members.iter().find_map(|member| match member {
-        CheckedTerm::Binding { name, value, .. } if name.as_ref() == "operation" => match &**value {
-            CheckedTerm::Literal { value, .. } => value.as_str(),
-            _ => None,
-        },
+        CheckedTerm::Binding { name, value, .. } if name.as_ref() == "operation" => {
+            match &**value {
+                CheckedTerm::Literal { value, .. } => value.as_str(),
+                _ => None,
+            }
+        }
         _ => None,
     });
     assert_eq!(anchored, operation["name"].as_str());
@@ -364,6 +366,85 @@ fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() 
         Some(filament_contract_model::StateClauseKind::Postcondition)
     );
 
+    // The package holds exactly two requirement rows: the operation frame's
+    // generated one, then Q1's.
+    let [frame_requirement, post_requirement] = package.requirement_items() else {
+        panic!(
+            "exactly two requirement rows, the frame's and Q1's: {:?}",
+            package.requirement_items()
+        );
+    };
+    assert_eq!(
+        node(&package, &frame_requirement.claim)
+            .semantic_form
+            .as_ref(),
+        "frame"
+    );
+    assert_eq!(
+        frame_requirement.occurrence.role,
+        CheckedOccurrenceRole::Generated
+    );
+    assert_eq!(frame_requirement.occurrence.ordinal, 0);
+    assert_eq!(
+        frame_requirement.kind,
+        filament_contract_model::CapabilityKind::OperationContract
+    );
+    assert_eq!(
+        frame_requirement.extent,
+        filament_contract_model::RequirementExtent::Bounded
+    );
+    let Some(filament_contract_model::RequirementRecord::OperationContract(frame_record)) =
+        &frame_requirement.record
+    else {
+        panic!("the frame's bounded operation-contract row names its typed record");
+    };
+    assert_eq!(
+        node(&package, &frame_record.node).semantic_form.as_ref(),
+        "operation_contract"
+    );
+    assert_eq!(frame_record.result_bound, *result_type);
+    assert!(!frame_record.invariant);
+    assert_eq!(frame_record.operation.as_ref(), Some(&anchor.node_id));
+    assert!(frame_record.model_objects.is_empty());
+    assert!(frame_record.populations.is_empty());
+
+    // The producer's bounded operation-contract request for Q1 carries the
+    // exact record node that the strict reader joined into this typed row.
+    assert_eq!(post_requirement.claim, post.node_id);
+    assert_eq!(
+        post_requirement.occurrence.role,
+        CheckedOccurrenceRole::Claim
+    );
+    assert_eq!(post_requirement.occurrence.ordinal, 0);
+    assert_eq!(
+        post_requirement.kind,
+        filament_contract_model::CapabilityKind::OperationContract
+    );
+    assert_eq!(
+        post_requirement.extent,
+        filament_contract_model::RequirementExtent::Bounded
+    );
+    let Some(filament_contract_model::RequirementRecord::OperationContract(record)) =
+        &post_requirement.record
+    else {
+        panic!("Q1's bounded operation-contract row names its typed record");
+    };
+    let record_node = node(&package, &record.node);
+    assert_eq!(record_node.semantic_form.as_ref(), "operation_contract");
+    assert_eq!(
+        record.result_bound, *result_type,
+        "the record's result bound is the transition's Boolean result type"
+    );
+    assert_eq!(
+        node(&package, &record.result_bound).semantic_form.as_ref(),
+        "boolean",
+        "the operation-contract result bound is Boolean"
+    );
+    assert!(!record.invariant, "Q1 is a postcondition, not an invariant");
+    assert_eq!(record.operation.as_ref(), Some(&anchor.node_id));
+    assert_eq!(record.model_objects, std::slice::from_ref(&owner.node_id));
+    assert!(record.populations.is_empty());
+
     // The claim occurrence, and the source region it points at.
     assert_eq!(transition.occurrences.len(), 1);
     assert_eq!(transition.occurrences[0].role, CheckedOccurrenceRole::Claim);
@@ -413,6 +494,7 @@ fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() 
     let again = read_back(&written, &[&document]);
     assert_eq!(again.graph(), package.graph());
     assert_eq!(again.source_map(), package.source_map());
+    assert_eq!(again.requirement_items(), package.requirement_items());
     assert_eq!(again.name(), package.name());
     assert_eq!(encode(&again), written, "write/read/write is stable");
 }
@@ -464,7 +546,7 @@ fn encode(read: &CheckedPackageV2) -> Vec<u8> {
             },
         )
         .collect::<Vec<_>>();
-    filament_contract_model::encode_checked_package_v2(
+    filament_contract_model::encode_checked_package_v2_with_requirement_items(
         read.name(),
         read.lock(),
         read.graph(),
@@ -482,6 +564,7 @@ fn encode(read: &CheckedPackageV2) -> Vec<u8> {
             schedulability_claims: (!schedulability_claims.is_empty())
                 .then_some(schedulability_claims.as_slice()),
         },
+        (!read.requirement_items().is_empty()).then_some(read.requirement_items()),
         read.capability_report(),
         read.diagnostics(),
         quire_canonical::Limits::new(1 << 24),

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Use the root Makefile's sibling checkout defaults and exported environment.
 .DEFAULT_GOAL := protocol-source-routes
 include ../Makefile

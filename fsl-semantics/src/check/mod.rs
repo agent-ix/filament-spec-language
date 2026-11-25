@@ -772,6 +772,7 @@ fn function_state<'a>(
 ) -> FunctionState<'a> {
     FunctionState {
         name: &signature.name,
+        parameters: &signature.parameters,
         body: function.body.root(),
         slots: function.slots,
         formed_units: &function.formed_units,
@@ -1795,14 +1796,16 @@ impl CheckedExpression {
     }
 }
 
-/// One admitted function's evaluation-visible state: exactly what
-/// `value::expression`'s evaluator needs (name, checked body, slot count --
-/// FR-068's own Description names these as the accessor surface), without
-/// exposing `CheckedFunction`'s private representation.
+/// One admitted function's evaluation-visible state: what `value::expression`'s
+/// evaluator needs (name, parameters, checked body, slot count, formed units),
+/// read through FR-068's public accessors without exposing `CheckedFunction`'s
+/// private representation.
 #[non_exhaustive]
 pub struct FunctionState<'a> {
     /// The declared name.
     pub name: &'a str,
+    /// The declared parameters, for argument admission.
+    pub parameters: &'a [(String, ValueType)],
     /// The checked body.
     pub body: CheckedNode<'a>,
     /// The evaluation slot count.
@@ -7213,13 +7216,11 @@ impl PackageDeclarations {
         }
         // FR-375: each refinement's rows, keyed once its catalog is, each
         // row expression located at its own site. A refinement whose
-        // catalog names a node not written yet, or whose history initial has
-        // no literal form, is not emitted, so its rows are not keyed.
+        // catalog names a node not written yet is not emitted, so its rows
+        // are not keyed.
         let mut refinement_booleans = std::collections::BTreeMap::new();
         for checked in &mut refinements {
-            if (checked.class_catalog.is_some() && checked.class_catalog_keys.is_none())
-                || !checked.history_initials_have_literals()
-            {
+            if checked.class_catalog.is_some() && checked.class_catalog_keys.is_none() {
                 continue;
             }
             for row in checked.rows() {
@@ -9798,6 +9799,32 @@ impl CheckedGraph {
         &self.model_selections
     }
 
+    /// The identity of the domain package that owns the obligation `claim`
+    /// names, FR-621's certificate `model` (FSpec FR-201, FR-412): the package
+    /// of a temporal clause's `over` object type, else the package's one model
+    /// selection. `None` when the claim names no single owning package: a
+    /// package with no model selection, or several and a claim with no `over`
+    /// object type.
+    pub fn owning_model<'a>(&'a self, claim: &'a filament_exact::NodeKey) -> Option<&'a str> {
+        let over = self
+            .temporal_clauses()
+            .iter()
+            .find(|clause| clause.identity() == *claim)
+            .and_then(|clause| match &clause.clause().over().1 {
+                ValueType::Reference(object_type) => Some(object_type.original().package()),
+                _ => None,
+            });
+        let hybrid = self
+            .hybrid_claim_sites()
+            .iter()
+            .any(|site| &site.identity == claim)
+            .then(|| claim.package());
+        over.or(hybrid).or_else(|| match self.model_selections() {
+            [selection] => Some(selection.identity.as_str()),
+            _ => None,
+        })
+    }
+
     /// FR-081/FR-400: the completed effective declaration view for each
     /// selected model alias, as produced during S3 admission. Package
     /// emission reads these retained views rather than normalizing source
@@ -10405,6 +10432,29 @@ impl CheckedGraph {
     /// FR-337: every emitted temporal clause, in declaration order.
     pub fn temporal_clauses(&self) -> &[TemporalClauseNode] {
         &self.temporal_clauses
+    }
+
+    /// Replace, after S3, the guard `a and b` of temporal clause `clause` by
+    /// `b` alone: the guard of a hand-built package (FR-315-AC-58), whose
+    /// definedness obligation `a` discharged and no checked source guard
+    /// leaves open. Test-support only.
+    ///
+    /// # Panics
+    ///
+    /// If there is no such clause, it has no guard, or its guard is no
+    /// conjunction.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn drop_temporal_guard_left_conjunct_after_s3(&mut self, clause: usize) {
+        let (guard, _) = self.temporal_clauses[clause]
+            .guard
+            .as_mut()
+            .expect("a guarded clause");
+        let NodeKind::Connective(filament_checked::node::Connective::And, _, _, right) =
+            *guard.root().kind()
+        else {
+            panic!("the guard is a conjunction");
+        };
+        guard.cut_back_to(right);
     }
 
     /// FR-113: the checked protocol declared `name`, or `None`.

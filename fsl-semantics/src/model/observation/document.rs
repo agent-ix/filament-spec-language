@@ -3,22 +3,23 @@
 //! (check 1), admitting its populations and objects (checks 5 to 8) and
 //! resolving `self`, `parameters` and `result` (checks 9 and 10).
 
-use super::{admission_record, AdmissionRecordExt};
+use super::{AdmissionRecordExt, admission_record};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use filament_exact::{
-    CollectionKind, FieldValue, Integer, ObjectId, ObjectReference, UniverseId, Value,
+    CollectionKind, FieldValue, Integer, ObjectId, ObjectReference, UniverseId, Value, ValueType,
 };
 
 use fsl_foundation::diagnostic::Code;
+use ix_trace_rs::implements;
 
 use super::helpers::object_reference;
-use super::tree::{read_raw_value, Json, Object};
+use super::tree::{Json, Object, read_raw_value};
 use super::{
-    check_document_valid, collection_tag, fault, incomplete, population_universe, refuse,
     AdmissionFailure, AdmissionRecord, DocumentRef, ModelView, NativeKind, ObservationLimits,
     OutOfRange, PathStep, PostStateRange, RawForm, RawNative, RawNativeKind, RawValue, ReadMeter,
-    SelectedObject, SnapshotValue,
+    SelectedObject, SnapshotValue, check_document_valid, collection_tag, fault, incomplete,
+    population_universe, refuse,
 };
 use crate::model::object_environment::{
     ObjectEnvironment, ReferenceOriginBuilder, ReferenceOriginLocus, ReferenceOriginPrefix,
@@ -1669,18 +1670,24 @@ fn admit_leaf(
                 .resolve(reference, type_identity.clone())
                 .map(Value::Reference)
         }
-        // FR-106-AC-83: an unseeded refinement row has no route-neutral
-        // identity with which to admit raw Clock-place data. Preserve the
-        // supplied place identity and the snapshot's literal identity.
+        // FR-106-AC-83: a raw Clock-place value is admitted only when the
+        // selected route supplies the authenticated declaration table that
+        // resolves its population, owner and template.
         (RawForm::Reference(reference), filament_exact::ValueType::ClockReference) => {
-            let record = admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
-                .with("reason", "missing-route-neutral-place-identity");
-            Err(match &references.document {
-                Some(document) => record
-                    .with("document", document.clone())
-                    .with("target", reference.key.clone()),
-                None => record,
-            })
+            let admitted = references.resolve_clock(reference).map_err(|record| {
+                match &references.document {
+                    Some(document) => record
+                        .with("document", document.clone())
+                        .with("target", reference.key.clone()),
+                    None => record,
+                }
+            })?;
+            let place = filament_exact::ClockPlaceReference::new(
+                admitted.universe().clone(),
+                admitted.object().as_str(),
+            )
+            .map_err(|_| admission_record(Code::InvalidRuntimeInput, "invalid-value"))?;
+            Ok(Value::ClockReference(place))
         }
         (RawForm::Variant(variant), filament_exact::ValueType::Enum(slot)) => {
             admit_variant(references, variant, slot)
@@ -2587,11 +2594,26 @@ fn admit_value<'a: 'w, 'w>(
                         let mut value =
                             admit_leaf(references, form, value_type, witness.as_deref_mut())
                                 .map_err(|record| {
-                                    // A refusal inside a payload object (a
-                                    // Quantity's magnitude) names its own
-                                    // steps below the value.
+                                    // For a malformed native member inside a
+                                    // collection element, the typed path ends
+                                    // at the element; `fields.member` names
+                                    // the payload key. Keep any parent path
+                                    // below the element (for example
+                                    // Quantity's `magnitude`) and let
+                                    // `refusal_steps` add the member to the
+                                    // document pointer.
+                                    let mut nested = record.path.clone();
+                                    let collection_element =
+                                        path.iter().any(|step| matches!(step, PathStep::Index(_)));
+                                    let names_member =
+                                        record.fields.get("member").is_some_and(|member| {
+                                            nested.last() == Some(&PathStep::Field(member.clone()))
+                                        });
+                                    if collection_element && names_member {
+                                        nested.pop();
+                                    }
                                     let mut full = path.clone();
-                                    full.extend(record.path.iter().cloned());
+                                    full.extend(nested);
                                     record.at(full)
                                 })?;
                         if let Some(reference) = raw_reference {
@@ -2786,7 +2808,9 @@ pub(super) fn check_untyped_parameters(
             if raw_field(parameters, name).is_none() {
                 return Err(refuse(
                     admission_record(Code::InvalidRuntimeInput, "missing-member")
-                        .with("field", name.to_owned()),
+                        .with("member", name.to_owned())
+                        .with("field", name.to_owned())
+                        .with("path", parameter_path(name)),
                 ));
             }
             if let Some(record) =
@@ -3550,6 +3574,138 @@ fn snapshot_field_path(population: usize, object: usize, field: &str) -> String 
     )
 }
 
+#[implements("FR-125-AC-13")]
+fn object_field_values_match(
+    types: &TypeEnvironment,
+    record_keys: &BTreeMap<String, filament_exact::NodeKey>,
+    effective_type: &filament_exact::EffectiveId,
+    left: &RawObject,
+    right: &RawObject,
+) -> bool {
+    let Some(attributes) = types.attributes(effective_type.clone()) else {
+        return false;
+    };
+    attributes.into_iter().all(|attribute| {
+        let name = attribute.field().name();
+        let (Some(left), Some(right)) = (
+            raw_field(&left.fields, name),
+            raw_field(&right.fields, name),
+        ) else {
+            return false;
+        };
+        left.equals_by(
+            right,
+            Some(attribute.field().value_type()),
+            &|identity, field| record_field_type(types, record_keys, identity, field),
+        )
+    })
+}
+
+/// Whether an admitted value type contains a Clock reference, including a
+/// reference nested in a composite, option, collection, or map value.
+fn value_type_contains_clock(value_type: &ValueType, types: &TypeEnvironment) -> bool {
+    let mut pending = vec![value_type];
+    let mut visited_composites = BTreeSet::new();
+    while let Some(value_type) = pending.pop() {
+        match value_type {
+            ValueType::ClockReference => return true,
+            ValueType::Option(inner) => pending.push(inner),
+            ValueType::Collection(collection) => pending.push(collection.element()),
+            ValueType::Map(map) => {
+                pending.push(map.key());
+                pending.push(map.values());
+            }
+            ValueType::Composite(key) if visited_composites.insert(key.clone()) => {
+                let Some(composite) = types.composite(key.clone()) else {
+                    continue;
+                };
+                match composite.shape() {
+                    CompositeShape::Record(fields) => {
+                        pending.extend(fields.iter().map(FieldDeclaration::value_type));
+                    }
+                    CompositeShape::Tuple(positions) => pending.extend(positions),
+                    CompositeShape::Union(members) => {
+                        pending.extend(members.iter().flat_map(|member| member.positions()));
+                    }
+                }
+            }
+            ValueType::Reference(target)
+                if crate::model::clock_reference::is_clock_type(target) =>
+            {
+                return true;
+            }
+            ValueType::Boolean
+            | ValueType::Integer
+            | ValueType::Int(_)
+            | ValueType::Rational(_)
+            | ValueType::Decimal(_)
+            | ValueType::Float(_)
+            | ValueType::Quantity(_)
+            | ValueType::CarriedQuantity(_)
+            | ValueType::Text(_)
+            | ValueType::String
+            | ValueType::Bytes
+            | ValueType::JsonObject
+            | ValueType::Uuid
+            | ValueType::Timestamp
+            | ValueType::Enum(_)
+            | ValueType::BoundedQuantity(_)
+            | ValueType::Reference(_)
+            | ValueType::Population(_)
+            | ValueType::Composite(_) => {}
+        }
+    }
+    false
+}
+
+/// A type owns a Clock when it has a declared clock place or one of its
+/// effective fields can carry a Clock reference.
+fn object_type_owns_clock(
+    views: &[ModelView],
+    types: &TypeEnvironment,
+    effective_type: &filament_exact::EffectiveId,
+) -> bool {
+    if views.iter().any(|view| {
+        view.clock_declarations
+            .as_ref()
+            .is_some_and(|declarations| {
+                declarations
+                    .run_places()
+                    .any(|(_, place)| types.conforms(effective_type.clone(), place.owner.clone()))
+            })
+    }) {
+        return true;
+    }
+
+    types
+        .attributes(effective_type.clone())
+        .is_some_and(|attributes| {
+            attributes
+                .into_iter()
+                .any(|attribute| value_type_contains_clock(attribute.field().value_type(), types))
+        })
+}
+
+fn population_qualified_identity_refusal(
+    population: &str,
+    other_population: &str,
+    object: &str,
+    population_index: usize,
+) -> AdmissionFailure {
+    refuse(
+        admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+            .with("reason", "population-qualified-object-identity")
+            .with("population", population.to_owned())
+            .with("other_population", other_population.to_owned())
+            .with("object", object.to_owned())
+            .with("path", format!("/populations/{population_index}"))
+            .at(vec![
+                filament_semantic_value::admission::PathStep::Field("populations".to_owned()),
+                filament_semantic_value::admission::PathStep::Index(population_index),
+            ]),
+    )
+}
+
 pub(super) fn admit_population_values<'t>(
     views: &[ModelView],
     types: &'t TypeEnvironment,
@@ -3566,6 +3722,9 @@ pub(super) fn admit_population_values<'t>(
     let mut listed = super::relationships::Listed::new();
     let mut completeness = BTreeMap::new();
     let mut keys_by_population: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut object_owners: BTreeMap<(filament_exact::EffectiveId, String), (String, usize, usize)> =
+        BTreeMap::new();
+    let record_keys = record_keys(views);
     let mut references = References::over(views, types, populations)?;
     references.document = Some(document.identity.clone());
     let mut out_of_range: Vec<OutOfRange> = Vec::new();
@@ -3683,6 +3842,33 @@ pub(super) fn admit_population_values<'t>(
                             snapshot_member_path(population_index, object_index, "key"),
                         ),
                 ));
+            }
+            // The shared object closure is keyed by declared type and local
+            // key. Retain the first row's position so a same-key occurrence
+            // can be compared after its field values have been admitted.
+            let mut duplicate_owner = None;
+            if ObjectId::new(&object.key).is_ok() {
+                let owner_identity = (effective_type.clone(), object.key.clone());
+                if let Some((other_population, owner_population_index, owner_object_index)) =
+                    object_owners.get(&owner_identity)
+                {
+                    if other_population != &entry.population {
+                        if object_type_owns_clock(views, types, &effective_type) {
+                            return Err(population_qualified_identity_refusal(
+                                &entry.population,
+                                other_population,
+                                &object.key,
+                                population_index,
+                            ));
+                        }
+                        duplicate_owner = Some((*owner_population_index, *owner_object_index));
+                    }
+                } else {
+                    object_owners.insert(
+                        owner_identity,
+                        (entry.population.clone(), population_index, object_index),
+                    );
+                }
             }
             // 6.4: a declared field missing (`missing-member`), then an
             // undeclared field present (`unknown-member`), in the order
@@ -3856,6 +4042,34 @@ pub(super) fn admit_population_values<'t>(
                         .map(|breach| (attribute.identity(), breach)),
                 );
                 attributes.push((name, field_value));
+            }
+
+            if let Some((owner_population_index, owner_object_index)) = duplicate_owner {
+                let Some(owner_object) = populations
+                    .get(owner_population_index)
+                    .and_then(|population| population.objects.get(owner_object_index))
+                else {
+                    return Err(fault("population-identity-owner-already-admitted"));
+                };
+                if !object_field_values_match(
+                    types,
+                    &record_keys,
+                    &effective_type,
+                    owner_object,
+                    object,
+                ) {
+                    let Some((other_population, _, _)) =
+                        object_owners.get(&(effective_type.clone(), object.key.clone()))
+                    else {
+                        return Err(fault("population-identity-owner-retained"));
+                    };
+                    return Err(population_qualified_identity_refusal(
+                        &entry.population,
+                        other_population,
+                        &object.key,
+                        population_index,
+                    ));
+                }
             }
 
             // `object_reference` already refuses an empty key with FR-106's
@@ -4133,14 +4347,12 @@ fn context_field_path(entry: usize, field: Option<&str>) -> String {
     }
 }
 
-/// The RFC 6901 pointer to an invocation's `parameters` object, or to its
-/// parameter `name`: a parameter's nested typed steps hang below it exactly as
-/// a snapshot field's do (FR-106-AC-15, FR-106-AC-21).
-fn parameter_path(name: Option<&str>) -> String {
-    match name {
-        Some(name) => format!("/parameters/{}", json_pointer_segment(name)),
-        None => "/parameters".to_owned(),
-    }
+/// The RFC 6901 pointer to an invocation's parameter `name`, present or
+/// absent: a parameter's nested typed steps hang below it exactly as a
+/// snapshot field's do (FR-106-AC-15, FR-106-AC-21), and a missing one is
+/// named as FR-106-AC-71 states.
+fn parameter_path(name: &str) -> String {
+    format!("/parameters/{}", json_pointer_segment(name))
 }
 
 /// The read context of `snapshot` for a clause of the state machine `machine`
@@ -4936,21 +5148,22 @@ pub(super) fn admit_parameters(
             }
             return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "missing-member")
+                    .with("member", name.clone())
                     .with("field", name.clone())
-                    .with("path", parameter_path(None)),
+                    .with("path", parameter_path(name)),
             ));
         };
         if !field_kind_matches(raw, value_type) {
             return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
                     .with("field", name.clone())
-                    .with("path", parameter_path(Some(name))),
+                    .with("path", parameter_path(name)),
             ));
         }
         let value = admit_form(references, raw.form(), value_type, None).map_err(|record| {
             let path = format!(
                 "{}{}",
-                parameter_path(Some(&*name)),
+                parameter_path(name),
                 pointer_of(&refusal_steps(raw.form(), &record))
             );
             refuse(record.with("field", name.clone()).with("path", path))
@@ -4974,8 +5187,9 @@ pub(super) fn admit_parameters(
         {
             return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "unknown-member")
+                    .with("member", name.clone())
                     .with("field", name.clone())
-                    .with("path", parameter_path(Some(name))),
+                    .with("path", parameter_path(name)),
             ));
         }
     }

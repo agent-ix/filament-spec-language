@@ -13,6 +13,14 @@
 
 use super::*;
 
+type RandomizedSchedule = BTreeMap<ProbabilityProductKey, Vec<(usize, Rational)>>;
+
+pub(super) struct ScheduleEvidence<'a> {
+    pub(super) graph: &'a CheckerGraph,
+    pub(super) reference: Option<&'a ObjectReference>,
+    pub(super) rows: &'a [(ProbabilityProductKey, Vec<(crate::ProductAction, Rational)>)],
+}
+
 fn unbounded_eventually_predicate(
     formula: &fsl_semantics::check::CheckedTemporalFormula,
 ) -> Option<&fsl_semantics::check::CheckedPredicate> {
@@ -308,6 +316,7 @@ fn subject(
                 } else {
                     super::super::reward::RewardProfile::CyclicMdp
                 },
+                None,
                 meter,
                 storage,
                 &control,
@@ -1022,9 +1031,7 @@ pub(super) fn scheduled_choices(
 /// the admitted transition relation, not to the producer's action order.
 pub(super) fn randomized_scheduled_choices(
     system: &ModelSystem<'_>,
-    graph: &CheckerGraph,
-    reference: Option<&ObjectReference>,
-    rows: &[(ProbabilityProductKey, Vec<(crate::ProductAction, Rational)>)],
+    evidence: ScheduleEvidence<'_>,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
@@ -1032,8 +1039,12 @@ pub(super) fn randomized_scheduled_choices(
     mut enabled: Option<
         &mut BTreeMap<ProbabilityProductKey, Vec<fsl_eval::simulation::model::ScheduledIdentity>>,
     >,
-) -> Result<Option<BTreeMap<ProbabilityProductKey, Vec<(usize, Rational)>>>, ProbabilityDocumentError>
-{
+) -> Result<Option<RandomizedSchedule>, ProbabilityDocumentError> {
+    let ScheduleEvidence {
+        graph,
+        reference,
+        rows,
+    } = evidence;
     let identity = fsl_foundation::IdentityLimits::default();
     let mut wanted = BTreeMap::new();
     for (key, distribution) in rows {

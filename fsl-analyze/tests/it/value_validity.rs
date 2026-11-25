@@ -14,12 +14,12 @@
 //! The vectors place a clause at occurrence role `claim`; the tests build
 //! that key on the function's node, as the vector states it.
 
+use crate::value_validity_support::{package_of, package_with_source_mode};
 use filament_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, HashMap};
 use std::num::NonZeroU64;
 
 use filament_exact::{Cancel, Integer, IntegerInterval, Origin, Role, Value};
-use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as LocationOrigin,
 };
@@ -38,8 +38,7 @@ use fsl_replay::{
     OccurrenceKey, ProofBasis, TerminalValue,
 };
 use fsl_route::Mode;
-use fsl_semantics::check::{Capability, NodeTag, PackageDeclarations};
-use fsl_semantics::value::{admit_integer_division, DefinitionRole};
+use fsl_semantics::check::{Capability, NodeTag};
 use ix_trace_rs::trace;
 use serde_json::Value as Json;
 
@@ -357,60 +356,8 @@ fn marked_scalar_key(package: &CheckedPackage, model: &Json) -> OccurrenceKey {
 
 // ---- compiling and running ----
 
-pub(crate) fn package_of(declarations: &str) -> CheckedPackage {
-    package_with_source(declarations).0
-}
-
-pub(crate) fn package_with_source(declarations: &str) -> (CheckedPackage, Vec<u8>) {
-    // Value-validity cases exercise undefinedness in the complete-V1
-    // evaluator. Kernel leaves the Nonzero obligation for that runtime path;
-    // Linked refusal is covered by the checker acceptance tests.
-    package_with_source_mode(declarations, CheckMode::Kernel)
-}
-
 fn package_of_mode(declarations: &str, mode: CheckMode) -> CheckedPackage {
     package_with_source_mode(declarations, mode).0
-}
-
-fn package_with_source_mode(declarations: &str, mode: CheckMode) -> (CheckedPackage, Vec<u8>) {
-    let text = format!(
-        "language \"ix:native\" edition \"1-draft\";\n\
-         profile v = \"filament.value.complete/v1\";\n{declarations}\n"
-    );
-    let parsed = fsl_cst::parse(
-        fsl_foundation::SourceIdentity::new("a", "u"),
-        "unit.native",
-        text.as_bytes(),
-        fsl_cst::Limits::default(),
-    )
-    .expect("S1 reads the unit");
-    assert!(parsed.is_admissible(), "{:?}\n{text}", parsed.diagnostics());
-    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
-    let mut declarations = PackageDeclarations::assemble(
-        parsed.source().reference().clone(),
-        "package".to_owned(),
-        unit,
-        Vec::new(),
-        Vec::new(),
-    )
-    .expect("the assembler builds the package declarations");
-    declarations.integer_division = Some(
-        admit_integer_division(
-            &[DefinitionRole::IntegerDivisionEuclidean.reference()],
-            None,
-        )
-        .expect("Euclidean division is admitted"),
-    );
-    let package = CheckedPackage::link(
-        declarations
-            .check(
-                mode,
-                CheckingLimits::default(),
-                &fsl_eval::value::S6aRewardEvaluator,
-            )
-            .unwrap_or_else(|e| panic!("the package checks: {e:?}\n{text}")),
-    );
-    (package, text.into_bytes())
 }
 
 fn wire_of(package: &CheckedPackage, function: &str) -> filament_exact::NodeKey {
@@ -2340,4 +2287,37 @@ fn a_provider_item_stopped_by_the_case_budget_or_cancellation_is_incomplete() {
         record.settlement
     );
     assert!(record.value_check.is_none());
+}
+
+/// Regression pin on the source route's spelling: a value-check
+/// counterexample over a source `enum` parameter writes it in FR-181's typed
+/// enum form, named by the declaration identity text. The route reads the
+/// member through the scope's enum member index, which holds every source enum
+/// member.
+#[test]
+fn a_source_enum_parameter_counterexample_is_spelled() {
+    let package = package_of(
+        "enum Color { red, blue }\n\
+         function subject using v(c: Color): Boolean pure { c != Color::red }",
+    );
+    let key = key_of(
+        &package,
+        "subject",
+        &serde_json::json!({"role": "claim", "ordinal": 0}),
+    );
+    let record = run(&package, &key, "subject", None);
+    assert!(matches!(terminal(&record), TerminalValue::Refuted));
+    let found = record.value_check.as_ref().expect("a counterexample");
+    let [parameter] = found.parameters.as_slice() else {
+        panic!("one parameter: {:?}", found.parameters);
+    };
+    let expected = serde_json::json!({"type": "assignments", "values": [{
+        "parameter": fsl_foundation::node_wire::node_key_to_json(parameter)
+            .expect("a parameter node"),
+        "value": {"type": "enum", "name": r#"{"node":"Color","package":"package"}"#,
+            "member": "red"},
+    }]});
+    let item = serde_json::to_value(item_of(&record, &package))
+        .expect("the item has a wire representation");
+    assert_eq!(item["counterexample"], expected);
 }

@@ -18,7 +18,6 @@ fn key(id: u8) -> ProbKey {
         binding: None,
         model: vec![id],
         monitor: None,
-        timed_history: None,
         accumulator: None,
         pending: None,
         certificate_state: None,

@@ -14,8 +14,8 @@ use filament_eval::CallFailure;
 use filament_eval::Evaluation;
 use filament_eval::FamilyOutcome;
 use filament_exact::{
-    EffectiveId, FieldValue, IllTypedCause, Integer, Meter, ObjectId, ObjectReference, Outcome,
-    Presence, ScalarLimits, Value, ValueType,
+    EffectiveId, FieldValue, Integer, Meter, ObjectId, ObjectReference, Outcome, Presence,
+    ScalarLimits, Value, ValueType,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::declaration::{
@@ -159,9 +159,13 @@ fn assert_missing_field_at_check(package: &CheckedPackage, static_type: &str, fi
         panic!("StateModel ownership for missing {field}: {cause:?}");
     };
     assert_eq!(owner.family(), FamilyKind::StateModel);
-    assert_eq!(
-        owner.cause,
-        CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+    assert_eq!(owner.cause.code(), fsl_foundation::Code::IllTyped);
+    assert_eq!(owner.cause.cause(), Some("type-mismatch"));
+    assert!(
+        matches!(&owner.cause, CheckCause::UnknownField { field: absent, span: None, .. }
+            if &**absent == field),
+        "{:?}",
+        owner.cause
     );
 }
 
@@ -251,6 +255,7 @@ fn an_attribute_read_of_an_object_absent_from_the_current_state_is_a_fault() {
 /// `A.x` is inherited by `B`: `deref(r).x` resolves for `r: Reference<B>`
 /// and reads the `B` object's inherited slot, beside its own `y`. `A`'s
 /// view does not see `B`'s own `y`.
+#[trace("TC-790", "FR-300-AC-2")]
 #[trace("FSpec-TC-198", "FSpec-FR-153-AC-6")]
 #[test]
 fn deref_reads_an_inherited_field_through_the_subtype() {
@@ -333,6 +338,7 @@ fn deref_reads_the_most_derived_redefinition() {
 
 /// A renamed redefinition: `B.y` redefines `A.x`. Through `Reference<B>`
 /// the name is `y`, and `x` no longer resolves: refused at check time.
+#[trace("TC-790", "FR-300-AC-2")]
 #[trace("FSpec-TC-198", "FSpec-FR-153-AC-6")]
 #[trace("FSpec-TC-196", "FSpec-FR-151-AC-1")]
 #[test]

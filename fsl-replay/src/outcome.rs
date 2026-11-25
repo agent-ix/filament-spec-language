@@ -29,12 +29,12 @@ pub mod hint;
 pub use counterexample::{
     assignments_wire, assignments_wire_with_enum_members, graph_evidence_wire,
     hyper_counterexample_wire, probabilistic_undefined_wire, probabilistic_wire,
-    probabilistic_wire_with_enum_members, protocol_temporal_wire,
-    read_task_temporal_counterexample, read_task_temporal_document, read_temporal_counterexample,
-    replay_model_trace_document, replay_task_product_trace, sampled_witness_wire, state_key_wire,
-    task_product_transition_wire, task_source_transition_wire, task_temporal_wire,
-    task_temporal_wire_with_queue_growth, task_transition_wire, temporal_wire,
-    CounterexampleWireError, ProtocolWire, ReadCounterexample, TaskProductCounterexampleDocument,
+    protocol_temporal_wire, read_task_temporal_counterexample, read_task_temporal_document,
+    read_temporal_counterexample, replay_model_trace_document, replay_task_product_trace,
+    sampled_witness_wire, state_key_wire, task_product_transition_wire,
+    task_source_transition_wire, task_temporal_wire, task_temporal_wire_with_queue_growth,
+    task_transition_wire, temporal_wire, CounterexampleWireError, ProbabilisticValueSchema,
+    ProtocolWire, ReadCounterexample, TaskProductCounterexampleDocument,
     TaskProductTraceReplayRefusal, TemporalCounterexampleReadRefusal, TraceAlphabet,
 };
 
@@ -4380,7 +4380,9 @@ mod tests {
     }
 
     /// FR-286-AC-2: the `check` outcome of the `inv` source refuses with one
-    /// diagnostic equal to the refusal's code, cause, locus and message.
+    /// diagnostic equal to the refusal's code, cause, locus and message. The
+    /// integer `/` in a body that expects no rational refuses `type-mismatch`
+    /// (FR-495-AC-9), and that pair has a catalog hint (FR-286 "Fix hints").
     #[trace("TC-770", "FR-286-AC-2")]
     #[test]
     fn check_refusal_document_carries_the_refusals_diagnostic() {
@@ -4399,9 +4401,10 @@ mod tests {
                 "category": "refusal",
                 "items": [],
                 "diagnostics": [{
-                    "cause": "ambiguous-literal",
+                    "cause": "type-mismatch",
                     "code": "ill_typed",
                     "details": null,
+                    "hint": hint::hint_for(Code::IllTyped, Some("type-mismatch"), None),
                     "locus": {
                         "kind": "region",
                         "source": serde_json::to_value(region.source()).expect("a source ref"),
@@ -4709,6 +4712,113 @@ mod tests {
                     "category": category,
                 })
             );
+        }
+    }
+
+    /// FR-338-AC-12 (TC-1197): each stated rule and locus pair is written in
+    /// its spelling, and FSpec FR-331's schema admits the written cause.
+    #[trace("TC-1197", "FR-338-AC-12")]
+    #[test]
+    fn certificate_rejection_spellings_conform_to_fr331() {
+        use base64::Engine as _;
+        use fsl_eval::automaton::AutomatonStateKey;
+        use fsl_eval::simulation::StateKey;
+
+        use crate::{ProductStateRef, QueryPart};
+
+        let published = |path: &str| -> Value {
+            let bytes = filament_specification::published_file(path).expect("FSpec publishes it");
+            serde_json::from_slice(bytes).expect("the schema is JSON")
+        };
+        let schema = published("proposals/backend-provider-v1/schema.json");
+        let definition = json!({
+            "$schema": schema["$schema"],
+            "$defs": schema["$defs"],
+            "$ref": "#/$defs/CertificateRejected",
+        });
+        let rejected = jsonschema::JSONSchema::options()
+            .with_draft(jsonschema::Draft::Draft202012)
+            .with_document(
+                "urn:filament:checked-package:v2".to_owned(),
+                published("proposals/checked-package-v2/schema.json"),
+            )
+            .compile(&definition)
+            .expect("the schema compiles");
+        let encode = |bytes: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+
+        let model_state = StateKey::from_canonical_bytes(b"model state".to_vec());
+        let automaton_state = AutomatonStateKey::imported(b"automaton state".to_vec());
+        let state = json!({"key": encode(model_state.as_bytes())});
+        for (rule, at, spelled, written) in [
+            (
+                CertificateRule::SuccessorMissing,
+                CertificateLocus::ProductState(ProductStateRef {
+                    model_state: model_state.clone(),
+                    automaton_state: automaton_state.clone(),
+                }),
+                "successor-missing",
+                json!({
+                    "model_state": state,
+                    "automaton_state": encode(automaton_state.as_bytes()),
+                }),
+            ),
+            (
+                CertificateRule::QueryMismatch,
+                CertificateLocus::Query {
+                    part: QueryPart::Unrolling,
+                },
+                "query-mismatch",
+                json!("unrolling"),
+            ),
+            (
+                CertificateRule::ShapeMismatch,
+                CertificateLocus::Query {
+                    part: QueryPart::Step { row: Some(3) },
+                },
+                "shape-mismatch",
+                json!("step/3"),
+            ),
+            (
+                CertificateRule::NotRefutation,
+                CertificateLocus::Query {
+                    part: QueryPart::Step { row: None },
+                },
+                "not-refutation",
+                json!("step"),
+            ),
+            (
+                CertificateRule::ProofStepInvalid,
+                CertificateLocus::ProofStep {
+                    part: QueryPart::Step { row: Some(4) },
+                    index: 41,
+                },
+                "proof-step-invalid",
+                json!({"part": "step/4", "index": "41"}),
+            ),
+            (
+                CertificateRule::RankMissing,
+                CertificateLocus::ModelState(model_state.clone()),
+                "rank-missing",
+                state.clone(),
+            ),
+        ] {
+            let item = record(
+                0,
+                TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected { rule, at }),
+            );
+            let bytes =
+                OutcomeDocument::settled(Operation::Analyze, Some(OutcomeStage::S6c), vec![item])
+                    .to_bytes()
+                    .expect("the rejection document encodes");
+            let document: Value = serde_json::from_slice(&bytes).expect("the outcome is JSON");
+            let cause = &document["items"][0]["cause"];
+            assert_eq!(
+                cause,
+                &json!({"kind": "certificate-rejected", "rule": spelled, "at": written})
+            );
+            // FR-331 names the writer's `kind` member `type`.
+            let wire = json!({"type": cause["kind"], "rule": cause["rule"], "at": cause["at"]});
+            assert!(rejected.is_valid(&wire), "{wire}");
         }
     }
 

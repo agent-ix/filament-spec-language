@@ -10,7 +10,7 @@ use fsl_semantics::check::Capability;
 use ix_trace_rs::trace;
 
 use crate::counter::{document, package, timed_package, Documents, CONTRACT, PACKAGE};
-use crate::derived_request::derived_items;
+use crate::derived_request_support::derived_items;
 
 const TIMED: &str = "dimension Time;\nunit s : Time = rational(1, 1);\n\
      unit ms : Time = rational(1, 1000) * s;\ntime M dense unit ms;\n";

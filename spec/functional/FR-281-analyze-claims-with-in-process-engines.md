@@ -19,6 +19,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-120
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-255
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-507
     type: depends_on
   - target: "ix://agent-ix/filament-specification/FR-300"
@@ -352,8 +354,13 @@ pub struct AnalyzeLimits {
     pub accounting: ScalarLimits,
     pub observation: ObservationLimits,
     pub normalization: ModelNormalizationLimits,
+    pub expansion: fsl_eval::simulation::model::ExpansionLimits,
     pub simulation: SimulationLimits,
+    pub position_limit: u64,
     pub deadline: DeadlineSupply,
+    pub emit: fsl_package::EmitLimits,
+    pub replay: fsl_replay::ReplayLimits,
+    pub engines: EngineBounds,
 }
 
 pub struct SimulationLimits {
@@ -361,6 +368,8 @@ pub struct SimulationLimits {
     pub max_transitions: u64,  // `explore.transitions`, default 100000000
     pub max_steps: u64,        // `simulation.max_steps`, default 16777216
 }
+
+pub struct EngineBounds { /* bounds explicitly named by the caller */ }
 
 pub enum DeadlineSupply {
     Unbounded,
@@ -422,10 +431,16 @@ pub enum DeadlineSupply {
   FR-272 code, cause and payload of an `unsupported` or `invalid-request`
   disposition (FSpec FR-331), present exactly for those two.
 - `Engines`: the engines "Negotiated items" describes.
-- `AnalyzeLimits`: the accounting limits, the observation and
-  model-normalization limits the binding is admitted under, each with its
-  published default (FR-277), the simulation limits `simulation`, and the
-  request's deadline `deadline`.
+- `AnalyzeLimits`: the accounting limits, observation and model-normalization
+  limits under which the binding is admitted (FR-277), expansion limits
+  `expansion`, simulation limits `simulation`, request deadline `deadline`,
+  package emission limits `emit`, replay reader limits `replay`, and
+  explicitly named engine bounds `engines`. `position_limit` is the separate
+  bound on model-domain positions used by model-based testing, default 10000;
+  it is not the trace-step limit `simulation.max_steps` and has no
+  FR-255 caller-limit setting. `expansion.max_candidates`
+  defaults to 750,000 even in `AnalyzeLimits::unbounded`; a caller may
+  replace it through FR-255's `expansion.max_candidates` setting.
   `DeadlineSupply` has no `Default`, so `AnalyzeLimits` has none and the
   caller supplies `deadline` explicitly, as FR-277 has callers supply
   `ScalarLimits` and `supplied`: `Unbounded`, or `Milliseconds(n)`, the
@@ -437,12 +452,16 @@ pub enum DeadlineSupply {
   it is part of the request so that the request states its deadline and the
   timer is armed from that one value.
 - `SimulationLimits`: the exploration limits `explore.states` and
-  `explore.transitions` (FR-255) and the trace position limit
+  `explore.transitions` (FR-255) and the trace-step limit
   `simulation.max_steps`, each with the published default shown, so a
   caller that sets none gets the defaults a `simulation` item uses. They
-  bound the state exploration and trace generation of a `model_based_test`
-  plan step (FR-752 "Entry"); an `analyze` item that carries its own
+  bound state exploration and generated trace length for a `model_based_test`
+  plan step (FR-752 "Entry"); they do not set the separate `position_limit`
+  used to bound model-domain positions. An `analyze` item that carries its own
   `simulation` member (FR-634) keeps its own settings.
+- A plan `model_based_test` step receives `AnalyzeLimits.expansion` for each
+  expansion, `AnalyzeLimits.simulation` for exploration and the trace-step
+  ceiling, and `AnalyzeLimits.position_limit` for model-domain positions.
 - `&Cancel`.
 
 ## Outputs
@@ -597,7 +616,7 @@ registry reaches EN-7 (FR-620, FR-633).
 | FR-281-AC-4 | With the test engine's certificate altered in one member before checking, the item settles `inconclusive` with cause `CertificateRejected`; with an engine that reports a proof no core certificate checker covers (EN-1 under partial-order reduction, ADR-021 RV-1), the item settles `proved`, category success, with the certification `uncertified` naming that engine, and the same item unreduced settles `certified`. This clause is observed at `analyze` over an engine set holding EN-1: the reduced item is an EN-1 item whose request selects partial-order reduction (FR-159), so EN-1 reports `HoldsReduced` and no engine or checker-less seam is added to `analyze`. The step engine's absent-certificate mapping (`BackendCertificate::Absent` to `uncertified`, FR-146) is a separate rule and does not satisfy this clause. | Test (TC-763) |
 | FR-281-AC-5 | With a test engine that reports a counterexample replay does not reproduce, the item settles `inconclusive` with cause `replay_parity`; with one whose counterexample names a parameter the function lacks, `inconclusive` with cause `replay_refused`. | Test (TC-763) |
 | FR-281-AC-6 | (a) AC-2's EN-1 item with `limits.max_states` 1 settles `incomplete` with `LimitReached{max_states}`, exit 22, carries no counterexample and is never `refuted` or `proved`. (b) AC-1's EN-5 item with `exact_prob.max_states` 1 settles `incomplete` with `LimitReached{ExactProbMaxStates}` naming `exact_prob.max_states`. | Test (TC-763) |
-| FR-281-AC-7 | Over a finite model with one reachable state at which the invariant `100 / x > 0` divides by zero, an EN-1 item claiming that invariant settles `refuted`, category violation, with cause `UndefinedEvaluation` whose `where` names that state and whose `cause` is `division-by-zero`; its `ItemCounterexample` is of kind `undefined-evaluation` and replay reproduces the undefined value at that state, the record carries no `undefined` label, and FR-285 maps the outcome to exit 10. | Test (TC-763) |
+| FR-281-AC-7 | Over a finite model with one reachable state at which the clause `always holds(q(2 - c.value) >= 0)` divides by zero, where `function q using v(x: Integer): Integer pure { 6 mod x }` has its body checked under `CheckMode::Kernel` and the Linked clause calls it (FR-495-AC-3, FR-952), an EN-1 item claiming that clause settles `refuted`, category violation, with cause `UndefinedEvaluation` whose `where` names that state and whose `cause` is `division-by-zero`; its `ItemCounterexample` is of kind `undefined-evaluation` and replay reproduces the undefined value at that state, the record carries no `undefined` label, and FR-285 maps the outcome to exit 10. | Test (TC-763) |
 | FR-281-AC-8 | With `engines` holding test engines `fsl.test-a` and `fsl.test-b`, both advertising (`value-validity`, `bounded`): an item settled `Supported(fsl.test-b)` runs on `fsl.test-b` alone and its record names it; the same item settled `InvalidRequest` with `invalid_capability`/`ambiguous-backend` naming `fsl.test-a` and `fsl.test-b`, as `negotiate_*` settles it with both candidates and no named backend (FSpec FR-290, FR-331-AC-4), returns a record settled by that disposition with that diagnostic and runs neither engine; settled `Unsupported` with `unsupported_projection`/`unsupported-requested-capability`, a record settled by that disposition and no run; settled `RequiresBound`, a record settled by that disposition with no diagnostic and no run; and settled `Supported(fsl.test-c)`, which `engines` does not hold, `invalid-request` with `invalid_capability`/`unknown-backend` naming `fsl.test-c` and no run. | Test (TC-762) |
 | FR-281-AC-9 | AC-3's request returns its three records in `request_index` order 0, 1, 2. The same request whose binding's `universes` name a population the package does not declare returns `StageFailure::Refused(AnalyzeRefusal::Binding)` holding FR-120's `invalid_runtime_input`/`wrong-role-mapping`, no record, and no engine runs. | Test (TC-762) |
 | FR-281-AC-10 | `Engines::with` holding `fsl.test-a`, given a second engine whose manifest's `BackendId` is `fsl.test-a`, returns `invalid_capability`/`duplicate-backend` naming `fsl.test-a`, and the set still runs the first engine for an item settled `Supported(fsl.test-a)`. With `fsl.test-a` advertising only (`value-validity`, `bounded`), a `temporal-satisfaction` item settled `Supported(fsl.test-a)` settles `invalid-request` with `invalid_capability`/`inconsistent-candidates` naming `fsl.test-a` and the item's kind and mode, and `fsl.test-a` does not run. AC-3's unsupported record carries the diagnostic naming the claim kind and no `cause` member. | Test (TC-762) |
@@ -617,6 +636,7 @@ registry reaches EN-7 (FR-620, FR-633).
 | FR-281-AC-24 | When an external provider reports a refuted verdict with each FR-290 unusable-counterexample reason in turn, the item settles `inconclusive` with cause `replay-parity`, carries one item diagnostic with code `invalid_result`, cause `invalid-value` and that typed reason, and carries neither `counterexample` nor `replay`; a refuted verdict with mapped assignments still follows the existing replay rule. | Test (TC-774) |
 
 | FR-281-AC-25 | If an engine returns `undefined` while evaluating a claim at a state or step, the item settles `refuted` with `UndefinedEvaluation{where, cause}` identifying that state or step. It is not settled with an `undefined` label. | Test (TC-763) |
+| FR-281-AC-26 | `AnalyzeLimits::unbounded()` sets `expansion.max_candidates` to `200000`, `simulation.max_states` to `10000000`, `simulation.max_transitions` to `100000000`, `simulation.max_steps` to `16777216` and `position_limit` to `10000`; replacing only `expansion.max_candidates` with caller value `B` changes only that field. The `AnalyzeLimits` fields are `accounting`, `observation`, `normalization`, `expansion`, `simulation`, `position_limit`, `deadline`, `emit`, `replay` and `engines`. | Test |
 ## Dependencies
 
 - ADR-029 OP-2, CB-3: the operation and layer A.

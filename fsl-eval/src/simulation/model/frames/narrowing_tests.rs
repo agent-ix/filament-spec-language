@@ -136,7 +136,7 @@ fn fields(mode: u32, speed: u32, lidar: bool) -> serde_json::Value {
 /// The applications of `name` from the initial state, and their charge.
 fn apply(system: &ModelSystem<'_>, name: &str) -> (Applications, u64) {
     let state = initial(system);
-    let [row] = <[_; 1]>::try_from(rows_of(system, &state.state).expect("rows"))
+    let [row] = <[_; 1]>::try_from(rows_of(system, state.state()).expect("rows"))
         .unwrap_or_else(|_| panic!("one rover"));
     let operation = OperationRef {
         declaring: row.type_id(),

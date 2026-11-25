@@ -1,10 +1,11 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-113's binder no-shadowing rule: a binder shadowing a model/profile
 //! alias, a native declaration of the package or an earlier binder of the
 //! same protocol.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use fsl_forms::ProtocolDeclarationForm;
+use fsl_forms::{BinderKind, ProtocolDeclarationForm, ProtocolNodeKind};
 use fsl_foundation::Span;
 
 use super::refusal;
@@ -17,17 +18,14 @@ use crate::check::{Scope, Signatures};
 /// binder visible where it is declared, in source order.
 ///
 /// Binders are checked in `protocol.binders`' own order (source order,
-/// the S2 walk), each against every binder built before it anywhere
-/// in the protocol: a later binder shadows an earlier one, never the other
-/// way round, so only the later binder is refused (FR-113: "refuse ... at
-/// that binder, naming the declaration it would shadow"). FSpec
-/// `shared-grammar.md` makes binders "unique in their enclosing
-/// declaration" -- the whole protocol, not the lexical scope a binder's
-/// own `BinderForm::scope` names -- so this check ignores scope entirely
-/// when comparing binder against binder; `scope` still locates a binder for
-/// FR-114's later binding pass. A package-level alias or native
-/// declaration is checked only when no earlier binder in the protocol
-/// already shares the name.
+/// the S2 walk). A later binder shadows an earlier binder only when the
+/// earlier binder's scope is active at the later declaration site. Named
+/// control scopes are lexical: an enclosing scope remains active in its
+/// descendants, while a completed child or sibling scope is no longer
+/// active. The finish and compensation-template record binders need their
+/// own declaration scope because neither is enclosed by a named control.
+/// A package-level alias or native declaration is checked regardless of
+/// binder scope.
 pub(super) fn shadow_refusals(
     protocol: &ProtocolDeclarationForm,
     alias_names: &BTreeMap<String, AliasKind>,
@@ -36,13 +34,17 @@ pub(super) fn shadow_refusals(
     signatures: &Signatures,
 ) -> Vec<(Span, CheckRefusal)> {
     let mut refusals = Vec::new();
-    // Every earlier binder's own span, by name, flat across the whole
-    // protocol (SR-765 FND-001).
-    let mut seen: BTreeMap<String, Span> = BTreeMap::new();
+    let mut seen: BTreeMap<String, Vec<(Vec<ScopeSegment>, Span)>> = BTreeMap::new();
     for binder in &protocol.binders {
+        let binder_scope = binder_scope(protocol, binder);
         let shadowed = seen
             .get(binder.name.name.as_str())
-            .map(|&span| ShadowedDeclaration::Binder(span))
+            .and_then(|earlier| {
+                earlier.iter().rev().find_map(|(earlier_scope, span)| {
+                    scope_is_prefix(earlier_scope, &binder_scope)
+                        .then_some(ShadowedDeclaration::Binder(*span))
+                })
+            })
             .or_else(|| {
                 package_shadow(
                     &binder.name.name,
@@ -62,9 +64,70 @@ pub(super) fn shadow_refusals(
                 }),
             ));
         }
-        seen.insert(binder.name.name.clone(), binder.name.span);
+        seen.entry(binder.name.name.clone())
+            .or_default()
+            .push((binder_scope, binder.name.span));
     }
     refusals
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScopeSegment {
+    Control(usize),
+    Declaration(usize),
+}
+
+fn scope_is_prefix(earlier: &[ScopeSegment], later: &[ScopeSegment]) -> bool {
+    earlier.len() <= later.len() && earlier.iter().zip(later).all(|(left, right)| left == right)
+}
+
+fn binder_scope(
+    protocol: &ProtocolDeclarationForm,
+    binder: &fsl_forms::BinderForm,
+) -> Vec<ScopeSegment> {
+    let mut path = Vec::new();
+    let mut current = binder.scope;
+    while let Some(scope) = current.filter(|_| path.len() < protocol.scopes.len()) {
+        let entry = &protocol.scopes[scope.index()];
+        path.push(ScopeSegment::Control(scope.index()));
+        current = entry.parent;
+    }
+    path.reverse();
+
+    if binder.kind == BinderKind::RecordBinder {
+        if let Some((declaration_index, declaration)) = protocol
+            .declarations
+            .iter()
+            .enumerate()
+            .find(|(_, declaration)| {
+                declaration.span.start <= binder.name.span.start
+                    && binder.name.span.end <= declaration.span.end
+                    && matches!(
+                        declaration.kind,
+                        ProtocolNodeKind::Finish | ProtocolNodeKind::CompensateTemplate
+                    )
+            })
+        {
+            match declaration.kind {
+                ProtocolNodeKind::Finish => {
+                    path.push(ScopeSegment::Declaration(declaration_index));
+                }
+                ProtocolNodeKind::CompensateTemplate => {
+                    if let Some((scope_index, _)) =
+                        protocol.scopes.iter().enumerate().find(|(_, entry)| {
+                            entry.name.name == declaration.name.name
+                                && entry.parent == declaration.scope
+                        })
+                    {
+                        path.push(ScopeSegment::Control(scope_index));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    path
 }
 
 /// Whether `name` is a model/profile alias or a native declaration of the
