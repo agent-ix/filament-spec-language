@@ -2047,8 +2047,18 @@ fn apply_manifest_rule(workspace_root: &Path, recipe: &mut Recipe) -> Result<()>
             add_integration(workspace_root, recipe, it_filter.package, filter)?;
         }
     }
+    for filters in [
+        FOUNDATION_CONSUMERS,
+        SOURCE_CONSUMERS,
+        CST_CONSUMERS,
+        FORMS_CONSUMERS,
+        PACKAGE_CONSUMERS,
+    ] {
+        apply_it_filters(workspace_root, filters, None, recipe)?;
+    }
+    add_package_replay_controls(recipe);
     recipe.notes.insert(
-        "manifest or lockfile change: run workspace check and emitter consumers".to_owned(),
+        "manifest or lockfile change: run workspace check and named consumer controls".to_owned(),
     );
     Ok(())
 }
@@ -2111,6 +2121,15 @@ fn apply_crate_fallback(path: &str, workspace_root: &Path, recipe: &mut Recipe) 
     }
     if package == "xtask" {
         add_named_library_modules(workspace_root, recipe, "xtask")?;
+    } else if let Some(consumers) = match package {
+        "fsl-foundation" => Some(FOUNDATION_CONSUMERS),
+        "fsl-source" => Some(SOURCE_CONSUMERS),
+        "fsl-cst" => Some(CST_CONSUMERS),
+        "fsl-forms" => Some(FORMS_CONSUMERS),
+        _ => None,
+    } {
+        add_named_library_modules(workspace_root, recipe, package)?;
+        apply_it_filters(workspace_root, consumers, None, recipe)?;
     } else if matches!(package, "fsl-eval" | "fsl-semantics") {
         add_library(
             recipe,
@@ -2678,6 +2697,7 @@ mod tests {
             | "timed_"
             | "timed_within_200"
             | "timed_within_201" => "it_model_check",
+            "package_forms" => "it_model_check",
             "monitor_" => "it_monitor_protocol",
             "hyper" | "probabilistic" => "it_probabilistic",
             "race_freedom" => "it_refinement",
@@ -3640,6 +3660,61 @@ mod tests {
                 displays(&recipe).join("\n")
             );
         }
+    }
+
+    #[test]
+    fn low_level_crate_roots_and_manifests_include_named_consumers() {
+        for (path, package, filter) in [
+            (
+                "fsl-foundation/src/lib.rs",
+                "fsl-command",
+                "check_source_identity",
+            ),
+            (
+                "fsl-foundation/Cargo.toml",
+                "fsl-command",
+                "check_source_identity",
+            ),
+            (
+                "fsl-source/src/lib.rs",
+                "fsl-command",
+                "extraction_request_refusals",
+            ),
+            (
+                "fsl-source/Cargo.toml",
+                "fsl-command",
+                "extraction_request_refusals",
+            ),
+            ("fsl-cst/src/lib.rs", "fsl-replay", "compile_text_literals"),
+            ("fsl-cst/Cargo.toml", "fsl-replay", "compile_text_literals"),
+            ("fsl-forms/src/lib.rs", "fsl-analyze", "package_forms"),
+            ("fsl-forms/Cargo.toml", "fsl-analyze", "package_forms"),
+        ] {
+            let recipe = plan(workspace_root(), &[path]);
+            assert_selects_owner(&recipe, package, filter);
+            assert!(
+                recipe
+                    .selectors
+                    .iter()
+                    .all(|selector| selector.filter.is_some()),
+                "{path}"
+            );
+        }
+
+        let manifest = plan(workspace_root(), &["Cargo.lock"]);
+        for (package, filter) in [
+            ("fsl-command", "check_source_identity"),
+            ("fsl-command", "extraction_request_refusals"),
+            ("fsl-replay", "compile_text_literals"),
+            ("fsl-analyze", "package_forms"),
+            ("fsl-eval", "checked_route_owner"),
+        ] {
+            assert_selects_owner(&manifest, package, filter);
+        }
+        assert!(manifest
+            .selectors
+            .iter()
+            .all(|selector| selector.filter.is_some()));
     }
 
     #[test]

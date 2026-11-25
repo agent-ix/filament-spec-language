@@ -23,7 +23,9 @@ API), `it_monitor_protocol`, `it_probabilistic`, `it_model_check`,
 liveness test, isolated) Cargo targets. A normal
 `cargo test -p fsl-analyze` runs every target. The recipe reads every target
 root. An analyzer target-root change, or a change to a crate's own shared
-fixture, selects every module of the crate. A changed module file, at any depth,
+fixture, selects every module of the crate. A low-level library root or crate
+manifest change also selects its named downstream consumer controls. A changed
+module file, at any depth,
 runs that module in each target that declares it; a helper-only module (no test
 in it or below it) runs every module of each target that declares it. A consumer
 filter selects every target containing a matching test. The command fails, and
@@ -41,9 +43,13 @@ other readers are not inferred.
 | `fsl-package/src/emit/**` | `fsl-package` lib `emit` tests, one thread, skip 100k tests and the 2/1000 nested-form stress test | Analyze engine filters `monitor_`, `timed_`, `hyper`, `probabilistic`; command `run_requirement_items`; selected package reader modules; TC-736 and other large controls run alone with timing enabled |
 | `fsl-package/src/**` outside `emit/**` | Touched library module | `fsl-eval` `checked_route_owner`; `fsl-replay` `emit_admit_agreement` and the TC-736 library control; analyzer `analyze_package_selection`; command `run_requirement_items`; probability-check `roundtrip`; root `run_items` |
 | `fsl-foundation/src/**` | Touched library module | Identity/source controls in `fsl-cst` `cst_identity`, `fsl-source` `quire_source`, `fsl-forms` `source_grammar_vectors`, `fsl-semantics` `identity_golden_vectors`, `fsl-package` `source_object_identity_rows_public`, `fsl-command` `check_source_identity`, `fsl-replay` `source_diagnostic_outcome` and root `layer_crate_reexports` |
+| `fsl-foundation/src/lib.rs`, `fsl-foundation/Cargo.toml` | Named top-level library modules | Same identity/source controls as `fsl-foundation/src/**` |
 | `fsl-source/src/**` | Touched library module | `fsl-replay` `source_diagnostic_outcome`, command `extraction_request_refusals` and root `formal_source` |
+| `fsl-source/src/lib.rs`, `fsl-source/Cargo.toml` | Named top-level library modules | Same source controls as `fsl-source/src/**` |
 | `fsl-cst/src/**` | Touched library module | `fsl-forms` `source_grammar_vectors`, package `checked_ir_surface`, replay `compile_package_facade` and `compile_text_literals`, and `fsl-cst` `complete_cst` and `complete_grammar` |
+| `fsl-cst/src/lib.rs`, `fsl-cst/Cargo.toml` | Named top-level library modules | Same CST controls as `fsl-cst/src/**` |
 | `fsl-forms/src/**` | Touched library module | `fsl-semantics` `type_decisions`, evaluator `union_value_profile`, analyzer `package_forms`, command `fr311_s3_forms` and root `forms_package_contracts` |
+| `fsl-forms/src/lib.rs`, `fsl-forms/Cargo.toml` | Named top-level library modules | Same forms controls as `fsl-forms/src/**` |
 | `fsl-analyze/src/analyze/exact.rs`, `exact/**` | Touched library module | `fsl-analyze` filters `probabilistic` and `timed_`; every `fsl-probability-check` IT module |
 | `fsl-analyze/src/exact_probabilistic*` | Touched library module | `fsl-analyze` filters `probabilistic` and `timed_`; every `fsl-probability-check` IT module |
 | `fsl-semantics/src/check/probabilistic*`, `check/mod.rs` | Touched library module | `fsl-analyze` filters `timed_`, `timed_within_200`, `timed_within_201`; every `fsl-probability-check` IT module |
@@ -62,7 +68,7 @@ other readers are not inferred.
 | One or more test files only | The changed test modules or named tests; every module of each declaring target for a helper-only module | If a changed diff adds/removes `#[ignore]`, xtask `ignored_reason_tests::` |
 | `xtask/src/<module>.rs` | The changed xtask library module | None |
 | `xtask` crate root or manifest | Named top-level xtask library modules | None |
-| `Cargo.toml`, `Cargo.lock` | Workspace check | All emitter consumers: analyze's four engine filters and command `run_requirement_items` |
+| `Cargo.toml`, `Cargo.lock` | Workspace check | All named low-level consumers and emitter controls, plus the TC-736 replay control |
 | `spec/**` only | No Cargo commands | None |
 | Crate `lib.rs`, `main.rs`, or root `mod.rs` | Named top-level library modules | Crate-specific consumer routes |
 | `<crate>/tests/fixtures/**`, `<crate>/tests/support/**` | All integration-test modules in the crate | — |
