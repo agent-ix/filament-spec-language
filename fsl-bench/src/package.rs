@@ -421,6 +421,27 @@ mod tests {
         assert!(!fixture.emission.package().bytes().is_empty());
     }
 
+    #[trace("NFR-141-AC-2")]
+    #[test]
+    fn every_timed_package_size_reads_its_emission() {
+        for count in MODEL_COUNTS {
+            let fixture = super::fixture(count).expect("timed package fixture compiles");
+            let result = fsl_package::read_evaluation_emission(
+                fixture.checked.package(),
+                &fixture.emission,
+                fsl_semantics::library::LibraryName::new("package")
+                    .expect("benchmark library identity"),
+                &fixture.packages,
+                fsl_package::V2ReadLimits::bounded(1 << 24),
+                fsl_package::EmitLimits::new(1 << 32),
+                fsl_package::SourceWitnessSupplier::new(&fixture.emission),
+            );
+            if let Err(error) = result {
+                panic!("M={count} checked package read: {error:?}");
+            }
+        }
+    }
+
     #[trace("NFR-141-AC-3")]
     #[test]
     fn every_package_size_compiles_emits_and_replays() {
