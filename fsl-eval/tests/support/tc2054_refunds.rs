@@ -35,7 +35,7 @@ fn object_type(name: &str, fields: Vec<Value>, operations: Vec<Value>) -> Value 
     } else if name == "Order" {
         vec![id("Order/total")]
     } else {
-        Vec::new()
+        vec![id("Desk/order")]
     };
     json!({
         "identity": identity, "displayName": identity,
