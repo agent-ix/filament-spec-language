@@ -273,8 +273,10 @@ impl<'a, 'k> Walk<'a, 'k> {
         let mut syntax_visits = HashMap::<(usize, usize), usize>::new();
         // The nodes whose bodies the walk is inside. A reference back to one is
         // a recursive call: the walk does not enter it again, so a recursive
-        // owner is walked once, not without end.
+        // owner is walked once, not without end. The root function itself is
+        // already being walked even though this walk starts at its body node.
         let mut active = HashSet::<usize>::new();
+        active.insert(root_owner);
         while let Some(task) = pending.pop() {
             match task {
                 Task::Leave(position) => {
