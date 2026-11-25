@@ -47,8 +47,8 @@ use serde_json::{json, Value as Json};
 
 use crate::fill::{reachable, Explored, Reached};
 use crate::litmus::{
-    attempt, contracts, document, field, key, protocol, protocol_with, sb_run, sb_unit,
-    unit_text_with, NO_BOTH_ZERO,
+    attempt, contracts, document, field, protocol, protocol_with, sb_run, sb_unit, unit_text_with,
+    NO_BOTH_ZERO,
 };
 use crate::model_settle_support::{envelope_at, request};
 

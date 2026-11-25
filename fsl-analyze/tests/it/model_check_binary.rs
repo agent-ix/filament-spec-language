@@ -65,7 +65,6 @@ mod timed_world;
 mod units;
 mod value_validity_support;
 mod weak_memory_support;
-mod weak_memory_support;
 mod zone_dense;
 mod zone_liveness;
 mod zone_replay;

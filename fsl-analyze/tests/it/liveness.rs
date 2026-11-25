@@ -39,7 +39,7 @@ use fsl_semantics::model::observation::AnchorKind;
 use ix_trace_rs::trace;
 
 use crate::counter::{
-    document, document_with_ranged_parameter, key, subject, value, CONTRACT, UNLIMITED, ZERO,
+    document, document_with_ranged_parameter, subject, value, CONTRACT, UNLIMITED, ZERO,
 };
 
 /// FR-126-AC-3's last sentence, with the deadlock half in
