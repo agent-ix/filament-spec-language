@@ -18,7 +18,12 @@ the region-mapping cost group in QSL-2854,
 the FSL benchmark gate SHALL run the applicable named axis, check its
 acceptance criterion below, and compare candidate B with current
 `origin/main` A using live measurements from the same session as specified in
-`fsl-bench/BENCHMARKING.md`. Stored measurements are not thresholds.
+`fsl-bench/BENCHMARKING.md`. For QSL-1919, baseline A SHALL use `origin/main`
+production sources and candidate B SHALL use candidate production sources.
+The wall-time axes in AC-1 through AC-3 SHALL be built without a
+replay-counter seam on both sides. Only the isolated parse-counter probe in
+AC-5 SHALL use the benchmark-only replay-counter seam, applying the identical
+harness files unchanged to both sides. Stored measurements are not thresholds.
 
 ## Scope
 
@@ -50,7 +55,11 @@ not thresholds.
 
 Each AC below is evaluated independently. A live A/B result records all five
 alternating rounds, load average before and after each round, per-round
-estimates, both medians, the computed noise, and the pass/fail comparison.
+estimates, both medians, the computed noise, and the pass/fail comparison. A
+measurement session is immutable: every raw result file from the session,
+including failed, loaded, or invalid results, SHALL be preserved and reported.
+A rerun requires explicit lead authorization recorded in its report. No axis
+result may be selectively replaced within a session.
 
 | Metric | Target | Threshold | Method |
 | --- | --- | --- | --- |
