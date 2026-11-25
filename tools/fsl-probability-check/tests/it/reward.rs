@@ -904,3 +904,73 @@ fn cancellation_inside_qualified_reward_evaluation_stops_and_old_actions_still_w
         assert_eq!(system.actions(&initial).unwrap().unwrap()[0].draws.len(), 2);
     }
 }
+
+/// FR-1042-AC-19 under a workload, over the cyclic chain base: the omitted
+/// retry `r` is the only successor of `s`. The `lower` ranks the states it
+/// names, so `r` has no rank row, and its progress goes through `r`.
+#[trace("TC-3212", "FR-1042-AC-19")]
+#[test]
+fn a_subset_cyclic_reward_lower_omits_the_only_successor_of_the_initial_state() {
+    let source = claim(
+        &retry_value_two(),
+        "Steady",
+        ">=",
+        "rational(1,2)",
+        "m.delivered",
+    );
+    let exact = proof(&source);
+    let base = document(&exact);
+    assert_eq!(
+        base["objective"]["profile"],
+        "filament.probability-objective/dtmc-expected-reward/v1"
+    );
+    let target = base["objective"]["targets"][0].clone();
+    let rows = base["ranking"].as_array().unwrap();
+    let initial = rows
+        .iter()
+        .max_by_key(|row| row["rank"].as_u64().unwrap())
+        .unwrap()["state"]
+        .clone();
+    let valued = |state: &serde_json::Value, numerator: &str| {
+        let value = json!({"numerator": numerator, "denominator": "1"});
+        json!({"state": state, "value": value})
+    };
+    let values: Vec<_> = base["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|found| {
+            if found["state"] == initial {
+                Some(valued(&initial, "1"))
+            } else {
+                (found["state"] == target).then(|| valued(&target, "0"))
+            }
+        })
+        .collect();
+    assert_eq!(values.len(), 2);
+    let objective = "filament.probability-objective/value-bounds/v1";
+    let lower = json!({
+        "identity": base["identity"],
+        "objective": {"profile": objective, "base": base["objective"]},
+        "kind": "lower",
+        "values": values,
+        "ranking": rows
+            .iter()
+            .filter(|row| row["state"] == initial || row["state"] == target)
+            .collect::<Vec<_>>(),
+    });
+    let mut request = exact.clone();
+    request["certificate"] = json!(serde_json::to_string(&lower).unwrap());
+    request["claim_side"] = json!(true);
+    accepted(&request, "1", "1");
+    let (code, output) = run(&mutate(&request, |doc| {
+        for row in doc["values"].as_array_mut().unwrap() {
+            if row["state"] == initial {
+                row["value"] = json!({"numerator": "2", "denominator": "1"});
+            }
+        }
+    }));
+    assert_eq!(code, 1, "{output}");
+    assert_eq!(output["rule"], "inequality-fails", "{output}");
+    assert_eq!(output["at"], json!({"product_key": initial}), "{output}");
+}
