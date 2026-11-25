@@ -515,4 +515,96 @@ mod tests {
         );
         assert!(rows.iter().all(|row| row.location.up == 0));
     }
+
+    /// FSpec FR-322-AC-274: a recursion-group member is keyed under its group's
+    /// declaration path. A query or collection term in a group still gets its
+    /// body-location rows, and both the strict reader and FSL's I2 read admit
+    /// the package.
+    #[ix_trace_rs::trace("FSpec-FR-146-AC-1", "FSpec-FR-322-AC-274")]
+    #[test]
+    fn recursion_group_queries_and_collections_keep_their_body_location_rows() {
+        // Each case names the group's one declared member, whose path its
+        // anonymous members carry; a group of two has a producer-chosen path.
+        const CASES: &[(&str, Option<&str>, &str)] = &[
+            (
+                "forall",
+                Some("a"),
+                "function a using v(n: Int[0, 9], s: Sequence<Int[0, 9]>[0, 4]): Boolean pure \
+                 decreases(n) { forall(x in s: if n > 0 then a(n - 1, s) else true) }",
+            ),
+            (
+                "exists across a mutual pair",
+                None,
+                "function a using v(n: Int[0, 9], s: Sequence<Int[0, 9]>[0, 4]): Boolean pure \
+                 decreases(n) { if n > 0 then exists(x in s: b(n - 1, s)) else true }\n\
+                 function b using v(n: Int[0, 9], s: Sequence<Int[0, 9]>[0, 4]): Boolean pure \
+                 decreases(n) { if n > 0 then a(n - 1, s) else false }",
+            ),
+            (
+                "count",
+                Some("a"),
+                "type C = Int[0, 4];\n\
+                 function a using v(n: Int[0, 9], s: Sequence<Int[0, 9]>[0, 4]): Boolean pure \
+                 decreases(n) { if n > 0 then count<C>(x in s: a(n - 1, s)) > 0 else true }",
+            ),
+            (
+                "collection literal",
+                Some("a"),
+                "function len using v(s: Sequence<Integer>[0, 4]): Integer pure { 0 }\n\
+                 function a using v(n: Int[0, 9]): Integer pure decreases(n) \
+                 { if n > 0 then len(sequence[a(n - 1), a(n - 1)]) else 0 }",
+            ),
+        ];
+        for (case, declared, declarations) in CASES {
+            let (_, checked) = super::super::tests::package_from_text(declarations);
+            let emission =
+                super::super::emit_checked(&checked, crate::checked::EmitLimits::new(1 << 20))
+                    .unwrap_or_else(|refusal| panic!("{case} emits: {refusal:?}"));
+            let package = match read_checked_package(
+                emission.package().bytes(),
+                crate::checked_v2::V2ReadLimits::fixture().for_ir(),
+                emission.evidence(),
+            ) {
+                CheckedPackageDispatchResult::AdmittedV2(package) => package,
+                other => panic!("{case} must read: {other:?}"),
+            };
+            let read = super::super::tests::read_back(&emission);
+            assert!(
+                matches!(read, crate::checked_v2::Read::Verified { .. }),
+                "{case}: {read:?}"
+            );
+            let rows = &package.checked_term_data().unwrap().body_locations;
+            let wire = super::super::tests::wire(&emission);
+            let terms: Vec<&serde_json::Value> = super::super::tests::nodes(&wire)
+                .iter()
+                .filter(|node| {
+                    matches!(
+                        node["body"]["operator"].as_str(),
+                        Some("quantify" | "collection")
+                    )
+                })
+                .collect();
+            assert!(!terms.is_empty(), "{case} holds a query or collection term");
+            for term in terms {
+                assert!(
+                    term.get("recursion_group").is_some(),
+                    "{case}: the term is a group member: {term}"
+                );
+                if let Some(declared) = declared {
+                    assert_eq!(
+                        term["node_id"]["path"],
+                        serde_json::json!([declared]),
+                        "{case}"
+                    );
+                }
+                assert!(
+                    rows.iter().any(|row| {
+                        serde_json::to_value(&row.application).unwrap() == term["node_id"]
+                    }),
+                    "{case}: no body-location row for {}",
+                    term["body"]
+                );
+            }
+        }
+    }
 }

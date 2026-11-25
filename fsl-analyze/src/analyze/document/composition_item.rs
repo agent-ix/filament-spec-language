@@ -459,7 +459,10 @@ impl CompositionFront for Context<'_> {
         let ResolvedItem::Claim(claim) = resolved else {
             return Ok(GuaranteeResolution::Settled(resolved));
         };
-        let owning_model = super::owning_model(&component, &claim.item.claim).map(str::to_owned);
+        let owning_model = component
+            .graph()
+            .owning_model(claim.item.claim.node())
+            .map(str::to_owned);
         Ok(GuaranteeResolution::Claim {
             claim,
             owning_model,

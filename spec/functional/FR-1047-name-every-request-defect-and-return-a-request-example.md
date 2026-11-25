@@ -239,7 +239,7 @@ request carrying an `export` member, or with `ExportSelection::Evidence` an
   | either source | each run and run-reader entry | a member the typed request reader refuses while decoding (unknown, repeated, of the wrong JSON kind, or a value the decoder rejects); request-level `requirements` without `verification_plan`; a caller-supplied `clocks` override that FR-640 refuses | FR-1047-AC-11 |
   | `program` | each run and run-reader entry | `sources` (FR-100-AC-23) | FR-1047-AC-12 |
   | `package` | each run and run-reader entry | `sources` that FR-1039's caller source table refuses; `integer_division`, `libraries` or `refinement_internals` beside `package` (FR-1039); `clocks` beside `package` (FR-640) | FR-1047-AC-13 |
-  | `program` | the run entries, for a request without `program.extraction`; `prepare_run` and `prepare_run_with_overrides`, for every request | `refinement_internals` without `package`; an `integer_division` value, on the request or on a library, that FR-767 refuses; an extension entry FR-660 refuses from the request alone; more selected files than the FR-026 file ceiling admits; a `program.source` `document` or `formal_revision` its constructor refuses (`invalid-identifier`) | FR-1047-AC-14 |
+  | `program` | the run entries, for a request without `program.extraction`; `prepare_run` and `prepare_run_with_overrides`, for every request | `refinement_internals` without `package`; an `integer_division` value, on the request or on a library, that FR-767 refuses; an extension entry that FR-660's decode rules refuse, or two extension entries with one `{authority, identity}` (`conflicting-definition`), the refusals of FR-660-AC-4; more selected files than the FR-026 file ceiling admits; a `program.source` `document` or `formal_revision` its constructor refuses (`invalid-identifier`) | FR-1047-AC-14 |
   | `program` with `program.extraction`, in a build with `quire-extraction` | the run entries and `read_clause_run_request` | `extraction-clause-count` (FR-031) | FR-1047-AC-15 |
 
 - A provider that `run_with_providers` cannot register is FR-961's refusal.
@@ -247,8 +247,10 @@ request carrying an `export` member, or with `ExportSelection::Evidence` an
   refusal, this one included.
 - Every other check comes after this refusal, so this refusal is given in its
   place (FR-1047-AC-16). That includes every check that reads a named file,
-  the declared edition among them; over either source, FR-100's refusal of a
-  model in a format other than `semantic-ir/2.0.0` and
+  the declared edition among them; FR-660's refusal of a capability id outside
+  its inventory (`unknown_required_feature`/`unknown-feature`), which is
+  checked at the catalog link, after the program read; over either source,
+  FR-100's refusal of a model in a format other than `semantic-ir/2.0.0` and
   `native-model-unit/1`; over a `package` request, the checks of the
   `package` selection's own members; `extraction-clause-count` at
   `prepare_run` and `prepare_run_with_overrides`; and, at

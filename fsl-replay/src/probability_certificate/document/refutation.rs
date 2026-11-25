@@ -316,6 +316,7 @@ fn subject(
                 } else {
                     super::super::reward::RewardProfile::CyclicMdp
                 },
+                None,
                 meter,
                 storage,
                 &control,

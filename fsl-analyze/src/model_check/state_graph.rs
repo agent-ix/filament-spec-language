@@ -236,8 +236,10 @@ pub struct StateGraphRun {
     /// requested.
     pub graph: ExploredStateGraph,
     /// Each item's decisions in request order. Instances have one decision
-    /// each; an item with no instances has one item-level `NoInstance`
-    /// marker, not a per-instance decision (FR-125).
+    /// each. Over a subject with no initial state every item has one
+    /// item-level `NoInitialState` marker; otherwise an item with no
+    /// instances has one item-level `NoInstance` marker. Neither marker is a
+    /// per-instance decision (FR-125).
     pub items: Vec<Vec<StateGraphInstanceOutcome>>,
     /// The deadlock-freedom item's outcome, when the request asked for it.
     pub deadlock: Option<ModelCheckOutcome>,
@@ -527,32 +529,16 @@ pub fn check_state_graph(
         .map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS).map_err(bounds_refusal)?;
     let views = instances(&request.items, &system)?;
-    if views.iter().all(Vec::is_empty) && !request.deadlock_freedom {
-        return Ok(StateGraphRun {
-            graph: explore::empty(RunEnd::Completed),
-            items: views.iter().map(|_| vec![no_instance()]).collect(),
-            deadlock: None,
-            seed,
-        });
-    }
+    // FR-125 Instancing orders the outcomes `requires-bound` (both checks
+    // above), `no-initial-state`, then `no-instance`: a subject with no
+    // initial state admits no key either.
     if no_initial {
         return Ok(StateGraphRun {
             graph: explore::empty(RunEnd::Completed),
-            items: views
+            items: request
+                .items
                 .iter()
-                .map(|item| {
-                    if item.is_empty() {
-                        return vec![no_instance()];
-                    }
-                    item.iter()
-                        .map(|view| StateGraphInstanceOutcome {
-                            over: view.over.clone(),
-                            outcome: StateGraphOutcome::NoInitialState,
-                            sampled: Vec::new(),
-                            walks_stopped: 0,
-                        })
-                        .collect()
-                })
+                .map(|_| vec![no_initial_state()])
                 .collect(),
             deadlock: request
                 .deadlock_freedom
@@ -560,6 +546,14 @@ pub fn check_state_graph(
                     cause: fsl_replay::UndecidedCause::NoInitialState,
                     stats: fsl_replay::RunStats::default(),
                 }),
+            seed,
+        });
+    }
+    if views.iter().all(Vec::is_empty) && !request.deadlock_freedom {
+        return Ok(StateGraphRun {
+            graph: explore::empty(RunEnd::Completed),
+            items: views.iter().map(|_| vec![no_instance()]).collect(),
+            deadlock: None,
             seed,
         });
     }
@@ -982,6 +976,16 @@ fn stopped_before_exploring(
             stats: fsl_replay::RunStats::default(),
         }),
         seed,
+    }
+}
+
+/// The item-level FR-125 outcome over a subject with no initial state.
+fn no_initial_state() -> StateGraphInstanceOutcome {
+    StateGraphInstanceOutcome {
+        over: None,
+        outcome: StateGraphOutcome::NoInitialState,
+        sampled: Vec::new(),
+        walks_stopped: 0,
     }
 }
 

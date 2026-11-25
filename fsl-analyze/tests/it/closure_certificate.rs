@@ -2374,3 +2374,24 @@ fn product_members_mut(
         fsl_replay::ProductClosure::Relation(_) => panic!("expected a temporal product"),
     }
 }
+
+/// FR-125-AC-13: over a subject with no initial state a clause has no
+/// instance either; the checker refuses `NoInitialState`, never
+/// `NoInstance`.
+#[trace("TC-520", "FR-125-AC-13")]
+#[test]
+fn a_clause_over_no_initial_state_is_refused_before_no_instance() {
+    let mut world = world(CONTRACT, &[("c", 0)]);
+    world.initial.clear();
+    let invariant = world.invariant("always holds(c.value <= 3)", |v| Some(v <= 3));
+    let checked = check_closure(
+        &invariant.request(&world, UNLIMITED),
+        &ClosureCertificate { states: Vec::new() },
+        &ModelCheckLimits::default(),
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(checked, Err(ClosureRefusal::NoInitialState)),
+        "{checked:?}"
+    );
+}

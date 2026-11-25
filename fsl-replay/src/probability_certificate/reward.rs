@@ -151,6 +151,7 @@ pub(super) fn enumerate(
     cancel: &Cancel,
     identity: fsl_foundation::IdentityLimits,
     profile: RewardProfile,
+    expand: Option<&BTreeSet<ProbabilityProductKey>>,
     meter: &mut filament_exact::Meter,
     used: &mut u64,
     control: &RewardControl<'_>,
@@ -217,6 +218,7 @@ pub(super) fn enumerate(
             limits.edges,
             cancel,
             stop_at_target,
+            expand,
             &key_of,
             &mut |bytes| {
                 charge(
@@ -359,11 +361,13 @@ pub(super) fn enumerate(
         cancel,
     )?;
     topological_order(&graph, cancel)?;
-    if graph
-        .states
-        .values()
-        .any(|state| state.choices.is_empty() && state.terminal != Some(true))
-    {
+    // A state a partial product leaves unexpanded has no choices to read, so
+    // only an expanded one can be a non-target terminal.
+    if graph.states.iter().any(|(key, state)| {
+        expand.is_none_or(|named| named.contains(key))
+            && state.choices.is_empty()
+            && state.terminal != Some(true)
+    }) {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     for key in graph.states.keys() {
