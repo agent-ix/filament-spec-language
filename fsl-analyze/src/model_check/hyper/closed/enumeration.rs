@@ -191,7 +191,7 @@ impl Run<'_, '_> {
                         for (transition, state) in expanded.successors {
                             charge(meter, self.cancel)?;
                             let (_, post_state) = system
-                                .state_key(&state)
+                                .state_key(&state, fsl_foundation::IdentityLimits::default())
                                 .map_err(crate::model_check::ModelCheckRefusal::Encoding)?;
                             let mut following = path.clone();
                             following.states.push(state);

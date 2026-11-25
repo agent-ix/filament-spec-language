@@ -305,7 +305,12 @@ fn a_state_and_its_swapped_image_canonicalise_equal() {
         canonical_symbolic_state(&timed, &group, first.post(), &zone).expect("canonical");
     let (right, right_zone, _) =
         canonical_symbolic_state(&timed, &group, second.post(), &image).expect("canonical");
-    let key = |state| system.state_key(state).expect("a key").0;
+    let key = |state| {
+        system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .expect("a key")
+            .0
+    };
     assert_eq!(key(&left), key(&right));
     assert_eq!(left_zone, right_zone);
 }

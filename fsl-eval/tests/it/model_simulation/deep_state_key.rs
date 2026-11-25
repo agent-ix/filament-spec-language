@@ -123,39 +123,34 @@ fn a_100_000_long_list_keys_as_its_rfc_8785_text() {
     keys_as_its_rfc_8785_text(false);
 }
 
-/// TC-735 step 2 over the unbudgeted `ModelSystem::state_key`, the strict
-/// form of the same requirement. IGNORED because it fails today, for two
-/// reasons found in production code, neither changed here:
-///
-/// 1. `Canonicalizer::write` and `Canonicalizer::object` in
-///    `fsl-eval/src/simulation/model/encode.rs` recurse once per record
-///    level, so a 100,000-deep value overflows the 512 KiB stack (the
-///    process aborts with SIGSEGV and takes the whole test binary with it).
-/// 2. `state_key` encodes under the fixed 16 MiB identity limit, and this
-///    key is 16,777,218 bytes, so on a larger stack it refuses
-///    `IdentityInputBytes` instead of returning the key.
-///
-/// Remove the `ignore` when `state_key` is iterative and takes a bound.
-#[ignore = "QSL-3355: ModelSystem::state_key recurses per record level (stack overflow at 512 KiB) and caps keys at 16 MiB"]
+/// TC-735 step 2 over the caller-bounded `ModelSystem::state_key`, the strict
+/// form of the same requirement. The explicit 1 GiB identity bound admits
+/// these canonical key bytes.
+#[trace("TC-735", "FR-262-AC-2")]
+#[trace("TC-729", "FR-259-AC-3")]
 #[test]
-fn a_100_000_long_list_keys_as_its_rfc_8785_text_through_the_unbudgeted_state_key() {
+fn a_100_000_long_list_keys_as_its_rfc_8785_text_through_the_caller_bounded_state_key() {
     keys_as_its_rfc_8785_text(true);
 }
 
-fn keys_as_its_rfc_8785_text(unbudgeted: bool) {
-    let small = on_stack(512 * 1024, move || state_key_bytes(unbudgeted));
-    if !unbudgeted {
+fn keys_as_its_rfc_8785_text(through_public_api: bool) {
+    let small = on_stack(512 * 1024, move || state_key_bytes(through_public_api));
+    if !through_public_api {
         let large = on_stack(8 * 1024 * 1024, || state_key_bytes(false));
         assert!(small == large, "the key differs across stack sizes");
     }
 }
 
-fn state_key_bytes(unbudgeted: bool) -> Vec<u8> {
+fn state_key_bytes(through_public_api: bool) -> Vec<u8> {
     with_deep_state(|system, state, world| {
-        // The default 16 MiB identity ceiling is below this key's size,
-        // so the key is encoded with the explicitly raised limit.
-        let raw = if unbudgeted {
-            system.state_key(state).expect("the key encodes").0
+        let raw = if through_public_api {
+            system
+                .state_key(
+                    state,
+                    fsl_foundation::IdentityLimits::default().with_input_bytes(1 << 30),
+                )
+                .expect("the key encodes")
+                .0
         } else {
             encode_state(system, state, 1 << 30).expect("the key encodes")
         };
