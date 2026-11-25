@@ -5984,6 +5984,29 @@ fn same_read_range_guards_prove_bounded_addition_in_all_clause_contexts() {
     }
 }
 
+/// FR-104-AC-1: a finite field's upper bound does not prove that its
+/// unguarded successor remains in range, even when the comparison literal is
+/// the declared maximum.
+#[trace("FR-104-AC-1")]
+#[test]
+fn an_unproved_successor_comparison_refuses_at_the_sum() {
+    let document = config_version_document(
+        attempt_update_modifies_version_number(),
+        Vec::new(),
+        Vec::new(),
+        json!([]),
+    );
+    let body = "invariant G using v on Config::ConfigVersion at current { self.versionNumber + 1 <= 1000 }\n";
+    let refusals = match check(&document, body) {
+        Ok(_) => panic!("the unproved sum was accepted"),
+        Err(refusals) => refusals,
+    };
+    assert_eq!(
+        refusals,
+        vec![(Code::UndefinedExpression, Some("unproved-range"))]
+    );
+}
+
 /// FR-104-AC-10: process-owned `self.n` reads use the owner reference and
 /// the clause's own temporal observation, while a missing operation is
 /// rejected at its qualified name.
