@@ -10,10 +10,12 @@ an explicit filter with no non-ignored matches then fails closed. A local
 library-module filter with no matches is reported as a note.
 
 The output is one command per line, with target `--no-run` compilation commands
-first, name-filtered test commands next, any external driver note after those,
-and `cargo check --locked --workspace --all-targets` last. Run the printed
-commands in that order. The recipe itself only lists tests; it does not execute
-them. For spec-only changes it prints `NO CARGO: spec-only change.`
+first, named-filter test commands next, any external driver note after those,
+and `cargo check --locked --workspace --all-targets` last. Every test command
+has a named module or test filter; the recipe never runs an unfiltered library
+or crate test target. Run the printed commands in that order. The recipe itself
+only lists tests; it does not execute them. For spec-only changes it prints
+`NO CARGO: spec-only change.`
 
 `fsl-analyze` integration tests are split across the `it` (analysis and package
 API), `it_monitor_protocol`, `it_probabilistic`, `it_model_check`,
@@ -36,7 +38,12 @@ other readers are not inferred.
 
 | Changed paths | Local controls | Consumer controls |
 | --- | --- | --- |
-| `fsl-package/src/emit/**` | `fsl-package` lib `emit` tests, one thread, skip 100k tests and the 2/1000 nested-form stress test | All four analyze IT engine filters: `monitor_`, `timed_`, `hyper`, `probabilistic`; command IT `run_requirement_items`; each large emitter and replay control runs alone with timing enabled |
+| `fsl-package/src/emit/**` | `fsl-package` lib `emit` tests, one thread, skip 100k tests and the 2/1000 nested-form stress test | All four analyze IT engine filters: `monitor_`, `timed_`, `hyper`, `probabilistic`; command IT `run_requirement_items`; named modules in direct package consumers; each large emitter and replay control runs alone with timing enabled |
+| `fsl-package/src/**` outside `emit/**` | Touched library module | Named modules in direct consumers `fsl-eval`, `fsl-replay`, `fsl-analyze`, `fsl-command`, `fsl-conformance`, `fsl-inspect`, `fsl-jit`, `fsl-bench`, `fsl-probability-check` and the root package |
+| `fsl-foundation/src/**` | Touched library module | Named modules in direct consumers, including `fsl-cst`, `fsl-source`, `fsl-forms`, `fsl-route`, `fsl-semantics`, `fsl-package`, `fsl-eval`, `fsl-replay`, `fsl-analyze`, `fsl-command`, `fsl-conformance`, `fsl-inspect`, `fsl-hybrid-reference`, `fsl-jit`, `fsl-bench`, `fsl-probability-check`, `fsl-hybrid-test-provider` and the root package |
+| `fsl-source/src/**` | Touched library module | Named IT modules in `fsl-replay`, `fsl-command` and the root package |
+| `fsl-cst/src/**` | Touched library module | Named modules in `fsl-forms`, `fsl-package`, `fsl-semantics`, `fsl-eval`, `fsl-replay`, `fsl-analyze`, `fsl-command`, `fsl-conformance`, `fsl-inspect`, `fsl-jit`, `fsl-bench` and the root package |
+| `fsl-forms/src/**` | Touched library module | Named modules in `fsl-semantics`, `fsl-package`, `fsl-eval`, `fsl-replay`, `fsl-analyze`, `fsl-command`, `fsl-conformance`, `fsl-inspect`, `fsl-jit`, `fsl-bench` and the root package |
 | `fsl-analyze/src/analyze/exact.rs`, `exact/**` | Touched library module | `fsl-analyze` filters `probabilistic` and `timed_`; every `fsl-probability-check` IT module |
 | `fsl-analyze/src/exact_probabilistic*` | Touched library module | `fsl-analyze` filters `probabilistic` and `timed_`; every `fsl-probability-check` IT module |
 | `fsl-semantics/src/check/probabilistic*`, `check/mod.rs` | Touched library module | `fsl-analyze` filters `timed_`, `timed_within_200`, `timed_within_201`; every `fsl-probability-check` IT module |
@@ -53,10 +60,11 @@ other readers are not inferred.
 | `fsl-command/src/**` | Touched library module plus IT modules selected by explicit command-area rules | Driver pin changes also require driver targets `frontend_cli`, `binary_process`, `cli_contract` |
 | Known `fsl-eval` and `fsl-semantics` paths | Touched library module | Explicit table of root/consumer IT filters; unknown paths add analyze `timed_` and a note |
 | One or more test files only | The changed test modules or named tests; every module of each declaring target for a helper-only module | If a changed diff adds/removes `#[ignore]`, xtask `ignored_reason_tests::` |
-| `xtask/**` | Whole xtask `--lib` target | None |
+| `xtask/src/<module>.rs` | The changed xtask library module | None |
+| `xtask` crate root or manifest | Named top-level xtask library modules | None |
 | `Cargo.toml`, `Cargo.lock` | Workspace check | All emitter consumers: analyze's four engine filters and command `run_requirement_items` |
 | `spec/**` only | No Cargo commands | None |
-| Crate `lib.rs`, `main.rs`, or root `mod.rs` | Whole `--lib` for small crates; union of crate rules for large crates | Crate-specific consumer routes |
+| Crate `lib.rs`, `main.rs`, or root `mod.rs` | Named top-level library modules | Crate-specific consumer routes |
 | `<crate>/tests/fixtures/**`, `<crate>/tests/support/**` | All integration-test modules in the crate | — |
 | Root `tests/fixtures/**`, `tests/support/**` | All root-package modules when the root target declares the file, or, with a note, when no target does | All modules of each other declaring target, in any package |
 | `README.md`, `docs/**`, `Makefile`, `.github/**` | Note only; workspace check if combined with code | — |

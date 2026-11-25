@@ -63,7 +63,7 @@ struct Recipe {
 enum LibRule {
     SourceModule,
     Fixed(&'static str),
-    Whole,
+    NamedModules,
 }
 
 #[derive(Clone, Copy)]
@@ -315,6 +315,232 @@ const PROTOCOL_STATE_KEY_CONSUMERS: &[ItFilter] = &[
         rule: ItRule::Fixed("native_correlation"),
     },
 ];
+const FOUNDATION_CONSUMERS: &[ItFilter] = &[
+    ItFilter {
+        package: "fsl-cst",
+        rule: ItRule::AllModules("fsl-cst"),
+    },
+    ItFilter {
+        package: "fsl-source",
+        rule: ItRule::AllModules("fsl-source"),
+    },
+    ItFilter {
+        package: "fsl-forms",
+        rule: ItRule::AllModules("fsl-forms"),
+    },
+    ItFilter {
+        package: "fsl-route",
+        rule: ItRule::AllModules("fsl-route"),
+    },
+    ItFilter {
+        package: "fsl-semantics",
+        rule: ItRule::AllModules("fsl-semantics"),
+    },
+    ItFilter {
+        package: "fsl-package",
+        rule: ItRule::AllModules("fsl-package"),
+    },
+    ItFilter {
+        package: "fsl-eval",
+        rule: ItRule::AllModules("fsl-eval"),
+    },
+    ItFilter {
+        package: "fsl-replay",
+        rule: ItRule::AllModules("fsl-replay"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::AllModules("fsl-analyze"),
+    },
+    ItFilter {
+        package: "fsl-command",
+        rule: ItRule::AllModules("fsl-command"),
+    },
+    ItFilter {
+        package: "fsl-conformance",
+        rule: ItRule::AllModules("fsl-conformance"),
+    },
+    ItFilter {
+        package: "fsl-inspect",
+        rule: ItRule::AllModules("fsl-inspect"),
+    },
+    ItFilter {
+        package: "fsl-hybrid-reference",
+        rule: ItRule::AllModules("fsl-hybrid-reference"),
+    },
+    ItFilter {
+        package: "fsl-jit",
+        rule: ItRule::AllModules("fsl-jit"),
+    },
+    ItFilter {
+        package: "fsl-bench",
+        rule: ItRule::AllModules("fsl-bench"),
+    },
+    ItFilter {
+        package: "fsl-probability-check",
+        rule: ItRule::AllModules("fsl-probability-check"),
+    },
+    ItFilter {
+        package: "fsl-hybrid-test-provider",
+        rule: ItRule::AllModules("fsl-hybrid-test-provider"),
+    },
+    ItFilter {
+        package: "filament-spec-language",
+        rule: ItRule::AllModules("filament-spec-language"),
+    },
+];
+const SOURCE_CONSUMERS: &[ItFilter] = &[
+    ItFilter {
+        package: "fsl-replay",
+        rule: ItRule::AllModules("fsl-replay"),
+    },
+    ItFilter {
+        package: "fsl-command",
+        rule: ItRule::AllModules("fsl-command"),
+    },
+    ItFilter {
+        package: "filament-spec-language",
+        rule: ItRule::AllModules("filament-spec-language"),
+    },
+];
+const CST_CONSUMERS: &[ItFilter] = &[
+    ItFilter {
+        package: "fsl-forms",
+        rule: ItRule::AllModules("fsl-forms"),
+    },
+    ItFilter {
+        package: "fsl-package",
+        rule: ItRule::AllModules("fsl-package"),
+    },
+    ItFilter {
+        package: "fsl-semantics",
+        rule: ItRule::AllModules("fsl-semantics"),
+    },
+    ItFilter {
+        package: "fsl-eval",
+        rule: ItRule::AllModules("fsl-eval"),
+    },
+    ItFilter {
+        package: "fsl-replay",
+        rule: ItRule::AllModules("fsl-replay"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::AllModules("fsl-analyze"),
+    },
+    ItFilter {
+        package: "fsl-command",
+        rule: ItRule::AllModules("fsl-command"),
+    },
+    ItFilter {
+        package: "fsl-conformance",
+        rule: ItRule::AllModules("fsl-conformance"),
+    },
+    ItFilter {
+        package: "fsl-inspect",
+        rule: ItRule::AllModules("fsl-inspect"),
+    },
+    ItFilter {
+        package: "fsl-jit",
+        rule: ItRule::AllModules("fsl-jit"),
+    },
+    ItFilter {
+        package: "fsl-bench",
+        rule: ItRule::AllModules("fsl-bench"),
+    },
+    ItFilter {
+        package: "filament-spec-language",
+        rule: ItRule::AllModules("filament-spec-language"),
+    },
+];
+const FORMS_CONSUMERS: &[ItFilter] = &[
+    ItFilter {
+        package: "fsl-semantics",
+        rule: ItRule::AllModules("fsl-semantics"),
+    },
+    ItFilter {
+        package: "fsl-package",
+        rule: ItRule::AllModules("fsl-package"),
+    },
+    ItFilter {
+        package: "fsl-eval",
+        rule: ItRule::AllModules("fsl-eval"),
+    },
+    ItFilter {
+        package: "fsl-replay",
+        rule: ItRule::AllModules("fsl-replay"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::AllModules("fsl-analyze"),
+    },
+    ItFilter {
+        package: "fsl-command",
+        rule: ItRule::AllModules("fsl-command"),
+    },
+    ItFilter {
+        package: "fsl-conformance",
+        rule: ItRule::AllModules("fsl-conformance"),
+    },
+    ItFilter {
+        package: "fsl-inspect",
+        rule: ItRule::AllModules("fsl-inspect"),
+    },
+    ItFilter {
+        package: "fsl-jit",
+        rule: ItRule::AllModules("fsl-jit"),
+    },
+    ItFilter {
+        package: "fsl-bench",
+        rule: ItRule::AllModules("fsl-bench"),
+    },
+    ItFilter {
+        package: "filament-spec-language",
+        rule: ItRule::AllModules("filament-spec-language"),
+    },
+];
+const PACKAGE_CONSUMERS: &[ItFilter] = &[
+    ItFilter {
+        package: "fsl-eval",
+        rule: ItRule::AllModules("fsl-eval"),
+    },
+    ItFilter {
+        package: "fsl-replay",
+        rule: ItRule::AllModules("fsl-replay"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::AllModules("fsl-analyze"),
+    },
+    ItFilter {
+        package: "fsl-command",
+        rule: ItRule::AllModules("fsl-command"),
+    },
+    ItFilter {
+        package: "fsl-conformance",
+        rule: ItRule::AllModules("fsl-conformance"),
+    },
+    ItFilter {
+        package: "fsl-inspect",
+        rule: ItRule::AllModules("fsl-inspect"),
+    },
+    ItFilter {
+        package: "fsl-jit",
+        rule: ItRule::AllModules("fsl-jit"),
+    },
+    ItFilter {
+        package: "fsl-bench",
+        rule: ItRule::AllModules("fsl-bench"),
+    },
+    ItFilter {
+        package: "fsl-probability-check",
+        rule: ItRule::AllModules("fsl-probability-check"),
+    },
+    ItFilter {
+        package: "filament-spec-language",
+        rule: ItRule::AllModules("filament-spec-language"),
+    },
+];
 const ABSTRACTION_CONSUMERS: &[ItFilter] = &[
     ItFilter {
         package: "fsl-analyze",
@@ -429,7 +655,7 @@ const RULES: &[Rule] = &[
         prefix: "fsl-package/src/reader_protocol_projection.rs",
         package: Some("fsl-package"),
         lib: Some(LibRule::SourceModule),
-        it_filters: &[],
+        it_filters: PACKAGE_CONSUMERS,
         large_input: PROJECTION_LARGE_INPUTS,
         note: None,
         skips: &[],
@@ -439,7 +665,7 @@ const RULES: &[Rule] = &[
         prefix: "fsl-package/src/checked_v2.rs",
         package: Some("fsl-package"),
         lib: Some(LibRule::SourceModule),
-        it_filters: &[],
+        it_filters: PACKAGE_CONSUMERS,
         large_input: PROJECTION_LARGE_INPUTS,
         note: None,
         skips: &[],
@@ -448,8 +674,8 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-forms/src/spans.rs",
         package: Some("fsl-forms"),
-        lib: Some(LibRule::Whole),
-        it_filters: &[],
+        lib: Some(LibRule::SourceModule),
+        it_filters: FORMS_CONSUMERS,
         large_input: PROJECTION_LARGE_INPUTS,
         note: None,
         skips: &[],
@@ -1006,7 +1232,7 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "xtask/",
         package: Some("xtask"),
-        lib: Some(LibRule::Whole),
+        lib: Some(LibRule::NamedModules),
         it_filters: &[],
         large_input: &[],
         note: None,
@@ -1016,8 +1242,8 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-foundation/src/",
         package: Some("fsl-foundation"),
-        lib: Some(LibRule::Whole),
-        it_filters: &[],
+        lib: Some(LibRule::SourceModule),
+        it_filters: FOUNDATION_CONSUMERS,
         large_input: &[],
         note: None,
         skips: &[],
@@ -1026,8 +1252,8 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-source/src/",
         package: Some("fsl-source"),
-        lib: Some(LibRule::Whole),
-        it_filters: &[],
+        lib: Some(LibRule::SourceModule),
+        it_filters: SOURCE_CONSUMERS,
         large_input: &[],
         note: None,
         skips: &[],
@@ -1036,8 +1262,8 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-cst/src/",
         package: Some("fsl-cst"),
-        lib: Some(LibRule::Whole),
-        it_filters: &[],
+        lib: Some(LibRule::SourceModule),
+        it_filters: CST_CONSUMERS,
         large_input: &[],
         note: None,
         skips: &[],
@@ -1046,8 +1272,8 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-forms/src/",
         package: Some("fsl-forms"),
-        lib: Some(LibRule::Whole),
-        it_filters: &[],
+        lib: Some(LibRule::SourceModule),
+        it_filters: FORMS_CONSUMERS,
         large_input: &[],
         note: None,
         skips: &[],
@@ -1057,7 +1283,7 @@ const RULES: &[Rule] = &[
         prefix: "fsl-package/src/",
         package: Some("fsl-package"),
         lib: Some(LibRule::SourceModule),
-        it_filters: &[],
+        it_filters: PACKAGE_CONSUMERS,
         large_input: &[],
         note: None,
         skips: &[],
@@ -1187,7 +1413,7 @@ fn run_with_runner(
     let mut recipe = plan_paths(workspace_root, &paths)?;
     for path in &paths {
         if is_test_path(path) && ignore_attribute_changed(workspace_root, path, runner)? {
-            add_whole_library(&mut recipe, "xtask");
+            add_named_library_modules(workspace_root, &mut recipe, "xtask")?;
         }
     }
 
@@ -1275,7 +1501,7 @@ fn plan_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Result<(
         return Ok(());
     }
     if matches!(path, "src/lib.rs" | "src/main.rs" | "src/mod.rs") {
-        add_whole_library(recipe, "filament-spec-language");
+        add_named_library_modules(workspace_root, recipe, "filament-spec-language")?;
         return Ok(());
     }
     if let Some(relative) = path.strip_prefix("tools/fsl-probability-check/") {
@@ -1305,7 +1531,14 @@ fn plan_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Result<(
         return Ok(());
     }
     if path.starts_with("xtask/") {
-        add_whole_library(recipe, "xtask");
+        if path.starts_with("xtask/src/")
+            && !path.ends_with("/lib.rs")
+            && !path.ends_with("/main.rs")
+        {
+            add_library(recipe, "xtask", source_module_filter(path)?, true);
+        } else {
+            add_named_library_modules(workspace_root, recipe, "xtask")?;
+        }
         return Ok(());
     }
     if path.contains("/tests/fixtures/") || path.contains("/tests/support/") {
@@ -1569,10 +1802,13 @@ fn apply_rule(workspace_root: &Path, path: &str, rule: &Rule, recipe: &mut Recip
                     no_match_is_note: false,
                 },
             ),
-            LibRule::Whole => add_whole_library(recipe, package),
+            LibRule::NamedModules => add_named_library_modules(workspace_root, recipe, package)?,
         }
     }
     apply_it_filters(workspace_root, rule.it_filters, Some(path), recipe)?;
+    if path.starts_with("fsl-package/src/emit") {
+        apply_it_filters(workspace_root, PACKAGE_CONSUMERS, None, recipe)?;
+    }
     for control in rule.large_input {
         add_large_input(recipe, control);
     }
@@ -1615,6 +1851,7 @@ fn integration_roots(package: &str) -> Vec<(String, String)> {
     let path = match package {
         "filament-spec-language" => "tests/it/main.rs".to_owned(),
         "fsl-probability-check" => format!("tools/{package}/tests/it/main.rs"),
+        "fsl-hybrid-test-provider" => format!("tools/{package}/tests/it/main.rs"),
         _ => format!("{package}/tests/it/main.rs"),
     };
     vec![("it".to_owned(), path)]
@@ -1856,7 +2093,7 @@ fn add_all_it_modules(workspace_root: &Path, package: &str, recipe: &mut Recipe)
         .filter(|(_, root)| workspace_root.join(root).is_file())
         .collect::<Vec<_>>();
     if existing.is_empty() {
-        add_whole_library(recipe, package);
+        add_named_library_modules(workspace_root, recipe, package)?;
         recipe.notes.insert(format!(
             "{package} has no integration-test target; falling back to its library tests"
         ));
@@ -1926,11 +2163,8 @@ fn apply_crate_fallback(path: &str, workspace_root: &Path, recipe: &mut Recipe) 
             .insert(format!("no crate-level rule for {path}"));
         return Ok(());
     };
-    if matches!(
-        package,
-        "fsl-foundation" | "fsl-source" | "fsl-cst" | "fsl-forms"
-    ) {
-        add_whole_library(recipe, package);
+    if matches!(path, "src/lib.rs" | "src/main.rs" | "src/mod.rs") {
+        add_named_library_modules(workspace_root, recipe, package)?;
         return Ok(());
     }
     if matches!(
@@ -1952,6 +2186,7 @@ fn apply_crate_fallback(path: &str, workspace_root: &Path, recipe: &mut Recipe) 
                         recipe,
                     )?;
                 }
+                apply_it_filters(workspace_root, PACKAGE_CONSUMERS, None, recipe)?;
             }
             "fsl-replay" => {
                 if let Some(rule) = matching_rule("fsl-replay/src/fallback.rs") {
@@ -1977,7 +2212,7 @@ fn apply_crate_fallback(path: &str, workspace_root: &Path, recipe: &mut Recipe) 
         return Ok(());
     }
     if package == "xtask" {
-        add_whole_library(recipe, "xtask");
+        add_named_library_modules(workspace_root, recipe, "xtask")?;
     } else if matches!(package, "fsl-eval" | "fsl-semantics") {
         add_library(
             recipe,
@@ -1994,7 +2229,7 @@ fn apply_crate_fallback(path: &str, workspace_root: &Path, recipe: &mut Recipe) 
             "unknown {package} source path; added timed analyzer consumer control"
         ));
     } else {
-        add_whole_library(recipe, package);
+        add_named_library_modules(workspace_root, recipe, package)?;
     }
     Ok(())
 }
@@ -2019,20 +2254,47 @@ fn add_library(recipe: &mut Recipe, package: &str, filter: String, no_match_is_n
     );
 }
 
-fn add_whole_library(recipe: &mut Recipe, package: &str) {
-    add_target_filter(
-        recipe,
-        TestSelector {
-            package: package.to_owned(),
-            target: TestTarget::Library,
-            filter: None,
-            exact: false,
-            skip: Vec::new(),
-            timed: false,
-            threads: None,
-            no_match_is_note: false,
-        },
-    );
+fn add_named_library_modules(
+    workspace_root: &Path,
+    recipe: &mut Recipe,
+    package: &str,
+) -> Result<()> {
+    let root = match package {
+        "filament-spec-language" => PathBuf::from("src/lib.rs"),
+        "xtask" => PathBuf::from("xtask/src/lib.rs"),
+        "fsl-probability-check" => PathBuf::from("tools/fsl-probability-check/src/lib.rs"),
+        _ => PathBuf::from(package).join("src/lib.rs"),
+    };
+    let source = fs::read_to_string(workspace_root.join(&root)).map_err(|error| {
+        Error::MergeGateRecipe(format!(
+            "cannot read library root {} for named test selection: {error}",
+            root.display()
+        ))
+    })?;
+    let file = syn::parse_file(&source).map_err(|error| {
+        Error::MergeGateRecipe(format!(
+            "cannot parse library root {} for named test selection: {error}",
+            root.display()
+        ))
+    })?;
+    let mut modules = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Mod(module) => Some(module.ident.to_string()),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    if modules.is_empty() {
+        return Err(Error::MergeGateRecipe(format!(
+            "no named modules found in {} for test selection",
+            root.display()
+        )));
+    }
+    for module in std::mem::take(&mut modules) {
+        add_library(recipe, package, format!("{module}::"), true);
+    }
+    Ok(())
 }
 
 fn add_integration(
@@ -3134,7 +3396,7 @@ mod tests {
     }
 
     #[test]
-    fn command_paths_include_local_module_and_forms_spans_runs_whole_library() {
+    fn command_paths_include_local_modules_and_forms_spans_selects_its_module() {
         let command = plan(workspace_root(), &["fsl-command/src/command/items.rs"]);
         assert!(command.selectors.iter().any(|item| {
             item.package == "fsl-command"
@@ -3149,7 +3411,7 @@ mod tests {
         assert!(spans.selectors.iter().any(|item| {
             item.package == "fsl-forms"
                 && item.target == TestTarget::Library
-                && item.filter.is_none()
+                && item.filter.as_deref() == Some("spans::")
         }));
         assert!(spans
             .selectors
@@ -3352,7 +3614,7 @@ mod tests {
         assert!(plan(workspace_root(), &["xtask/src/new_task.rs"])
             .selectors
             .iter()
-            .any(|item| item.package == "xtask" && item.filter.is_none()));
+            .any(|item| item.package == "xtask" && item.filter.is_some()));
         assert!(
             plan(
                 workspace_root(),
@@ -3373,7 +3635,7 @@ mod tests {
         assert!(plan(workspace_root(), &["src/lib.rs"])
             .selectors
             .iter()
-            .any(|item| item.package == "filament-spec-language" && item.filter.is_none()));
+            .any(|item| item.package == "filament-spec-language" && item.filter.is_some()));
     }
 
     #[test]
@@ -3390,7 +3652,71 @@ mod tests {
         assert!(recipe
             .selectors
             .iter()
-            .any(|item| item.package == "xtask" && item.filter.is_none()));
+            .any(|item| item.package == "xtask"
+                && item.filter.as_deref() == Some("merge_gate_recipe::")));
+    }
+
+    #[test]
+    fn low_level_changes_select_named_downstream_modules() {
+        let foundation = plan(workspace_root(), &["fsl-foundation/src/source_map.rs"]);
+        assert!(foundation.selectors.iter().any(|item| {
+            item.package == "fsl-cst" && item.target == TestTarget::Integration("it".to_owned())
+        }));
+        assert!(foundation.selectors.iter().any(|item| {
+            item.package == "filament-spec-language"
+                && item.target == TestTarget::Integration("it".to_owned())
+        }));
+
+        let source = plan(workspace_root(), &["fsl-source/src/preflight.rs"]);
+        assert!(source.selectors.iter().any(|item| {
+            item.package == "fsl-command" && item.target == TestTarget::Integration("it".to_owned())
+        }));
+
+        let cst = plan(workspace_root(), &["fsl-cst/src/cst.rs"]);
+        assert!(cst.selectors.iter().any(|item| {
+            item.package == "fsl-forms" && item.target == TestTarget::Integration("it".to_owned())
+        }));
+
+        let forms = plan(workspace_root(), &["fsl-forms/src/spans.rs"]);
+        assert!(forms.selectors.iter().any(|item| {
+            item.package == "fsl-semantics"
+                && item.target == TestTarget::Integration("it".to_owned())
+        }));
+
+        let package = plan(workspace_root(), &["fsl-package/src/probabilistic_read.rs"]);
+        assert!(package.selectors.iter().any(|item| {
+            item.package == "fsl-eval" && item.target == TestTarget::Integration("it".to_owned())
+        }));
+        assert!(foundation
+            .selectors
+            .iter()
+            .chain(source.selectors.iter())
+            .chain(cst.selectors.iter())
+            .chain(forms.selectors.iter())
+            .chain(package.selectors.iter())
+            .all(|item| item.filter.is_some()));
+    }
+
+    #[test]
+    fn crate_wide_fallbacks_emit_only_named_library_filters() {
+        for path in [
+            "xtask/src/lib.rs",
+            "xtask/Cargo.toml",
+            "src/lib.rs",
+            "fsl-foundation/Cargo.toml",
+            "fsl-source/src/lib.rs",
+            "fsl-cst/src/lib.rs",
+            "fsl-forms/src/lib.rs",
+            "fsl-package/src/lib.rs",
+        ] {
+            let recipe = plan(workspace_root(), &[path]);
+            assert!(!recipe.selectors.is_empty(), "{path}");
+            assert!(
+                recipe.selectors.iter().all(|item| item.filter.is_some()),
+                "{path} selected an unfiltered library target: {}",
+                displays(&recipe).join("\n")
+            );
+        }
     }
 
     #[test]
