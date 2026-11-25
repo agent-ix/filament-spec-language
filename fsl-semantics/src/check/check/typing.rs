@@ -3785,6 +3785,7 @@ impl<'a> Typer<'a> {
         )))
     }
 
+    #[implements("FR-980-AC-3")]
     fn accept_let<'e, 'r>(
         &mut self,
         mut frame: Box<LetFrame<'e, 'r>>,
@@ -4759,6 +4760,9 @@ impl<'a> Typer<'a> {
     }
 
     /// Start `form(binder in population where c [: e])` (FR-139).
+    #[implements("FR-139-AC-1")]
+    #[implements("FR-139-AC-2")]
+    #[implements("FR-391-AC-7")]
     fn population_form<'e, 'r>(
         &mut self,
         (form, binder, population, population_span): (PopulationForm, &'e str, &str, Span),
