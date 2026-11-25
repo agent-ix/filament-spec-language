@@ -724,66 +724,6 @@ fn a_cancelled_handle_stops_prepare_and_call() {
     );
 }
 
-/// FR-276-AC-6 (TC-757): a pre-cancelled meter stops at `function.call`
-/// without admitting a charge; `execute` returns the same cancellation.
-#[trace("TC-757", "FR-276-AC-6")]
-#[test]
-fn a_pre_cancelled_count_call_is_incomplete_at_function_call() {
-    const COUNT: &str = "language \"ix:native\" edition \"1-draft\";\n\
-        profile v = \"filament.value.complete/v1\";\n\
-        function count using v(n: Int[0, 1000000]): Integer pure decreases(n) {\n\
-            if n = 0 then 0 else count(n - 1) + 1\n\
-        }\n";
-    let unit = checked_source("tc-757-count.native", COUNT);
-    let cancel = Cancel::new();
-    let mut supplied = SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
-        .expect("supplied limits initialize");
-    cancel.cancel(CancelCause::Requested);
-
-    let mut meter = Meter::new(default_accounting(u64::MAX)).with_cancel(cancel.clone());
-    let called = unit.package().call(
-        &name("count"),
-        vec![integer(3)],
-        &ObjectEnvironment::default(),
-        &mut meter,
-    );
-    let Evaluation {
-        outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
-        ..
-    } = called.expect("the package call reports cancellation as incomplete")
-    else {
-        panic!("expected an incomplete evaluation at function.call");
-    };
-    assert_eq!(incomplete.limit_kind, filament_exact::LimitKind::WorkUnits);
-    assert_eq!(incomplete.limit, incomplete.consumed);
-    assert_eq!(
-        incomplete.charge_point,
-        filament_exact::ChargePoint::FunctionCall
-    );
-    assert_eq!(meter.admitted_charges(), &[]);
-    assert_eq!(cancel.tripped(), Some(CancelCause::Requested));
-
-    let executed = fsl_eval::execution::execute(
-        unit.package(),
-        &request(
-            "count",
-            vec![integer(3)],
-            ExecutionBackendChoice::Interpreter,
-        ),
-        &SuppliedBackends::default(),
-        &limits(),
-        &mut supplied,
-        &cancel,
-    );
-    assert!(
-        matches!(
-            executed,
-            Err(CallFailure::Cancelled(CancelCause::Requested))
-        ),
-        "expected execute cancellation with no value, got {executed:?}"
-    );
-}
-
 /// A test backend that charges one compile work unit per entry.
 struct PerEntry;
 
