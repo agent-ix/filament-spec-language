@@ -203,7 +203,7 @@ impl ModelSystem<'_> {
                 let Some(object) = self
                     .initial_base
                     .iter()
-                    .find_map(|state| state.state.populations.get(&population.key)?.get(key))
+                    .find_map(|state| state.state().populations.get(&population.key)?.get(key))
                 else {
                     continue;
                 };
@@ -252,7 +252,7 @@ impl ModelSystem<'_> {
         let mut admitted = Vec::new();
         for state in &self.initial_base {
             for object in state
-                .state
+                .state()
                 .populations
                 .values()
                 .flat_map(|objects| objects.values())
