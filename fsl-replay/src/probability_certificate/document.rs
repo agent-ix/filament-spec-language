@@ -3,6 +3,7 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use ix_trace_rs::implements;
 use serde::{Deserialize, Serialize};
 
 use super::*;
@@ -2207,6 +2208,7 @@ impl Offer<'_> {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-1042-AC-19", "FR-1042-AC-25", "FR-1042-AC-26")]
 fn check_document_bytes(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],

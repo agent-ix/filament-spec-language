@@ -4,6 +4,7 @@
 //! names and their successors.
 
 use super::*;
+use ix_trace_rs::implements;
 
 /// The `cyclic_dtmc` flag of the base a partial product's `lower` document
 /// takes for `claim`: the cyclic chain for an `eventually`, the acyclic
@@ -94,6 +95,7 @@ pub(super) fn explored_subject(
 /// ranking each named state by its distance to a named target through named
 /// states of positive value; an expected reward takes the acyclic profile,
 /// ranked by height in that part. This does not grant acceptance.
+#[implements("FR-1042-AC-25", "FR-1042-AC-26")]
 pub fn partial_lower_probability_proof_document(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
