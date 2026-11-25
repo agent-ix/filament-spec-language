@@ -401,6 +401,45 @@ impl SourceMap {
     fn record_region_lookup_step(&self) {}
 }
 
+fn allowed_gap(
+    source: &Source,
+    gap: Span,
+    region_end: usize,
+    trailing: bool,
+    layout: Layout,
+) -> bool {
+    let bytes = source.text().as_bytes();
+    let mut at = gap.start;
+    while at < gap.end {
+        match bytes[at] {
+            b' ' | b'\t' if layout.strip_indentation && at < source.indentation_end(at) => {
+                // Skip the entire allowed indentation prefix, keeping validation linear.
+                at = gap.end.min(source.indentation_end(at));
+            }
+            b'\r'
+                if layout.normalize_crlf
+                    && at + 1 < region_end
+                    && bytes.get(at + 1) == Some(&b'\n') =>
+            {
+                at += 1
+            }
+            b'\n' if trailing && layout.drop_final_newline && at + 1 == region_end => at += 1,
+            // Dropping the final CRLF pair does not require normalization of interior newlines.
+            b'\r'
+                if trailing
+                    && layout.drop_final_newline
+                    && at + 2 == region_end
+                    && gap.end == region_end
+                    && bytes.get(at + 1) == Some(&b'\n') =>
+            {
+                at += 2
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,43 +577,4 @@ mod tests {
             }
         }
     }
-}
-
-fn allowed_gap(
-    source: &Source,
-    gap: Span,
-    region_end: usize,
-    trailing: bool,
-    layout: Layout,
-) -> bool {
-    let bytes = source.text().as_bytes();
-    let mut at = gap.start;
-    while at < gap.end {
-        match bytes[at] {
-            b' ' | b'\t' if layout.strip_indentation && at < source.indentation_end(at) => {
-                // Skip the entire allowed indentation prefix, keeping validation linear.
-                at = gap.end.min(source.indentation_end(at));
-            }
-            b'\r'
-                if layout.normalize_crlf
-                    && at + 1 < region_end
-                    && bytes.get(at + 1) == Some(&b'\n') =>
-            {
-                at += 1
-            }
-            b'\n' if trailing && layout.drop_final_newline && at + 1 == region_end => at += 1,
-            // Dropping the final CRLF pair does not require normalization of interior newlines.
-            b'\r'
-                if trailing
-                    && layout.drop_final_newline
-                    && at + 2 == region_end
-                    && gap.end == region_end
-                    && bytes.get(at + 1) == Some(&b'\n') =>
-            {
-                at += 2
-            }
-            _ => return false,
-        }
-    }
-    true
 }

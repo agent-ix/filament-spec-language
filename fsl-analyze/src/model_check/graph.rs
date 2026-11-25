@@ -414,7 +414,7 @@ where
                     stats: graph.stats(transitions),
                     frontier: graph.frontier(source, &queue),
                     cause: stop.cause,
-                }
+                };
             }
         };
         let mut successors = Vec::with_capacity(expansion.successors.len());
@@ -426,7 +426,7 @@ where
                         stats: graph.stats(transitions),
                         frontier: graph.frontier(source, &queue),
                         cause,
-                    }
+                    };
                 }
             };
             let order = encode(&transition, identity)?;
@@ -454,7 +454,7 @@ where
                         stats: graph.stats(transitions),
                         frontier: graph.frontier(source, &queue),
                         cause: stop.cause,
-                    }
+                    };
                 }
             }
         }

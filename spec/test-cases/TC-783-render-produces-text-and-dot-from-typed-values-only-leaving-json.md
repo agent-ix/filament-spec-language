@@ -12,7 +12,7 @@ relationships:
 
 Verify the renderers.
 
-Scope: FR-298-AC-1 to FR-298-AC-11.
+Scope: FR-298-AC-1 to FR-298-AC-12.
 
 ## Test Procedure
 
@@ -27,6 +27,7 @@ Scope: FR-298-AC-1 to FR-298-AC-11.
 9. Render a retained 100,000-state graph view as DOT and cancel with `Deadline` from a second thread once the charge observer has seen 1,000 output charges; render it again with a handle already cancelled with `Requested`.
 10. Repeat each step 2, 3 and 7 rendering with equal inputs, forms, `RenderSources` and limits, and compare the bytes; inspect the text counterexample's row order and the text trace's position order and markers.
 11. Build `RenderSources::from_sources` over two `Source` values, then over two with equal bytes under paths `a.fsl` and `b.fsl` and render FR-286-AC-2's refusal; compile the `compile_fail` doctests that insert a `Source` under a caller-supplied key or build `RenderSources` from a map, beside a `from_sources` control.
+12. Build a `check_fences` outcome containing exactly the `Broken` fence entry and diagnostic of FR-865-AC-25, with the cause, `label` and `hint` lines and the hint line last. Render it at the default limit to obtain `N` bytes, then with `render.output_bytes` set to `N - 1`, then at `N`.
 
 Tag the tests `#[trace("TC-783", "<AC id>")]`.
 
@@ -43,3 +44,4 @@ Tag the tests `#[trace("TC-783", "<AC id>")]`.
 - Step 9: `StageFailure::Cancelled(Deadline)`, no bytes, at most one charge after cancellation; then `StageFailure::Cancelled(Requested)` before any charge; both exit 22.
 - Step 10: every pair of repeated renderings is byte-equal; counterexample rows follow parameter declaration order; trace positions increase, with the loop-start and deciding lines marked.
 - Step 11: each `Source` sits under its own identity; the refusal prints path `a.fsl`; the doctests fail to compile and the control compiles.
+- Step 12: at `N - 1`, `render` returns `StageFailure::Limit(LimitExceeded)` while charging the final hint line, with kind `input-bytes-exceeded`, bound `N - 1`, would-be count `N`, setting `render.output_bytes`, no bytes and exit 22; at `N`, it returns all output bytes exactly as in the default-limit run.
