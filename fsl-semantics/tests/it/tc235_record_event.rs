@@ -311,7 +311,9 @@ fn tc235_m20_process_subtype_inherits_identity_and_steps() {
         "TypeDefinition.supertypes[0]",
     );
 
-    let cycle = mutate_k2(|document| {
+    // A root process with no identity field is refused by the semantic-IR
+    // reader, so intake ends.
+    let rootless = mutate_k2(|document| {
         document["types"].as_array_mut().unwrap().push(declaration(
             "ExpressFulfilment",
             "saga",
@@ -338,7 +340,17 @@ fn tc235_m20_process_subtype_inherits_identity_and_steps() {
             "origin": origin("PF"),
         }]);
     });
-    let package = read_k2(&cycle).expect("cycle base package reads before normalization mutation");
+    let refusals = intake_refusals(&rootless);
+    assert_eq!(refusals.len(), 1, "{refusals:#?}");
+    assert_malformed_at(
+        &refusals[0],
+        &id("ExpressFulfilment"),
+        "TypeDefinition.identityFields",
+    );
+
+    // The cycle is closed on the records of the admitted subtype package.
+    let package = read_k2(&with_process_subtype(false))
+        .expect("cycle base package reads before normalization mutation");
     let mut records = package.records.clone();
     for record in &mut records {
         if let DomainPackageRecord::Process(process) = record {
@@ -1200,8 +1212,12 @@ fn tc235_m17_record_value_specialization_vectors() {
             }),
         ));
     });
-    let wrong_meaning_refusals = normalized_refusals(&wrong_meaning, 24);
-    assert_eq!(wrong_meaning_refusals.len(), 1);
+    let wrong_meaning_refusals = intake_refusals(&wrong_meaning);
+    assert_eq!(
+        wrong_meaning_refusals.len(),
+        1,
+        "{wrong_meaning_refusals:?}"
+    );
     assert_malformed_at(
         &wrong_meaning_refusals[0],
         &id("TaxedMoney"),
