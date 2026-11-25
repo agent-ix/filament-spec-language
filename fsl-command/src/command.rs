@@ -4527,6 +4527,9 @@ fn prepare_run_bytes_with_sources(
         && request.refinement_transfer.is_none()
         && request.export_evidence.is_none()
     {
+        // Package-owned selections still take precedence when restated by the
+        // request (FR-1039), including libraries and integer_division.
+        package_run::validate_request(&request)?;
         return Err(RunCause::CompleteRunSelection(CompleteRunSelection::NoCall));
     }
     // FR-100, FR-1039: a selected checked package runs from its own records,

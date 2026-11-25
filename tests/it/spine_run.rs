@@ -606,8 +606,7 @@ fn tc_450_step_5_no_call_refuses_before_dependent_reads() {
         "program":{"source":program_source()},
     }));
     assert_no_call_refusal(json!({
-        "models":selections["models"],
-        "libraries":selections["libraries"],
+        "models":[],
         "package":{"file":"missing-package.json"},
     }));
 }
