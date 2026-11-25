@@ -18,7 +18,7 @@ Verify that a package-only `native-run/1` request runs from the package's
 own records, never discovers or compiles source, and refuses a package that
 cannot run with the code and locus stated. Explicit caller-selected rendering
 sources use the existing source-file intake and do not supply execution
-semantics. Scope: FR-1039-AC-1 to AC-12, FR-100-AC-23 and FR-026-AC-8.
+semantics. Scope: FR-1039-AC-1 to AC-13, FR-100-AC-23 and FR-026-AC-8.
 
 ## Test Procedure
 
@@ -83,6 +83,16 @@ semantics. Scope: FR-1039-AC-1 to AC-12, FR-100-AC-23 and FR-026-AC-8.
     parity. Repeat step 6's TL lowering with absent `sources`, `[]` and valid
     explicit caller sources; retain different source bytes in the handoff
     for the rendering tests.
+12. Independently send a package-file request with a valid non-empty
+    `libraries` selection and a valid `models` selection, with the package,
+    model and library paths each naming an unavailable file. Repeat with
+    `libraries` absent and with `libraries: []`. Send a separate request with
+    a valid `refinement_internals` member and independently unavailable
+    package and model files. For each conflict, repeat the request
+    with neither `call` nor the FR-031 clause-run member. Keep the `libraries`
+    and `refinement_internals` conflicts independent of one another; also send
+    malformed `libraries` and `refinement_internals` carriers as the existing
+    request-shape controls.
 
 The carrier and resource cases for steps 8 and 9 are:
 
@@ -166,3 +176,11 @@ underscore spellings are unchanged; no `details.diagnostic` wrapper is added.
   them or discovers handoff source bytes. TL atom text stays byte-equal to
   step 6's canonical lowering. Caller labels and formal metadata remain
   unauthenticated assertions; neither bytes nor a content hash validates them.
+- Step 12: each valid package-plus-member conflict refuses `invalid-request`
+  at stage `request`, exit 20, with a message naming the conflicting member,
+  before opening unavailable package/model files, and, for the `libraries`
+  case, the selected library file; it writes no member outcome. With neither
+  `call` nor the clause-run member,
+  the package-member refusal still wins over FR-100-AC-25's no-call message.
+  `libraries` absent and `libraries: []` do not trigger this refusal.
+  Malformed member carriers retain their existing request-shape refusals.

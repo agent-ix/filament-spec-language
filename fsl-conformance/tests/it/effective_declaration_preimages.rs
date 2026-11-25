@@ -11,6 +11,7 @@ use fsl_semantics::model::domain_package::{
 use fsl_semantics::model::key::{EffectiveDeclarationPreimage, Fact, RULE_QUALIFY};
 use fsl_semantics::model::normalize::{normalize, EffectiveView, NormalizeOutcome};
 use fsl_semantics::model::refusal::ModelRefusalCause;
+use ix_trace_rs::trace;
 
 const MULTIPLICITY_0_1: Multiplicity = Multiplicity {
     lower: 0,
@@ -91,6 +92,7 @@ fn declaration<'a>(
         .preimage
 }
 
+#[trace("FR-400-AC-10", "FR-400-AC-17")]
 #[test]
 fn effective_declaration_identity_is_structural_and_derivation_refusals_are_typed() {
     let view = complete(&diamond_fixture());
@@ -106,11 +108,14 @@ fn effective_declaration_identity_is_structural_and_derivation_refusals_are_type
     ];
     for (entry, original) in type_entries {
         assert_eq!(
-            entry.identity(),
+            fsl_semantics::model::key::EffectiveDeclarationPreimage::identity(entry),
             EffectiveId::new(None, OriginalDeclarationKey::new("test/orders", original)),
             "type identity {original} is the structural declaration key"
         );
-        assert_eq!(entry.validate_derivation(), Ok(()));
+        assert_eq!(
+            fsl_semantics::model::key::EffectiveDeclarationPreimage::validate_derivation(entry),
+            Ok(())
+        );
     }
     let member_entries = [
         (a, "ix://test/orders/A"),
@@ -127,14 +132,17 @@ fn effective_declaration_identity_is_structural_and_derivation_refusals_are_type
     });
     for (member, owner, owner_key) in member_entries {
         assert_eq!(
-            member.identity(),
+            fsl_semantics::model::key::EffectiveDeclarationPreimage::identity(member),
             EffectiveId::new(
                 Some(owner.identity()),
                 OriginalDeclarationKey::new("test/orders", "ix://test/orders/A/x"),
             ),
             "member identity under {owner_key} includes that effective owner"
         );
-        assert_eq!(member.validate_derivation(), Ok(()));
+        assert_eq!(
+            fsl_semantics::model::key::EffectiveDeclarationPreimage::validate_derivation(member),
+            Ok(())
+        );
     }
     let d_x = declaration(&view, "ix://test/orders/A/x", Some(&d.identity()));
 
@@ -180,4 +188,43 @@ fn effective_declaration_identity_is_structural_and_derivation_refusals_are_type
             ..
         }
     ));
+}
+
+/// The duplicate-path example is constructed in this consumer crate, so the
+/// validator call also exercises its public cross-crate API.
+#[trace("FR-400-AC-16")]
+#[test]
+fn exact_qualify_duplicate_path_is_rejected_from_another_crate() {
+    let original = declaration_key("ix://test/orders/A/x");
+    let inputs = vec![original.clone()];
+    let preimage = EffectiveDeclarationPreimage {
+        owner_effective_type: None,
+        original: original.clone(),
+        derivation: vec![
+            Fact {
+                ordinal: 0,
+                rule: RULE_QUALIFY,
+                inputs: inputs.clone(),
+                parent: None,
+            },
+            Fact {
+                ordinal: 1,
+                rule: RULE_QUALIFY,
+                inputs,
+                parent: None,
+            },
+        ],
+    };
+
+    let (cause, _) = preimage
+        .validate_derivation()
+        .expect_err("duplicate qualify path is refused");
+    assert_eq!(
+        cause,
+        ModelRefusalCause::DuplicatePath {
+            original,
+            earlier: 0,
+            later: 1,
+        }
+    );
 }

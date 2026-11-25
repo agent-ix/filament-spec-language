@@ -241,7 +241,8 @@ const RUN: &[Entry] = &[
 ];
 
 /// A run request carrying a member that selects another reading of
-/// `native-run/1` lacks no `call` / `clause` / `items` group (FR-1047).
+/// `native-run/1`, or a selected program/package with no call selector, lacks
+/// no `call` / `clause` / `items` group (FR-1047, FR-100-AC-25).
 const RUN_SELECTED: &[Entry] = &[models(), PROGRAM_OR_PACKAGE, libraries()];
 
 /// The members that select another reading of `native-run/1` than a call
@@ -358,6 +359,12 @@ fn export_shape(selection: ExportSelection) -> &'static [Entry] {
 /// `native-run/1` than a call lacks no `call` / `clause` / `items` group.
 fn run_shape(request: &BTreeMap<String, &RawValue>) -> &'static [Entry] {
     if SELECTORS.iter().any(|name| request.contains_key(*name)) {
+        RUN_SELECTED
+    } else if request.contains_key("program") != request.contains_key("package")
+        && !["call", "clause", "items"]
+            .iter()
+            .any(|name| request.contains_key(*name))
+    {
         RUN_SELECTED
     } else {
         RUN
