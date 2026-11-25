@@ -134,6 +134,7 @@ pub(super) fn replay(
             witness,
             binding.as_ref().map(|binding| &binding.reference),
             &elapsed_total,
+            elapsed_phase.as_deref(),
             cancel,
         )? {
             return Ok(ProbabilityWitnessReplay::Parity);
@@ -219,8 +220,10 @@ pub(super) fn replay(
             &supplied.post_key,
             &current,
             elapsed_measure_monitor(elapsed_phase.as_deref()).or_else(|| monitor.clone()).map(|mut value| {
-                if let Some(phase) = value.as_array_mut().and_then(|parts| parts.get_mut(2)) {
-                    *phase = serde_json::Value::String(monitor_phase.clone());
+                if elapsed_quantile.is_none() {
+                    if let Some(phase) = value.as_array_mut().and_then(|parts| parts.get_mut(2)) {
+                        *phase = serde_json::Value::String(monitor_phase.clone());
+                    }
                 }
                 value
             }),
@@ -261,8 +264,10 @@ pub(super) fn replay(
             &witness.product_state,
             &current,
             elapsed_measure_monitor(elapsed_phase.as_deref()).or_else(|| monitor.clone()).map(|mut value| {
-                if let Some(phase) = value.as_array_mut().and_then(|parts| parts.get_mut(2)) {
-                    *phase = serde_json::Value::String(monitor_phase.clone());
+                if elapsed_quantile.is_none() {
+                    if let Some(phase) = value.as_array_mut().and_then(|parts| parts.get_mut(2)) {
+                        *phase = serde_json::Value::String(monitor_phase.clone());
+                    }
                 }
                 value
             }),
@@ -371,12 +376,16 @@ fn source_claim_undecided(
     witness: &ProbabilityUndefinedWitness,
     binding: Option<&filament_exact::ObjectReference>,
     elapsed: &Rational,
+    elapsed_measure_phase: Option<&str>,
     cancel: &Cancel,
 ) -> Result<bool, ProbabilityWitnessError> {
-    if claim.bounded_measure() && elapsed_quantile_predicates(claim).is_none() {
-        // `measure::replay_undefined` independently replays the exact control
-        // and accumulator for this pre-read state.
-        return Ok(true);
+    if claim.bounded_measure() {
+        if elapsed_quantile_predicates(claim).is_none() {
+            // `measure::replay_undefined` independently replays the exact control
+            // and accumulator for this pre-read state.
+            return Ok(true);
+        }
+        return Ok(matches!(elapsed_measure_phase, Some("inactive" | "active")));
     }
     if let Some((first, second, operator, interval)) = timed_formula(claim, witness)? {
         if elapsed < interval.lower() || (elapsed == interval.lower() && !interval.lower_closed()) {

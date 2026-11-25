@@ -4,6 +4,12 @@
 use super::*;
 use serde_json::Value;
 
+const DROP_OPERATION: &str = r#"{"node":"ix://test/timed/Call/drop","package":"test/timed"}"#;
+const AA_DROP_OPERATION: &str = r#"{"node":"ix://test/timed/Call/aa_drop","package":"test/timed"}"#;
+const AA_KEEP_OPERATION: &str = r#"{"node":"ix://test/timed/Call/aa_keep","package":"test/timed"}"#;
+const ZZ_DROP_OPERATION: &str = r#"{"node":"ix://test/timed/Call/zz_drop","package":"test/timed"}"#;
+const ZZ_KEEP_OPERATION: &str = r#"{"node":"ix://test/timed/Call/zz_keep","package":"test/timed"}"#;
+
 /// Timed formula, Until, elapsed-quantile and every-scheduler undefined routes
 /// retain their complete pre-read control, product key, cause and time.
 #[trace(
@@ -131,6 +137,29 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
                 "elapsed measure build did not stop at its undefined read: {product:#?}"
             );
         }
+        if matches!(
+            name,
+            "UndefinedWeightedLongRun" | "UndefinedEveryWeightedLongRun"
+        ) {
+            let product = fsl_analyze::exact_probabilistic::build_product(
+                fsl_analyze::exact_probabilistic::ProductRequest {
+                    subject: fsl_eval::model_subject::ModelSubject {
+                        simulation: world.request(),
+                        proof_bounds: Vec::new(),
+                    },
+                    claim,
+                    limits: fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+                },
+                &Cancel::new(),
+            );
+            assert!(
+                matches!(
+                    product,
+                    Ok(fsl_analyze::exact_probabilistic::ProbBuild::Undefined(_))
+                ),
+                "weighted long-run build did not stop at its undefined read: {product:#?}"
+            );
+        }
         let item = exact_probabilistic_item(RequestIndex::new(0), request);
         records.extend(analyze_items(&engines, vec![item], &Cancel::new()));
     }
@@ -196,7 +225,7 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
                 .as_ref()
                 .unwrap()
                 .operation,
-            "Call/drop",
+            DROP_OPERATION,
             "{name} undefined-producing action"
         );
         assert_eq!(
@@ -458,8 +487,14 @@ fn timed_undefined_replays_every_hop_of_a_tied_race() {
     let undefined = witness.undefined().expect("the tied path replays");
     let steps = &undefined.path.paths[0].steps;
     assert_eq!(steps.len(), 2);
-    assert_eq!(steps[0].action.as_ref().unwrap().operation, "Call/aa_keep");
-    assert_eq!(steps[1].action.as_ref().unwrap().operation, "Call/zz_drop");
+    assert_eq!(
+        steps[0].action.as_ref().unwrap().operation,
+        AA_KEEP_OPERATION
+    );
+    assert_eq!(
+        steps[1].action.as_ref().unwrap().operation,
+        ZZ_DROP_OPERATION
+    );
     assert_eq!(steps[0].elapsed, ratio(1, 1));
     assert_eq!(steps[1].elapsed, ratio(0, 1));
     assert_eq!(undefined.evaluation.site.position, 2);
@@ -482,6 +517,200 @@ fn timed_undefined_replays_every_hop_of_a_tied_race() {
     assert_eq!(
         witness.wire.as_ref().unwrap()["evidence"]["undefined"]["cause"],
         "absent-key"
+    );
+}
+
+/// A precomputed immediate hop after the first undefined read is excluded
+/// from the witness path and cannot advance its site or control.
+#[trace(
+    "FR-196-AC-13",
+    "FR-203-AC-5",
+    "FSpec-FR-411-AC-12",
+    "FSpec-FR-413-AC-7",
+    "FSpec-FR-413-AC-11"
+)]
+#[test]
+fn timed_undefined_tied_chain_stops_at_its_first_undefined_hop() {
+    let mut document: Value = serde_json::from_slice(&crate::timed_world::document(
+        &["x"],
+        &[("aa_drop", &[]), ("zz_keep", &[])],
+    ))
+    .expect("the timed fixture emits JSON");
+    let operation = &mut document["types"][1]["operations"][0];
+    operation["params"] = serde_json::json!([{
+        "identity": crate::timed_world::ident("Call/aa_drop/b"),
+        "name": "b",
+        "typeRef": crate::timed_world::ident("Phase"),
+        "presence": "required",
+        "nullable": false,
+        "defaultKind": "none",
+        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+        "origin": {"generated": {
+            "generatorIdentity": crate::timed_world::ident("Call/aa_drop/b"),
+            "generatorVersion": "1.0.0",
+            "inputIdentities": [crate::timed_world::ident("Call/aa_drop/b")]
+        }}
+    }]);
+    operation["frame"]["deletes"] = serde_json::json!([]);
+    operation["frame"]["deletes_receiver"] = serde_json::json!(true);
+    let body = format!(
+        "{}\
+         post Drop using v on M::Call::aa_drop {{ b = 0 and count(o in M::calls where true) = 0 }}\n\
+         random Call::aa_drop(b) ~ {{ 0: 1 }};\n\
+         delay M::Call::aa_drop ~ discrete {{ 1 ms: 1 }};\n\
+         delay M::Call::zz_keep ~ discrete {{ 1 ms: 1 }};\n\
+         workload Tied on M {{ weight Call::aa_drop = 1; weight Call::zz_keep = 1; }}\n\
+         probabilistic FirstUndefined using timed on M over (c: M::Call) under Tied on origin\n\
+             with alpha 0.4, beta 0.4, indifference 0.005\n\
+             {{ probability >= 0.5 [ always[0 ms, 3 ms) holds(c.phase = 0) ] }}\n",
+        crate::timed_world::DENSE,
+    );
+    let world = crate::timed_world::world(
+        &document.to_string().into_bytes(),
+        "profile timed = \"filament.temporal.timed/v1\";\n",
+        &body,
+    );
+    let claim = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("FirstUndefined")
+        .expect("the tied timed claim checks");
+    let system = fsl_eval::simulation::model::ModelSystem::new(world.request())
+        .expect("the tied timed model admits");
+    assert!(
+        system.source_package().is_some(),
+        "the replay package is retained"
+    );
+    assert!(
+        matches!(
+            &claim.form,
+            fsl_semantics::check::ProbForm::Probability {
+                event: fsl_semantics::check::Event::Formula {
+                    timed_horizon: Some(_),
+                    ..
+                },
+                ..
+            }
+        ),
+        "the timed formula dispatch is selected: {claim:#?}"
+    );
+    let initial = system.initial().remove(0);
+    let initially_enabled = system
+        .actions_with_cancel(&initial, &Cancel::new())
+        .unwrap()
+        .unwrap();
+    assert!(
+        initially_enabled
+            .iter()
+            .any(|action| action.identity.operation == AA_DROP_OPERATION)
+    );
+    assert!(
+        initially_enabled
+            .iter()
+            .any(|action| action.identity.operation == ZZ_KEEP_OPERATION)
+    );
+    let drop = system
+        .actions_with_cancel(&initial, &Cancel::new())
+        .unwrap()
+        .unwrap()
+        .into_iter()
+        .find(|action| action.identity.operation == AA_DROP_OPERATION)
+        .expect("the first tied hop is enabled");
+    let zero_draw = drop
+        .draws
+        .into_iter()
+        .find(|draw| {
+            matches!(
+                draw.random.as_slice(),
+                [filament_exact::Value::Integer(value)] if value == &Integer::from(0_i64)
+            )
+        })
+        .expect("drop(0) removes the bound object");
+    let (_, after_drop) = zero_draw
+        .successors
+        .into_iter()
+        .next()
+        .expect("drop(0) has one successor");
+    assert!(
+        system
+            .actions_with_cancel(&after_drop, &Cancel::new())
+            .unwrap()
+            .unwrap()
+            .iter()
+            .all(|action| action.identity.operation != ZZ_KEEP_OPERATION),
+        "aa_drop deletes c, so the already-tied zz_keep hop is unavailable"
+    );
+    let limits = fsl_analyze::exact_probabilistic::ExactProbLimits::default();
+    let product = fsl_analyze::exact_probabilistic::build_product(
+        fsl_analyze::exact_probabilistic::ProductRequest {
+            subject: fsl_eval::model_subject::ModelSubject {
+                simulation: world.request(),
+                proof_bounds: Vec::new(),
+            },
+            claim,
+            limits: limits.clone(),
+        },
+        &Cancel::new(),
+    )
+    .expect("the first undefined timed read is a product outcome");
+    let fsl_analyze::exact_probabilistic::ProbBuild::Undefined(path) = product else {
+        panic!("expected the undefined read at the first tied hop: {product:#?}");
+    };
+    assert_eq!(path.position, 1);
+    assert_eq!(path.steps.len(), 1);
+    assert_eq!(
+        path.steps[0].action.as_ref().unwrap().operation,
+        AA_DROP_OPERATION
+    );
+    // The equal-weight race selects aa_drop(c) first with probability 1/2;
+    // its precomputed unavailable suffix does not price this undefined read.
+    assert_eq!(path.probability, ratio(1, 2));
+
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let records = analyze_items(
+        &engines,
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            fsl_analyze::exact_probabilistic::ProductRequest {
+                subject: fsl_eval::model_subject::ModelSubject {
+                    simulation: world.request(),
+                    proof_bounds: Vec::new(),
+                },
+                claim,
+                limits,
+            },
+        )],
+        &Cancel::new(),
+    );
+    assert_eq!(records.len(), 1);
+    let record = &records[0];
+    assert_eq!(
+        record.terminal().map(|terminal| terminal.value()),
+        Some(&TerminalValue::Refuted),
+        "{record:#?}"
+    );
+    let witness = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the first undefined hop replays");
+    assert_eq!(witness.mass(), &ratio(1, 2));
+    let undefined = witness
+        .undefined()
+        .expect("the undefined read is reproduced");
+    assert_eq!(undefined.path.paths[0].steps.len(), 1);
+    assert_eq!(
+        undefined.path.paths[0].steps[0]
+            .action
+            .as_ref()
+            .unwrap()
+            .operation,
+        AA_DROP_OPERATION
+    );
+    assert_eq!(undefined.evaluation.site.position, 1);
+    assert_eq!(
+        undefined.evaluation.site.time.as_ref().unwrap().stamp,
+        ratio(1, 1)
     );
 }
 
@@ -521,11 +750,12 @@ fn timed_region_undefined_replays_its_exact_clock_key() {
         "{}\
          post Drop using v on M::Call::drop {{ (b = 0 and count(o in M::calls where true) = 0) or (b = 1 and count(o in M::calls where true) = 1) }}\n\
          random Call::drop(b) ~ {{ 0: 1, 1: 1 }};\n\
-         delay M::Call::drop ~ discrete {{ 1/2 ms: 1 }};\n\
-         delay M::Call::keep ~ discrete {{ 1/2 ms: 1 }};\n\
+         delay M::Call::drop ~ discrete {{ rational(1, 2) ms: 1 }};\n\
+         delay M::Call::keep ~ discrete {{ rational(1, 2) ms: 1 }};\n\
+         workload Even on M {{ weight Call::drop = 1; weight Call::keep = 0; }}\n\
          probabilistic RegionUndefined using timed on M over (c: M::Call) under Even on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
-             {{ probability >= 0.5 [ always[0 ms, 3 ms] holds(c.phase = 0) ] }}\n",
+             {{ probability >= 0.5 [ always[0 ms, 3 ms) holds(c.phase = 0) ] }}\n",
         crate::timed_world::DENSE,
     );
     let world = crate::timed_world::world(

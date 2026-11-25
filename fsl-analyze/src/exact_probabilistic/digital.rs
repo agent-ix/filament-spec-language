@@ -744,10 +744,11 @@ fn each_ordering(
     tied: &[(ScheduledIdentity, Rational)],
     probability: Rational,
     prefix: &mut Vec<ScheduledIdentity>,
-    visit: &mut dyn FnMut(Rational, &[ScheduledIdentity]) -> Step<()>,
+    factors: &mut Vec<Rational>,
+    visit: &mut dyn FnMut(Rational, &[ScheduledIdentity], &[Rational]) -> Step<()>,
 ) -> Step<()> {
     if tied.is_empty() {
-        return visit(probability, prefix);
+        return visit(probability, prefix, factors);
     }
     let mut operations: Vec<(&str, &Rational, u64)> = Vec::new();
     for (identity, weight) in tied {
@@ -789,7 +790,9 @@ fn each_ordering(
                 .map(|(_, entry)| entry.clone())
                 .collect();
             prefix.push(identity.clone());
-            each_ordering(&rest, probability.mul(&each), prefix, visit)?;
+            factors.push(each.clone());
+            each_ordering(&rest, probability.mul(&each), prefix, factors, visit)?;
+            factors.pop();
             prefix.pop();
         }
     }
@@ -1653,12 +1656,19 @@ impl<'c> Builder<'_, '_, 'c> {
             let mut taken = taken.clone();
             let mut source = self.nodes[at].key.monitor;
             let mut letters = Vec::with_capacity(taken.chain.len());
-            for hop in &mut taken.chain {
-                let truths = match self.truths(&hop.reached.model, binding)? {
+            for hop_index in 0..taken.chain.len() {
+                let truths = match self.truths(&taken.chain[hop_index].reached.model, binding)? {
                     Ok(truths) => truths,
                     Err(hit) => {
-                        let key = self.key_of(&hop.reached, binding, source, None)?;
-                        hop.target = Some(key.clone());
+                        let key =
+                            self.key_of(&taken.chain[hop_index].reached, binding, source, None)?;
+                        taken.chain[hop_index].target = Some(key.clone());
+                        taken.probability = taken
+                            .chain
+                            .iter()
+                            .take(hop_index + 1)
+                            .fold(one(), |mass, hop| mass.mul(&hop.probability));
+                        taken.chain.truncate(hop_index + 1);
                         return Err(self.undefined(
                             Some(at),
                             Some(&taken),
@@ -1669,10 +1679,10 @@ impl<'c> Builder<'_, '_, 'c> {
                         ));
                     }
                 };
-                let mut state = hop.reached.clone();
+                let mut state = taken.chain[hop_index].reached.clone();
                 source = self.control_after(source, &mut state, std::slice::from_ref(&truths))?;
-                hop.target = Some(self.key_of(&state, binding, source, None)?);
-                hop.reached = state;
+                taken.chain[hop_index].target = Some(self.key_of(&state, binding, source, None)?);
+                taken.chain[hop_index].reached = state;
                 letters.push(truths);
             }
             reached = taken
@@ -2142,10 +2152,13 @@ impl<'c> Builder<'_, '_, 'c> {
                         .filter(|(position, _)| *position != first)
                         .map(|(_, identity)| identity.clone()),
                 );
+                let order_factors = vec![one(); order.len()];
                 self.chain_edges(
                     at,
                     &start,
                     &order,
+                    &order_factors,
+                    &probability,
                     (probability.clone(), least == 0, least, &chosen),
                     Edges { planned, scope: 0 },
                 )?;
@@ -2645,16 +2658,20 @@ impl<'c> Builder<'_, '_, 'c> {
             })
             .collect::<Step<Vec<_>>>()?;
         let Edges { planned, scope } = out;
+        let race_probability = probability.clone();
         each_ordering(
             &weighted,
             probability,
             &mut Vec::with_capacity(weighted.len()),
-            &mut |order, ordered| {
+            &mut Vec::with_capacity(weighted.len()),
+            &mut |order, ordered, factors| {
                 self.poll()?;
                 self.chain_edges(
                     at,
                     &start,
                     ordered,
+                    factors,
+                    &race_probability,
                     (order, delay == 0, delay, representative),
                     Edges {
                         planned: &mut *planned,
@@ -2673,6 +2690,8 @@ impl<'c> Builder<'_, '_, 'c> {
         at: usize,
         start: &DState,
         ordered: &[ScheduledIdentity],
+        order_factors: &[Rational],
+        race_probability: &Rational,
         outcome: (Rational, bool, u64, &ScheduledIdentity),
         out: Edges<'_>,
     ) -> Step<()> {
@@ -2686,6 +2705,7 @@ impl<'c> Builder<'_, '_, 'c> {
             Option<Vec<Value>>,
             Vec<(Identifier, Value)>,
             Vec<TraceHop>,
+            Rational,
         );
         let mut chains: Vec<Chain> = vec![(
             probability,
@@ -2693,10 +2713,17 @@ impl<'c> Builder<'_, '_, 'c> {
             None,
             self.system.zero_rewards(),
             Vec::new(),
+            one(),
         )];
-        for identity in ordered {
+        for (order_index, identity) in ordered.iter().enumerate() {
             let mut next: Vec<Chain> = Vec::new();
-            for (chain_probability, states, first_draw, summed, mut hops) in chains {
+            for (chain_probability, states, first_draw, summed, mut hops, pending_factor) in chains
+            {
+                let choice_factor = order_factors
+                    .get(order_index)
+                    .cloned()
+                    .ok_or_else(|| fault("ordered-identity-has-a-choice-factor"))?;
+                let pending_factor = pending_factor.mul(&choice_factor);
                 let current = states
                     .last()
                     .cloned()
@@ -2707,7 +2734,14 @@ impl<'c> Builder<'_, '_, 'c> {
                     .iter()
                     .find(|candidate| candidate.identity == *identity)
                 else {
-                    next.push((chain_probability, states, first_draw, summed, hops));
+                    next.push((
+                        chain_probability,
+                        states,
+                        first_draw,
+                        summed,
+                        hops,
+                        pending_factor,
+                    ));
                     continue;
                 };
                 for draw in &action.draws {
@@ -2734,9 +2768,9 @@ impl<'c> Builder<'_, '_, 'c> {
                         tail: Tail::Running,
                     };
                     let hop_probability = if hops.is_empty() {
-                        chain_probability.mul(&draw.probability)
+                        race_probability.mul(&pending_factor).mul(&draw.probability)
                     } else {
-                        draw.probability.clone()
+                        pending_factor.mul(&draw.probability)
                     };
                     hops.push(TraceHop {
                         action: identity.clone(),
@@ -2754,6 +2788,7 @@ impl<'c> Builder<'_, '_, 'c> {
                         first_draw.clone().or_else(|| Some(draw.random.clone())),
                         add_rewards(&summed, &draw.rewards)?,
                         hops.clone(),
+                        one(),
                     ));
                 }
             }
@@ -2763,7 +2798,7 @@ impl<'c> Builder<'_, '_, 'c> {
             .first()
             .cloned()
             .ok_or_else(|| fault("race-takes-an-identity"))?;
-        for (chain_probability, states, draw, rewards, hops) in chains {
+        for (chain_probability, states, draw, rewards, hops, _) in chains {
             let reached = states
                 .last()
                 .cloned()

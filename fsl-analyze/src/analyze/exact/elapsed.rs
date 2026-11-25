@@ -384,6 +384,7 @@ pub(super) fn run(
     };
     let product = match built {
         ProbBuild::Built(product) => product,
+        ProbBuild::Partial { .. } => return not_yet(),
         ProbBuild::Undefined(path) => {
             return undefined::run(
                 simulation,

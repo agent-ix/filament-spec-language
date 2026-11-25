@@ -598,6 +598,7 @@ fn run_timed(
     let (built, monitor) = built;
     let product = match built {
         ProbBuild::Built(product) => product,
+        ProbBuild::Partial { .. } => return not_yet(),
         ProbBuild::Undefined(path) => {
             return undefined::run(
                 simulation,
@@ -1054,6 +1055,7 @@ fn run_timed_mean(
     };
     let product = match built {
         ProbBuild::Built(product) => product,
+        ProbBuild::Partial { .. } => return not_yet(),
         ProbBuild::Undefined(path) => {
             return timed_mean_undefined::run(
                 simulation,

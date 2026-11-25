@@ -60,11 +60,15 @@ pub(super) fn run(
     };
     let item = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(item) => item,
-        Err(error) => return graph_failure(error, &limits, subject),
+        Err(error) => {
+            return graph_failure(error, &limits, subject);
+        }
     };
     let binding = match claim_binding(&system, claim) {
         Ok(binding) => binding,
-        Err(error) => return graph_failure(error, &limits, subject),
+        Err(error) => {
+            return graph_failure(error, &limits, subject);
+        }
     };
     let io = ProbabilityDocumentIoLimits {
         bytes: limits.document.bytes,
@@ -86,7 +90,9 @@ pub(super) fn run(
         let proof_bounds = std::mem::take(&mut request.subject.proof_bounds);
         match build_retaining_monitor_with_budget(request, identity, &mut admission, cancel) {
             Ok((ProbBuild::Built(product), _)) => product,
-            Ok((ProbBuild::Partial { .. }, _)) => return not_yet(),
+            Ok((ProbBuild::Partial { .. }, _)) => {
+                return not_yet();
+            }
             Ok((ProbBuild::Undefined(path), monitor)) => {
                 return undefined::run(
                     simulation.clone(),
@@ -100,6 +106,38 @@ pub(super) fn run(
                 );
             }
             Err(BudgetedProductError::Product(error)) => return build_refusal(error, subject),
+            Err(BudgetedProductError::Key(
+                fsl_eval::simulation::model::ModelKeyError::Unsupported(
+                    "untimed budgeted probabilistic product",
+                ),
+            )) => {
+                let unbudgeted_request = ProductRequest {
+                    subject: fsl_eval::model_subject::ModelSubject {
+                        simulation: simulation.clone(),
+                        proof_bounds,
+                    },
+                    claim,
+                    limits,
+                };
+                match build_retaining_monitor(unbudgeted_request, cancel) {
+                    Ok((ProbBuild::Undefined(path), monitor)) => {
+                        return undefined::run(
+                            simulation.clone(),
+                            claim,
+                            path,
+                            monitor,
+                            &limits,
+                            cancel,
+                            subject,
+                            tamper_witness,
+                        );
+                    }
+                    Ok((ProbBuild::Partial { .. }, _)) | Ok((ProbBuild::Built(_), _)) => {
+                        return not_yet();
+                    }
+                    Err(error) => return build_refusal(error, subject),
+                }
+            }
             Err(BudgetedProductError::Key(error)) => {
                 return document_failure(admission.refusal(error), subject);
             }
@@ -125,7 +163,9 @@ pub(super) fn run(
                             tamper_witness,
                         );
                     }
-                    Ok((ProbBuild::Partial { .. }, _)) => return not_yet(),
+                    Ok((ProbBuild::Partial { .. }, _)) => {
+                        return not_yet();
+                    }
                     Ok((ProbBuild::Built(_), _)) => return broken(),
                     Err(error) => return build_refusal(error, subject),
                 }
