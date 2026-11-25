@@ -1677,7 +1677,33 @@ fn a_bounded_nested_punctual_claim_settles_an_exact_verdict() {
         exact_value(&settle_trio(&world, "NestedMinimum", None)),
         ratio(9, 10)
     );
-    let refuted = settle_trio(&world, "Nested", None);
+    let selected = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Nested")
+        .expect("the claim checks");
+    let identity = selected
+        .occurrence()
+        .expect("the claim has a package identity");
+    let item = exact_probabilistic_item(
+        fsl_foundation::RequestIndex::new(0),
+        ProductRequest {
+            subject: ModelSubject {
+                simulation: world.request(),
+                proof_bounds: Vec::new(),
+            },
+            claim: selected,
+            limits: ExactProbLimits::default(),
+        },
+    )
+    .at_claim(
+        &world.package,
+        fsl_route::request::ItemKind::Formula,
+        identity,
+    );
+    let engines = Engines::fsl().expect("the linked EN-5 engine is admitted");
+    let refuted = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
     assert!(
         matches!(
             refuted.terminal().expect("a terminal record").value(),
@@ -1686,14 +1712,22 @@ fn a_bounded_nested_punctual_claim_settles_an_exact_verdict() {
         "{refuted:#?}"
     );
 
-    let identity = world
-        .package
-        .graph()
-        .probabilistic_model()
-        .claim("Nested")
-        .and_then(|claim| claim.occurrence().cloned())
-        .expect("the claim has a package identity");
-    let locus = fsl_replay::claim_locus_wire(&identity).expect("a wire locus");
+    // The replayed refutation and the record's locus both name the selected
+    // claim.
+    let witness = refuted
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("a replayed witness");
+    assert_eq!(
+        witness.evidence().item,
+        fsl_replay::probabilistic_claim_identity(selected).expect("an obligation identity")
+    );
+    let reported = refuted.claim.as_ref().expect("the record names its claim");
+    let locus = fsl_replay::claim_locus_wire(reported).expect("a wire locus");
+    assert_eq!(
+        locus,
+        fsl_replay::claim_locus_wire(identity).expect("a wire locus")
+    );
     let mut members: Vec<&str> = locus
         .as_object()
         .expect("a locus object")
