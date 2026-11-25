@@ -110,6 +110,7 @@ use fsl_semantics::model::intake::{
     admit_unit_with_cancel, admit_units_with_cancel, SelectedModel, SelectedModels, UnitIntakeCause,
 };
 use fsl_semantics::value::identity_limit;
+use ix_trace_rs::implements;
 
 use super::subject::StaticSubjectInput;
 use super::{
@@ -3246,6 +3247,9 @@ fn forms_protocol_results(
         .collect()
 }
 
+#[implements("FR-503-AC-4")]
+#[implements("FR-503-AC-5")]
+#[implements("FR-503-AC-6")]
 fn protocol_check_outcome(
     parsed: &ParsedUnitSource,
     graph: &fsl_semantics::check::CheckedGraph,

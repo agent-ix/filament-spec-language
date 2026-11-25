@@ -40,6 +40,7 @@ use fsl_semantics::check::{
     ClockOp, ConvexPart, DelayDistribution, Event, FormulaNode, ProbForm, ProbScheduler,
     UnaryTemporal, Workload,
 };
+use ix_trace_rs::implements;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive, Zero};
@@ -61,6 +62,7 @@ pub(crate) const ELAPSED_REWARD: &str = "qsl_elapsed_time";
 /// [`ProductRefusal`]: the admission causes of FR-204, a model that is not a
 /// Markov decision process or chain at some digital state, a budget or the
 /// cancellation.
+#[implements("FR-204-AC-1")]
 pub(super) fn build<'s, 'a>(
     system: &'s ModelSystem<'a>,
     timed: TimedSystem<'s, 'a>,
