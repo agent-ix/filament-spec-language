@@ -80,7 +80,8 @@ package reference (FSpec FR-322 `package_id` wire member) its spine compile emit
 10. Under `package_name` `R`, compile a unit that imports `R`, then one that
     imports `test/a` whose source imports `R`. Run each with no library
     supplied as `R`, with a library supplied as `R` from another source
-    identity declaring what the unit declares, and with one that differs.
+    identity declaring what the unit declares, and with one, likewise from
+    another source identity, that differs.
 
 Tag the tests `#[trace("FR-099-AC-n", "TC-446")]` with the AC each backs.
 

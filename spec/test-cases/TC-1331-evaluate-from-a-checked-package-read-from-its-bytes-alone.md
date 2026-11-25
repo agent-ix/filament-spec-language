@@ -24,7 +24,8 @@ The isolated bytes-only consumer test crate depends on `filament-contract-model`
 `fsl-package` and `fsl-eval` only. Producer transport and selected-monitor
 preparation tests additionally obtain authentic final emissions, admitted model
 inputs and the FR-251 plan context through their public FSL APIs before handing
-rows or bytes to the consumer.
+rows or bytes to the consumer. Row 62 runs instead as a crate-internal
+`fsl-package` test that sets the view unit tables directly.
 
 ## Test Procedure
 
@@ -64,11 +65,11 @@ rows or bytes to the consumer.
 | 56 | 56 | compare charges for the AC-54 profile-unknown refusal with FR-516's source-route counterpart | equal source-route charges |
 | 57 | 57 | compare charges for the AC-55 infinite-profile refusal with FR-516's source-route counterpart | equal source-route charges |
 | 58 | 58 | inspect the AC-53 strict-read refusal before any evaluation call | no evaluation work is charged |
-| 59 | 59 | root `dep` declaring `unit ms : Time = rational(1, 1000) * s`; a `HandoffSupply` replay with an artifact named `dep`, the root's own content then one declaring `rational(1, 2000) * s`, for a function converting 3 s to `ms` and for a function comparing `three_seconds_in_ms()` with `3000 ms` | `PackageRead(Malformed)`, `invalid_package` with no cause; no result, so no converted value or verdict |
-| 60 | 60 | `HandoffSupply` replays with two artifacts of one name, identical then differing, in both orders; then the name held once | the first four return `PackageRead(Malformed)`, `invalid_package` with no cause; the last is not refused for its names |
-| 61 | 61 | `with_dependency_artifacts` with a root-named artifact, equal then differing; two artifacts of one name, identical then differing; then distinct names, none the root's | `invalid_package` with no cause and no `BarePackage` for the first four; the last returns the package |
-| 62 | 62 | assemble, below the name check, a view set whose unit definitions, then dimension definitions, under one node key are unequal, and one whose definitions are equal; call `world()` and `world_with_source_objects()` | a world fault and no unit table for each unequal set; one world holding the definition once for the equal set |
-| 63 | 63 | `read_checked_package` and the FR-850 directory loader over a package that selects its own name, and over one that reaches it through a library, with differing content under that name | `invalid_package`/`definition-cycle`; no `BarePackage`, no item evaluated |
+| 59 | 59 | root `dep` declaring `unit ms : Time = rational(1, 1000) * s`; a `HandoffSupply` replay with an artifact whose admitted bytes name `dep`: the root's own content, then one declaring `rational(1, 2000) * s`, then that artifact supplied under the identity `lib`; for a function converting 3 s to `ms` and for a function comparing `three_seconds_in_ms()` with `3000 ms` | `PackageRead(Malformed)`, `invalid_package` with no cause; no result, so no converted value or verdict |
+| 60 | 60 | `HandoffSupply` replays with two artifacts whose admitted bytes name one package, identical then differing, in both orders; then that package name held once | the first four return `PackageRead(Malformed)`, `invalid_package` with no cause; the last is not refused for its names |
+| 61 | 61 | `with_dependency_artifacts` with an artifact whose package name is the root's, equal then differing; two artifacts of one package name, identical then differing; then distinct package names, none the root's | `DependencyJoinRefusal::Name` carrying that package name, `code()` `invalid_package`, no cause, no `LimitExceeded`, never `stage_limit_exceeded`, and no `BarePackage` for the first four; the last returns the package |
+| 62 | 62 | in `fsl-package`, join the views and set their unit tables so that unit definitions, then dimension definitions, under one node key are unequal, and once so that they are equal; call `world()` and `world_with_source_objects()` | the internal fault `authenticated-unit-declarations-agree` and no unit table for each unequal set; one world holding the definition once for the equal set |
+| 63 | 63 | the FR-850 directory loader and `read_checked_package` over a package that selects its own name, with and without a package supplied under that name, and over one that reaches it through a library, with differing content under that name | the loader: `invalid_package`/`definition-cycle` in every case; the reader: `invalid_package`/`definition-cycle` where every selected package is supplied, `missing_import`/`missing-selection` for the unsupplied direct selection; no `BarePackage`, no item evaluated |
 
 Trace each procedure row with `TC-1331` and the AC id in its second column. In
 particular, the admitted missing-clock-row result owns `FR-531-AC-6`, and the

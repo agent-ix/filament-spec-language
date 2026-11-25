@@ -936,7 +936,9 @@ names this file beside `identities.json`.
 
 ### Dependency artifact names
 
-An artifact's name is its package's `name`. The root is the package the
+An artifact is named by the `name` of the package in its admitted bytes, which
+keys that package's node ids, and not by the `identity` label it is supplied
+with; the refusals below are decided by that name. The root is the package the
 artifacts are supplied beside: the package of the `BarePackage` that
 `with_dependency_artifacts` extends, or the package a `HandoffSupply` is
 replayed with.
@@ -952,21 +954,39 @@ replayed with.
   replay entry given a `HandoffSupply` returns it as
   `ReplayRefusal::PackageRead(PackageReadRefusal::Malformed)`. A refused supply
   yields no `BarePackage`, no partly joined view and no result.
+- `BarePackage::with_dependency_artifacts` SHALL refuse with a
+  `DependencyJoinRefusal`, whose arms are `Name` and
+  `Native(NativeJoinFailure)`. `Name` is the refusal of this section: it carries
+  the package name that is the root's or is repeated, its `code()` is
+  `invalid_package` and it has no cause. `Native` carries a native join refusal,
+  a denied charge included, unchanged ("The native join budget"). A caller SHALL
+  keep `Name` out of the stage-limit path: it is not a resource denial, carries
+  no `LimitExceeded` and names no setting, and no caller reports it as
+  `stage_limit_exceeded`.
 - The unit table of a world is built from the unit and dimension definitions of
   the root and of every attached library view. When two of those definitions
   under one node key are unequal, `BarePackage::world()` and
-  `BarePackage::world_with_source_objects()` SHALL refuse with a world fault, an
-  internal fault, as they do for two unequal composite declarations under one
-  key. No definition replaces an unequal one. Equal definitions under one key are
+  `BarePackage::world_with_source_objects()` SHALL refuse with a world fault, the
+  internal fault whose invariant is `authenticated-unit-declarations-agree`, as
+  they refuse `authenticated-composite-declarations-agree` for two unequal
+  composite declarations under one key. No definition replaces an unequal
+  one. Equal definitions under one key are
   one definition. This check is made where the world is assembled, and it does not
   depend on the name refusals above.
 
 A package whose dependency closure holds its own name, directly or through a
-library, is an import cycle and is never admitted: `read_checked_package`
-refuses it as `invalid_package`/`definition-cycle`
-(FSpec FR-322-AC-545; Contract IR FR-038-AC-637), so no `BarePackage` exists for
-it, and the FR-850 directory loader refuses its handoff with the same code and
-cause. A source compile refuses such a unit too (FR-099).
+library, is an import cycle and is never admitted, so no `BarePackage` exists
+for it. `read_checked_package`, supplied the packages the closure selects,
+refuses it as `invalid_package`/`definition-cycle` at the full selection path to
+the entry that names it (FSpec FR-322-AC-545; Contract IR FR-038-AC-637), and
+reports the first failing entry in depth-first lock order (FSpec
+FR-322-AC-546). It checks supply first: a direct entry naming the package with
+no package supplied under that name refuses `missing_import`/`missing-selection`
+at that entry. The FR-850 directory loader finds the cycle before admission and
+refuses `invalid_package`/`definition-cycle` at the location FR-850 states, for
+an entry naming the root too, which the manifest's closure excludes; a source
+compile refuses the same code and cause (FR-099). Each of these answers is a
+refusal.
 
 ### The native join budget
 
@@ -1020,7 +1040,9 @@ follows.
   `NativeJoinFailure` retaining Contract IR's original typed cause: an
   `ExactTypeProjectionError` with code `ExhaustedWork` or `ExhaustedStorage`
   for identity/type projection, or an `AdmittedEqualityReadError` with code
-  `WorkLimit` or `StorageLimit` for equality admission. The shared budget
+  `WorkLimit` or `StorageLimit` for equality admission.
+  `BarePackage::with_dependency_artifacts` returns that failure as
+  `DependencyJoinRefusal::Native`. The shared budget
   retains the first unpaid charge and cumulative admitted counters. No
   `BarePackage` is returned. It is not an `UnknownIdentityWitness`, not an
   `InternalFault` and not an empty set of identities. A denial surfaced through
@@ -1235,11 +1257,11 @@ outcome map. Each carries a "Consumer entry" section that points here.
 | FR-531-AC-56 | For the profile-unknown refusal of AC-54, the call's charges equal the FR-516 source-route counterpart. | Test (TC-1331) |
 | FR-531-AC-57 | For the infinite-profile refusal of AC-55, the call's charges equal the FR-516 source-route counterpart. | Test (TC-1331) |
 | FR-531-AC-58 | The strict-read refusal of AC-53 occurs before any evaluation call and incurs no evaluation work. | Test (TC-1331) |
-| FR-531-AC-59 | Over a root package named `dep` that declares `unit ms : Time = rational(1, 1000) * s`, a replay given a `HandoffSupply` holding one artifact named `dep`, once with the root's own content and once declaring `unit ms : Time = rational(1, 2000) * s`, returns `ReplayRefusal::PackageRead(PackageReadRefusal::Malformed)`, code `invalid_package` with no cause, and no result, both where the selected function converts a quantity and where it compares a function call's result with a quantity literal (`three_seconds_in_ms() = 3000 ms`). | Test (TC-1331) |
-| FR-531-AC-60 | A replay given a `HandoffSupply` holding two artifacts of one name, identical in one case and differing in another, in either order, returns `ReplayRefusal::PackageRead(PackageReadRefusal::Malformed)`, code `invalid_package` with no cause, and no result; the same supply with that name held once, and no artifact named as the root, is not refused for its names. | Test (TC-1331) |
-| FR-531-AC-61 | `BarePackage::with_dependency_artifacts` given an artifact named as the root, equal in content to the root or differing from it, or two artifacts of one name, identical or differing, refuses with code `invalid_package` and no cause and returns no `BarePackage`; given artifacts of distinct names, none of them the root's, it returns the `BarePackage`. | Test (TC-1331) |
-| FR-531-AC-62 | A `BarePackage` whose root and library views hold unequal unit definitions, or unequal dimension definitions, under one node key refuses `world()` and `world_with_source_objects()` with a world fault and yields no unit table; views whose definitions under one key are equal give one world holding that definition once. | Test (TC-1331) |
-| FR-531-AC-63 | For a package whose dependency closure holds its own name, directly and through a library, whatever the content of the package supplied under that name, `read_checked_package` and the FR-850 directory loader refuse `invalid_package`/`definition-cycle` before any item is evaluated, and no `BarePackage` is built. | Test (TC-1331) |
+| FR-531-AC-59 | Over a root package named `dep` that declares `unit ms : Time = rational(1, 1000) * s`, a replay given a `HandoffSupply` holding one artifact whose admitted bytes name `dep`, once with the root's own content, once declaring `unit ms : Time = rational(1, 2000) * s`, and once supplied under the identity `lib` while its admitted bytes still name `dep`, returns `ReplayRefusal::PackageRead(PackageReadRefusal::Malformed)`, code `invalid_package` with no cause, and no result, both where the selected function converts a quantity and where it compares a function call's result with a quantity literal (`three_seconds_in_ms() = 3000 ms`). | Test (TC-1331) |
+| FR-531-AC-60 | A replay given a `HandoffSupply` holding two artifacts whose admitted bytes name one package, identical in one case and differing in another, in either order, returns `ReplayRefusal::PackageRead(PackageReadRefusal::Malformed)`, code `invalid_package` with no cause, and no result; the same supply with that package name held once, and no artifact whose package name is the root's, is not refused for its names. | Test (TC-1331) |
+| FR-531-AC-61 | `BarePackage::with_dependency_artifacts` given an artifact whose package name is the root's, equal in content to the root or differing from it, or two artifacts of one package name, identical or differing, returns `DependencyJoinRefusal::Name` carrying that package name, whose `code()` is `invalid_package` and which has no cause, and returns no `BarePackage`. A caller keeps this refusal out of the stage-limit path: it carries no `LimitExceeded` and is never reported as `stage_limit_exceeded`. Given artifacts of distinct package names, none of them the root's, it returns the `BarePackage`. | Test (TC-1331) |
+| FR-531-AC-62 | A `BarePackage` whose root and library views hold unequal unit definitions, or unequal dimension definitions, under one node key refuses `world()` and `world_with_source_objects()` with the internal fault whose invariant is `authenticated-unit-declarations-agree` and yields no unit table; views whose definitions under one key are equal give one world holding that definition once. A crate-internal `fsl-package` test that sets the view unit tables verifies this: no public route builds unequal definitions under one key once the artifact names are checked. | Test (TC-1331) |
+| FR-531-AC-63 | For a package whose dependency closure holds its own name, directly and through a library, the FR-850 directory loader refuses `invalid_package`/`definition-cycle`, with or without an artifact supplied under that name. `read_checked_package`, supplied every package the closure selects, refuses the same code and cause, whatever the content of the package supplied under that name, and refuses a direct selection of the name with no package supplied under it as `missing_import`/`missing-selection`. Each refusal precedes any item evaluation, and no `BarePackage` is built. | Test (TC-1331) |
 
 ## Dependencies
 
