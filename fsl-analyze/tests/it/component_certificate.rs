@@ -1275,11 +1275,11 @@ fn components_offered_for_a_safety_clause_are_refused() {
     ));
 }
 
-/// FR-339 and FR-125-AC-13: components offered for the deadlock-freedom item,
+/// FR-339-AC-8: components offered for the deadlock-freedom item,
 /// which is no TP-4 clause, over a subject with no initial state are refused
 /// `NoInitialState` before `NotLiveness`, and as the certificate of a `Holds`
 /// settle `inconclusive`, `NoInitialState`.
-#[trace("TC-526", "FR-125-AC-13")]
+#[trace("TC-526", "FR-339-AC-8")]
 #[test]
 fn components_over_no_initial_state_are_refused_before_not_liveness() {
     let mut fixture = counter(

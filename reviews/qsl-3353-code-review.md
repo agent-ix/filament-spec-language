@@ -58,9 +58,16 @@ The PR is mergeable at 8c4787bfd8f41e634840d81ac3f5473283bdaf1a.
 | --- | --- | --- | --- |
 | FND-002 | low | The closure checker now refuses `NoInitialState` before `NotLiveness`. For the one case where both apply, a component certificate offered for the deadlock-freedom item (one instance whatever the initial list holds) over a subject with no initial state, the settlement changes from `failed` (`NotLiveness`, via settle.rs `Row::of_check` `Err(_)`) to `inconclusive`/`no-initial-state`. Neither outcome proves anything. FR-125 Instancing orders only the instancing outcomes, and FR-339 does not order its form refusals against `NoInitialState`, so the spec does not decide this. No test covers it. It does not block. A one-sentence ruling in FR-339 would settle it. | fsl-replay/src/certificate/closure.rs:664-685, fsl-replay/src/model_check/item.rs:263, fsl-replay/src/model_check/settle.rs:973-977 |
 
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | low | `components_over_no_initial_state_are_refused_before_not_liveness` is tagged `#[trace("TC-526", "FR-125-AC-13")]`. That pairs two artifacts that do not belong together. TC-526 scopes FR-339 only and says "Tag the tests `#[trace("TC-526", "FR-339-AC-n")]`", while FR-125-AC-13's test case is TC-520. FR-125-AC-13 also says nothing about `NotLiveness` or component certificates. The order the test proves, `NoInitialState` before `NotLiveness` and its `inconclusive` settlement, is the new FR-339 bullet, and no FR-339 acceptance criterion states it. Fix: add this vector to FR-339-AC-8, which is about the form refusals, or to a new FR-339 criterion, and retag the test `("TC-526", "FR-339-AC-8")`. | fsl-analyze/tests/it/component_certificate.rs:1282, spec/test-cases/TC-526-an-en-1-component-certificate-is-checked.md:49, spec/functional/FR-339-check-an-en-1-component-certificate.md:167-172 |
+
 ## Dispositions
 
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-001 | deferred | Moved to QSL-3333 (comment on QSL-3333 confirms), which edits the same FR-169 paragraph; pre-existing on main, outside this diff. |
 | FND-002 | deferred | Not blocking: refusal against refusal, never `proved`; the spec leaves the order open, so the ruling belongs in FR-339 under its own ticket or QSL-3333's spec pass. The code lead decides whether to file it. |
+| FND-002 | fixed | - |
