@@ -251,7 +251,7 @@ impl OneIdentity {
 }
 
 /// The package written to its handoff bytes, with the rows of its supply.
-struct Handoff {
+pub(crate) struct Handoff {
     bytes: Vec<u8>,
     admitted: fsl_package::CheckedPackageV2,
     identities: fsl_package::ReadIdentityRows,
@@ -264,7 +264,7 @@ fn handoff(world: &Two) -> Handoff {
     handoff_package(&world.package, &world.packages)
 }
 
-fn handoff_package(
+pub(crate) fn handoff_package(
     package: &CheckedPackage,
     packages: &fsl_semantics::model::intake::PackageInput,
 ) -> Handoff {
@@ -290,7 +290,7 @@ fn handoff_package(
 }
 
 impl Handoff {
-    fn bare(&self) -> BarePackage<'_> {
+    pub(crate) fn bare(&self) -> BarePackage<'_> {
         BarePackage::new(&self.admitted)
             .with_supply(
                 BareSupply {

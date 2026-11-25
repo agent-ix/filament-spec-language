@@ -26,6 +26,7 @@ mod decide;
 mod explore;
 mod sample;
 
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{Cancel, ObjectReference, ValueType};
@@ -39,8 +40,8 @@ use fsl_eval::simulation::{
 use fsl_foundation::selection::DefinitionRef;
 use fsl_replay::ReplayRefusal;
 use fsl_replay::{
-    settle_state_graph, AppliedReduction, GraphReplayResult, IncompleteCause, ModelCheckLimit,
-    ModelCheckLimits, ModelCheckOutcome, OpenCause, Proviso, ReachedLimit, RunEnd,
+    settle_state_graph, AppliedReduction, GraphReplayResult, GraphUndefined, IncompleteCause,
+    ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, OpenCause, Proviso, ReachedLimit, RunEnd,
     StateGraphInstanceOutcome, StateGraphMethod, StateGraphOutcome, StateGraphRecord,
     DEFAULT_WITNESS_SEED,
 };
@@ -195,6 +196,9 @@ pub struct ExploredStateGraph {
     /// The node of each initial state of the subject, by its index in the
     /// subject's initial list.
     initial: Vec<NodeIndex>,
+    /// The first node in discovery order where one of the subject's own
+    /// expressions is undefined (FR-168), with where and why.
+    subject_undefined: Option<(NodeIndex, GraphUndefined)>,
 }
 
 impl ExploredStateGraph {
@@ -515,6 +519,7 @@ pub(super) fn cancelled(cancel: &Cancel) -> Option<Halt> {
 ///
 /// [`ModelCheckRefusal`] when the subject does not admit, a root is
 /// unbounded, or an identity cannot be encoded; nothing is decided then.
+#[implements("FR-167-AC-7")]
 pub fn check_state_graph(
     request: StateGraphRequest<'_>,
     cancel: &Cancel,
@@ -528,6 +533,12 @@ pub fn check_state_graph(
     let system = ModelSystem::new(request.subject.simulation)
         .map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS).map_err(bounds_refusal)?;
+    // FR-158 "Resolution": before any expansion.
+    if let Some(name) = &request.reductions.constraint {
+        if !system.has_constraint(name) {
+            return Err(ModelCheckRefusal::UnknownConstraint { name: name.clone() });
+        }
+    }
     let views = instances(&request.items, &system)?;
     // FR-125 Instancing orders the outcomes `requires-bound` (both checks
     // above), `no-initial-state`, then `no-instance`: a subject with no
@@ -584,6 +595,7 @@ pub fn check_state_graph(
                             },
                             sampled: Vec::new(),
                             walks_stopped: 0,
+                            boundary_states: 0,
                         })
                         .collect()
                 })
@@ -675,7 +687,7 @@ pub fn check_state_graph(
             reads,
             &por_instances,
             &[],
-            None,
+            request.reductions.constraint.as_deref(),
         )?)
     } else {
         None
@@ -687,6 +699,7 @@ pub fn check_state_graph(
         cancel,
         budgets,
         views: &views,
+        constraint: request.reductions.constraint.as_deref(),
         deadlock_freedom: request.deadlock_freedom,
         por: por.as_ref(),
         declared_symmetry: &declared_symmetry,
@@ -712,6 +725,7 @@ pub fn check_state_graph(
                         },
                         sampled: Vec::new(),
                         walks_stopped: 0,
+                        boundary_states: 0,
                     })
                     .collect());
             }
@@ -751,6 +765,7 @@ pub fn check_state_graph(
                         outcome,
                         sampled: sampled.witnesses(view).to_vec(),
                         walks_stopped: sampled.stopped(view),
+                        boundary_states: explored.graph.boundary_states(),
                     })
                 })
                 .collect::<Result<Vec<_>, ModelCheckRefusal>>()
@@ -965,6 +980,7 @@ fn stopped_before_exploring(
                         },
                         sampled: Vec::new(),
                         walks_stopped: 0,
+                        boundary_states: 0,
                     })
                     .collect()
             })
@@ -986,6 +1002,7 @@ fn no_initial_state() -> StateGraphInstanceOutcome {
         outcome: StateGraphOutcome::NoInitialState,
         sampled: Vec::new(),
         walks_stopped: 0,
+        boundary_states: 0,
     }
 }
 
@@ -996,5 +1013,6 @@ fn no_instance() -> StateGraphInstanceOutcome {
         outcome: StateGraphOutcome::NoInstance,
         sampled: Vec::new(),
         walks_stopped: 0,
+        boundary_states: 0,
     }
 }
