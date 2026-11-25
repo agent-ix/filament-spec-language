@@ -1127,7 +1127,7 @@ fn a_source_type_is_visible_only_in_the_unit_that_declares_it() {
 /// the type refuse `ambiguous-name` at both declarations, so a clause
 /// function's declaration `[<type>, <operation>, <kind>, <label>]` names the
 /// operation of one unit.
-#[trace("FR-569-AC-3", "TC-1408")]
+#[trace("TC-1408")]
 #[test]
 fn two_units_cannot_declare_one_source_type_name() {
     let unit = "profile P = \"filament.model.complete/v1\";\n\

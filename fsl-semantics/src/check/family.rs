@@ -3515,16 +3515,36 @@ pub(crate) mod checking_tests {
         );
         let test_only = "#[cfg(test)] mod t { static OK: u8 = 0; }";
         assert!(global_state_findings(test_only).is_empty());
+        assert!(declares_test_only_tests("#[cfg(test)] mod tests;"));
+        for production in ["mod tests;", "#[cfg(test)] mod other;"] {
+            assert!(!declares_test_only_tests(production), "{production}");
+        }
     }
 
     /// The production `.rs` files under `directory`. A file or directory
     /// named for tests holds the files of a `#[cfg(test)] mod tests;`, whose
-    /// own text does not carry the attribute, so it is left out by name.
+    /// own text does not carry the attribute, so it is left out by name. A
+    /// `tests` directory is left out only when its parent module declares it
+    /// that way; otherwise the walk panics.
     fn collect_sources(directory: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(directory).expect("directory reads") {
             let path = entry.expect("entry reads").path();
             if path.is_dir() {
-                if path.file_name().is_none_or(|name| name != "tests") {
+                if path.file_name().is_some_and(|name| name == "tests") {
+                    let flat = directory.with_extension("rs");
+                    let parent = if flat.is_file() {
+                        flat
+                    } else {
+                        directory.join("mod.rs")
+                    };
+                    let text = std::fs::read_to_string(&parent).expect("parent module reads");
+                    assert!(
+                        declares_test_only_tests(&text),
+                        "{} must declare `#[cfg(test)] mod tests;` for {}",
+                        parent.display(),
+                        path.display()
+                    );
+                } else {
                     collect_sources(&path, files);
                 }
             } else if path.extension().is_some_and(|extension| extension == "rs")
@@ -3538,19 +3558,35 @@ pub(crate) mod checking_tests {
         }
     }
 
+    fn is_cfg_test(attributes: &[syn::Attribute]) -> bool {
+        attributes.iter().any(|attribute| {
+            attribute.path().is_ident("cfg")
+                && attribute
+                    .parse_args::<syn::Ident>()
+                    .is_ok_and(|ident| ident == "test")
+        })
+    }
+
+    /// Whether the module `source` declares `mod tests` and every such
+    /// declaration is `#[cfg(test)]`.
+    fn declares_test_only_tests(source: &str) -> bool {
+        let file = syn::parse_file(source).expect("source parses");
+        let mut declarations = file
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Mod(module) if module.ident == "tests" => Some(module),
+                _ => None,
+            })
+            .peekable();
+        declarations.peek().is_some() && declarations.all(|module| is_cfg_test(&module.attrs))
+    }
+
     /// Every global- or thread-local-state construct in `source`'s non-test
     /// items, each described with its identifier.
     fn global_state_findings(source: &str) -> Vec<String> {
         use syn::visit::Visit;
         struct Scan(Vec<String>);
-        fn is_cfg_test(attributes: &[syn::Attribute]) -> bool {
-            attributes.iter().any(|attribute| {
-                attribute.path().is_ident("cfg")
-                    && attribute
-                        .parse_args::<syn::Ident>()
-                        .is_ok_and(|ident| ident == "test")
-            })
-        }
         fn banned_name(name: &str) -> bool {
             matches!(
                 name,
