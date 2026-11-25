@@ -637,10 +637,10 @@ fn records_of_a_shared_application_follow_the_owner_walk() {
     assert_eq!(expressions, [0, 1]);
 }
 
-/// FSpec FR-322 "Expression occurrence ordinals", FR-825-AC-11: mutual
+/// FSpec FR-322 "Expression occurrence ordinals", FSpec FR-825-AC-11: mutual
 /// recursive functions reuse the same bounded decrement and guard shape.
 /// Their guarded range records must still emit and pass strict admission.
-#[trace("FR-825-AC-11", "FR-322", "FR-062-AC-17")]
+#[trace("FSpec-FR-825-AC-11", "FSpec-FR-322", "FR-062-AC-17")]
 #[test]
 fn bounded_mutual_recursion_emits_guarded_range_records() {
     let declarations = "function a using v(n: Int[0, 9]): Integer pure decreases(n) { if n > 0 then b(n - 1) else 0 }\n\
@@ -752,9 +752,9 @@ fn bounded_mutual_recursion_emits_guarded_range_records() {
     assert_eq!(region_start(&regions[&3]), source_b_start);
 }
 
-/// FSpec FR-322 and FR-825-AC-11: repeated structurally equal uses keep the
+/// FSpec FR-322 and FSpec FR-825-AC-11: repeated structurally equal uses keep the
 /// source region belonging to each lexical occurrence through transitive walks.
-#[trace("FR-825-AC-11", "FR-322", "FR-062-AC-17")]
+#[trace("FSpec-FR-825-AC-11", "FSpec-FR-322", "FR-062-AC-17")]
 #[test]
 fn mutual_recursion_preserves_repeated_syntax_owner_regions() {
     let declarations = "function a using v(n: Int[0, 9]): Integer pure decreases(n) { if n > 0 then b(n - 1) + b(n - 1) else 0 }\n\
