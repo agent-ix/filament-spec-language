@@ -18,8 +18,8 @@ over the base profile's product, probability and expected-reward bases
 alike, that settlement checks the pairing, and that the long-run form, which
 has no dyadic method, settles a typed incomplete result.
 
-Scope: FR-1042-AC-2 to FR-1042-AC-5, FR-1042-AC-7 to FR-1042-AC-14, FR-1042-AC-25,
-FR-1042-AC-26 and FR-203-AC-9.
+Scope: FR-1042-AC-2 to FR-1042-AC-5, FR-1042-AC-7 to FR-1042-AC-14, FR-1042-AC-25 to
+FR-1042-AC-27 and FR-203-AC-9.
 
 ## Test Procedure
 
@@ -55,6 +55,8 @@ FR-1042-AC-26 and FR-203-AC-9.
     `ranking` row for the state it leaves out, and offer EN-5 a certificate
     that leaves one out; over the bounded base change a named rank of the
     subset.
+15. Over FR-1043-AC-2's model offer FR-1042-AC-27's claim-side documents of
+    the wrong kind, over the whole graph and naming the initial key alone.
 
 Tag the tests `#[trace("TC-3151", "FR-1042-AC-n")]`.
 
@@ -97,3 +99,4 @@ Tag the tests `#[trace("TC-3151", "FR-1042-AC-n")]`.
 - Step 14: `Malformed` at `ranking` with the extra row, accepted without it,
   and EN-5's own subset `lower` accepted; the changed bounded rank is
   rejected `RankBroken` at that state.
+- Step 15: every one rejected `Malformed` at `kind`.

@@ -11,10 +11,15 @@ use super::bounded::{
     document, mutate, replace_source_and_rebind, request_with, requests_offering,
     requests_with_mode, run,
 };
+use super::certificate_kinds::likely;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use filament_exact::{Integer, Rational};
 use fsl_analyze::analyze::Settlement;
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
+use fsl_replay::{
+    BoundsExploration, BoundsMethod, Certification, ExactBound, IncompleteCause, ProofBasis,
+    TerminalValue,
+};
 use ix_trace_rs::trace;
 use serde_json::{Value, json};
 
@@ -1079,6 +1084,8 @@ fn a_subset_lower_over_a_whole_graph_ranks_exactly_the_states_it_names() {
 /// Pins a known gap, not required behaviour: FR-1042 "Bases" admits
 /// `reachability/v1` under every scheduler as well as under a workload, and
 /// neither side offered for the claim under every scheduler is checked yet.
+///
+/// Remaining work: QSL-3405
 #[test]
 fn an_acyclic_eventual_base_takes_no_bounds_under_every_scheduler() {
     let source = acyclic("rational(2,5)", false)
@@ -1171,5 +1178,305 @@ fn a_subset_bounded_lower_with_a_changed_rank_is_refused() {
     for rank in [0, 2] {
         let changed = edit(&subset, |doc| set(doc, "ranking", &s, "rank", json!(rank)));
         rejected(&changed, "rank-broken", at_key(&s));
+    }
+}
+
+/// FR-1043-AC-2's claim at `level` and `comparison` over the cyclic `link`
+/// model under every scheduler.
+fn quantile(level: &str, comparison: &str) -> String {
+    likely(
+        "ev",
+        "every scheduler",
+        &format!(
+            "quantile {level} of (steps from holds(true) until holds(m.delivered) within 4) {comparison}"
+        ),
+    )
+}
+
+/// A measure probability claim `comparison theta` over the same measure.
+fn measured(comparison: &str, theta: &str) -> String {
+    likely(
+        "ev",
+        "every scheduler",
+        &format!(
+            "probability {comparison} {theta} [steps from holds(true) until holds(m.delivered) within 4 <= 3]"
+        ),
+    )
+}
+
+/// The analyzer's settlement of `source` explored to `max_states`.
+fn explored(source: &str, max_states: usize) -> (Vec<Value>, Settlement) {
+    let mut limits = ExactProbLimits::default();
+    limits.model.limits.max_states = max_states;
+    requests_with_mode(source, SNAPSHOT, limits, domain().as_bytes(), false)
+}
+
+/// The one claim-side document of a partial proof of `source`, whose upper
+/// end is `upper`.
+fn partial_proof(source: &str, max_states: usize, upper: (i64, i64)) -> Value {
+    let (requests, settlement) = explored(source, max_states);
+    let Settlement::Terminal(record) = &settlement else {
+        panic!("a partial proof settles: {settlement:?}");
+    };
+    let TerminalValue::Proved {
+        basis:
+            ProofBasis::ValueBounds {
+                upper: ExactBound::Finite(end),
+                method: BoundsMethod::BackwardInduction { precision_bits },
+                exploration: BoundsExploration::Partial,
+                ..
+            },
+        certification: Certification::Certified,
+    } = record.value()
+    else {
+        panic!(
+            "a certified partial ValueBounds proof: {:?}",
+            record.value()
+        );
+    };
+    assert_eq!(
+        end.value(),
+        &Rational::new(Integer::from(upper.0), Integer::from(upper.1)).unwrap()
+    );
+    assert!(*precision_bits > 0, "FSpec's PositiveCount");
+    let [claim] = requests.as_slice() else {
+        panic!("one claim-side document and no counterpart: {settlement:?}");
+    };
+    assert_eq!(document(claim)["kind"], "lower");
+    assert_eq!(claim["claim_side"], true);
+    claim.clone()
+}
+
+/// The state and value of each row of `doc` ranked `rank`.
+fn ranked(doc: &Value, rank: u64) -> Vec<(Value, Value)> {
+    doc["ranking"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["rank"] == rank)
+        .map(|row| {
+            let value = doc["values"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["state"] == row["state"])
+                .expect("a value at each ranked state")["value"]
+                .clone();
+            (row["state"].clone(), value)
+        })
+        .collect()
+}
+
+/// Keep the rows of `doc` whose state `keep` admits.
+fn keep_rows(doc: &mut Value, keep: &[&Value]) {
+    for list in ["values", "ranking"] {
+        doc[list]
+            .as_array_mut()
+            .unwrap()
+            .retain(|row| keep.contains(&&row["state"]));
+    }
+}
+
+fn inequality_fails(request: &Value) {
+    let (code, output) = run(request);
+    assert_eq!(code, 1, "{output}");
+    assert_eq!(output["rule"], "inequality-fails", "{output}");
+}
+
+/// FSpec FR-411-AC-8, FR-1042 "Document": a level-0.4 `shifted` `lower` over
+/// the explored prefix proves the claim with upper `3/5`, is checked over its
+/// named states and their successors under the same `max_states`, and refuses
+/// each false document there and over the whole graph.
+#[trace("TC-3151", "FSpec-FR-411-AC-8", "FSpec-FR-412-AC-5")]
+#[test]
+fn a_partial_shifted_lower_over_the_named_states_refuses_a_false_document() {
+    let claim = partial_proof(&quantile("0.4", "<= 3"), 10, (3, 5));
+    let emitted = document(&claim);
+    let [(initial, value)]: [(Value, Value); 1] =
+        ranked(&emitted, 4).try_into().expect("one initial key");
+    let narrow = within(&claim, 10);
+    accepted(&narrow, value.clone());
+    accepted(&claim, value.clone());
+
+    let satisfied: Vec<Value> = ranked(&emitted, 0)
+        .into_iter()
+        .filter(|(_, value)| *value == rational(3, 5))
+        .map(|(state, _)| state)
+        .collect();
+    assert!(!satisfied.is_empty(), "the prefix reaches delivery");
+    for request in [&narrow, &claim] {
+        // A value above the one-step value, and a payoff above the terminal's.
+        let raised = mutate(request, |doc| {
+            set(doc, "values", &initial, "value", rational(1, 2));
+        });
+        rejected(&raised, "inequality-fails", at_key(&initial));
+        let overpaid = mutate(request, |doc| {
+            set(doc, "values", &satisfied[0], "value", rational(1, 1));
+        });
+        rejected(&overpaid, "inequality-fails", at_key(&satisfied[0]));
+        let misranked = mutate(request, |doc| {
+            set(doc, "ranking", &initial, "rank", json!(3));
+        });
+        rejected(&misranked, "rank-broken", at_key(&initial));
+        let unranked = mutate(request, |doc| drop_row(doc, "ranking", &initial));
+        rejected(&unranked, "malformed", at_member("ranking"));
+        // A successor left out counts as `-2/5`, below the value it held.
+        for state in &satisfied {
+            inequality_fails(&mutate(request, |doc| {
+                drop_row(doc, "values", state);
+                drop_row(doc, "ranking", state);
+            }));
+        }
+    }
+
+    // A state named without the states that reach it is outside the part read,
+    // and neither is a part read with more rows than `max_states` or for a
+    // document that is not the claim side.
+    let (deep, _) = ranked(&emitted, 2)
+        .first()
+        .cloned()
+        .expect("an undecided state two steps in");
+    let detached = mutate(&narrow, |doc| {
+        keep_rows(doc, &[&initial, &deep]);
+        set(doc, "values", &initial, "value", rational(-2, 5));
+    });
+    stopped_at_max_states(&detached, 10);
+    let rows = emitted["values"].as_array().unwrap().len();
+    let rows = u64::try_from(rows).unwrap();
+    stopped_at_max_states(&within(&claim, rows - 1), rows - 1);
+    let mut counterpart = narrow.clone();
+    counterpart["claim_side"] = json!(false);
+    stopped_at_max_states(&counterpart, 10);
+}
+
+/// FR-1042-AC-10, FSpec FR-412-AC-16: at level 0.5 a `lower` naming only the
+/// initial key at 0 fails there, over the named states as over the whole
+/// graph, since each unnamed successor counts as `-1/2`. At `-1/2` it meets
+/// its conditions and misses the threshold.
+#[trace("TC-3151", "FR-1042-AC-10", "FSpec-FR-412-AC-16")]
+#[test]
+fn a_partial_shifted_lower_naming_the_initial_key_counts_the_rest_at_minus_the_level() {
+    let proved = partial_proof(&quantile("0.4", "<= 3"), 10, (3, 5));
+    let (initial, _) = ranked(&document(&proved), 4).remove(0);
+    let mut request = edit(&proved, |doc| {
+        keep_rows(doc, &[&initial]);
+        set(doc, "values", &initial, "value", rational(0, 1));
+        doc["objective"]["base"]["measure"]["level"] = rational(1, 2);
+    });
+    replace_source_and_rebind(&mut request, &quantile("0.5", "<= 3"));
+    let floor = edit(&request, |doc| {
+        set(doc, "values", &initial, "value", rational(-1, 2));
+    });
+    for states in [1, 100] {
+        rejected(
+            &within(&request, states),
+            "inequality-fails",
+            at_key(&initial),
+        );
+        rejected(
+            &within(&floor, states),
+            "threshold-missed",
+            at_key(&initial),
+        );
+    }
+}
+
+/// FSpec FR-411-AC-8: a measure probability `>= theta` is proved on a partial
+/// product with upper 1, each unnamed successor counting as 0.
+#[trace("TC-3151", "FSpec-FR-411-AC-8", "FSpec-FR-412-AC-5")]
+#[test]
+fn a_measure_probability_is_proved_on_a_partial_product() {
+    let claim = partial_proof(&measured(">=", "0.3"), 4, (1, 1));
+    let emitted = document(&claim);
+    let (initial, value) = ranked(&emitted, 4).remove(0);
+    let narrow = within(&claim, 4);
+    accepted(&narrow, value.clone());
+    accepted(&claim, value);
+    for request in [&narrow, &claim] {
+        let raised = mutate(request, |doc| {
+            set(doc, "values", &initial, "value", rational(1, 2));
+        });
+        rejected(&raised, "inequality-fails", at_key(&initial));
+        let alone = mutate(request, |doc| keep_rows(doc, &[&initial]));
+        rejected(&alone, "inequality-fails", at_key(&initial));
+    }
+}
+
+/// FSpec FR-411-AC-8: a prefix that shows no claim-side bound, and a claim a
+/// `lower` cannot prove, stop at `max_states` with no document.
+#[trace("TC-3151", "FSpec-FR-411-AC-8")]
+#[test]
+fn a_measure_prefix_that_settles_nothing_stops_at_max_states() {
+    for (source, max_states) in [
+        (quantile("0.4", "<= 3"), 2),
+        (measured("<=", "0.9"), 4),
+        (quantile("0.9", ">= 2"), 4),
+    ] {
+        let (requests, settlement) = explored(&source, max_states);
+        assert!(requests.is_empty(), "no document: {settlement:?}");
+        let Settlement::Terminal(record) = &settlement else {
+            panic!("a typed stop: {settlement:?}");
+        };
+        assert!(
+            matches!(
+                record.value(),
+                TerminalValue::Incomplete(IncompleteCause::LimitReached { value, .. })
+                    if *value == u64::try_from(max_states).unwrap()
+            ),
+            "{source}: {:?}",
+            record.value()
+        );
+    }
+}
+
+/// The checker request offering `kind` bounds of the analyzer's exact proof of
+/// `source` as the claim side.
+fn measure_bound(source: &str, kind: &str) -> Value {
+    bound(&proof(source), kind, &[], None, true)
+}
+
+/// FR-1042-AC-27: over a measure base a claim-side document of the wrong kind
+/// is rejected, over the whole graph and naming the initial key alone, whose
+/// bound meets the claim's number from the wrong side.
+#[trace("TC-3151", "FR-1042-AC-27")]
+#[test]
+fn a_claim_side_measure_bound_of_the_wrong_kind_is_rejected() {
+    for (source, wrong, right) in [
+        (quantile("0.4", "<= 3"), "upper", "lower"),
+        (measured(">=", "0.3"), "upper", "lower"),
+        (measured("<=", "0.9"), "lower", "upper"),
+        (quantile("0.9", ">= 2"), "lower", "upper"),
+    ] {
+        let (code, output) = run(&measure_bound(&source, right));
+        assert_eq!(code, 0, "{source}: {output}");
+        rejected(
+            &measure_bound(&source, wrong),
+            "malformed",
+            at_member("kind"),
+        );
+    }
+
+    // `Pr <= 0.1` is false: a `lower` of 0 at the initial key alone meets
+    // every `lower` condition and says nothing about the claim.
+    let whole = measure_bound(&measured("<=", "0.9"), "lower");
+    let (initial, _) = ranked(&document(&whole), 4).remove(0);
+    let mut least = edit(&whole, |doc| {
+        keep_rows(doc, &[&initial]);
+        set(doc, "values", &initial, "value", rational(0, 1));
+    });
+    replace_source_and_rebind(&mut least, &measured("<=", "0.1"));
+    // So is `Pr(M < 2) < 0.2`, whose `lower` of `-1/5` says as little.
+    let whole = measure_bound(&quantile("0.9", ">= 2"), "lower");
+    let (strict, _) = ranked(&document(&whole), 4).remove(0);
+    let mut below = edit(&whole, |doc| {
+        keep_rows(doc, &[&strict]);
+        set(doc, "values", &strict, "value", rational(-1, 5));
+        doc["objective"]["base"]["measure"]["level"] = rational(1, 5);
+    });
+    replace_source_and_rebind(&mut below, &quantile("0.2", ">= 2"));
+    for request in [least, below] {
+        for states in [1, 100] {
+            rejected(&within(&request, states), "malformed", at_member("kind"));
+        }
     }
 }
