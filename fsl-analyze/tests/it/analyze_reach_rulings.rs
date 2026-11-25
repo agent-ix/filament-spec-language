@@ -279,7 +279,7 @@ fn state_graph_evidence_keys_loci_and_budget_stops() {
 
 /// The Counter document with every operation framed to its receiver
 /// (`modifies_receiver`): a step leaves every other counter's value as it was.
-fn receiver_framed_document() -> Vec<u8> {
+pub(super) fn receiver_framed_document() -> Vec<u8> {
     fn frame(value: &mut Value) -> usize {
         match value {
             Value::Object(members) => {
