@@ -11,6 +11,7 @@
 //! Each counterexample is also read back by an oracle written here that
 //! re-executes its traces through the vault's `ModelSystem`.
 
+use crate::hyper_projected_support::{aligned, AGREE, IDLE, MID_OPERATION};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Charge, ChargePoint, Identifier, Meter, Undefined};
 use fsl_analyze::model_check::ModelCheckRefusal;
@@ -29,19 +30,14 @@ use std::cell::RefCell;
 
 use crate::counter::ZERO;
 
-use crate::hyper::{input, inputs, positions, refuted, Exhausted, Refusing};
-use crate::hyper_witness::KERNEL_MOD_FUNCTION;
+use crate::hyper_support::{
+    input, inputs, positions, refuted, Exhausted, Refusing, KERNEL_MOD_FUNCTION,
+};
 use crate::hyper_world::{
     assert_hyper_division_refused_in, busy_of, high, input_of, key as hyper_key, low,
     non_interference, Vault, World, KEY,
 };
 use fsl_eval::temporal::UndefinedCause;
-
-/// `μ` matching the arguments of two `step` steps and nothing else: a `step`
-/// is matched against a `step` of equal input, and against any step that is
-/// not one.
-const AGREE: &str = "(if present(a.step.Vault::step.i) and present(b.step.Vault::step.i) \
-     then value(a.step.Vault::step.i) = value(b.step.Vault::step.i) else true)";
 
 /// A conjunct that divides by `a`'s input inline, which S3 refuses.
 const INVERSE: &str = "(if present(a.step.Vault::step.i) \
@@ -51,13 +47,6 @@ const INVERSE: &str = "(if present(a.step.Vault::step.i) \
 /// `step(0)`: it calls [`KERNEL_MOD_FUNCTION`], so the Linked clause admits it.
 const KERNEL_INVERSE: &str = "(if present(a.step.Vault::step.i) \
      then q(value(a.step.Vault::step.i)) else 0) = 0";
-
-/// The vault's two idle initial states `(h, l, busy)`.
-pub(crate) const IDLE: [(i64, i64, i64); 2] = [(0, 0, 0), (1, 0, 0)];
-
-/// The secret-1 run caught mid-operation, `busy` already set: its first step
-/// is a `mix`.
-pub(crate) const MID_OPERATION: [(i64, i64, i64); 2] = [(0, 0, 0), (1, 0, 1)];
 
 /// Section 13's clause with `align skip { V::Vault::mix }` over the body
 /// `body` and the `match` conjuncts `conjuncts`.
@@ -73,17 +62,6 @@ fn aligned_over(body: &str, conjuncts: &[&str]) -> String {
 /// ADR-023 section 13's lockstep clause.
 fn lockstep() -> String {
     non_interference(&format!("match {{ {AGREE} }}"))
-}
-
-/// Section 13's clause with `align skip { V::Vault::mix }` and the `match`
-/// conjuncts `conjuncts`.
-pub(crate) fn aligned(conjuncts: &[&str]) -> String {
-    format!(
-        "hyper NonInterference using inf over behaviours (v: V::Vault) \
-         forall trace a of V forall trace b of V align skip {{ V::Vault::mix }} \
-         match {{ {} }} {{ always holds(v.l @ a = v.l @ b) }}",
-        [&[AGREE], conjuncts].concat().join(" and ")
-    )
 }
 
 fn run(world: &World) -> HyperOutcome {

@@ -610,16 +610,18 @@ fn package_workflow_roles_replay_refuses_forged_actors() {
     }
     let unit = std::fs::read(ws.path("program.fsl")).expect("source bytes");
     let model = std::fs::read(ws.path("model.json")).expect("model bytes");
-    let wire = crate::model_settle::request(
+    let wire = crate::model_settle_support::request(
         compiled.checked(),
         &[],
         &model,
         documents.snapshots.iter(),
         &unit,
     );
-    let (node, occurrence) = crate::model_settle::protocol_anchor(compiled.checked(), "Flow");
-    let envelope =
-        |payload| crate::model_settle::envelope_at(payload, node.clone(), occurrence.clone());
+    let (node, occurrence) =
+        crate::model_settle_support::protocol_anchor(compiled.checked(), "Flow");
+    let envelope = |payload| {
+        crate::model_settle_support::envelope_at(payload, node.clone(), occurrence.clone())
+    };
     let letters = crate::counter::Letters { atom: |_| None };
     let legitimate = replay_protocol_trace(
         wire.clone(),
@@ -2256,15 +2258,15 @@ fn package_symbolic_capacity_replay_readmits_the_recorded_binding() {
         else {
             panic!("one-slot queue deadlocks");
         };
-        let mut wire = crate::model_settle::request(
+        let mut wire = crate::model_settle_support::request(
             checked,
             &[],
             &std::fs::read(ws.path("model.json")).expect("model"),
             documents.snapshots.iter(),
             &std::fs::read(ws.path("program.fsl")).expect("source"),
         );
-        let (node, occurrence) = crate::model_settle::protocol_anchor(checked, "Flow");
-        let envelope = crate::model_settle::envelope_at(*counterexample, node, occurrence);
+        let (node, occurrence) = crate::model_settle_support::protocol_anchor(checked, "Flow");
+        let envelope = crate::model_settle_support::envelope_at(*counterexample, node, occurrence);
         let mut subject = fsl_replay::ProtocolTraceSubject {
             model: fsl_replay::ModelTraceSubject {
                 timed: None,
@@ -2944,7 +2946,7 @@ fn channel_related_premise(ws: &Workspace, related: bool) {
     let mut model: Value =
         serde_json::from_slice(&std::fs::read(ws.path("model.json")).expect("model document"))
             .expect("model JSON");
-    crate::related_by::add_owns_relationship(&mut model);
+    crate::related_by_support::add_owns_relationship(&mut model);
     std::fs::write(ws.path("model.json"), model.to_string()).expect("write the related model");
     let mut snapshot: Value = serde_json::from_slice(
         &std::fs::read(ws.path("snapshot-0.json")).expect("the initial snapshot"),

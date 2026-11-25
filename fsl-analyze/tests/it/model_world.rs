@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(
+    dead_code,
+    reason = "shared model fixture support spans split integration test binaries"
+)]
 //! Model subjects for the EN-1 safety tests (`crate::model_check_safety`):
 //! a domain package with one population, a native unit selecting it as `M`
 //! with its contracts and temporal clauses, the initial snapshots, and the

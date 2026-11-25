@@ -695,7 +695,8 @@ pub(crate) fn replay_unit_result(
         byte_provision,
         documents,
     };
-    let (node, occurrence) = clause.unwrap_or_else(|| crate::model_settle::model_anchor(PACKAGE));
+    let (node, occurrence) =
+        clause.unwrap_or_else(|| crate::model_settle_support::model_anchor(PACKAGE));
     let envelope = WitnessEnvelope::reconstruct(
         WitnessPacket {
             obligation_identity: Some(crate::fixture_ids::obligation_identity()),

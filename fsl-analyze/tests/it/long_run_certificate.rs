@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! End-to-end exact long-run candidates checked against an independent graph.
 
+use crate::long_run_support::limits;
 use crate::prob_world::{self, Model, Operation, World};
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
@@ -17,16 +18,6 @@ use ix_trace_rs::trace;
 
 fn ratio(n: i64, d: i64) -> Rational {
     Rational::new(Integer::from(n), Integer::from(d)).unwrap()
-}
-pub(super) fn limits() -> ProbabilityDocumentLimits {
-    ProbabilityDocumentLimits {
-        bytes: 1_000_000,
-        storage_bytes: 16_000_000,
-        states: 128,
-        edges: 1024,
-        scalar_bits: 128,
-        accounting: fsl_replay::AccountingLimits::default().0,
-    }
 }
 fn claim(name: &str, predicate: &str, bound: &str) -> String {
     format!("probabilistic {name} using inf on M over (s: M::Server) under Steady on origin {{ long_run_fraction holds({predicate}) {bound} }}\n")

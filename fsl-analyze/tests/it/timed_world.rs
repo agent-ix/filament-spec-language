@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(
+    dead_code,
+    reason = "shared timed fixture support spans split integration test binaries"
+)]
 //! A timed fixture for EN-6: the domain package `test/timed`, whose object
 //! `Call` holds `phase: Int[0, 3]`, the Booleans `inflight`, `late` and
 //! `retried`, and the clock fields a test names, with the operations it

@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(
+    dead_code,
+    reason = "shared fixture support spans split integration test binaries"
+)]
 //! ADR-023 section 8's vault as a hyper world: the `test/vault` domain
 //! package (object type `Vault`, secret `h` and public output `l` over
 //! `Int[0, 1]`, population `vaults`, operation `step(i: Int[0, 1])` with frame
