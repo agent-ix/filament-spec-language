@@ -706,9 +706,7 @@ const AMBIENT: &[(Ambient, &[Spelling])] = {
     ]
 };
 
-/// Type names whose `static` is a mutable global that can hold a registry:
-/// a lock or cell, or a once-cell or lazy value filled at run time. An
-/// atomic counter is not one: it holds a number, not entries.
+/// Type names whose `static` is mutable global state, including atomics.
 const MUTABLE_STATIC_TYPES: &[&str] = &[
     "OnceLock",
     "OnceCell",
@@ -720,6 +718,17 @@ const MUTABLE_STATIC_TYPES: &[&str] = &[
     "Cell",
     "RefCell",
     "UnsafeCell",
+    "AtomicBool",
+    "AtomicI8",
+    "AtomicI16",
+    "AtomicI32",
+    "AtomicI64",
+    "AtomicIsize",
+    "AtomicU8",
+    "AtomicU16",
+    "AtomicU32",
+    "AtomicU64",
+    "AtomicUsize",
 ];
 
 /// One ambient-input finding in a core crate's shipped source.
@@ -1440,8 +1449,8 @@ mod tests {
     }
 
     /// Test code (a `#[cfg(test)]` item macro included), comments, string
-    /// literals, compile-time `env!`, an immutable `static`, an atomic
-    /// counter, locals named `dirs` and `tempfile` and the comparison
+    /// literals, compile-time `env!`, an immutable `static`, locals named
+    /// `dirs` and `tempfile` and the comparison
     /// `print != x` do not match, and a crate outside the core is not
     /// scanned.
     #[trace("TC-768", "FR-284-AC-4")]
@@ -1460,7 +1469,6 @@ mod tests {
                  mod golden;\n\
                  #[cfg(test)]\n\
                  thread_local! { static CALLS: std::cell::Cell<u8> = const { std::cell::Cell::new(0) }; }\n\
-                 static NEXT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);\n\
                  fn m(x: bool, print: bool) -> bool { let dirs = 1; let tempfile = dirs; print != x && tempfile > 0 }\n",
             ),
             (
@@ -1470,6 +1478,20 @@ mod tests {
             ("fsl-analyze/src/lib.rs", "fn h() { println!(\"x\"); }\n"),
         ]);
         assert_eq!(found(&dir), Vec::new());
+    }
+
+    /// A mutable atomic static is global state even when it is a counter.
+    #[trace("TC-768", "FR-284-AC-4")]
+    #[test]
+    fn tc_768_atomic_statics_are_global_state_findings() {
+        let dir = core_tree(&[(
+            "fsl-eval/src/lib.rs",
+            "static GENERATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);\n",
+        )]);
+        assert_eq!(
+            found(&dir),
+            vec![("fsl-eval/src/lib.rs".to_owned(), 1, Ambient::GlobalState)]
+        );
     }
 
     /// The report names each pair and each site, and passes only when both
