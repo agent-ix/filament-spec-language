@@ -92,14 +92,17 @@ fn event(variant: EventVariant) -> Value {
         reassigned,
         assignment_accepted,
         acknowledged,
+        accepted,
     ) = match variant {
-        EventVariant::Qualified => (1, 2, 14, 17, 18, 21, false, false, true),
-        EventVariant::Receipt => (1, 2, 14, 17, 18, 21, false, false, false),
-        EventVariant::SelfReview => (1, 1, 14, 17, 18, 21, false, false, true),
-        EventVariant::StaleRevision => (1, 2, 19, 17, 18, 21, false, false, true),
-        EventVariant::UnacceptedReassignment => (1, 2, 14, 17, 18, 21, true, false, true),
-        EventVariant::WrongSourceEvent => (1, 2, 14, 17, 18, 99, false, false, true),
-        EventVariant::WrongSourceAuthority => (1, 2, 14, 99, 18, 21, false, false, true),
+        EventVariant::Qualified => (1, 2, 14, 17, 18, 21, false, false, true, true),
+        EventVariant::Receipt => (1, 2, 14, 17, 18, 21, false, false, false, true),
+        EventVariant::SelfReview => (1, 1, 14, 17, 18, 21, false, false, true, true),
+        EventVariant::StaleRevision => (1, 2, 19, 17, 18, 21, false, false, true, true),
+        EventVariant::UnacceptedReview => (1, 2, 14, 17, 18, 21, false, false, true, false),
+        EventVariant::UnacceptedReassignment => (1, 2, 14, 17, 18, 21, true, false, true, true),
+        EventVariant::AcceptedReassignment => (1, 2, 14, 17, 18, 21, true, true, true, true),
+        EventVariant::WrongSourceEvent => (1, 2, 14, 17, 18, 99, false, false, true, true),
+        EventVariant::WrongSourceAuthority => (1, 2, 14, 99, 18, 21, false, false, true, true),
     };
     json!({
         "position": {"sample": {
@@ -119,7 +122,7 @@ fn event(variant: EventVariant) -> Value {
             "reviewer_identity": {"integer": reviewer.to_string()},
             "assignment_identity": {"integer": "16"},
             "acknowledged": {"boolean": acknowledged},
-            "accepted": {"boolean": true},
+            "accepted": {"boolean": accepted},
             "reassigned": {"boolean": reassigned},
             "assignment_accepted": {"boolean": assignment_accepted}
         }}, "stamp": 3
@@ -132,7 +135,9 @@ enum EventVariant {
     Receipt,
     SelfReview,
     StaleRevision,
+    UnacceptedReview,
     UnacceptedReassignment,
+    AcceptedReassignment,
     WrongSourceEvent,
     WrongSourceAuthority,
 }
@@ -366,6 +371,11 @@ fn receipt_late_self_review_stale_revision_and_unaccepted_reassignment_do_not_qu
             "unaccepted reassignment does not qualify",
         ),
         (
+            EventVariant::UnacceptedReview,
+            3,
+            "unaccepted review does not qualify",
+        ),
+        (
             EventVariant::WrongSourceEvent,
             3,
             "unbound source event identity does not qualify",
@@ -392,6 +402,23 @@ fn receipt_late_self_review_stale_revision_and_unaccepted_reassignment_do_not_qu
         let repeated = result(repeat_directory.path(), variant, stamp, false, false);
         assert_eq!(document, repeated.value.as_value(), "{description} repeats");
     }
+}
+
+#[test]
+#[trace("FR-1050-AC-5")]
+fn accepted_reassignment_recovers_to_success() {
+    let directory = tempfile::tempdir().expect("case directory");
+    let outcome = result(
+        directory.path(),
+        EventVariant::AcceptedReassignment,
+        3,
+        false,
+        false,
+    );
+    let document = outcome.value.as_value();
+    assert_eq!(outcome.exit_code, 0, "{document}");
+    assert_eq!(document["disposition"]["category"], "success", "{document}");
+    assert_eq!(document["axes"]["truth"], "true", "{document}");
 }
 
 #[test]
