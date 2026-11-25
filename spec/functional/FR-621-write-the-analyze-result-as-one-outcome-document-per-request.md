@@ -321,6 +321,7 @@ The Counter fixture is FR-620's.
 | FR-621-AC-20 | For the `command::analyze` request defined in AC-19, item 1 has `request_index` `1`, `claim_name` `ServedIfAcquireIsStronglyFair`, `record.result` `refuted`, and a nonempty `counterexample.loop`. | Test (TC-1581) |
 | FR-621-AC-21 | For the `command::analyze` request defined in AC-19, item 2 has `request_index` `2`, `claim_name` `ServedIfEachAcquireIsStronglyFair`, `record.result` `proved`, and `certificate.accepted` `true`. | Test (TC-1581) |
 | FR-621-AC-22 | For the `command::analyze` request defined in AC-19, the three outcome items have `request_index` `[0, 1, 2]` and `claim_name` `["ServedWithoutFairness", "ServedIfAcquireIsStronglyFair", "ServedIfEachAcquireIsStronglyFair"]` in request order, and the document exits 10. | Test (TC-1581) |
+| FR-621-AC-23 | On a 512 KiB stack, `check_probability_certificate_package` given a package with the deepest operand chain admitted by default checked-package limits (10,000 graph nodes, 9,999 operand links, and at most 1 MiB) and a held certificate whose first value holds an id into node 9,999 and whose next value holds the out-of-range index 10,000 returns typed `Malformed` without overflowing the stack. | Test (TC-3154) |
 
 ## Dependencies
 

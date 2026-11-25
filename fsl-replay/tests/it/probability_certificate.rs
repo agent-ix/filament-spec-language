@@ -7,17 +7,20 @@ use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::TransitionSystem;
 use fsl_package::ObligationIdentity;
 use fsl_replay::{
-    check_claim_exact_reachability, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
+    check_claim_exact_reachability, check_probability_certificate_package,
+    ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
     ExactProbabilityGraphError, ExactProbabilityValue, ProbabilityBoundSide,
     ProbabilityCertificateLocus, ProbabilityCertificateRejection, ProbabilityCertificateRule,
-    ProbabilityProductKey,
+    ProbabilityProductKey, ByteProvision, CertificateRole, ProbabilityDocumentError,
+    ProbabilityDocumentLimits, ProbabilityPackageRequest, ProbabilitySourceError,
+    ProbabilitySourceLimits,
 };
 use fsl_semantics::check::{Bound, CheckedProbabilisticClaim, ProbForm, ReachTarget};
 use ix_trace_rs::trace;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use crate::vault_world::{with_body, Build, World, SECURE};
+use crate::vault_world::{with_body, Build, World, SECURE, UNLIMITED};
 
 /// Reaches `holds(true)` at the initial state, so its graph is one state.
 const LIKELY: &str = "probabilistic Same using inf on V under every scheduler on origin \
@@ -263,6 +266,103 @@ fn claim_fixes_the_objective_and_a_false_claim_is_rejected() {
     };
     assert_eq!(accepted.value(), &one());
     assert_eq!(accepted.side(), ProbabilityBoundSide::AtLeast);
+}
+
+#[trace("TC-3154", "FR-621-AC-23")]
+#[test]
+fn package_route_returns_malformed_for_a_deep_held_id_then_bad_index_on_512_kib_stack() {
+    const DEEPEST_DEFAULT_CHAIN_NODES: usize = 10_000;
+
+    use fsl_eval::simulation::model::ExpansionLimits;
+    use fsl_replay::SpineLimits;
+    use fsl_semantics::model::observation::ObservationLimits;
+    use std::fmt::Write as _;
+
+    let limits = ProbabilitySourceLimits {
+        spine: SpineLimits::default(),
+        observation: ObservationLimits::default(),
+        expansion: ExpansionLimits { max_candidates: 1 },
+        scalar: UNLIMITED,
+        document: ProbabilityDocumentLimits {
+            bytes: u64::MAX,
+            storage_bytes: u64::MAX,
+            states: 1,
+            edges: 1,
+            scalar_bits: 64,
+            accounting: UNLIMITED,
+        },
+    };
+    let package_ceiling = limits
+        .spine
+        .model
+        .intake
+        .input_bytes
+        .max(limits.observation.document_bytes);
+    let mut package = String::from(
+        r#"{"name":"probe","lock":{"sources":[{"authority":"probe","identity":"source"}]},"semantic_graph":{"nodes":[{"node_id":{"package":"p","path":[{"name":"root"}],"ordinal":0}}"#,
+    );
+    let mut depth = 1_usize;
+    while depth < DEEPEST_DEFAULT_CHAIN_NODES {
+        let mut row = String::new();
+        write!(
+            &mut row,
+            r#",{{"node_id":{{"package":"p","path":[{{"node":{}}}],"ordinal":0}}}}"#,
+            depth - 1
+        )
+        .expect("write an in-memory graph row");
+        package.push_str(&row);
+        depth += 1;
+    }
+    package.push_str("]}}");
+    assert_eq!(depth, DEEPEST_DEFAULT_CHAIN_NODES);
+    assert!(package.len() <= 1 << 20, "the 10,000-node chain fits i2's default 1 MiB byte limit");
+    assert!(u64::try_from(package.len()).unwrap_or(u64::MAX) <= package_ceiling);
+
+    let item = ObligationIdentity::new(
+        NodeKey::new("p", vec![filament_exact::PathSegment::Text("claim".to_owned())], 0)
+            .expect("claim identity"),
+        None,
+        0,
+    );
+    let certificate = format!(
+        r#"{{"identity":{{"model":"model","node_id":{{"package":"p","path":[{{"name":"identity"}}],"ordinal":0}},"ordinal":0}},"values":[{{"state":{{"package":"p","path":[{{"node":{}}}],"ordinal":0}},"value":0}},{{"state":{{"package":"p","path":[{{"node":{depth}}}],"ordinal":0}},"value":0}}]}}"#,
+        depth - 1
+    )
+    .into_bytes();
+    let provision = ByteProvision::admit(
+        vec![("probe".to_owned(), "source".to_owned(), Vec::new())],
+        Vec::new(),
+        std::iter::empty::<(String, &fsl_replay::DefinitionSourceRef)>(),
+    )
+    .expect("the package source has a provision entry");
+    let thread_limits = limits;
+    let result = std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(move || {
+            check_probability_certificate_package(
+                ProbabilityPackageRequest {
+                    package: package.as_bytes(),
+                    package_name: None,
+                    provision: &provision,
+                    item: &item,
+                    initial: Vec::new(),
+                    universes: Vec::new(),
+                    certificate: &certificate,
+                    role: CertificateRole::Claim,
+                },
+                thread_limits,
+                &Cancel::new(),
+            )
+        })
+        .expect("spawn the bounded-stack checker")
+        .join()
+        .expect("the certificate checker must not overflow the 512 KiB stack");
+    assert!(matches!(
+        result,
+        Err(ProbabilitySourceError::Document(
+            ProbabilityDocumentError::Malformed
+        ))
+    ), "unexpected checker result: {result:?}");
 }
 
 #[trace("TC-636")]
