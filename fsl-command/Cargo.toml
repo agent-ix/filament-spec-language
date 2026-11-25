@@ -10,7 +10,7 @@ description = "Non-core bounded request-file intake and typed command orchestrat
 [features]
 # FR-031 and FR-662: command requests can carry Markdown extraction records.
 default = ["quire-extraction"]
-quire-extraction = ["dep:fsl-source", "fsl-replay/quire-extraction"]
+quire-extraction = ["dep:fsl-source", "fsl-replay/quire-extraction", "fsl-inspect/quire-extraction"]
 
 [dependencies]
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }

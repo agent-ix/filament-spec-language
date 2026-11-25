@@ -1356,13 +1356,11 @@ pub(super) fn finish(
 ) -> Result<Emission, EmitRefusal> {
     let lock = base.lock().clone();
     super::order_dependencies(&mut nodes, invariant)?;
-    let mut meter = super::OutputMeter::new(limits);
     let (requirement_rows, path_condition_frames, renumbered) =
         super::value_validity_requirements::carry_rows(
             base,
             &mut nodes,
             &mut source_map,
-            &mut meter,
         )?;
     let operand_rows = super::write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
