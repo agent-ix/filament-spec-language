@@ -2,7 +2,7 @@
 //! S1 parser inputs: complete-V1 source text for `fsl_cst::parse`, and the
 //! classification of what one parse returned.
 
-use fsl_cst::{Limits, ParsedSource};
+use fsl_cst::{Limits, ParsedSource, ParserContext};
 use fsl_foundation::SourceIdentity;
 
 /// The two-line prelude every generated source starts with: the language
@@ -15,6 +15,43 @@ pub const PRELUDE: &str = concat!(
 
 /// The source identity every generated source is parsed under.
 pub const IDENTITY: &str = "bench:qsl-196";
+
+/// One benchmark process's reused caller-owned parser context.
+pub struct ParseSession {
+    context: ParserContext,
+}
+
+impl ParseSession {
+    /// Construct the parser context once for this benchmark process.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            context: ParserContext::new(),
+        }
+    }
+
+    /// Parse `text` under the default limits using this session's context.
+    pub fn parse(&self, text: &str) -> Result<ParsedSource, Box<fsl_cst::CompleteDiagnostic>> {
+        self.parse_with(text, Limits::default())
+    }
+
+    /// Parse `text` under `limits` using this session's context.
+    pub fn parse_with(
+        &self,
+        text: &str,
+        limits: Limits,
+    ) -> Result<ParsedSource, Box<fsl_cst::CompleteDiagnostic>> {
+        self.context.parse(
+            SourceIdentity {
+                authority: "agent-ix".into(),
+                identity: IDENTITY.to_owned(),
+            },
+            "bench.native",
+            text.as_bytes(),
+            limits,
+        )
+    }
+}
 
 /// One function whose body nests `depth` parenthesis pairs:
 /// `depth = 3` is `((( x + x) + x) + x)`. `depth = 0` is the bare `x`.
@@ -55,15 +92,7 @@ pub fn parse_with(
     text: &str,
     limits: Limits,
 ) -> Result<ParsedSource, Box<fsl_cst::CompleteDiagnostic>> {
-    fsl_cst::parse(
-        SourceIdentity {
-            authority: "agent-ix".into(),
-            identity: IDENTITY.to_owned(),
-        },
-        "bench.native",
-        text.as_bytes(),
-        limits,
-    )
+    ParseSession::new().parse_with(text, limits)
 }
 
 /// What one parse returned, reduced to benchmark outcome metadata.
@@ -151,6 +180,16 @@ mod tests {
     fn smallest_inputs_parse() {
         for text in [nested_source(0), volume_source(1)] {
             assert!(ParseOutcome::of(&parse(&text)).is_admitted(), "{text}");
+        }
+    }
+
+    /// The parser benchmark entry reuses one process-owned session over parses.
+    #[trace("NFR-141-AC-10")]
+    #[test]
+    fn one_parse_session_handles_repeated_sources() {
+        let session = ParseSession::new();
+        for text in [nested_source(0), volume_source(1)] {
+            assert!(ParseOutcome::of(&session.parse(&text)).is_admitted(), "{text}");
         }
     }
 }

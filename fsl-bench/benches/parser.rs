@@ -16,7 +16,7 @@
 //! Throughput is source bytes, so criterion also reports bytes per second.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use fsl_bench::parse::{nested_source, outcome_id, parse, volume_source, ParseOutcome};
+use fsl_bench::parse::{nested_source, outcome_id, volume_source, ParseOutcome, ParseSession};
 use fsl_bench::widen;
 use ix_trace_rs::trace;
 use std::hint::black_box;
@@ -28,32 +28,38 @@ const DEPTHS: [usize; 7] = [0, 1, 2, 3, 4, 5, 8];
 const VOLUMES: [usize; 5] = [100, 500, 1_000, 2_000, 3_000];
 
 #[trace("NFR-141-AC-11")]
-fn depth(c: &mut Criterion) {
+fn depth(c: &mut Criterion, session: &ParseSession) {
     let mut group = c.benchmark_group("parser/depth");
     for depth in DEPTHS {
         let text = nested_source(depth);
-        let id = outcome_id(&ParseOutcome::of(&parse(&text)), depth);
+        let id = outcome_id(&ParseOutcome::of(&session.parse(&text)), depth);
         group.throughput(Throughput::Bytes(widen(text.len())));
         group.bench_with_input(BenchmarkId::from_parameter(id), &text, |b, text| {
-            b.iter(|| parse(black_box(text)));
+            b.iter(|| session.parse(black_box(text)));
         });
     }
     group.finish();
 }
 
-fn volume(c: &mut Criterion) {
+fn volume(c: &mut Criterion, session: &ParseSession) {
     let mut group = c.benchmark_group("parser/volume");
     group.sample_size(20);
     for functions in VOLUMES {
         let text = volume_source(functions);
-        let id = outcome_id(&ParseOutcome::of(&parse(&text)), functions);
+        let id = outcome_id(&ParseOutcome::of(&session.parse(&text)), functions);
         group.throughput(Throughput::Bytes(widen(text.len())));
         group.bench_with_input(BenchmarkId::from_parameter(id), &text, |b, text| {
-            b.iter(|| parse(black_box(text)));
+            b.iter(|| session.parse(black_box(text)));
         });
     }
     group.finish();
 }
 
-criterion_group!(benches, depth, volume);
+fn parser_benches(c: &mut Criterion) {
+    let session = ParseSession::new();
+    depth(c, &session);
+    volume(c, &session);
+}
+
+criterion_group!(benches, parser_benches);
 criterion_main!(benches);
