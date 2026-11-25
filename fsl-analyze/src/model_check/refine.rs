@@ -67,6 +67,9 @@ use fsl_replay::{
 };
 use ix_trace_rs::implements;
 
+#[cfg(test)]
+use fsl_replay::{check_protocol_initial, check_protocol_step};
+
 use super::check::{BOUND_POSITIONS, ModelCheckRefusal, fault, not_simulated, widen};
 use super::fair_summary::{
     CandidateEnables, CandidateRelation, FairLabel, FairMark, FairScope, WalkSummary,
