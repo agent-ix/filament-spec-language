@@ -760,11 +760,7 @@ pub(super) fn assemble(
             package_name,
             NodeTag::ScalarType,
             "dimension_equivalence",
-            vec![
-                PathSegment::Node(first),
-                PathSegment::Node(second),
-                PathSegment::Text(format!("root-scale:{}", preimage.root_scale())),
-            ],
+            vec![PathSegment::Node(first), PathSegment::Node(second)],
             0,
         )
         .map_err(|refusal| fault(AssemblyCause::nominal(super::nominal_key_refusal(refusal))))?;
