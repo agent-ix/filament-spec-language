@@ -11,7 +11,7 @@ review_set: subset
 
 ## Summary
 
-Ticket: QSL-3273 (with QSL-3295). Head cf69938b73, base 43d14c36dd, 13 files. Code review with the rust-review lane. FSpec FR-322 was read at filament-specification origin/main. No cargo command was run (the brief forbids it). The gates are another machine's job.
+Ticket: QSL-3273 (with QSL-3295). Head cf69938b73, base 43d14c36dd, 13 files. Code review with the rust-review lane. FSpec FR-322 was read at filament-specification origin/main. This review was made by reading the code; no build or test was run.
 
 What the change does: `walked_operands` (fsl-semantics/src/check/lowering.rs:8459-8478) now writes a `Member::Field` application's declaring node and field name into the derived path. It writes the read form only when present and the population only when present. This covers `filament.op.record.project`, `filament.op.model.field` and `filament.op.model.reaches_field`. `emit_monitor_plan` (fsl-package/src/emit/monitor_plan.rs:431-443) re-keys a derived node whose projection field it renames, then applies the change with the record-value re-keys.
 
@@ -32,7 +32,7 @@ The 39 unattributed failures (fsl-analyze, fsl-eval, fsl-replay at head) were tr
 - `protocol_initial_faults_follow_distinct_root_admission`, fixed on main by #3921.
 - Three `timed_subject` clock-reference tests, tracked as QSL-3258.
 
-The three fsl-replay lib tests have no captured panic text. The full table is in the reviewer's report to the lead.
+The three fsl-replay lib tests have no captured panic text. The per-test triage is recorded on the ticket.
 
 ## Findings
 
@@ -49,9 +49,9 @@ The three fsl-replay lib tests have no captured panic text. The full table is in
 
 Not mergeable yet. The field-member change itself is correct and consistent across lowering, monitor_plan re-keying, inspect, consumers, recursion groups and imported references. It merges cleanly with origin/main and with #3920.
 
-FND-001 is the same FR-135-AC-4 defect class in the ticket's own refinement-row scope. FND-002 and FND-003 are explicit FR-322 text the PR did not apply. Fix them here, or have the lead name a ticket for each before merge. FND-004 needs a named ticket, plus an FSpec gap for the spelling of the position index. FND-005 and FND-006 are low and quick.
+FND-001 is the same FR-135-AC-4 defect class in the ticket's own refinement-row scope. FND-002 and FND-003 are explicit FR-322 text the PR did not apply. Fix them here, or name a ticket for each before merge. FND-004 needs a named ticket, plus an FSpec gap for the spelling of the position index. FND-005 and FND-006 are low and quick.
 
-Mergeability also depends on the remote gate runs (A at base for the 39, B1-B6 at head), which have not run yet.
+Mergeability also depends on the test runs at base (for the 39) and at head, which have not run yet.
 
 ## New findings (disposition pass 1)
 
@@ -72,3 +72,5 @@ Head f454bfeea8 (fix fa5dc218c3, merge of origin/main 7b05d21e64).
 | FND-004 | fixed | - |
 | FND-005 | fixed | - |
 | FND-006 | deferred | QSL-2955 comment of 2026-11-25 records the exact codegen clause_key change (node(account), text(field) after "filament.op.record.project") for the next pin bump. |
+| FND-007 | deferred | QSL-3345 (state and transition node path operands per FSpec FR-341), blocked on STD-729 for the segment order; named in the PR body. |
+| FND-008 | fixed | - |

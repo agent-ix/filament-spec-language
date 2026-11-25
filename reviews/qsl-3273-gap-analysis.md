@@ -18,7 +18,7 @@ relationships:
 
 ## Summary
 
-Ticket: QSL-3273 (with QSL-3295). Planless run: no plan was supplied. The run covers the computed matrix (`quire matrix --scope . --format json` at head), a reverse-gap check over the changed production code, and a stub check. The semantic review was not run, because the brief asked for a reviewer pass only.
+Ticket: QSL-3273 (with QSL-3295). Planless run: no plan was supplied. The run covers the computed matrix (`quire matrix --scope . --format json` at head), a reverse-gap check over the changed production code, and a stub check. The semantic review was not run.
 
 Matrix state of the criteria the PR touches:
 - FR-135-AC-4 is tagged by `a_field_row_changes_the_refinement_node_body_and_not_its_key`.
@@ -49,7 +49,7 @@ CONDITIONAL. Every criterion this PR touches is tagged by a test that asserts li
 - Criteria examined: FR-135-AC-4, FR-137-AC-1, FR-147-AC-9, FR-147-AC-16, FR-306-AC-2, FR-092-AC-2, FR-092-AC-11.
 - Reverse gap: `walked_operands` member arms; `rename_projections` and the `emit_monitor_plan` re-key.
 - Stub and tautology check: the 9 changed test files.
-- Semantic review: skipped (reviewer pass).
+- Semantic review: skipped.
 - Plan completion: not assessed
 
 ## Dispositions
