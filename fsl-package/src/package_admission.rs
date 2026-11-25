@@ -11,8 +11,7 @@ use std::sync::Arc;
 
 use filament_contract_model::{
     CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageRefusal,
-    CheckedPackageRefusalCause, CheckedPackageRefusalCode, CheckedPackageV2,
-    read_checked_package,
+    CheckedPackageRefusalCause, CheckedPackageRefusalCode, CheckedPackageV2, read_checked_package,
 };
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_semantics::value::DefinitionRole;
@@ -301,12 +300,13 @@ impl PackageAdmissionRefusal {
     #[must_use]
     #[implements("FR-110-AC-16")]
     pub fn reader_cause(&self) -> Option<&'static str> {
-        self.cause.map(cause_spelling)
+        self.cause.and_then(|cause| cause_spelling(cause).ok())
     }
 
     /// The refusal spelled `code/cause for identity at pointer`, each part
     /// when present.
     #[must_use]
+    #[implements("FR-110-AC-16")]
     pub fn label(&self) -> String {
         if let Some(failure) = self.host_allocation_failure.as_deref() {
             return format!(
@@ -316,8 +316,10 @@ impl PackageAdmissionRefusal {
         }
         let mut label = self.code.as_str().to_owned();
         if let Some(cause) = self.cause {
-            label.push('/');
-            label.push_str(&cause_spelling(cause));
+            if let Ok(spelling) = cause_spelling(cause) {
+                label.push('/');
+                label.push_str(spelling);
+            }
         }
         if let Some(identity) = &self.identity {
             label.push_str(" for ");
@@ -399,59 +401,35 @@ impl PackageAdmissionRefusal {
 }
 
 #[implements("FR-110-AC-16")]
-fn cause_spelling(cause: CheckedPackageRefusalCause) -> &'static str {
-    match cause {
-        CheckedPackageRefusalCause::MalformedJson => "malformed-json",
-        CheckedPackageRefusalCause::MissingMember => "missing-member",
-        CheckedPackageRefusalCause::UnknownMember => "unknown-member",
-        CheckedPackageRefusalCause::WrongValueKind => "wrong-value-kind",
-        CheckedPackageRefusalCause::DefinitionCycle => "definition-cycle",
-        CheckedPackageRefusalCause::IncompatibleDefinition => "incompatible-definition",
-        CheckedPackageRefusalCause::FeatureSetMismatch => "feature-set-mismatch",
-        CheckedPackageRefusalCause::InsufficientNextCharge => "insufficient-next-charge",
-        CheckedPackageRefusalCause::MissingName => "missing-name",
-        CheckedPackageRefusalCause::WrongObservation => "wrong-observation",
-        CheckedPackageRefusalCause::MalformedDeclaration => "malformed-declaration",
-        CheckedPackageRefusalCause::WrongExport => "wrong-export",
-        CheckedPackageRefusalCause::InvalidDerivedShape => "invalid-derived-shape",
-        CheckedPackageRefusalCause::UnknownOperation => "unknown-operation",
-        CheckedPackageRefusalCause::OperationClassMismatch => "operation-class-mismatch",
-        CheckedPackageRefusalCause::OperationLawMissing => "operation-law-missing",
-        CheckedPackageRefusalCause::OperationLawMismatch => "operation-law-mismatch",
-        CheckedPackageRefusalCause::OperationLawUnselected => "operation-law-unselected",
-        CheckedPackageRefusalCause::OperationModeMismatch => "operation-mode-mismatch",
-        CheckedPackageRefusalCause::OperationModeTypeMismatch => "operation-mode-type-mismatch",
-        CheckedPackageRefusalCause::OperationMemberMismatch => "operation-member-mismatch",
-        CheckedPackageRefusalCause::OperatorIneligible => "operator-ineligible",
-        CheckedPackageRefusalCause::ExpressionForm => "expression-form",
-        CheckedPackageRefusalCause::DeclarationForm => "declaration-form",
-        CheckedPackageRefusalCause::DeclarationNominalMismatch => "declaration-nominal-mismatch",
-        CheckedPackageRefusalCause::AmbiguousName => "ambiguous-name",
-        CheckedPackageRefusalCause::MissingSelection => "missing-selection",
-        CheckedPackageRefusalCause::WrongModelSelection => "wrong-model-selection",
-        CheckedPackageRefusalCause::ConflictingBinding => "conflicting-binding",
-        CheckedPackageRefusalCause::UnpreservedModelMeaning => "unpreserved-model-meaning",
-        CheckedPackageRefusalCause::ConflictingDefinition => "conflicting-definition",
-        CheckedPackageRefusalCause::InvalidSemanticGraph => "invalid-semantic-graph",
-        CheckedPackageRefusalCause::InvalidValue => "invalid-value",
-        CheckedPackageRefusalCause::DuplicateMember => "duplicate-member",
-        CheckedPackageRefusalCause::TypeMismatch => "type-mismatch",
-        CheckedPackageRefusalCause::UnitMismatch => "unit-mismatch",
-        CheckedPackageRefusalCause::NonBooleanRoot => "non-boolean-root",
-        CheckedPackageRefusalCause::MissingTimedModel => "missing-timed-model",
-        CheckedPackageRefusalCause::TimedNodeReference => "timed-node-reference",
-        CheckedPackageRefusalCause::DuplicateClockPlace => "duplicate-clock-place",
-        CheckedPackageRefusalCause::MalformedClockPlace => "malformed-clock-place",
-        CheckedPackageRefusalCause::InvalidTimeQuantity => "invalid-time-quantity",
-        CheckedPackageRefusalCause::ClockWithoutDenseTime => "clock-without-dense-time",
-        CheckedPackageRefusalCause::UnsupportedSelection => "unsupported-selection",
-        CheckedPackageRefusalCause::WrongSelectionRole => "wrong-selection-role",
-        CheckedPackageRefusalCause::InexactInteger => "inexact-integer",
-        CheckedPackageRefusalCause::InexactNumber => "inexact-number",
-        CheckedPackageRefusalCause::InvalidTaskSet => "invalid-task-set",
-        CheckedPackageRefusalCause::StaleNodeKey => "stale-node-key",
-        CheckedPackageRefusalCause::ClockReadOutsideConstraint => "clock-read-outside-constraint",
+struct CauseSpellingSerializer;
+
+impl serde::Serializer for CauseSpellingSerializer {
+    type Ok = &'static str;
+    type Error = serde_json::Error;
+    type SerializeSeq = serde::ser::Impossible<Self::Ok, Self::Error>;
+    type SerializeTuple = serde::ser::Impossible<Self::Ok, Self::Error>;
+    type SerializeTupleStruct = serde::ser::Impossible<Self::Ok, Self::Error>;
+    type SerializeTupleVariant = serde::ser::Impossible<Self::Ok, Self::Error>;
+    type SerializeMap = serde::ser::Impossible<Self::Ok, Self::Error>;
+    type SerializeStruct = serde::ser::Impossible<Self::Ok, Self::Error>;
+    type SerializeStructVariant = serde::ser::Impossible<Self::Ok, Self::Error>;
+
+    #[implements("FR-110-AC-16")]
+    fn serialize_unit_variant(
+        self,
+        _name: &'static str,
+        _index: u32,
+        variant: &'static str,
+    ) -> Result<Self::Ok, Self::Error> {
+        Ok(variant)
     }
+}
+
+#[implements("FR-110-AC-16")]
+pub(crate) fn cause_spelling(
+    cause: CheckedPackageRefusalCause,
+) -> Result<&'static str, serde_json::Error> {
+    serde::Serialize::serialize(&cause, CauseSpellingSerializer)
 }
 
 /// The domain package identity the value at `pointer` of the package JSON

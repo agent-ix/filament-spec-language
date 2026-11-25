@@ -741,13 +741,90 @@ pub(crate) struct AmbientFinding {
     pub(crate) ambient: Ambient,
 }
 
+/// The type aliases and imported names that may hide mutable static types,
+/// including aliases nested in inline modules or imported from sibling files.
+#[implements("FR-284-AC-4")]
+fn aliases_in(parsed: &syn::File) -> BTreeMap<String, Vec<syn::Type>> {
+    #[implements("FR-284-AC-4")]
+    fn with_segment(path: &syn::Path, ident: &syn::Ident) -> syn::Path {
+        let mut path = path.clone();
+        path.segments.push(syn::PathSegment {
+            ident: ident.clone(),
+            arguments: syn::PathArguments::None,
+        });
+        path
+    }
+
+    #[implements("FR-284-AC-4")]
+    fn collect_use_tree(
+        tree: &syn::UseTree,
+        prefix: &syn::Path,
+        aliases: &mut BTreeMap<String, Vec<syn::Type>>,
+    ) {
+        match tree {
+            syn::UseTree::Path(path) => {
+                collect_use_tree(&path.tree, &with_segment(prefix, &path.ident), aliases);
+            }
+            syn::UseTree::Name(name) => {
+                let path = with_segment(prefix, &name.ident);
+                aliases
+                    .entry(name.ident.to_string())
+                    .or_default()
+                    .push(syn::Type::Path(syn::TypePath { qself: None, path }));
+            }
+            syn::UseTree::Rename(rename) => {
+                let path = with_segment(prefix, &rename.ident);
+                aliases
+                    .entry(rename.rename.to_string())
+                    .or_default()
+                    .push(syn::Type::Path(syn::TypePath { qself: None, path }));
+            }
+            syn::UseTree::Group(group) => {
+                for tree in &group.items {
+                    collect_use_tree(tree, prefix, aliases);
+                }
+            }
+            syn::UseTree::Glob(_) => {}
+        }
+    }
+
+    struct Aliases(BTreeMap<String, Vec<syn::Type>>);
+    impl<'ast> Visit<'ast> for Aliases {
+        #[implements("FR-284-AC-4")]
+        fn visit_item_type(&mut self, node: &'ast syn::ItemType) {
+            self.0
+                .entry(node.ident.to_string())
+                .or_default()
+                .push((*node.ty).clone());
+            syn::visit::visit_item_type(self, node);
+        }
+
+        #[implements("FR-284-AC-4")]
+        fn visit_item_use(&mut self, node: &'ast syn::ItemUse) {
+            let prefix = syn::Path {
+                leading_colon: None,
+                segments: syn::punctuated::Punctuated::new(),
+            };
+            collect_use_tree(&node.tree, &prefix, &mut self.0);
+            syn::visit::visit_item_use(self, node);
+        }
+    }
+    let mut visitor = Aliases(BTreeMap::new());
+    visitor.visit_file(parsed);
+    visitor.0
+}
+
 /// The line of every `static mut` and every `static` whose type names one
 /// of [`MUTABLE_STATIC_TYPES`], including mutable types reached through aliases.
 #[implements("FR-284-AC-4")]
-fn mutable_static_lines(parsed: &syn::File) -> BTreeSet<usize> {
+fn mutable_static_lines(
+    parsed: &syn::File,
+    aliases: &BTreeMap<String, Vec<syn::Type>>,
+) -> BTreeSet<usize> {
+    #[implements("FR-284-AC-4")]
     fn mutable_type(
         ty: &syn::Type,
-        aliases: &BTreeMap<String, syn::Type>,
+        aliases: &BTreeMap<String, Vec<syn::Type>>,
         visited: &mut BTreeSet<String>,
     ) -> bool {
         struct Idents(Vec<String>);
@@ -761,24 +838,20 @@ fn mutable_static_lines(parsed: &syn::File) -> BTreeSet<usize> {
         idents.0.iter().any(|name| {
             MUTABLE_STATIC_TYPES.contains(&name.as_str())
                 || aliases.get(name).is_some_and(|aliased| {
-                    visited.insert(name.clone()) && mutable_type(aliased, aliases, visited)
+                    aliased.iter().any(|aliased| {
+                        let mut branch = visited.clone();
+                        branch.insert(name.clone()) && mutable_type(aliased, aliases, &mut branch)
+                    })
                 })
         })
     }
 
-    let aliases: BTreeMap<String, syn::Type> = parsed
-        .items
-        .iter()
-        .filter_map(|item| match item {
-            syn::Item::Type(alias) => Some((alias.ident.to_string(), (*alias.ty).clone())),
-            _ => None,
-        })
-        .collect();
     struct Statics<'a> {
         lines: BTreeSet<usize>,
-        aliases: &'a BTreeMap<String, syn::Type>,
+        aliases: &'a BTreeMap<String, Vec<syn::Type>>,
     }
     impl<'ast> Visit<'ast> for Statics<'_> {
+        #[implements("FR-284-AC-4")]
         fn visit_item_static(&mut self, node: &'ast syn::ItemStatic) {
             let mutable = matches!(node.mutability, syn::StaticMutability::Mut(_))
                 || mutable_type(&node.ty, self.aliases, &mut BTreeSet::new());
@@ -790,7 +863,7 @@ fn mutable_static_lines(parsed: &syn::File) -> BTreeSet<usize> {
     }
     let mut visitor = Statics {
         lines: BTreeSet::new(),
-        aliases: &aliases,
+        aliases,
     };
     visitor.visit_file(parsed);
     visitor.lines
@@ -803,6 +876,7 @@ fn scan_file(
     path: &Path,
     compiled: &[(Ambient, Vec<CallPattern>)],
     exempt: Option<(&str, Ambient)>,
+    aliases: &BTreeMap<String, Vec<syn::Type>>,
 ) -> Result<Vec<AmbientFinding>> {
     let text = fs::read_to_string(path).map_err(|error| Error::io(path, error))?;
     let parsed = syn::parse_file(&text).map_err(|source| Error::source_parse(path, source))?;
@@ -818,7 +892,7 @@ fn scan_file(
             by_line.entry(line).or_insert(*ambient);
         }
     }
-    for line in mutable_static_lines(&parsed) {
+    for line in mutable_static_lines(&parsed, aliases) {
         by_line.entry(line).or_insert(Ambient::GlobalState);
     }
     Ok(by_line
@@ -881,15 +955,28 @@ pub(crate) fn scan_ambient(fsl_root: &Path) -> Result<Vec<AmbientFinding>> {
             })
             .collect();
         let test_modules = cfg_test_module_declarations(&modules)?;
-        for (file, module) in &modules {
-            let under_test = test_modules
+        let under_test = |module: &str| {
+            test_modules
                 .iter()
-                .any(|ancestor| module == ancestor || module.starts_with(&format!("{ancestor}::")));
-            if !under_test {
+                .any(|ancestor| module == ancestor || module.starts_with(&format!("{ancestor}::")))
+        };
+        let mut aliases: BTreeMap<String, Vec<syn::Type>> = BTreeMap::new();
+        for (file, module) in &modules {
+            if !under_test(module) {
+                let text = fs::read_to_string(file).map_err(|error| Error::io(file, error))?;
+                let parsed =
+                    syn::parse_file(&text).map_err(|source| Error::source_parse(file, source))?;
+                for (name, mut found) in aliases_in(&parsed) {
+                    aliases.entry(name).or_default().append(&mut found);
+                }
+            }
+        }
+        for (file, module) in &modules {
+            if !under_test(module) {
                 let (scratch_file, function, category) = FCD_LIFT_SCRATCH;
                 let exempt = (file.strip_prefix(fsl_root) == Ok(Path::new(scratch_file)))
                     .then_some((function, category));
-                findings.extend(scan_file(file, &compiled, exempt)?);
+                findings.extend(scan_file(file, &compiled, exempt, &aliases)?);
             }
         }
     }
@@ -1496,6 +1583,39 @@ mod tests {
         assert_eq!(
             found(&dir),
             vec![("fsl-eval/src/lib.rs".to_owned(), 1, Ambient::GlobalState)]
+        );
+    }
+
+    /// Imported aliases and aliases in nested modules cannot hide global state.
+    #[trace("TC-768", "FR-284-AC-4")]
+    #[test]
+    fn tc_768_imported_and_nested_aliases_are_global_state_findings() {
+        let dir = core_tree(&[
+            (
+                "fsl-eval/src/lib.rs",
+                "use std::sync::Mutex as Lock;\n\
+             static IMPORTED: Lock<Vec<u8>> = std::sync::Mutex::new(Vec::new());\n\
+             mod nested {\n\
+                 type Cache = std::sync::OnceLock<Vec<u8>>;\n\
+                 static NESTED: Cache = std::sync::OnceLock::new();\n\
+             }\n\
+             mod sibling;\n\
+             use crate::sibling::Shared as ImportedCache;\n\
+             static REEXPORTED: ImportedCache = std::sync::OnceLock::new();\n",
+            ),
+            (
+                "fsl-eval/src/sibling.rs",
+                "pub type Shared = std::sync::OnceLock<Vec<u8>>;\n",
+            ),
+        ]);
+        let file = "fsl-eval/src/lib.rs".to_owned();
+        assert_eq!(
+            found(&dir),
+            [
+                (file.clone(), 2, Ambient::GlobalState),
+                (file.clone(), 5, Ambient::GlobalState),
+                (file, 9, Ambient::GlobalState),
+            ]
         );
     }
 
