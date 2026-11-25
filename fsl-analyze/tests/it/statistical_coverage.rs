@@ -112,7 +112,7 @@ fn clopper_pearson_witness_replays() {
     assert!(!verdict.witnesses.is_empty(), "the sample has a witness");
     for witness in &verdict.witnesses {
         assert_eq!(
-            crate::statistical_witness_replay::replay(
+            crate::statistical_witness_support::replay(
                 &world,
                 "CoinGone",
                 &verdict.provenance,

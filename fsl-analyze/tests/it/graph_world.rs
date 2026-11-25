@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(
+    dead_code,
+    reason = "shared analyzer fixture support spans split integration test binaries"
+)]
 //! The state-graph tests' worlds: a one-type domain package whose fields are
 //! bounded integers and whose operations take no parameter, a native unit
 //! selecting it with a contract and state-graph claims, and the snapshots,

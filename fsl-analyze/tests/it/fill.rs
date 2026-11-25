@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(
+    dead_code,
+    reason = "shared model fixture support spans split integration test binaries"
+)]
 //! ADR-027 §7's worked example as a fixture: the `test/fill` domain package
 //! (population `cells` of `Cell`, fields `v` and `w: Int[0, 3]`, operations
 //! `inc`, `setTwo`, `bump`, `flag` and `nudge(peer: Cell)` modifying their

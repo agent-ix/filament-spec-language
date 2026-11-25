@@ -25,8 +25,8 @@ use crate::counter::{
     document, document_with_ranged_parameter, subject, value, Letters, UNLIMITED,
 };
 use crate::lasso_replay::{clause_identity, found, refusal, subject_of};
-use crate::liveness::{counter, is_zero, Fixture};
-use crate::model_settle::{envelope_at, request};
+use crate::liveness_support::{counter, is_zero, Fixture};
+use crate::model_settle_support::{envelope_at, request};
 
 const FORMULA: &str = "always eventually holds(c.value = 3)";
 const ZERO: &str = "always eventually holds(c.value = 0)";

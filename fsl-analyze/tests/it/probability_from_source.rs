@@ -9,6 +9,7 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::prob_world::{self, World};
+use crate::provider_schema_support::{assert_valid, provider_definition};
 use filament_exact::Cancel;
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
 use fsl_analyze::exact_probabilistic::{
@@ -1857,30 +1858,6 @@ fn an_item_with_no_probabilistic_member_takes_every_default() {
     assert_eq!(request["max_witnesses"], 8, "{item}");
     assert_eq!(request["workers"], 1, "{item}");
     assert_eq!(request["limits"]["max_samples"], 1_u64 << 24, "{item}");
-}
-
-/// One definition of FSpec's backend-provider schema, with the checked-package
-/// schema it refers to.
-pub(crate) fn provider_definition(name: &str) -> jsonschema::JSONSchema {
-    let schema = crate::published_fspec::json("proposals/backend-provider-v1/schema.json");
-    let package = crate::published_fspec::json("proposals/checked-package-v2/schema.json");
-    let definition = json!({
-        "$schema": schema["$schema"],
-        "$defs": schema["$defs"],
-        "$ref": format!("#/$defs/{name}"),
-    });
-    jsonschema::JSONSchema::options()
-        .with_draft(jsonschema::Draft::Draft202012)
-        .with_document("urn:filament:checked-package:v2".to_owned(), package)
-        .compile(&definition)
-        .expect("the schema compiles")
-}
-
-pub(crate) fn assert_valid(compiled: &jsonschema::JSONSchema, instance: &Value, what: &str) {
-    if let Err(errors) = compiled.validate(instance) {
-        let errors: Vec<_> = errors.map(|error| error.to_string()).collect();
-        panic!("{what} violates the schema: {errors:?}\n{instance}");
-    }
 }
 
 /// FR-410, FR-741, FR-322, FSpec FR-412: a real statistical `measured` item's

@@ -43,13 +43,14 @@ use fsl_semantics::check::Capability;
 use fsl_semantics::family::{ClaimExtent, Requirements};
 use serde_json::{json, Value as Json};
 
-use crate::dense_route::{ids, registry};
-use crate::derived_request::{
+use crate::dense_route_support::{ids, registry};
+use crate::derived_request_support::{
     derived_subjects, items_of_kind, protocol_request, protocol_request_under, settled,
 };
 use crate::fill::tcb_01_event_position_selection;
 use crate::litmus::{attempt, contracts, protocol, protocol_with, NO_BOTH_ZERO};
-use crate::weak_memory::{litmus_run, load_ordered, select, steps, Case, MP};
+use crate::weak_memory::{litmus_run, MP};
+use crate::weak_memory_support::{load_ordered, select, steps, Case};
 
 /// `SB::Main::Both` resolved to `tso`.
 fn tso() -> [MemorySelection; 1] {
@@ -208,7 +209,9 @@ fn has_reachable_non_atomic_access<M: MemoryModel>(
     selection: &[MemorySelection],
     memory: M,
 ) -> bool {
-    let system = case.concrete_system(selection, memory).expect("protocol system");
+    let system = case
+        .concrete_system(selection, memory)
+        .expect("protocol system");
     let mut queue: VecDeque<_> = system.try_initial().expect("initial states settle").into();
     let mut seen = BTreeSet::new();
     while let Some(state) = queue.pop_front() {

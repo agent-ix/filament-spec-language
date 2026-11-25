@@ -206,20 +206,20 @@ fn the_timed_refinement_record_routes_to_en6_alone() {
         .expect("the refinement has a record");
     let record = graph.requirements().get(occurrence).expect("its record");
     assert!(record.requirements().timed());
-    let registry = crate::dense_route::registry();
+    let registry = crate::dense_route_support::registry();
     let items = items_from_requirements(graph.requirements(), &registry, None);
     let item = items
         .iter()
         .find(|item| item.occurrence() == occurrence)
         .expect("the record's item");
     assert_eq!(
-        crate::dense_route::ids(item.candidates()),
+        crate::dense_route_support::ids(item.candidates()),
         [en6::BACKEND_ID]
     );
 
     let subject = "treq";
     let initial = [world.abstract_initial.clone()];
-    let derived: Vec<_> = crate::derived_request::derived_items(
+    let derived: Vec<_> = crate::derived_request_support::derived_items(
         &[],
         &[ModelRefinementItem {
             refinement,
@@ -235,7 +235,7 @@ fn the_timed_refinement_record_routes_to_en6_alone() {
         assert_eq!(obligation.subject, subject);
         (
             item.item_kind(),
-            crate::dense_route::ids(item.candidates().expect("its candidates")),
+            crate::dense_route_support::ids(item.candidates().expect("its candidates")),
         )
     })
     .collect();

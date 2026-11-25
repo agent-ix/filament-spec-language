@@ -512,7 +512,7 @@ fn derived_items_take_temporal_trace_from_their_item_kind_on_any_anchor() {
 /// The package of a `Value` function with a Boolean result and a scalar
 /// operation application in its body.
 fn value_package() -> CheckedPackage {
-    crate::value_validity::package_of(
+    crate::value_validity_support::package_of(
         "function f using v(x: Integer): Integer pure { x }\n\
          function subject using v(x: Integer): Boolean pure { f(x) + 1 > x }\n",
     )
@@ -963,7 +963,7 @@ fn each_claim_form_is_read_from_its_node_tag_form_and_role() {
     );
 
     // `relation-claim`: a refinement whose abstract side is a protocol.
-    let source = crate::refinement_protocol::cas_twice(false, false);
+    let source = crate::refinement_protocol_support::cas_twice(false, false);
     let world = crate::refinement_fixture::World::with_internals(
         crate::refinement_fixture::Variant {
             peek: false,

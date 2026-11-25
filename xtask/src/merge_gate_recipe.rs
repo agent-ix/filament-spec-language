@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Path-based, name-filtered merge-gate recipes for FSL changes.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::error::{Error, Result};
 
@@ -14,6 +15,23 @@ const LARGE_EMIT_FILTER: &str =
 const EMIT_SKIP: [&str; 2] = [
     "100000",
     "every_nested_form_emits_in_the_stratified_grammar_at_2_and_1000_levels",
+];
+const ANALYZE_IT_ROOTS: &[(&str, &str)] = &[
+    ("it", "fsl-analyze/tests/it/main.rs"),
+    (
+        "it_monitor_protocol",
+        "fsl-analyze/tests/it/monitor_protocol.rs",
+    ),
+    ("it_probabilistic", "fsl-analyze/tests/it/probabilistic.rs"),
+    (
+        "it_model_check",
+        "fsl-analyze/tests/it/model_check_binary.rs",
+    ),
+    ("it_refinement", "fsl-analyze/tests/it/refinement.rs"),
+    (
+        "it_refinement_cx1",
+        "fsl-analyze/tests/it_refinement_cx1.rs",
+    ),
 ];
 const USAGE: &str = "usage: cargo xtask merge-gate-recipe [--preflight] <changed-path>...";
 
@@ -1236,7 +1254,10 @@ fn plan_paths(workspace_root: &Path, paths: &[String]) -> Result<Recipe> {
                 .insert(format!("no targeted cargo tests for {path}"));
             continue;
         }
-        if !path_exists(workspace_root, path) && !is_virtual_path(path) {
+        if !path_exists(workspace_root, path)
+            && !is_virtual_path(path)
+            && !is_root_shared_test_path(path)
+        {
             recipe.notes.insert(format!(
                 "changed path {path} is absent; using crate fallback"
             ));
@@ -1250,7 +1271,7 @@ fn plan_paths(workspace_root: &Path, paths: &[String]) -> Result<Recipe> {
 
 fn plan_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Result<()> {
     if path == "Cargo.toml" || path == "Cargo.lock" {
-        apply_manifest_rule(recipe);
+        apply_manifest_rule(workspace_root, recipe)?;
         return Ok(());
     }
     if matches!(path, "src/lib.rs" | "src/main.rs" | "src/mod.rs") {
@@ -1260,12 +1281,23 @@ fn plan_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Result<(
     if let Some(relative) = path.strip_prefix("tools/fsl-probability-check/") {
         return plan_probability_check(workspace_root, path, relative, recipe);
     }
+    if is_root_shared_test_path(path) {
+        return plan_root_shared_test_file(workspace_root, path, recipe);
+    }
     if path.ends_with("/Cargo.toml") {
         apply_crate_fallback(path, workspace_root, recipe)?;
         return Ok(());
     }
-    if path == "tests/it/main.rs" || path.ends_with("/tests/it/main.rs") {
-        if let Some(rule) = matching_rule(path) {
+    if is_integration_root_path(workspace_root, path) {
+        // A root is not a module, so a directory's changed-module rule cannot
+        // select it: such a root runs every module.
+        let rule = matching_rule(path).filter(|rule| {
+            !rule
+                .it_filters
+                .iter()
+                .any(|filter| matches!(filter.rule, ItRule::ChangedModule))
+        });
+        if let Some(rule) = rule {
             apply_rule(workspace_root, path, rule, recipe)?;
         } else {
             add_all_it_modules(workspace_root, test_package(path), recipe)?;
@@ -1324,14 +1356,71 @@ fn plan_probability_check(
         .strip_prefix("tests/it/")
         .filter(|module| *module != "main.rs");
     if module.is_some() {
-        add_integration(
-            recipe,
-            "fsl-probability-check",
-            integration_module_filter(path)?,
-        );
-        return Ok(());
+        return add_changed_module(workspace_root, recipe, "fsl-probability-check", path);
     }
     add_all_it_modules(workspace_root, "fsl-probability-check", recipe)
+}
+
+/// A file under the workspace root's `tests/support/` or `tests/fixtures/`,
+/// which the test binaries of any package may declare by `#[path]`.
+fn is_root_shared_test_path(path: &str) -> bool {
+    path.starts_with("tests/support/") || path.starts_with("tests/fixtures/")
+}
+
+/// The packages whose integration binaries can declare a root shared file: the
+/// root package, the probability checker, and every `fsl-` crate directory.
+fn integration_packages(workspace_root: &Path) -> Result<BTreeSet<String>> {
+    let unlisted = |error: std::io::Error| {
+        Error::MergeGateRecipe(format!(
+            "cannot list workspace root {}: {error}",
+            workspace_root.display()
+        ))
+    };
+    let mut packages = BTreeSet::from([
+        "filament-spec-language".to_owned(),
+        "fsl-probability-check".to_owned(),
+    ]);
+    for entry in fs::read_dir(workspace_root).map_err(unlisted)? {
+        let name = entry.map_err(unlisted)?.file_name();
+        if let Some(name) = name.to_str().filter(|name| name.starts_with("fsl-")) {
+            packages.insert(name.to_owned());
+        }
+    }
+    Ok(packages)
+}
+
+/// Selects every module of each integration binary, in any package, that
+/// declares the changed root shared file. A file no binary declares (data a
+/// test reads, a module only library code includes, or a deleted file) runs
+/// every root-package module, with a note.
+fn plan_root_shared_test_file(
+    workspace_root: &Path,
+    path: &str,
+    recipe: &mut Recipe,
+) -> Result<()> {
+    let changed = normalize_components(&workspace_root.join(path));
+    let mut declared = false;
+    for package in integration_packages(workspace_root)? {
+        for (target, root) in integration_roots(&package) {
+            if !workspace_root.join(&root).is_file() {
+                continue;
+            }
+            if integration_module_files(workspace_root, &root)?
+                .iter()
+                .any(|module| module.path == changed)
+            {
+                declared = true;
+                add_target_modules(workspace_root, recipe, &package, &target, &root)?;
+            }
+        }
+    }
+    if declared {
+        return Ok(());
+    }
+    recipe.notes.insert(format!(
+        "no integration-test binary declares {path}; running every filament-spec-language integration module"
+    ));
+    add_all_it_modules(workspace_root, "filament-spec-language", recipe)
 }
 
 fn plan_test_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Result<()> {
@@ -1374,26 +1463,15 @@ fn plan_test_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Res
         }
         return Ok(());
     }
-    if path == "tests/it/main.rs" || path.ends_with("/tests/it/main.rs") {
-        if let Some(rule) = matching_rule(path) {
-            return apply_rule(workspace_root, path, rule, recipe);
-        }
-        return add_all_it_modules(workspace_root, test_package(path), recipe);
-    }
     if let Some(package) = crate_name(path) {
-        if path.contains("/tests/fixtures/") || path.contains("/tests/support/") {
-            return add_all_it_modules(workspace_root, package, recipe);
-        }
         if path.starts_with("xtask/tests/") {
             return Ok(());
         }
-        // The module filter reads the path from its `tests/it/` segment, so
-        // the rule is applied to the whole changed path.
         if integration_path(path).is_some() {
             if let Some(rule) = matching_rule(path) {
                 apply_rule(workspace_root, path, rule, recipe)?;
             } else {
-                add_integration(recipe, package, integration_module_filter(path)?);
+                add_changed_module(workspace_root, recipe, package, path)?;
             }
             return Ok(());
         }
@@ -1410,11 +1488,7 @@ fn plan_test_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Res
         if let Some(rule) = matching_rule(path) {
             apply_rule(workspace_root, path, rule, recipe)?;
         } else {
-            add_integration(
-                recipe,
-                "filament-spec-language",
-                integration_module_filter(path)?,
-            );
+            add_changed_module(workspace_root, recipe, "filament-spec-language", path)?;
         }
         return Ok(());
     }
@@ -1516,12 +1590,14 @@ fn apply_it_filters(
 ) -> Result<()> {
     for it_filter in filters {
         match it_filter.rule {
-            ItRule::Fixed(filter) => add_integration(recipe, it_filter.package, filter),
+            ItRule::Fixed(filter) => {
+                add_integration(workspace_root, recipe, it_filter.package, filter)?
+            }
             ItRule::ChangedModule => {
                 let path = changed_path.ok_or_else(|| {
                     Error::MergeGateRecipe("changed-module rule requires a path".to_owned())
                 })?;
-                add_integration(recipe, it_filter.package, integration_module_filter(path)?);
+                add_changed_module(workspace_root, recipe, it_filter.package, path)?;
             }
             ItRule::AllModules(package) => add_all_it_modules(workspace_root, package, recipe)?,
         }
@@ -1529,123 +1605,288 @@ fn apply_it_filters(
     Ok(())
 }
 
-fn integration_root(package: &str) -> String {
-    match package {
+fn integration_roots(package: &str) -> Vec<(String, String)> {
+    if package == "fsl-analyze" {
+        return ANALYZE_IT_ROOTS
+            .iter()
+            .map(|(target, path)| ((*target).to_owned(), (*path).to_owned()))
+            .collect();
+    }
+    let path = match package {
         "filament-spec-language" => "tests/it/main.rs".to_owned(),
         "fsl-probability-check" => format!("tools/{package}/tests/it/main.rs"),
         _ => format!("{package}/tests/it/main.rs"),
+    };
+    vec![("it".to_owned(), path)]
+}
+
+fn is_integration_root_path(workspace_root: &Path, path: &str) -> bool {
+    integration_roots(test_package(path))
+        .iter()
+        .any(|(_, root)| root == path && workspace_root.join(root).is_file())
+}
+
+/// One module file of an integration-test binary, declared by its root or by
+/// another module file.
+struct ModuleFile {
+    path: PathBuf,
+    /// The module path from the root, as libtest names it.
+    name: String,
+    /// Every test in the module, including those of its child module files.
+    tests: Vec<String>,
+}
+
+fn parse_integration_file(path: &Path) -> Result<syn::File> {
+    let source = fs::read_to_string(path).map_err(|error| {
+        Error::MergeGateRecipe(format!(
+            "cannot read integration test file {}: {error}",
+            path.display()
+        ))
+    })?;
+    syn::parse_file(&source).map_err(|error| {
+        Error::MergeGateRecipe(format!(
+            "cannot parse integration test file {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+/// `path` with its `.` and `..` components resolved by name, so that a
+/// `#[path]` module compares equal to the changed path that names its file.
+fn normalize_components(path: &Path) -> PathBuf {
+    let mut normal = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normal.pop();
+            }
+            other => normal.push(other),
+        }
+    }
+    normal
+}
+
+/// One root's cache slot: empty until a walk of that root succeeds.
+type WalkSlot = Arc<Mutex<Option<Arc<[ModuleFile]>>>>;
+
+/// The walks this process has made, keyed by the root file's full path, so that
+/// workspaces never share one. A recipe run does not write sources, so a walk
+/// stays current for the life of the process.
+static MODULE_WALKS: Mutex<BTreeMap<PathBuf, WalkSlot>> = Mutex::new(BTreeMap::new());
+
+/// Every module file of the integration binary rooted at `root`, parsed on the
+/// first request for it. A failed walk is not kept.
+fn integration_module_files(workspace_root: &Path, root: &str) -> Result<Arc<[ModuleFile]>> {
+    let path = workspace_root.join(root);
+    let slot = Arc::clone(
+        MODULE_WALKS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(path.clone())
+            .or_default(),
+    );
+    // Only this root's slot is held while parsing: other roots walk in
+    // parallel, and concurrent requests for this one wait for one walk.
+    let mut cached = slot.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(files) = cached.as_ref() {
+        return Ok(Arc::clone(files));
+    }
+    let syntax = parse_integration_file(&path)?;
+    let directory = path.parent().unwrap_or(workspace_root);
+    let mut walk = ModuleWalk::default();
+    walk.items(&syntax.items, directory, directory)?;
+    let files: Arc<[ModuleFile]> = walk.files.into();
+    *cached = Some(Arc::clone(&files));
+    Ok(files)
+}
+
+/// A walk of one binary's module tree, in declaration order.
+#[derive(Default)]
+struct ModuleWalk {
+    modules: Vec<String>,
+    files: Vec<ModuleFile>,
+}
+
+impl ModuleWalk {
+    /// Returns the tests of `items`. A `#[path]` among them is relative to
+    /// `path_base`, and a module without one is a file under `child_base`.
+    fn items(
+        &mut self,
+        items: &[syn::Item],
+        path_base: &Path,
+        child_base: &Path,
+    ) -> Result<Vec<String>> {
+        let mut tests = Vec::new();
+        for item in items {
+            let syn::Item::Mod(module) = item else {
+                collect_test_names(std::slice::from_ref(item), &mut self.modules, &mut tests);
+                continue;
+            };
+            let name = module.ident.to_string();
+            self.modules.push(name.clone());
+            if let Some((_, nested)) = &module.content {
+                let directory = child_base.join(&name);
+                tests.extend(self.items(nested, &directory, &directory)?);
+            } else {
+                tests.extend(self.file(module, &name, path_base, child_base)?);
+            }
+            self.modules.pop();
+        }
+        Ok(tests)
+    }
+
+    /// Reads the file of the out-of-line `module`, records it and its child
+    /// files, and returns its tests.
+    fn file(
+        &mut self,
+        module: &syn::ItemMod,
+        name: &str,
+        path_base: &Path,
+        child_base: &Path,
+    ) -> Result<Vec<String>> {
+        let explicit = module.attrs.iter().find_map(path_attribute);
+        // A `#[path]` file and a `mod.rs` own their directory; any other
+        // module file keeps its children in a directory named after it.
+        let (file, owns_directory) = match explicit {
+            Some(relative) => (path_base.join(relative), true),
+            None => {
+                let file = child_base.join(format!("{name}.rs"));
+                if file.exists() {
+                    (file, false)
+                } else {
+                    (child_base.join(name).join("mod.rs"), true)
+                }
+            }
+        };
+        let file = normalize_components(&file);
+        let syntax = parse_integration_file(&file)?;
+        let directory = file.parent().map(Path::to_path_buf).unwrap_or_default();
+        let children = if owns_directory {
+            directory.clone()
+        } else {
+            directory.join(name)
+        };
+        let tests = self.items(&syntax.items, &directory, &children)?;
+        self.files.push(ModuleFile {
+            path: file,
+            name: self.modules.join("::"),
+            tests: tests.clone(),
+        });
+        Ok(tests)
+    }
+}
+
+/// The top-level modules of the binary rooted at `root` that hold a test, each
+/// with its tests.
+fn modules_in_root(
+    workspace_root: &Path,
+    package: &str,
+    target: &str,
+    root: &str,
+) -> Result<Vec<(String, Vec<String>)>> {
+    let modules = integration_module_files(workspace_root, root)?
+        .iter()
+        .filter(|module| !module.name.contains("::") && !module.tests.is_empty())
+        .map(|module| (module.name.clone(), module.tests.clone()))
+        .collect::<Vec<_>>();
+    if modules.is_empty() {
+        return Err(Error::MergeGateRecipe(format!(
+            "no named integration modules found in {} ({package} --test {target})",
+            workspace_root.join(root).display()
+        )));
+    }
+    Ok(modules)
+}
+
+fn add_target_modules(
+    workspace_root: &Path,
+    recipe: &mut Recipe,
+    package: &str,
+    target: &str,
+    root: &str,
+) -> Result<()> {
+    for (module, _) in modules_in_root(workspace_root, package, target, root)? {
+        add_integration_target(recipe, package, target, module);
+    }
+    Ok(())
+}
+
+/// Selects what a changed integration module file can affect in every binary
+/// that declares it: the module itself, or, when neither the file nor its child
+/// files hold a test, every module of the binary. A file no binary declares has
+/// nothing to select and fails closed.
+fn add_changed_module(
+    workspace_root: &Path,
+    recipe: &mut Recipe,
+    package: &str,
+    path: &str,
+) -> Result<()> {
+    let changed = normalize_components(&workspace_root.join(path));
+    let mut declared = false;
+    for (target, root) in integration_roots(package) {
+        if !workspace_root.join(&root).is_file() {
+            continue;
+        }
+        for module in integration_module_files(workspace_root, &root)?.iter() {
+            if module.path != changed {
+                continue;
+            }
+            declared = true;
+            if module.tests.is_empty() {
+                add_target_modules(workspace_root, recipe, package, &target, &root)?;
+            } else {
+                add_integration_target(recipe, package, &target, &module.name);
+            }
+        }
+    }
+    if declared {
+        Ok(())
+    } else {
+        Err(Error::MergeGateRecipe(format!(
+            "no {package} integration target declares changed file {path:?}; refusing to print a recipe that would run none of its tests"
+        )))
     }
 }
 
 fn add_all_it_modules(workspace_root: &Path, package: &str, recipe: &mut Recipe) -> Result<()> {
-    let main = integration_root(package);
-    let path = workspace_root.join(&main);
-    if !path.exists() {
+    let roots = integration_roots(package);
+    let existing = roots
+        .iter()
+        .filter(|(_, root)| workspace_root.join(root).is_file())
+        .collect::<Vec<_>>();
+    if existing.is_empty() {
         add_whole_library(recipe, package);
         recipe.notes.insert(format!(
             "{package} has no integration-test target; falling back to its library tests"
         ));
         return Ok(());
     }
-    let source = fs::read_to_string(&path).map_err(|error| {
-        Error::MergeGateRecipe(format!(
-            "cannot read integration test root {}: {error}",
-            path.display()
-        ))
-    })?;
-    let syntax = syn::parse_file(&source).map_err(|error| {
-        Error::MergeGateRecipe(format!(
-            "cannot parse integration test root {}: {error}",
-            path.display()
-        ))
-    })?;
-    let base = path.parent().unwrap_or(workspace_root);
-    let mut modules = Vec::new();
-    for item in &syntax.items {
-        let syn::Item::Mod(module) = item else {
-            continue;
-        };
-        let module_name = module.ident.to_string();
-        let module_file = module
-            .attrs
-            .iter()
-            .find_map(path_attribute)
-            .map(|relative| base.join(relative))
-            .unwrap_or_else(|| base.join(format!("{module_name}.rs")));
-        let module_file = if module_file.exists() {
-            module_file
-        } else {
-            base.join(&module_name).join("mod.rs")
-        };
-        let Ok(module_source) = fs::read_to_string(&module_file) else {
-            continue;
-        };
-        let Ok(module_syntax) = syn::parse_file(&module_source) else {
-            continue;
-        };
-        let mut names = Vec::new();
-        collect_test_names(&module_syntax.items, &mut Vec::new(), &mut names);
-        if !names.is_empty() {
-            modules.push(module_name);
-        }
-    }
-    if modules.is_empty() {
-        return Err(Error::MergeGateRecipe(format!(
-            "no named integration modules found in {}",
-            path.display()
-        )));
-    }
-    for module in modules {
-        add_integration(recipe, package, module);
+    for (target, root) in existing {
+        add_target_modules(workspace_root, recipe, package, target, root)?;
     }
     Ok(())
 }
 
 #[cfg(test)]
-fn top_level_integration_modules(workspace_root: &Path, package: &str) -> Result<Vec<String>> {
-    let main = integration_root(package);
-    let path = workspace_root.join(&main);
-    let source = fs::read_to_string(&path).map_err(|error| {
-        Error::MergeGateRecipe(format!(
-            "cannot read integration test root {}: {error}",
-            path.display()
-        ))
-    })?;
-    let syntax = syn::parse_file(&source).map_err(|error| {
-        Error::MergeGateRecipe(format!(
-            "cannot parse integration test root {}: {error}",
-            path.display()
-        ))
-    })?;
-    let base = path.parent().unwrap_or(workspace_root);
+fn top_level_integration_modules(
+    workspace_root: &Path,
+    package: &str,
+) -> Result<Vec<(String, String)>> {
     let mut modules = Vec::new();
-    for item in &syntax.items {
-        let syn::Item::Mod(module) = item else {
-            continue;
-        };
-        let name = module.ident.to_string();
-        let file = module
-            .attrs
-            .iter()
-            .find_map(path_attribute)
-            .map(|relative| base.join(relative))
-            .unwrap_or_else(|| base.join(format!("{name}.rs")));
-        let file = if file.exists() {
-            file
-        } else {
-            base.join(&name).join("mod.rs")
-        };
-        let Ok(source) = fs::read_to_string(file) else {
-            continue;
-        };
-        let Ok(syntax) = syn::parse_file(&source) else {
-            continue;
-        };
-        let mut names = Vec::new();
-        collect_test_names(&syntax.items, &mut Vec::new(), &mut names);
-        if !names.is_empty() {
-            modules.push(name);
+    for (target, root) in integration_roots(package) {
+        if workspace_root.join(&root).is_file() {
+            modules.extend(
+                modules_in_root(workspace_root, package, &target, &root)?
+                    .into_iter()
+                    .map(|(module, _)| (target.clone(), module)),
+            );
         }
+    }
+    if modules.is_empty() {
+        return Err(Error::MergeGateRecipe(format!(
+            "no named integration modules found for {package}"
+        )));
     }
     Ok(modules)
 }
@@ -1666,15 +1907,16 @@ fn path_attribute(attribute: &syn::Attribute) -> Option<String> {
     }
 }
 
-fn apply_manifest_rule(recipe: &mut Recipe) {
+fn apply_manifest_rule(workspace_root: &Path, recipe: &mut Recipe) -> Result<()> {
     for it_filter in EMIT_CONSUMERS {
         if let ItRule::Fixed(filter) = it_filter.rule {
-            add_integration(recipe, it_filter.package, filter);
+            add_integration(workspace_root, recipe, it_filter.package, filter)?;
         }
     }
     recipe.notes.insert(
         "manifest or lockfile change: run workspace check and emitter consumers".to_owned(),
     );
+    Ok(())
 }
 
 fn apply_crate_fallback(path: &str, workspace_root: &Path, recipe: &mut Recipe) -> Result<()> {
@@ -1745,7 +1987,7 @@ fn apply_crate_fallback(path: &str, workspace_root: &Path, recipe: &mut Recipe) 
         );
         for it_filter in TIMED_CONSUMER {
             if let ItRule::Fixed(filter) = it_filter.rule {
-                add_integration(recipe, it_filter.package, filter);
+                add_integration(workspace_root, recipe, it_filter.package, filter)?;
             }
         }
         recipe.notes.insert(format!(
@@ -1793,12 +2035,56 @@ fn add_whole_library(recipe: &mut Recipe, package: &str) {
     );
 }
 
-fn add_integration(recipe: &mut Recipe, package: &str, filter: impl Into<String>) {
+fn add_integration(
+    workspace_root: &Path,
+    recipe: &mut Recipe,
+    package: &str,
+    filter: impl Into<String>,
+) -> Result<()> {
+    let filter = filter.into();
+    let targets = integration_targets_for_filter(workspace_root, package, &filter)?;
+    for target in targets {
+        add_integration_target(recipe, package, &target, filter.clone());
+    }
+    Ok(())
+}
+
+fn integration_targets_for_filter(
+    workspace_root: &Path,
+    package: &str,
+    filter: &str,
+) -> Result<Vec<String>> {
+    let mut targets = BTreeSet::new();
+    for (target, root) in integration_roots(package) {
+        if !workspace_root.join(&root).is_file() {
+            continue;
+        }
+        if modules_in_root(workspace_root, package, &target, &root)?
+            .into_iter()
+            .any(|(_, tests)| tests.iter().any(|test| test.contains(filter)))
+        {
+            targets.insert(target);
+        }
+    }
+    if targets.is_empty() {
+        return Err(Error::MergeGateRecipe(format!(
+            "test filter {filter:?} matches no test in any {package} integration target; refusing to print a recipe that would run nothing"
+        )));
+    }
+    Ok(targets.into_iter().collect())
+}
+
+fn add_integration_target(
+    recipe: &mut Recipe,
+    package: &str,
+    target: &str,
+    filter: impl Into<String>,
+) {
     add_target_filter(
         recipe,
         TestSelector {
             package: package.to_owned(),
-            target: TestTarget::Integration("it".to_owned()),
+            target: TestTarget::Integration(target.to_owned()),
             filter: Some(filter.into()),
             exact: false,
             skip: Vec::new(),
@@ -1963,14 +2249,6 @@ fn ignore_attribute_changed(
 
 fn source_module_filter(path: &str) -> Result<String> {
     module_filter(path, "/src/")
-}
-
-fn integration_module_filter(path: &str) -> Result<String> {
-    if let Some(relative) = path.strip_prefix("tests/it/") {
-        return module_name_filter(relative, path)
-            .map(|filter| filter.trim_end_matches("::").to_owned());
-    }
-    module_filter(path, "/tests/it/").map(|filter| filter.trim_end_matches("::").to_owned())
 }
 
 fn module_filter(path: &str, marker: &str) -> Result<String> {
@@ -2195,10 +2473,10 @@ mod tests {
         .expect("valid paths")
     }
 
-    fn selector(package: &str, filter: &str) -> TestSelector {
+    fn integration_selector(package: &str, target: &str, filter: &str) -> TestSelector {
         TestSelector {
             package: package.to_owned(),
-            target: TestTarget::Integration("it".to_owned()),
+            target: TestTarget::Integration(target.to_owned()),
             filter: Some(filter.to_owned()),
             exact: false,
             skip: Vec::new(),
@@ -2208,18 +2486,112 @@ mod tests {
         }
     }
 
+    /// The binary holding the module or tests a live-workspace filter is named
+    /// for.
+    fn owning_target(package: &str, filter: &str) -> &'static str {
+        if package != "fsl-analyze" {
+            return "it";
+        }
+        match filter {
+            "analyze_composition_cli" | "analyze_package_provider" | "analyze_request_wire" => "it",
+            "analyze_package_selection"
+            | "native_correlation"
+            | "protocol_bounded_lasso"
+            | "timed_"
+            | "timed_within_200"
+            | "timed_within_201" => "it_model_check",
+            "monitor_" => "it_monitor_protocol",
+            "hyper" | "probabilistic" => "it_probabilistic",
+            "race_freedom" => "it_refinement",
+            other => panic!("name the binary that owns the filter {other:?}"),
+        }
+    }
+
+    /// `recipe` runs `package`'s `filter` in the binary that owns it. A test in
+    /// another binary may widen a live-workspace selection, so exact target
+    /// sets are asserted over temporary workspaces only.
+    fn assert_selects_owner(recipe: &Recipe, package: &str, filter: &str) {
+        let owner = integration_selector(package, owning_target(package, filter), filter);
+        assert!(recipe.selectors.contains(&owner), "{package} {filter}");
+    }
+
+    fn displays(recipe: &Recipe) -> Vec<String> {
+        recipe.selectors.iter().map(TestSelector::display).collect()
+    }
+
+    /// A workspace whose binaries hold known tests. `it_refinement_cx1` holds
+    /// none that a consumer filter names.
+    fn filter_workspace() -> tempfile::TempDir {
+        let workspace = tempfile::tempdir().expect("a temporary workspace");
+        write_files(
+            workspace.path(),
+            &[
+                ("fsl-analyze/src/provider.rs", ""),
+                ("fsl-eval/src/simulation/reach.rs", ""),
+                ("fsl-eval/src/value/expression/bare.rs", ""),
+                ("fsl-semantics/src/check/abstraction.rs", ""),
+                ("tests/it/main.rs", "mod language;\n"),
+                (
+                    "tests/it/language.rs",
+                    "#[test]\nfn bare_value() {}\n#[test]\nfn abstraction_relation_inert_holds() {}\n",
+                ),
+                ("fsl-analyze/tests/it/main.rs", "mod package_api;\n"),
+                (
+                    "fsl-analyze/tests/it/package_api.rs",
+                    "#[test]\nfn monitor_from_package() {}\n#[test]\nfn hyper_from_package() {}\n#[test]\nfn race_freedom_from_package() {}\n",
+                ),
+                ("fsl-analyze/tests/it/monitor_protocol.rs", "mod wire;\n"),
+                (
+                    "fsl-analyze/tests/it/wire.rs",
+                    "#[test]\nfn monitor_on_the_wire() {}\n#[test]\nfn timed_wire() {}\n",
+                ),
+                (
+                    "fsl-analyze/tests/it/probabilistic.rs",
+                    "mod helper;\nmod measure;\n",
+                ),
+                (
+                    "fsl-analyze/tests/it/measure.rs",
+                    "#[test]\nfn probabilistic_hyper() {}\n",
+                ),
+                ("fsl-analyze/tests/it/model_check_binary.rs", "mod zones;\n"),
+                (
+                    "fsl-analyze/tests/it/zones.rs",
+                    "#[test]\nfn timed_within_200_states() {}\n#[test]\nfn protocol_bounded_lasso_found() {}\n#[test]\nfn native_correlation_kept() {}\n",
+                ),
+                (
+                    "fsl-analyze/tests/it/refinement.rs",
+                    "mod helper;\nmod races;\n",
+                ),
+                (
+                    "fsl-analyze/tests/it/races.rs",
+                    "#[test]\nfn race_freedom_refined() {}\n",
+                ),
+                (
+                    "fsl-analyze/tests/it/helper.rs",
+                    "pub(crate) fn fixture() {}\n",
+                ),
+                ("fsl-analyze/tests/it_refinement_cx1.rs", "mod isolated;\n"),
+                (
+                    "fsl-analyze/tests/isolated.rs",
+                    "#[test]\nfn liveness_alone() {}\n",
+                ),
+            ],
+        );
+        workspace
+    }
+
     fn probability_check_modules() -> Vec<String> {
         let modules = top_level_integration_modules(workspace_root(), "fsl-probability-check")
             .expect("probability-check integration modules");
         assert!(!modules.is_empty());
-        modules
+        modules.into_iter().map(|(_, module)| module).collect()
     }
 
     fn runs_modules(recipe: &Recipe, modules: &[String]) -> bool {
         modules.iter().all(|module| {
             recipe
                 .selectors
-                .contains(&selector("fsl-probability-check", module))
+                .contains(&integration_selector("fsl-probability-check", "it", module))
         })
     }
 
@@ -2273,12 +2645,10 @@ mod tests {
     #[test]
     fn unrelated_replay_paths_do_not_run_the_probability_check() {
         let recipe = plan(workspace_root(), &["fsl-replay/src/refinement.rs"]);
-        assert!(
-            !recipe
-                .selectors
-                .iter()
-                .any(|item| item.package == "fsl-probability-check")
-        );
+        assert!(!recipe
+            .selectors
+            .iter()
+            .any(|item| item.package == "fsl-probability-check"));
     }
 
     #[test]
@@ -2294,14 +2664,16 @@ mod tests {
                 .iter()
                 .filter(|item| item.package == "fsl-probability-check")
                 .collect::<Vec<_>>(),
-            vec![&selector("fsl-probability-check", "cyclic_mdp")]
+            vec![&integration_selector(
+                "fsl-probability-check",
+                "it",
+                "cyclic_mdp"
+            )]
         );
-        assert!(
-            !module
-                .selectors
-                .iter()
-                .any(|item| item.package == "filament-spec-language")
-        );
+        assert!(!module
+            .selectors
+            .iter()
+            .any(|item| item.package == "filament-spec-language"));
         for path in [
             "tools/fsl-probability-check/tests/it/main.rs",
             "tools/fsl-probability-check/src/main.rs",
@@ -2339,27 +2711,19 @@ mod tests {
             "fsl-analyze/src/analyze/exact/nested.rs",
         ] {
             let recipe = plan(workspace_root(), &[path]);
-            assert!(
-                recipe
-                    .selectors
-                    .contains(&selector("fsl-analyze", "probabilistic"))
-            );
-            assert!(
-                recipe
-                    .selectors
-                    .contains(&selector("fsl-analyze", "timed_"))
-            );
+            assert_selects_owner(&recipe, "fsl-analyze", "probabilistic");
+            assert_selects_owner(&recipe, "fsl-analyze", "timed_");
         }
         let recipe = plan(workspace_root(), &["fsl-analyze/src/provider.rs"]);
         for filter in ["monitor_", "timed_", "hyper", "probabilistic"] {
-            assert!(recipe.selectors.contains(&selector("fsl-analyze", filter)));
+            assert_selects_owner(&recipe, "fsl-analyze", filter);
         }
         let zone = plan(
             workspace_root(),
             &["fsl-analyze/src/zone_check/divergence.rs"],
         );
         for filter in ["timed_", "timed_within_200", "timed_within_201"] {
-            assert!(zone.selectors.contains(&selector("fsl-analyze", filter)));
+            assert_selects_owner(&zone, "fsl-analyze", filter);
         }
     }
 
@@ -2377,18 +2741,13 @@ mod tests {
                 "monitor_",
                 "probabilistic",
             ] {
-                assert!(
-                    recipe.selectors.contains(&selector("fsl-analyze", filter)),
-                    "{path} must run {filter}"
-                );
+                assert_selects_owner(&recipe, "fsl-analyze", filter);
             }
         }
         let other = plan(workspace_root(), &["fsl-analyze/src/provider.rs"]);
-        assert!(
-            !other
-                .selectors
-                .contains(&selector("fsl-analyze", "analyze_request_wire"))
-        );
+        assert!(!integration_runs(&other, "fsl-analyze")
+            .iter()
+            .any(|(_, filter)| filter == "analyze_request_wire"));
     }
 
     #[test]
@@ -2409,10 +2768,7 @@ mod tests {
                 "hyper",
                 "probabilistic",
             ] {
-                assert!(
-                    recipe.selectors.contains(&selector("fsl-analyze", filter)),
-                    "{path} must run {filter}"
-                );
+                assert_selects_owner(&recipe, "fsl-analyze", filter);
             }
         }
     }
@@ -2426,16 +2782,325 @@ mod tests {
                 "tests/it/bare_package.rs",
             ],
         );
-        assert!(
-            recipe
-                .selectors
-                .contains(&selector("fsl-analyze", "analyze_composition_cli"))
+        assert_selects_owner(&recipe, "fsl-analyze", "analyze_composition_cli");
+        assert_selects_owner(&recipe, "filament-spec-language", "bare_package");
+    }
+
+    /// The `(target, filter)` pairs a recipe runs for `package`'s integration
+    /// tests.
+    fn integration_runs(recipe: &Recipe, package: &str) -> Vec<(String, String)> {
+        recipe
+            .selectors
+            .iter()
+            .filter(|item| item.package == package)
+            .filter_map(|item| match (&item.target, &item.filter) {
+                (TestTarget::Integration(target), Some(filter)) => {
+                    Some((target.clone(), filter.clone()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn pair(target: &str, filter: &str) -> (String, String) {
+        (target.to_owned(), filter.to_owned())
+    }
+
+    fn write_files(root: &Path, files: &[(&str, &str)]) {
+        for (path, source) in files {
+            let path = root.join(path);
+            fs::create_dir_all(path.parent().expect("a parent directory")).expect("directories");
+            fs::write(path, source).expect("fixture file");
+        }
+    }
+
+    #[test]
+    fn a_changed_nested_module_file_runs_in_the_binary_that_declares_it() {
+        let recipe = plan(
+            workspace_root(),
+            &["fsl-analyze/tests/it/weak_memory/replay_boundary_cases.rs"],
         );
-        assert!(
-            recipe
-                .selectors
-                .contains(&selector("filament-spec-language", "bare_package"))
+        assert!(integration_runs(&recipe, "fsl-analyze")
+            .contains(&pair("it_refinement", "weak_memory::replay_boundary_cases")));
+    }
+
+    #[test]
+    fn a_changed_helper_only_module_runs_every_module_of_each_binary_that_declares_it() {
+        let recipe = plan(
+            workspace_root(),
+            &["fsl-analyze/tests/it/liveness_support.rs"],
         );
+        let runs = integration_runs(&recipe, "fsl-analyze");
+        for expected in [
+            pair("it_model_check", "component_certificate"),
+            pair("it_model_check", "liveness"),
+            pair("it_probabilistic", "exact_probabilistic"),
+        ] {
+            assert!(runs.contains(&expected), "{expected:?}");
+        }
+        assert!(runs.iter().all(|(_, filter)| filter != "liveness_support"));
+
+        // The two refinement binaries declare this one.
+        let recipe = plan(
+            workspace_root(),
+            &["fsl-analyze/tests/it/refinement_liveness_support.rs"],
+        );
+        let runs = integration_runs(&recipe, "fsl-analyze");
+        assert!(runs.contains(&pair("it_refinement", "refinement_liveness")));
+        assert!(runs.contains(&pair("it_refinement", "refinement_certificate")));
+        assert!(runs.contains(&pair("it_refinement_cx1", "refinement_liveness_cx1")));
+    }
+
+    #[test]
+    fn a_consumer_filter_selects_exactly_the_binaries_holding_a_matching_test() {
+        let workspace = filter_workspace();
+        let runs = |path: &str| integration_runs(&plan(workspace.path(), &[path]), "fsl-analyze");
+        assert_eq!(
+            runs("fsl-analyze/src/provider.rs"),
+            [
+                pair("it", "hyper"),
+                pair("it", "monitor_"),
+                pair("it_model_check", "timed_"),
+                pair("it_monitor_protocol", "monitor_"),
+                pair("it_monitor_protocol", "timed_"),
+                pair("it_probabilistic", "hyper"),
+                pair("it_probabilistic", "probabilistic"),
+            ]
+        );
+        assert_eq!(
+            runs("fsl-eval/src/simulation/reach.rs"),
+            [
+                pair("it", "race_freedom"),
+                pair("it_model_check", "native_correlation"),
+                pair("it_model_check", "protocol_bounded_lasso"),
+                pair("it_refinement", "race_freedom"),
+            ]
+        );
+        assert_eq!(
+            runs("fsl-analyze/tests/it/helper.rs"),
+            [
+                pair("it_probabilistic", "measure"),
+                pair("it_refinement", "races"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_root_shared_file_runs_every_module_of_each_binary_that_declares_it() {
+        let workspace = tempfile::tempdir().expect("a temporary workspace");
+        write_files(
+            workspace.path(),
+            &[
+                (
+                    "tests/it/main.rs",
+                    "mod language;\n#[path = \"../support/mod.rs\"]\nmod support;\n",
+                ),
+                ("tests/it/language.rs", "#[test]\nfn words() {}\n"),
+                ("tests/support/mod.rs", "mod child;\n"),
+                ("tests/support/child.rs", "pub(crate) fn fixture() {}\n"),
+                ("tests/support/shared.rs", "pub(crate) fn fixture() {}\n"),
+                ("tests/fixtures/data.native", "package data\n"),
+                (
+                    "fsl-analyze/tests/it/refinement.rs",
+                    "#[path = \"../../../tests/support/shared.rs\"]\nmod shared;\nmod refined;\n",
+                ),
+                (
+                    "fsl-analyze/tests/it/refined.rs",
+                    "#[test]\nfn refines() {}\n",
+                ),
+                ("fsl-analyze/tests/it/probabilistic.rs", "mod measure;\n"),
+                (
+                    "fsl-analyze/tests/it/measure.rs",
+                    "#[test]\nfn measures() {}\n",
+                ),
+                (
+                    "fsl-replay/tests/it/main.rs",
+                    "#[path = \"../../../tests/support/shared.rs\"]\nmod shared;\nmod replayed;\n",
+                ),
+                (
+                    "fsl-replay/tests/it/replayed.rs",
+                    "#[test]\nfn replays() {}\n",
+                ),
+            ],
+        );
+        let shared = plan(workspace.path(), &["tests/support/shared.rs"]);
+        assert_eq!(
+            displays(&shared),
+            [
+                "cargo test --locked -p fsl-analyze --test it_refinement -- refined",
+                "cargo test --locked -p fsl-replay --test it -- replayed",
+            ]
+        );
+        assert!(shared.notes.is_empty());
+
+        // Declared through the root binary's `support` module.
+        let root_modules = ["cargo test --locked -p filament-spec-language --test it -- language"];
+        let child = plan(workspace.path(), &["tests/support/child.rs"]);
+        assert_eq!(displays(&child), root_modules);
+        assert!(child.notes.is_empty());
+
+        // No binary declares a data file, and a deleted file is not declared.
+        for path in ["tests/fixtures/data.native", "tests/support/deleted.rs"] {
+            let recipe = plan(workspace.path(), &[path]);
+            assert_eq!(displays(&recipe), root_modules, "{path}");
+            assert!(
+                recipe
+                    .notes
+                    .iter()
+                    .any(|note| note
+                        .contains(&format!("no integration-test binary declares {path}"))),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_live_root_support_file_selects_declaring_binaries_across_packages() {
+        let recipe = plan(workspace_root(), &["tests/support/refinement_aux.rs"]);
+        for (package, target) in [
+            ("fsl-analyze", "it_refinement"),
+            ("fsl-analyze", "it_refinement_cx1"),
+            ("fsl-replay", "it"),
+        ] {
+            assert!(
+                integration_runs(&recipe, package)
+                    .iter()
+                    .any(|(selected, _)| selected == target),
+                "{package} --test {target}"
+            );
+        }
+    }
+
+    #[test]
+    fn changed_files_of_a_single_binary_package_follow_the_module_tree() {
+        let workspace = tempfile::tempdir().expect("a temporary workspace");
+        write_files(
+            workspace.path(),
+            &[
+                ("tests/it/main.rs", "mod helper;\nmod used;\n"),
+                ("tests/it/helper.rs", "pub(crate) fn fixture() {}\n"),
+                (
+                    "tests/it/used.rs",
+                    "mod nested;\n#[path = \"moved_cases.rs\"]\nmod renamed;\n",
+                ),
+                ("tests/it/used/nested.rs", "#[test]\nfn deep() {}\n"),
+                ("tests/it/moved_cases.rs", "#[test]\nfn moved() {}\n"),
+                ("tests/it/orphan.rs", "#[test]\nfn never_built() {}\n"),
+            ],
+        );
+        let runs = |path: &str| {
+            integration_runs(&plan(workspace.path(), &[path]), "filament-spec-language")
+        };
+        assert_eq!(runs("tests/it/helper.rs"), [pair("it", "used")]);
+        assert_eq!(
+            runs("tests/it/used/nested.rs"),
+            [pair("it", "used::nested")]
+        );
+        assert_eq!(
+            runs("tests/it/moved_cases.rs"),
+            [pair("it", "used::renamed")]
+        );
+        let orphan = plan_paths(workspace.path(), &["tests/it/orphan.rs".to_owned()]);
+        assert!(
+            orphan.is_err(),
+            "a file no binary declares must fail closed"
+        );
+    }
+
+    #[test]
+    fn a_module_walk_is_read_once_per_root_and_never_shared_between_workspaces() {
+        let names = |workspace: &Path| {
+            integration_module_files(workspace, "tests/it/main.rs").map(|files| {
+                files
+                    .iter()
+                    .map(|module| module.name.clone())
+                    .collect::<Vec<_>>()
+            })
+        };
+        let first = tempfile::tempdir().expect("a temporary workspace");
+        write_files(first.path(), &[("tests/it/main.rs", "mod words;\n")]);
+        // A walk that fails is made again.
+        assert!(names(first.path()).is_err());
+        write_files(first.path(), &[("tests/it/words.rs", "")]);
+        assert_eq!(names(first.path()).expect("a walk"), ["words"]);
+
+        let second = tempfile::tempdir().expect("a temporary workspace");
+        write_files(
+            second.path(),
+            &[
+                ("tests/it/main.rs", "mod numbers;\n"),
+                ("tests/it/numbers.rs", ""),
+            ],
+        );
+        assert_eq!(names(second.path()).expect("a walk"), ["numbers"]);
+
+        let walk = || integration_module_files(first.path(), "tests/it/main.rs").expect("a walk");
+        let cached = walk();
+        fs::remove_file(first.path().join("tests/it/words.rs")).expect("remove a module");
+        assert!(Arc::ptr_eq(&cached, &walk()), "the root was parsed again");
+    }
+
+    #[test]
+    fn a_selection_that_would_match_no_test_fails_closed() {
+        for package in ["fsl-analyze", "fsl-command", "filament-spec-language"] {
+            assert!(
+                integration_targets_for_filter(workspace_root(), package, "no_such_test_name")
+                    .is_err(),
+                "{package}"
+            );
+        }
+        let workspace = tempfile::tempdir().expect("a temporary workspace");
+        write_files(
+            workspace.path(),
+            &[
+                ("tests/it/main.rs", "mod helper;\n"),
+                ("tests/it/helper.rs", "pub(crate) fn fixture() {}\n"),
+            ],
+        );
+        let helper = plan_paths(workspace.path(), &["tests/it/helper.rs".to_owned()]);
+        assert!(
+            helper.is_err(),
+            "a binary with no test cannot cover a helper"
+        );
+    }
+
+    #[test]
+    fn every_table_filter_matches_a_test() {
+        let tables = RULES
+            .iter()
+            .flat_map(|rule| rule.it_filters)
+            .chain(EMIT_CONSUMERS)
+            .chain(TIMED_CONSUMER);
+        let filters = tables
+            .filter_map(|it_filter| match it_filter.rule {
+                ItRule::Fixed(filter) => Some((it_filter.package, filter)),
+                ItRule::ChangedModule | ItRule::AllModules(_) => None,
+            })
+            .collect::<BTreeSet<_>>();
+        assert!(!filters.is_empty());
+        for (package, filter) in filters {
+            integration_targets_for_filter(workspace_root(), package, filter)
+                .unwrap_or_else(|error| panic!("{package}: {error}"));
+        }
+    }
+
+    #[test]
+    fn the_isolated_cx1_module_and_root_select_the_cx1_binary() {
+        for path in [
+            "fsl-analyze/tests/it/refinement_liveness_cx1.rs",
+            "fsl-analyze/tests/it_refinement_cx1.rs",
+        ] {
+            let recipe = plan(workspace_root(), &[path]);
+            assert!(
+                recipe.selectors.iter().any(|selector| {
+                    selector.package == "fsl-analyze"
+                        && selector.target
+                            == TestTarget::Integration("it_refinement_cx1".to_owned())
+                        && selector.filter.as_deref() == Some("refinement_liveness_cx1")
+                }),
+                "{path} must run fsl-analyze --test it_refinement_cx1"
+            );
+        }
     }
 
     #[test]
@@ -2454,24 +3119,18 @@ mod tests {
                 .map(|item| item.to_string())
                 .collect::<Vec<_>>()
         );
-        assert!(
-            recipe
-                .selectors
-                .iter()
-                .any(|item| item.package == "fsl-replay"
-                    && item.filter.as_deref()
-                        == Some(
-                            "tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict"
-                        )
-                    && item.timed)
-        );
-        assert!(
-            recipe
-                .selectors
-                .iter()
-                .filter(|item| item.timed)
-                .all(|item| item.threads == Some(1))
-        );
+        assert!(recipe
+            .selectors
+            .iter()
+            .any(|item| item.package == "fsl-replay"
+                && item.filter.as_deref()
+                    == Some("tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict")
+                && item.timed));
+        assert!(recipe
+            .selectors
+            .iter()
+            .filter(|item| item.timed)
+            .all(|item| item.threads == Some(1)));
     }
 
     #[test]
@@ -2492,37 +3151,70 @@ mod tests {
                 && item.target == TestTarget::Library
                 && item.filter.is_none()
         }));
-        assert!(
-            spans
-                .selectors
-                .iter()
-                .any(|item| item.filter.as_deref() == Some(LARGE_EMIT_FILTER))
-        );
+        assert!(spans
+            .selectors
+            .iter()
+            .any(|item| item.filter.as_deref() == Some(LARGE_EMIT_FILTER)));
     }
 
     #[test]
     fn main_roots_are_checked_before_test_prefixes_and_coverage_is_table_driven() {
-        for (package, root) in [
-            ("fsl-analyze", "fsl-analyze/tests/it/main.rs"),
-            ("fsl-command", "fsl-command/tests/it/main.rs"),
-            ("filament-spec-language", "tests/it/main.rs"),
-        ] {
-            assert!(matching_rule(root).is_some_and(|rule| rule.prefix.ends_with("main.rs")));
-            assert!(plan(workspace_root(), &[root]).selectors.len() > 1);
+        for package in ["fsl-analyze", "fsl-command", "filament-spec-language"] {
+            let roots = integration_roots(package);
+            assert!(!roots.is_empty());
+            for (_, root) in &roots {
+                assert!(is_integration_root_path(workspace_root(), root), "{root}");
+                assert!(
+                    plan(workspace_root(), &[root]).selectors.len() > 1,
+                    "{root}"
+                );
+            }
             let modules =
                 top_level_integration_modules(workspace_root(), package).expect("module list");
             assert!(!modules.is_empty());
-            for module in modules {
-                let path = if package == "filament-spec-language" {
-                    format!("tests/it/{module}.rs")
+            let mut routed = 0;
+            for (target, module) in modules {
+                let directory = if package == "filament-spec-language" {
+                    "tests/it".to_owned()
                 } else {
-                    format!("{package}/tests/it/{module}.rs")
+                    format!("{package}/tests/it")
                 };
+                // A module a root loads by `#[path]` from outside `tests/it`
+                // is routed by its own file's rules.
+                let Some(path) = [
+                    format!("{directory}/{module}.rs"),
+                    format!("{directory}/{module}/mod.rs"),
+                ]
+                .into_iter()
+                .find(|path| workspace_root().join(path).is_file()) else {
+                    continue;
+                };
+                routed += 1;
                 assert!(
                     matching_rule(&path).is_some(),
                     "unrouted module path {path}"
                 );
+                let recipe = plan(workspace_root(), &[&path]);
+                assert!(
+                    recipe.selectors.iter().any(|selector| {
+                        selector.package == package
+                            && selector.target == TestTarget::Integration(target.clone())
+                            && selector.filter.as_deref() == Some(module.as_str())
+                    }),
+                    "{path} must route to {package} --test {target}"
+                );
             }
+            assert!(routed > 0, "{package}");
+        }
+        let analyze = plan(workspace_root(), &["fsl-analyze/tests/it/main.rs"]);
+        for (target, _) in ANALYZE_IT_ROOTS {
+            assert!(
+                analyze.selectors.iter().any(|selector| {
+                    selector.package == "fsl-analyze"
+                        && selector.target == TestTarget::Integration((*target).to_owned())
+                }),
+                "the root recipe must select fsl-analyze --test {target}"
+            );
         }
     }
 
@@ -2538,14 +3230,12 @@ mod tests {
         assert!(result.starts_with("# PR head head-sha; origin/main main-sha\n"));
         let calls = runner.calls.borrow();
         assert_eq!(calls[0].1[0], "fetch");
-        assert!(
-            calls
-                .iter()
-                .any(|(_, args)| args.first().is_some_and(|arg| arg == "merge-base"))
-        );
+        assert!(calls
+            .iter()
+            .any(|(_, args)| args.first().is_some_and(|arg| arg == "merge-base")));
         let compile = result.find("--no-run").expect("compile first");
         let tests = result
-            .find("\ncargo test --locked -p fsl-analyze --test it -- probabilistic")
+            .find("\ncargo test --locked -p fsl-analyze --test it_probabilistic -- probabilistic")
             .expect("filtered test after compile");
         assert!(compile < tests);
     }
@@ -2559,14 +3249,14 @@ mod tests {
             &runner,
         )
         .expect("print recipe");
-        assert!(result.contains("cargo test --locked -p fsl-analyze --test it -- probabilistic"));
-        assert!(
-            runner
-                .calls
-                .borrow()
-                .iter()
-                .all(|(program, _)| program == "git")
-        );
+        assert!(result.contains(
+            "cargo test --locked -p fsl-analyze --test it_probabilistic -- probabilistic"
+        ));
+        assert!(runner
+            .calls
+            .borrow()
+            .iter()
+            .all(|(program, _)| program == "git"));
     }
 
     #[test]
@@ -2575,22 +3265,20 @@ mod tests {
             no_tests: true,
             ..FakeRunner::new()
         };
-        assert!(
-            run_with_runner(
-                workspace_root(),
-                &[
-                    OsString::from("--preflight"),
-                    OsString::from("fsl-analyze/src/analyze/exact.rs"),
-                ],
-                &runner,
-            )
-            .is_err()
-        );
-        assert!(
-            runner.calls.borrow().iter().any(|(program, args)| {
-                program != "git" && args.contains(&"--ignored".to_owned())
-            })
-        );
+        assert!(run_with_runner(
+            workspace_root(),
+            &[
+                OsString::from("--preflight"),
+                OsString::from("fsl-analyze/src/analyze/exact.rs"),
+            ],
+            &runner,
+        )
+        .is_err());
+        assert!(runner
+            .calls
+            .borrow()
+            .iter()
+            .any(|(program, args)| { program != "git" && args.contains(&"--ignored".to_owned()) }));
     }
 
     #[test]
@@ -2600,7 +3288,7 @@ mod tests {
         assert_eq!(
             preflight(
                 workspace_root(),
-                &selector("fsl-analyze", "explicit"),
+                &integration_selector("fsl-analyze", "it", "explicit"),
                 &runner
             )
             .expect("list"),
@@ -2611,7 +3299,7 @@ mod tests {
         assert_eq!(
             preflight(
                 workspace_root(),
-                &selector("fsl-analyze", "explicit"),
+                &integration_selector("fsl-analyze", "it", "explicit"),
                 &runner
             )
             .expect("list"),
@@ -2625,58 +3313,46 @@ mod tests {
             no_tests: true,
             ..FakeRunner::new()
         };
-        assert!(
-            run_with_runner(
-                workspace_root(),
-                &[
-                    OsString::from("--preflight"),
-                    OsString::from("fsl-analyze/src/analyze/exact.rs"),
-                ],
-                &runner
-            )
-            .is_err()
-        );
+        assert!(run_with_runner(
+            workspace_root(),
+            &[
+                OsString::from("--preflight"),
+                OsString::from("fsl-analyze/src/analyze/exact.rs"),
+            ],
+            &runner
+        )
+        .is_err());
     }
 
     #[test]
     fn empty_unknown_manifest_fixture_deleted_and_root_paths_have_fallbacks() {
-        assert!(
-            plan_paths(workspace_root(), &[])
-                .expect("empty planning")
-                .selectors
-                .is_empty()
-        );
+        assert!(plan_paths(workspace_root(), &[])
+            .expect("empty planning")
+            .selectors
+            .is_empty());
         assert!(run_with_runner(workspace_root(), &[], &FakeRunner::new()).is_err());
-        assert!(
-            plan(workspace_root(), &["untracked/unknown.dat"])
-                .notes
-                .iter()
-                .any(|note| note.contains("unknown.dat"))
-        );
-        assert!(
-            plan(workspace_root(), &["Cargo.lock"])
-                .selectors
-                .iter()
-                .any(|item| item.filter.as_deref() == Some("monitor_"))
-        );
-        assert!(
-            plan(workspace_root(), &["fsl-eval/src/new_unknown.rs"])
-                .notes
-                .iter()
-                .any(|note| note.contains("unknown fsl-eval"))
-        );
+        assert!(plan(workspace_root(), &["untracked/unknown.dat"])
+            .notes
+            .iter()
+            .any(|note| note.contains("unknown.dat")));
+        assert!(plan(workspace_root(), &["Cargo.lock"])
+            .selectors
+            .iter()
+            .any(|item| item.filter.as_deref() == Some("monitor_")));
+        assert!(plan(workspace_root(), &["fsl-eval/src/new_unknown.rs"])
+            .notes
+            .iter()
+            .any(|note| note.contains("unknown fsl-eval")));
         assert!(
             plan(workspace_root(), &["fsl-semantics/src/new_unknown.rs"])
                 .notes
                 .iter()
                 .any(|note| note.contains("unknown fsl-semantics"))
         );
-        assert!(
-            plan(workspace_root(), &["xtask/src/new_task.rs"])
-                .selectors
-                .iter()
-                .any(|item| item.package == "xtask" && item.filter.is_none())
-        );
+        assert!(plan(workspace_root(), &["xtask/src/new_task.rs"])
+            .selectors
+            .iter()
+            .any(|item| item.package == "xtask" && item.filter.is_none()));
         assert!(
             plan(
                 workspace_root(),
@@ -2686,24 +3362,18 @@ mod tests {
             .len()
                 > 1
         );
-        assert!(
-            plan(workspace_root(), &["fsl-analyze/src/deleted.rs"])
-                .notes
-                .iter()
-                .any(|note| note.contains("absent"))
-        );
-        assert!(
-            plan(workspace_root(), &["fsl-analyze/src/lib.rs"])
-                .selectors
-                .iter()
-                .any(|item| item.filter.as_deref() == Some("monitor_"))
-        );
-        assert!(
-            plan(workspace_root(), &["src/lib.rs"])
-                .selectors
-                .iter()
-                .any(|item| item.package == "filament-spec-language" && item.filter.is_none())
-        );
+        assert!(plan(workspace_root(), &["fsl-analyze/src/deleted.rs"])
+            .notes
+            .iter()
+            .any(|note| note.contains("absent")));
+        assert!(plan(workspace_root(), &["fsl-analyze/src/lib.rs"])
+            .selectors
+            .iter()
+            .any(|item| item.filter.as_deref() == Some("monitor_")));
+        assert!(plan(workspace_root(), &["src/lib.rs"])
+            .selectors
+            .iter()
+            .any(|item| item.package == "filament-spec-language" && item.filter.is_none()));
     }
 
     #[test]
@@ -2717,12 +3387,10 @@ mod tests {
             ],
         );
         assert!(recipe.notes.iter().any(|note| note.contains("README.md")));
-        assert!(
-            recipe
-                .selectors
-                .iter()
-                .any(|item| item.package == "xtask" && item.filter.is_none())
-        );
+        assert!(recipe
+            .selectors
+            .iter()
+            .any(|item| item.package == "xtask" && item.filter.is_none()));
     }
 
     #[test]
@@ -2736,36 +3404,34 @@ mod tests {
             "race_freedom",
             "native_correlation",
         ] {
-            assert!(
-                recipe
-                    .selectors
-                    .iter()
-                    .any(|item| item.package == "fsl-analyze"
-                        && item.filter.as_deref() == Some(filter)),
-                "{filter}"
-            );
+            assert_selects_owner(&recipe, "fsl-analyze", filter);
         }
     }
 
     #[test]
     fn semantically_related_rules_and_dedup_are_explicit_and_ordered() {
+        let workspace = filter_workspace();
         let recipe = plan(
-            workspace_root(),
+            workspace.path(),
             &[
                 "fsl-semantics/src/check/abstraction.rs",
                 "fsl-eval/src/value/expression/bare.rs",
                 "fsl-semantics/src/check/abstraction.rs",
             ],
         );
-        for filter in ["abstraction_relation_inert", "bare_", "timed_"] {
-            assert!(
-                recipe
-                    .selectors
-                    .iter()
-                    .any(|item| item.filter.as_deref() == Some(filter))
-            );
-        }
-        assert_eq!(recipe.selectors.len(), 5);
+        // The repeated path adds nothing, and `timed_`, which both rules name,
+        // is selected once in each analyzer target holding such a test.
+        assert_eq!(
+            displays(&recipe),
+            [
+                "cargo test --locked -p filament-spec-language --test it -- abstraction_relation_inert",
+                "cargo test --locked -p filament-spec-language --test it -- bare_",
+                "cargo test --locked -p fsl-analyze --test it_model_check -- timed_",
+                "cargo test --locked -p fsl-analyze --test it_monitor_protocol -- timed_",
+                "cargo test --locked -p fsl-eval --lib -- value::expression::bare::",
+                "cargo test --locked -p fsl-semantics --lib -- check::abstraction::",
+            ]
+        );
     }
 
     #[test]
