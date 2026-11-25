@@ -63,8 +63,8 @@ fn with_constraint(reductions: Reductions, constraint: &str) -> Reductions {
 /// `at current` clauses of its model.
 const SECURE_CONSTRAINED: Vault = Vault::Custom(
     "post Step using v on V::Vault::step { self.l = i }\n\
-     invariant Low using v on V::Vault at current { self.l <= 1 }\n\
-     invariant Zero using v on V::Vault at current { self.l = 0 }\n",
+     constraint Low using v on V::Vault at current { self.l <= 1 }\n\
+     constraint Zero using v on V::Vault at current { self.l = 0 }\n",
 );
 
 /// `NonInterference` over the vaults `v` and `w` of `vault`.
@@ -518,7 +518,7 @@ fn a_finite_constraint_preserves_false_extension_and_terminal_replay() {
         Vault::Custom(
             "pre Fresh using v on V::Vault::step { self.l = 0 }\n\
             post Step using v on V::Vault::step { self.l = i }\n\
-            invariant Low using v on V::Vault at current { self.l <= 1 }\n",
+            constraint Low using v on V::Vault at current { self.l <= 1 }\n",
         ),
         uniform_snapshots(&["v"]),
         &["v"],
@@ -800,7 +800,7 @@ fn a_finite_matched_cut_prevents_a_real_descendant_expansion_failure() {
         Vault::Custom(
             "pre Guard using v on V::Vault::step { self.l = 0 implies i = 0 }\n\
             post Step using v on V::Vault::step { self.l = 1 }\n\
-            invariant Zero using v on V::Vault at current { self.l = 0 }\n",
+            constraint Zero using v on V::Vault at current { self.l = 0 }\n",
         ),
         false,
         &[(0, 0)],

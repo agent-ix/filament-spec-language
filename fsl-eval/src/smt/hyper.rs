@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Not;
 
-use filament_exact::{Integer, Meter, ValueType};
+use filament_exact::{Integer, Meter};
 use filament_semantic_value::location::ExpressionOwner as Origin;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::check::{
@@ -244,7 +244,7 @@ pub fn encode_hyper_script(
         let listed = systems
             .get(slot)
             .ok_or_else(|| fault("a system for each alias"))?
-            .instances(&ValueType::Reference(parameter.population.object()))
+            .hyper_instances(&parameter.population)
             .map_err(|_| fault("an instance the identity checks list"))?;
         let bound = listed
             .into_iter()

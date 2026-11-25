@@ -104,7 +104,7 @@ use std::cell::{Cell, Ref};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::rc::Rc;
 
-use filament_exact::{Cancel, Meter, ScalarLimits, ValueType};
+use filament_exact::{Cancel, Meter, ScalarLimits};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::FairnessGranularity;
 use filament_semantic_value::model_transition::ModelTransition;
@@ -449,7 +449,7 @@ fn instances(
             .get(slot_of(parameter.alias.as_str())?)
             .ok_or_else(|| fault("a-parameter-names-an-alias-of-the-clause"))?;
         let keys = system
-            .instances(&ValueType::Reference(parameter.population.object()))
+            .hyper_instances(&parameter.population)
             .map_err(not_simulated)?;
         lists.push(
             keys.into_iter()

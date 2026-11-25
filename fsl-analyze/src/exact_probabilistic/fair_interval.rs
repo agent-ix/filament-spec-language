@@ -121,7 +121,6 @@ mod tests {
                     accumulator: None,
                     pending: None,
                     certificate_state: None,
-                    timed_history: None,
                 })
                 .collect(),
             kind: ProductKind::Mdp,
