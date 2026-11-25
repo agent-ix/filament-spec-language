@@ -59,6 +59,30 @@ protocol Purchase using P over (view: M::Node) on origin {
 }
 "#;
 
+const REVIEW_SOURCE: &str = r#"
+language "ix:native" edition "1-draft";
+profile P = "filament.protocol.finite-global/v1";
+model M = "test/orders";
+protocol Review using P over (view: M::Node) on origin {
+  role Requester on M::Node;
+  role Reviewer on M::Node;
+  channel Acknowledgement from Reviewer to Requester carries M::Flag
+      ordering fifo by (message: M::Flag) { message.count }
+      delivery at-least-once capacity 2 overflow block;
+  run sequence Main {
+    send Acknowledged via Acknowledgement as (sent: M::Flag) { true };
+    receive FirstDelivery via Acknowledgement of Main::Acknowledged
+        as (first: M::Flag) { true };
+    receive Redelivered via Acknowledgement of Main::Acknowledged
+        as (redelivered: M::Flag) { true };
+    attempt RecordAcceptance by Requester on M::Node::step contracts []
+        as (tried: M::Flag) { true };
+    effect Accepted of Main::RecordAcceptance as (accepted: M::Receipt) { true };
+  }
+  finish Closed as (closed: M::Receipt) { true };
+}
+"#;
+
 fn fixture(
     source: &str,
     include_second: bool,
@@ -179,6 +203,22 @@ fn reachable_with_nodes(
     include_second: bool,
     related: bool,
 ) -> fsl_eval::simulation::protocol::Reachable<Sc> {
+    reachable_for_protocol(
+        source,
+        "Purchase",
+        ["Buyer", "Seller"],
+        include_second,
+        related,
+    )
+}
+
+fn reachable_for_protocol(
+    source: &str,
+    protocol_name: &str,
+    role_names: [&str; 2],
+    include_second: bool,
+    related: bool,
+) -> fsl_eval::simulation::protocol::Reachable<Sc> {
     let (package, packages, snapshots, initial) = fixture(source, include_second, related);
     let population = filament_checked::key::DeclarationKey {
         package: tc1070::model::PACKAGE.to_owned(),
@@ -208,19 +248,19 @@ fn reachable_with_nodes(
     let model = ModelSystem::new(request.clone()).expect("model subject built");
     let checked = package
         .graph()
-        .protocol("Purchase")
+        .protocol(protocol_name)
         .expect("protocol checked");
     let subject = ProtocolSubject {
         model: ModelSubject {
             simulation: request,
             proof_bounds: Vec::new(),
         },
-        protocol: "Purchase".to_owned(),
+        protocol: protocol_name.to_owned(),
         over: ModelInstance {
             population,
             key: "node-1".to_owned(),
         },
-        roles: ["Buyer", "Seller"]
+        roles: role_names
             .into_iter()
             .map(|role| RoleBinding {
                 role: role.to_owned(),
@@ -474,4 +514,57 @@ fn a_duplicate_delivery_applies_its_effect_once() {
             }
         }
     }
+}
+
+#[test]
+#[trace("TC-2528", "FR-894-AC-1")]
+fn a_redelivered_review_acknowledgement_establishes_one_effect_identity() {
+    let graph = reachable_for_protocol(
+        REVIEW_SOURCE,
+        "Review",
+        ["Requester", "Reviewer"],
+        false,
+        false,
+    );
+    let (copies, receives, effects) = duplicate_then_effect(&graph)
+        .expect("the acknowledgement can be redelivered before one acceptance effect");
+
+    assert_eq!(copies.len(), 1, "one redelivered copy");
+    assert_eq!(copies[0].index(), 1);
+    assert_eq!(receives.len(), 2, "both delivery copies are received");
+    assert_eq!(
+        receives
+            .iter()
+            .map(DeliveryIdentity::index)
+            .collect::<Vec<_>>(),
+        [0, 1],
+    );
+    assert_eq!(
+        copies
+            .iter()
+            .chain(&receives)
+            .map(|delivery| delivery.message().clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        1,
+        "both deliveries retain the one acknowledgement message identity"
+    );
+    assert_eq!(
+        effects,
+        [0],
+        "one business-effect occurrence is established"
+    );
+
+    let mut effect_identities = std::collections::BTreeSet::new();
+    for reached in &graph.states {
+        for (transition, _) in &reached.steps {
+            if let Some(effect) = transition.business_effect() {
+                assert_eq!(effect.ordinal(), 0);
+                let identity = fsl_eval::simulation::protocol::transition_json(transition)
+                    .expect("effect identity serializes");
+                effect_identities.insert(identity["business_effect"].clone());
+            }
+        }
+    }
+    assert_eq!(effect_identities.len(), 1, "one stable effect identity");
 }
