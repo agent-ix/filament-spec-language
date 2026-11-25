@@ -6045,6 +6045,20 @@ mod carried_sum;
 mod invariants;
 mod text_conversion;
 
+/// Convert an admitted text value using the same bounded, metered adapter as
+/// checked expression evaluation.
+///
+/// Backends that execute checked `ConvertText` nodes use this adapter for the
+/// canonical parser, domain checks, accounting charges, and loss result.
+pub fn convert_text_value(
+    types: &TypeEnvironment,
+    target: &ValueType,
+    source: &Value,
+    meter: &mut Meter,
+) -> Result<(Value, Option<ValueLoss>), Stop> {
+    text_conversion::convert(types, &UnitScope::new(types.units()), target, source, meter)
+}
+
 pub(super) mod node_source;
 pub(super) mod reader_source;
 mod world;

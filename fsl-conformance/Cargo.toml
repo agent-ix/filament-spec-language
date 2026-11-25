@@ -7,6 +7,11 @@ rust-version = "1.98"
 license = "AGPL-3.0-or-later"
 description = "FR-564, FR-565 (ADR-029 CB-4): the lifecycle conformance matrix the library half and the driver CLI half both run."
 
+[features]
+default = []
+# Test-only reference substitution for the FR-563 parity gate.
+test-support = []
+
 # The matrix runs FSL's lifecycle operations (`fsl-replay`'s spine, `fsl-analyze`'s
 # `analyze`, `monitor` and provider entry), so it depends on the layers those
 # name and on nothing else; the driver depends on this crate, never the reverse.
@@ -23,22 +28,24 @@ filament-eval = { workspace = true }
 filament-exact = { workspace = true }
 filament-semantic-value = { workspace = true }
 thiserror = "2.0.20"
+serde_json = { version = "1.0.151", features = ["raw_value"] }
+filament-specification = { workspace = true }
+jsonschema = { version = "0.17.1", default-features = false, features = ["draft202012"] }
+quire-canonical = { workspace = true }
 
 [dev-dependencies]
+fsl-conformance = { path = ".", features = ["test-support"] }
 serde = { version = "1.0.228", features = ["derive"] }
-filament-specification = { workspace = true }
 filament-contract-model = { workspace = true }
 filament-verification-contracts = { git = "https://github.com/agent-ix/filament-verification-contracts", rev = "e6eebb660c6d9b3dee25d643923d3984cbc745b6" }
 fsl-command = { path = "../fsl-command" }
 serde_json = "1.0.151"
-jsonschema = { version = "0.17.1", default-features = false, features = ["draft202012"] }
 tempfile = "3.27.0"
 fsl-cst = { path = "../fsl-cst" }
 fsl-forms = { path = "../fsl-forms" }
 fsl-semantics = { path = "../fsl-semantics", features = ["test-support"] }
 fsl-package = { path = "../fsl-package", features = ["test-support"] }
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
-quire-canonical = { workspace = true }
 fsl-analyze = { path = "../fsl-analyze", features = ["test-support"] }
 
 [[test]]

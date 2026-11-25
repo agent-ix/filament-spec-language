@@ -4885,8 +4885,14 @@ fn a_temporal_violation_carries_its_decisive_information() {
     else {
         panic!("the observed trace counterexample");
     };
+    // A finite trace reads back as its documents in `prefix` and an empty
+    // `loop` (FR-330 Outputs).
+    let documents = [
+        ("test", "counter-0"),
+        ("test", "counter-1"),
+        ("test", "counter-2"),
+    ];
     assert_eq!(
-        counterexample.loop_documents().collect::<Vec<_>>(),
         expected
             .prefix
             .iter()
@@ -4894,7 +4900,15 @@ fn a_temporal_violation_carries_its_decisive_information() {
                 step.document.authority.as_str(),
                 step.document.identity.as_str()
             ))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>(),
+        documents
+    );
+    assert_eq!(expected.loop_start, None);
+    assert_eq!(counterexample.prefix().collect::<Vec<_>>(), documents);
+    assert_eq!(counterexample.loop_documents().count(), 0);
+    assert_eq!(
+        value["disposition"]["temporal"]["counterexample"]["loop"],
+        serde_json::json!([])
     );
     assert_eq!(record.basis(), "closed-scope");
 

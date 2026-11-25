@@ -1115,7 +1115,7 @@ impl Run<'_, '_, '_> {
             if types.is_empty() {
                 continue;
             }
-            let used = self.walk.state.state.populations.get(population);
+            let used = self.walk.state.state().populations.get(population);
             for key in keys {
                 if used.is_some_and(|objects| objects.contains_key(key)) {
                     continue;
@@ -1502,7 +1502,7 @@ impl Run<'_, '_, '_> {
         dimensions: &[Dimension<'_>],
         digits: &[u128],
     ) -> Result<ModelState, ExpansionStop> {
-        let state = &self.walk.state.state;
+        let state = self.walk.state.state();
         let mut populations = state.populations.clone();
         for (population, key) in deleted {
             if let Some(objects) = populations.get_mut(*population) {
@@ -1579,7 +1579,7 @@ impl Run<'_, '_, '_> {
         candidate: &ModelState,
         touched: Option<&BTreeSet<&DeclarationKey>>,
     ) -> Result<Result<Delta, FrameRefused>, ExpansionStop> {
-        let pre = &self.walk.state.state;
+        let pre = self.walk.state.state();
         let empty = BTreeMap::new();
         let populations: BTreeSet<&DeclarationKey> = pre
             .populations
@@ -1718,7 +1718,7 @@ impl Run<'_, '_, '_> {
     /// one field, and the frame decision accepts or refuses it.
     fn writable_fields(&self) -> Result<WritableFields, ExpansionStop> {
         let system = self.walk.system;
-        let pre = &self.walk.state.state;
+        let pre = self.walk.state.state();
         let references = self.walk.references();
         let mut writable = BTreeSet::new();
         for row in &self.walk.rows {
@@ -1791,7 +1791,7 @@ impl Run<'_, '_, '_> {
         delta: &Delta,
     ) -> Result<StepEffect, ExpansionStop> {
         let system = self.walk.system;
-        let pre = &self.walk.state.state;
+        let pre = self.walk.state.state();
         let reference = |state: &ModelState, population: &DeclarationKey, key: &str| {
             state
                 .populations
@@ -2313,7 +2313,7 @@ fn retain_outcome(walk: &Walk<'_, '_>, next: &Applied) -> Result<(), ExpansionSt
         for argument in &applied.arguments {
             count = count.add(&argument.occ());
         }
-        for objects in applied.state.state.populations.values() {
+        for objects in applied.state.state().populations.values() {
             count = count.add(&filament_exact::Integer::one());
             for object in objects.values() {
                 count = count.add(&filament_exact::Integer::one());

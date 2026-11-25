@@ -357,8 +357,10 @@ pub fn check_step(
         abstract_system,
         pre,
         step,
-        false,
-        false,
+        StepProduct {
+            allow_protocol_node: false,
+            merge_candidate_states: false,
+        },
     )
 }
 
@@ -380,9 +382,21 @@ pub fn check_step_for_model(
         abstract_system,
         pre,
         step,
-        false,
-        true,
+        StepProduct {
+            allow_protocol_node: false,
+            merge_candidate_states: true,
+        },
     )
+}
+
+/// How the product a step is checked in reads the abstract subject.
+#[derive(Clone, Copy)]
+struct StepProduct {
+    /// Whether a protocol-node row applies, which needs an abstract protocol
+    /// subject (FR-148).
+    allow_protocol_node: bool,
+    /// Whether equal hidden abstract states are one candidate (FR-142).
+    merge_candidate_states: bool,
 }
 
 fn check_step_inner(
@@ -391,8 +405,7 @@ fn check_step_inner(
     abstract_system: &ModelSystem<'_>,
     pre: &RefinementPosition,
     step: &ConcreteStep<'_>,
-    allow_protocol_node: bool,
-    merge_candidate_states: bool,
+    product: StepProduct,
 ) -> StepResult {
     let mut abstract_successors = 0;
     let verdict = decide_step(
@@ -402,8 +415,7 @@ fn check_step_inner(
         pre,
         step,
         &mut abstract_successors,
-        allow_protocol_node,
-        merge_candidate_states,
+        product,
     );
     StepResult {
         verdict,
@@ -523,8 +535,10 @@ pub fn check_protocol_step(
         abstract_system,
         pre,
         step,
-        protocol_node,
-        false,
+        StepProduct {
+            allow_protocol_node: protocol_node,
+            merge_candidate_states: false,
+        },
     );
     let StepVerdict::Passes { mut post, taken } = model_result.verdict else {
         if matches!(
@@ -1393,9 +1407,12 @@ fn decide_step(
     pre: &RefinementPosition,
     step: &ConcreteStep<'_>,
     abstract_successors: &mut u64,
-    allow_protocol_node: bool,
-    merge_candidate_states: bool,
+    product: StepProduct,
 ) -> StepVerdict {
+    let StepProduct {
+        allow_protocol_node,
+        merge_candidate_states,
+    } = product;
     let Some(before) = pre.abstract_states.first() else {
         return fault("a-position-holds-an-abstract-state");
     };
@@ -1698,8 +1715,10 @@ fn decide_step(
             judge_operation(
                 abstract_system,
                 (&pre.abstract_states, &mapped),
-                operation,
-                arguments,
+                AbstractCall {
+                    operation,
+                    arguments,
+                },
                 step,
                 abstract_successors,
                 merge_candidate_states,
@@ -2078,6 +2097,13 @@ struct Arguments {
     result: Option<Value>,
 }
 
+/// The call an abstract-operation row makes: the abstract operation it names
+/// and what it reads at the pre-state.
+struct AbstractCall<'a> {
+    operation: &'a DeclarationKey,
+    arguments: Arguments,
+}
+
 /// RS-4: the receiver and arguments of the abstract-operation row `row`,
 /// evaluated at the pre-state over the concrete step's receiver and
 /// arguments (FR-141 "Abstract-operation evaluation"), with the history
@@ -2407,20 +2433,23 @@ fn completions(
     Ok(states)
 }
 
-/// RS-4: the abstract operation `operation` over the evaluated `arguments`,
+/// RS-4: the abstract operation of `call` over its evaluated arguments,
 /// judged against each completion of the mapped post-state from each member
 /// of `pre_states`, with the calls the abstract system makes when it expands
 /// the member. The members after the step are the accepted completions.
 fn judge_operation(
     abstract_system: &ModelSystem<'_>,
     (pre_states, mapped): (&[ModelState], &MappedState),
-    operation: &DeclarationKey,
-    arguments: Arguments,
+    call: AbstractCall<'_>,
     step: &ConcreteStep<'_>,
     abstract_successors: &mut u64,
     merge_candidate_states: bool,
     passes: impl FnOnce(Taken, Vec<ModelState>) -> StepVerdict,
 ) -> StepVerdict {
+    let AbstractCall {
+        operation,
+        arguments,
+    } = call;
     let completions = match completions(abstract_system, mapped) {
         Ok(completions) => completions,
         Err(verdict) => return verdict,

@@ -1528,7 +1528,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             .filter(|(_, _, _, max)| max.is_none())
             .flat_map(|(type_key, field, min, _)| {
                 state
-                    .state
+                    .state()
                     .populations
                     .iter()
                     .flat_map(move |(population, objects)| {
@@ -1548,7 +1548,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             let mut next = state.clone();
             for ((population, key, field, min), extra) in holders.iter().zip(added) {
                 let Some(object) = next
-                    .state
+                    .state_mut()
                     .populations
                     .get_mut(population)
                     .and_then(|objects| objects.get_mut(key))

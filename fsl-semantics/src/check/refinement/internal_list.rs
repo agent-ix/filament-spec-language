@@ -921,7 +921,7 @@ mod tests {
     /// broken checker invariant: the catalog refuses with an internal fault
     /// naming it rather than writing an `activate` class with an empty
     /// binder record (SR-1716 FND-001).
-    #[trace("FR-375-AC-27", "TC-310")]
+    #[trace("FSpec-FR-375-AC-27", "FSpec-TC-310")]
     #[test]
     fn an_each_clause_without_its_trigger_binder_is_an_internal_fault() {
         let classes = ProtocolClasses {

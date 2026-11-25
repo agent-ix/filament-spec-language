@@ -661,6 +661,17 @@ fn check_system<S: SubjectSystem>(
         }
         Err(refusal) => return Err(refusal.into()),
     };
+    // FR-125 Instancing orders the refusals: an unbounded root (above), then
+    // no initial state, then no instance.
+    if system
+        .initial_iter()
+        .next()
+        .transpose()
+        .map_err(|error| ClosureRefusal::Protocol(error.into()))?
+        .is_none()
+    {
+        return Err(ClosureRefusal::NoInitialState);
+    }
     if instances.is_empty() {
         return Err(ClosureRefusal::NoInstance);
     }
@@ -670,15 +681,6 @@ fn check_system<S: SubjectSystem>(
     }
     if proof.components.is_none() && instances.iter().any(liveness) {
         return Err(ClosureRefusal::LivenessNeedsComponents);
-    }
-    if system
-        .initial_iter()
-        .next()
-        .transpose()
-        .map_err(|error| ClosureRefusal::Protocol(error.into()))?
-        .is_none()
-    {
-        return Err(ClosureRefusal::NoInitialState);
     }
 
     // Admission reads at most one entry per product state the state budget
