@@ -68,7 +68,7 @@ fn markdown(body: &str, newline: &str) -> String {
 }
 
 #[test]
-#[trace("FR-031-AC-4")]
+#[trace("FR-031-AC-4", "FR-267-AC-17")]
 fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenance() {
     for newline in ["\n", "\r\n"] {
         for (case, category, exit, truth) in [
@@ -88,15 +88,11 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
             let upstream = json!({"availability": upstream.availability,
                 "clause_text": upstream.clause_text, "diagnostics": upstream.diagnostics,
                 "clauses": upstream.clauses});
-            let expected_segments: Vec<_> = admitted
-                .map()
-                .segments()
-                .iter()
-                .map(|segment| {
-                    json!({"body_start": segment.body.start, "body_end": segment.body.end,
-                    "original_start": segment.original.start, "original_end": segment.original.end})
-                })
-                .collect();
+            let expected_segments = if newline == "\n" {
+                json!([{"body_start":0,"body_end":283,"original_start":57,"original_end":340}])
+            } else {
+                json!([{"body_start":0,"body_end":289,"original_start":63,"original_end":352}])
+            };
             let extracted = run(&extracted_path);
             let document = extracted.value.as_value();
             assert_eq!(extracted.exit_code, exit, "{document}");
@@ -120,8 +116,7 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
             assert_eq!(extraction["body"]["identity"], "body");
             assert_eq!(extraction["binding"]["clause"], "parent_order");
             assert_eq!(extraction["outcome"], upstream);
-            assert!(!expected_segments.is_empty());
-            assert_eq!(extraction["map"]["segments"], json!(expected_segments));
+            assert_eq!(extraction["map"]["segments"], expected_segments);
 
             let read = fsl_replay::spine::read_native_run_result(
                 &serde_json::to_vec(document).expect("the command result serializes"),
@@ -131,6 +126,45 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
                 panic!("a clause result");
             };
             assert_eq!(read.extraction(), Some(extraction));
+            assert_eq!(read.stage(), document["disposition"]["stage"]);
+            assert_eq!(read.category(), document["disposition"]["category"]);
+            assert_eq!(read.truth(), document["disposition"]["truth"].as_bool());
+            assert_eq!(read.basis(), document["basis"]);
+            assert_eq!(read.code(), None);
+            assert_eq!(read.cause(), None);
+            assert!(!read.has_witness());
+            assert!(read.temporal().is_none());
+
+            for (label, member) in [
+                ("unknown", "source"),
+                ("missing", "map"),
+                ("null", "binding"),
+                ("wrong-type", "identity"),
+                ("empty", "segments"),
+            ] {
+                let mut malformed = document.clone();
+                match label {
+                    "unknown" => malformed["extraction"]["source"] = json!("bad"),
+                    "missing" => {
+                        malformed["extraction"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("map");
+                    }
+                    "null" => malformed["extraction"]["binding"] = Value::Null,
+                    "wrong-type" => malformed["extraction"]["body"]["identity"] = json!(7),
+                    "empty" => malformed["extraction"]["map"]["segments"] = json!([]),
+                    _ => unreachable!(),
+                }
+                let error = fsl_replay::spine::read_native_run_result(
+                    &serde_json::to_vec(&malformed).expect("the mutated result serializes"),
+                )
+                .err()
+                .expect("malformed extraction metadata is refused");
+                let message = error.to_string();
+                assert!(message.contains("extraction"), "{label}: {message}");
+                assert!(message.contains(member), "{label}: {message}");
+            }
         }
     }
 }
@@ -246,7 +280,7 @@ fn an_extracted_body_with_two_clauses_refuses_its_actual_count() {
 }
 
 #[test]
-#[trace("FR-031-AC-9", "TC-109")]
+#[trace("FR-031-AC-9", "TC-109", "FR-267-AC-17")]
 fn an_extracted_body_with_a_syntax_error_refuses_at_the_source() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
@@ -261,6 +295,18 @@ fn an_extracted_body_with_a_syntax_error_refuses_at_the_source() {
         "{document}"
     );
     assert!(document["disposition"]["truth"].is_null(), "{document}");
+    assert!(!document["extraction"]["original_regions"]
+        .as_array()
+        .expect("a body-span refusal carries original Markdown regions")
+        .is_empty());
+    let read = fsl_replay::spine::read_native_run_result(
+        &serde_json::to_vec(document).expect("the refusal document serializes"),
+    )
+    .expect("the extracted refusal reads");
+    let fsl_replay::spine::NativeRunResult::Clause(read) = read else {
+        panic!("a clause refusal record");
+    };
+    assert_eq!(read.extraction(), Some(&document["extraction"]));
 }
 
 #[test]
