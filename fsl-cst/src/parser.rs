@@ -48,25 +48,28 @@ pub(crate) const DEFAULT_SYNTAX_DIAGNOSTICS: usize = 100;
 const EXPECTED_ALTERNATIVE_BOUND: usize = 12;
 
 #[derive(Clone, Debug)]
-struct Failure {
+struct Failure<'g> {
     position: usize,
-    expected: SmallVec<[ExpectedId; 4]>,
+    expected: SmallVec<[ExpectedId<'g>; 4]>,
 }
 
 /// Compact identity for an expected terminal. Human-readable descriptions
 /// are built only when a failure is turned into a diagnostic.
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum ExpectedId {
+enum ExpectedId<'g> {
     Label(&'static str),
     Exact(&'static str),
     TextValue(&'static str),
     Peek(&'static [&'static str]),
     CallableAllowed(&'static str),
     TypeExcept(&'static str),
-    Dynamic(Box<str>),
+    Production(Production),
+    ExtensionKeyword(&'g str),
+    ExtensionClause(&'g str),
+    ExtensionSeparator(&'g str),
 }
 
-impl ExpectedId {
+impl ExpectedId<'_> {
     fn is_exact(&self, value: &str) -> bool {
         matches!(self, Self::Exact(expected) if *expected == value)
     }
@@ -79,13 +82,16 @@ impl ExpectedId {
             Self::Peek(spellings) => format!("one of `{}`", spellings.join("`, `")),
             Self::CallableAllowed(value) => format!("identifier or `{value}`"),
             Self::TypeExcept(value) => format!("type name other than `{value}`"),
-            Self::Dynamic(value) => value.to_string(),
+            Self::Production(production) => format!("{production:?}"),
+            Self::ExtensionKeyword(word) => format!("`{word}`"),
+            Self::ExtensionClause(name) => format!("clause-name, the clause `{name}`"),
+            Self::ExtensionSeparator(next) => format!("`,` before clause `{next}`"),
         }
     }
 }
 
-impl Failure {
-    fn expected(position: usize, expected: ExpectedId) -> Self {
+impl<'g> Failure<'g> {
+    fn expected(position: usize, expected: ExpectedId<'g>) -> Self {
         Self {
             position,
             expected: smallvec::smallvec![expected],
@@ -210,12 +216,10 @@ pub(super) fn parse(
     let (tokens, significant, mut diagnostics, mut recoveries) =
         scan(&source, limits, compounds, cancel)?;
     if diagnostics.len() > limits.diagnostics {
-        let cut_span = diagnostics[limits.diagnostics]
-            .byte_span()
-            .unwrap_or(Span {
-                start: source.text().len(),
-                end: source.text().len(),
-            });
+        let cut_span = diagnostics[limits.diagnostics].byte_span().unwrap_or(Span {
+            start: source.text().len(),
+            end: source.text().len(),
+        });
         diagnostics.truncate(limits.diagnostics);
         diagnostics.push(*super::diagnostic::error(
             &source,
@@ -2274,12 +2278,12 @@ struct Refusal {
 
 /// Result of matching one rule at one position.
 #[derive(Debug)]
-enum Outcome {
+enum Outcome<'g> {
     /// Matched; the value is the position after the match.
     Match(usize),
     /// Did not match; the failure is recoverable by an enclosing choice,
     /// option or repetition.
-    No(Failure),
+    No(Failure<'g>),
     /// A resource ceiling was hit; fatal for the whole parse.
     Exhausted(Refusal),
 }
@@ -2306,7 +2310,7 @@ enum Frame<'g> {
         index: usize,
         position: usize,
         first: usize,
-        failure: Option<Failure>,
+        failure: Option<Failure<'g>>,
     },
     /// The optional rule is being matched at `position`.
     Optional { position: usize, first: usize },
@@ -2329,7 +2333,7 @@ enum Step<'g> {
     /// Start matching a production at a position.
     Production(Production, usize),
     /// Hand an outcome to the innermost suspended frame.
-    Return(Outcome),
+    Return(Outcome<'g>),
 }
 
 /// Interpreter steps the work budget allows per significant token.
@@ -2405,13 +2409,13 @@ pub(crate) const DEFAULT_WORK_UNITS: usize = 288;
 /// case. The measured inputs at the default
 /// [`Limits::work_units`] store at most 0.17
 /// matches and 0.17 links per step, about 14 bytes per step.
-struct Engine<'a> {
-    grammar: &'a Grammar,
-    reserved_words: &'a std::collections::BTreeSet<&'static str>,
-    tokens: &'a [Significant],
+struct Engine<'g, 't> {
+    grammar: &'g Grammar,
+    reserved_words: &'g std::collections::BTreeSet<&'static str>,
+    tokens: &'t [Significant],
     limits: Limits,
-    cancel: &'a Cancel,
-    frames: Vec<Frame<'a>>,
+    cancel: &'t Cancel,
+    frames: Vec<Frame<'g>>,
     matches: Vec<Matched>,
     links: Vec<usize>,
     pending: Vec<Pending>,
@@ -2430,22 +2434,22 @@ struct Engine<'a> {
     /// arm no longer needs it. Consulted only if the call's overall outcome
     /// is [`Outcome::No`]: a successful parse never reports it, so this
     /// never changes what a valid input produces.
-    farthest_failure: Option<Failure>,
+    farthest_failure: Option<Failure<'g>>,
     /// The longest `frames` and `pending` grew, for the stack-charge test.
     #[cfg(test)]
     peak: (usize, usize),
 }
 
-impl<'a> Engine<'a> {
+impl<'g, 't> Engine<'g, 't> {
     /// The work budget is [`Limits::work_units`] steps per significant
     /// token, plus one token's worth for the end of input, so parsing work
     /// is linear in the input.
     fn new(
-        grammar: &'a Grammar,
-        reserved_words: &'a std::collections::BTreeSet<&'static str>,
-        tokens: &'a [Significant],
+        grammar: &'g Grammar,
+        reserved_words: &'g std::collections::BTreeSet<&'static str>,
+        tokens: &'t [Significant],
         limits: Limits,
-        cancel: &'a Cancel,
+        cancel: &'t Cancel,
     ) -> Self {
         Self {
             grammar,
@@ -2485,7 +2489,7 @@ impl<'a> Engine<'a> {
     /// so `farthest_failure` always holds the deepest position any attempt
     /// reached this call, independent of which frame later discards its own
     /// copy of the same failure.
-    fn fail(&mut self, failure: Failure) -> Outcome {
+    fn fail(&mut self, failure: Failure<'g>) -> Outcome<'g> {
         self.farthest_failure = Some(match self.farthest_failure.take() {
             Some(farthest) => farthest.merge(failure.clone()),
             None => failure.clone(),
@@ -2493,7 +2497,7 @@ impl<'a> Engine<'a> {
         Outcome::No(failure)
     }
 
-    fn work_exhausted(&self) -> Outcome {
+    fn work_exhausted(&self) -> Outcome<'g> {
         Outcome::Exhausted(Refusal {
             limit: SyntaxLimit::Work {
                 bound: self.maximum_steps,
@@ -2502,7 +2506,7 @@ impl<'a> Engine<'a> {
         })
     }
 
-    fn nodes_exhausted(&self) -> Outcome {
+    fn nodes_exhausted(&self) -> Outcome<'g> {
         Outcome::Exhausted(Refusal {
             limit: SyntaxLimit::Nodes {
                 bound: self.limits.nodes,
@@ -2552,7 +2556,7 @@ impl<'a> Engine<'a> {
     /// happen to fail at the same position for unrelated reasons must not
     /// blend their `expected` sets the way two alternatives of the same
     /// `Choice` deliberately do.
-    fn production(&mut self, production: Production, position: usize) -> Outcome {
+    fn production(&mut self, production: Production, position: usize) -> Outcome<'g> {
         self.frames.clear();
         self.pending.clear();
         self.farthest_failure = None;
@@ -2617,7 +2621,7 @@ impl<'a> Engine<'a> {
             })
     }
 
-    fn enter_production(&mut self, production: Production, position: usize) -> Step<'a> {
+    fn enter_production(&mut self, production: Production, position: usize) -> Step<'g> {
         if !self.charge(position) {
             return Step::Return(self.work_exhausted());
         }
@@ -2648,7 +2652,7 @@ impl<'a> Engine<'a> {
         let Some(rule) = grammar.get(&production) else {
             return Step::Return(self.fail(Failure::expected(
                 position,
-                ExpectedId::Dynamic(format!("{production:?}").into()),
+                ExpectedId::Production(production),
             )));
         };
         self.frames.push(Frame::Production {
@@ -2659,7 +2663,7 @@ impl<'a> Engine<'a> {
         Step::Rule(rule, position)
     }
 
-    fn enter_rule(&mut self, rule: &'a Rule, position: usize) -> Step<'a> {
+    fn enter_rule(&mut self, rule: &'g Rule, position: usize) -> Step<'g> {
         if !self.charge(position) {
             return Step::Return(self.work_exhausted());
         }
@@ -2722,7 +2726,7 @@ impl<'a> Engine<'a> {
     /// the end of a repetition) truncates `pending` to where the failed
     /// attempt began, so the attempt's matches leave the tree. They stay in
     /// the store, where a memoized one can still be reused.
-    fn resume(&mut self, frame: Frame<'a>, outcome: Outcome) -> Step<'a> {
+    fn resume(&mut self, frame: Frame<'g>, outcome: Outcome<'g>) -> Step<'g> {
         match frame {
             Frame::Production {
                 production,
@@ -2878,7 +2882,7 @@ impl<'a> Engine<'a> {
     }
 
     #[ix_trace_rs::string_edge]
-    fn terminal(&mut self, terminal: &Terminal, position: usize) -> Outcome {
+    fn terminal(&mut self, terminal: &'g Terminal, position: usize) -> Outcome<'g> {
         let accepted = match terminal {
             Terminal::End => {
                 return if position == self.tokens.len() {
@@ -2987,7 +2991,7 @@ impl<'a> Engine<'a> {
 }
 
 impl Terminal {
-    fn expected_id(&self) -> ExpectedId {
+    fn expected_id(&self) -> ExpectedId<'_> {
         match self {
             Self::Exact(value) | Self::Literal(value) | Self::ContextualWord(value) => {
                 ExpectedId::Exact(value)
@@ -3004,13 +3008,9 @@ impl Terminal {
             Self::ClockType { word, .. } => ExpectedId::Exact(word),
             Self::TypeIdentifier { except } => ExpectedId::TypeExcept(except),
             Self::EmptyCallEnd { .. } => ExpectedId::Label("`)`"),
-            Self::ExtensionKeyword(word) => ExpectedId::Dynamic(format!("`{word}`").into()),
-            Self::ExtensionClause(name) => {
-                ExpectedId::Dynamic(format!("clause-name, the clause `{name}`").into())
-            }
-            Self::ExtensionSeparator(next) => {
-                ExpectedId::Dynamic(format!("`,` before clause `{next}`").into())
-            }
+            Self::ExtensionKeyword(word) => ExpectedId::ExtensionKeyword(word),
+            Self::ExtensionClause(name) => ExpectedId::ExtensionClause(name),
+            Self::ExtensionSeparator(next) => ExpectedId::ExtensionSeparator(next),
             Self::End => ExpectedId::Label("end of source"),
         }
     }
@@ -3095,6 +3095,7 @@ fn lower_tree(source: &Source, tokens: &[Significant], forest: &Forest) -> (Vec<
 mod tests {
     use super::*;
     use fsl_foundation::SourceIdentity;
+    use ix_trace_rs::trace;
 
     const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"filament.value.complete/v1\";\n";
 
@@ -3109,6 +3110,40 @@ mod tests {
             fsl_foundation::source::MAX_SOURCE_BYTES,
         )
         .expect("test source")
+    }
+
+    #[trace("NFR-141-AC-8")]
+    #[test]
+    fn extension_terminal_failures_keep_typed_expected_ids() {
+        let keyword = Terminal::ExtensionKeyword("deploy".into());
+        let ExpectedId::ExtensionKeyword(keyword) = keyword.expected_id() else {
+            panic!("extension keyword should remain an identifier until diagnosis");
+        };
+        assert_eq!(keyword, "deploy");
+        assert_eq!(
+            ExpectedId::ExtensionKeyword(keyword).description(),
+            "`deploy`"
+        );
+
+        let clause = Terminal::ExtensionClause("by".into());
+        let ExpectedId::ExtensionClause(clause) = clause.expected_id() else {
+            panic!("extension clause should remain an identifier until diagnosis");
+        };
+        assert_eq!(clause, "by");
+        assert_eq!(
+            ExpectedId::ExtensionClause(clause).description(),
+            "clause-name, the clause `by`"
+        );
+
+        let separator = Terminal::ExtensionSeparator("to".into());
+        let ExpectedId::ExtensionSeparator(separator) = separator.expected_id() else {
+            panic!("extension separator should remain an identifier until diagnosis");
+        };
+        assert_eq!(separator, "to");
+        assert_eq!(
+            ExpectedId::ExtensionSeparator(separator).description(),
+            "`,` before clause `to`"
+        );
     }
 
     fn function(body: &str) -> String {

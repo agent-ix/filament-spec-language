@@ -15,8 +15,8 @@
 //!
 //! Throughput is source bytes, so criterion also reports bytes per second.
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use fsl_bench::parse::{ParseOutcome, nested_source, outcome_id, parse, volume_source};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use fsl_bench::parse::{nested_source, outcome_id, parse, volume_source, ParseOutcome};
 use fsl_bench::widen;
 use ix_trace_rs::trace;
 use std::hint::black_box;

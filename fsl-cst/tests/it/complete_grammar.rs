@@ -68,6 +68,7 @@ const ACCEPTED_PRODUCTIONS: &[Production] = &[
     Production::FunctionDeclaration,
     Production::Predicate,
     Production::Parameter,
+    Production::OperationParameter,
     Production::StateClause,
     Production::OperationBody,
     Production::PopulationBound,
@@ -1150,7 +1151,7 @@ fn every_corpus_unit_formats_idempotently_with_its_tokens_and_tree() {
     }
 }
 
-#[trace("NFR-141-AC-10")]
+#[trace("NFR-141-AC-8", "NFR-141-AC-10")]
 #[test]
 fn default_and_caller_forms_preserve_parser_outputs() {
     let no_forms = ExtensionForms::default();
@@ -1192,8 +1193,8 @@ fn default_and_caller_forms_preserve_parser_outputs() {
         );
     }
 
-    let forms = ExtensionForms::new([ExtensionProduction::new("deploy", ["by"])]);
-    let text = source("deploy Instance { by: \"team/service\" }");
+    let forms = ExtensionForms::new([ExtensionProduction::new("deploy", ["by", "to"])]);
+    let text = source("deploy Instance { by: \"team/service\", to: \"team/other\" }");
     let parsed = fsl_cst::parse_with_extensions(
         SourceIdentity {
             authority: "test".into(),
@@ -1211,11 +1212,76 @@ fn default_and_caller_forms_preserve_parser_outputs() {
         "{:?}",
         parsed.diagnostics()
     );
+    assert!(parsed
+        .cst()
+        .nodes()
+        .iter()
+        .any(|node| node.production() == Production::ExtensionDeclaration));
+
+    let malformed = source("deploy Instance { }");
+    let rejected = fsl_cst::parse_with_extensions(
+        SourceIdentity {
+            authority: "test".into(),
+            identity: "test:caller-forms-missing-clause".into(),
+        },
+        "caller-forms.native",
+        malformed.as_bytes(),
+        Limits::default(),
+        &forms,
+        &filament_exact::Cancel::new(),
+    )
+    .unwrap();
     assert!(
-        parsed
-            .cst()
-            .nodes()
+        rejected
+            .diagnostics()
             .iter()
-            .any(|node| node.production() == Production::ExtensionDeclaration)
+            .any(|diagnostic| diagnostic.message == "expected clause-name, the clause `by`"),
+        "{:?}",
+        rejected.diagnostics()
+    );
+
+    let malformed_separator = source("deploy Instance { by: \"team/service\" to: \"team/other\" }");
+    let rejected_separator = fsl_cst::parse_with_extensions(
+        SourceIdentity {
+            authority: "test".into(),
+            identity: "test:caller-forms-missing-separator".into(),
+        },
+        "caller-forms.native",
+        malformed_separator.as_bytes(),
+        Limits::default(),
+        &forms,
+        &filament_exact::Cancel::new(),
+    )
+    .unwrap();
+    assert!(
+        rejected_separator
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.message == "expected `,` before clause `to`"),
+        "{:?}",
+        rejected_separator.diagnostics()
+    );
+
+    let malformed_keyword = source("deploY Instance { by: \"team/service\", to: \"team/other\" }");
+    let rejected_keyword = fsl_cst::parse_with_extensions(
+        SourceIdentity {
+            authority: "test".into(),
+            identity: "test:caller-forms-wrong-keyword".into(),
+        },
+        "caller-forms.native",
+        malformed_keyword.as_bytes(),
+        Limits::default(),
+        &forms,
+        &filament_exact::Cancel::new(),
+    )
+    .unwrap();
+    assert!(
+        rejected_keyword.diagnostics().iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .starts_with("`deploY` begins no declaration form")
+        }),
+        "{:?}",
+        rejected_keyword.diagnostics()
     );
 }
