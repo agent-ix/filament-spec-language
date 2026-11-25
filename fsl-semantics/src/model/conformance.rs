@@ -41,6 +41,7 @@ use crate::model::normalize::{ModelRefusal, ModelRefusalCause};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Presence;
 use fsl_foundation::diagnostic::Code;
+use ix_trace_rs::implements;
 
 /// One failing conformance axis: `{axis, code, cause, detail}`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -145,6 +146,7 @@ fn charge_type_axis(
 /// as whether it is `Option<X>`, and `X`. Presence `optional` and a single
 /// option value type over `X` are one type (FSpec FR-154 "Presence and
 /// option"). Multiplicity is judged on its own axis.
+#[implements("FSpec-FR-151-AC-21")]
 fn parameter_type<'a>(
     index: &'a ModelIndex,
     parameter: &'a OperationParameterRecord,
@@ -347,6 +349,12 @@ pub fn check_subsetting(
 /// Checks an operation redefinition's arity, parameter, result and effect
 /// axes. The precondition/postcondition axes never refuse (checked by
 /// construction, per the module docs) but are still charged.
+#[implements(
+    "FSpec-FR-151-AC-4",
+    "FSpec-FR-151-AC-21",
+    "FR-082-AC-1",
+    "FR-082-AC-5"
+)]
 pub fn check_operation_redefinition(
     index: &ModelIndex,
     redefining_key: &DeclarationKey,
