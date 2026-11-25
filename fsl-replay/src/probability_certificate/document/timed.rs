@@ -1352,6 +1352,56 @@ fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound
     let root_index = checked.root().index();
     let root = checked.nodes().get(root_index)?;
     let horizon = time_units(timed_horizon, scale)?;
+    let mut admitted = true;
+    let mut predicates = Vec::new();
+    for (index, node) in checked.nodes().iter().enumerate() {
+        match node {
+            FormulaNode::Constant(_) | FormulaNode::Not(_) | FormulaNode::And(..)
+            | FormulaNode::Or(..) | FormulaNode::Implies(..) => {}
+            FormulaNode::Holds { .. } => predicates.push(formula.condition(index)?),
+            FormulaNode::Unary { interval, .. } | FormulaNode::Binary { interval, .. } => {
+                let Some(CheckedInterval::Timed(interval)) = interval else {
+                    admitted = false;
+                    break;
+                };
+                if !interval.lower_closed()
+                    || !interval.upper_closed()
+                    || interval.upper().is_none()
+                {
+                    admitted = false;
+                    break;
+                }
+            }
+            FormulaNode::Aggregate { .. } => {
+                admitted = false;
+                break;
+            }
+        }
+    }
+    if admitted {
+        let (lower, coalesce_same_time) = match root {
+            FormulaNode::Unary {
+                operator: UnaryTemporal::Eventually,
+                interval: Some(CheckedInterval::Timed(interval)),
+                operand,
+            } if matches!(checked.nodes().get(operand.index()), Some(FormulaNode::Holds { .. })) =>
+            {
+                (time_units(interval.lower(), scale)?, true)
+            }
+            _ => (0, false),
+        };
+        return Some((
+            bound.clone(),
+            Watch::TimedTrace {
+                formula,
+                predicates,
+                horizon,
+                lower,
+                coalesce_same_time,
+                scale,
+            },
+        ));
+    }
     let condition = |index: usize| formula.condition(index);
     let direct_holds = |index: usize| {
         matches!(checked.nodes().get(index), Some(FormulaNode::Holds { .. }))
@@ -1391,6 +1441,8 @@ fn bounded_event(claim: &CheckedProbabilisticClaim, scale: u64) -> Option<(Bound
                     formula,
                     predicates: vec![condition(operand.index())?],
                     horizon,
+                    lower: 0,
+                    coalesce_same_time: true,
                     scale,
                 },
             ));
@@ -1517,15 +1569,18 @@ fn push_timed_formula_observation(
     history: &mut Vec<TimedFormulaObservation>,
     time: u64,
     values: &[bool],
+    coalesce_same_time: bool,
 ) {
-    // TimedTrace is admitted only for one atomic Eventually read. Independently
-    // reconstruct its idempotent same-time truth summary from replayed states.
-    if let Some(observation) = history.iter_mut().rev().find(|entry| entry.time == time) {
+    // Only a direct Eventually atom has an idempotent same-time OR summary.
+    // Other formulas retain the order of every same-time position.
+    if coalesce_same_time {
+        if let Some(observation) = history.iter_mut().rev().find(|entry| entry.time == time) {
         if observation.values.len() == values.len() {
             for (summary, value) in observation.values.iter_mut().zip(values) {
                 *summary |= *value;
             }
             return;
+        }
         }
     }
     history.push(TimedFormulaObservation {
@@ -1646,6 +1701,8 @@ enum Watch<'a> {
         formula: &'a fsl_semantics::check::CheckedTemporalFormula,
         predicates: Vec<&'a fsl_semantics::check::CheckedPredicate>,
         horizon: u64,
+        lower: u64,
+        coalesce_same_time: bool,
         scale: u64,
     },
     Bounded {
@@ -1709,6 +1766,8 @@ impl Watch<'_> {
                 formula,
                 predicates,
                 horizon,
+                lower,
+                coalesce_same_time,
                 scale,
             } => {
                 let (mut history, prior_verdict) = match previous {
@@ -1731,15 +1790,34 @@ impl Watch<'_> {
                 if let Some(previous) = history.last().cloned() {
                     let mut at = previous.time.saturating_add(1);
                     while at < elapsed {
-                        push_timed_formula_observation(&mut history, at, &previous.values);
+                        push_timed_formula_observation(
+                            &mut history,
+                            at,
+                            &previous.values,
+                            *coalesce_same_time,
+                        );
                         at = at.saturating_add(1);
                     }
                     if elapsed > previous.time && truths != previous.values {
-                        push_timed_formula_observation(&mut history, elapsed, &previous.values);
+                        push_timed_formula_observation(
+                            &mut history,
+                            elapsed,
+                            &previous.values,
+                            *coalesce_same_time,
+                        );
                     }
                 }
-                push_timed_formula_observation(&mut history, elapsed, &truths);
-                let verdict = if elapsed <= *horizon && truths.iter().any(|truth| *truth) {
+                push_timed_formula_observation(
+                    &mut history,
+                    elapsed,
+                    &truths,
+                    *coalesce_same_time,
+                );
+                let verdict = if *coalesce_same_time
+                    && elapsed >= *lower
+                    && elapsed <= *horizon
+                    && truths.first().copied().unwrap_or(false)
+                {
                     Some(true)
                 } else if elapsed > *horizon {
                     let selected = history

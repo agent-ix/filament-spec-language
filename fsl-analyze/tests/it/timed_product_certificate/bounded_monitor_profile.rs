@@ -3,6 +3,43 @@
 
 use super::*;
 
+#[trace("FR-204-AC-21")]
+#[test]
+fn timed_bounded_operators_replay_with_literal_values_and_occurrences() {
+    let claims = "\
+        probabilistic LowerEventually using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ eventually[1 ms, 4 ms] holds(c.late) ] }\n\
+        probabilistic AlwaysFalse using ev on M over (c: M::Call) under every scheduler on origin { probability <= 0.01 [ always[0 ms, 4 ms] holds(c.late) ] }\n\
+        probabilistic LowerUntil using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ holds(not c.late) until[1 ms, 4 ms] holds(c.late) ] }\n\
+        probabilistic NestedPunctual using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ eventually[0 ms, 4 ms] always[1 ms, 1 ms] holds(c.late) ] }\n\
+        probabilistic ConjunctionChildren using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ eventually[1 ms, 4 ms] holds(c.late) and eventually[0 ms, 4 ms] holds(c.late) ] }\n";
+    let world = retx(GUARD, true, TWO_DELAYS, claims);
+    for (name, expected) in [
+        ("LowerEventually", ratio(99, 100)),
+        ("AlwaysFalse", ratio(0, 1)),
+        ("LowerUntil", ratio(99, 100)),
+        ("NestedPunctual", ratio(99, 100)),
+        ("ConjunctionChildren", ratio(99, 100)),
+    ] {
+        let record = settle(&world, name);
+        assert_eq!(proved_value(&record), expected, "{name}: {record:#?}");
+        assert!(
+            accepted(&world, name, &document(&record)),
+            "independent replay accepts {name}"
+        );
+    }
+}
+
+#[trace("FR-204-AC-21")]
+#[test]
+fn timed_non_punctual_nested_always_keeps_each_operator_window() {
+    let claims = "\
+        probabilistic NestedWindow using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ eventually[0 ms, 4 ms] always[1 ms, 2 ms] holds(c.late) ] }\n";
+    let world = retx(GUARD, true, TWO_DELAYS, claims);
+    let record = settle(&world, "NestedWindow");
+    assert_eq!(proved_value(&record), ratio(99, 100));
+    assert!(accepted(&world, "NestedWindow", &document(&record)));
+}
+
 #[trace("FR-186-AC-7")]
 #[test]
 fn timed_eventually_with_closed_horizon_settles_at_ninety_nine_percent() {
