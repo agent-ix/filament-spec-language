@@ -5,5 +5,7 @@
 mod refinement_aux;
 #[path = "it/refinement_liveness_cx1.rs"]
 mod refinement_liveness_cx1;
+#[path = "it/refinement_liveness_support.rs"]
+mod refinement_liveness_support;
 #[path = "../../tests/support/ring_world.rs"]
 mod ring_world;

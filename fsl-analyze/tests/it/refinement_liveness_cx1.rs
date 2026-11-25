@@ -1,105 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-143 (TC-548): isolated liveness refinement test with a large search.
 
-use filament_exact::Cancel;
-use fsl_analyze::model_check::{check_refinement, RefinementCheckRequest};
-use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::{operation_identity_text, ModelSimulationRequest};
-use fsl_package::CheckedPackage;
+use fsl_eval::simulation::model::operation_identity_text;
 use fsl_replay::{
-    open_systems, replay_refinement_trace, LivenessHalf, ModelCheckLimits, ModelCheckOutcome,
-    RefinementFailure, RefinementOutcome, RefinementTraceSettlement, SafetyOutcome,
-    TemporalCounterexample,
+    RefinementFailure, RefinementTraceSettlement, SafetyOutcome, TemporalCounterexample,
 };
-use fsl_semantics::check::CheckedRefinement;
-use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
-use crate::refinement_aux::{Unit, World as AuxWorld, UNLIMITED as AUX_UNLIMITED};
+use crate::refinement_aux::Unit;
+use crate::refinement_liveness_support::{
+    assert_reproduced, check_aux, hidden_tick_refinement, holds, lasso, replayed,
+};
 
-fn check_aux(world: &AuxWorld<'_>) -> RefinementOutcome {
-    run(
-        world.refinement(),
-        world.concrete_request(AUX_UNLIMITED),
-        world.package(),
-        world.abstract_initials(),
-    )
-}
-
-fn hidden_tick_refinement(rows: &str) -> String {
-    format!(
-        "refinement HiddenTick using inf abstract Spec concrete Impl {{\n\
-         population Spec::ms from Impl::ms;\n\
-         object Spec::M from Impl::M {{ v = self.v; }}\n\
-         step Impl::M::tick -> any;\n\
-         {rows}}}"
-    )
-}
-
-fn run(
-    refinement: &CheckedRefinement,
-    concrete: ModelSimulationRequest<'_>,
-    package: &CheckedPackage,
-    abstract_initials: Vec<DocumentRef>,
-) -> RefinementOutcome {
-    check_refinement(
-        RefinementCheckRequest {
-            refinement,
-            concrete: ModelSubject {
-                simulation: concrete,
-                proof_bounds: Vec::new(),
-            },
-            abstract_package: package,
-            abstract_initial: abstract_initials.into(),
-            abstract_protocol_binding: None,
-            max_depth: None,
-            limits: ModelCheckLimits::default(),
-        },
-        &Cancel::new(),
-    )
-    .expect("the refinement is checked")
-}
-
-fn holds(outcome: &RefinementOutcome) {
-    assert!(matches!(outcome.safety, SafetyOutcome::Holds { .. }));
-    let Some(LivenessHalf::Checked(ModelCheckOutcome::HoldsReduced { reductions, .. })) =
-        &outcome.liveness
-    else {
-        panic!("the liveness half holds: {:?}", outcome.liveness);
-    };
-    assert!(reductions.is_empty());
-}
-
-fn lasso(outcome: RefinementOutcome) -> TemporalCounterexample {
-    assert!(matches!(outcome.safety, SafetyOutcome::Holds { .. }));
-    let Some(LivenessHalf::Checked(ModelCheckOutcome::Violated { counterexample, .. })) =
-        outcome.liveness
-    else {
-        panic!("the liveness half is violated: {:?}", outcome.liveness);
-    };
-    *counterexample
-}
-
-fn replayed(world: &AuxWorld<'_>, payload: &TemporalCounterexample) -> RefinementTraceSettlement {
-    let systems = open_systems(
-        world.refinement(),
-        &world.concrete_request(AUX_UNLIMITED),
-        world.package(),
-        world.abstract_initials(),
-    )
-    .expect("the subjects open");
-    replay_refinement_trace(world.refinement(), &systems, payload).expect("the trace replays")
-}
-
-fn assert_reproduced(world: &AuxWorld<'_>, payload: &TemporalCounterexample) {
-    match replayed(world, payload) {
-        RefinementTraceSettlement::Reproduced { failure, .. } => {
-            assert_eq!(Some(failure), payload.refinement);
-        }
-        other => panic!("the failure reproduces: {other:?}"),
-    }
-}
-
+/// The operation identities of `payload`'s stem and of its loop.
 fn stem_and_loop(payload: &TemporalCounterexample) -> (Vec<String>, Vec<String>) {
     let entry = payload.lasso.as_ref().expect("a lasso").entry;
     let identity = |step: &fsl_replay::ModelStep| step.transition.operation().to_owned();

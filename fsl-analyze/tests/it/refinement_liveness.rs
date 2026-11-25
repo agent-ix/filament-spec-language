@@ -9,17 +9,13 @@ use filament_exact::{Cancel, CancelCause};
 use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::model_check::{check_refinement, RefinementCheckRequest};
 use fsl_eval::model_subject::ModelSubject;
-use fsl_eval::simulation::model::{operation_identity_text, ModelSimulationRequest};
+use fsl_eval::simulation::model::operation_identity_text;
 use fsl_eval::simulation::Limits;
-use fsl_package::CheckedPackage;
 use fsl_replay::{
-    open_systems, replay_refinement_trace, CounterexampleKind, IncompleteCause, LivenessHalf,
-    ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ReachedLimit, RefinementFailure,
-    RefinementOutcome, RefinementTraceSettlement, SafetyOutcome, Taken, TemporalCounterexample,
-    UndecidedCause,
+    CounterexampleKind, IncompleteCause, LivenessHalf, ModelCheckLimit, ModelCheckLimits,
+    ModelCheckOutcome, ReachedLimit, RefinementFailure, RefinementOutcome,
+    RefinementTraceSettlement, SafetyOutcome, Taken, TemporalCounterexample, UndecidedCause,
 };
-use fsl_semantics::check::CheckedRefinement;
-use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
 use crate::refinement_aux::{
@@ -29,6 +25,9 @@ use crate::refinement_aux::{
 };
 use crate::refinement_fixture::{
     cas_refines_counter, divergence_refinement, key, mutated, World, CAS, UNLIMITED,
+};
+use crate::refinement_liveness_support::{
+    assert_reproduced, check_aux, hidden_tick_refinement, holds, lasso, replayed, run,
 };
 
 fn check(world: &World) -> RefinementOutcome {
@@ -40,72 +39,8 @@ fn check(world: &World) -> RefinementOutcome {
     )
 }
 
-fn check_aux(world: &AuxWorld<'_>) -> RefinementOutcome {
-    run(
-        world.refinement(),
-        world.concrete_request(AUX_UNLIMITED),
-        world.package(),
-        world.abstract_initials(),
-    )
-}
-
-fn hidden_tick_refinement(rows: &str) -> String {
-    format!(
-        "refinement HiddenTick using inf abstract Spec concrete Impl {{\n\
-         population Spec::ms from Impl::ms;\n\
-         object Spec::M from Impl::M {{ v = self.v; }}\n\
-         step Impl::M::tick -> any;\n\
-         {rows}}}"
-    )
-}
-
-fn run(
-    refinement: &CheckedRefinement,
-    concrete: ModelSimulationRequest<'_>,
-    package: &CheckedPackage,
-    abstract_initials: Vec<DocumentRef>,
-) -> RefinementOutcome {
-    check_refinement(
-        RefinementCheckRequest {
-            refinement,
-            concrete: ModelSubject {
-                simulation: concrete,
-                proof_bounds: Vec::new(),
-            },
-            abstract_package: package,
-            abstract_initial: abstract_initials.into(),
-            abstract_protocol_binding: None,
-            max_depth: None,
-            limits: ModelCheckLimits::default(),
-        },
-        &Cancel::new(),
-    )
-    .expect("the refinement is checked")
-}
-
 fn without_ensure(refinement: &str) -> String {
     mutated(refinement, "ensure fair weak each Spec::Counter::inc;", "")
-}
-
-fn holds(outcome: &RefinementOutcome) {
-    assert!(matches!(outcome.safety, SafetyOutcome::Holds { .. }));
-    let Some(LivenessHalf::Checked(ModelCheckOutcome::HoldsReduced { reductions, .. })) =
-        &outcome.liveness
-    else {
-        panic!("the liveness half holds: {:?}", outcome.liveness);
-    };
-    assert!(reductions.is_empty());
-}
-
-/// The lasso `outcome`'s liveness half refutes with.
-fn lasso(outcome: RefinementOutcome) -> TemporalCounterexample {
-    assert!(matches!(outcome.safety, SafetyOutcome::Holds { .. }));
-    let Some(LivenessHalf::Checked(ModelCheckOutcome::Violated { counterexample, .. })) =
-        outcome.liveness
-    else {
-        panic!("the liveness half is violated: {:?}", outcome.liveness);
-    };
-    *counterexample
 }
 
 /// The operations of `counterexample`'s prefix, by name.
@@ -340,28 +275,6 @@ fn the_non_taking_candidate_is_hidden_and_a_fair_write_candidate_holds() {
         }),
         "the candidate set includes a run taking the abstract write"
     );
-}
-
-/// The settlement FR-145 replay gives `payload` over `world`.
-fn replayed(world: &AuxWorld<'_>, payload: &TemporalCounterexample) -> RefinementTraceSettlement {
-    let systems = open_systems(
-        world.refinement(),
-        &world.concrete_request(AUX_UNLIMITED),
-        world.package(),
-        world.abstract_initials(),
-    )
-    .expect("the subjects open");
-    replay_refinement_trace(world.refinement(), &systems, payload).expect("the trace replays")
-}
-
-/// Replay reproduces exactly the failure `payload` records.
-fn assert_reproduced(world: &AuxWorld<'_>, payload: &TemporalCounterexample) {
-    match replayed(world, payload) {
-        RefinementTraceSettlement::Reproduced { failure, .. } => {
-            assert_eq!(Some(failure), payload.refinement);
-        }
-        other => panic!("the failure reproduces: {other:?}"),
-    }
 }
 
 /// FR-899-AC-7 / TC-2536 CX-2: each constraint has a fair candidate alone,

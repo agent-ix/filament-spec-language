@@ -42,6 +42,7 @@ mod refinement_certificate;
 #[path = "../../../tests/support/refinement_cas.rs"]
 mod refinement_fixture;
 mod refinement_liveness;
+mod refinement_liveness_support;
 mod refinement_protocol;
 mod refinement_reads;
 mod refinement_replay;
