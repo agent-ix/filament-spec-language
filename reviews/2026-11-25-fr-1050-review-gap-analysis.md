@@ -23,6 +23,6 @@ Plan completion: not assessed.
 | --- | --- | --- | --- |
 | FND-001 | low | No manual gap finding. Focused execution passed 4/4; engine-backed matrix output remains unavailable. | - |
 
-## Follow-up disposition
+## Follow-up
 
-No new manual trace-tag gap was found at source head 1f6cf27. Matrix coverage remains unverified and is not claimed.
+No manual trace-tag gap was found; focused execution passed 4/4, while matrix coverage remains unavailable.

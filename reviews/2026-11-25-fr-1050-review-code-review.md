@@ -25,6 +25,6 @@ The test uses checked conversion when reconstructing extracted bytes, keeps its 
 | --- | --- | --- | --- |
 | FND-001 | low | No code finding. Follow-up execution passed all four focused cases; independent re-review found no new code issue. | - |
 
-## Follow-up disposition
+## Follow-up
 
-FND-001 is closed at source head 1f6cf27. The focused suite passed 4/4, the target passed Quire validation, and independent review found no additional code issue.
+The focused suite passed 4/4 and target validation passed; no code finding was identified on follow-up.

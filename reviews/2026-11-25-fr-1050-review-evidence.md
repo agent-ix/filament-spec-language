@@ -21,6 +21,6 @@ All six criteria specify test verification and each is present in an integration
 | --- | --- | --- | --- |
 | FND-001 | low | No requirement defect found. The criterion-to-test mapping was checked manually and focused execution passed 4/4; matrix output remains unavailable. | - |
 
-## Follow-up disposition
+## Follow-up
 
-FND-001 is closed at source head 1f6cf27. Focused execution is complete and independently rechecked. The matrix timeout remains noted; no computed matrix result is claimed.
+Focused execution passed 4/4; matrix output remains unavailable and no computed coverage claim is made.

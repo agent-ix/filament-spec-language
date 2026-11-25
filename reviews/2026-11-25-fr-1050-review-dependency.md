@@ -27,4 +27,4 @@ Round 1 re-review was at source head 1f6cf27; the byte-identical content is on r
 
 | FND | outcome | after_excerpt |
 | --- | --- | --- |
-| FND-001 | fixed | `- target: ix://agent-ix/filament-spec-language/FR-267`<br>`type: depends_on`<br>`[FR-267](FR-267-write-run-results-as-native-run-result-2.md): the native-run-result/2 output contract.` |
+| FND-001 | fixed | ``- target: ix://agent-ix/filament-spec-language/FR-267``<br>``type: depends_on``<br>``[FR-267](FR-267-write-run-results-as-native-run-result-2.md): the `native-run-result/2` output contract.`` |
