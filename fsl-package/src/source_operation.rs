@@ -15,6 +15,7 @@ use fsl_semantics::check::{
     CheckedGraph, FunctionState, NodeTag, Owner, SemanticNode, SourceOwner,
 };
 use fsl_semantics::model::domain_package::DomainPackageRecord;
+use ix_trace_rs::implements;
 
 /// An authored source operation contract clause selected by its checked
 /// operation anchor, never by a synthesized function name.
@@ -50,6 +51,7 @@ impl SourceOperationClause {
     /// `[<type>, <operation>, <kind>, <label>]`, declares this clause of the
     /// operation `operation_name` of the source type `type_name`.
     #[ix_trace_rs::string_edge]
+    #[implements("FR-531-AC-40")]
     pub(crate) fn is_declared_by<'a>(
         &self,
         type_name: &str,
@@ -92,6 +94,7 @@ impl<'g> DeclaredSourceOperation<'g> {
 /// Every [`DeclaredSourceOperation`] of `graph`, in source package record
 /// order.
 #[ix_trace_rs::string_edge]
+#[implements("FR-390-AC-70")]
 pub(crate) fn declared_source_operations(
     graph: &CheckedGraph,
 ) -> impl Iterator<Item = DeclaredSourceOperation<'_>> {
@@ -156,6 +159,7 @@ impl CheckedPackage {
     /// source-declared operation of this package or more than one function
     /// declares the clause, [`SlotSelectionFailure::MissingNode`] of `anchor`
     /// when none does.
+    #[implements("FR-531-AC-40")]
     pub fn select_source_operation_clause(
         &self,
         anchor: &NodeKey,

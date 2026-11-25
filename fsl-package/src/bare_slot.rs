@@ -20,6 +20,7 @@ use filament_exact::{NodeKey, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use fsl_semantics::check::{protocol_site, ProtocolSite, RelatedSide};
+use ix_trace_rs::implements;
 
 use crate::bare::{BarePackage, IdentityWitnessRefusal};
 use crate::checked_v2::wire_graph;
@@ -498,6 +499,7 @@ impl<'p> BarePackage<'p> {
     /// Returns a typed selection failure when the identity witness is absent,
     /// the anchor is not an admitted source operation, or its clause function
     /// cannot be selected and projected.
+    #[implements("FR-531-AC-40")]
     pub fn project_source_operation_clause(
         &self,
         anchor: &CheckedNodeId,

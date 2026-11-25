@@ -66,6 +66,7 @@ use filament_semantic_value::supplied_stop::{
 use fsl_semantics::check::StepRead;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::SelfKind;
+use ix_trace_rs::implements;
 use s6a::{ReferenceEvaluation, S6aFamilyKind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -2368,6 +2369,7 @@ fn evaluate_expression(
 ///
 /// The selection, argument admission or evaluator failure, as the bytes-only
 /// entry reports it.
+#[implements("FR-531-AC-40")]
 pub fn evaluate_source_operation_clause(
     package: &CheckedPackage,
     anchor: &NodeKey,

@@ -58,7 +58,7 @@ use fsl_semantics::value::{
     native_diagnostics_catalog, DefinitionReference, DefinitionRole, HeaderLayer, Member,
     ModelRole, NodeOwner, TemporalRole,
 };
-use ix_trace_rs::string_edge;
+use ix_trace_rs::{implements, string_edge};
 
 use super::{CheckedPackage, EmittedPackage};
 use crate::checked::EmitLimits;
@@ -9143,6 +9143,7 @@ fn source_object_rows(
 
 /// FR-390 source-operation identity rows, for checked anchors whose declared
 /// operation belongs to a source object type.
+#[implements("FR-390-AC-70")]
 fn source_operation_rows(
     graph: &CheckedGraph,
     emitted: &HashMap<NodeKey, CheckedNodeId>,
