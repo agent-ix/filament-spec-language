@@ -13,7 +13,8 @@ relationships:
 ## Statement
 
 When the FSL benchmark gate evaluates a change for QSL-1919, QSL-1921,
-QSL-1922, QSL-1923, QSL-1924, QSL-1925, QSL-1926, QSL-1927, or QSL-1930,
+QSL-1922, QSL-1923, QSL-1924, QSL-1925, QSL-1926, QSL-1927, QSL-1930, or
+the region-mapping cost group in QSL-2854,
 the FSL benchmark gate SHALL run the applicable named axis, check its
 acceptance criterion below, and compare candidate B with current
 `origin/main` A using live measurements from the same session as specified in
@@ -22,7 +23,8 @@ acceptance criterion below, and compare candidate B with current
 ## Scope
 
 This requirement defines the benchmark inputs and acceptance criteria for the
-nine named QSL performance-program tickets. A baseline-relative comparison is
+the named QSL performance-program tickets and the region-mapping cost group
+in QSL-2854. A baseline-relative comparison is
 used where a ticket gives no fixed numeric target; no historical measurement
 is a threshold.
 
@@ -70,6 +72,7 @@ estimates, both medians, the computed noise, and the pass/fail comparison.
 | NFR-141-AC-16, assembly/normalization | Before/after exponent or the full linear-growth table | Identical outputs if fixed; follow the ticket's super-linear/linear branch | Live A/B scaling and output comparison |
 | NFR-141-AC-17, workspace structure | One `it` binary each and duplicate major versions removed | Exactly one each; zero duplicate `syn`/`jsonschema` majors | Build graph and binary inventory |
 | NFR-141-AC-18, build time | Cold/incremental build and test no-run wall time | Each B median <= A median × (1 + noise), and one < A median × (1 − noise) | Five-round live A/B build measurements |
+| NFR-141-AC-19, region lookup work | Source-map segment-group index build visits and lookup probes for nested prefix spans at 5,000, 10,000 and 20,000 segments | At most N index visits and N × (2 × ceil(log2 N) + 4) query probes at each size; exact mapped-region results equal the existing multi-region mapping filtered to exactly one region | Deterministic operation-count test and exact output comparison |
 
 ## Acceptance Criteria
 
@@ -93,6 +96,7 @@ estimates, both medians, the computed noise, and the pass/fail comparison.
 | NFR-141-AC-16 | For QSL-1927, `bench-model` includes widening redefinitions and package-typed fields at 1,000, 4,000 and 16,000 types, reports the before exponent, and either (a) for super-linear growth fixes the cause, preserves outputs and reports the after exponent, or (b) for linear growth closes with the complete three-size table. The intake alias-chain and map-key scans in the ticket remain context only, not benchmark axes. | Live A/B scaling benchmark and output comparison |
 | NFR-141-AC-17 | For QSL-1930, qsl-replay and qsl-package each build exactly one `it` test binary; duplicate `syn` and `jsonschema` major versions are removed from the resolved workspace dependency graph. | Cargo build graph and test-binary inventory |
 | NFR-141-AC-18 | For QSL-1930, cold and incremental `cargo build --timings` and `cargo test --no-run` wall time are measured before and after; each candidate median is no greater than its baseline median plus session noise, and at least one is lower by more than session noise. | Live five-round A/B build measurements |
+| NFR-141-AC-19 | For the region-mapping cost group in QSL-2854, construct a `SourceMap` with N = 5,000, 10,000 and 20,000 ordered one-line body segments separated by an allowed two-byte indentation deletion in the original source, then query each of the N nonempty body prefixes `[0, 2k)` for `1 <= k <= N`. Building the contiguous original-region group index visits at most N input segments. Across the N queries at each size, binary-search and examined-group probes total at most `N × (2 × ceil(log2 N) + 4)`. For every query, the specialized single-region result is exactly the result of `map_regions` when that method returns one region, and is `None` when it returns zero or multiple regions. The old scan-per-query implementation fails this bound: at N = 5,000, the deterministic probe recorded 12,577,499 segment steps against a bound of 150,000. | Focused deterministic operation-count unit test at all three sizes, with exact comparison against `map_regions` results |
 
 ## Verification
 
