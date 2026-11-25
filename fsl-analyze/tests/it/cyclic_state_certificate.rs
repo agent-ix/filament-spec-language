@@ -6,7 +6,9 @@ use crate::prob_world::{Model, Operation, World};
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+use fsl_analyze::exact_probabilistic::build_product;
 use fsl_eval::simulation::model::ModelSystem;
+use fsl_foundation::RequestIndex;
 use fsl_replay::{
     check_cyclic_mdp_probability_certificate_observing, check_probability_certificate_document,
     probabilistic_claim_identity, read_probability_proof_document,
@@ -14,10 +16,12 @@ use fsl_replay::{
     ExactProbabilityCertificateCheck as Check, IncompleteCause, ModelCheckLimit, ModelCheckLimits,
     ProbabilityBoundSide, ProbabilityCertificateLocus as Locus, ProbabilityCertificateRule as Rule,
     ProbabilityDocumentError, ProbabilityDocumentLimit, ProbabilityObjective,
-    ProbabilityStateEvent, TerminalValue,
+    ProbabilityStateEvent, ProofBasis, TerminalValue,
 };
 use ix_trace_rs::trace;
 use serde_json::Value;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
 
 const DTMC: &str = "filament.probability-objective/cyclic-dtmc-state-predicate/v1";
 const MDP: &str = "filament.probability-objective/cyclic-mdp-state-predicate/v1";
@@ -74,10 +78,7 @@ fn settle(
     adjust(&mut request);
     analyze_items(
         &Engines::fsl().unwrap(),
-        vec![exact_probabilistic_item(
-            fsl_foundation::RequestIndex::new(0),
-            request,
-        )],
+        vec![exact_probabilistic_item(RequestIndex::new(0), request)],
         &Cancel::new(),
     )
     .remove(0)
@@ -235,7 +236,7 @@ fn cyclic_until_and_always_claims_prove_with_their_closed_profile_at_equality() 
         let record = settle(&world, "Likely", ModelCheckLimits::default(), |_| {});
         let terminal = record.terminal().unwrap();
         let TerminalValue::Proved {
-            basis: fsl_replay::ProofBasis::ExactValue { value, entries, .. },
+            basis: ProofBasis::ExactValue { value, entries, .. },
             ..
         } = terminal.value()
         else {
@@ -490,6 +491,105 @@ fn a_violated_quantity_past_the_rational_budget_settles_incomplete() {
         record.terminal().unwrap().value(),
         TerminalValue::Proved { .. }
     ));
+}
+
+#[trace("TC-3187", "FR-201-AC-65", "FR-203")]
+#[test]
+fn a_storage_stop_while_reading_the_cyclic_subject_names_the_storage_budget() {
+    let world = World::new(&model(false, &claim("Likely", ">= rational(3,5)", UNTIL)));
+    let record = settle(&world, "Likely", ModelCheckLimits::default(), |request| {
+        request.limits.max_rational_bits = 1;
+        request.limits.document.storage_bytes = 0;
+    });
+    assert_eq!(
+        record.terminal().unwrap().value(),
+        &TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::CertificateMaxWorkingBytes,
+            value: 0,
+            required: None,
+        }),
+        "{record:#?}"
+    );
+    assert!(record.exact_probabilistic.is_none());
+}
+
+/// Past the rational budget the run's last readings admit the subject again
+/// and walk its graph; a cancellation at any of them keeps its cause rather
+/// than reporting the budget.
+#[trace("TC-3185", "FR-201-AC-63", "FR-201-AC-65")]
+#[test]
+fn cancelling_the_cyclic_subject_check_past_the_rational_budget_keeps_its_cause() {
+    let world = World::new(&model(false, &claim("Likely", ">= rational(3,5)", UNTIL)));
+    let engines = Engines::fsl().unwrap();
+    let request = || {
+        let mut request = world.request("Likely", ModelCheckLimits::default());
+        request.limits.max_rational_bits = 1;
+        request
+    };
+    let run = |cancel: &Cancel| {
+        let item = exact_probabilistic_item(RequestIndex::new(0), request());
+        analyze_items(&engines, vec![item], cancel).remove(0)
+    };
+    let live = Cancel::new();
+    let _counting = live.count_charges();
+    run(&live);
+    let last = live.charges();
+    let building = Cancel::new();
+    let _building = building.count_charges();
+    build_product(request(), &building).unwrap();
+    // The check is one admission and one walk of the same graph the product
+    // build admits and walks, so twice the build's readings cover it.
+    let first = last.saturating_sub(building.charges().saturating_mul(2));
+    assert!(first > 0 && first < last);
+    for at in first..=last {
+        let cause = if at % 2 == 0 {
+            CancelCause::Requested
+        } else {
+            CancelCause::Deadline
+        };
+        let slot = Arc::new(OnceLock::<Cancel>::new());
+        let weak = Arc::downgrade(&slot);
+        let polls = AtomicU32::new(0);
+        let cancel = Cancel::observing(move || {
+            if polls.fetch_add(1, Ordering::Relaxed) + 1 == at {
+                weak.upgrade().unwrap().get().unwrap().cancel(cause);
+            }
+        });
+        slot.set(cancel.clone()).unwrap();
+        let record = run(&cancel);
+        assert_eq!(
+            record.terminal().expect("a terminal record").value(),
+            &TerminalValue::Incomplete(IncompleteCause::Cancelled { source: cause }),
+            "reading {at} of {last}"
+        );
+        assert!(record.exact_probabilistic.is_none());
+    }
+}
+
+/// `Link` is acyclic, so the cyclic-subject check does not stop it. Its least
+/// value 24/25 is wider than 8 bits as one scalar, which stops the first
+/// solve, while each part fits; the threshold solve then runs, its 4-bit
+/// interval cannot decide, and its exact answer settles the claim.
+#[trace("TC-3187", "FR-201")]
+#[test]
+fn an_acyclic_subject_past_the_rational_budget_goes_on_to_the_threshold_solve() {
+    let world = World::new(&crate::prob_world::link(
+        "probabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin \
+         { probability >= 0.95 [ holds(m.attempts <= 2) until holds(m.delivered) ] }\n",
+    ));
+    let record = settle(&world, "Likely", ModelCheckLimits::default(), |request| {
+        request.limits.max_rational_bits = 8;
+        request.limits.precision_bits = 4;
+        request.limits.max_precision_bits = 4;
+    });
+    let TerminalValue::Proved {
+        basis: ProofBasis::ExactValue { value, .. },
+        ..
+    } = record.terminal().unwrap().value()
+    else {
+        panic!("{record:#?}");
+    };
+    assert_eq!(value.value(), &ratio(24, 25));
 }
 
 #[trace("TC-3185", "FR-201-AC-63")]

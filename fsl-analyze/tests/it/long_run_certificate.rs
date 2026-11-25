@@ -637,7 +637,7 @@ fn reachable_undefined_predicate_retains_its_family_cause() {
 #[trace("TC-1401", "FR-201-AC-30")]
 #[trace("TC-3190", "FR-201-AC-74")]
 #[test]
-fn finite_profile_claims_issue_no_long_run_document() {
+fn an_event_position_workload_claim_settles_as_its_infinite_trace_twin_does() {
     for profile in ["ev", "inf"] {
         let source = format!("probabilistic Below using {profile} on M over (s: M::Server) under Steady on origin {{ long_run_fraction holds(s.phase = 0) >= rational(1,2) }}");
         let world = World::new(&prob_world::service(&source));

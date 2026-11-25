@@ -1582,7 +1582,7 @@ fn failing_witness(world: &World, name: &str) -> ProbabilisticCounterexample {
     }
 }
 
-#[trace("FSpec-TC-362", "FSpec-FR-412-AC-27", "FSpec-FR-411-AC-18")]
+#[trace("FSpec-TC-362", "FSpec-FR-412-AC-27", "FSpec-FR-411-AC-18", "FR-200")]
 #[test]
 fn a_fairness_set_accepts_a_deterministic_witness_only_when_every_bottom_component_is_fair() {
     let world = World::new(&toggling(&format!(
@@ -1662,7 +1662,7 @@ fn mixed(optimum: ProductAction, omitted: ProductAction) -> ProbabilisticSchedul
     ProbabilisticSchedulerChoice::Randomized(vec![(optimum, quarters(3)), (omitted, quarters(1))])
 }
 
-#[trace("FSpec-TC-362", "FSpec-FR-412-AC-27", "FSpec-FR-411-AC-18")]
+#[trace("FSpec-TC-362", "FSpec-FR-412-AC-27", "FSpec-FR-411-AC-18", "FR-200")]
 #[test]
 fn an_every_scheduler_long_run_claim_settles_refuted_with_its_scheduler_witness() {
     let world = World::new(&architecture(
