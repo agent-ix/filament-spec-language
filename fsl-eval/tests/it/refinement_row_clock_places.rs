@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! RAW Clock DATA and unseeded refinement receivers retain explicit
-//! unsupported boundaries; declaration and codec controls remain independent.
+//! RAW Clock DATA admission and unseeded refinement-row clock reads retain
+//! their distinct typed outcomes; declaration and codec controls remain independent.
 
 use std::collections::BTreeMap;
 
@@ -319,28 +319,37 @@ fn declared_place_text(owner: &str, field: &str) -> String {
     )
 }
 
-/// A reference-dependent refinement cannot be initialized from RAW Clock
-/// DATA while the route-neutral admission boundary remains unsupported.
-#[trace("FR-106-AC-83", "FR-106", "TC-464", "TC-3084")]
+/// Exercise raw Clock DATA through initial admission and the real checked-row
+/// evaluator, preserving both the declared and removed place outcomes.
+#[trace("FR-106-AC-72", "FR-106-AC-73", "TC-464")]
 #[test]
-fn raw_clock_data_refuses_before_refinement_evaluation() {
+fn raw_clock_data_outcomes_on_the_refinement_route() {
     use fsl_semantics::model::observation::{AdmissionFailure, ObservationLimits};
     use serde_json::json;
+
     let checked = clock_reference_fixture(true);
+    let package = CheckedPackage::link(checked.graph);
+    let graph = package.graph();
     let model = StateModel::new(
-        checked.graph.model_inputs(),
-        checked.graph.scope().types(),
+        graph.model_inputs(),
+        graph.scope().types(),
         &checked.packages,
         ModelNormalizationLimits::default(),
     )
     .expect("actual model");
     let identity = DocumentRef {
         authority: "test".to_owned(),
-        identity: "clock-snapshot".to_owned(),
+        identity: "clock-route-snapshot".to_owned(),
     };
-    for target in [
-        declared_place_text("c1", "x"),
-        declared_place_text("c1", "removed"),
+    let [refinement] = graph.refinements() else {
+        panic!("one refinement");
+    };
+    let [queue, _cell] = refinement.objects() else {
+        panic!("the queue and cell rows");
+    };
+    for (target, declared) in [
+        (declared_place_text("c1", "x"), true),
+        (declared_place_text("c1", "removed"), false),
     ] {
         let reference = json!({"reference":{"population":crate::ring_queue::node(CLOCKS,"calls"),"key":target}});
         let document = json!({
@@ -357,34 +366,63 @@ fn raw_clock_data_refuses_before_refinement_evaluation() {
             identity.clone(),
             serde_json::to_vec(&document).expect("snapshot"),
         )]);
-        let Err(AdmissionFailure::Refused(record)) =
-            model.admit_initial(&snapshots, &identity, ObservationLimits::default())
-        else {
-            panic!("RAW Clock DATA cannot initialize a refinement")
-        };
-        assert_eq!(record.catalog.code(), "unknown_required_feature");
-        assert_eq!(record.catalog.cause(), "unsupported-feature");
-        assert_eq!(
-            record.fields.get("reason").map(String::as_str),
-            Some("missing-route-neutral-place-identity")
-        );
-        assert_eq!(record.fields.get("target"), Some(&target));
-        assert_eq!(record.fields.get("document"), Some(&identity.identity));
-        assert_eq!(
-            record.fields.get("path").map(String::as_str),
-            Some("/populations/0/objects/0/fields/r")
-        );
-        assert_eq!(
-            record.path,
-            vec![
-                filament_semantic_value::admission::PathStep::Field("populations".to_owned()),
-                filament_semantic_value::admission::PathStep::Index(0),
-                filament_semantic_value::admission::PathStep::Field("objects".to_owned()),
-                filament_semantic_value::admission::PathStep::Index(0),
-                filament_semantic_value::admission::PathStep::Field("fields".to_owned()),
-                filament_semantic_value::admission::PathStep::Field("r".to_owned()),
-            ]
-        );
+        match model.admit_initial(&snapshots, &identity, ObservationLimits::default()) {
+            Ok((state, _)) => {
+                let environment = model
+                    .observation(&state, identity.clone())
+                    .expect("admitted state observes")
+                    .environment;
+                let owner = environment
+                    .population_members(&crate::ring_queue::node(CLOCKS, "calls"))
+                    .expect("calls population")
+                    .into_iter()
+                    .find(|owner| owner.object().as_str() == "c1")
+                    .expect("c1 owner");
+                let mut meter = Meter::new(UNLIMITED);
+                assert!(declared, "only a declared place should admit");
+                let evaluation = evaluate_refinement_row(
+                    &package,
+                    &queue.fields[0].expression,
+                    &environment,
+                    vec![Value::Reference(owner.clone())],
+                    &mut meter,
+                )
+                .expect("row returns a typed outcome");
+                let FamilyOutcome::FamilyEvaluated(FamilyResult::Refused(cause)) =
+                    evaluation.outcome
+                else {
+                    panic!("the unseeded row has a typed clock-origin refusal")
+                };
+                assert_eq!(
+                    cause.catalog_code(),
+                    filament_semantic_value::catalog::CatalogCode::new(
+                        "unknown_required_feature",
+                        "unsupported-feature"
+                    )
+                );
+                assert_eq!(
+                    cause.catalog_fields(),
+                    Some(BTreeMap::from([(
+                        "reason",
+                        "clock-owner-population-authority".to_owned()
+                    )]))
+                );
+            }
+            Err(AdmissionFailure::Refused(record)) => {
+                assert!(!declared, "the declared place should be admitted");
+                assert_eq!(record.catalog.code(), "dangling_reference");
+                assert_eq!(
+                    record.catalog.cause(),
+                    "absent-target-in-complete-population"
+                );
+                assert_eq!(record.fields.get("target"), Some(&target));
+                assert_eq!(
+                    record.fields.get("path").map(String::as_str),
+                    Some("/populations/0/objects/0/fields/r")
+                );
+            }
+            Err(other) => panic!("initial admission failed unexpectedly: {other:?}"),
+        }
     }
 }
 
