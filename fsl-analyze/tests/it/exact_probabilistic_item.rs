@@ -614,7 +614,10 @@ fn the_bound_reference_is_part_of_the_product_key() {
         .expect("one instance")
         .expect("the claim has an over");
     let model = system
-        .state_key(&system.initial()[0], fsl_foundation::IdentityLimits::default())
+        .state_key(
+            &system.initial()[0],
+            fsl_foundation::IdentityLimits::default(),
+        )
         .expect("the owner encodes its initial state")
         .0;
     let bound =
@@ -1207,7 +1210,10 @@ fn rekey_undefined(
             None => monitor.unread_key(),
         }
         .unwrap();
-        let raw = system.state_key(state, fsl_foundation::IdentityLimits::default()).unwrap().0;
+        let raw = system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .unwrap()
+            .0;
         let key = ProbabilityProductKey::for_formula_state(
             reference,
             &raw,
@@ -1347,8 +1353,15 @@ fn assert_same_horizon_zero_witness(
     assert_eq!(reproduced.item, expected.item);
     assert_eq!(reproduced.binding, expected.binding);
     assert_eq!(
-        system.state_key(&reproduced.initial, fsl_foundation::IdentityLimits::default()).unwrap(),
-        system.state_key(&expected.initial, fsl_foundation::IdentityLimits::default()).unwrap()
+        system
+            .state_key(
+                &reproduced.initial,
+                fsl_foundation::IdentityLimits::default()
+            )
+            .unwrap(),
+        system
+            .state_key(&expected.initial, fsl_foundation::IdentityLimits::default())
+            .unwrap()
     );
     assert_eq!(reproduced.initial_key, expected.initial_key);
     assert_eq!(reproduced.scheduler, expected.scheduler);
@@ -1386,7 +1399,13 @@ fn external_always_initial_key(world: &World, system: &ModelSystem<'_>) -> Proba
         QualifiedBoundedMonitor::for_observations(formula.formula(), &context, 100).unwrap();
     let control = monitor.start(true).unwrap();
     let monitor_key = monitor.key(control).unwrap();
-    let raw = system.state_key(&system.initial()[0], fsl_foundation::IdentityLimits::default()).unwrap().0;
+    let raw = system
+        .state_key(
+            &system.initial()[0],
+            fsl_foundation::IdentityLimits::default(),
+        )
+        .unwrap()
+        .0;
     ProbabilityProductKey::for_formula_state(
         reference,
         &raw,

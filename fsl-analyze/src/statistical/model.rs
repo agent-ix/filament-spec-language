@@ -1269,7 +1269,10 @@ impl<'c> Shared<'_, '_, 'c> {
                                     position: u64::try_from(position).unwrap_or(u64::MAX),
                                     state_key: self
                                         .system
-                                        .state_key(state.discrete(), fsl_foundation::IdentityLimits::default())
+                                        .state_key(
+                                            state.discrete(),
+                                            fsl_foundation::IdentityLimits::default(),
+                                        )
                                         .map_err(|_| broken())?
                                         .1,
                                     locus: UndefinedLocus::ClaimPredicate(if index == 0 {
@@ -1667,7 +1670,10 @@ impl ModelWalk<'_, '_, '_> {
             }
         };
         let discrete = system
-            .state_key(walk.state.discrete(), fsl_foundation::IdentityLimits::default())
+            .state_key(
+                walk.state.discrete(),
+                fsl_foundation::IdentityLimits::default(),
+            )
             .map_err(|_| broken())?;
         let key = (walk.binding, discrete.0.to_vec());
         let readings = match truths.get(&key) {

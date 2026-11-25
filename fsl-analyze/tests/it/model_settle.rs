@@ -130,7 +130,10 @@ fn a_counterexample_the_model_does_not_take_refuses_with_no_result() {
     let system = fsl_eval::simulation::model::ModelSystem::new(request.subject.simulation)
         .expect("the model admits");
     let (bytes, _) = system
-        .state_key(&system.initial_states()[0], fsl_foundation::IdentityLimits::default())
+        .state_key(
+            &system.initial_states()[0],
+            fsl_foundation::IdentityLimits::default(),
+        )
         .expect("encodes");
     let recorded = fsl_eval::simulation::StateKey::from_canonical_bytes(bytes);
     altered.prefix[1].post_state = recorded.clone();
@@ -639,7 +642,10 @@ fn a_disagreeing_or_refused_replay_never_settles_refuted() {
     let system = fsl_eval::simulation::model::ModelSystem::new(request.subject.simulation)
         .expect("the model admits");
     let (bytes, _) = system
-        .state_key(&system.initial_states()[0], fsl_foundation::IdentityLimits::default())
+        .state_key(
+            &system.initial_states()[0],
+            fsl_foundation::IdentityLimits::default(),
+        )
         .expect("encodes");
     altered.prefix[0].post_state = fsl_eval::simulation::StateKey::from_canonical_bytes(bytes);
     let refused = settle_model_check(

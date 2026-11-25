@@ -110,7 +110,9 @@ fn visit(
     pending: &mut VecDeque<ModelSimState>,
     counters: &mut Counters,
 ) -> Result<(), AxisError> {
-    let (bytes, _) = system.state_key(&state, fsl_foundation::IdentityLimits::default()).map_err(fail)?;
+    let (bytes, _) = system
+        .state_key(&state, fsl_foundation::IdentityLimits::default())
+        .map_err(fail)?;
     counters.canonical_encodes += 1;
     if seen.insert(bytes) {
         counters.states += 1;

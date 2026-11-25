@@ -340,7 +340,9 @@ impl Exploration<'_, '_, '_> {
                 Ok(canonical) => canonical,
                 Err(stop) => return expansion_stop(&stop, self.budgets).map(Err),
             };
-            let (key, _) = self.system.state_key(&state, fsl_foundation::IdentityLimits::default())?;
+            let (key, _) = self
+                .system
+                .state_key(&state, fsl_foundation::IdentityLimits::default())?;
             successors.push((order, key, transition, state, permutation));
         }
         successors.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));

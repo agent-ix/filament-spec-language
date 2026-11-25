@@ -185,7 +185,10 @@ fn canonicalise_is_permutation_invariant_on_each_fairness_quotient() {
             .canonicalise(&state, &group)
             .expect("state canonicalises")
             .0;
-        let canonical_key = system.state_key(&canonical, fsl_foundation::IdentityLimits::default()).expect("canonical key").0;
+        let canonical_key = system
+            .state_key(&canonical, fsl_foundation::IdentityLimits::default())
+            .expect("canonical key")
+            .0;
         for shuffle in shuffles {
             let permuted = system
                 .permute(
@@ -204,7 +207,10 @@ fn canonicalise_is_permutation_invariant_on_each_fairness_quotient() {
                 .0;
             assert_eq!(
                 system
-                    .state_key(&canonical_permuted, fsl_foundation::IdentityLimits::default())
+                    .state_key(
+                        &canonical_permuted,
+                        fsl_foundation::IdentityLimits::default()
+                    )
                     .expect("permuted canonical key")
                     .0,
                 canonical_key,
@@ -245,8 +251,14 @@ fn canonicalise_is_idempotent_on_each_fairness_quotient() {
             .expect("canonicalises twice")
             .0;
         assert_eq!(
-            system.state_key(&once, fsl_foundation::IdentityLimits::default()).expect("canonical key").0,
-            system.state_key(&twice, fsl_foundation::IdentityLimits::default()).expect("twice canonical key").0,
+            system
+                .state_key(&once, fsl_foundation::IdentityLimits::default())
+                .expect("canonical key")
+                .0,
+            system
+                .state_key(&twice, fsl_foundation::IdentityLimits::default())
+                .expect("twice canonical key")
+                .0,
         );
     }
     let state = system.initial().into_iter().next().expect("initial state");

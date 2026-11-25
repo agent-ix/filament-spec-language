@@ -1203,7 +1203,10 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         let (discrete_key, _) = self
             .timed()
             .system()
-            .state_key(reached.discrete(), fsl_foundation::IdentityLimits::default())
+            .state_key(
+                reached.discrete(),
+                fsl_foundation::IdentityLimits::default(),
+            )
             .map_err(|_| DigitalRefusal::Fault("state-key"))?;
         let clocks: Vec<Rational> = self
             .timed()

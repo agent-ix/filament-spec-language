@@ -1696,7 +1696,9 @@ fn an_undecided_contract_is_an_undecided_successor() {
         let world = OrdersWorld::over(&format!("{undecided}{workload}"), wobble);
         let system = world.system();
         let state = system.initial().remove(0);
-        let (bytes, _) = system.state_key(&state, fsl_foundation::IdentityLimits::default()).expect("a key");
+        let (bytes, _) = system
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
+            .expect("a key");
         let expected = UndecidedSuccessor {
             state: fsl_eval::simulation::StateKey::from_canonical_bytes(bytes),
         };
@@ -2101,7 +2103,10 @@ pub(super) fn admitted_raw_key(
         .expect("admitted raw identity");
     assert_eq!(
         bytes,
-        system.state_key(state, fsl_foundation::IdentityLimits::default()).expect("legacy raw identity").0
+        system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .expect("legacy raw identity")
+            .0
     );
     bytes
 }
@@ -2153,7 +2158,9 @@ fn raw_model_key_preserves_legacy_reference_enum_and_extent_vectors() {
     );
     let enum_system = self::system(&enums, vec![first, second], &["c1", "c2"], UNLIMITED);
     let states = enum_system.initial();
-    let first = enum_system.state_key(&states[0], fsl_foundation::IdentityLimits::default()).expect("enum key");
+    let first = enum_system
+        .state_key(&states[0], fsl_foundation::IdentityLimits::default())
+        .expect("enum key");
     assert_eq!(bounded(&enum_system, &states[0]), first.0);
     use fsl_eval::simulation::model::ModelKeyError;
     let identity = fsl_foundation::IdentityLimits::default();
@@ -2236,7 +2243,10 @@ fn raw_model_key_preserves_legacy_reference_enum_and_extent_vectors() {
     );
     assert_eq!(bounded(&enum_system, &states[0]), first.0);
     assert_eq!(
-        enum_system.state_key(&states[0], fsl_foundation::IdentityLimits::default()).unwrap().0,
+        enum_system
+            .state_key(&states[0], fsl_foundation::IdentityLimits::default())
+            .unwrap()
+            .0,
         first.0,
         "caller denial/cancellation must not change the next legacy call"
     );
@@ -2290,8 +2300,12 @@ fn raw_model_key_preserves_legacy_reference_enum_and_extent_vectors() {
     );
     let extent_system = self::system(&extents, vec![linked, unlinked], &["c1", "c2"], UNLIMITED);
     let states = extent_system.initial();
-    let linked = extent_system.state_key(&states[0], fsl_foundation::IdentityLimits::default()).expect("extent key");
-    let unlinked = extent_system.state_key(&states[1], fsl_foundation::IdentityLimits::default()).expect("unlinked key");
+    let linked = extent_system
+        .state_key(&states[0], fsl_foundation::IdentityLimits::default())
+        .expect("extent key");
+    let unlinked = extent_system
+        .state_key(&states[1], fsl_foundation::IdentityLimits::default())
+        .expect("unlinked key");
     assert_eq!(bounded(&extent_system, &states[0]), linked.0);
     assert_eq!(bounded(&extent_system, &states[1]), unlinked.0);
     assert_ne!(
@@ -2349,7 +2363,13 @@ fn bounded_raw_model_key_refuses_large_initial_and_post_state_growth() {
         "the large source reaches actual before-growth admission"
     );
     assert!(denied.storage <= denied.storage_limit);
-    assert_eq!(system.state_key(&state, fsl_foundation::IdentityLimits::default()).unwrap().0, legacy);
+    assert_eq!(
+        system
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
+            .unwrap()
+            .0,
+        legacy
+    );
 
     let large = "y".repeat(256 * 1024);
     let spawn = operation("spawn", &[], None, frame(&[], true, false));
@@ -2477,8 +2497,12 @@ fn states_that_differ_only_in_extents_have_different_keys() {
         format!("{:?}", origin.state().extents),
         "different extents"
     );
-    let (_, origin_key) = system.state_key(origin, fsl_foundation::IdentityLimits::default()).expect("encodes");
-    let (_, recreated_key) = system.state_key(&recreated, fsl_foundation::IdentityLimits::default()).expect("encodes");
+    let (_, origin_key) = system
+        .state_key(origin, fsl_foundation::IdentityLimits::default())
+        .expect("encodes");
+    let (_, recreated_key) = system
+        .state_key(&recreated, fsl_foundation::IdentityLimits::default())
+        .expect("encodes");
     assert!(origin_key != recreated_key, "two states, two keys");
 }
 
@@ -2509,8 +2533,12 @@ fn a_repeated_extent_pair_is_a_different_state() {
     let system = self::system(&world, vec![once, twice], &["c1", "c2"], UNLIMITED);
     let initial = system.initial();
     assert_eq!(initial.len(), 2, "both snapshots are admitted");
-    let (_, first) = system.state_key(&initial[0], fsl_foundation::IdentityLimits::default()).expect("encodes");
-    let (_, second) = system.state_key(&initial[1], fsl_foundation::IdentityLimits::default()).expect("encodes");
+    let (_, first) = system
+        .state_key(&initial[0], fsl_foundation::IdentityLimits::default())
+        .expect("encodes");
+    let (_, second) = system
+        .state_key(&initial[1], fsl_foundation::IdentityLimits::default())
+        .expect("encodes");
     assert!(first != second, "one pair and a repeated pair are two keys");
     assert_eq!(stats(&explore(&system)).0, 2);
 }
@@ -2682,8 +2710,12 @@ fn float_model_state_keys_distinguish_signed_zero() {
         .iter()
         .find(|state| float_bits(state.state(), "c1") == 0x8000_0000_0000_0000)
         .expect("the -0 state is present");
-    let (_, plus_key) = system.state_key(plus, fsl_foundation::IdentityLimits::default()).expect("plus-zero key encodes");
-    let (_, minus_key) = system.state_key(minus, fsl_foundation::IdentityLimits::default()).expect("minus-zero key encodes");
+    let (_, plus_key) = system
+        .state_key(plus, fsl_foundation::IdentityLimits::default())
+        .expect("plus-zero key encodes");
+    let (_, minus_key) = system
+        .state_key(minus, fsl_foundation::IdentityLimits::default())
+        .expect("minus-zero key encodes");
     assert_ne!(
         plus_key, minus_key,
         "states differing only by signed zero have distinct keys"

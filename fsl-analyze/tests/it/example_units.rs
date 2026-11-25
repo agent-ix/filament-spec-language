@@ -166,7 +166,11 @@ fn positions(world: &World, counterexample: &TemporalCounterexample) -> Vec<Mode
             .into_iter()
             .find(|(transition, state)| {
                 *transition == step.transition
-                    && system.state_key(state, fsl_foundation::IdentityLimits::default()).expect("encodes").0.as_slice()
+                    && system
+                        .state_key(state, fsl_foundation::IdentityLimits::default())
+                        .expect("encodes")
+                        .0
+                        .as_slice()
                         == step.post_state.as_bytes()
             })
             .map(|(_, state)| state)

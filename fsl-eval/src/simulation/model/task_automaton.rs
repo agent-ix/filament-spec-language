@@ -899,7 +899,11 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
         let tasks = self.product.plan().tasks.len();
         let mut found = Vec::new();
         for state in self.product.source().initial() {
-            let (_, source_key) = self.product.source().system().state_key(state.discrete(), fsl_foundation::IdentityLimits::default())?;
+            let (_, source_key) = self
+                .product
+                .source()
+                .system()
+                .state_key(state.discrete(), fsl_foundation::IdentityLimits::default())?;
             let location = TaskLocation {
                 source: state.discrete().clone(),
                 source_key,
@@ -1107,11 +1111,10 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
         &self,
         state: &TaskProductState,
     ) -> Result<(TaskLocation, Vec<Rational>), TaskAutomatonRefusal> {
-        let (_, source_key) = self
-            .product
-            .source()
-            .system()
-            .state_key(state.source().discrete(), fsl_foundation::IdentityLimits::default())?;
+        let (_, source_key) = self.product.source().system().state_key(
+            state.source().discrete(),
+            fsl_foundation::IdentityLimits::default(),
+        )?;
         let mut order: Vec<usize> = (0..state.jobs().len()).collect();
         order.sort_by(|left, right| {
             let (left, right) = (&state.jobs()[*left], &state.jobs()[*right]);
@@ -1353,7 +1356,11 @@ impl<'t, 's, 'a> TaskAutomaton<'t, 's, 'a> {
             if control.mode == CriticalityMode::Lo && plan.switches_mode_on(step.operation()) {
                 control.mode = CriticalityMode::Hi;
             }
-            let (_, source_key) = self.product.source().system().state_key(step.post(), fsl_foundation::IdentityLimits::default())?;
+            let (_, source_key) = self
+                .product
+                .source()
+                .system()
+                .state_key(step.post(), fsl_foundation::IdentityLimits::default())?;
             let target = TaskLocation {
                 source: step.post().clone(),
                 source_key,

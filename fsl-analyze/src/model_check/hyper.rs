@@ -1974,7 +1974,10 @@ impl<'a> Run<'_, 'a> {
             let (initial, steps, marks) = if component < universals {
                 let system = &self.systems[self.slots[component]];
                 let start = system
-                    .state_key(&root_state.components[component], fsl_foundation::IdentityLimits::default())
+                    .state_key(
+                        &root_state.components[component],
+                        fsl_foundation::IdentityLimits::default(),
+                    )
                     .map_err(ModelCheckRefusal::Encoding)?
                     .0;
                 let initial = system

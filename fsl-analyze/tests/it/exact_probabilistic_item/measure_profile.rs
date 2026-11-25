@@ -2154,7 +2154,10 @@ fn residual_measure_paths_replay_one_positive_physical_draw_and_reject_wrong_pos
             "{rejected:?}"
         );
         let first = &witness.paths[0].steps[0];
-        let original = system.state_key(&first.post, fsl_foundation::IdentityLimits::default()).unwrap().0;
+        let original = system
+            .state_key(&first.post, fsl_foundation::IdentityLimits::default())
+            .unwrap()
+            .0;
         let alternate = system
             .actions_with_cancel(&witness.initial, &Cancel::new())
             .unwrap()
@@ -2167,7 +2170,13 @@ fn residual_measure_paths_replay_one_positive_physical_draw_and_reject_wrong_pos
             })
             .flat_map(|draw| draw.successors)
             .map(|(_, post)| post)
-            .find(|post| system.state_key(post, fsl_foundation::IdentityLimits::default()).unwrap().0 != original)
+            .find(|post| {
+                system
+                    .state_key(post, fsl_foundation::IdentityLimits::default())
+                    .unwrap()
+                    .0
+                    != original
+            })
             .expect("an actual alternative post-state");
         let mut forged = witness.clone();
         forged.paths[0].steps[0].post = alternate;

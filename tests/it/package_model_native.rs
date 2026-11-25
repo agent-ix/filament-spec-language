@@ -178,14 +178,22 @@ impl Fixture {
             .expect("the source model and temporal clause check");
             let system = model_system(checked.package(), &request, missing_b);
             let mut state = system.initial().pop().expect("one authored initial state");
-            let mut keys = vec![system.state_key(&state, fsl_foundation::IdentityLimits::default()).unwrap().1];
+            let mut keys = vec![
+                system
+                    .state_key(&state, fsl_foundation::IdentityLimits::default())
+                    .unwrap()
+                    .1,
+            ];
             let mut steps = Vec::new();
             for _ in 0..4 {
                 let expansion = system.successors(&state).expect("the model expands");
                 let Some((transition, successor)) = expansion.successors.into_iter().next() else {
                     break;
                 };
-                let key = system.state_key(&successor, fsl_foundation::IdentityLimits::default()).unwrap().1;
+                let key = system
+                    .state_key(&successor, fsl_foundation::IdentityLimits::default())
+                    .unwrap()
+                    .1;
                 keys.push(key.clone());
                 steps.push(ModelStep {
                     transition,

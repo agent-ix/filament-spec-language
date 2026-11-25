@@ -471,7 +471,10 @@ impl<'a> Run<'_, 'a> {
                     stop = Some(Ok(halt));
                     return true;
                 }
-                let key = match self.system.state_key(state, fsl_foundation::IdentityLimits::default()) {
+                let key = match self
+                    .system
+                    .state_key(state, fsl_foundation::IdentityLimits::default())
+                {
                     Ok((key, _)) => key,
                     Err(refusal) => {
                         stop = Some(Err(ModelCheckRefusal::Encoding(refusal)));

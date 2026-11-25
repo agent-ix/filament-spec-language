@@ -16,14 +16,15 @@ use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits, V2ReadLim
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{
-    AdmissionFailure, AnchorKind, ClauseFacts, ClauseSelection, ClauseSelectionInput, DocumentRef,
-    ObservationLimits, Provisions, SelectedAnchor, SelectedObject, admit_observations,
+    admit_observations, AdmissionFailure, AnchorKind, ClauseFacts, ClauseSelection,
+    ClauseSelectionInput, DocumentRef, ObservationLimits, Provisions, SelectedAnchor,
+    SelectedObject,
 };
 use fsl_semantics::model::state::StateModel;
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
-use crate::ring_queue::{self, CLOCKS, Checked, QUEUE, clock_refinement, key, node};
+use crate::ring_queue::{self, clock_refinement, key, node, Checked, CLOCKS, QUEUE};
 
 const LIMITS: ScalarLimits = ScalarLimits {
     integer_bits: 1 << 20,

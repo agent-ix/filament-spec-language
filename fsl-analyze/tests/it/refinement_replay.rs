@@ -607,11 +607,19 @@ fn drifting_lasso(world: &AuxWorld<'_>) -> TemporalCounterexample {
         let (transition, next) = expansion
             .successors
             .into_iter()
-            .find(|(_, next)| system.state_key(next, fsl_foundation::IdentityLimits::default()).is_ok_and(|(key, _)| key == one))
+            .find(|(_, next)| {
+                system
+                    .state_key(next, fsl_foundation::IdentityLimits::default())
+                    .is_ok_and(|(key, _)| key == one)
+            })
             .expect("write(r, 1)");
         prefix.push(ModelStep {
             transition,
-            post_state: system.state_key(&next, fsl_foundation::IdentityLimits::default()).expect("a key").0.into(),
+            post_state: system
+                .state_key(&next, fsl_foundation::IdentityLimits::default())
+                .expect("a key")
+                .0
+                .into(),
             delay: None,
         });
         state = next;
@@ -901,7 +909,11 @@ fn walk(system: &ModelSystem<'_>, operations: &[String]) -> Vec<ModelStep> {
             .unwrap_or_else(|| panic!("{operation} is enabled"));
         steps.push(ModelStep {
             transition,
-            post_state: system.state_key(&next, fsl_foundation::IdentityLimits::default()).expect("a key").0.into(),
+            post_state: system
+                .state_key(&next, fsl_foundation::IdentityLimits::default())
+                .expect("a key")
+                .0
+                .into(),
             delay: None,
         });
         state = next;

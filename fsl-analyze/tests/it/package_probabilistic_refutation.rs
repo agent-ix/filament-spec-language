@@ -472,7 +472,10 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
         panic!("the source claim is an eventuality");
     };
     let state_key = |state: &fsl_eval::simulation::model::ModelSimState| {
-        system.state_key(state, fsl_foundation::IdentityLimits::default()).ok().map(|(_, key)| key)
+        system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .ok()
+            .map(|(_, key)| key)
     };
     let scope = checked.graph().scope();
     let expected = fsl_replay::probabilistic_wire(

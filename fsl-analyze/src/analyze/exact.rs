@@ -3878,7 +3878,11 @@ fn replay_produced_witness(
                             continue;
                         }
                         for (transition, post) in draw.successors {
-                            if system.state_key(&post, fsl_foundation::IdentityLimits::default()).ok().map(|key| key.0).as_ref()
+                            if system
+                                .state_key(&post, fsl_foundation::IdentityLimits::default())
+                                .ok()
+                                .map(|key| key.0)
+                                .as_ref()
                                 == Some(&to.model)
                             {
                                 if let Err(issue) = witness_charge(
@@ -4066,7 +4070,10 @@ fn finish_replay(
                 }
             };
             let state_key = |state: &fsl_eval::simulation::model::ModelSimState| {
-                system.state_key(state, fsl_foundation::IdentityLimits::default()).ok().map(|(_, key)| key)
+                system
+                    .state_key(state, fsl_foundation::IdentityLimits::default())
+                    .ok()
+                    .map(|(_, key)| key)
             };
             let value_schema = fsl_replay::ProbabilisticValueSchema::new(
                 input.types,
@@ -4321,7 +4328,10 @@ fn replay_timed_paths(
                         })
                         .find_map(|draw| {
                             draw.successors.into_iter().find_map(|(transition, post)| {
-                                let key = system.state_key(&post, fsl_foundation::IdentityLimits::default()).ok()?.0;
+                                let key = system
+                                    .state_key(&post, fsl_foundation::IdentityLimits::default())
+                                    .ok()?
+                                    .0;
                                 let discrete: serde_json::Value =
                                     serde_json::from_slice(&key).ok()?;
                                 (Some(&discrete) == wanted.as_ref())

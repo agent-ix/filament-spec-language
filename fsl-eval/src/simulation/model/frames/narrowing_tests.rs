@@ -355,7 +355,10 @@ fn keyed_applications(system: &ModelSystem<'_>, applications: &Applications) -> 
                 .reached_by()
                 .expect("a completed assignment records its step effect");
             (
-                system.state_key(&applied.state, fsl_foundation::IdentityLimits::default()).expect("a canonical key").0,
+                system
+                    .state_key(&applied.state, fsl_foundation::IdentityLimits::default())
+                    .expect("a canonical key")
+                    .0,
                 (applied.transition.clone(), Some(effect.clone())),
             )
         })

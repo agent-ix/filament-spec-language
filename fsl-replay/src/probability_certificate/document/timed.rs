@@ -982,7 +982,14 @@ fn enumerate_region_mean_time(
                         && system
                             .state_key(post.discrete(), fsl_foundation::IdentityLimits::default())
                             .ok()
-                            .zip(system.state_key(discrete_post, fsl_foundation::IdentityLimits::default()).ok())
+                            .zip(
+                                system
+                                    .state_key(
+                                        discrete_post,
+                                        fsl_foundation::IdentityLimits::default(),
+                                    )
+                                    .ok(),
+                            )
                             .is_some_and(|(left, right)| left.0 == right.0)
                 }) else {
                     enabled = false;
@@ -1098,7 +1105,10 @@ fn mean_region_key(
     route: TimedProbabilityRoute,
 ) -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
     let (discrete_bytes, _) = system
-        .state_key(state.timed.discrete(), fsl_foundation::IdentityLimits::default())
+        .state_key(
+            state.timed.discrete(),
+            fsl_foundation::IdentityLimits::default(),
+        )
         .map_err(ProbabilityDocumentError::KeyEncoding)?;
     let discrete: JsonValue =
         serde_json::from_slice(&discrete_bytes).map_err(|_| ProbabilityDocumentError::Malformed)?;
@@ -2183,7 +2193,14 @@ fn enumerate_digital_deadline(
                         && system
                             .state_key(post.discrete(), fsl_foundation::IdentityLimits::default())
                             .ok()
-                            .zip(system.state_key(discrete_post, fsl_foundation::IdentityLimits::default()).ok())
+                            .zip(
+                                system
+                                    .state_key(
+                                        discrete_post,
+                                        fsl_foundation::IdentityLimits::default(),
+                                    )
+                                    .ok(),
+                            )
                             .is_some_and(|(left, right)| left.0 == right.0)
                 }) else {
                     enabled = false;
@@ -2477,7 +2494,14 @@ fn enumerate_region_deadline(
                         && system
                             .state_key(post.discrete(), fsl_foundation::IdentityLimits::default())
                             .ok()
-                            .zip(system.state_key(discrete_post, fsl_foundation::IdentityLimits::default()).ok())
+                            .zip(
+                                system
+                                    .state_key(
+                                        discrete_post,
+                                        fsl_foundation::IdentityLimits::default(),
+                                    )
+                                    .ok(),
+                            )
                             .is_some_and(|(left, right)| left.0 == right.0)
                 }) else {
                     enabled = false;
@@ -2698,7 +2722,10 @@ fn region_key(
     deadline: u64,
 ) -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
     let (discrete_bytes, _) = system
-        .state_key(state.timed.discrete(), fsl_foundation::IdentityLimits::default())
+        .state_key(
+            state.timed.discrete(),
+            fsl_foundation::IdentityLimits::default(),
+        )
         .map_err(ProbabilityDocumentError::KeyEncoding)?;
     let discrete: JsonValue =
         serde_json::from_slice(&discrete_bytes).map_err(|_| ProbabilityDocumentError::Malformed)?;
@@ -2871,7 +2898,10 @@ fn digital_key(
     deadline: u64,
 ) -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
     let (discrete_bytes, _) = system
-        .state_key(state.timed.discrete(), fsl_foundation::IdentityLimits::default())
+        .state_key(
+            state.timed.discrete(),
+            fsl_foundation::IdentityLimits::default(),
+        )
         .map_err(ProbabilityDocumentError::KeyEncoding)?;
     let discrete: JsonValue =
         serde_json::from_slice(&discrete_bytes).map_err(|_| ProbabilityDocumentError::Malformed)?;
@@ -3396,7 +3426,14 @@ fn digital_fire_chain(
                         && system
                             .state_key(post.discrete(), fsl_foundation::IdentityLimits::default())
                             .ok()
-                            .zip(system.state_key(discrete_post, fsl_foundation::IdentityLimits::default()).ok())
+                            .zip(
+                                system
+                                    .state_key(
+                                        discrete_post,
+                                        fsl_foundation::IdentityLimits::default(),
+                                    )
+                                    .ok(),
+                            )
                             .is_some_and(|(left, right)| left.0 == right.0)
                 }) else {
                     continue;
@@ -4208,9 +4245,19 @@ fn digital_enabled_actions(
                     clocked_steps.iter().any(|(step, timed_post)| {
                         step.transition() == transition
                             && system
-                                .state_key(timed_post.discrete(), fsl_foundation::IdentityLimits::default())
+                                .state_key(
+                                    timed_post.discrete(),
+                                    fsl_foundation::IdentityLimits::default(),
+                                )
                                 .ok()
-                                .zip(system.state_key(discrete_post, fsl_foundation::IdentityLimits::default()).ok())
+                                .zip(
+                                    system
+                                        .state_key(
+                                            discrete_post,
+                                            fsl_foundation::IdentityLimits::default(),
+                                        )
+                                        .ok(),
+                                )
                                 .is_some_and(|(left, right)| left.0 == right.0)
                     })
                 })

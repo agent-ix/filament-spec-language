@@ -2690,13 +2690,20 @@ fn contract_result(
                     failure.get_or_insert_with(|| "undefined-postcondition".to_owned());
                     continue;
                 }
-                let post_key = system.state_key(&states[index + 1], fsl_foundation::IdentityLimits::default())?.1;
+                let post_key = system
+                    .state_key(
+                        &states[index + 1],
+                        fsl_foundation::IdentityLimits::default(),
+                    )?
+                    .1;
                 let mut clause_holds = false;
                 for candidate in &cases.steps {
                     if candidate.transition != step.transition {
                         continue;
                     }
-                    let candidate_key = system.state_key(&candidate.post, fsl_foundation::IdentityLimits::default())?.1;
+                    let candidate_key = system
+                        .state_key(&candidate.post, fsl_foundation::IdentityLimits::default())?
+                        .1;
                     clause_holds |= candidate_key == post_key;
                 }
                 if !clause_holds {
@@ -3184,7 +3191,12 @@ fn shortest_partition_path(
                         current
                             .findings
                             .push(crate::simulation::expansion::StateFindings {
-                                state: system.state_key(&current.state, fsl_foundation::IdentityLimits::default())?.1,
+                                state: system
+                                    .state_key(
+                                        &current.state,
+                                        fsl_foundation::IdentityLimits::default(),
+                                    )?
+                                    .1,
                                 depth: current.depth,
                                 findings,
                             });
@@ -3368,7 +3380,9 @@ fn build_partition_trace(
     };
     if !final_findings.is_empty() {
         findings.push(crate::simulation::expansion::StateFindings {
-            state: system.state_key(&final_state, fsl_foundation::IdentityLimits::default())?.1,
+            state: system
+                .state_key(&final_state, fsl_foundation::IdentityLimits::default())?
+                .1,
             depth: steps.len(),
             findings: final_findings,
         });
@@ -3907,7 +3921,8 @@ fn operation_reachability(
     let mut queue = VecDeque::new();
     let mut stopped = None;
     for initial in ordered_initial_states(system)? {
-        let (key, _) = system.state_key(&initial.state, fsl_foundation::IdentityLimits::default())?;
+        let (key, _) =
+            system.state_key(&initial.state, fsl_foundation::IdentityLimits::default())?;
         if visited.contains_key(&key) {
             continue;
         }
@@ -3976,7 +3991,8 @@ fn operation_reachability(
                 queue.clear();
                 break;
             }
-            let (key, _) = system.state_key(&successor.state, fsl_foundation::IdentityLimits::default())?;
+            let (key, _) =
+                system.state_key(&successor.state, fsl_foundation::IdentityLimits::default())?;
             let depth = current.steps.len().saturating_add(1);
             if visited.contains_key(&key) {
                 continue;

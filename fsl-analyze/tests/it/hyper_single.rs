@@ -195,7 +195,10 @@ impl<'w> Expansions<'w> {
     }
 
     fn node(&self, state: ModelSimState) -> Rc<Node> {
-        let (bytes, _) = self.system.state_key(&state, fsl_foundation::IdentityLimits::default()).expect("a key");
+        let (bytes, _) = self
+            .system
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
+            .expect("a key");
         let key = fsl_eval::simulation::StateKey::from_canonical_bytes(bytes);
         Rc::new(Node { state, key })
     }

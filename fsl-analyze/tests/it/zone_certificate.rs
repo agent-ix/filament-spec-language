@@ -357,7 +357,10 @@ fn a_locked_node_is_checked_for_divergence() {
     let timed = TimedSystem::new(&system, "M").expect("a timed subject");
     let start = timed.initial().remove(0);
     let key = |state: &fsl_eval::simulation::model::ModelSimState| {
-        system.state_key(state, fsl_foundation::IdentityLimits::default()).expect("a state key").1
+        system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .expect("a state key")
+            .1
     };
     let a = key(start.discrete());
     let (_, gone) = timed
@@ -748,7 +751,10 @@ fn a_zeno_set_is_bounded_by_its_own_invariants() {
     let timed = TimedSystem::new(&system, "M").expect("a timed subject");
     let start = timed.initial().remove(0);
     let key = |state: &fsl_eval::simulation::model::ModelSimState| {
-        system.state_key(state, fsl_foundation::IdentityLimits::default()).expect("a key").1
+        system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .expect("a key")
+            .1
     };
     let (_, gone) = timed
         .steps(&start)

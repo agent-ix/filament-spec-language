@@ -100,7 +100,10 @@ fn system_and_root(world: &World) -> (ModelSystem<'_>, ProbabilityProductKey) {
     subject.simulation.initial.truncate(1);
     let system = ModelSystem::new(subject.simulation.clone()).expect("model admits");
     let initial = system.initial().into_iter().next().expect("one initial");
-    let model_key = system.state_key(&initial, fsl_foundation::IdentityLimits::default()).expect("model key").0;
+    let model_key = system
+        .state_key(&initial, fsl_foundation::IdentityLimits::default())
+        .expect("model key")
+        .0;
     let product = ProbabilityProductKey::for_model_state(None, &model_key)
         .expect("the owner form is embedded");
     (system, product)

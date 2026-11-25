@@ -6667,12 +6667,9 @@ fn a_bare_clock_collection_ranges_its_initial_count() {
     let keys: std::collections::BTreeSet<Vec<u8>> = initial
         .iter()
         .map(|state| {
-            held.state_key(
-                state.discrete(),
-                fsl_foundation::IdentityLimits::default(),
-            )
-            .expect("a key")
-            .0
+            held.state_key(state.discrete(), fsl_foundation::IdentityLimits::default())
+                .expect("a key")
+                .0
         })
         .collect();
     assert_eq!(keys.len(), 4);
@@ -7181,16 +7178,12 @@ fn absent_drops_an_option_clock() {
         assert!(step.resets().is_empty());
         assert!(!timed.live(&timed.places()[v], next.discrete()));
         assert_eq!(timed.live_clocks(next.discrete()), 1);
-        let key =
-            String::from_utf8(
-                held.state_key(
-                    next.discrete(),
-                    fsl_foundation::IdentityLimits::default(),
-                )
+        let key = String::from_utf8(
+            held.state_key(next.discrete(), fsl_foundation::IdentityLimits::default())
                 .expect("a key")
                 .0,
-            )
-            .expect("UTF-8");
+        )
+        .expect("UTF-8");
         assert!(key.contains(r#"{"name":"v","value":{"type":"option","value":null}}"#));
     }
 }

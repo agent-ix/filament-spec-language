@@ -91,8 +91,14 @@ pub(super) fn replay<T>(
             })
         })?;
         if !distributions.is_empty()
-            || system.state_key(state, fsl_foundation::IdentityLimits::default()).ok().map(|(bytes, _)| bytes)
-                != system.state_key(&step.post, fsl_foundation::IdentityLimits::default()).ok().map(|(bytes, _)| bytes)
+            || system
+                .state_key(state, fsl_foundation::IdentityLimits::default())
+                .ok()
+                .map(|(bytes, _)| bytes)
+                != system
+                    .state_key(&step.post, fsl_foundation::IdentityLimits::default())
+                    .ok()
+                    .map(|(bytes, _)| bytes)
         {
             return Err(ProbabilityWitnessError::Refused);
         }

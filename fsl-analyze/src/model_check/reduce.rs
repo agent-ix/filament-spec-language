@@ -300,7 +300,9 @@ fn closure_of<S: Borrow<ModelSimState>>(
     for initial in initial {
         let (index, state) = initial?;
         let state = state.borrow();
-        let (key, _) = system.state_key(state, fsl_foundation::IdentityLimits::default()).map_err(ClosureRefusal::Encoding)?;
+        let (key, _) = system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .map_err(ClosureRefusal::Encoding)?;
         missing.remove(&key);
         if !keys.insert(key) {
             continue;
@@ -309,7 +311,9 @@ fn closure_of<S: Borrow<ModelSimState>>(
             let image = system
                 .permute(state, generator)
                 .map_err(|_| ClosureRefusal::Unordered)?;
-            let (key, _) = system.state_key(&image, fsl_foundation::IdentityLimits::default()).map_err(ClosureRefusal::Encoding)?;
+            let (key, _) = system
+                .state_key(&image, fsl_foundation::IdentityLimits::default())
+                .map_err(ClosureRefusal::Encoding)?;
             if !keys.contains(&key) {
                 missing.entry(key).or_insert((index, order));
             }

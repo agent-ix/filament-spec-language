@@ -363,7 +363,10 @@ pub(crate) fn check<R: PlanRules>(
     let Some(first) = entries.first() else {
         return reject(CertificateRule::Initial, 0);
     };
-    let start_key = system.state_key(&start, fsl_foundation::IdentityLimits::default()).map(|(key, _)| key).ok();
+    let start_key = system
+        .state_key(&start, fsl_foundation::IdentityLimits::default())
+        .map(|(key, _)| key)
+        .ok();
     if start_key.as_ref() != Some(&first.key.state)
         || rules
             .compare_policy_states(&monitors, &first.monitors)
@@ -566,7 +569,9 @@ pub(crate) fn check<R: PlanRules>(
             let Some(successor) = entries.get(*target) else {
                 return reject(CertificateRule::Closure, index);
             };
-            let Ok((state_key, _)) = system.state_key(&state, fsl_foundation::IdentityLimits::default()) else {
+            let Ok((state_key, _)) =
+                system.state_key(&state, fsl_foundation::IdentityLimits::default())
+            else {
                 return reject(CertificateRule::Closure, index);
             };
             // With no cost dominance the node keeps its accumulated value,

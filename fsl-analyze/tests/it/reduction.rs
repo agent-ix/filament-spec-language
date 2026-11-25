@@ -763,7 +763,10 @@ fn every_state(system: &ModelSystem<'_>) -> Vec<ModelSimState> {
     let mut seen = BTreeMap::new();
     let mut frontier = system.initial();
     while let Some(state) = frontier.pop() {
-        let key = system.state_key(&state, fsl_foundation::IdentityLimits::default()).expect("encodes").0;
+        let key = system
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .0;
         if seen.contains_key(&key) {
             continue;
         }
@@ -793,13 +796,28 @@ fn canonical_forms_coalesce_the_orbits_of_reachable_states() {
         let mut forms = BTreeSet::new();
         for state in &states {
             let (canonical, permutation) = system.canonicalise(state, &classes).expect("canonical");
-            let key = system.state_key(&canonical, fsl_foundation::IdentityLimits::default()).expect("encodes").0;
+            let key = system
+                .state_key(&canonical, fsl_foundation::IdentityLimits::default())
+                .expect("encodes")
+                .0;
             let image = system.permute(state, &permutation).expect("permuted");
-            assert_eq!(system.state_key(&image, fsl_foundation::IdentityLimits::default()).expect("encodes").0, key);
+            assert_eq!(
+                system
+                    .state_key(&image, fsl_foundation::IdentityLimits::default())
+                    .expect("encodes")
+                    .0,
+                key
+            );
             let (again, identity) = system
                 .canonicalise(&canonical, &classes)
                 .expect("canonical");
-            assert_eq!(system.state_key(&again, fsl_foundation::IdentityLimits::default()).expect("encodes").0, key);
+            assert_eq!(
+                system
+                    .state_key(&again, fsl_foundation::IdentityLimits::default())
+                    .expect("encodes")
+                    .0,
+                key
+            );
             assert!(identity.is_identity());
             forms.insert(key);
         }
@@ -854,7 +872,12 @@ fn objects_with_equal_sort_keys_canonicalise_into_their_orbit() {
     let system = world.system();
     let states = system.initial();
     let full = group(&[&["a", "b", "c"]]);
-    let key = |state: &ModelSimState| system.state_key(state, fsl_foundation::IdentityLimits::default()).expect("encodes").0;
+    let key = |state: &ModelSimState| {
+        system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .0
+    };
     // The starts run over the unlinked key, then the eight value triples.
     let first = &states[16]; // c unlinked, all at 0: a->b, b->a.
     let second = &states[0]; // a unlinked, all at 0: b->c, c->b.
@@ -917,16 +940,28 @@ fn canonicalisation_is_a_function_of_the_state_and_the_group() {
     let (once, first) = system.canonicalise(state, &full).expect("canonical");
     let (twice, second) = system.canonicalise(state, &full).expect("canonical");
     assert_eq!(
-        system.state_key(&once, fsl_foundation::IdentityLimits::default()).expect("encodes").0,
-        system.state_key(&twice, fsl_foundation::IdentityLimits::default()).expect("encodes").0
+        system
+            .state_key(&once, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .0,
+        system
+            .state_key(&twice, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .0
     );
     assert_eq!(first, second);
     let (same, identity) = system
         .canonicalise(state, &SymmetryGroup::default())
         .expect("canonical");
     assert_eq!(
-        system.state_key(&same, fsl_foundation::IdentityLimits::default()).expect("encodes").0,
-        system.state_key(state, fsl_foundation::IdentityLimits::default()).expect("encodes").0
+        system
+            .state_key(&same, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .0,
+        system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .0
     );
     assert!(identity.is_identity());
 }
@@ -1048,7 +1083,11 @@ fn undefined_absent_and_initially_false_constraints_and_bounds() {
         .pop()
         .expect("a last state");
     assert_eq!(
-        world.system().state_key(&last, fsl_foundation::IdentityLimits::default()).expect("encodes").1,
+        world
+            .system()
+            .state_key(&last, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .1,
         evaluation.site.state_key
     );
     // The deadlock-freedom item's refutation by the undefined constraint

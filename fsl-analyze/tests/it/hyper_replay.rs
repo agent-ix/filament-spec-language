@@ -69,7 +69,11 @@ fn take(world: &World, state: &ModelSimState, input: i64) -> (ModelStep, ModelSi
                 && transition.arguments()[0].contains(&format!("\"value\":\"{input}\""))
         })
         .expect("step(i) is enabled");
-    let post_state = system.state_key(&next, fsl_foundation::IdentityLimits::default()).expect("a key").0.into();
+    let post_state = system
+        .state_key(&next, fsl_foundation::IdentityLimits::default())
+        .expect("a key")
+        .0
+        .into();
     (
         ModelStep {
             transition,
@@ -144,7 +148,10 @@ fn a_counterexample_that_breaks_a_replay_rule_is_refused() {
         panic!("a model step");
     };
     step.post_state = system
-        .state_key(&system.initial()[1], fsl_foundation::IdentityLimits::default())
+        .state_key(
+            &system.initial()[1],
+            fsl_foundation::IdentityLimits::default(),
+        )
         .expect("a key")
         .0
         .into();
@@ -836,7 +843,12 @@ fn a_witness_replay_follows_the_post_state_a_nondeterministic_step_took() {
         .successors
         .into_iter()
         .filter(|(transition, _)| *transition == first.transition)
-        .map(|(_, state)| system.state_key(&state, fsl_foundation::IdentityLimits::default()).expect("a key").1)
+        .map(|(_, state)| {
+            system
+                .state_key(&state, fsl_foundation::IdentityLimits::default())
+                .expect("a key")
+                .1
+        })
         .collect();
     assert_eq!(posts.len(), 2, "a step with two post-states");
     assert_ne!(posts[0], first.post_state, "the second one is taken");
@@ -1296,7 +1308,11 @@ fn a_projected_prefix_that_is_bad_early_reproduces_at_the_position_that_fixes_it
                 .into_iter()
                 .find(|(transition, _)| transition.operation().contains("/Vault/mix\""))
                 .expect("mix is enabled");
-            let post_state = system.state_key(&next, fsl_foundation::IdentityLimits::default()).expect("a key").0.into();
+            let post_state = system
+                .state_key(&next, fsl_foundation::IdentityLimits::default())
+                .expect("a key")
+                .0
+                .into();
             trace.steps.push(HyperStep::Model(ModelStep {
                 transition,
                 post_state,

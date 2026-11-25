@@ -89,7 +89,12 @@ pub(super) fn run(
                     scope.variant_types(),
                     scope.enums(),
                 ),
-                &|state| system.state_key(state, fsl_foundation::IdentityLimits::default()).ok().map(|(_, key)| key),
+                &|state| {
+                    system
+                        .state_key(state, fsl_foundation::IdentityLimits::default())
+                        .ok()
+                        .map(|(_, key)| key)
+                },
                 &scheduler,
             );
             EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))

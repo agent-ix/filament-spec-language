@@ -775,7 +775,9 @@ fn state_key_of(fixture: &Fixture, phase: u8) -> fsl_eval::simulation::StateKey 
         state = successors[pick].1.clone();
     }
     {
-        let (bytes, _) = system.state_key(&state, fsl_foundation::IdentityLimits::default()).expect("encodes");
+        let (bytes, _) = system
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
+            .expect("encodes");
         fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
     }
 }
@@ -1098,7 +1100,9 @@ fn a_guarded_each_activation_has_its_own_acceptance_set_in_the_certificate() {
         .expect("a's update is a step")
         .1;
     let one_zero = {
-        let (bytes, _) = system.state_key(&updated, fsl_foundation::IdentityLimits::default()).expect("encodes");
+        let (bytes, _) = system
+            .state_key(&updated, fsl_foundation::IdentityLimits::default())
+            .expect("encodes");
         fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
     };
     let removed = certificate.components[1]
@@ -1115,7 +1119,9 @@ fn a_guarded_each_activation_has_its_own_acceptance_set_in_the_certificate() {
     );
 
     let initial = {
-        let (bytes, _) = system.state_key(&start, fsl_foundation::IdentityLimits::default()).expect("encodes");
+        let (bytes, _) = system
+            .state_key(&start, fsl_foundation::IdentityLimits::default())
+            .expect("encodes");
         fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
     };
     let waiting = certificate.components[0]

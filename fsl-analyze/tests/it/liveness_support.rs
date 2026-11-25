@@ -231,7 +231,11 @@ impl Fixture {
                 .into_iter()
                 .find(|(transition, state)| {
                     *transition == step.transition
-                        && system.state_key(state, fsl_foundation::IdentityLimits::default()).expect("encodes").0.as_slice()
+                        && system
+                            .state_key(state, fsl_foundation::IdentityLimits::default())
+                            .expect("encodes")
+                            .0
+                            .as_slice()
                             == step.post_state.as_bytes()
                 })
                 .map(|(_, state)| state)
@@ -296,7 +300,12 @@ pub(crate) fn assert_weakly_fair(
     assert!(!lasso.terminal_stutter);
     let states = fixture.positions(counterexample);
     let system = fixture.system();
-    let state_key = |state: &ModelSimState| system.state_key(state, fsl_foundation::IdentityLimits::default()).expect("encodes").1;
+    let state_key = |state: &ModelSimState| {
+        system
+            .state_key(state, fsl_foundation::IdentityLimits::default())
+            .expect("encodes")
+            .1
+    };
     assert_eq!(
         state_key(states.last().expect("a position")),
         state_key(&states[lasso.entry]),
