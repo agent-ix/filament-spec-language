@@ -1,4 +1,0 @@
-language "ix:native" edition "1-draft";
-profile v = "filament.value.complete/v1";
-type T = Rational[0,300;1,4];
-function f using v(s: Sequence<Rational[0,100;1,4]>[0,3]): T pure { sum<T>(x in s: x) }

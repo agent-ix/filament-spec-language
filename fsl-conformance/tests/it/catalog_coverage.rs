@@ -4,11 +4,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use filament_contract_model::ClockConfiguration;
 use filament_exact::Cancel;
 use filament_verification_contracts::operation_catalog::CHECKED_OPERATION_CATALOG_V1;
 use fsl_foundation::SourceIdentity;
-use fsl_package::{EmitLimits, V2ReadLimits};
-use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
+use fsl_package::{EmitLimits, SourceWitnessSupplier, V2ReadLimits};
+use fsl_replay::spine::{
+    self, DependencyInput, ParseRequest, ProfileCatalogInput, RequestClocks, SpineLimits,
+    SuppliedLibrary,
+};
+use fsl_semantics::library::bundle::{
+    Definition, DefinitionCatalog, DefinitionRole, PackageLimits, ReaderAuthority,
+};
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::{package_input, PackageInput};
 use ix_trace_rs::trace;
@@ -22,8 +29,28 @@ struct Case {
     /// The domain packages the source selects, each supplied under the identity
     /// it declares in place of any pooled document.
     documents: &'static [&'static [u8]],
+    supplies: Supplies,
     operations: &'static [&'static str],
     forms: &'static [(&'static str, &'static str)],
+}
+
+/// What a case's request supplies beyond its source and domain packages.
+#[derive(Clone, Copy)]
+struct Supplies {
+    /// Event-position clocks: the clock name and its sequence authority.
+    clocks: &'static [(&'static str, &'static str)],
+    /// Dependency libraries: the identity the source imports and its source.
+    libraries: &'static [(&'static str, &'static str)],
+    /// Extension definitions: the identity the source selects and its document.
+    extensions: &'static [(&'static str, &'static [u8])],
+}
+
+impl Supplies {
+    const NOTHING: Self = Self {
+        clocks: &[],
+        libraries: &[],
+        extensions: &[],
+    };
 }
 
 macro_rules! operators {
@@ -32,6 +59,7 @@ macro_rules! operators {
             name: $name,
             source: include_str!(concat!("../../cases/type-operators/", $name, "-accepted.native")),
             documents: &[],
+            supplies: Supplies::NOTHING,
             operations: &[$(concat!("filament.op.", $family, ".", $operation)),+],
             forms: &[],
         }
@@ -44,6 +72,7 @@ macro_rules! sourced {
             name: $name,
             source: include_str!(concat!("../../cases/catalog-source/", $name, ".native")),
             documents: &[],
+            supplies: Supplies::NOTHING,
             operations: $operations,
             forms: $forms,
         }
@@ -59,6 +88,22 @@ macro_rules! selecting {
             name: $name,
             source: include_str!(concat!("../../cases/catalog-source/", $name, ".native")),
             documents: &[include_bytes!(concat!("../../../", $document))],
+            supplies: Supplies::NOTHING,
+            operations: $operations,
+            forms: $forms,
+        }
+    };
+}
+
+/// A catalog source whose request supplies clocks, libraries or extension
+/// definitions.
+macro_rules! supplied {
+    ($name:literal, $supplies:expr, $operations:expr, $forms:expr) => {
+        Case {
+            name: $name,
+            source: include_str!(concat!("../../cases/catalog-source/", $name, ".native")),
+            documents: &[],
+            supplies: $supplies,
             operations: $operations,
             forms: $forms,
         }
@@ -71,6 +116,7 @@ macro_rules! original {
             name: $name,
             source: include_str!(concat!("../../../", $path)),
             documents: &[],
+            supplies: Supplies::NOTHING,
             operations: $operations,
             forms: $forms,
         }
@@ -132,6 +178,7 @@ source_cases! {
         name: "option-presence",
         source: include_str!("../../cases/type-operators/option-presence-accepted.native"),
         documents: &[],
+        supplies: Supplies::NOTHING,
         operations: &[
             "filament.op.option.present",
             "filament.op.option.value",
@@ -143,6 +190,7 @@ source_cases! {
         name: "tuple-position",
         source: include_str!("../../cases/tuple-position-accepted.native"),
         documents: &[],
+        supplies: Supplies::NOTHING,
         operations: &["filament.op.tuple.project"],
         forms: &[("composite_type", "tuple"), ("expression", "query")],
     },
@@ -150,6 +198,7 @@ source_cases! {
         name: "float-arithmetic",
         source: include_str!("../../cases/type-operators/float-arithmetic-accepted.native"),
         documents: &[],
+        supplies: Supplies::NOTHING,
         operations: &["filament.op.ieee.float32.add", "filament.op.ieee.float32.sub", "filament.op.ieee.float32.mul", "filament.op.ieee.float64.add", "filament.op.ieee.float64.sub", "filament.op.ieee.float64.mul"],
         forms: &[],
     },
@@ -157,6 +206,7 @@ source_cases! {
         name: "float-negation",
         source: include_str!("../../cases/type-operators/float-negation-accepted.native"),
         documents: &[],
+        supplies: Supplies::NOTHING,
         operations: &["filament.op.ieee.float32.negate", "filament.op.ieee.float64.negate"],
         forms: &[],
     },
@@ -164,6 +214,7 @@ source_cases! {
         name: "float-division",
         source: include_str!("../../cases/type-operators/float-division-accepted.native"),
         documents: &[],
+        supplies: Supplies::NOTHING,
         operations: &["filament.op.ieee.float32.div", "filament.op.ieee.float64.div"],
         forms: &[],
     },
@@ -171,6 +222,7 @@ source_cases! {
         name: "structural-calls",
         source: include_str!("../../cases/catalog-source-structural.native"),
         documents: &[],
+        supplies: Supplies::NOTHING,
         operations: &["filament.op.record.project", "filament.op.function.call", "filament.op.control.let", "filament.op.integer.add"],
         forms: &[("composite_type", "record"), ("expression", "call"), ("expression", "let")],
     },
@@ -254,6 +306,63 @@ source_cases! {
     refinement_rows => sourced!("refinement-rows", &["filament.op.collection.seq", "filament.op.refinement.history"], &[]),
     relationship_navigation => sourced!("relationship-navigation", &["filament.op.model.navigate", "filament.op.model.reaches"], &[]),
     presence_slots => sourced!("presence-slots", &["filament.op.option.slots"], &[]),
+    sum_families => sourced!("sum-families", &["filament.op.collection.sum.decimal", "filament.op.collection.sum.rational"], &[]),
+    carried_quantity_sum => sourced!("carried-quantity-sum", &["filament.op.collection.sum.carried_quantity"], &[("scalar_type", "carried_quantity")]),
+    rational_narrow => sourced!("rational-narrow", &["filament.op.rational.narrow"], &[]),
+    source_dispatch => sourced!("source-dispatch", &["filament.op.model.dispatch_call"], &[]),
+    synthesis_request => sourced!("synthesis-request", &[], &[("claim", "synthesis_request")]),
+    dimension_equivalence => sourced!("dimension-equivalence", &[], &[("scalar_type", "dimension_equivalence")]),
+    tuple_value_type => sourced!("tuple-value-type", &[], &[("model", "tuple_value_type")]),
+    event_type => sourced!("event-type", &[], &[("model", "event_type")]),
+    implementation_guarantee => sourced!("implementation-guarantee", &[], &[("correspondence", "abstraction_relation"), ("correspondence", "implementation_guarantee")]),
+    component_composition => supplied!(
+        "component-composition",
+        Supplies {
+            libraries: &[
+                ("catalog/producer", include_str!("../../cases/catalog-source/composition-producer.native")),
+                ("catalog/consumer", include_str!("../../cases/catalog-source/composition-consumer.native")),
+            ],
+            ..Supplies::NOTHING
+        },
+        &[],
+        &[("correspondence", "component_composition")]
+    ),
+    extension_form => supplied!(
+        "extension-form",
+        Supplies {
+            extensions: &[("retention", include_bytes!("../../cases/catalog-source/retention.extension.json"))],
+            ..Supplies::NOTHING
+        },
+        &[],
+        &[("extension", "extension_form")]
+    ),
+    finite_hyper => supplied!(
+        "finite-hyper",
+        Supplies {
+            clocks: &[("t", "test-hyper-events")],
+            ..Supplies::NOTHING
+        },
+        &[],
+        &[("bounded_domain", "finite_trace_population")]
+    ),
+    compensation => supplied!(
+        "compensation",
+        Supplies {
+            clocks: &[("c", "compensation-events")],
+            ..Supplies::NOTHING
+        },
+        &[],
+        &[("protocol", "compensation")]
+    ),
+    temporal_aggregate => supplied!(
+        "temporal-aggregate",
+        Supplies {
+            clocks: &[("events", "events")],
+            ..Supplies::NOTHING
+        },
+        &["filament.op.temporal.aggregate"],
+        &[]
+    ),
 }
 
 fn catalog_identities() -> BTreeSet<String> {
@@ -402,43 +511,124 @@ fn checked_in_files(directories: &[&str], extension: &str) -> Vec<PathBuf> {
     files
 }
 
+/// The definition catalog holding each extension definition under its
+/// identity.
+fn extension_catalog(extensions: &[(&str, &[u8])]) -> DefinitionCatalog {
+    let definitions = extensions
+        .iter()
+        .map(|(identity, document)| {
+            Definition::from_exact_bytes(
+                &ReaderAuthority::fixture(),
+                "agent-ix",
+                *identity,
+                DefinitionRole::Extension,
+                BTreeSet::new(),
+                BTreeSet::new(),
+                document,
+            )
+            .expect("a case's extension definition reads")
+        })
+        .collect();
+    DefinitionCatalog::new(definitions).expect("a case's extension definitions are distinct")
+}
+
+/// The request clock configurations of event-position clocks.
+fn event_clocks(clocks: &[(&str, &str)]) -> RequestClocks {
+    let members = clocks
+        .iter()
+        .map(|(clock, authority)| {
+            let configuration = ClockConfiguration::EventPosition {
+                sequence_authority: (*authority).into(),
+            };
+            ((*clock).to_owned(), configuration)
+        })
+        .collect();
+    RequestClocks::new(members).expect("a case's clock configurations read")
+}
+
 /// Compiles and reads a source over the domain packages `inputs` through the
 /// public front end and the strict reader; every refusal is returned, never
 /// raised.
 fn try_compile_and_read(name: &str, source: &str, inputs: &PackageInput) -> Result<Value, Refusal> {
+    try_compile_supplied(name, source, inputs, Supplies::NOTHING)
+}
+
+/// [`try_compile_and_read`] for a request that also supplies clocks,
+/// dependency libraries or extension definitions.
+fn try_compile_supplied(
+    name: &str,
+    source: &str,
+    inputs: &PackageInput,
+    supplies: Supplies,
+) -> Result<Value, Refusal> {
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let identity = SourceIdentity::new("catalog-source", name);
-    let parsed = spine::parse(
-        &ParseRequest {
-            source: &identity,
-            path: name,
-            bytes: source.as_bytes(),
-        },
-        limits.source,
-        &cancel,
-    )
+    let request = ParseRequest {
+        source: &identity,
+        path: name,
+        bytes: source.as_bytes(),
+    };
+    let parsed = if supplies.extensions.is_empty() {
+        spine::parse(&request, limits.source, &cancel)
+    } else {
+        spine::parse_selecting_extensions(
+            &request,
+            ProfileCatalogInput {
+                catalog: &extension_catalog(supplies.extensions),
+                limits: PackageLimits::default(),
+            },
+            limits.source,
+            &cancel,
+        )
+    }
     .map_err(|error| Refusal::new("parse", error))?
     .into_value();
     let models = spine::select(&parsed, inputs, limits.model, &cancel)
         .map_err(|error| Refusal::new("select", error))?
         .into_value();
+    let libraries = supplies
+        .libraries
+        .iter()
+        .map(|(library, text)| SuppliedLibrary {
+            identity: (*library).to_owned(),
+            source: SourceIdentity::new("catalog-library", *library),
+            path: (*library).to_owned(),
+            bytes: text.as_bytes().to_vec(),
+        });
+    let dependencies = DependencyInput::new(libraries).expect("a case's libraries are distinct");
     let checked = spine::check(
         &parsed,
         "catalog-source".to_owned(),
         &models,
-        &DependencyInput::default(),
+        &dependencies,
         limits,
         &cancel,
     )
     .map_err(|error| Refusal::new("check", error))?
     .into_value();
-    let read = fsl_package::read_evaluation_package(
+    let emit_limits = || EmitLimits::new(16_777_216);
+    let emission = if supplies.clocks.is_empty() {
+        fsl_package::emit_checked(checked.package(), emit_limits())
+    } else {
+        let selections = event_clocks(supplies.clocks)
+            .package_selections(&checked, &[&parsed])
+            .map_err(|error| Refusal::new("admit", error))?;
+        fsl_package::emit_checked_with_temporal_selections(
+            checked.package(),
+            &selections,
+            emit_limits(),
+        )
+    }
+    .map_err(|error| Refusal::new("admit", error))?;
+    let read = fsl_package::read_evaluation_emission(
         checked.package(),
+        &emission,
         LibraryName::new("catalog-source").expect("package name"),
         inputs,
         V2ReadLimits::bounded(16_777_216),
-        EmitLimits::new(16_777_216),
+        emit_limits(),
+        SourceWitnessSupplier::new(&emission),
     )
     .map_err(|error| Refusal::new("admit", error))?;
     if !read.emission().omitted().is_empty() {
@@ -448,9 +638,11 @@ fn try_compile_and_read(name: &str, source: &str, inputs: &PackageInput) -> Resu
         .map_err(|error| Refusal::new("admit", error))
 }
 
-/// Compiles and reads a case's source over the domain packages it selects.
+/// Compiles and reads a case's source over the domain packages it selects,
+/// with what its request supplies.
 fn try_compile_case(case: &Case) -> Result<Value, Refusal> {
-    try_compile_and_read(case.name, case.source, &pool_with(case.documents))
+    let inputs = pool_with(case.documents);
+    try_compile_supplied(case.name, case.source, &inputs, case.supplies)
 }
 
 fn compile_and_read(case: &Case) -> Value {
@@ -577,8 +769,6 @@ enum Detect {
 /// What the probe source of an entry must do today.
 #[derive(Clone, Copy)]
 enum Expect {
-    /// The source is admitted and does not emit the item.
-    Admitted,
     /// The source is refused at this stage with this cause. The refusal is
     /// pinned: the test fails when the stage or cause changes, and when the
     /// source is admitted and emits the item.
@@ -678,18 +868,6 @@ const UNPRODUCED: &[Unproduced] = &[
         },
     },
     Unproduced {
-        id: "filament.op.model.dispatch_call",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: probe_source!("probe-operation-call"),
-            detect: Detect::Operation("filament.op.model.dispatch_call"),
-            expect: Expect::Refused {
-                stage: "check",
-                cause: "OperatorIneligible",
-            },
-        },
-    },
-    Unproduced {
         id: "source-declared-object-navigation",
         keys: &["QSL-3047"],
         probe: Probe {
@@ -754,60 +932,6 @@ const UNPRODUCED: &[Unproduced] = &[
         "Sequence<F>[0,3]"
     ),
     Unproduced {
-        id: "filament.op.collection.sum.carried_quantity",
-        keys: &["QSL-3044"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Operation("filament.op.collection.sum.carried_quantity"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "filament.op.collection.sum.decimal",
-        keys: &["QSL-3044"],
-        probe: Probe {
-            source: include_str!("../../cases/catalog-source/probe-sum-decimal.native"),
-            detect: Detect::Operation("filament.op.collection.sum.decimal"),
-            expect: Expect::Refused {
-                stage: "check",
-                cause: "Unproved",
-            },
-        },
-    },
-    Unproduced {
-        id: "filament.op.collection.sum.rational",
-        keys: &["QSL-3044"],
-        probe: Probe {
-            source: include_str!("../../cases/catalog-source/probe-sum-rational.native"),
-            detect: Detect::Operation("filament.op.collection.sum.rational"),
-            expect: Expect::Refused {
-                stage: "check",
-                cause: "Unproved",
-            },
-        },
-    },
-    Unproduced {
-        id: "filament.op.rational.narrow",
-        keys: &["QSL-3045"],
-        probe: Probe {
-            source: include_str!("../../cases/catalog-source/probe-rational-narrow.native"),
-            detect: Detect::Operation("filament.op.rational.narrow"),
-            expect: Expect::Refused {
-                stage: "check",
-                cause: "TypeMismatch",
-            },
-        },
-    },
-    Unproduced {
-        id: "bounded_domain/finite_trace_population",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("bounded_domain/finite_trace_population"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
         id: "filament.op.reference.upcast",
         keys: &["QSL-3047"],
         probe: Probe {
@@ -853,15 +977,6 @@ const UNPRODUCED: &[Unproduced] = &[
         },
     },
     Unproduced {
-        id: "filament.op.temporal.aggregate",
-        keys: &["QSL-3049"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Operation("filament.op.temporal.aggregate"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
         id: "temporal/activation",
         keys: &["QSL-3049"],
         probe: Probe {
@@ -870,28 +985,25 @@ const UNPRODUCED: &[Unproduced] = &[
             expect: Expect::Unprobed,
         },
     },
+    // No writer emits a `clock`, `deadline` or `window` node: the window and
+    // await sources of the corpus are admitted without one when their request
+    // supplies clock selections.
     Unproduced {
         id: "temporal/clock",
         keys: &["QSL-3049"],
         probe: Probe {
-            source: include_str!("../../../tests/corpus/temporal/event-window.native"),
+            source: "",
             detect: Detect::Form("temporal/clock"),
-            expect: Expect::Refused {
-                stage: "admit",
-                cause: "MissingTemporalClockSelection",
-            },
+            expect: Expect::Unprobed,
         },
     },
     Unproduced {
         id: "temporal/deadline",
         keys: &["QSL-3049"],
         probe: Probe {
-            source: include_str!("../../../tests/corpus/protocol/await.native"),
+            source: "",
             detect: Detect::Form("temporal/deadline"),
-            expect: Expect::Refused {
-                stage: "admit",
-                cause: "MissingTemporalClockSelection",
-            },
+            expect: Expect::Unprobed,
         },
     },
     Unproduced {
@@ -907,12 +1019,9 @@ const UNPRODUCED: &[Unproduced] = &[
         id: "temporal/window",
         keys: &["QSL-3049"],
         probe: Probe {
-            source: include_str!("../../../tests/corpus/temporal/fixed-window.native"),
+            source: "",
             detect: Detect::Form("temporal/window"),
-            expect: Expect::Refused {
-                stage: "admit",
-                cause: "MissingTemporalClockSelection",
-            },
+            expect: Expect::Unprobed,
         },
     },
     Unproduced {
@@ -921,15 +1030,6 @@ const UNPRODUCED: &[Unproduced] = &[
         probe: Probe {
             source: "",
             detect: Detect::Form("claim/analysis_claim"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "claim/synthesis_request",
-        keys: &["QSL-3051"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("claim/synthesis_request"),
             expect: Expect::Unprobed,
         },
     },
@@ -943,38 +1043,11 @@ const UNPRODUCED: &[Unproduced] = &[
         },
     },
     Unproduced {
-        id: "correspondence/abstraction_relation",
-        keys: &["QSL-3052"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("correspondence/abstraction_relation"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
         id: "correspondence/binding_role",
         keys: &["QSL-3052"],
         probe: Probe {
             source: "",
             detect: Detect::Form("correspondence/binding_role"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "correspondence/component_composition",
-        keys: &["QSL-3052"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("correspondence/component_composition"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "correspondence/implementation_guarantee",
-        keys: &["QSL-3052"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("correspondence/implementation_guarantee"),
             expect: Expect::Unprobed,
         },
     },
@@ -993,15 +1066,6 @@ const UNPRODUCED: &[Unproduced] = &[
         probe: Probe {
             source: "",
             detect: Detect::Form("correspondence/source_locus"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "model/event_type",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("model/event_type"),
             expect: Expect::Unprobed,
         },
     },
@@ -1069,15 +1133,6 @@ const UNPRODUCED: &[Unproduced] = &[
         },
     },
     Unproduced {
-        id: "model/tuple_value_type",
-        keys: &["QSL-3053"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("model/tuple_value_type"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
         id: "model/value_type",
         keys: &["QSL-3053"],
         probe: Probe {
@@ -1117,51 +1172,12 @@ const UNPRODUCED: &[Unproduced] = &[
         },
     },
     Unproduced {
-        id: "scalar_type/carried_quantity",
-        keys: &["QSL-3055"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("scalar_type/carried_quantity"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "scalar_type/dimension_equivalence",
-        keys: &["QSL-3055"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("scalar_type/dimension_equivalence"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
         id: "value/collection_value",
         keys: &["QSL-3055"],
         probe: Probe {
             source: "",
             detect: Detect::Form("value/collection_value"),
             expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "extension/extension_form",
-        keys: &["QSL-3056"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Form("extension/extension_form"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "protocol/compensation",
-        keys: &["QSL-3056"],
-        probe: Probe {
-            source: include_str!("../../../tests/corpus/protocol/original/compensation.native"),
-            detect: Detect::Form("protocol/compensation"),
-            expect: Expect::Refused {
-                stage: "select",
-                cause: "MissingImport",
-            },
         },
     },
 ];
@@ -1185,9 +1201,6 @@ fn probe_verdict(entry: &Unproduced) -> Result<(), String> {
     let outcome = try_compile_and_read(entry.id, probe.source, model_pool());
     match (&probe.expect, outcome) {
         (Expect::Unprobed, _) => Ok(()),
-        (Expect::Admitted, Ok(package)) if !detected(&probe.detect, &package) => Ok(()),
-        (Expect::Admitted, Ok(_)) => Err("the probe now emits the item".to_owned()),
-        (Expect::Admitted, Err(refusal)) => Err(format!("the probe is now refused: {refusal:?}")),
         (Expect::Refused { .. }, Ok(package)) if detected(&probe.detect, &package) => {
             Err("the probe is now admitted and emits the item".to_owned())
         }
@@ -1353,8 +1366,9 @@ fn without_source(universe: &BTreeSet<String>) -> BTreeSet<String> {
 /// combination of checked-in documents of the identities it names.
 ///
 /// Not seen: source text written inline in Rust, a source whose domain package
-/// or library dependency exists only as Rust values, and a source the front
-/// end or the reader refuses.
+/// or library dependency exists only as Rust values, a source admitted only
+/// when its request supplies clocks, libraries or extension definitions, and a
+/// source the front end or the reader refuses.
 fn corpus_packages() -> &'static [(String, Value)] {
     static CORPUS: std::sync::OnceLock<Vec<(String, Value)>> = std::sync::OnceLock::new();
     CORPUS.get_or_init(|| {
@@ -1392,6 +1406,7 @@ fn a_wrong_expected_operation_names_the_source_case_and_identity() {
         name: "altered-boolean-expectation",
         source: CASES[0].source,
         documents: &[],
+        supplies: Supplies::NOTHING,
         operations: &["filament.op.integer.add"],
         forms: &[],
     };
@@ -1680,7 +1695,7 @@ fn the_unproduced_list_shrinks_only_by_a_covering_case() {
 #[trace("TC-3218", "FR-350-AC-25")]
 fn each_alteration_of_the_unproduced_list_fails_naming_the_entry() {
     const OPERATION: &str = "filament.op.collection.index";
-    const FORM: &str = "extension/extension_form";
+    const FORM: &str = "value/collection_value";
     let published = published();
     let produced = produced();
     let failures = |list: &[Unproduced]| run_list(list, &published, &produced, false).failures;
@@ -1798,22 +1813,18 @@ fn the_named_unproduced_owners_are_listed_with_their_keys() {
     assert_eq!(keyed("source-declared-object-navigation"), ["QSL-3047"]);
 }
 
-/// Only the filed tickets own an unproduced entry: QSL-3044..QSL-3056 (the
-/// QSL-2051 groups) and the long-standing owners of the named non-producers.
+/// Only the filed tickets own an unproduced entry.
 #[test]
 #[trace("FR-350")]
 fn listed_keys_are_among_the_filed_set() {
-    const FILED: &[&str] = &["IR-1491", "IR-1492", "IR-1320", "STD-654"];
+    const FILED: &[&str] = &[
+        "IR-1320", "IR-1491", "QSL-3047", "QSL-3048", "QSL-3049", "QSL-3051", "QSL-3052",
+        "QSL-3053", "QSL-3054", "QSL-3055", "STD-654",
+    ];
     let outside: Vec<_> = UNPRODUCED
         .iter()
         .flat_map(|entry| entry.keys.iter().map(move |key| (entry.id, *key)))
-        .filter(|(_, key)| {
-            let group = key
-                .strip_prefix("QSL-")
-                .and_then(|number| number.parse::<u32>().ok())
-                .is_some_and(|number| (3044..=3056).contains(&number));
-            !group && !FILED.contains(key)
-        })
+        .filter(|(_, key)| !FILED.contains(key))
         .collect();
     assert!(
         outside.is_empty(),
