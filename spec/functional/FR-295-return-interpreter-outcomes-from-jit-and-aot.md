@@ -81,7 +81,8 @@ tuples. The gate's default seed is `0x51534C2D4A495431` (the ASCII bytes
   functions declared earlier in the unit, so no unit recurses.
 - **Admission.** Only units that `check` admits count toward the requested
   count; the generator draws again for a unit `check` refuses, and the gate
-  reports how many it discarded.
+  reports how many it discarded. The gate bounds those refused draws and
+  fails when they pass the bound (FR-563 `generator-exhausted`).
 - **Arguments.** Each function gets 4 argument tuples within its declared
   parameter types, among them each bounded `Int` parameter's two range ends
   and, where a body divides by a parameter, a zero divisor.
