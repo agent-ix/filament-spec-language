@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Per-family accept and reject coverage, and the pinned `flips_with` keys,
-//! of the collections, operations and protocol corpora (QSL-2040,
-//! QSL-2041, QSL-2043).
+//! Per-family accept and reject coverage of the collections, operations and
+//! protocol corpora, and the pinned `flips_with` keys of the last two.
 
 use super::{corpus_root, Expectation};
 
@@ -59,6 +58,67 @@ pub(super) fn assert_flips(area: &str, flips: &[(&str, &str)]) {
         );
     }
 }
+
+pub(super) const COLLECTION_FAMILIES: &[Family] = &[
+    Family {
+        name: "set",
+        accepting: &["coll-set-ok", "r-set-dedupe", "r-set-eq"],
+        rejecting: &["coll-set-index-bad"],
+    },
+    Family {
+        name: "bag",
+        accepting: &["coll-bag-ok", "r-bag"],
+        rejecting: &["coll-bag-bad"],
+    },
+    Family {
+        name: "ordered set",
+        accepting: &["coll-oset-ok", "r-oset"],
+        rejecting: &["coll-oset-bad"],
+    },
+    Family {
+        name: "sequence",
+        accepting: &["coll-seq-ok", "coll-nested-seq-ok", "r-seq"],
+        rejecting: &["coll-dropfirst-bad", "coll-index-unproved-bad"],
+    },
+    Family {
+        name: "map",
+        accepting: &["coll-map-ok", "r-map-lookup"],
+        rejecting: &["map-key-bad"],
+    },
+    Family {
+        name: "aggregate",
+        accepting: &[
+            "agg-sum-named",
+            "agg-count-ok",
+            "agg-size-range-ok",
+            "r-sum",
+        ],
+        rejecting: &[
+            "agg-size-range-bad",
+            "agg-size-unbounded-coll-bad",
+            "agg-sum-narrow-bad",
+        ],
+    },
+    Family {
+        name: "quantifier",
+        accepting: &["quant-forall-ok", "quant-nested", "quant-range-fact"],
+        rejecting: &[
+            "quant-nonbool-bad",
+            "quant-binder-shadow",
+            "quant-unbounded-int",
+        ],
+    },
+    Family {
+        name: "function call",
+        accepting: &["fn-call-ok", "fn-call-enum-arg", "fn-call-record-arg"],
+        rejecting: &["fn-call-arity-bad", "fn-call-argrange-bad"],
+    },
+    Family {
+        name: "recursion",
+        accepting: &["fn-recursion-ok", "r-recursion"],
+        rejecting: &["fn-recursion-nodecrease-bad", "fn-recursion-nomeasure-bad"],
+    },
+];
 
 pub(super) const OPERATION_FAMILIES: &[Family] = &[
     Family {
