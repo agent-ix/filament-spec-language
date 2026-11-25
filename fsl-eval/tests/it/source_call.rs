@@ -365,7 +365,7 @@ fn one_check_refusal(declarations: PackageDeclarations) -> fsl_semantics::check:
     refusals.remove(0)
 }
 
-/// Trace: FR-091-AC-39, TC-394
+#[trace("FR-091-AC-39", "TC-394")]
 #[test]
 fn complete_value_requires_one_admitted_division_law_but_mod_needs_none() {
     for operator in ["div", "rem"] {
