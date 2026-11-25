@@ -44,3 +44,14 @@ is recorded as FND-002 in the code-review SR, not here.
 - Semantic review: skipped. The caller did not ask for it, and the code review covered
   intent against the pinned reader.
 - Plan completion: not assessed
+
+## Disposition review round 1
+
+Re-checked at head 79bba218c3aa1129ba8f3d07d138aced84c00abd.
+
+- FR-901-AC-1 still has its verifying tests and its `implements` tag.
+- New `implements` tags FR-093-AC-33 and FR-093-AC-50 on `Lowering::literal_at` and
+  `Lowering::literal_value` are confirmed and listed by `quire trace`.
+- The new nested-option unit test is untagged. That is recorded as FND-003 in the code-review
+  SR (SR-967175026302197768900474181941935084867) and is not repeated here.
+- No new gap findings. The placeholder row stands.

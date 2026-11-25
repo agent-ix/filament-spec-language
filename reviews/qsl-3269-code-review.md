@@ -65,3 +65,64 @@ reader's rule.
 | --- | --- | --- | --- |
 | FND-001 | medium | The test now asserts that non-Option (Int, Boolean) history initials are a `reference` to a `literal` node. FSpec FR-375 `HistoryInitial` and AC-36 (pinned 691ac5a) admit a reference only to a `value`/`option_value` node of the history's `Option<T>` type, and say a reference at a non-Option history refuses. The pinned reader b81baf1 still admits it, so this shape will break the way `none` did once IR implements AC-36. The behaviour is from before this PR, but the diff asserts it again. | fsl-package/src/emit/tests/admission_corpus.rs:4302-4306; fsl-semantics/src/check/lowering/refinement_rows.rs:226-229 |
 | FND-002 | low | The nested-option branch, an absent payload inside a present option (`option_types` non-empty), lowers to a `literal` node referenced by the `option_value`. The `option_types.is_empty()` guard and its comment have no test, so removing the guard or inverting it would go unnoticed. | fsl-semantics/src/check/lowering/refinement_rows.rs:213-218 |
+
+## Disposition review round 1
+
+Checked head 79bba218c3aa1129ba8f3d07d138aced84c00abd. The new commits are 223a87e74b (fix),
+31cb3f22f6 (tags) and 79bba218c3 (these review records, with one heading edit).
+
+- **Breadth of the behaviour change.** Every history initial that is not a present option now
+  becomes the row's own inline `literal` term, through `Lowering::literal_value`. That function
+  is split out of `literal_at`, so the node literals and the history initials share one
+  value-to-literal decision.
+  - Scalar kinds keep the kind they had before: Boolean, Integer, Rational, Decimal, Float,
+    Text/String, Quantity, Uuid, Timestamp, Bytes and JsonObject. Absent options become `none`.
+  - Composite, collection, reference, population, union and map values fault exactly as
+    `literal_at` did before.
+  - Top-level enums stay inline.
+  - Inside a present option, enum payloads stay inline and every other payload stays a node,
+    so the absent payload in `Option<Option<T>>` is a `literal` node.
+  - The node path of `literal_at` is unchanged for expression literals, because its enum
+    branch moved ahead of the `literal_value` call.
+- **Readers of the change.** No FSL code reads a history `initial` term back:
+  - fsl-replay and analyze compute histories from `CheckedRefinement.history`;
+  - `refinement_view` refuses refinements that have histories;
+  - contract-codegen has no history handling.
+- **Author's r2 logs at 79bba218, all exit 0:**
+  - package lib (66 passed);
+  - semantics lib (192 passed) and semantics it (89 passed);
+  - analyze it_model_check (30 passed) and it_refinement (92 passed);
+  - fsl-replay refinement_history (29 passed);
+  - conformance emitted_packages_are_admitted (2 passed);
+  - clippy semantics, clippy package, clippy analyze `--no-deps`, and the workspace check.
+- **Red runs.** r2-mutant-old (the package test against the 7d880035 lowering) fails on the
+  Int initial. r2-mutant-nested (the guard mutated) fails on the nested test. Both new tests
+  therefore discriminate.
+- **Changed reader-refusal test.**
+  `the_reader_refuses_a_history_row_whose_concrete_type_is_not_an_object_type` now puts the
+  row's `type` node (an `Int[0, 1]` bounded domain, not an object type) into `concrete_type`.
+  Before, it used the `literal` node, which no longer exists. The mutation stays a non-object
+  node, and the test still asserts the refusal path `/histories/0/concrete_type`, so it proves
+  the same reader behaviour.
+  - Pre-existing and not caused by this PR: the test's tag FR-901-AC-4 ("update is
+    ill-typed... refuses at S3") does not describe a reader refusal of `concrete_type`.
+- **Tags from 31cb3f22f6.** `#[implements("FR-093-AC-33", "FR-093-AC-50")]` on `literal_at` and
+  `literal_value` is justified:
+  - AC-33: `literal_value` chooses `value_kind` `quantity` with the reduced magnitude, and
+    `literal_at` builds the `literal` node typed at the unit node.
+  - AC-50: `literal_value` keeps the profile-normalized text as `value_kind` `text`, and
+    `literal_at` types the node at the `Text[...]` node.
+  - `quire trace` lists all four as `implements`. Keep them.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | low | The new unit test `an_absent_payload_inside_a_present_option_is_a_node_the_option_value_names` has no `#[trace]` tag, against the rule that every new test carries one for the criteria it asserts. Nearest FSL criterion: FR-901-AC-1 (TC-2540), as on the package test. | fsl-semantics/src/check/lowering/refinement_rows.rs:381 |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | 223a87e74b writes every non-present-option initial as an inline `literal` term. A `reference` remains only for a present option's `option_value`, per FSpec FR-375 HistoryInitial/AC-36. The package test asserts the inline term for integer, boolean, text, rational, decimal and none, and reader admission for each. |
+| FND-002 | fixed | 223a87e74b adds a unit test for `Option<Option<Int[0, 1]>>` = present(none). It asserts an `option_value` of the declared type whose member references a `none` `literal` node of the inner type. r2-mutant-nested shows the test fails when the branch is mutated. |
