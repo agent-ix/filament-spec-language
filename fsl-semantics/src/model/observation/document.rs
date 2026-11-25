@@ -3,7 +3,7 @@
 //! (check 1), admitting its populations and objects (checks 5 to 8) and
 //! resolving `self`, `parameters` and `result` (checks 9 and 10).
 
-use super::{admission_record, AdmissionRecordExt};
+use super::{AdmissionRecordExt, admission_record};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use filament_exact::{
@@ -13,12 +13,12 @@ use filament_exact::{
 use fsl_foundation::diagnostic::Code;
 
 use super::helpers::object_reference;
-use super::tree::{read_raw_value, Json, Object};
+use super::tree::{Json, Object, read_raw_value};
 use super::{
-    check_document_valid, collection_tag, fault, incomplete, population_universe, refuse,
     AdmissionFailure, AdmissionRecord, DocumentRef, ModelView, NativeKind, ObservationLimits,
     OutOfRange, PathStep, PostStateRange, RawForm, RawNative, RawNativeKind, RawValue, ReadMeter,
-    SelectedObject, SnapshotValue,
+    SelectedObject, SnapshotValue, check_document_valid, collection_tag, fault, incomplete,
+    population_universe, refuse,
 };
 use crate::model::object_environment::{
     ObjectEnvironment, ReferenceOriginBuilder, ReferenceOriginLocus, ReferenceOriginPrefix,
@@ -2587,11 +2587,26 @@ fn admit_value<'a: 'w, 'w>(
                         let mut value =
                             admit_leaf(references, form, value_type, witness.as_deref_mut())
                                 .map_err(|record| {
-                                    // A refusal inside a payload object (a
-                                    // Quantity's magnitude) names its own
-                                    // steps below the value.
+                                    // For a malformed native member inside a
+                                    // collection element, the typed path ends
+                                    // at the element; `fields.member` names
+                                    // the payload key. Keep any parent path
+                                    // below the element (for example
+                                    // Quantity's `magnitude`) and let
+                                    // `refusal_steps` add the member to the
+                                    // document pointer.
+                                    let mut nested = record.path.clone();
+                                    let collection_element =
+                                        path.iter().any(|step| matches!(step, PathStep::Index(_)));
+                                    let names_member =
+                                        record.fields.get("member").is_some_and(|member| {
+                                            nested.last() == Some(&PathStep::Field(member.clone()))
+                                        });
+                                    if collection_element && names_member {
+                                        nested.pop();
+                                    }
                                     let mut full = path.clone();
-                                    full.extend(record.path.iter().cloned());
+                                    full.extend(nested);
                                     record.at(full)
                                 })?;
                         if let Some(reference) = raw_reference {
