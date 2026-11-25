@@ -56,6 +56,11 @@ impl fmt::Debug for NodeId {
 ///     Node { kind, value_type: filament_exact::ValueType::Boolean, location }
 /// }
 /// ```
+/// Its public name remains usable outside the checker:
+/// ```no_run
+/// use fsl_semantics::check::Node;
+/// fn holds(node: Node) -> Node { node }
+/// ```
 /// Nor does retyping a clone of a checked node:
 /// ```compile_fail,E0616
 /// use fsl_semantics::check::Node;
@@ -425,6 +430,17 @@ impl Node {
 /// `Drop` run over one flat vector and never recurse, however deep the
 /// expression. Only `check` builds one. A node no path from the root
 /// reaches is never read.
+///
+/// Code outside `check` can name the checked body but cannot forge one:
+/// ```compile_fail,E0451
+/// use fsl_semantics::check::CheckedBody;
+/// let forged = CheckedBody { data: todo!(), identity: todo!() };
+/// ```
+/// Its public name remains usable:
+/// ```no_run
+/// use fsl_semantics::check::CheckedBody;
+/// fn holds(body: CheckedBody) -> CheckedBody { body }
+/// ```
 #[derive(Clone)]
 pub struct CheckedBody {
     /// Keep the arena and its derived cache together without growing the
