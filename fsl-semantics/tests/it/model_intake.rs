@@ -117,6 +117,146 @@ fn the_model_reader_cohort_admits_dimensions_and_scaled_units() {
     );
 }
 
+fn package_with_dimension_and_unit_graph() -> Value {
+    let mut document: Value = serde_json::from_slice(include_bytes!(
+        "../../../tests/fixtures/spine-model.semantic-ir.json"
+    ))
+    .expect("the authored model fixture is JSON");
+    let origin = document["types"][0]["origin"].clone();
+    document["dimensions"] = serde_json::json!([{
+        "identity": "ix://acme/orders/dimension/Time",
+        "name": "Time",
+        "base": true,
+        "terms": [],
+        "origin": origin
+    }]);
+    document["units"] = serde_json::json!([
+        {
+            "identity": "ix://acme/orders/unit/s",
+            "name": "s",
+            "dimension": "ix://acme/orders/dimension/Time",
+            "scale": "1",
+            "offset": "0",
+            "origin": origin
+        },
+        {
+            "identity": "ix://acme/orders/unit/ms",
+            "name": "ms",
+            "dimension": "ix://acme/orders/dimension/Time",
+            "target": "ix://acme/orders/unit/s",
+            "scale": "1/1000",
+            "offset": "0",
+            "origin": origin
+        }
+    ]);
+    document
+}
+
+fn intake_reference_refusals(document: &Value) -> Vec<fsl_semantics::model::refusal::ModelRefusal> {
+    let bytes = serde_json::to_vec(document).expect("serialize the mutated model");
+    let packages = package_input([bytes.as_slice()]).expect("the package input parses");
+    let selection = DomainPackageRef {
+        identity: "acme/orders".to_owned(),
+    };
+    let (_, admitted) = admit(
+        &selection.identity,
+        &packages,
+        fsl_foundation::IntakeLimits::default(),
+    )
+    .expect("the matching package selection admits before semantic validation");
+    read_domain_package(selection, &admitted).expect_err("the missing graph reference refuses")
+}
+
+fn assert_reference_refusal(
+    refusals: &[fsl_semantics::model::refusal::ModelRefusal],
+    node: &str,
+    reference: &str,
+    origin: &Value,
+    path: &str,
+    member: &str,
+) {
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(refusals[0].code, fsl_foundation::Code::MissingDeclaration);
+    assert_eq!(refusals[0].cause.as_str(), "missing-name");
+    assert_eq!(
+        refusals[0].cause,
+        fsl_semantics::model::refusal::ModelRefusalCause::IntakeMissingDeclaration {
+            node: node.to_owned(),
+            reference: reference.to_owned(),
+            origin: origin.clone(),
+            path: path.parse().expect("a semantic-IR JSON pointer"),
+            member: member.parse().expect("an FSL member path"),
+        }
+    );
+}
+
+/// FSpec FR-154 maps an unresolved dimension reference from either a unit's
+/// dimension or a dimension term to `missing_declaration`/`missing-name` at
+/// the exact referring member.
+#[trace("TC-145", "FR-056-AC-5")]
+#[test]
+fn intake_maps_an_unresolved_dimension_term_to_missing_name() {
+    let mut term_document = package_with_dimension_and_unit_graph();
+    term_document["dimensions"] = serde_json::json!([
+        term_document["dimensions"][0].clone(),
+        {
+            "identity": "ix://acme/orders/dimension/Rate",
+            "name": "Rate",
+            "base": false,
+            "terms": [{
+                "dimension": "ix://acme/orders/dimension/Missing",
+                "exponent": "1"
+            }],
+            "origin": term_document["dimensions"][0]["origin"].clone()
+        }
+    ]);
+    let term_origin = term_document["dimensions"][1]["origin"].clone();
+    assert_reference_refusal(
+        &intake_reference_refusals(&term_document),
+        "ix://acme/orders/dimension/Rate",
+        "ix://acme/orders/dimension/Missing",
+        &term_origin,
+        "/dimensions/1/terms/0/dimension",
+        "Dimension.terms[0].dimension",
+    );
+}
+
+/// FSpec FR-154 maps an unresolved unit dimension to
+/// `missing_declaration`/`missing-name` at `Unit.dimension`.
+#[trace("TC-145", "FR-056-AC-5")]
+#[test]
+fn intake_maps_an_unresolved_unit_dimension_to_missing_name() {
+    let mut unit_document = package_with_dimension_and_unit_graph();
+    unit_document["units"][0]["dimension"] = "ix://acme/orders/dimension/Missing".into();
+    let unit_origin = unit_document["units"][0]["origin"].clone();
+    assert_reference_refusal(
+        &intake_reference_refusals(&unit_document),
+        "ix://acme/orders/unit/s",
+        "ix://acme/orders/dimension/Missing",
+        &unit_origin,
+        "/units/0/dimension",
+        "Unit.dimension",
+    );
+}
+
+/// FSpec FR-154 maps an unresolved unit target to `missing_declaration`/
+/// `missing-name` at `Unit.target`.
+#[trace("TC-145", "FR-056-AC-5")]
+#[test]
+fn intake_maps_an_unresolved_unit_target_to_missing_name() {
+    let mut document = package_with_dimension_and_unit_graph();
+    document["units"][1]["target"] = "ix://acme/orders/unit/Missing".into();
+    let origin = document["units"][1]["origin"].clone();
+    assert_reference_refusal(
+        &intake_reference_refusals(&document),
+        "ix://acme/orders/unit/ms",
+        "ix://acme/orders/unit/Missing",
+        &origin,
+        "/units/1/target",
+        "Unit.target",
+    );
+}
+
 /// Resolves to the checked-out `agent-ix-extraction-frontend` git
 /// dependency's own `fixtures` directory
 /// (`crates/extraction-frontend/fixtures` in the pinned
