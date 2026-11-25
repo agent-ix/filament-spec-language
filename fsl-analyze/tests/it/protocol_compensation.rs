@@ -1143,7 +1143,7 @@ fn assert_keys_determine_successors(system: &ProtocolSystem<'_, Sc>) -> usize {
     };
     let mut known: std::collections::BTreeMap<Vec<u8>, Successors> =
         std::collections::BTreeMap::new();
-    let mut pending = system.initial();
+    let mut pending = system.try_initial().expect("initial states settle");
     let mut again = 0;
     while let Some(state) = pending.pop() {
         let successors = system
@@ -1404,7 +1404,11 @@ fn bounded_cends(
     use fsl_eval::simulation::TransitionSystem;
 
     const MAX_STATES: usize = 256;
-    let mut queue: VecDeque<_> = system.initial().into_iter().collect();
+    let mut queue: VecDeque<_> = system
+        .try_initial()
+        .expect("initial states settle")
+        .into_iter()
+        .collect();
     let mut seen = BTreeSet::new();
     while let Some(state) = queue.pop_front() {
         let (key, _) = SubjectSystem::state_key(system, &state).ok()?;
@@ -1443,6 +1447,7 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
     stop_limits.limits.max_transitions = 1;
     let stopped = check_protocol(
         ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: case.subject("Pay"),
             item: ModelCheckItem::DeadlockFreedom,
@@ -1477,6 +1482,7 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
         limits.limits.max_transitions = 40_000;
         check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: case.subject("Pay"),
                 item: ModelCheckItem::DeadlockFreedom,
@@ -1839,6 +1845,7 @@ fn requires_bound(attempts: &str) -> Vec<(Vec<u32>, DomainKind)> {
     let case = Case::new(&body, &[0]);
     let refused = check_protocol(
         ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: case.subject("Pay"),
             item: ModelCheckItem::DeadlockFreedom,
@@ -1935,6 +1942,7 @@ fn an_attempt_type_is_bound_at_its_own_templates_node() {
     let case = Case::new(&body, &[0]);
     let refused = check_protocol(
         ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: case.subject("Pay"),
             item: ModelCheckItem::DeadlockFreedom,

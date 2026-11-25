@@ -13,7 +13,7 @@ relationships:
 Verify emission and I2 read-back at 100,000 deep, and the stratified body
 grammar of every emitted package.
 
-Scope: FR-264-AC-1, FR-264-AC-2, FR-264-AC-6, FR-264-AC-7, FR-264-AC-8.
+Scope: FR-264-AC-1, FR-264-AC-2, FR-264-AC-6, FR-264-AC-7, FR-264-AC-8, FR-264-AC-9.
 
 ## Test Procedure
 
@@ -37,8 +37,10 @@ Run every step on a thread spawned with a 512 KiB stack unless the step says oth
    strict-read and lending-cursor work against those bounds. With the same
    checked input and other stage ceilings unchanged, set only `emit.output_bytes`
    to the published default 16777216 and emit again (FR-264-AC-8).
+6. Emit a package whose source map or later typed rows are large, at bound `N / 10`
+   and at `N - 1`, counting allocations of each emit (FR-264-AC-9).
 
-Tag the tests `#[trace("TC-738", "FR-264-AC-6")]`, `#[trace("TC-738", "FR-264-AC-7")]`, `#[trace("TC-738", "FR-264-AC-1")]`, `#[trace("TC-738", "FR-264-AC-2")]`, `#[trace("TC-738", "FR-264-AC-8")]`.
+Tag the tests `#[trace("TC-738", "FR-264-AC-6")]`, `#[trace("TC-738", "FR-264-AC-7")]`, `#[trace("TC-738", "FR-264-AC-1")]`, `#[trace("TC-738", "FR-264-AC-2")]`, `#[trace("TC-738", "FR-264-AC-8")]` and `#[trace("TC-738", "FR-264-AC-9")]`.
 
 ## Expected Results
 
@@ -57,3 +59,5 @@ Tag the tests `#[trace("TC-738", "FR-264-AC-6")]`, `#[trace("TC-738", "FR-264-AC
   and native work within the declared bounds. Under the unchanged published
   default it instead refuses `OutputLimit` naming `emit.output_bytes`, configured
   bound 16777216 and actual first unpaid byte 16777217, with no partial package.
+- Step 6: the emit at `N / 10` allocates under two thirds of the emit at
+  `N - 1` and returns the same `OutputLimit` refusal.

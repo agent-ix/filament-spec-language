@@ -98,7 +98,10 @@ pub(crate) use derived_item::{NoLetters, derived_target};
 pub use derived_item::{PackageDeadlockSubject, deadlock_model_item};
 pub use exact::{ExactProbabilityEvidence, exact_probabilistic_item};
 #[cfg(feature = "test-support")]
-pub use exact::{exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered};
+pub use exact::{
+    exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered,
+    settle_exact_engine_report,
+};
 pub use invariant_item::{PackageInvariantSubject, PackageItemInputs};
 pub(crate) use items::admission;
 pub use items::{

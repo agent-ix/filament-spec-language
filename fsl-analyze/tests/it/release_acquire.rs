@@ -100,7 +100,10 @@ fn step(
 
 /// `state` after the fork.
 fn forked(system: &ProtocolSystem<'_, Ra>) -> RaState {
-    let initial = system.initial().remove(0);
+    let initial = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     system
         .successors(&initial)
         .expect("expands")
@@ -1324,7 +1327,10 @@ fn an_ra_counterexample_replays_by_its_message_depths() {
     // Each carried component is the memory member of the state its step
     // reaches.
     let system = case.system(&ra, Ra::default()).expect("builds");
-    let mut state = system.initial().remove(0);
+    let mut state = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     for step in &counterexample.prefix {
         state = system
             .successors(&state)

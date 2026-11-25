@@ -149,6 +149,7 @@ fn put(
             concrete: pre,
             history: HistoryValues::default(),
             abstract_states: vec![mapped.visible],
+            candidate_clock_blocks: vec![0],
             abstract_protocol_states: Vec::new(),
         },
     )
@@ -382,4 +383,71 @@ fn a_replay_over_the_budget_settles_incomplete_not_parity() {
         })
     );
     assert_eq!(record.execution, Execution::ResourceIncomplete);
+}
+
+/// FR-126-AC-26 (TC-521): `check_refinement` keys its initial set one state at
+/// a time and refuses at `max_states` before keying the rest. Three equal
+/// initial states are all keyed under the default budget, but only the first
+/// under `max_states` 0, which refuses with `MaxStates` naming 0.
+#[trace("TC-521", "FR-126-AC-26")]
+#[test]
+fn refinement_refuses_at_max_states_before_keying_the_later_initial_states() {
+    let world = RingWorld::with(
+        Variant::default(),
+        &crate::ring_world::ring_is_queue("items = sequence[];"),
+    );
+    let check = |max_states: usize| {
+        let mut simulation = world.concrete_request(UNLIMITED);
+        let first = simulation.initial[0].clone();
+        simulation.initial = vec![first.clone(), first.clone(), first];
+        let mut limits = ModelCheckLimits::default();
+        limits.limits.max_states = max_states;
+        let before = fsl_analyze::model_check::keyed_initial_states();
+        let outcome = check_refinement(
+            RefinementCheckRequest {
+                refinement: world.refinement(),
+                concrete: ModelSubject {
+                    simulation,
+                    proof_bounds: Vec::new(),
+                },
+                abstract_package: world.package(),
+                abstract_initial: vec![world.abstract_initial()].into(),
+                abstract_protocol_binding: None,
+                max_depth: Some(0),
+                limits,
+            },
+            &Cancel::new(),
+        )
+        .expect("the refinement is checked")
+        .safety;
+        (
+            outcome,
+            fsl_analyze::model_check::keyed_initial_states() - before,
+        )
+    };
+    let (outcome, keyed) = check(ModelCheckLimits::default().limits.max_states);
+    assert!(
+        matches!(outcome, SafetyOutcome::BoundReached { depth: 0, .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(keyed, 3, "every initial state is keyed within the budget");
+    let (outcome, keyed) = check(0);
+    assert!(
+        matches!(
+            outcome,
+            SafetyOutcome::Stopped {
+                cause: IncompleteCause::ResourceExhausted,
+                limit: Some(ReachedLimit {
+                    limit: ModelCheckLimit::MaxStates,
+                    value: 0,
+                }),
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        keyed, 0,
+        "the zero-budget crossing root is not constructed or keyed"
+    );
 }

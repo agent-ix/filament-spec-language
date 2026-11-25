@@ -1153,6 +1153,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "sha2",
  "thiserror",
 ]
 
@@ -2537,6 +2538,13 @@ name = "smallvec"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9be42f50aa861c555654aa3a37f52f4b1074bacf4e48fe0ef7fa584e80f1f0f"
+
+[[package]]
+name = "smt-proof-consumer"
+version = "0.1.0"
+dependencies = [
+ "fsl-replay",
+]
 
 [[package]]
 name = "spin"

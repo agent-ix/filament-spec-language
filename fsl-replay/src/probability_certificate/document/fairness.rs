@@ -4,7 +4,7 @@
 use super::*;
 use filament_exact::{Identifier, NodeKey, NodePathIter};
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
-use fsl_foundation::node_wire::{project_node_key, NodeIdentitySink};
+use fsl_foundation::node_wire::{NodeIdentitySink, project_node_key};
 use quire_canonical::{Encode, Error, Sink, Writer};
 
 /// Actual bounded fair-proof checking stages, for default-off observation.
@@ -111,6 +111,34 @@ struct WireTarget<'a> {
 }
 
 pub(super) fn admit(claim: &CheckedProbabilisticClaim) -> Result<(), ProbabilityDocumentError> {
+    if matches!(claim.form, ProbForm::MeanTime { .. }) {
+        return if !claim.fairness.is_empty()
+            && matches!(claim.scheduler, ProbScheduler::Every)
+            && fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
+                == Some(fsl_semantics::check::TemporalProfile::InfiniteTrace)
+        {
+            Ok(())
+        } else {
+            Err(ProbabilityDocumentError::Unsupported)
+        };
+    }
+    if matches!(
+        &claim.form,
+        ProbForm::Reach {
+            target: ReachTarget::Eventually(_),
+            ..
+        }
+    ) {
+        return if !claim.fairness.is_empty()
+            && matches!(claim.scheduler, ProbScheduler::Every)
+            && fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
+                == Some(fsl_semantics::check::TemporalProfile::InfiniteTrace)
+        {
+            Ok(())
+        } else {
+            Err(ProbabilityDocumentError::Unsupported)
+        };
+    }
     if matches!(
         &claim.form,
         ProbForm::Quantile { .. }
@@ -410,6 +438,451 @@ pub(super) fn records(
         .map_err(|_| ProbabilityDocumentError::KeySizeOverflow)?;
     records.extend(rows.into_iter().map(|(_, record)| record));
     Ok(records)
+}
+
+#[derive(Clone)]
+struct FairGraphAction {
+    identity: Option<fsl_eval::simulation::model::ScheduledIdentity>,
+    successors: Vec<usize>,
+}
+
+struct FairGraphState {
+    actions: Vec<FairGraphAction>,
+    enabled: Vec<fsl_eval::simulation::model::ScheduledIdentity>,
+}
+
+#[derive(Clone)]
+struct FairObligation {
+    operation: String,
+    kind: FairnessKind,
+    whole: bool,
+    identity: Option<fsl_eval::simulation::model::ScheduledIdentity>,
+}
+
+/// Independently expand a fair eventuality's concrete model graph and return
+/// every non-target state in a maximal fair end component.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn non_target_fair_end_component_states(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    graph: &CheckerGraph,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    identity_limits: fsl_foundation::IdentityLimits,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+) -> Result<std::collections::BTreeSet<ProbabilityProductKey>, ProbabilityDocumentError> {
+    let ProbForm::Reach {
+        target: ReachTarget::Eventually(predicate),
+        ..
+    } = &claim.form
+    else {
+        return Err(ProbabilityDocumentError::Unsupported);
+    };
+    let binding = claim_binding(system, claim)?;
+    let reference = binding.as_ref().map(|bound| &bound.reference);
+    let workload = claim_workload(system, claim)?;
+    Ok(fair_end_component_keys(
+        system,
+        graph,
+        Some(predicate),
+        reference,
+        workload,
+        &claim.fairness,
+        true,
+        limits,
+        cancel,
+        identity_limits,
+        meter,
+        storage,
+    )?
+    .into_iter()
+    .flatten()
+    .collect())
+}
+
+/// Independently reconstruct fair maximal end components for an exact
+/// checker graph. When `exclude_targets` is true, accepting reachability
+/// states are omitted from the recurrent set.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn fair_end_component_keys(
+    system: &ModelSystem<'_>,
+    graph: &CheckerGraph,
+    target: Option<&fsl_semantics::check::CheckedPredicate>,
+    reference: Option<&ObjectReference>,
+    workload: Option<&Workload>,
+    constraints: &[filament_semantic_value::fairness::FairnessConstraint],
+    exclude_targets: bool,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    identity_limits: fsl_foundation::IdentityLimits,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+) -> Result<Vec<Vec<ProbabilityProductKey>>, ProbabilityDocumentError> {
+    use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
+    use fsl_eval::simulation::model::{ModelKeyExpansionError, ScheduledIdentity};
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+    let captured = super::cyclic::CapturedStates::default();
+    let expanded =
+        super::cyclic::enumerate_graph_capturing::<fsl_semantics::check::CheckedPredicate>(
+            system,
+            target,
+            reference,
+            workload,
+            limits,
+            cancel,
+            identity_limits,
+            meter,
+            storage,
+            exclude_targets,
+            true,
+            Some(&captured),
+        )?;
+    if expanded.states.keys().ne(graph.states.keys()) {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    let keys: Vec<_> = graph.states.keys().cloned().collect();
+    let indices: BTreeMap<_, _> = keys
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, key)| (key, index))
+        .collect();
+    let mut nodes = Vec::new();
+    nodes
+        .try_reserve_exact(keys.len())
+        .map_err(|_| ProbabilityDocumentError::KeySizeOverflow)?;
+    for key in &keys {
+        poll(cancel)?;
+        let state = captured
+            .borrow()
+            .get(key)
+            .cloned()
+            .ok_or(ProbabilityDocumentError::ObjectiveMismatch)?;
+        let checker_state = graph
+            .states
+            .get(key)
+            .ok_or(ProbabilityDocumentError::ObjectiveMismatch)?;
+        if exclude_targets && checker_state.terminal == Some(true) {
+            nodes.push(FairGraphState {
+                actions: Vec::new(),
+                enabled: Vec::new(),
+            });
+            continue;
+        }
+        if checker_state.choices.is_empty() {
+            let index = *indices
+                .get(key)
+                .ok_or(ProbabilityDocumentError::ObjectiveMismatch)?;
+            nodes.push(FairGraphState {
+                actions: vec![FairGraphAction {
+                    identity: None,
+                    successors: vec![index],
+                }],
+                enabled: Vec::new(),
+            });
+            continue;
+        }
+        let mut admission =
+            ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
+        let actions =
+            match system.actions_with_budget(&state, identity_limits, &mut admission, cancel) {
+                Ok(Ok(actions)) => actions,
+                Ok(Err(_)) => return Err(ProbabilityDocumentError::Unsupported),
+                Err(error) => {
+                    return Err(match error {
+                        ModelKeyExpansionError::Key(error) => admission.refusal(error),
+                        ModelKeyExpansionError::Expansion(stop) => match cancel.tripped() {
+                            Some(cause) => ProbabilityDocumentError::Cancelled(cause),
+                            None => ProbabilityDocumentError::Build(Box::new(
+                                crate::ExactProbBuildIssue::Expansion(stop),
+                            )),
+                        },
+                    });
+                }
+            };
+        let mut rows = Vec::new();
+        let mut enabled = Vec::new();
+        for action in actions {
+            let mut successors = BTreeSet::new();
+            for draw in action.draws {
+                if draw.probability == rational(0) {
+                    continue;
+                }
+                for (_, successor) in draw.successors {
+                    let mut admission =
+                        ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
+                    let bytes = system
+                        .state_key_bytes_with_budget(
+                            &successor,
+                            identity_limits,
+                            &mut admission,
+                            cancel,
+                        )
+                        .map_err(|error| admission.refusal(error))?;
+                    let successor_key = ProbabilityProductKey::for_model_state_with_budget(
+                        reference,
+                        &bytes,
+                        identity_limits,
+                        &mut admission,
+                        cancel,
+                    )
+                    .map_err(|error| admission.refusal(error))?;
+                    successors.insert(
+                        *indices
+                            .get(&successor_key)
+                            .ok_or(ProbabilityDocumentError::ObjectiveMismatch)?,
+                    );
+                }
+            }
+            if successors.is_empty() {
+                continue;
+            }
+            let identity = action.identity;
+            if !enabled.contains(&identity) {
+                enabled.push(identity.clone());
+            }
+            rows.push(FairGraphAction {
+                identity: Some(identity),
+                successors: successors.into_iter().collect(),
+            });
+        }
+        nodes.push(FairGraphState {
+            actions: rows,
+            enabled,
+        });
+    }
+
+    let mut obligations = Vec::new();
+    for constraint in constraints {
+        let operation = constraint.operation();
+        let operation_text = system
+            .operation_text(operation.declaring_type(), operation.name())
+            .ok_or(ProbabilityDocumentError::Unsupported)?
+            .to_owned();
+        if constraint.granularity() == FairnessGranularity::Whole {
+            obligations.push(FairObligation {
+                operation: operation_text,
+                kind: constraint.kind(),
+                whole: true,
+                identity: None,
+            });
+        } else {
+            let mut identities: Vec<ScheduledIdentity> = Vec::new();
+            for node in &nodes {
+                for action in &node.enabled {
+                    if action.operation == operation_text && !identities.contains(action) {
+                        identities.push(action.clone());
+                    }
+                }
+            }
+            for identity in identities {
+                obligations.push(FairObligation {
+                    operation: operation_text.clone(),
+                    kind: constraint.kind(),
+                    whole: false,
+                    identity: Some(identity),
+                });
+            }
+        }
+    }
+
+    let universe: BTreeSet<_> = keys
+        .iter()
+        .enumerate()
+        .filter_map(|(index, key)| {
+            (!exclude_targets
+                || graph
+                    .states
+                    .get(key)
+                    .is_some_and(|state| state.terminal != Some(true)))
+            .then_some(index)
+        })
+        .collect();
+    let mut pending: VecDeque<_> = maximal_mecs(&nodes, universe).into();
+    let mut fair_components = Vec::new();
+    while let Some(candidate) = pending.pop_front() {
+        let mut rejected = false;
+        let mut split = None;
+        for obligation in &obligations {
+            let enabled = candidate
+                .iter()
+                .map(|state| {
+                    nodes[*state].enabled.iter().any(|identity| {
+                        identity.operation == obligation.operation
+                            && (obligation.whole || obligation.identity.as_ref() == Some(identity))
+                    })
+                })
+                .collect::<Vec<_>>();
+            let taken = candidate.iter().any(|state| {
+                nodes[*state].actions.iter().any(|action| {
+                    action.identity.as_ref().is_some_and(|identity| {
+                        identity.operation == obligation.operation
+                            && (obligation.whole || obligation.identity.as_ref() == Some(identity))
+                            && action
+                                .successors
+                                .iter()
+                                .all(|successor| candidate.contains(successor))
+                    })
+                })
+            });
+            if taken {
+                continue;
+            }
+            match obligation.kind {
+                FairnessKind::Weak if enabled.iter().all(|value| *value) => {
+                    rejected = true;
+                    break;
+                }
+                FairnessKind::Strong if enabled.iter().any(|value| *value) => {
+                    let retained = candidate
+                        .iter()
+                        .copied()
+                        .filter(|state| !enabled[candidate.range(..*state).count()])
+                        .collect();
+                    split = Some(maximal_mecs(&nodes, retained));
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if rejected {
+            continue;
+        }
+        if let Some(children) = split {
+            pending.extend(children);
+        } else {
+            fair_components.push(candidate);
+        }
+    }
+
+    Ok(fair_components
+        .into_iter()
+        .map(|component| {
+            component
+                .into_iter()
+                .map(|index| keys[index].clone())
+                .collect()
+        })
+        .collect())
+}
+
+fn maximal_mecs(
+    nodes: &[FairGraphState],
+    initial: std::collections::BTreeSet<usize>,
+) -> Vec<std::collections::BTreeSet<usize>> {
+    use std::collections::{BTreeSet, VecDeque};
+    let mut pending = VecDeque::from([initial]);
+    let mut result = Vec::new();
+    while let Some(mut candidate) = pending.pop_front() {
+        loop {
+            let retained: BTreeSet<_> = candidate
+                .iter()
+                .copied()
+                .filter(|state| {
+                    nodes[*state].actions.iter().any(|action| {
+                        action
+                            .successors
+                            .iter()
+                            .all(|successor| candidate.contains(successor))
+                    })
+                })
+                .collect();
+            if retained == candidate {
+                break;
+            }
+            candidate = retained;
+            if candidate.is_empty() {
+                break;
+            }
+        }
+        if candidate.is_empty() {
+            continue;
+        }
+        let mut adjacency = vec![Vec::new(); nodes.len()];
+        for state in &candidate {
+            for action in &nodes[*state].actions {
+                if action
+                    .successors
+                    .iter()
+                    .all(|successor| candidate.contains(successor))
+                {
+                    adjacency[*state].extend(action.successors.iter().copied());
+                }
+            }
+            adjacency[*state].sort_unstable();
+            adjacency[*state].dedup();
+        }
+        let components = fair_sccs(&adjacency, &candidate);
+        if components.len() == 1 && components[0] == candidate {
+            result.push(candidate);
+        } else {
+            pending.extend(components);
+        }
+    }
+    result
+}
+
+fn fair_sccs(
+    adjacency: &[Vec<usize>],
+    states: &std::collections::BTreeSet<usize>,
+) -> Vec<std::collections::BTreeSet<usize>> {
+    use std::collections::BTreeSet;
+    let mut reverse = vec![Vec::new(); adjacency.len()];
+    for from in states {
+        for to in &adjacency[*from] {
+            if states.contains(to) {
+                reverse[*to].push(*from);
+            }
+        }
+    }
+    let mut seen = vec![false; adjacency.len()];
+    let mut order = Vec::new();
+    for root in states {
+        if seen[*root] {
+            continue;
+        }
+        seen[*root] = true;
+        let mut stack = vec![(*root, 0_usize)];
+        while let Some((state, offset)) = stack.last_mut() {
+            if let Some(next) = adjacency[*state]
+                .iter()
+                .filter(|next| states.contains(next))
+                .nth(*offset)
+                .copied()
+            {
+                *offset += 1;
+                if !seen[next] {
+                    seen[next] = true;
+                    stack.push((next, 0));
+                }
+            } else {
+                order.push(stack.pop().expect("nonempty SCC stack").0);
+            }
+        }
+    }
+    seen.fill(false);
+    let mut components = Vec::new();
+    for root in order.into_iter().rev() {
+        if seen[root] {
+            continue;
+        }
+        seen[root] = true;
+        let mut component = BTreeSet::new();
+        let mut stack = vec![root];
+        while let Some(state) = stack.pop() {
+            component.insert(state);
+            for predecessor in &reverse[state] {
+                if !seen[*predecessor] {
+                    seen[*predecessor] = true;
+                    stack.push(*predecessor);
+                }
+            }
+        }
+        components.push(component);
+    }
+    components
 }
 
 pub(super) fn same(

@@ -371,7 +371,7 @@ pub(super) fn expression_form(node: &ExprNode, predicates: &BTreeSet<&str>) -> O
         ExprNode::Query { query, .. } => match query {
             BinderQuery::Map | BinderQuery::Filter => Some(LayerForm::SequenceQuery),
             BinderQuery::FlatMap => Some(LayerForm::ValueConstruct),
-            BinderQuery::Forall | BinderQuery::Exists => None,
+            BinderQuery::Forall | BinderQuery::Exists | BinderQuery::Only => None,
         },
         ExprNode::Count { .. } | ExprNode::Sum { .. } => Some(LayerForm::SequenceQuery),
         ExprNode::Deref(_) | ExprNode::Reaches { .. } => Some(LayerForm::ObjectNavigation),

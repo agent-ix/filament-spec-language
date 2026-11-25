@@ -781,8 +781,14 @@ impl PackageDeclarations {
         identity: fsl_foundation::IdentityLimits,
         selected: crate::model::intake::SelectedModels,
     ) -> Self {
-        let (entries, versions, meter, exact_declarations, exact_fields, tuple_declarations) =
-            selected.into_parts();
+        let crate::model::intake::SelectedModelsParts {
+            entries,
+            versions,
+            meter,
+            exact_declarations,
+            exact_fields,
+            tuple_declarations,
+        } = selected.into_parts();
         let mut declarations = Self::new(source, package_name, identity);
         declarations.models = entries
             .iter()
@@ -4407,17 +4413,35 @@ impl<'a> Typer<'a> {
                 operand.stored = integer;
             }
         }
-        let check = |left: &EqualityOperand, right: &EqualityOperand| {
+        let conversion_location = if left.conversion_target.is_some() {
+            Some(left.node.location.clone())
+        } else if right.conversion_target.is_some() {
+            Some(right.node.location.clone())
+        } else {
+            None
+        };
+        let check = |left_equivalent: &EqualityOperand, right_equivalent: &EqualityOperand| {
             self.scope
                 .types
                 .check_equality_in(
                     &self.units,
                     operator,
-                    left.clone(),
-                    right.clone(),
+                    left_equivalent.clone(),
+                    right_equivalent.clone(),
                     &|shape: &EnumShape| self.scope.enum_members_of(shape),
                 )
-                .map_err(|refusal| CheckRefusal::from_ill_typed(location, refusal))
+                .map_err(|refusal| {
+                    // A type mismatch discovered while admitting an explicit
+                    // equality conversion belongs to that conversion operand,
+                    // whose target is part of the authored operation. Keep
+                    // other equality refusals at the equality expression.
+                    let refusal_location = if refusal.cause == IllTypedCause::TypeMismatch {
+                        conversion_location.as_ref().unwrap_or(location)
+                    } else {
+                        location
+                    };
+                    CheckRefusal::from_ill_typed(refusal_location, refusal)
+                })
         };
         let mut checked = check(&left.checked, &right.checked)?;
         if (&left.stored, &right.stored) != (&left.checked, &right.checked) {
@@ -4480,24 +4504,31 @@ impl<'a> Typer<'a> {
         }
         let mut unit_type_facts = Vec::new();
         let mut operand_type_facts = Vec::new();
-        for (operand_position, operand) in [(0, &left), (1, &right)] {
-            let mut typed_roles = vec![(
-                &operand.source_type,
-                super::ir::EqualityUnitOperandRole::Source,
-            )];
-            if operand.conversion_target.is_some() {
-                typed_roles.push((
-                    &operand.node.value_type,
-                    super::ir::EqualityUnitOperandRole::ConversionTarget,
-                ));
-            }
+        for (operand_position, source_type, conversion_target, node_type) in [
+            (
+                0,
+                left.source_type,
+                left.conversion_target,
+                &left.node.value_type,
+            ),
+            (
+                1,
+                right.source_type,
+                right.conversion_target,
+                &right.node.value_type,
+            ),
+        ] {
+            let typed_roles =
+                std::iter::once((source_type, super::ir::EqualityUnitOperandRole::Source)).chain(
+                    conversion_target.map(|_| {
+                        (
+                            node_type.clone(),
+                            super::ir::EqualityUnitOperandRole::ConversionTarget,
+                        )
+                    }),
+                );
             for (value_type, role) in typed_roles {
-                operand_type_facts.push(super::ir::EqualityOperandTypeFact {
-                    operand_position,
-                    role,
-                    value_type: value_type.clone(),
-                });
-                let unit_id = match value_type {
+                let unit_id = match &value_type {
                     ValueType::Quantity(unit) => Some(unit.clone()),
                     ValueType::BoundedQuantity(quantity) => Some(quantity.unit().clone()),
                     ValueType::CarriedQuantity(quantity) => Some(quantity.unit().clone()),
@@ -4519,13 +4550,20 @@ impl<'a> Typer<'a> {
                         value_type: value_type.clone(),
                     });
                 }
+                operand_type_facts.push(super::ir::EqualityOperandTypeFact {
+                    operand_position,
+                    role,
+                    value_type,
+                });
             }
         }
+        let authored_operands = [left.authored, right.authored];
+        let compared_operands = [left.stored, right.stored];
         let producer = EqualityProducerData {
             operator,
             schedule: checked.schedule(),
-            authored_operands: [left.authored.clone(), right.authored.clone()],
-            compared_operands: [left.stored.clone(), right.stored.clone()],
+            authored_operands,
+            compared_operands,
             operand_type_facts,
             units,
             unit_type_facts,
@@ -4803,31 +4841,24 @@ impl<'a> Typer<'a> {
                     ValueType::Quantity(unit.clone()),
                 )
             }
-            (l, r, ArithmeticOperator::Divide) if is_integer(l) && is_integer(r) => {
-                if !self.complete_value {
+            (l, r, ArithmeticOperator::Divide) if is_integer(l) && is_integer(r) => match hint {
+                Some(ValueType::Rational(domain)) if self.complete_value => (
+                    NodeKind::Divide {
+                        left: left_box,
+                        right: right_box,
+                        domain: domain.clone(),
+                    },
+                    ValueType::Rational(domain.clone()),
+                ),
+                Some(ValueType::Rational(_)) => {
                     return Err(refuse(
                         location,
                         CheckCause::ProfileProhibitedOperator(BinaryOperator::Divide),
                     ));
                 }
-                match hint {
-                    Some(ValueType::Rational(domain)) => (
-                        NodeKind::Divide {
-                            left: left_box,
-                            right: right_box,
-                            domain: domain.clone(),
-                        },
-                        ValueType::Rational(domain.clone()),
-                    ),
-                    Some(_) => return Err(mismatch(location)),
-                    None => {
-                        return Err(CheckRefusal::ill_typed(
-                            location,
-                            IllTypedCause::AmbiguousLiteral,
-                        ));
-                    }
-                }
-            }
+                Some(_) => return Err(mismatch(location)),
+                None => return Err(mismatch(location)),
+            },
             (l, r, _) if is_integer(l) && is_integer(r) => {
                 // `Divide` is taken by the preceding arm; naming it here keeps
                 // a later change from silently lowering `/` as `*`.
@@ -6674,6 +6705,25 @@ impl<'a> Typer<'a> {
                         body: self.push(body),
                     },
                     ValueType::Boolean,
+                    location,
+                )
+            }
+            BinderQuery::Only => {
+                if source_type.kind() != filament_exact::CollectionKind::Set
+                    || !matches!(source_type.element(), ValueType::ClockReference)
+                {
+                    return Err(mismatch(location));
+                }
+                let value_type = body.value_type.clone();
+                node(
+                    NodeKind::Query {
+                        visit: Visit::Only,
+                        slot,
+                        name: self.slot_name(slot, location)?,
+                        source: self.push(source),
+                        body: self.push(body),
+                    },
+                    value_type,
                     location,
                 )
             }

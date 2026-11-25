@@ -328,11 +328,14 @@ fn model_work(outcome: &ModelCheckOutcome, atoms: u64) -> Result<(Work, u64), Ax
 fn check_item(world: &World, item: ModelCheckItem<'_>) -> Result<ModelCheckOutcome, AxisError> {
     check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: world.subject(),
             item,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),
@@ -703,6 +706,7 @@ pub fn run_sample(world: &World) -> Result<Work, AxisError> {
         .map_err(|e| fail("sampler", e))?;
     let outcome = check_statistical(
         StatisticalRequest {
+            workers: 1,
             subject: world.subject(),
             claim,
             method: StatisticalMethod::Okamoto,

@@ -259,8 +259,8 @@ pub trait PropertyComponent<M: TransitionSystem> {
     /// Findings exposed without interpretation by the product.
     type Finding: Clone + Eq + std::fmt::Debug;
 
-    /// States after reading the model's initial position.
-    fn initial(&self, model: &M::State) -> Vec<Self::State>;
+    /// States after reading the model's initial position, yielded on demand.
+    fn initial(&self, model: &M::State) -> impl Iterator<Item = Self::State> + use<Self, M>;
     /// Canonical key of a property state.
     fn key(&self, state: &Self::State) -> Self::Key;
     /// Property moves on a concrete model step or terminal repetition.
@@ -334,20 +334,28 @@ where
     type Key = ProductKey<M::Key, P::Key>;
     type Finding = ProductFinding<M::Finding, P::Finding>;
 
-    fn initial(&self) -> Vec<Self::State> {
-        self.model
-            .initial()
-            .into_iter()
-            .flat_map(|model| {
-                self.property
-                    .initial(&model)
-                    .into_iter()
-                    .map(move |property| ProductState {
-                        model: model.clone(),
-                        property,
-                    })
-            })
-            .collect()
+    type InitialError = M::InitialError;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        self.model.initial_iter().flat_map(move |model| {
+            let (states, refusal) = match model {
+                Ok(model) => {
+                    let properties = self.property.initial(&model);
+                    let states = properties.map(move |property| {
+                        Ok(ProductState {
+                            model: model.clone(),
+                            property,
+                        })
+                    });
+                    (Some(states), None)
+                }
+                Err(refusal) => (None, Some(refusal)),
+            };
+            refusal
+                .into_iter()
+                .map(Err)
+                .chain(states.into_iter().flatten())
+        })
     }
 
     fn key(&self, state: &Self::State) -> Self::Key {

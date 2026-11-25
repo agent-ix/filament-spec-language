@@ -23,14 +23,14 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use filament_semantic_value::fairness::FairnessConstraint;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{EdgeLabel, Identity, Vertex};
-use fsl_replay::{AbstractClass, TemporalCounterexample};
+use fsl_replay::{AbstractClass, CandidateStep, TemporalCounterexample};
 
 use super::{Decided, FairScope, Live};
 use crate::model_check::fair_summary::{
-    CandidateEnables, CandidateRelation, FairLabel, FairMark, WalkSummary,
     candidate_steps_relation, candidate_stutter_relation, compose_candidate_relations,
     compose_fair_labels, concrete_label_is_fair, idempotent_has_fair_candidate,
-    insert_relation_label, insert_walk_summary, neutral_label,
+    insert_relation_label, insert_walk_summary, neutral_label, CandidateEnables, CandidateRelation,
+    FairLabel, FairMark, WalkSummary,
 };
 use crate::model_check::fair_walk::FairModel;
 use crate::zone_check::refine::Product;
@@ -63,7 +63,7 @@ pub(super) enum Refuted {
 
 /// One hidden valuation of a vertex's position and the abstract transitions
 /// enabled from it.
-type Candidates = Vec<(Vec<u8>, Vec<ModelTransition>)>;
+type Candidates = Vec<(usize, Vec<u8>, Vec<ModelTransition>)>;
 
 impl Product<'_, '_> {
     /// Decide `component` over every closed walk that is concretely fair and
@@ -102,10 +102,10 @@ impl Product<'_, '_> {
         for &start in component.members {
             run.poll()?;
             let mut identity = CandidateRelation::new();
-            for (key, _) in vertex_of(&candidates, start.index())? {
+            for (ordinal, key, _) in vertex_of(&candidates, start.index())? {
                 insert_relation_label(
                     &mut identity,
-                    (key.clone(), key.clone()),
+                    ((*ordinal, key.clone()), (*ordinal, key.clone())),
                     neutral_label(classes.len()),
                 );
             }
@@ -142,6 +142,7 @@ impl Product<'_, '_> {
                             .ok_or(ZoneCheckRefusal::Fault("walk-edge"))?;
                         let relation = arc_relation(
                             arc.taken.as_ref(),
+                            &arc.candidate_stutters,
                             &enables(vertex_of(&candidates, arc.from)?),
                             &enables(vertex_of(&candidates, arc.to)?),
                             classes,
@@ -269,7 +270,7 @@ fn vertex_of(
 fn enables(candidates: &Candidates) -> Vec<CandidateEnables<'_>> {
     candidates
         .iter()
-        .map(|(key, enabled)| (key.as_slice(), enabled.as_slice()))
+        .map(|(ordinal, key, enabled)| (*ordinal, key.as_slice(), enabled.as_slice()))
         .collect()
 }
 
@@ -278,6 +279,7 @@ fn enables(candidates: &Candidates) -> Vec<CandidateEnables<'_>> {
 /// candidate.
 fn arc_relation(
     taken: Option<&Taken>,
+    stutters: &[CandidateStep],
     source: &[CandidateEnables<'_>],
     target: &[CandidateEnables<'_>],
     classes: &[AbstractClass],
@@ -286,8 +288,10 @@ fn arc_relation(
         Some(Taken::CandidateSteps(rows)) => candidate_steps_relation(
             rows.iter().map(|row| {
                 (
+                    row.pre_candidate,
                     row.pre_state.as_slice(),
                     row.transition.as_ref(),
+                    row.post_candidate,
                     row.post_state.as_slice(),
                 )
             }),
@@ -297,7 +301,25 @@ fn arc_relation(
         )
         .map_err(ZoneCheckRefusal::Fault),
         Some(Taken::Stutter | Taken::Failing) | None => {
-            Ok(candidate_stutter_relation(source, target, classes))
+            if stutters.is_empty() {
+                Ok(candidate_stutter_relation(source, target, classes))
+            } else {
+                candidate_steps_relation(
+                    stutters.iter().map(|row| {
+                        (
+                            row.pre_candidate,
+                            row.pre_state.as_slice(),
+                            None,
+                            row.post_candidate,
+                            row.post_state.as_slice(),
+                        )
+                    }),
+                    source,
+                    target,
+                    classes,
+                )
+                .map_err(ZoneCheckRefusal::Fault)
+            }
         }
         Some(Taken::Abstract(_)) => Err(ZoneCheckRefusal::Fault(
             "hidden-model-edge-retains-candidate-steps",
@@ -363,10 +385,12 @@ mod tests {
 
     fn cycle_of_three() -> CandidateRelation {
         let mut relation = CandidateRelation::new();
-        for (from, to) in [(b"a", b"b"), (b"b", b"c"), (b"c", b"a")] {
+        for (from_ordinal, to_ordinal, from, to) in
+            [(0, 1, b"a", b"b"), (1, 2, b"b", b"c"), (2, 0, b"c", b"a")]
+        {
             insert_relation_label(
                 &mut relation,
-                (from.to_vec(), to.to_vec()),
+                ((from_ordinal, from.to_vec()), (to_ordinal, to.to_vec())),
                 neutral_label(1),
             );
         }
@@ -386,9 +410,9 @@ mod tests {
         assert_eq!(
             pairs,
             [
-                (b"a".to_vec(), b"a".to_vec()),
-                (b"b".to_vec(), b"b".to_vec()),
-                (b"c".to_vec(), b"c".to_vec()),
+                ((0, b"a".to_vec()), (0, b"a".to_vec())),
+                ((1, b"b".to_vec()), (1, b"b".to_vec())),
+                ((2, b"c".to_vec()), (2, b"c".to_vec())),
             ]
         );
     }

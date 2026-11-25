@@ -283,14 +283,14 @@ pub fn covering_derivations() -> Vec<Derivation> {
     let mut normal = vec![INFINITE; Production::all().len()];
     for _ in 0..grammar.len() {
         let previous = normal.clone();
-        for (production, rule) in &grammar {
+        for (production, rule) in grammar {
             normal[*production as usize] = cost(rule, &previous).saturating_add(1).min(INFINITE);
         }
         if normal == previous {
             break;
         }
     }
-    let contexts = contexts(&grammar, &normal);
+    let contexts = contexts(grammar, &normal);
     let mut output = Vec::new();
     for target in grammar.keys().copied() {
         let targeted = target_costs(&contexts, &normal, target);
@@ -298,7 +298,7 @@ pub fn covering_derivations() -> Vec<Derivation> {
             continue;
         }
         let builder = Builder {
-            grammar: &grammar,
+            grammar,
             normal: &normal,
             targeted,
             target,
@@ -309,7 +309,7 @@ pub fn covering_derivations() -> Vec<Derivation> {
         // grammar's unambiguous hyper-expression context.
         let builder = if target == Production::StepLabel {
             Builder {
-                grammar: &grammar,
+                grammar,
                 normal: &normal,
                 targeted: target_costs(&contexts, &normal, Production::MatchBlock),
                 target: Production::MatchBlock,

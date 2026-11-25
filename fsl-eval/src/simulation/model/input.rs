@@ -2008,7 +2008,7 @@ impl ModelEvaluator for CheckedPackage {
             system.types,
             &system.populations,
             &system.universes,
-            &system.initial,
+            &system.initial_base,
         )
         .map_err(super::LettersRefusal::ReferenceBindingsAdmission)
     }

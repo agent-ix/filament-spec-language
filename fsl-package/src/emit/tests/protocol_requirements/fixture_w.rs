@@ -676,10 +676,19 @@ fn complete_w_activation_map_matches_read_back() {
             "W's {form} nodes"
         );
     }
-    for text in [W.to_owned(), format!("// reformatted W\n{}", W.replace(';', ";\n\n")),
-        W.replace("requires temporal OrderClosureBounded;", "requires temporal OrderClosureBounded;\nrequires temporal OrderClosureBounded;"),
-        format!("temporal RefundBounded using T over (view: M::OrderView) clock \"model-steps\" on origin {{ eventually[0,1] holds(false) }}\n{W}"),
-        format!("temporal Unrequired using T over (view: M::OrderView) clock \"model-steps\" on origin {{ eventually[0,1] holds(false) }}\n{W}"),
+    for text in [
+        W.to_owned(),
+        format!("// reformatted W\n{}", W.replace(';', ";\n\n")),
+        W.replace(
+            "requires temporal OrderClosureBounded;",
+            "requires temporal OrderClosureBounded;\nrequires temporal OrderClosureBounded;",
+        ),
+        format!(
+            "temporal RefundBounded using T over (view: M::OrderView) clock \"model-steps\" on origin {{ eventually[0,1] holds(false) }}\n{W}"
+        ),
+        format!(
+            "temporal Unrequired using T over (view: M::OrderView) clock \"model-steps\" on origin {{ eventually[0,1] holds(false) }}\n{W}"
+        ),
     ] {
         let variant = lower_with(document(), PROFILES_W, &text);
         assert!(variant.verified, "{}", variant.text);
@@ -692,7 +701,17 @@ fn complete_w_activation_map_matches_read_back() {
     );
     assert!(empty.verified, "{}", empty.text);
     assert!(activation_rows(&empty).is_empty());
-    let two = lower_with(document(), PROFILES_W, &format!("temporal OrderPaidBounded using T over (view: M::OrderView) clock \"model-steps\" on origin {{ eventually[0,1] holds(false) }}\n{}", W.replace("requires temporal OrderClosureBounded;", "requires temporal OrderClosureBounded;\nrequires temporal OrderPaidBounded;")));
+    let two = lower_with(
+        document(),
+        PROFILES_W,
+        &format!(
+            "temporal OrderPaidBounded using T over (view: M::OrderView) clock \"model-steps\" on origin {{ eventually[0,1] holds(false) }}\n{}",
+            W.replace(
+                "requires temporal OrderClosureBounded;",
+                "requires temporal OrderClosureBounded;\nrequires temporal OrderPaidBounded;"
+            )
+        ),
+    );
     assert!(two.verified, "{}", two.text);
     let rows = activation_rows(&two);
     assert_eq!(rows.len(), 2);
@@ -1025,7 +1044,13 @@ fn w_relationships_are_model_nodes_sorted_and_deduplicated() {
 fn w_missing_required_temporal_refuses_before_a_package_exists() {
     let document = document();
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
-    let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n{PROFILES_W}model M = \"acme/orders\";\n{}", W.replace("requires temporal OrderClosureBounded;", "requires temporal Missing;"));
+    let text = format!(
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n{PROFILES_W}model M = \"acme/orders\";\n{}",
+        W.replace(
+            "requires temporal OrderClosureBounded;",
+            "requires temporal Missing;"
+        )
+    );
     let refusals = assemble_with_models(text.as_bytes(), &packages)
         .expect("W assembles")
         .check(

@@ -15,18 +15,23 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_contract_model::{
     CheckedNodeId, CheckedPackageV2, ExactTypeProjection, ExactTypeProjectionError,
-    NativeJoinBudget, SelectedExactDeclarationForm, SelectedExactDeclarationRow,
-    SelectedExactFieldRow, SelectedExactIdentities, SelectedExactIdentity, SelectedSourceObjectRow,
-    SelectedSourceObjects, SelectedSourceOperationRow, SelectedSourceOperations,
-    SelectedSourceRecordRow, SelectedSourceUnionRow,
+    NativeJoinBudget, RequirementItemRow, SelectedExactDeclarationForm,
+    SelectedExactDeclarationRow, SelectedExactFieldRow, SelectedExactIdentities,
+    SelectedExactIdentity, SelectedSourceObjectRow, SelectedSourceObjects,
+    SelectedSourceOperationRow, SelectedSourceOperations, SelectedSourceRecordRow,
+    SelectedSourceUnionRow,
 };
-use filament_exact::{EffectiveId, MemberId, MemberOwner, NodeKey, OriginalDeclarationKey, UnitId};
+use filament_exact::{
+    EffectiveId, MemberId, MemberOwner, NodeKey, Origin, OriginalDeclarationKey, Role, UnitId,
+};
+use fsl_foundation::{source::provenance::OccurrenceKey, RequestIndex};
 use serde::{Deserialize, Serialize};
 
 use crate::checked_v2::wire_graph;
 
 mod carried;
 mod model_enum;
+mod model_tuple;
 mod model_union;
 mod observation;
 mod source_enum;
@@ -36,7 +41,7 @@ use filament_exact::Presence;
 use source_enum::SourceEnumJson;
 
 /// The format of `identities.json` (FR-531 "The identity file").
-pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/6";
+pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/7";
 
 /// A checked package as a bytes-only consumer holds it (FR-531).
 ///
@@ -638,6 +643,68 @@ impl<'p> BarePackage<'p> {
         wire_graph(self.package).ok()?.key(node).ok()
     }
 
+    /// The requirement items owned by the unique function named `function`,
+    /// in admitted package order, with each original request index (FR-531,
+    /// FR-395). The rows and value-validity facts are projected from the
+    /// admitted package; this does not reconstruct them from source.
+    #[must_use]
+    pub fn call_requirements(&self, function: &str) -> Vec<BareCallRequirement> {
+        let mut owners = self
+            .package
+            .resolved_graph()
+            .nodes
+            .iter()
+            .filter(|node| node.semantic_form.as_ref() == "pure_function")
+            .filter(|node| {
+                node.declaration.as_ref().is_some_and(|declaration| {
+                    declaration
+                        .qualified_name
+                        .last()
+                        .is_some_and(|name| name.as_ref() == function)
+                        || declaration
+                            .qualified_name
+                            .iter()
+                            .map(AsRef::as_ref)
+                            .collect::<Vec<&str>>()
+                            .join("::")
+                            == function
+                })
+            })
+            .map(|node| &node.node_id);
+        let Some(owner) = owners.next() else {
+            return Vec::new();
+        };
+        if owners.next().is_some() {
+            return Vec::new();
+        }
+
+        self.package
+            .requirement_items()
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| {
+                row.record.as_ref().is_some_and(|record| match record {
+                    filament_contract_model::RequirementRecord::ValueValidity(record) => {
+                        &record.owner == owner
+                    }
+                    filament_contract_model::RequirementRecord::OperationContract(_) => false,
+                })
+            })
+            .filter_map(|(index, row)| {
+                let node = self.node_key(&row.claim)?;
+                let role = checked_occurrence_role(&row.occurrence.role)?;
+                Some(BareCallRequirement {
+                    occurrence: OccurrenceKey::new(
+                        node,
+                        Origin::new(Role::new(role), row.occurrence.ordinal),
+                    ),
+                    request_index: RequestIndex::new(index),
+                    item: row.clone(),
+                })
+            })
+            .collect()
+    }
+
     /// The supply, when one was given.
     pub fn supply(&self) -> Option<&BareSupply<'p>> {
         self.supply.as_ref()
@@ -652,6 +719,50 @@ impl<'p> BarePackage<'p> {
     pub fn dependencies(&self) -> Vec<&'p CheckedPackageV2> {
         crate::analysis_view::closure(self.package)
     }
+}
+
+/// One admitted package requirement row selected for a bare function call
+/// (FR-531, FR-395).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BareCallRequirement {
+    occurrence: OccurrenceKey,
+    request_index: RequestIndex,
+    item: RequirementItemRow,
+}
+
+impl BareCallRequirement {
+    /// The requirement row's structural occurrence key.
+    #[must_use]
+    pub fn occurrence(&self) -> &OccurrenceKey {
+        &self.occurrence
+    }
+
+    /// Its zero-based position in the admitted package requirement rows.
+    #[must_use]
+    pub fn request_index(&self) -> RequestIndex {
+        self.request_index
+    }
+
+    /// The exact admitted row, including its owner, bound, conversion, guards,
+    /// roots and objects when the row carries a value-validity record.
+    #[must_use]
+    pub fn item(&self) -> &RequirementItemRow {
+        &self.item
+    }
+}
+
+fn checked_occurrence_role(
+    role: &filament_contract_model::CheckedOccurrenceRole,
+) -> Option<&'static str> {
+    use filament_contract_model::CheckedOccurrenceRole;
+    Some(match role {
+        CheckedOccurrenceRole::Declaration => "declaration",
+        CheckedOccurrenceRole::Type => "type",
+        CheckedOccurrenceRole::Expression => "expression",
+        CheckedOccurrenceRole::Anchor => "anchor",
+        CheckedOccurrenceRole::Claim => "claim",
+        CheckedOccurrenceRole::Generated => "generated",
+    })
 }
 
 /// The selected model identity rows of one package, read from its
@@ -672,6 +783,7 @@ pub struct ReadIdentityRows {
     model_enum_declarations: Vec<filament_contract_model::SelectedModelEnumDeclarationRow>,
     model_enum_members: Vec<filament_contract_model::SelectedModelEnumMemberRow>,
     model_enum_shapes: Vec<filament_contract_model::SelectedModelEnumShapeRow>,
+    model_tuples: Vec<filament_contract_model::SelectedTupleDeclarationRow>,
     model_unions: Vec<filament_contract_model::SelectedModelUnionRow>,
 }
 
@@ -751,6 +863,9 @@ pub enum IdentityMember {
     /// The selected model union channel.
     #[error("model union rows")]
     ModelUnions,
+    /// The selected model tuple channel.
+    #[error("`model_tuples`")]
+    ModelTuples,
     /// A declaration row's `form`.
     #[error("`form`")]
     Form,
@@ -782,6 +897,7 @@ struct File {
     model_enum_declarations: Vec<model_enum::DeclarationJson>,
     model_enum_members: Vec<model_enum::MemberJson>,
     model_enum_shapes: Vec<model_enum::ShapeJson>,
+    model_tuples: Vec<model_tuple::ModelTupleJson>,
     model_unions: Vec<model_union::ModelUnionJson>,
 }
 
@@ -1239,6 +1355,7 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
         let mut model_enum_declarations: Option<Vec<model_enum::DeclarationJson>> = None;
         let mut model_enum_members: Option<Vec<model_enum::MemberJson>> = None;
         let mut model_enum_shapes: Option<Vec<model_enum::ShapeJson>> = None;
+        let mut model_tuples: Option<Vec<model_tuple::ModelTupleJson>> = None;
         let mut model_unions: Option<Vec<model_union::ModelUnionJson>> = None;
         while let Some(key) = map.next_key::<String>()? {
             match key.as_str() {
@@ -1343,6 +1460,14 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
                         self.problem.set(Some(IdentityMember::ModelEnums));
                     })?);
                 }
+                "model_tuples" => {
+                    if model_tuples.is_some() {
+                        return Err(self.fail(IdentityMember::Repeated("model_tuples")));
+                    }
+                    model_tuples = Some(map.next_value().inspect_err(|_: &A::Error| {
+                        self.problem.set(Some(IdentityMember::ModelTuples));
+                    })?);
+                }
                 "model_unions" => {
                     if model_unions.is_some() {
                         return Err(self.fail(IdentityMember::Repeated("model_unions")));
@@ -1362,6 +1487,7 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
             model_enum_members.ok_or_else(|| self.fail(IdentityMember::ModelEnums))?;
         let model_enum_shapes =
             model_enum_shapes.ok_or_else(|| self.fail(IdentityMember::ModelEnums))?;
+        let model_tuples = model_tuples.ok_or_else(|| self.fail(IdentityMember::ModelTuples))?;
         let model_unions = model_unions.ok_or_else(|| self.fail(IdentityMember::ModelUnions))?;
         match (
             format,
@@ -1393,6 +1519,7 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
                 model_enum_declarations,
                 model_enum_members,
                 model_enum_shapes,
+                model_tuples,
                 model_unions,
             }),
             (None, _, _, _, _, _, _) => Err(self.fail(IdentityMember::Format)),
@@ -1496,6 +1623,15 @@ enum IdentityRowsJoinError {
 }
 
 impl ReadIdentityRows {
+    pub(crate) fn source_operation_validation_work_bound(
+        &self,
+        package: &CheckedPackageV2,
+    ) -> u128 {
+        let effects = package.operation_effect_rows().map_or(0, <[_]>::len) as u128;
+        let rows = self.source_operations.len() as u128;
+        rows.saturating_mul(effects.saturating_add(1))
+    }
+
     /// Whether the selected model enumeration declared at `node` has its
     /// complete shape row: the declaration is a payload-free enumeration
     /// whose declaration and cases the package reads (FR-531).
@@ -1607,14 +1743,14 @@ impl ReadIdentityRows {
             },
             budget,
         )?;
-        // A package selecting no union has no union row to join; the join
-        // also owns model-tuple coverage, which this carrier does not supply.
-        if self.model_unions.is_empty() {
+        // Tuple and union witnesses share one full join, including packages
+        // that select tuples without a union payload.
+        if self.model_tuples.is_empty() && self.model_unions.is_empty() {
             return Ok(identities);
         }
         Ok(identities.with_model_union_rows(
             package,
-            &[],
+            &self.model_tuples,
             &self.model_unions,
             filament_contract_model::ModelUnionScope::Full,
             budget,
@@ -1649,6 +1785,11 @@ impl ReadIdentityRows {
     /// Selected model union rows, in structural order.
     pub fn model_unions(&self) -> &[filament_contract_model::SelectedModelUnionRow] {
         &self.model_unions
+    }
+
+    /// Selected model tuple declaration rows, in structural order.
+    pub fn model_tuples(&self) -> &[filament_contract_model::SelectedTupleDeclarationRow] {
+        &self.model_tuples
     }
 
     /// Original source-union producer rows, in declaration and payload order.
@@ -1897,6 +2038,11 @@ impl ReadIdentityRows {
                 .into_iter()
                 .map(model_enum::ShapeJson::row)
                 .collect::<Result<_, _>>()?,
+            model_tuples: file
+                .model_tuples
+                .into_iter()
+                .map(model_tuple::ModelTupleJson::row)
+                .collect::<Result<_, _>>()?,
             model_unions: file
                 .model_unions
                 .into_iter()
@@ -1910,7 +2056,17 @@ impl ReadIdentityRows {
             IdentityRowsJoinError::Rows(error) => IdentityFileRefusal::Rows(error),
         })?;
         rows.selected_source_objects(package)?;
-        rows.selected_source_operations(package, u64::MAX)?;
+        let work_bound = rows.source_operation_validation_work_bound(package);
+        crate::native_row::work(
+            budget,
+            filament_contract_model::NativeJoinLocus {
+                source: filament_contract_model::NativeJoinLocusSource::Package,
+                form: "read-source-operation-rows",
+            },
+            u128::from(work_bound),
+        )?;
+        let work_limit = u64::try_from(work_bound).unwrap_or(0);
+        rows.selected_source_operations(package, work_limit)?;
         Ok(rows)
     }
 
@@ -1972,6 +2128,7 @@ impl ReadIdentityRows {
             model_enum_declarations: Vec::new(),
             model_enum_members: Vec::new(),
             model_enum_shapes: Vec::new(),
+            model_tuples: Vec::new(),
             model_unions: Vec::new(),
         }
     }
@@ -2012,6 +2169,14 @@ impl ReadIdentityRows {
         self
     }
 
+    pub(crate) fn with_model_tuples(
+        mut self,
+        tuples: Vec<filament_contract_model::SelectedTupleDeclarationRow>,
+    ) -> Self {
+        self.model_tuples = tuples;
+        self
+    }
+
     /// The identity file of these rows (FR-531 "The identity file"): one JSON
     /// object, pretty-printed with two-space indent, members in the
     /// documented order, UTF-8, ending in one newline, byte-identical for
@@ -2024,7 +2189,9 @@ impl ReadIdentityRows {
     pub fn to_bytes(&self, package: &CheckedPackageV2) -> Result<Vec<u8>, IdentityFileRefusal> {
         let malformed = |member: IdentityMember| IdentityFileRefusal::Malformed { member };
         self.selected_source_objects(package)?;
-        self.selected_source_operations(package, u64::MAX)?;
+        let work_bound = self.source_operation_validation_work_bound(package);
+        let work_limit = u64::try_from(work_bound).unwrap_or(0);
+        self.selected_source_operations(package, work_limit)?;
         let references = node_references(package).ok_or_else(|| malformed(IdentityMember::File))?;
         let reference = |key: &NodeKey| {
             references
@@ -2166,6 +2333,11 @@ impl ReadIdentityRows {
                 .model_enum_shapes
                 .iter()
                 .map(model_enum::ShapeJson::of)
+                .collect::<Result<_, _>>()?,
+            model_tuples: self
+                .model_tuples
+                .iter()
+                .map(model_tuple::ModelTupleJson::of)
                 .collect::<Result<_, _>>()?,
             model_unions: self
                 .model_unions

@@ -3,7 +3,7 @@
 
 use filament_contract_model::{
     CheckedNodeOwner, CheckedOccurrenceRole, CheckedOperationEffect, CheckedOperationEffectOrigin,
-    CheckedPackageEvidence, CheckedPackageV2, ExactTypeProjectionErrorCode,
+    CheckedPackageV2, ExactTypeProjectionErrorCode,
     SelectedExactIdentities, SelectedExactIdentity, SelectedTypeDeclarations,
 };
 use filament_exact::{Presence, ValueType};
@@ -20,8 +20,6 @@ struct Fixture {
     _directory: tempfile::TempDir,
     package: Box<CheckedPackageV2>,
     rows: ReadIdentityRows,
-    bytes: Vec<u8>,
-    evidence: CheckedPackageEvidence,
 }
 
 fn fixture(document: &Value) -> Fixture {
@@ -64,8 +62,6 @@ fn fixture_with_source(document: &Value, source_text: &str) -> Fixture {
         _directory: directory,
         package,
         rows,
-        bytes,
-        evidence,
     }
 }
 
@@ -191,7 +187,7 @@ fn selected_object_closure_projects_standard_e_and_unused_ep_objects() {
         assert_eq!(
             generated_at_alias.len(),
             1,
-            "{name} is located at its selecting alias"
+            "{name} is located at its selecting alias: {generated_at_alias:?}; node={graph_node:?}; span={model_start}..{model_end}"
         );
         assert_eq!(object.fields(), object.declared_fields());
         assert!(object.supertypes().is_empty());
@@ -271,7 +267,7 @@ fn selected_object_closure_roots_a_package_selected_by_two_aliases_once() {
                 .filter(|region| { region.start >= first_start && region.end < second_start })
                 .count(),
             1,
-            "the first selecting alias owns the root occurrence"
+            "the first selecting alias owns the root occurrence: {generated:?}; bounds={first_start}..{second_start}"
         );
         assert!(
             generated
@@ -342,7 +338,7 @@ fn selected_object_closure_refuses_missing_and_foreign_object_witnesses() {
 
 #[trace("TC-417", "FR-094-AC-14")]
 #[test]
-fn selected_object_closure_refuses_a_model_reference_whose_object_node_is_absent() {
+fn selected_object_closure_refuses_a_model_reference_whose_object_witness_is_absent() {
     let fixture = fixture(&tc1070::document_ep());
     let other = fixture
         .rows
@@ -350,24 +346,8 @@ fn selected_object_closure_refuses_a_model_reference_whose_object_node_is_absent
         .iter()
         .find(|row| row.original_identity.as_ref() == tc1070::model::id("Other"))
         .expect("Other has its real emitted declaration");
-    let other_json = serde_json::to_value(&other.structural_node).expect("node reference");
-    let mut package = crate::support::resolved_package(&fixture.bytes);
-    let nodes = package["semantic_graph"]["nodes"]
-        .as_array_mut()
-        .expect("nodes");
-    let before = nodes.len();
-    nodes.retain(|node| node["node_id"] != other_json);
-    assert_eq!(nodes.len() + 1, before, "remove only the actual Other node");
-    package["source_map"]
-        .as_array_mut()
-        .expect("source map")
-        .retain(|entry| entry["node_id"] != other_json);
-    let package = admitted(
-        &crate::support::slotted_package_bytes(&package),
-        &fixture.evidence,
-    );
     let identities = SelectedExactIdentities::from_stage_rows(
-        &package,
+        &fixture.package,
         fixture
             .rows
             .declarations()
@@ -377,20 +357,20 @@ fn selected_object_closure_refuses_a_model_reference_whose_object_node_is_absent
         fixture.rows.fields().iter().cloned(),
         &mut filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
     )
-    .expect("only the remaining genuine declaration rows are supplied");
-    let refusal = package
+        .expect("the checked package remains valid when one identity witness is omitted");
+    let refusal = fixture
+        .package
         .project_selected_type_declarations(
             &identities,
             &[],
             &[],
             &mut filament_contract_model::NativeJoinBudget::new(10_000_000, 10_000_000),
         )
-        .expect_err("retained model references cannot invent their absent object declaration");
+        .expect_err("the selected model reference cannot replace its omitted object witness");
     assert_eq!(
         refusal.code,
-        ExactTypeProjectionErrorCode::UnresolvedSelectedDeclaration
+        ExactTypeProjectionErrorCode::UnavailableIdentityWitness
     );
-    assert_eq!(refusal.form.as_deref(), Some("selected_document_type"));
 }
 
 /// FR-533-AC-22 (catalog budget): a native budget that pays every earlier

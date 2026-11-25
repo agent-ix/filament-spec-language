@@ -305,6 +305,7 @@ fn analyze_case_items(
             .variant;
         let item = ProtocolItem {
             request: ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: case.subject("P"),
                 item: check_item,

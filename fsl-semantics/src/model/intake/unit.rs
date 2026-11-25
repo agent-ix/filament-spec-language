@@ -68,6 +68,15 @@ pub struct SelectedModels {
     tuple_declarations: Vec<filament_contract_model::SelectedTupleDeclarationRow>,
 }
 
+pub(crate) struct SelectedModelsParts {
+    pub(crate) entries: Vec<SelectedModel>,
+    pub(crate) versions: BTreeMap<String, String>,
+    pub(crate) meter: NormalizationMeter,
+    pub(crate) exact_declarations: Vec<SelectedExactDeclarationRow>,
+    pub(crate) exact_fields: Vec<SelectedExactFieldRow>,
+    pub(crate) tuple_declarations: Vec<filament_contract_model::SelectedTupleDeclarationRow>,
+}
+
 impl Default for SelectedModels {
     fn default() -> Self {
         Self {
@@ -221,24 +230,15 @@ impl From<Vec<SelectedModel>> for SelectedModels {
 }
 
 impl SelectedModels {
-    pub(crate) fn into_parts(
-        self,
-    ) -> (
-        Vec<SelectedModel>,
-        BTreeMap<String, String>,
-        NormalizationMeter,
-        Vec<SelectedExactDeclarationRow>,
-        Vec<SelectedExactFieldRow>,
-        Vec<filament_contract_model::SelectedTupleDeclarationRow>,
-    ) {
-        (
-            self.entries,
-            self.versions,
-            self.meter.into_meter(),
-            self.exact_declarations,
-            self.exact_fields,
-            self.tuple_declarations,
-        )
+    pub(crate) fn into_parts(self) -> SelectedModelsParts {
+        SelectedModelsParts {
+            entries: self.entries,
+            versions: self.versions,
+            meter: self.meter.into_meter(),
+            exact_declarations: self.exact_declarations,
+            exact_fields: self.exact_fields,
+            tuple_declarations: self.tuple_declarations,
+        }
     }
 
     /// The selected model stage's rows, validated against the package IR

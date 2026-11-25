@@ -2537,7 +2537,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 } else {
                     access_kind
                 };
-                Ok(Access {
+                Ok::<_, ProtocolRefusal>(Access {
                     class,
                     ordering: if locked && weak.ordering.is_none() {
                         Some(AccessOrdering::AcqRel)

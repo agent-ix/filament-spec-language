@@ -65,8 +65,12 @@ struct Compiled {
 }
 
 fn compile(unit: &str) -> Compiled {
+    compile_as(unit, "test:spine-model")
+}
+
+fn compile_as(unit: &str, source_identity: &str) -> Compiled {
     let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
-    let graph = assemble_with_models(unit.as_bytes(), &packages)
+    let graph = assemble_with_models_as(unit.as_bytes(), &packages, source_identity)
         .expect("the unit assembles")
         .check(
             CheckMode::Linked,
@@ -76,6 +80,52 @@ fn compile(unit: &str) -> Compiled {
         .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
     let graph_clauses = graph.hyper_clauses().to_vec();
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    assert_eq!(emission.omitted, []);
+    let wire = wire(&emission);
+    Compiled {
+        graph_clauses,
+        emission,
+        wire,
+    }
+}
+
+fn compile_as_with_event_clock(unit: &str, source_identity: &str) -> Compiled {
+    let packages = fsl_semantics::model::intake::package_input([document()]).unwrap();
+    let graph = assemble_with_models_as(unit.as_bytes(), &packages, source_identity)
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("the package checks: {refusals:?}"));
+    let graph_clauses = graph.hyper_clauses().to_vec();
+    let selections = graph
+        .hyper_clauses()
+        .iter()
+        .filter(|clause| {
+            clause.profile() == fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+        })
+        .flat_map(|clause| {
+            clause.quantifiers().iter().map(|quantifier| {
+                let mut selection = crate::emit::TemporalClockSelection::new(
+                    graph.source().clone(),
+                    clause.span(),
+                    filament_contract_model::ClockConfiguration::EventPosition {
+                        sequence_authority: "test-hyper-events".into(),
+                    },
+                );
+                selection.trace = Some(quantifier.variable.as_str().into());
+                selection
+            })
+        })
+        .collect::<Vec<_>>();
+    let emission = crate::emit::emit_checked_with_temporal_selections(
+        &CheckedPackage::link(graph),
+        &selections,
+        crate::EmitLimits::fixture(),
+    )
+    .expect("the package emits");
     assert_eq!(emission.omitted, []);
     let wire = wire(&emission);
     Compiled {
@@ -144,6 +194,20 @@ fn a_finite_trace_set_hyperproperty_emits_its_finite_domain() {
 /// Check `source` (one finite hyper clause, with the selected model
 /// `documents`) and emit it with an event-position clock for the clause.
 fn emit_finite<'a>(source: &str, documents: impl IntoIterator<Item = &'a [u8]>) -> Emission {
+    emit_finite_with_clock(
+        source,
+        documents,
+        filament_contract_model::ClockConfiguration::EventPosition {
+            sequence_authority: "test-hyper-events".into(),
+        },
+    )
+}
+
+fn emit_finite_with_clock<'a>(
+    source: &str,
+    documents: impl IntoIterator<Item = &'a [u8]>,
+    clock: filament_contract_model::ClockConfiguration,
+) -> Emission {
     let packages =
         fsl_semantics::model::intake::package_input(documents).expect("selected model packages");
     let graph = assemble_with_models(source.as_bytes(), &packages)
@@ -162,9 +226,7 @@ fn emit_finite<'a>(source: &str, documents: impl IntoIterator<Item = &'a [u8]>) 
             crate::emit::TemporalClockSelection::new(
                 graph.source().clone(),
                 clause.span(),
-                filament_contract_model::ClockConfiguration::EventPosition {
-                    sequence_authority: "test-hyper-events".into(),
-                },
+                clock.clone(),
             )
         })
         .collect::<Vec<_>>();
@@ -518,7 +580,13 @@ fn every_emitted_hyper_shape_is_admitted_by_the_i2_read() {
         ),
         unit(
             INFINITE,
-            &hyper("Receivers", "", "", "match { a.step.receiver = b.step.receiver }", READ_A_B),
+            &hyper(
+                "Receivers",
+                "",
+                "",
+                "match { a.step.receiver = b.step.receiver }",
+                READ_A_B,
+            ),
         ),
     ];
     for case in cases {
@@ -1569,6 +1637,91 @@ fn clause_over(name: &str, quantifiers: &str, match_block: &str) -> String {
     )
 }
 
+/// FR-488-AC-30 (TC-3000): wrapper scope follows first body read, while slot
+/// levels follow canonical names and do not depend on quantifier order.
+#[trace("TC-3000", "FR-488-AC-30")]
+#[test]
+fn shared_hyper_wrappers_keep_canonical_slots_and_first_read_scope() {
+    let body = "always holds(v.versionNumber @ a = v.versionNumber @ b)";
+    let declaration = format!(
+        "hyper Fwd using t over behaviours (v: V::ConfigVersion) \
+         forall trace a of V forall trace b of V {{ {body} }}\n\
+         hyper Rev using t over behaviours (v: V::ConfigVersion) \
+         forall trace b of V forall trace a of V {{ {body} }}"
+    );
+    let both = build(INFINITE, &["V"], &declaration);
+    let named_hyper = |name: &str| {
+        let row = both.wire["claim_names"]
+            .as_array()
+            .expect("claim names")
+            .iter()
+            .find(|row| row["name"] == name)
+            .unwrap_or_else(|| panic!("the {name} claim name"));
+        node_with(&both.wire, &row["declaration"])
+    };
+    let fwd = named_hyper("Fwd");
+    let rev = named_hyper("Rev");
+    let fwd_wrapper_ref = binding(&fwd["body"], "body");
+    let rev_wrapper_ref = binding(&rev["body"], "body");
+    assert_eq!(target(fwd_wrapper_ref), target(rev_wrapper_ref));
+    let wrapper = node_via(&both.wire, fwd_wrapper_ref);
+    let wrapper_slots = slots(&both.wire);
+    for (name, level) in [("slot_sv_sa", "0"), ("slot_sv_sb", "1")] {
+        let slot = wrapper_slots
+            .get(name)
+            .unwrap_or_else(|| panic!("slot {name}"));
+        assert_eq!(binding(&slot["body"], "level")["value"], level, "{name}");
+    }
+    let over = node_via(&both.wire, &wrapper["body"]["arguments"][0]);
+    assert_eq!(text(binding(&over["body"], "name")), "slot_sv_sa");
+    admitted(&both);
+
+    let fwd_only = build(
+        INFINITE,
+        &["V"],
+        &format!(
+            "hyper Fwd using t over behaviours (v: V::ConfigVersion) \
+         forall trace a of V forall trace b of V {{ {body} }}"
+        ),
+    );
+    let rev_only = build(
+        INFINITE,
+        &["V"],
+        &format!(
+            "hyper Rev using t over behaviours (v: V::ConfigVersion) \
+         forall trace b of V forall trace a of V {{ {body} }}"
+        ),
+    );
+    let wrapper_id = |built: &Built| {
+        let hyper = hyper_node(&built.wire);
+        node_via(&built.wire, binding(&hyper["body"], "body"))["node_id"].clone()
+    };
+    assert_eq!(wrapper_id(&fwd_only), wrapper_id(&rev_only));
+    admitted(&fwd_only);
+    admitted(&rev_only);
+
+    let only_b = build(
+        INFINITE,
+        &["V"],
+        "hyper OnlyB using t over behaviours (v: V::ConfigVersion) \
+         forall trace a of V forall trace b of V \
+         { always holds(v.versionNumber @ b = 1) }",
+    );
+    let only_b_wrapper = node_via(
+        &only_b.wire,
+        binding(&hyper_node(&only_b.wire)["body"], "body"),
+    );
+    let only_b_slots = slots(&only_b.wire);
+    assert!(!only_b_slots.contains_key("slot_sv_sa"));
+    let b_slot = only_b_slots.get("slot_sv_sb").expect("only b is read");
+    assert_eq!(binding(&b_slot["body"], "level")["value"], "0");
+    assert_eq!(
+        target(&only_b_wrapper["body"]["arguments"][0]),
+        &b_slot["node_id"]
+    );
+    admitted(&only_b);
+}
+
 const TWO_FORALL: &str = "forall trace a of V forall trace b of V";
 
 /// FR-488-AC-7, AC-8: argument, receiver and operation reads mint slot nodes
@@ -1670,7 +1823,7 @@ fn interleaved_conjuncts_keep_their_written_order() {
 /// FR-488-AC-16, AC-17: a `let` rooted in `a`'s slot read inside `@ a`
 /// emits; the same read inside `@ b` is refused at the read it dereferences;
 /// a read with no slot root is refused.
-#[trace("TC-1266", "FR-488-AC-16", "FR-488-AC-17")]
+#[trace("TC-1266", "FR-488-AC-16", "FR-488-AC-17", "TC-3000", "FR-488-AC-30")]
 #[test]
 fn a_read_must_stay_in_the_component_its_slot_root_names() {
     let linked = |atom: &str| {
@@ -1682,6 +1835,13 @@ fn a_read_must_stay_in_the_component_its_slot_root_names() {
     let emits =
         linked("(let r = c.parent in present(r) and deref(value(r)).versionNumber = 1) @ a");
     let built = build(INFINITE, &["V"], &emits);
+    let let_binder = nodes(&built.wire)
+        .iter()
+        .find(|node| {
+            node["semantic_form"] == "parameter" && text(binding(&node["body"], "name")) == "r"
+        })
+        .expect("the let binder r is emitted as a slot parameter");
+    assert_eq!(binding(&let_binder["body"], "level")["value"], "1");
     let admitted = admitted(&built);
     let root = hyper_roots(&admitted).expect("Linked hyper root").remove(0);
     supplied_hyper(&built, &admitted, |bare| {
@@ -2160,32 +2320,83 @@ fn a_postcondition_beside_a_fair_temporal_claim_is_admitted() {
 /// row names the clause's own source unit, the one its `declaration_region`
 /// is under; every other row names none, and the hyper clause's
 /// `temporal_bindings` rows carry none. The I2 read then locks the unit.
-#[trace("TC-1266", "FR-322-AC-511")]
+#[trace("TC-1266", "FR-322-AC-511", "TC-1327", "FR-488-AC-31")]
 #[test]
 fn only_a_hyper_name_row_carries_the_clauses_source_unit() {
     let declarations = format!(
         "post VersionUnchanged using v on Config::ConfigVersion::attemptUpdate {{ \
          self.versionNumber = pre(self.versionNumber) }}\n{}",
-        non_interference()
+        hyper(
+            "NonInterference",
+            "",
+            "",
+            "match { a.step.op = b.step.op }",
+            "always[0, 1] holds(c.versionNumber @ a = c.versionNumber @ b)",
+        )
     );
-    let compiled = compile(&unit(INFINITE, &declarations));
+    let compiled = compile_as_with_event_clock(&unit(EVENT, &declarations), "example");
     let rows = compiled.wire["claim_names"].as_array().expect("rows");
     let hyper_id = &hyper_node(&compiled.wire)["node_id"];
     assert_eq!(rows.len(), 2, "{rows:?}");
     for row in rows {
         if row["declaration"] == *hyper_id {
             assert_eq!(row["source_unit"], row["declaration_region"]["source"]);
+            assert_eq!(
+                row["source_unit"],
+                json!({"authority": "agent-ix", "identity": "example"})
+            );
             assert!(row["source_unit"]["identity"].is_string(), "{row}");
         } else {
             assert!(row.get("source_unit").is_none(), "{row}");
         }
     }
     let bindings = compiled.wire["temporal_bindings"].as_array();
-    assert!(bindings
-        .into_iter()
-        .flatten()
-        .all(|row| row.get("source_unit").is_none()));
+    let bindings = bindings.expect("the hyperproperty's clock rows");
+    assert_eq!(bindings.len(), 2, "{bindings:?}");
+    assert!(bindings.iter().all(|row| row.get("source_unit").is_none()));
     admit(&compiled);
+}
+
+/// FR-488-AC-31 (TC-1327): the finite trace set's selected timestamped clock
+/// carries its unit from `example`, and the emitted package passes strict I2.
+#[trace("TC-1327", "FR-488-AC-31")]
+#[test]
+fn a_finite_hyper_clause_resolves_its_timestamp_unit_in_its_source_unit() {
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile t = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
+         dimension Time;\n\
+         unit ms : Time = rational(1, 1);\n\
+         record Obs {{ inp: Int[0, 3]; res: Int[0, 3]; }}\n\
+         hyper Fast using t over t in Obs bounded 3 forall trace a forall trace b \
+         {{ (a.inp = b.inp) implies (a.res = b.res) }}"
+    );
+    let emission = emit_finite_with_clock(
+        &source,
+        std::iter::empty::<&[u8]>(),
+        filament_contract_model::ClockConfiguration::TimestampedEvent {
+            timestamp_unit: "ms".into(),
+        },
+    );
+    let wire = wire(&emission);
+    let bindings = wire["temporal_bindings"]
+        .as_array()
+        .expect("the finite hyper's temporal binding rows");
+    assert_eq!(bindings.len(), 2, "{bindings:?}");
+    for row in bindings {
+        assert_eq!(
+            row["clock"],
+            json!({"kind": "timestamped_event", "timestamp_unit": "ms"})
+        );
+    }
+    crate::checked_v2::read_checked_package_v2(
+        emission.package.bytes(),
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence(&wire),
+    )
+    .unwrap_or_else(|failure| panic!("the strict reader admits Fast with local ms: {failure:?}"));
 }
 
 /// FR-402-AC-14, AC-15: the body wrapper's slots are one node per name at

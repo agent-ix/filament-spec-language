@@ -58,7 +58,7 @@ For steps 1–7, the unit table admits FSpec's `dimension-length`, `dimension-ti
    with the node's `root_scale` set to `0/1`, `-1/1`, `2000/2`, removed, and
    with the base ratios not multiplying to one.
 
-8. Independently place `ix://filament/unit/U` in each of FR-094-AC-15's eight publicly admitted model type positions, leaving every other model type unitless. Select that model from a source declaring dimension `Money`, root unit `Base`, derived unit `U = 2 × Base` and unrelated unit `Unused`. For Rational, also declare the model's own `Money` dimension and `U` root unit, satisfying its namespace rule. Check only a Boolean expression that names no unit. Write each checked handoff through the production writer and read it through the production IR reader.
+8. Independently place `ix://filament/unit/U` in each of FR-094-AC-15's eight publicly admitted model type positions, leaving every other model type unitless. Select that model from a source declaring dimension `Money`, root unit `Base`, derived unit `U = 2 × Base` and unrelated unit `Unused`. For Rational, also declare the model's own `Money` dimension and `U` root unit, satisfying its namespace rule. Check only a Boolean expression that names no unit. Write each checked handoff through the production writer and read it through the production IR reader. Verify that `Unused` remains a checked-graph declaration node under FR-910, but does not enter the quantity-type node root set seeded by the selected model's type positions.
 
 9. Independently for the defensive Variant and Map record arms, construct a synthetic domain package containing an otherwise unused variant payload or map value typed by an admitted unit. Run the real model normalizer, admit its resulting contract view, and invoke production model-type unit-root lowering without any expression lowering. This is contract-fixture coverage, not evidence of public intake accepting a unit payload. The existing FR-056-AC-25/TC-995 test continues to assert that public refusal.
 
@@ -98,6 +98,6 @@ Tag the tests `#[trace("FR-094-AC-n", "TC-419")]` with the AC each backs.
   quantity type naming either dimension; IR admits each package and refuses each
   changed `root_scale` with `invalid_semantic_graph`.
 
-- Step 8: each package contains source-owned `U`, `Base` and `Money` nodes; `U` is a unit typed by `Money` with exactly `Money` and `Base` as dependencies, and `Base` is typed by `Money`. No `Unused` node is emitted. Each independently emitted package is admitted by IR's checked-package/v2 reader.
+- Step 8: each package contains source-owned `U`, `Base` and `Money` nodes; `U` is a unit typed by `Money` with exactly `Money` and `Base` as dependencies, and `Base` is typed by `Money`. `Unused` remains a checked-graph declaration node under FR-910, but is not a root in the quantity-type node set seeded by the selected model's type positions. Each independently emitted package is admitted by IR's checked-package/v2 reader.
 
-- Step 9: each normalized record roots its unit and exactly the unit's nominal dimension closure; an unrelated unit and its dimension are absent. The unit has the lowering source owner and its admitted dimension type.
+- Step 9: each normalized record roots its unit and exactly the unit's nominal dimension closure; an unrelated unit and its dimension do not enter that root closure. Any declaration nodes for them required by FR-910 remain outside this root relation. The unit has the lowering source owner and its admitted dimension type.

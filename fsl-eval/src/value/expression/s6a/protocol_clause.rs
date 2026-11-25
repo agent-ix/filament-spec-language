@@ -11,7 +11,7 @@ use filament_eval::{EvalOutcome, FamilyOutcome, FamilyResult};
 use filament_exact::{Meter, NodeKey, Outcome, Value};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::location::ExpressionLocation as Location;
-use fsl_semantics::check::{CheckedGraph, ProtocolClauseFamily};
+use fsl_semantics::check::{CheckedGraph, CheckedStateClause, ProtocolClauseFamily};
 use fsl_semantics::model::clause_observation::Observation;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{AdmittedInvocation, FrameVerdict, FrameWitness};
@@ -25,6 +25,9 @@ use super::separation::Trail;
 pub(crate) enum ProtocolClauseInput<'a> {
     /// A state clause (FR-107).
     Clause {
+        /// The exact declaration selected by name. Node keys are structural,
+        /// so distinct declarations may share one key.
+        declaration: Option<&'a CheckedStateClause>,
         /// The clause's own observation: `current` for an invariant, `post`
         /// for a postcondition, and also the environment a precondition's
         /// non-`pre(..)` reads observe (FR-104: a precondition's own
@@ -68,6 +71,7 @@ impl<'a> ProtocolClauseEnv<'a> {
     /// A state clause's environment (FR-107).
     pub(crate) fn new(
         graph: &'a CheckedGraph,
+        declaration: Option<&'a CheckedStateClause>,
         current: &'a ObjectEnvironment,
         pre: Option<&'a ObjectEnvironment>,
         bindings: Vec<Value>,
@@ -76,6 +80,7 @@ impl<'a> ProtocolClauseEnv<'a> {
         let mut env = Self::with_input(
             graph,
             ProtocolClauseInput::Clause {
+                declaration,
                 current,
                 pre,
                 bindings: Some(bindings),
@@ -117,9 +122,9 @@ impl super::ReferenceEvaluation for ProtocolClauseFamily {
     type Env<'a> = ProtocolClauseEnv<'a>;
     type Key = NodeKey;
 
-    /// FR-107: for a clause input, resolves `checked` against `env.graph`'s
-    /// state clauses (never its functions), then runs the clause's checked
-    /// body through the same task-stack machine `Value`'s own hook uses
+    /// FR-107: for a clause input, checks `checked` against the exact state
+    /// clause selected by name, then runs that clause's checked body through
+    /// the same task-stack machine `Value`'s own hook uses
     /// ([`super::super::evaluate::Machine::with_pre`]), giving it `env`'s pre and
     /// current observations and the clause's own per-read observation map
     /// (`CheckedStateClause::reads`), so a read under `pre(..)` observes
@@ -153,12 +158,13 @@ impl super::ReferenceEvaluation for ProtocolClauseFamily {
         env.location = None;
         env.losses.clear();
         env.witness = None;
-        let (current, pre, bindings) = match &mut env.input {
+        let (declaration, current, pre, bindings) = match &mut env.input {
             ProtocolClauseInput::Clause {
+                declaration,
                 current,
                 pre,
                 bindings,
-            } => (*current, *pre, bindings.take()),
+            } => (*declaration, *current, *pre, bindings.take()),
             ProtocolClauseInput::Frame(invocation) => {
                 let invocation: &AdmittedInvocation<'_> = invocation;
                 let frame = env
@@ -173,9 +179,8 @@ impl super::ReferenceEvaluation for ProtocolClauseFamily {
                 return Ok(outcome);
             }
         };
-        let clause = env
-            .graph
-            .state_clause_by_identity(checked.clone())
+        let clause = declaration
+            .filter(|clause| clause.identity() == *checked)
             .ok_or_else(|| InternalFault::new("S6a", "checked-identity-not-resolved-by-package"))?;
         let Some(bindings) = bindings else {
             return Err(InternalFault::new(

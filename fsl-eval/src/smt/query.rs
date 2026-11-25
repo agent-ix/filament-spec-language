@@ -28,17 +28,17 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::model::clause_observation::Observation;
 
-use crate::automaton::{bounded_shape, invariant_atom, BoundedKind};
+use crate::automaton::{BoundedKind, bounded_shape, closure_shape, invariant_atom};
 use crate::model_subject::ModelSubject;
 use crate::simulation::model::{ModelSystem, SymbolicSubject};
+use crate::smt::SmtEncodingLimits;
 use crate::smt::expression::{Reader, Sym, Views};
 use crate::smt::layout::{StateCopy, StateLayout, StateRef};
 use crate::smt::monitor::MonitorTable;
 use crate::smt::relation::{
-    applications, check_domains, count_applications, Application, CopyFacts, StepRelation,
+    Application, CopyFacts, StepRelation, applications, check_domains, count_applications,
 };
 use crate::smt::script::{Script, Sort, Term};
-use crate::smt::SmtEncodingLimits;
 use crate::smt::{Measure, Refusal, SmtEncodingRefusal, SmtQueryKind};
 
 // A known false object settles the conjunction even if another object's
@@ -60,7 +60,7 @@ fn terminal_conjunction(readings: impl IntoIterator<Item = (Term, Term)>) -> (Te
 
 #[cfg(test)]
 mod terminal_tests {
-    use super::{terminal_conjunction, Term};
+    use super::{Term, terminal_conjunction};
     use ix_trace_rs::trace;
 
     #[trace("TC-519", "FR-124-AC-8", "FR-124-AC-10")]
@@ -110,10 +110,10 @@ pub enum SmtItem<'a> {
 enum Property {
     /// TP-1: the state predicate of the one atom.
     Invariant(FormulaNodeId),
-    /// TP-2 `on origin`: `always[0,u]` or `eventually[0,u]` of the one atom.
+    /// TP-2: bounded `on origin`, or AC-36's guarded bounded `on each`.
     Bounded(BoundedKind, u64, FormulaNodeId),
     /// TP-3: the monitor not rejecting.
-    Monitor(MonitorTable),
+    Monitor { table: MonitorTable, indexed: bool },
     /// FR-124: `always holds(not deadlocked)`.
     Deadlock,
 }
@@ -151,6 +151,64 @@ impl Atoms<'_, '_> {
             vec![Some(Sym::Object(self.instances[instance]))],
         )
         .boolean(condition)
+    }
+
+    fn guard(&self, instance: usize, copy: &StateCopy) -> Result<(Term, Term), SmtEncodingRefusal> {
+        let (guard, _): (CheckedNode<'_>, usize) = self
+            .node
+            .guard()
+            .ok_or_else(|| fault("a guarded activation has its checked condition"))?;
+        let trigger_type = self
+            .node
+            .clause()
+            .trigger()
+            .map(|(_, value_type)| value_type)
+            .and_then(|value_type| match value_type {
+                filament_exact::ValueType::Reference(reference) => Some(reference.clone()),
+                _ => None,
+            })
+            .ok_or_else(|| fault("a guarded activation has a reference trigger"))?;
+        let over = *self
+            .instances
+            .get(instance)
+            .ok_or_else(|| fault("a guarded activation's clause has an instance"))?;
+        let trigger = if self.subject.types.conforms(
+            self.subject.objects[over].type_id.clone(),
+            trigger_type.clone(),
+        ) {
+            over
+        } else {
+            let triggers: Vec<usize> = self
+                .subject
+                .objects
+                .iter()
+                .enumerate()
+                .filter(|(_, object)| {
+                    self.subject
+                        .types
+                        .conforms(object.type_id.clone(), trigger_type.clone())
+                })
+                .map(|(index, _)| index)
+                .collect();
+            let [trigger] = triggers.as_slice() else {
+                return Err(Refusal::SeveralInstances {
+                    count: triggers.len(),
+                }
+                .into());
+            };
+            *trigger
+        };
+        let views = Views::of(StateRef::Copy(copy.clone()));
+        Reader::new(
+            self.layout,
+            self.subject,
+            self.clause,
+            Observation::Current,
+            Vec::new(),
+            &views,
+            vec![Some(Sym::Object(over)), Some(Sym::Object(trigger))],
+        )
+        .boolean(guard)
     }
 }
 
@@ -274,21 +332,15 @@ pub fn encode_smt_query(
             .into());
         }
         if form == PropertyForm::BoundedMltl {
-            if clause.activation() != Activation::Origin {
-                return Err(Refusal::ItemForm {
-                    form: "a TP-2 `on each` clause",
-                }
-                .into());
-            }
-            bounded = Some(bounded_shape(clause).ok_or(Refusal::ItemForm {
-                form: "a TP-2 `on origin` clause other than a bounded `always` or `eventually` of one state predicate",
+            let shape = match clause.activation() {
+                Activation::Origin => bounded_shape(clause),
+                Activation::Each { guarded: true } => closure_shape(clause)
+                    .filter(|(kind, _, _)| matches!(kind, BoundedKind::Eventually)),
+                Activation::Each { guarded: false } => None,
+            };
+            bounded = Some(shape.ok_or(Refusal::ItemForm {
+                form: "a TP-2 clause other than a bounded `always` or `eventually` of one state predicate",
             })?);
-        }
-        if matches!(clause.activation(), Activation::Each { guarded: true }) {
-            return Err(Refusal::ItemForm {
-                form: "a clause guarded by a `when` condition",
-            }
-            .into());
         }
         // A TP-1, TP-3 or deadlock-freedom item binds infinite-trace; only a
         // TP-2 item binds false-extension (FR-315 "Internal faults").
@@ -297,11 +349,15 @@ pub fn encode_smt_query(
                 "a TP-1 or TP-3 item binds infinite-trace",
             ));
         }
-        if bounded.is_none() {
-            if form == PropertyForm::ReachableInvariant && invariant_atom(clause).is_none() {
+        if bounded.is_none() || clause.activation() != Activation::Origin {
+            let invariant = invariant_atom(clause);
+            if form == PropertyForm::ReachableInvariant
+                && clause.activation() == Activation::Origin
+                && invariant.is_none()
+            {
                 return Err(SmtEncodingRefusal::fault("a TP-1 item holds its one atom"));
             }
-            if invariant_atom(clause).is_none() {
+            if clause.activation() != Activation::Origin || invariant.is_none() {
                 let table =
                     MonitorTable::of(clause, limits.max_monitor_atoms, limits.max_monitor_states);
                 if let Err(refusal @ SmtEncodingRefusal::Refused(Refusal::ItemTranslation(_))) =
@@ -323,22 +379,37 @@ pub fn encode_smt_query(
             return Err(Refusal::Profile.into());
         }
         // Row 3: query-kind.
-        if bounded.is_some() && !matches!(kind, SmtQueryKind::Unrolling { .. }) {
+        if bounded.is_some()
+            && clause.activation() == Activation::Origin
+            && !matches!(kind, SmtQueryKind::Unrolling { .. })
+        {
             return Err(Refusal::QueryKind {
                 kind: kind.name(),
                 form: "a TP-2 `on origin` item",
             }
             .into());
         }
-        if let (Some((BoundedKind::Eventually, upper, _)), SmtQueryKind::Unrolling { depth }) =
-            (bounded, kind)
+        if bounded.is_some()
+            && clause.activation() == (Activation::Each { guarded: true })
+            && !matches!(kind, SmtQueryKind::Unrolling { .. })
         {
-            if depth < upper {
-                return Err(Refusal::QueryKind {
-                    kind: kind.name(),
-                    form: "an `eventually[0,u]` item below its horizon",
+            return Err(Refusal::QueryKind {
+                kind: kind.name(),
+                form: "a guarded TP-2 `on each` item",
+            }
+            .into());
+        }
+        if clause.activation() == Activation::Origin {
+            if let (Some((BoundedKind::Eventually, upper, _)), SmtQueryKind::Unrolling { depth }) =
+                (bounded, kind)
+            {
+                if depth < upper {
+                    return Err(Refusal::QueryKind {
+                        kind: kind.name(),
+                        form: "an `eventually[0,u]` item below its horizon",
+                    }
+                    .into());
                 }
-                .into());
             }
         }
     }
@@ -416,13 +487,6 @@ pub fn encode_smt_query(
                 })?,
         );
     }
-    if monitor.is_some() && instances.len() != 1 {
-        return Err(Refusal::SeveralInstances {
-            count: instances.len(),
-        }
-        .into());
-    }
-
     // Row 15: the size measures, in order.
     let depth = kind.depth();
     let per_position = layout
@@ -431,7 +495,12 @@ pub fn encode_smt_query(
         .flat_map(|object| object.fields())
         .map(|field| 1 + u64::from(field.is_optional()))
         .sum::<u64>()
-        + u64::from(monitor.is_some())
+        + u64::try_from(if monitor.is_some() {
+            instances.len().max(1)
+        } else {
+            0
+        })
+        .unwrap_or(u64::MAX)
         + u64::from(!infinite);
     let constants = depth.saturating_add(1).saturating_mul(per_position);
     if constants > limits.max_constants {
@@ -451,7 +520,10 @@ pub fn encode_smt_query(
     }
     let property = match (clause, monitor) {
         (None, _) => Property::Deadlock,
-        (Some(_), Some(table)) => Property::Monitor(table?),
+        (Some(clause), Some(table)) => Property::Monitor {
+            table: table?,
+            indexed: clause.activation() != Activation::Origin || instances.len() > 1,
+        },
         (Some(clause), None) => match (bounded, invariant_atom(clause)) {
             (Some((shape, upper, atom)), _) => Property::Bounded(shape, upper, atom),
             (None, Some(atom)) => Property::Invariant(atom),
@@ -509,8 +581,34 @@ struct Query<'q, 'a> {
 impl Query<'_, '_> {
     fn monitor(&self) -> Option<&MonitorTable> {
         match &self.property {
-            Property::Monitor(table) => Some(table),
+            Property::Monitor { table, .. } => Some(table),
             _ => None,
+        }
+    }
+
+    fn monitor_value_for(&self, position: u64, instance: usize) -> Term {
+        Term::constant(self.monitor_symbol_for(position, instance))
+    }
+
+    fn monitor_count(&self) -> usize {
+        match &self.property {
+            Property::Monitor { indexed: true, .. } => self.instances().max(1),
+            Property::Monitor { indexed: false, .. } => 1,
+            _ => 0,
+        }
+    }
+
+    fn monitor_symbol(&self, position: u64) -> String {
+        match &self.property {
+            Property::Monitor { indexed: true, .. } => format!("m{position}.0"),
+            _ => format!("m{position}"),
+        }
+    }
+
+    fn monitor_symbol_for(&self, position: u64, instance: usize) -> String {
+        match &self.property {
+            Property::Monitor { indexed: true, .. } => format!("m{position}.{instance}"),
+            _ => self.monitor_symbol(position),
         }
     }
 
@@ -566,11 +664,21 @@ impl Query<'_, '_> {
         atoms.read(atom, instance, &StateCopy::at(position))
     }
 
-    /// An atom of the monitor's letter: false past the end of a finite
-    /// behaviour.
-    fn letter_atom(&self, atom: FormulaNodeId, position: u64) -> Result<Term, SmtEncodingRefusal> {
-        let (value, _) = self.atom(atom, 0, position)?;
-        Ok(self.live(position, value))
+    fn guard(&self, instance: usize, position: u64) -> Result<(Term, Term), SmtEncodingRefusal> {
+        self.atoms
+            .as_ref()
+            .ok_or_else(|| fault("an item with no activation"))?
+            .guard(instance, &StateCopy::at(position))
+    }
+
+    /// An atom of the monitor's letter.
+    fn letter_atom(
+        &self,
+        atom: FormulaNodeId,
+        instance: usize,
+        position: u64,
+    ) -> Result<Term, SmtEncodingRefusal> {
+        Ok(self.atom(atom, instance, position)?.0)
     }
 
     fn instances(&self) -> usize {
@@ -608,7 +716,9 @@ impl Query<'_, '_> {
             let copy = StateCopy::at(position);
             self.layout.declare(&copy, &mut script);
             if self.monitor().is_some() {
-                script.declare(&format!("m{position}"), Sort::Int);
+                for instance in 0..self.monitor_count() {
+                    script.declare(&self.monitor_symbol_for(position, instance), Sort::Int);
+                }
             }
             if !self.infinite {
                 script.declare(&format!("h{position}"), Sort::Bool);
@@ -620,10 +730,12 @@ impl Query<'_, '_> {
                 script.assert(&range);
             }
             if let Some(table) = self.monitor() {
-                script.assert(&monitor_constant(position).within(
-                    &Integer::zero(),
-                    &Integer::from(table.states().saturating_sub(1)),
-                ));
+                for instance in 0..self.monitor_count() {
+                    script.assert(&self.monitor_value_for(position, instance).within(
+                        &Integer::zero(),
+                        &Integer::from(table.states().saturating_sub(1)),
+                    ));
+                }
             }
             self.check_size(&script)?;
         }
@@ -713,27 +825,40 @@ impl Query<'_, '_> {
     ) -> Result<(), SmtEncodingRefusal> {
         let depth = self.kind.depth();
         for position in 0..=depth {
-            let mut letter = Vec::new();
-            for atom in table.atoms() {
-                letter.push(self.letter_atom(*atom, position)?);
-            }
-            for step in table.moves() {
-                let reads = letter_term(step.letter, &letter);
-                let reached = monitor_constant(position).equal(Term::int(
-                    i64::try_from(step.to).map_err(|_| fault("a monitor state index"))?,
-                ));
-                let condition = if position == 0 {
-                    if !self.kind.starts_initial() || step.from != table.initial() {
-                        continue;
-                    }
-                    reads
-                } else {
-                    let before = monitor_constant(position - 1).equal(Term::int(
-                        i64::try_from(step.from).map_err(|_| fault("a monitor state index"))?,
+            for instance in 0..self.monitor_count() {
+                let mut letter = Vec::new();
+                if table.has_when() {
+                    letter.push(self.guard(instance, position)?.0);
+                }
+                for atom in table.atoms() {
+                    letter.push(self.letter_atom(*atom, instance, position)?);
+                }
+                for step in table.moves() {
+                    let reads = if table.end_letter() == Some(step.letter) {
+                        self.ended(position)
+                            .ok_or_else(|| fault("an end letter without a finite trace"))?
+                    } else {
+                        letter_term(step.letter, &letter)
+                    };
+                    let reached = self.monitor_value_for(position, instance).equal(Term::int(
+                        i64::try_from(step.to).map_err(|_| fault("a monitor state index"))?,
                     ));
-                    Term::all([before, reads])
-                };
-                script.assert(&condition.implies(reached));
+                    let condition = if position == 0 {
+                        if !self.kind.starts_initial() || step.from != table.initial() {
+                            continue;
+                        }
+                        reads
+                    } else {
+                        let before =
+                            self.monitor_value_for(position - 1, instance)
+                                .equal(Term::int(
+                                    i64::try_from(step.from)
+                                        .map_err(|_| fault("a monitor state index"))?,
+                                ));
+                        Term::all([before, reads])
+                    };
+                    script.assert(&condition.implies(reached));
+                }
             }
             self.check_size(script)?;
         }
@@ -751,8 +876,18 @@ impl Query<'_, '_> {
                 let mut agreements = self
                     .layout
                     .agreements(&StateCopy::at(right), &StateCopy::at(left));
-                if self.monitor().is_some() {
-                    agreements.push(monitor_constant(right).equal(monitor_constant(left)));
+                if !self.infinite {
+                    let later_ended = ended_constant(right);
+                    agreements.insert(0, later_ended.clone().equal(ended_constant(left)));
+                    for agreement in &mut agreements[1..] {
+                        *agreement = Term::any([later_ended.clone(), agreement.clone()]);
+                    }
+                }
+                for instance in 0..self.monitor_count() {
+                    agreements.push(
+                        self.monitor_value_for(right, instance)
+                            .equal(self.monitor_value_for(left, instance)),
+                    );
                 }
                 script.assert(&Term::all(agreements).not());
                 self.check_size(script)?;
@@ -782,11 +917,16 @@ impl Query<'_, '_> {
                 }
             }
             Property::Bounded(BoundedKind::Eventually, ..) => {}
-            Property::Monitor(table) => {
+            Property::Monitor { table, .. } => {
                 if let Some(rejecting) = table.rejecting() {
-                    violations.push(monitor_constant(position).equal(Term::int(
-                        i64::try_from(rejecting).map_err(|_| fault("a monitor state index"))?,
-                    )));
+                    for instance in 0..self.monitor_count() {
+                        violations.push(
+                            self.monitor_value_for(position, instance).equal(Term::int(
+                                i64::try_from(rejecting)
+                                    .map_err(|_| fault("a monitor state index"))?,
+                            )),
+                        );
+                    }
                 }
             }
             Property::Deadlock => {
@@ -873,10 +1013,16 @@ impl Query<'_, '_> {
                         disjuncts.push(self.live(position, failure));
                     }
                 }
-                Property::Monitor(table) => {
-                    for atom in table.atoms() {
-                        let failure = self.atom(*atom, 0, position)?.1.not();
-                        disjuncts.push(self.live(position, failure));
+                Property::Monitor { table, .. } => {
+                    for instance in 0..self.monitor_count() {
+                        if table.has_when() {
+                            let defined = self.guard(instance, position)?.1;
+                            disjuncts.push(self.live(position, defined.not()));
+                        }
+                        for atom in table.atoms() {
+                            let failure = self.atom(*atom, instance, position)?.1.not();
+                            disjuncts.push(self.live(position, failure));
+                        }
                     }
                 }
                 Property::Deadlock => {}

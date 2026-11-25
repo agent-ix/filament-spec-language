@@ -326,6 +326,7 @@ fn a_provider_over_the_deadline_settles_incomplete_timed_out() {
 /// the emitted package's v2 bytes and the run's deadline.
 #[test]
 #[trace("TC-3035", "FR-750-AC-6")]
+#[trace("TC-1187", "FR-447-AC-4")]
 fn item_options_and_the_deadline_reach_the_process_provider() {
     let unit = braking(&claim("SlowEnough", "always [0, 10] holds(h.v < 30)"));
     let ws = Workspace::new("ac6");
@@ -353,8 +354,29 @@ fn item_options_and_the_deadline_reach_the_process_provider() {
         request["request"]["items"][0]["requirements"],
         json!(["hybrid-dynamics"])
     );
+    assert_eq!(
+        request["request"]["items"][0]["kind"],
+        "temporal-satisfaction"
+    );
+    assert_eq!(
+        request["request"]["items"][0]["extent"]["classification"],
+        "bounded"
+    );
+    assert_eq!(
+        request["request"]["items"][0]["claim"]["occurrence"],
+        json!({"role": "claim", "ordinal": 0})
+    );
+    assert!(
+        request["request"]["items"][0]["claim"]["node"].is_object(),
+        "{request}"
+    );
     assert_eq!(request["request"]["deadline_ms"], limits().deadline_ms);
-    assert!(request["request"]["package"].is_string());
+    assert!(
+        request["request"]["package"]
+            .as_str()
+            .is_some_and(|bytes| !bytes.is_empty()),
+        "{request}"
+    );
 }
 
 /// FR-750 "Dispatch": a process provider's `proved` word is `trusted`; its

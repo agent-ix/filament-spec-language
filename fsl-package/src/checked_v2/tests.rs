@@ -1131,13 +1131,8 @@ fn read_fixture_wire_with_document_patch(
     envelope: &Value,
     document: &[u8],
 ) -> (String, Read) {
-    let evidence = fixture_evidence_with_document(
-        Some(fixture),
-        envelope,
-        envelope,
-        &[],
-        Some(document),
-    );
+    let evidence =
+        fixture_evidence_with_document(Some(fixture), envelope, envelope, &[], Some(document));
     let name = envelope["name"].as_str().expect("fixture name").to_owned();
     let outcome = read_v2(
         &fixture_wire_bytes(envelope),
@@ -3738,10 +3733,9 @@ fn conformance_node_index_vectors_refuse_malformed_wire() {
             &evidence,
         );
         if expected == "passes_operand_checks_with_dependency_position" {
-            let dependency_node = usize::try_from(
-                case["dependency_node"].as_u64().expect("dependency node"),
-            )
-            .expect("dependency node position");
+            let dependency_node =
+                usize::try_from(case["dependency_node"].as_u64().expect("dependency node"))
+                    .expect("dependency node position");
             assert!(dependency_node < admitted_library.resolved_graph().nodes.len());
             assert!(
                 matches!(&outcome, Read::Verified { .. })

@@ -1020,6 +1020,8 @@ pub struct CheckedGraph {
     >,
     /// FSpec FR-322: the `model_root` key of each selection, in the same order.
     model_roots: Vec<filament_exact::NodeKey>,
+    /// The selected model declaration location that owns each `model_root`.
+    model_root_locations: Vec<Location>,
     /// FR-110: the header-selectable layers the unit's header profiles
     /// resolve to, ascending.
     header_layers: Vec<crate::value::layer::HeaderLayer>,
@@ -1247,6 +1249,7 @@ impl DebugWith for CheckedGraph {
             operation_bodies,
             protocol_population_types,
             model_roots,
+            model_root_locations,
             header_layers,
             source_packages,
             source_object_identity_fields,
@@ -1376,6 +1379,7 @@ impl DebugWith for CheckedGraph {
                 &NodeMap(protocol_population_types.iter(), table),
             )
             .field("model_roots", &NodeList(model_roots.iter(), table))
+            .field("model_root_locations", model_root_locations)
             .field("header_layers", &header_layers)
             .field("source_packages", &source_packages)
             .field(
@@ -3508,6 +3512,18 @@ impl PackageDeclarations {
                 }
             }
         }
+        let model_root_locations = model_selections
+            .iter()
+            .map(|selection| {
+                let alias = admitted_by_identity
+                    .get(&selection.identity)
+                    .and_then(|model| model.alias())
+                    .unwrap_or(&selection.identity);
+                Location::root(Origin::TypeDeclaration {
+                    name: alias.to_owned(),
+                })
+            })
+            .collect();
         if let Some((&index, _)) = self.model_clauses.range(self.functions.len()..).next() {
             return Err(vec![invalid_dispatch(
                 root(Origin::Expression),
@@ -7411,6 +7427,14 @@ impl PackageDeclarations {
                 _ => None,
             };
             occurrences.relocate(moved);
+            // Duplicate authored `related by` rows that canonicalize to the
+            // same emitted record share one source occurrence, just as the
+            // lowering's canonical record array does.
+            let canonical_related_sites: BTreeSet<_> = related_renames.values().cloned().collect();
+            occurrences.deduplicate_locations(|location| match &location.origin {
+                Origin::TypeDeclaration { name } => canonical_related_sites.contains(name),
+                _ => false,
+            });
             for checked in &mut checked_protocols {
                 for related in &mut checked.slots.related {
                     for end in &mut related.ends {
@@ -8697,6 +8721,7 @@ impl PackageDeclarations {
             operation_bodies,
             protocol_population_types,
             model_roots,
+            model_root_locations,
             header_layers,
             source_packages,
             source_object_identity_fields,
@@ -9871,6 +9896,14 @@ impl CheckedGraph {
         self.model_selections
             .iter()
             .zip(self.model_roots.iter().cloned())
+    }
+
+    /// The source selection location that owns each `model_root`, in the
+    /// same order as [`Self::model_roots`].
+    pub fn model_root_locations(
+        &self,
+    ) -> &[filament_semantic_value::location::ExpressionLocation] {
+        &self.model_root_locations
     }
 
     /// FR-110: the header-selectable layers the unit's header profiles

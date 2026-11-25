@@ -1304,6 +1304,7 @@ impl Run<'_, '_, '_> {
                     after: None,
                     auxiliary_carries: Vec::new(),
                     auxiliary_resets: Vec::new(),
+                    auxiliary_advances: Vec::new(),
                     piece: if edge.to == edge.from {
                         // An undefined position's own: its cell is not
                         // known.
@@ -1326,6 +1327,7 @@ impl Run<'_, '_, '_> {
                 after: None,
                 auxiliary_carries: Vec::new(),
                 auxiliary_resets: Vec::new(),
+                auxiliary_advances: Vec::new(),
                 piece: self.cell_zone(&mut live.cells, &target.state, &[], &target.cell)?,
                 step: None,
                 position: Vec::new(),

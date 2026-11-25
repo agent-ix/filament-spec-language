@@ -2136,7 +2136,8 @@ fn check_initial_and_steps_retain_protocol_control_candidates() {
         protocol,
         0,
         concrete_initial.state(),
-    );
+    )
+    .expect("initial states settle");
     let StepVerdict::Passes {
         post: mut position, ..
     } = initial.verdict
@@ -2254,7 +2255,8 @@ fn an_any_row_can_take_a_visible_protocol_transition() {
         protocol,
         0,
         initial_state.state(),
-    );
+    )
+    .expect("initial states settle");
     let StepVerdict::Passes { post: position, .. } = initial.verdict else {
         panic!("the root maps: {:?}", initial.verdict);
     };
@@ -2341,7 +2343,8 @@ fn a_node_row_matches_the_attempt_identity_and_binder() {
         protocol,
         0,
         initial_state.state(),
-    );
+    )
+    .expect("initial states settle");
     let StepVerdict::Passes { post: position, .. } = initial.verdict else {
         panic!("the root maps: {:?}", initial.verdict);
     };
@@ -2457,7 +2460,8 @@ fn node_row_verdict(
         protocol,
         0,
         initial_state.state(),
-    );
+    )
+    .expect("initial states settle");
     let StepVerdict::Passes { post: position, .. } = initial.verdict else {
         panic!("the initial protocol state maps: {:?}", initial.verdict);
     };

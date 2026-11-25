@@ -9,6 +9,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-531
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-630
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-850
     type: specifies
   - target: ix://agent-ix/filament-spec-language/FR-281
@@ -31,6 +33,8 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-631
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-200
+    type: depends_on
 ---
 # FR-940: Analyze a checked package through one sealed read view over source-built and byte-read packages
 
@@ -903,6 +907,15 @@ step.
 | FR-940-AC-37 | No operation-contract item settles `unsupported` or is refused `unsupported_construct`/`not-yet-implemented` on the package route for a contract evaluator the source route has, and no function of `fsl_replay`, `fsl_eval` or `fsl_analyze` on the contract path takes a `CheckedPackage` or `CheckedGraph` or builds one from admitted bytes (the AC-2 source scan covers each; FR-087 R-10). | Test (TC-3216) |
 | FR-940-AC-38 | A requirement row the strict reader refuses, a test-only row whose operation anchor resolves to no admitted node, and a duplicated row each refuse the whole request with the reader's code, cause and pointer before an engine runs. | Test (TC-3216) |
 | FR-940-AC-39 | For each case named in FR-195-AC-1/2, FR-198-AC-2, FR-199-AC-3/4, FR-186-AC-12/16, FR-1043-AC-1/4/5, FR-204-AC-2, FR-877-AC-1, FR-196-AC-5 and FR-1043-AC-11, paired `program` and `package` requests over that case's same checked unit exercise (a) `Reach` (`eventually`, `until`, `always`) and `ExpectedReward`; (b) unweighted and duration-weighted `LongRunFraction`; (c) bounded `steps`, reward `accumulate`, `elapsed`, weighted and unweighted fraction measures, quantile and mean-of-fraction; (d) timed `MeanTime` and elapsed quantile; or (e) an undefined bounded-form read or undefined fraction read, respectively. For every source-decided item the package request returns the same item record, exact certificate or replayed witness, and process exit; it never returns `unsupported`/`not-yet-implemented` for one of those source-decided items. | Test |
+| FR-940-AC-40 | On the `Link` fixture, the `program` and `package` requests for the every-scheduler `TooLikely` claim `probability >= rational(99, 100) [eventually holds(m.delivered)]` under `fair weak M::Msg::send_a` produce equal complete outcome documents and equal exit codes; both settle the item `refuted`, exit `10`. | Test |
+| FR-940-AC-41 | On the `Link` fixture, the `program` and `package` requests for the every-scheduler `TooLikely` claim `probability >= rational(99, 100) [eventually holds(m.delivered)]` under `fair strong M::Msg::send_a` produce equal complete outcome documents and equal exit codes; both settle the item `refuted`, exit `10`. | Test |
+| FR-940-AC-42 | On the `Link` fixture, the `program` and `package` requests for the every-scheduler `TooLikely` claim `probability >= rational(99, 100) [eventually holds(m.delivered)]` under `fair weak each M::Msg::send_a` produce equal complete outcome documents and equal exit codes; both settle the item `refuted`, exit `10`. | Test |
+| FR-940-AC-43 | On the `Link` fixture, the `program` and `package` requests for the every-scheduler `TooLikely` claim `probability >= rational(99, 100) [eventually holds(m.delivered)]` under `fair strong each M::Msg::send_a` produce equal complete outcome documents and equal exit codes; both settle the item `refuted`, exit `10`. | Test |
+| FR-940-AC-44 | On the `Link` fixture, the `program` and `package` requests for `TooLikely` with `probability <= rational(98, 100) [eventually holds(m.delivered)]` under every scheduler with `fair weak M::Msg::send_a` produce equal complete outcome documents/stdout and process exits; both settle the item `refuted`, exit `10`, and the package-route replay has `reproduced` `true`. | Test |
+| FR-940-AC-45 | For FR-630-AC-11's `CounterIdentity` request, the package request removes `request.program`, selects the handoff directory written by `native-compile/1` with that program and model, and runs after `unit.native` and the handoff `sources/` have been deleted. The package route exits 0 and its complete outcome document equals the source route's; its item remains `proved`, `certified`, backend `en-1`, never `unsupported`. | Test (TC-2958) |
+| FR-940-AC-46 | With the `CounterIdentity` source request of FR-630-AC-11 and the same counter-step model/document, changing `request.items[0].temporal.item_kind` to `deadlock-freedom` leaves the source route's item with diagnostic cause `unknown-claim`; the item omits `certificate`, `counterexample` and `replay`, and exits 20. After compiling and removing `unit.native` and handoff `sources/`, the package route's complete outcome document and exit equal the source route's. | Test (TC-2958) |
+| FR-940-AC-47 | With the `CounterIdentity` source request of FR-630-AC-11 and the same counter-step model/document, changing `request.items[0].temporal.item_kind` to `time-lock-freedom` leaves the source route's item with diagnostic cause `unknown-claim`; the item omits `certificate`, `counterexample` and `replay`, and exits 20. After compiling and removing `unit.native` and handoff `sources/`, the package route's complete outcome document and exit equal the source route's. | Test (TC-2958) |
+| FR-940-AC-48 | With the `CounterIdentity` source request of FR-630-AC-11 and the same counter-step model/document, changing `request.items[0].temporal.item_kind` to `race-freedom` leaves the source route's item with diagnostic cause `unsupported-requested-capability`; the item omits `certificate`, `counterexample` and `replay`, and exits 21. After compiling and removing `unit.native` and handoff `sources/`, the package route's complete outcome document and exit equal the source route's. | Test (TC-2958) |
 
 ## Dependencies
 

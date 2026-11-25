@@ -272,7 +272,7 @@ mod tests {
         DomainPackage, DomainPackageRef, FieldMemberRecord, Multiplicity, NativeValueType,
         ObjectTypeRecord, ValueTypeRef,
     };
-    use crate::model::intake::SelectedModels;
+    use crate::model::intake::{SelectedModels, SelectedModelsParts};
     use filament_exact::Presence;
     use ix_trace_rs::trace;
 
@@ -337,7 +337,11 @@ mod tests {
             limits,
         )
         .expect("the real structural producer admits both member pairs");
-        let (selected, _, meter, _, _, _) = group.into_parts();
+        let SelectedModelsParts {
+            entries: selected,
+            meter,
+            ..
+        } = group.into_parts();
         let models = selected
             .iter()
             .map(|selection| AdmittedModel::from_view(&selection.view))

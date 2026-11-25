@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify FR-630's request item and decisions. Scope: FR-630-AC-1 to FR-630-AC-4, FR-135-AC-6, FR-138-AC-9.
+Verify FR-630's request item and decisions. Scope: FR-630-AC-1 to FR-630-AC-11, FR-135-AC-6 and FR-135-AC-13 to FR-135-AC-16, FR-138-AC-9, and FR-140-AC-19 to FR-140-AC-22.
 
 ## Test Procedure
 
@@ -18,6 +18,25 @@ Verify FR-630's request item and decisions. Scope: FR-630-AC-1 to FR-630-AC-4, F
 2. Analyze with and without `refinement_internals`.
 3. Check and analyze refinements with a decimal and an enum history row.
 4. Check and analyze, over the Counter fixture with a `chain: Sequence<Reference<Counter>>[0, 2]` field on both models, a refinement whose object row is `chain = self.chain` (the shape FR-135-AC-6 states over `RingIsQueue`; the Counter fixture is the one this test case's other steps use).
+5. Analyze the `Box` record case of FR-630-AC-7 with rings `a` and `b`,
+   where `a.box.target` names `b`, and the mapped `box.target` stays
+   unchanged on each concrete and abstract transition.
+6. Analyze the `Pair` tuple case of FR-630-AC-8 with
+   `a.pair = Pair(Reference<Ring>(b), true)`, preserved by each concrete and
+   abstract transition.
+7. Analyze the `Holder` union case of FR-630-AC-9 with
+   `a.holder = Holder::Has(Reference<Ring>(b))`, preserved by each concrete
+   and abstract transition; also analyze the `Empty` tag.
+8. Analyze the nested `Parcel` case of FR-630-AC-10 with
+   `a.parcel.owners = [Some(Reference<Ring>(b)), None]`, preserved by each
+   concrete and abstract transition.
+9. Analyze `CounterIdentity` from the source request
+   `tests/corpus/refinement/refinement-identity.analyze.json`, whose source is
+   `tests/corpus/refinement/refinement-identity.native`, selected model is
+   `fsl-conformance/cases/counter-step-package.json` and abstract document is
+   `fsl-conformance/cases/counter-step-v0.json`; its initial state and universe
+   both select `test`/`v0`. Assert the first outcome item's `claim_name` is
+   `CounterIdentity`.
 
 ## Expected Results
 
@@ -25,4 +44,10 @@ Verify FR-630's request item and decisions. Scope: FR-630-AC-1 to FR-630-AC-4, F
 - Step 2: the internals reach compilation; absent means the empty list.
 - Step 3: both check and settle `proved`.
 - Step 4: checks and settles `proved`, `certified`.
+- Steps 5–8: each item settles `proved`, `certified`; its checked simulation
+  certificate maps the record, tuple, union or nested sequence/option value
+  exactly as the corresponding FR-630 acceptance criterion states.
+- Step 9: the source route's first outcome item has `claim_name`
+  `CounterIdentity` and settles `proved`, `certified` with backend `en-1`,
+  exit 0.
 - Assertions compare the outcome document's typed members and the exit code, never message text.

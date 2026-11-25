@@ -5,14 +5,15 @@
 
 use filament_eval::FamilyOutcome;
 use filament_exact::{
-    IeeeFlag, IeeeFlags, IeeeValue, LimitKind, Meter, Outcome, ScalarLimits, Value,
+    FloatType, IeeeFlag, IeeeFlags, IeeeValue, IeeeWidth, LimitKind, Meter, OptionValue, Outcome,
+    RoundingMode, ScalarLimits, Value, ValueType,
 };
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::loss::ValueLoss;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
-use fsl_package::CheckedPackage;
-use fsl_semantics::check::PackageDeclarations;
+use fsl_package::{emit_checked, CheckedPackage, EmitLimits};
+use fsl_semantics::check::{CheckCause, PackageDeclarations};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
 use ix_trace_rs::trace;
@@ -137,6 +138,559 @@ fn flags(losses: &[ValueLoss]) -> Vec<IeeeFlag> {
         })
         .flat_map(IeeeFlags::iter)
         .collect()
+}
+
+fn checked_source(result: &str, body: &str) -> CheckedPackage {
+    checked_function("", result, body)
+}
+
+fn checked_function(parameters: &str, result: &str, body: &str) -> CheckedPackage {
+    checked_module(&format!(
+        "function f using v({parameters}): {result} pure {{ {body} }}\n"
+    ))
+}
+
+fn checked_module(items: &str) -> CheckedPackage {
+    let text = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         {items}"
+    );
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "fr397-bit-literal"),
+        "unit.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let mut declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fr397-bit-literal".to_owned(),
+        unit,
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect("the assembler accepts the unit");
+    declarations.ieee_profile = Some(
+        admit_ieee_profile(&[DefinitionRole::IeeeProfile.reference()], &[])
+            .expect("the IEEE profile admits"),
+    );
+    CheckedPackage::link(
+        declarations
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
+            .unwrap_or_else(|refusal| panic!("{items}: {refusal:?}")),
+    )
+}
+
+fn assert_ieee_operation_has_selected_law(wire: &serde_json::Value, identity: &str) {
+    let selections: Vec<&serde_json::Value> = wire["lock"]["definition_selections"]
+        .as_array()
+        .expect("definition selections are emitted")
+        .iter()
+        .filter(|selection| selection["identity"] == "filament.value.ieee754-2019-default/v1")
+        .collect();
+    let [selected] = selections.as_slice() else {
+        panic!("one IEEE profile definition selection is emitted: {selections:?}");
+    };
+    let node = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic nodes are emitted")
+        .iter()
+        .find(|node| node["body"]["operation"]["identity"] == identity)
+        .unwrap_or_else(|| panic!("the operation {identity} is emitted: {wire}"));
+    assert_eq!(
+        node["body"]["operation"]["laws"],
+        serde_json::json!([{"role": "ieee_profile", "definition": selected}]),
+        "{identity} carries the selected IEEE profile"
+    );
+}
+
+fn emitted_wire(package: &CheckedPackage) -> serde_json::Value {
+    let emission =
+        emit_checked(package, EmitLimits::new(16 * 1024 * 1024)).expect("the package emits");
+    serde_json::from_slice(emission.package().bytes()).expect("the package JSON parses")
+}
+
+fn literal_nodes(package: &CheckedPackage) -> Vec<serde_json::Value> {
+    let wire = emitted_wire(package);
+    wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("the semantic graph has nodes")
+        .iter()
+        .filter(|node| node["semantic_form"] == "literal")
+        .cloned()
+        .collect()
+}
+
+fn assert_literal_float_type(
+    wire: &serde_json::Value,
+    literal: &serde_json::Value,
+    width: &str,
+    rounding: &str,
+) {
+    let type_id = &literal["semantic_type"];
+    let ty = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic graph nodes are emitted")
+        .iter()
+        .find(|node| node["node_id"] == *type_id)
+        .expect("literal type node is emitted");
+    assert_eq!(ty["semantic_form"], "float_rounding");
+    assert_eq!(ty["semantic_type"]["path"][1], width);
+    assert_eq!(ty["body"]["members"].as_array().unwrap().len(), 1);
+    assert_eq!(ty["body"]["members"][0]["name"], "rounding");
+    assert_eq!(ty["body"]["members"][0]["value"]["value"], rounding);
+}
+
+fn evaluate_nullary(package: &CheckedPackage) -> (Outcome<Value>, Vec<ValueLoss>) {
+    evaluate_named(package, "f")
+}
+
+fn evaluate_named(package: &CheckedPackage, name: &str) -> (Outcome<Value>, Vec<ValueLoss>) {
+    evaluate_named_with_args(package, name, Vec::new())
+}
+
+fn evaluate_named_with_args(
+    package: &CheckedPackage,
+    name: &str,
+    arguments: Vec<Value>,
+) -> (Outcome<Value>, Vec<ValueLoss>) {
+    let evaluation = package
+        .call(
+            &QualifiedName::unqualified(name).expect("function name is valid"),
+            arguments,
+            &ObjectEnvironment::default(),
+            &mut Meter::new(UNLIMITED),
+        )
+        .expect("the checked function runs");
+    let FamilyOutcome::Evaluated(outcome) = evaluation.outcome else {
+        panic!(
+            "the evaluator returns a kernel outcome: {:?}",
+            evaluation.outcome
+        );
+    };
+    (
+        outcome,
+        evaluation
+            .losses
+            .into_iter()
+            .map(|loss| loss.loss)
+            .collect(),
+    )
+}
+
+/// FR-397-AC-10 (TC-1091): bit constructors inherit expected types, emit
+/// exact literal payloads, and evaluate special payloads without flags.
+#[trace("TC-1091", "FR-397-AC-10")]
+#[test]
+fn bit_constructors_keep_expected_types_and_exact_payloads() {
+    let one64 = checked_source("Float64[nearest-even]", "float64(bits: 0x3ff0000000000000)");
+    let literals64 = literal_nodes(&one64);
+    let [literal] = literals64.as_slice() else {
+        panic!("the constructor lowers to exactly one literal");
+    };
+    assert_literal_float_type(&emitted_wire(&one64), literal, "float64", "nearest-even");
+    assert_eq!(literal["body"]["value_kind"], "float64_bits");
+    assert_eq!(literal["body"]["value"], "3ff0000000000000");
+    assert!(matches!(
+        evaluate_nullary(&one64).0,
+        Outcome::Completed(Value::Float(value)) if value.bits() == 0x3ff0_0000_0000_0000
+    ));
+
+    let one32 = checked_source("Float32[toward-zero]", "float32(bits: 0x3f800000)");
+    let literals32 = literal_nodes(&one32);
+    let [literal] = literals32.as_slice() else {
+        panic!("the single-precision constructor lowers to exactly one literal");
+    };
+    assert_literal_float_type(&emitted_wire(&one32), literal, "float32", "toward-zero");
+    assert_eq!(literal["body"]["value_kind"], "float32_bits");
+    assert_eq!(literal["body"]["value"], "3f800000");
+    assert!(matches!(
+        evaluate_nullary(&one32).0,
+        Outcome::Completed(Value::Float(value)) if value.bits() == 0x3f80_0000
+    ));
+
+    let uncontextualized = checked_source(
+        "Boolean",
+        "float64(bits: 0x0000000000000000) = float64(bits: 0x8000000000000000)",
+    );
+    let literals = literal_nodes(&uncontextualized);
+    assert_eq!(literals.len(), 2);
+    let wire = emitted_wire(&uncontextualized);
+    for literal in &literals {
+        let type_id = &literal["semantic_type"];
+        let ty = wire["semantic_graph"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["node_id"] == *type_id)
+            .expect("the constructor's type is emitted");
+        assert_eq!(ty["semantic_form"], "float_rounding");
+        assert_eq!(ty["semantic_type"]["path"][1], "float64");
+        assert_eq!(ty["body"]["members"][0]["name"], "rounding");
+        assert_eq!(ty["body"]["members"][0]["value"]["value"], "exact");
+    }
+
+    for (bits, text) in [
+        (0x7ff0_0000_0000_0001, "0x7ff0000000000001"),
+        (0xfff8_0000_0000_0005, "0xfff8000000000005"),
+        (0x8000_0000_0000_0000, "0x8000000000000000"),
+        (0x7ff0_0000_0000_0000, "0x7ff0000000000000"),
+    ] {
+        let package = checked_source("Float64[nearest-even]", &format!("float64(bits: {text})"));
+        let (outcome, losses) = evaluate_nullary(&package);
+        assert!(matches!(
+            outcome,
+            Outcome::Completed(Value::Float(value)) if value.bits() == bits
+        ));
+        assert!(flags(&losses).is_empty(), "{text}: {losses:?}");
+    }
+}
+
+/// FR-397-AC-11 (TC-1091): malformed bit syntax refuses as a located invalid
+/// token; a valid constructor with an incompatible expected type is ill-typed.
+#[trace("TC-1091", "FR-397-AC-11")]
+#[test]
+fn malformed_and_mistyped_bit_constructors_refuse_at_the_constructor() {
+    use fsl_cst::{CompleteCause, CompleteCode};
+
+    for (result, constructor) in [
+        ("Float64[nearest-even]", "float64(bits: 0x3ff0)"),
+        ("Float64[nearest-even]", "float64(bits: 0x3FF0000000000000)"),
+        ("Float32[nearest-even]", "float32(bits: 3f800000)"),
+        ("Float32[nearest-even]", "float32(bits: 0x3f80000g)"),
+        ("Float64[nearest-even]", "float64(0x3ff0000000000000)"),
+    ] {
+        let text = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             function f using v(): {result} pure {{ {constructor} }}\n"
+        );
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("agent-ix", "fr397-bit-literal-refusal"),
+            "unit.native",
+            text.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("S1 runs");
+        let [diagnostic] = parsed.diagnostics() else {
+            panic!(
+                "one syntax diagnostic for {constructor}: {:?}",
+                parsed.diagnostics()
+            );
+        };
+        assert_eq!(
+            diagnostic.code,
+            CompleteCode::InvalidSyntax,
+            "{constructor}"
+        );
+        assert_eq!(
+            diagnostic.cause,
+            CompleteCause::InvalidToken,
+            "{constructor}"
+        );
+        let span = diagnostic.byte_span().expect("the refusal is located");
+        let constructor_start = text.find(constructor).expect("constructor occurs");
+        assert!(
+            span.start <= constructor_start && constructor_start < span.end,
+            "{constructor}: diagnostic span {span:?}"
+        );
+    }
+
+    for (result, constructor) in [
+        ("Float64[nearest-even]", "float32(bits: 0x3f800000)"),
+        ("Int[0, 10]", "float64(bits: 0x3ff0000000000000)"),
+    ] {
+        let text = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             function f using v(): {result} pure {{ {constructor} }}\n"
+        );
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("agent-ix", "fr397-bit-literal-type-refusal"),
+            "unit.native",
+            text.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("S1 runs");
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+        let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+        let declarations = PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "fr397-bit-literal".to_owned(),
+            unit,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("the assembler accepts the unit");
+        let refusals = declarations
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
+            .expect_err("the expected type rejects the bit constructor");
+        let [refusal] = refusals.as_slice() else {
+            panic!("one typed refusal for {constructor}: {refusals:?}");
+        };
+        assert_eq!(
+            &*refusal.cause,
+            &CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
+        );
+        assert!(refusal.location.path().is_empty(), "{refusal:?}");
+    }
+}
+
+/// FR-397-AC-19 (TC-1091): expression-only float use selects the IEEE law even
+/// when the unit declares no float type.
+#[test]
+#[trace("TC-1091", "FR-397-AC-19")]
+fn expression_only_float_forms_carry_the_ieee_profile_law() {
+    for (parameters, result, body, operation) in [
+        (
+            "",
+            "Boolean",
+            "float64(bits: 0x3ff0000000000000) = float64(bits: 0x3ff0000000000000)",
+            "filament.op.ieee.numeric_equal",
+        ),
+        (
+            "",
+            "Boolean",
+            "filament::value::ieee::bitIdentical(float64(bits: 0x3ff0000000000000), float64(bits: 0x3ff0000000000000))",
+            "filament.op.ieee.bit_identical",
+        ),
+        (
+            "i: Int[0, 10]",
+            "Float64[nearest-even]",
+            "convert<Float64[nearest-even]>(i)",
+            "filament.op.ieee.from_exact",
+        ),
+    ] {
+        let package = checked_function(parameters, result, body);
+        let wire = emitted_wire(&package);
+        assert_ieee_operation_has_selected_law(&wire, operation);
+    }
+}
+
+/// FR-397-AC-22 (TC-1091): structural equality retains IEEE float leaves in
+/// every specified composite shape and evaluates the literal vectors.
+#[trace("TC-1091", "FR-397-AC-22")]
+#[test]
+fn structural_composites_compare_float_leaves_numerically() {
+    let structural = checked_module(
+        r#"
+record R { x: Float64[nearest-even]; y: Integer; }
+record RT { x: Float64[nearest-even]; label: Text[0, 8; binary-utf8]; }
+union U { V(Float64[nearest-even]), N }
+tuple T(Float32[exact], Integer);
+function eq_record using v(a: R, b: R): Boolean pure { a = b }
+function ne_record using v(a: R, b: R): Boolean pure { a != b }
+function eq_option using v(a: Option<Float64[nearest-even]>, b: Option<Float64[nearest-even]>): Boolean pure { a = b }
+function ne_option using v(a: Option<Float64[nearest-even]>, b: Option<Float64[nearest-even]>): Boolean pure { a != b }
+function eq_union using v(a: U, b: U): Boolean pure { a = b }
+function ne_union using v(a: U, b: U): Boolean pure { a != b }
+function eq_sequence using v(a: Sequence<Float64[nearest-even]>[0, 2], b: Sequence<Float64[nearest-even]>[0, 2]): Boolean pure { a = b }
+function ne_sequence using v(a: Sequence<Float64[nearest-even]>[0, 2], b: Sequence<Float64[nearest-even]>[0, 2]): Boolean pure { a != b }
+function eq_tuple using v(a: T, b: T): Boolean pure { a = b }
+function ne_tuple using v(a: T, b: T): Boolean pure { a != b }
+function eq_record_text using v(a: RT, b: RT): Boolean pure { a = b }
+"#,
+    );
+    let wire = emitted_wire(&structural);
+    let nodes = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic graph nodes are emitted");
+    let eq_nodes: Vec<_> = nodes
+        .iter()
+        .filter(|node| node["body"]["operation"]["identity"] == "filament.op.structural.eq")
+        .collect();
+    let ne_nodes: Vec<_> = nodes
+        .iter()
+        .filter(|node| node["body"]["operation"]["identity"] == "filament.op.structural.ne")
+        .collect();
+    assert_eq!(eq_nodes.len(), 6);
+    assert_eq!(ne_nodes.len(), 5);
+    let mut float_paths = Vec::new();
+    for node in eq_nodes.iter().chain(ne_nodes.iter()) {
+        let leaves = node["body"]["operation"]["leaves"]
+            .as_array()
+            .expect("structural operation leaves are emitted");
+        for leaf in leaves {
+            let path: Vec<_> = leaf["path"]
+                .as_array()
+                .expect("leaf path is emitted")
+                .iter()
+                .map(|segment| segment.as_str().expect("path member is text"))
+                .collect();
+            let path = path.join("/");
+            if leaf["laws"]
+                .as_array()
+                .is_some_and(|laws| laws.iter().any(|law| law["role"] == "ieee_profile"))
+            {
+                assert!(leaf["mode"].is_null(), "{path}: {leaf}");
+                float_paths.push(path);
+            }
+        }
+    }
+    float_paths.sort();
+    assert_eq!(
+        float_paths,
+        [
+            "field:x",
+            "field:x",
+            "field:x",
+            "inner",
+            "inner",
+            "inner",
+            "inner",
+            "member:V/position:0",
+            "member:V/position:0",
+            "position:0",
+            "position:0",
+        ]
+    );
+    let record_text = eq_nodes
+        .iter()
+        .find(|node| {
+            node["body"]["operation"]["leaves"]
+                .as_array()
+                .is_some_and(|leaves| leaves.iter().any(|leaf| leaf["path"][0] == "field:label"))
+        })
+        .expect("the record with a float and text leaf is emitted");
+    let record_paths: Vec<Vec<String>> = record_text["body"]["operation"]["leaves"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|leaf| {
+            leaf["path"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|segment| segment.as_str().unwrap().to_owned())
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        record_paths,
+        [vec!["field:x".to_owned()], vec!["field:label".to_owned()]]
+    );
+
+    let vectors = checked_module(
+        r#"
+record R { x: Float64[nearest-even]; y: Integer; }
+union U { V(Float64[nearest-even]), N }
+tuple T(Float32[exact], Integer);
+function eq_option using v(a: Option<Float64[nearest-even]>, b: Option<Float64[nearest-even]>): Boolean pure { a = b }
+function eq_sequence using v(a: Sequence<Float64[nearest-even]>[0, 2], b: Sequence<Float64[nearest-even]>[0, 2]): Boolean pure { a = b }
+function record_zero using v(): Boolean pure { R { x: float64(bits: 0x0000000000000000), y: 1 } = R { x: float64(bits: 0x8000000000000000), y: 1 } }
+function record_nan using v(): Boolean pure { R { x: float64(bits: 0x7ff8000000000000), y: 1 } = R { x: float64(bits: 0x7ff8000000000000), y: 1 } }
+function record_nan_ne using v(): Boolean pure { R { x: float64(bits: 0x7ff8000000000000), y: 1 } != R { x: float64(bits: 0x7ff8000000000000), y: 1 } }
+function record_other_field using v(): Boolean pure { R { x: float64(bits: 0x0000000000000000), y: 1 } = R { x: float64(bits: 0x0000000000000000), y: 2 } }
+function union_zero using v(): Boolean pure { U::V(float64(bits: 0x0000000000000000)) = U::V(float64(bits: 0x8000000000000000)) }
+function union_empty using v(): Boolean pure { U::V(float64(bits: 0x0000000000000000)) = U::N }
+function sequence_zero using v(): Boolean pure { eq_sequence(sequence[float64(bits: 0x0000000000000000), float64(bits: 0x3ff0000000000000)], sequence[float64(bits: 0x8000000000000000), float64(bits: 0x3ff0000000000000)]) }
+function sequence_nan using v(): Boolean pure { eq_sequence(sequence[float64(bits: 0x7ff8000000000000)], sequence[float64(bits: 0x7ff8000000000000)]) }
+function tuple_zero using v(): Boolean pure { T(float32(bits: 0x80000000), 1) = T(float32(bits: 0x00000000), 1) }
+"#,
+    );
+    for (name, expected) in [
+        ("record_zero", true),
+        ("record_nan", false),
+        ("record_nan_ne", true),
+        ("record_other_field", false),
+        ("union_zero", true),
+        ("union_empty", false),
+        ("sequence_zero", true),
+        ("sequence_nan", false),
+        ("tuple_zero", true),
+    ] {
+        assert!(
+            matches!(evaluate_named(&vectors, name).0, Outcome::Completed(Value::Boolean(value)) if value == expected),
+            "{name} must be {expected}"
+        );
+    }
+    let float_type = ValueType::Float(FloatType::new(
+        IeeeWidth::Binary64,
+        RoundingMode::NearestEven,
+    ));
+    let nan = Value::Float(IeeeValue::binary64(0x7ff8_0000_0000_0000));
+    let option = OptionValue::present(float_type, nan).expect("the NaN is a present float value");
+    assert!(matches!(
+        evaluate_named_with_args(&vectors, "eq_option", vec![option.clone(), option]).0,
+        Outcome::Completed(Value::Boolean(false))
+    ));
+}
+
+/// FR-397-AC-23 (TC-1091): sets match float members by bits while their
+/// structural leaf uses numeric equality; bags and sequences retain their
+/// distinct value semantics.
+#[test]
+#[trace("TC-1091", "FR-397-AC-23")]
+fn set_bag_and_sequence_float_equality_use_their_defined_semantics() {
+    let package = checked_module(
+        r#"
+function eq_set using v(a: Set<Float64[nearest-even]>[0, 2], b: Set<Float64[nearest-even]>[0, 2]): Boolean pure { a = b }
+function ne_set using v(a: Set<Float64[nearest-even]>[0, 2], b: Set<Float64[nearest-even]>[0, 2]): Boolean pure { a != b }
+function eq_bag using v(a: Bag<Float64[nearest-even]>[0, 2], b: Bag<Float64[nearest-even]>[0, 2]): Boolean pure { a = b }
+function eq_sequence using v(a: Sequence<Float64[nearest-even]>[0, 2], b: Sequence<Float64[nearest-even]>[0, 2]): Boolean pure { a = b }
+function set_nan using v(): Boolean pure { eq_set(set[float64(bits: 0x7ff8000000000000)], set[float64(bits: 0x7ff8000000000000)]) }
+function set_zero using v(): Boolean pure { eq_set(set[float64(bits: 0x0000000000000000)], set[float64(bits: 0x8000000000000000)]) }
+function set_zero_ne using v(): Boolean pure { ne_set(set[float64(bits: 0x0000000000000000)], set[float64(bits: 0x8000000000000000)]) }
+function set_order using v(): Boolean pure { eq_set(set[float64(bits: 0x0000000000000000), float64(bits: 0x8000000000000000)], set[float64(bits: 0x8000000000000000), float64(bits: 0x0000000000000000)]) }
+function set_distinct_nan using v(): Boolean pure { eq_set(set[float64(bits: 0x7ff8000000000000)], set[float64(bits: 0x7ff8000000000001)]) }
+function bag_nan using v(): Boolean pure { eq_bag(bag[float64(bits: 0x7ff8000000000000)], bag[float64(bits: 0x7ff8000000000000)]) }
+function bag_zero using v(): Boolean pure { eq_bag(bag[float64(bits: 0x0000000000000000)], bag[float64(bits: 0x8000000000000000)]) }
+function sequence_nan using v(): Boolean pure { eq_sequence(sequence[float64(bits: 0x7ff8000000000000)], sequence[float64(bits: 0x7ff8000000000000)]) }
+"#,
+    );
+    let wire = emitted_wire(&package);
+    let nodes = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic graph nodes are emitted");
+    for (identity, expected_count) in [
+        ("filament.op.structural.eq", 3),
+        ("filament.op.structural.ne", 1),
+    ] {
+        let operations: Vec<_> = nodes
+            .iter()
+            .filter(|node| node["body"]["operation"]["identity"] == identity)
+            .collect();
+        assert_eq!(operations.len(), expected_count, "{identity}");
+        for operation in operations {
+            let leaves = operation["body"]["operation"]["leaves"]
+                .as_array()
+                .expect("structural leaves are emitted");
+            assert_eq!(leaves.len(), 1, "{identity}: {leaves:?}");
+            let leaf = &leaves[0];
+            assert_eq!(leaf["path"], serde_json::json!(["inner"]));
+            assert_eq!(leaf["mode"], serde_json::Value::Null);
+            assert_eq!(
+                leaf["laws"][0]["role"], "ieee_profile",
+                "{identity}: {leaf}"
+            );
+        }
+    }
+    for (name, expected) in [
+        ("set_nan", true),
+        ("set_zero", false),
+        ("set_zero_ne", true),
+        ("set_order", true),
+        ("set_distinct_nan", false),
+        ("bag_nan", true),
+        ("bag_zero", false),
+        ("sequence_nan", false),
+    ] {
+        assert!(
+            matches!(evaluate_named(&package, name).0, Outcome::Completed(Value::Boolean(value)) if value == expected),
+            "{name} must be {expected}"
+        );
+    }
 }
 
 /// The FR-397-AC-13 vector table at one width: zero, negative zero, one,

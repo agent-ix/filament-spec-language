@@ -6,36 +6,36 @@ use std::collections::BTreeSet;
 
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
 use filament_exact::Cancel;
-use fsl_analyze::analyze::{analyze_items, AnalyzeRecord, Engines};
+use fsl_analyze::analyze::{AnalyzeRecord, Engines, analyze_items};
 use fsl_analyze::protocol_analysis::{
-    self, projection_item, realizability_item, realize, realize_tampered, replay_counterexample,
-    replay_strategy, ProjectionRequest, ProtocolAnalysisArtifact, RealizabilityOutcome,
-    RealizabilityRefusal, RealizabilityRequest,
+    self, ProjectionRequest, ProtocolAnalysisArtifact, RealizabilityOutcome, RealizabilityRefusal,
+    RealizabilityRequest, projection_item, realizability_item, realize, realize_tampered,
+    replay_counterexample, replay_strategy,
 };
 use fsl_eval::model_subject::{ProtocolSubject, RoleBinding};
 use fsl_eval::simulation::protocol::StepKind;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::CheckedPackage;
 use fsl_replay::protocol_analysis::{
-    node_text, AnalysisOutcome, AssessedRoot, BoundsDraft, InconclusiveCause, Observed, Play,
+    AnalysisOutcome, AssessedRoot, BoundsDraft, InconclusiveCause, Observed, Play,
     ProjectionBoundsDraft, RealizabilityCounterexample, RealizabilityDisagreement,
-    RealizabilityWitness, RunBudget, RunLimit, StrategyAction, UnsupportedSlug,
+    RealizabilityWitness, RunBudget, RunLimit, StrategyAction, UnsupportedSlug, node_text,
 };
-use fsl_replay::spine::{read_native_run_result, NativeRunResult, ProtocolAnalysisKind};
+use fsl_replay::spine::{NativeRunResult, ProtocolAnalysisKind, read_native_run_result};
 use fsl_replay::{
     Certification, DecidingElement, Execution, IncompleteCause, InconclusiveCause as Fr331Cause,
     ModelCheckLimit, ProofBasis, ResultLabel, SeparatingWitnessRecord, SettlementBasis,
     TerminalValue, Truth, UnavailabilityCause,
 };
 use fsl_route::{
-    settle_candidates, Candidate, CandidateOutcome, NegotiationCause, NegotiationSettlement,
-    Registry,
+    Candidate, CandidateOutcome, NegotiationCause, NegotiationSettlement, Registry,
+    settle_candidates,
 };
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
-use crate::fill::{instance, model_subject, package, source_memory, Documents, PACKAGE};
+use crate::fill::{Documents, PACKAGE, instance, model_subject, package, source_memory};
 use crate::protocol_projection::{admitted_source, clause, named, root as assessed_root};
 
 const RECORDS: &str = "record Ack { ok: Boolean; }\nrecord PickMsg { ok: Boolean; }\n\
@@ -117,6 +117,22 @@ impl Fixture {
             admitted: admitted_source(&text),
             documents,
             initial,
+        }
+    }
+
+    fn with_join_predicate(delivery: &str, function: &str, run: &str) -> Self {
+        let text = format!(
+            "{RECORDS}{function}\nprotocol Flow using pp over (k: M::Cell) on origin {{\n{}\nrun {run}\n\
+             finish Done as (zz: Boolean) {{ true }};\n}}\n",
+            members(delivery)
+        );
+        let mut documents = Documents::new();
+        let initial = documents.start("s0", &[("c", 0)]);
+        Self {
+            checked: package(&text),
+            admitted: admitted_source(&text),
+            documents,
+            initial: vec![initial],
         }
     }
 
@@ -474,11 +490,13 @@ fn an_admitted_loss_is_an_environment_defeat() {
     let [defeat] = &defeats_per_branch[..] else {
         panic!("one branch: the environment fixes the choice");
     };
-    assert!(defeat
-        .play
-        .steps
-        .iter()
-        .any(|step| step.transition.kind() == StepKind::Lose));
+    assert!(
+        defeat
+            .play
+            .steps
+            .iter()
+            .any(|step| step.transition.kind() == StepKind::Lose)
+    );
     assert_eq!(obligation, fixture.named("Done"));
     assert_eq!(
         separating_witness.deciding_element,
@@ -509,6 +527,82 @@ fn two_runs_on_one_key_return_one_result() {
     ] {
         assert_eq!(fixture.run(), fixture.run());
     }
+}
+
+/// FR-572-AC-6 (TC-1412): all three run ceilings are outside the key. Each
+/// stopped result is `Failed` and carries no witness, while changing only the
+/// assessed-subject root leaves the structural key equal.
+#[trace("TC-1412", "FR-572-AC-6")]
+#[test]
+fn realizability_limits_and_assessed_root_do_not_change_the_key() {
+    let fixture = Fixture::new(
+        "exactly-once-premise",
+        "sequence Main { send Placed via Order as (placed: Ack) { true }; }",
+    );
+    let baseline = fixture.run();
+
+    let mut states = fixture.request(64);
+    states.budget.max_states = 1;
+    let stopped_states = fixture.decide(states);
+    assert_eq!(stopped_states.key, baseline.key);
+    assert!(matches!(
+        stopped_states.outcome,
+        AnalysisOutcome::Failed(RunLimit {
+            limit: ModelCheckLimit::MaxStates,
+            value: 1
+        })
+    ));
+
+    let mut transitions = fixture.request(64);
+    transitions.budget.max_transitions = 0;
+    let stopped_transitions = fixture.decide(transitions);
+    assert_eq!(stopped_transitions.key, baseline.key);
+    assert!(matches!(
+        stopped_transitions.outcome,
+        AnalysisOutcome::Failed(RunLimit {
+            limit: ModelCheckLimit::MaxTransitions,
+            value: 0
+        })
+    ));
+
+    let meter_fixture = Fixture::with_join_predicate(
+        "exactly-once-premise",
+        "function both using v(left: Boolean, right: Boolean): Boolean pure { left and right }",
+        "sequence Main { parallel Both memory sc { branch left sequence Left { event L by Buyer as (l: Ack) { true }; } branch right sequence Right { event R by Seller as (r: Ack) { true }; } } join predicate(both) [left, right] outstanding cancel; }",
+    );
+    let mut meter_baseline_request = meter_fixture.request(64);
+    meter_baseline_request.strategy_profile = Some("bounded".to_owned());
+    let meter_baseline = meter_fixture.decide(meter_baseline_request);
+    let mut meter = meter_fixture.request(64);
+    meter.strategy_profile = Some("bounded".to_owned());
+    meter.subject.model.simulation.meter = filament_exact::ScalarLimits {
+        work_units: 0,
+        ..crate::counter::UNLIMITED
+    };
+    let stopped_meter = meter_fixture.decide(meter);
+    assert_eq!(stopped_meter.key, meter_baseline.key);
+    assert!(
+        matches!(
+            stopped_meter.outcome,
+            AnalysisOutcome::Failed(RunLimit {
+                limit: ModelCheckLimit::EvaluationMeter { .. },
+                ..
+            })
+        ),
+        "evaluation-meter outcome: {:?}",
+        stopped_meter.outcome
+    );
+
+    let mut changed_root = fixture.request(64);
+    changed_root
+        .assessed_root
+        .as_mut()
+        .expect("the fixture has an assessed root")
+        .observation
+        .as_mut()
+        .expect("the fixture has an observation identity")
+        .identity = "protocol-claim-other".to_owned();
+    assert_eq!(fixture.decide(changed_root).key, baseline.key);
 }
 
 /// TC-1415: a step binder `fsl-eval` cannot enumerate is unsupported with
@@ -910,13 +1004,16 @@ fn a_pair_ending_where_another_role_can_move_is_refused() {
 /// first state where two `send` steps are enabled, and the first of those
 /// two steps.
 fn to_two_sends(fixture: &Fixture) -> (Play, fsl_replay::protocol_analysis::PlayStep) {
-    use fsl_eval::simulation::protocol::{ProtocolSystem, Sc};
     use fsl_eval::simulation::TransitionSystem;
+    use fsl_eval::simulation::protocol::{ProtocolSystem, Sc};
     let subject = fixture.subject();
     let model = fsl_eval::simulation::model::ModelSystem::new(subject.model.simulation.clone())
         .expect("the model admits");
     let system = ProtocolSystem::new(model, &subject, Sc).expect("the protocol admits");
-    let mut state = system.initial().remove(0);
+    let mut state = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let mut steps = Vec::new();
     loop {
         let successors = system.successors(&state).expect("expands").successors;
@@ -1412,10 +1509,13 @@ fn a_symbolic_capacity_premise_carries_the_bound_value_in_the_key() {
         &[0],
     );
     let admission_fixture = Fixture::built(
-        "on origin", "exactly-once-premise", "",
+        "on origin",
+        "exactly-once-premise",
+        "",
         "channel Sym from Buyer to Seller carries Ack ordering unordered delivery exactly-once-premise capacity symbolic(Bound) overflow reject;\n\
          channel Earlier from Buyer to Seller carries Ack ordering unordered delivery exactly-once-premise capacity symbolic(Alpha) overflow reject;\n",
-        "sequence Main {}", &[0],
+        "sequence Main {}",
+        &[0],
     );
     let source_definition = fsl_eval::simulation::model::ProtocolDefinition::Source(
         admission_fixture.checked.graph().protocol("Flow").unwrap(),
@@ -1688,7 +1788,7 @@ fn a_symbolic_capacity_is_decided_at_its_bound_value_under_bounded() {
 )]
 #[test]
 fn protocol_counterexample_outcomes_keep_both_realizability_bodies() {
-    use fsl_analyze::analyze::{analyze_document, split_records, Counterexample};
+    use fsl_analyze::analyze::{Counterexample, analyze_document, split_records};
     use fsl_replay::protocol_analysis::ProtocolAnalysisCounterexample;
 
     let hidden = worked("exactly-once-premise", PICK, "");
@@ -1994,10 +2094,13 @@ fn protocol_counterexample_outcomes_keep_both_realizability_bodies() {
     );
     assert_eq!(substituted.backend, found[0].backend);
     substituted.request_index = terminals[0].request_index();
-    assert!(matches!(
-        fsl_analyze::analyze::analyze_item(&terminals[0], &[substituted]),
-        Err(fsl_replay::OutcomeItemError::CounterexampleAssociation)
-    ), "matching typed evidence and wire from a different assessed root must not attach to the original item");
+    assert!(
+        matches!(
+            fsl_analyze::analyze::analyze_item(&terminals[0], &[substituted]),
+            Err(fsl_replay::OutcomeItemError::CounterexampleAssociation)
+        ),
+        "matching typed evidence and wire from a different assessed root must not attach to the original item"
+    );
 }
 
 /// Expected member-specific numeric view; the native FR-352 record remains numeric.

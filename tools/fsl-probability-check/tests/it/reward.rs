@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Named-reward documents are recomputed by a fresh qualified-core process.
 
-use super::bounded::{alter_keys, document, key, mutate, request_with, run, run_with};
+use super::bounded::{
+    alter_keys, document, key, mutate, request_with, requests_with_mode, run, run_with,
+};
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const DOMAIN: &[u8] = include_bytes!("../fixtures/reward.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
@@ -14,15 +16,39 @@ fn header() -> String {
         .lines()
         .next()
         .unwrap();
-    format!("{language}\nprofile v = \"filament.model.complete/v1\";\nprofile inf = \"filament.temporal.infinite-trace/v1\";\nmodel M = \"test/link\";\n")
+    format!(
+        "{language}\nprofile v = \"filament.model.complete/v1\";\nprofile inf = \"filament.temporal.infinite-trace/v1\";\nmodel M = \"test/link\";\n"
+    )
 }
 
 fn claim(model: &str, scheduler: &str, op: &str, threshold: &str, target: &str) -> String {
-    format!("{model}\nprobabilistic Likely using inf on M over (m: M::Msg) under {scheduler} on origin {{ expected accumulate cost until holds({target}) {op} {threshold} }}\n")
+    format!(
+        "{model}\nprobabilistic Likely using inf on M over (m: M::Msg) under {scheduler} on origin {{ expected accumulate cost until holds({target}) {op} {threshold} }}\n"
+    )
+}
+
+fn retry_value_two() -> String {
+    format!(
+        "{}\n\
+        pre A using v on M::Msg::send_a {{ self.attempts = 0 or (self.attempts = 1 and not self.delivered) }}\n\
+        post A_done using v on M::Msg::send_a {{ self.attempts - pre(self.attempts) = (if pre(self.attempts) = 0 then 1 else if lost then 1 else 0) and self.delivered = (pre(self.attempts) = 1 and lost) }}\n\
+        pre B using v on M::Msg::send_b {{ false }}\n\
+        post B_done using v on M::Msg::send_b {{ false }}\n\
+        pre C using v on M::Msg::send_c {{ false }}\n\
+        post C_done using v on M::Msg::send_c {{ false }}\n\
+        random Msg::send_a(lost) ~ {{ true: 1, false: 1 }};\n\
+        random Msg::send_b(lost) ~ {{ true: 1, false: 1 }};\n\
+        random Msg::send_c(lost) ~ {{ true: 1, false: 1 }};\n\
+        reward cost on Msg::send_a = 1;\n\
+        workload Steady on M {{ weight Msg::send_a = 1; weight Msg::send_b = 0; weight Msg::send_c = 0; }}\n\
+        terminal Stop using v on M when {{ self.delivered }};\n",
+        header()
+    )
 }
 
 fn two_step() -> String {
-    format!("{}\n\
+    format!(
+        "{}\n\
         pre A using v on M::Msg::send_a {{ self.attempts = 0 }}\n\
         post A_done using v on M::Msg::send_a {{ self.attempts = 1 and not self.delivered }}\n\
         pre B using v on M::Msg::send_b {{ self.attempts = 0 }}\n\
@@ -36,11 +62,14 @@ fn two_step() -> String {
         reward cost on Msg::send_b = 4;\n\
         reward cost on Msg::send_c = 2;\n\
         terminal Stop using v on M when {{ self.attempts = 2 }};\n\
-        workload Even on M {{ weight Msg::send_a = 1; weight Msg::send_b = 1; weight Msg::send_c = 1; }}\n", header())
+        workload Even on M {{ weight Msg::send_a = 1; weight Msg::send_b = 1; weight Msg::send_c = 1; }}\n",
+        header()
+    )
 }
 
 fn draws(cost: &str) -> String {
-    format!("{}\n\
+    format!(
+        "{}\n\
         pre A using v on M::Msg::send_a {{ self.attempts = 0 }}\n\
         post A_done using v on M::Msg::send_a {{ self.attempts = 1 and self.delivered = (not lost) }}\n\
         pre B using v on M::Msg::send_b {{ false }}\n\
@@ -52,7 +81,9 @@ fn draws(cost: &str) -> String {
         random Msg::send_c(lost) ~ {{ true: 1, false: 1 }};\n\
         reward cost on Msg::send_a = {cost};\n\
         terminal Stop using v on M when {{ self.attempts = 1 }};\n\
-        workload Even on M {{ weight Msg::send_a = 1; weight Msg::send_b = 1; weight Msg::send_c = 1; }}\n", header())
+        workload Even on M {{ weight Msg::send_a = 1; weight Msg::send_b = 1; weight Msg::send_c = 1; }}\n",
+        header()
+    )
 }
 
 fn proof(source: &str) -> Value {
@@ -71,6 +102,160 @@ fn accepted(request: &Value, n: &str, d: &str) {
     let (code, output) = run(request);
     assert_eq!(code, 0, "{output}");
     assert_eq!(output["value"], json!({"numerator": n, "denominator": d}));
+}
+
+#[trace("FSpec-FR-1042-AC-11")]
+#[test]
+fn partial_reward_lower_certificate_uses_infinite_upper_bound() {
+    let mut limits = ExactProbLimits::default();
+    limits.model.limits.max_states = 1;
+    let source = claim(&two_step(), "Even", ">=", "rational(0,1)", "m.delivered");
+    let (request, settlement) = request_with(&source, SNAPSHOT, limits, DOMAIN);
+    let request = request.unwrap_or_else(|| {
+        panic!("the explored reward prefix proves the zero lower bound: {settlement:?}")
+    });
+    let doc = document(&request);
+    assert_eq!(doc["kind"], "lower");
+    let (code, output) = run(&request);
+    assert_eq!(code, 0, "{output}");
+    let fsl_analyze::analyze::Settlement::Terminal(record) = settlement else {
+        panic!("partial reward proof settles: {settlement:?}");
+    };
+    assert!(matches!(
+        record.value(),
+        fsl_replay::TerminalValue::Proved {
+            basis: fsl_replay::ProofBasis::ValueBounds {
+                upper: fsl_replay::ExactBound::Infinity,
+                exploration: fsl_replay::BoundsExploration::Partial,
+                ..
+            },
+            ..
+        }
+    ));
+}
+
+/// FR-1042-AC-20: the geometric retry reward is two; both interval bounds are
+/// independently accepted and reject a changed value.
+#[trace("TC-3212", "FR-1042-AC-20")]
+#[test]
+fn low_budget_expected_reward_bounds_are_accepted_by_the_separate_checker() {
+    let source = claim(
+        &retry_value_two(),
+        "Steady",
+        ">=",
+        "rational(3,2)",
+        "m.delivered",
+    );
+    let limits = ExactProbLimits {
+        max_rational_bits: 1,
+        precision_bits: 4,
+        max_precision_bits: 16,
+        ..ExactProbLimits::default()
+    };
+    let (requests, settlement) = requests_with_mode(&source, SNAPSHOT, limits, DOMAIN, false);
+    let [lower, upper] = requests.as_slice() else {
+        panic!("the reward interval has two documents: {settlement:?}");
+    };
+    let fsl_analyze::analyze::Settlement::Terminal(record) = settlement else {
+        panic!("the reward interval settles terminal: {settlement:?}");
+    };
+    assert!(matches!(
+        record.value(),
+        fsl_replay::TerminalValue::Proved {
+            basis: fsl_replay::ProofBasis::ValueBounds { .. },
+            certification: fsl_replay::Certification::Certified,
+        }
+    ));
+    assert_eq!(document(lower)["kind"], "lower");
+    assert_eq!(document(upper)["kind"], "upper");
+    for request in [lower, upper] {
+        let (code, output) = run(request);
+        assert_eq!(code, 0, "{output}");
+        let changed = mutate(request, |doc| {
+            doc["values"][0]["value"] = json!({"numerator":"1","denominator":"7"});
+        });
+        assert_ne!(run(&changed).0, 0, "mutated reward bound must fail");
+    }
+}
+
+/// FR-1042-AC-19: an omitted undecided successor uses the lower bound zero;
+/// the full upper counterpart still names every product state.
+#[trace("TC-3212", "FR-1042-AC-19")]
+#[test]
+fn subset_reward_lower_and_full_upper_are_accepted_by_the_separate_checker() {
+    let source = claim(
+        &retry_value_two(),
+        "every scheduler",
+        ">=",
+        "rational(1,2)",
+        "m.delivered",
+    );
+    let (base_request, settlement) =
+        request_with(&source, SNAPSHOT, ExactProbLimits::default(), DOMAIN);
+    let base_request = base_request
+        .unwrap_or_else(|| panic!("the exact reward base has a document: {settlement:?}"));
+    let base = document(&base_request);
+    let values = base["values"].as_array().unwrap();
+    let target = base["objective"]["targets"][0].clone();
+    let rows = base["ranking"].as_array().unwrap();
+    let initial = rows
+        .iter()
+        .max_by_key(|row| row["rank"].as_u64().unwrap())
+        .unwrap()["state"]
+        .clone();
+    let omitted = values
+        .iter()
+        .find(|row| row["state"] != initial && row["state"] != target)
+        .expect("the undecided retry successor")["state"]
+        .clone();
+    let mut lower = json!({
+        "identity": base["identity"],
+        "objective": {"profile": "filament.probability-objective/value-bounds/v1", "base": base["objective"]},
+        "kind": "lower",
+        "values": values.iter().filter(|row| row["state"] != omitted).cloned().collect::<Vec<_>>(),
+        "ranking": base["ranking"],
+    });
+    for row in lower["values"].as_array_mut().unwrap() {
+        if row["state"] == initial {
+            row["value"] = json!({"numerator":"1","denominator":"1"});
+        }
+        if row["state"] == target {
+            row["value"] = json!({"numerator":"0","denominator":"1"});
+        }
+    }
+    let mut upper = json!({
+        "identity": base["identity"],
+        "objective": {"profile": "filament.probability-objective/value-bounds/v1", "base": base["objective"]},
+        "kind": "upper",
+        "values": base["values"],
+        "ranking": base["ranking"],
+    });
+    for row in upper["values"].as_array_mut().unwrap() {
+        if row["state"] == initial {
+            row["value"] = json!({"numerator":"3","denominator":"1"});
+        } else if row["state"] == omitted {
+            row["value"] = json!({"numerator":"2","denominator":"1"});
+        } else if row["state"] == target {
+            row["value"] = json!({"numerator":"0","denominator":"1"});
+        }
+    }
+    for (doc, claim_side) in [(&lower, true), (&upper, false)] {
+        let mut request = base_request.clone();
+        request["certificate"] = json!(serde_json::to_string(doc).unwrap());
+        request["claim_side"] = json!(claim_side);
+        let (code, output) = run(&request);
+        assert_eq!(code, 0, "claim_side={claim_side}: {output}");
+        if claim_side {
+            let changed = mutate(&request, |doc| {
+                for row in doc["values"].as_array_mut().unwrap() {
+                    if row["state"] == initial {
+                        row["value"] = json!({"numerator":"2","denominator":"1"});
+                    }
+                }
+            });
+            assert_eq!(run(&changed).1["rule"], "inequality-fails");
+        }
+    }
 }
 
 #[trace("TC-636", "FR-201-AC-22", "FR-282-AC-17")]
@@ -275,7 +460,10 @@ fn independent_draw_costs_accept_value_preserving_swap_and_reject_changed_equati
 #[trace("TC-636", "FR-201-AC-21", "FR-282-AC-16")]
 #[test]
 fn quantity_reward_uses_checked_exact_conversion_and_retains_unit_identity() {
-    let model = format!("{}\ndimension Time;\nunit ms : Time = rational(1,1);\nunit s : Time = rational(1000,1) * ms;\n", draws("if lost then 2 ms else 6 ms"));
+    let model = format!(
+        "{}\ndimension Time;\nunit ms : Time = rational(1,1);\nunit s : Time = rational(1000,1) * ms;\n",
+        draws("if lost then 2 ms else 6 ms")
+    );
     let request = proof(&claim(
         &model,
         "every scheduler",
@@ -314,7 +502,10 @@ fn quantity_reward_uses_checked_exact_conversion_and_retains_unit_identity() {
 #[trace("TC-636", "FR-201-AC-22", "FR-282-AC-17")]
 #[test]
 fn source_quantity_normalization_stops_at_its_real_s3_representation_limit() {
-    let model = format!("{}\ndimension Time;\nunit ms : Time = rational(1,1);\nunit s : Time = rational(2,1) * ms;\n", draws("if lost then 1 ms else 3 ms"));
+    let model = format!(
+        "{}\ndimension Time;\nunit ms : Time = rational(1,1);\nunit s : Time = rational(2,1) * ms;\n",
+        draws("if lost then 1 ms else 3 ms")
+    );
     let request = proof(&claim(
         &model,
         "every scheduler",
@@ -519,10 +710,12 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
     foreign_item["item"]["ordinal"] = json!(99);
     let (code, output) = run(&foreign_item);
     assert_eq!(code, 2, "{output}");
-    assert!(output["reason"]
-        .as_str()
-        .unwrap()
-        .contains("conflicting_identity"));
+    assert!(
+        output["reason"]
+            .as_str()
+            .unwrap()
+            .contains("conflicting_identity")
+    );
 }
 
 #[trace("TC-636", "FR-201-AC-22", "FR-282-AC-17")]
@@ -530,10 +723,10 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
 fn cancellation_inside_qualified_reward_evaluation_stops_and_old_actions_still_work() {
     use filament_checked::key::DeclarationKey;
     use filament_exact::{Cancel, CancelCause};
+    use fsl_eval::simulation::TransitionSystem;
     use fsl_eval::simulation::model::{
         ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
     };
-    use fsl_eval::simulation::TransitionSystem;
     use fsl_replay::spine::SpineLimits;
     use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
     use std::sync::atomic::{AtomicBool, Ordering};

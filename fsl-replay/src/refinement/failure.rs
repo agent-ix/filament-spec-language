@@ -203,12 +203,19 @@ pub enum Taken {
 /// One abstract transition (or stutter) between hidden-field candidates.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CandidateStep {
+    /// Index of this candidate in the source position's canonical order.
+    /// This distinguishes two clock blocks with the same discrete state key.
+    pub pre_candidate: usize,
     /// Canonical state-key bytes of the candidate before the concrete step.
     pub pre_state: Vec<u8>,
     /// The abstract transition taken, or `None` for stutter.
     pub transition: Option<ModelTransition>,
     /// Canonical state-key bytes of the candidate after the concrete step.
     pub post_state: Vec<u8>,
+    /// Candidate ordinal in the canonical post-state set before timed block
+    /// expansion. The timed checker may remap this after proving clock blocks
+    /// exactly equivalent.
+    pub post_candidate: usize,
 }
 
 /// One admitted path through an abstract protocol candidate graph.

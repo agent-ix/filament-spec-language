@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Closed identities/6 encoding of the original source-enum producer rows.
+//! Closed identities/7 encoding of the original source-enum producer rows.
 
 use filament_contract_model::{
     CheckedNodeId, SelectedEnumDeclarationRow, SelectedEnumMemberRow, SelectedSourceEnumRow,

@@ -57,7 +57,7 @@ use super::concretise::{concretise, Concrete, Target};
 use super::divergence::Escape;
 use super::liveness::Liveness;
 use super::{scale_constants, Bound, Dbm, DbmError};
-use crate::model_check::{admit, closure, instance_groups, ClosureRefusal};
+use crate::model_check::{admit, closure_under_limit, instance_groups, ClosureRefusal};
 use fsl_eval::automaton::{
     position_automaton, AutomatonError, PositionAutomaton, Read, Stamp, WindowClaim, WindowFault,
     WindowRefusal,
@@ -532,6 +532,7 @@ pub fn concretise_timed_state_graph_path(
             after: None,
             auxiliary_carries: Vec::new(),
             auxiliary_resets: Vec::new(),
+            auxiliary_advances: Vec::new(),
             piece: Some(target.zone.clone()),
             silent: false,
             fixed: None,
@@ -709,10 +710,28 @@ pub fn check_timed_model<S: Clone>(
     // FR-151: the declarations admit, and the initial states are closed
     // under their group.
     let group = admit(system, &reductions.symmetry).map_err(ZoneCheckRefusal::Symmetry)?;
-    let closed = closure(system, &group).map_err(|refusal| match refusal {
-        ClosureRefusal::Encoding(_) => ZoneCheckRefusal::Fault("state-key"),
-        ClosureRefusal::Unordered => ZoneCheckRefusal::Fault("symmetry-closure"),
-    })?;
+    let max_states = request.limits.max_symbolic_states;
+    let closed = match closure_under_limit(
+        system,
+        &group,
+        usize::try_from(max_states).unwrap_or(usize::MAX),
+    ) {
+        Ok(closed) => closed,
+        Err(ClosureRefusal::OverBudget) => {
+            return Ok(ZoneCheckOutcome::Stopped {
+                cause: ZoneStop::LimitReached(ZoneCheckLimit::MaxSymbolicStates(max_states)),
+                stats: ZoneStats::default(),
+            });
+        }
+        Err(ClosureRefusal::Encoding(_)) => return Err(ZoneCheckRefusal::Fault("state-key")),
+        Err(
+            ClosureRefusal::Unordered
+            | ClosureRefusal::Stopped(_)
+            | ClosureRefusal::Initial(_),
+        ) => {
+            return Err(ZoneCheckRefusal::Fault("symmetry-closure"));
+        }
+    };
     if let Some(ReductionCause::SymmetryBroken { population, cause }) = closed {
         return Ok(reduced(ZoneReduction::SymmetryBroken { population, cause }));
     }
@@ -1263,6 +1282,56 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             + usize::from(self.window.is_some())
     }
 
+    /// The dimension of a refinement product with `candidate_blocks`
+    /// independently timed abstract candidates.
+    pub(super) fn dim_with_auxiliary_blocks(&self, candidate_blocks: usize) -> usize {
+        self.timed.places().len()
+            + self
+                .auxiliary_timed
+                .map_or(0, |timed| timed.places().len() * candidate_blocks)
+            + 1
+            + usize::from(self.window.is_some())
+    }
+
+    /// LU bounds laid out for a zone's concrete clocks, candidate clock
+    /// blocks, and optional horizon clock.
+    pub(super) fn bounds_for(
+        &self,
+        dim: usize,
+    ) -> Result<(Vec<Option<BigInt>>, Vec<Option<BigInt>>), Halt> {
+        let concrete = self.timed.places().len();
+        let abstract_clocks = self.auxiliary_timed.map_or(0, |timed| timed.places().len());
+        let horizon = usize::from(self.window.is_some());
+        let clocks = dim.saturating_sub(1);
+        if clocks < concrete + horizon || (abstract_clocks == 0 && clocks != concrete + horizon) {
+            return Err(ZoneCheckRefusal::Fault("zone-clock-layout").into());
+        }
+        let blocks = if abstract_clocks == 0 {
+            0
+        } else {
+            let extra = clocks - concrete - horizon;
+            if extra % abstract_clocks != 0 {
+                return Err(ZoneCheckRefusal::Fault("zone-clock-layout").into());
+            }
+            extra / abstract_clocks
+        };
+        let block_end = concrete + abstract_clocks;
+        if self.lower.len() != block_end + horizon {
+            return Err(ZoneCheckRefusal::Fault("run-bound-layout").into());
+        }
+        let mut lower = self.lower[..concrete].to_vec();
+        let mut upper = self.upper[..concrete].to_vec();
+        for _ in 0..blocks {
+            lower.extend_from_slice(&self.lower[concrete..block_end]);
+            upper.extend_from_slice(&self.upper[concrete..block_end]);
+        }
+        if horizon == 1 {
+            lower.push(self.lower[block_end].clone());
+            upper.push(self.upper[block_end].clone());
+        }
+        Ok((lower, upper))
+    }
+
     /// Intersect `zone` with `constraints`.
     pub(super) fn constrain(
         &self,
@@ -1275,6 +1344,48 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     /// Whether time may elapse at `state`.
     pub(super) fn elapses(&self, state: &ModelSimState) -> Result<bool, Halt> {
         Ok(self.timed.tick_period().is_none() && !self.timed(self.timed.is_urgent(state))?)
+    }
+
+    /// Let dense clocks and auxiliary run clocks elapse, keeping timed
+    /// abstract clocks fixed when their source is an abstract tick.
+    pub(super) fn up_zone(&self, zone: &mut Dbm) -> Result<(), Halt> {
+        let Some(auxiliary) = self
+            .auxiliary_timed
+            .filter(|auxiliary| auxiliary.tick_period().is_some())
+        else {
+            zone.up();
+            return Ok(());
+        };
+        let concrete = self.timed.places().len();
+        let horizon = usize::from(self.window.is_some());
+        let clocks = zone.dim().saturating_sub(1);
+        let blocks = if auxiliary.places().is_empty() {
+            0
+        } else {
+            clocks
+                .saturating_sub(concrete + horizon)
+                .checked_div(auxiliary.places().len())
+                .unwrap_or(0)
+        };
+        self.up_zone_with_blocks(zone, blocks)
+    }
+
+    pub(super) fn up_zone_with_blocks(&self, zone: &mut Dbm, blocks: usize) -> Result<(), Halt> {
+        let Some(auxiliary) = self
+            .auxiliary_timed
+            .filter(|auxiliary| auxiliary.tick_period().is_some())
+        else {
+            zone.up();
+            return Ok(());
+        };
+        let concrete = self.timed.places().len();
+        let abstract_start = concrete + 1;
+        let abstract_end = abstract_start + blocks * auxiliary.places().len();
+        let clocks: Vec<_> = (1..zone.dim())
+            .filter(|clock| *clock < abstract_start || *clock >= abstract_end)
+            .collect();
+        zone.up_clocks(&clocks)?;
+        Ok(())
     }
 
     /// `zone` intersected with `state`'s invariants, let time elapse unless
@@ -1293,7 +1404,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         let invariants = self.timed(self.timed.invariants(state))?;
         constrain_at(zone, &invariants, factor)?;
         if !zone.is_empty() && self.elapses(state)? {
-            zone.up();
+            self.up_zone(zone)?;
             constrain_at(zone, &invariants, factor)?;
         }
         Ok(())
@@ -1546,8 +1657,9 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             .map_err(|_| ZoneCheckRefusal::Fault("state-key"))?;
         key.extend_from_slice(&widen(q).to_be_bytes());
         if let Some(stored) = self.passed.get(&key) {
+            let (lower, upper) = self.bounds_for(zone.dim())?;
             for &candidate in stored {
-                if zone.alu_covered_by(&self.nodes[candidate].zone, &self.lower, &self.upper)? {
+                if zone.alu_covered_by(&self.nodes[candidate].zone, &lower, &upper)? {
                     if let Some(arrival) = arrival {
                         self.retain(SymbolicEdge {
                             from: arrival.from,
@@ -1957,7 +2069,8 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     pub(super) fn node_escape(&mut self, node: usize) -> Result<Escape, Halt> {
         let state = self.nodes[node].state.clone();
         let zone = self.nodes[node].zone.clone();
-        let (scale, lower, upper) = (self.scale.clone(), self.lower.clone(), self.upper.clone());
+        let scale = self.scale.clone();
+        let (lower, upper) = self.bounds_for(zone.dim())?;
         self.escape(&state, &zone, &scale, &lower, &upper)
     }
 
@@ -2224,9 +2337,16 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                 .map(|bound| bound.as_ref().map(|value| value * &finer))
                 .collect()
         };
-        let (lower, upper) = (rescale(&self.lower), rescale(&self.upper));
-        let mut point = Dbm::universe(self.dim());
-        for (place, value) in concrete.last_clocks.iter().enumerate() {
+        let places = self.timed.places().len();
+        let diverge_horizon = usize::from(self.window.is_some() && self.auxiliary_timed.is_none());
+        let mut lower = rescale(&self.lower[..places]);
+        let mut upper = rescale(&self.upper[..places]);
+        if diverge_horizon == 1 {
+            lower.push(self.lower[places].as_ref().map(|bound| bound * &finer));
+            upper.push(self.upper[places].as_ref().map(|bound| bound * &finer));
+        }
+        let mut point = Dbm::universe(places + 1 + diverge_horizon);
+        for (place, value) in concrete.last_clocks.iter().take(places).enumerate() {
             let value = scaled(value, &factor);
             point.constrain(place + 1, 0, Bound::le(value.clone()))?;
             point.constrain(0, place + 1, Bound::le(-value))?;
@@ -2324,6 +2444,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                 after: None,
                 auxiliary_carries: Vec::new(),
                 auxiliary_resets: Vec::new(),
+                auxiliary_advances: Vec::new(),
                 piece: None,
                 silent: false,
                 fixed: None,

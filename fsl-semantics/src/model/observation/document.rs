@@ -1116,7 +1116,7 @@ fn field_kind_matches(raw: &SnapshotValue, value_type: &filament_exact::ValueTyp
             )
             | (
                 RawForm::Reference(_),
-                filament_exact::ValueType::Reference(_)
+                filament_exact::ValueType::Reference(_) | filament_exact::ValueType::ClockReference
             )
             | (
                 RawForm::Absent | RawForm::Present(_),
@@ -1171,7 +1171,7 @@ fn object_field_kind_matches(
             )
             | (
                 RawForm::Reference(_),
-                filament_exact::ValueType::Reference(_)
+                filament_exact::ValueType::Reference(_) | filament_exact::ValueType::ClockReference
             )
             | (
                 RawForm::Collection(..),
@@ -1669,14 +1669,19 @@ fn admit_leaf(
                 .resolve(reference, type_identity.clone())
                 .map(Value::Reference)
         }
-        // FR-230-AC-71: the value is the kernel's clock-place reference, built
-        // from the snapshot's universe and place id. That admission is
-        // QSL-3002; until then the reference is refused, typed, never read as
-        // an object reference.
-        (RawForm::Reference(_), filament_exact::ValueType::ClockReference) => Err(
-            admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
-                .with("reason", "clock-reference-admission-pending-qsl-3002"),
-        ),
+        // FR-106-AC-83: an unseeded refinement row has no route-neutral
+        // identity with which to admit raw Clock-place data. Preserve the
+        // supplied place identity and the snapshot's literal identity.
+        (RawForm::Reference(reference), filament_exact::ValueType::ClockReference) => {
+            let record = admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+                .with("reason", "missing-route-neutral-place-identity");
+            Err(match &references.document {
+                Some(document) => record
+                    .with("document", document.clone())
+                    .with("target", reference.key.clone()),
+                None => record,
+            })
+        }
         (RawForm::Variant(variant), filament_exact::ValueType::Enum(slot)) => {
             admit_variant(references, variant, slot)
         }
@@ -5140,7 +5145,7 @@ mod tests {
         })
     }
 
-    #[trace("FR-106", "TC-464")]
+    #[trace("FR-106-AC-83", "FR-106", "TC-464")]
     #[test]
     fn raw_clock_data_refusal_keeps_its_typed_value_locus() {
         let types = TypeEnvironment::default();
@@ -5166,18 +5171,70 @@ mod tests {
             let mut references =
                 References::over(&[], &types, &[]).expect("empty declared catalog");
             let record = admit_form(&mut references, raw.form(), &slot, None)
-                .expect_err("transported Clock DATA is refused typed until QSL-3002");
+                .expect_err("raw Clock DATA has no route-neutral place identity here");
             assert_eq!(record.catalog.code(), Code::UnknownRequiredFeature.as_str());
             assert_eq!(record.catalog.cause(), "unsupported-feature");
             assert_eq!(
                 record.fields,
-                BTreeMap::from([(
-                    "reason",
-                    "clock-reference-admission-pending-qsl-3002".to_owned()
-                )])
+                BTreeMap::from([("reason", "missing-route-neutral-place-identity".to_owned())])
             );
             assert_eq!(record.path, path);
         }
+    }
+
+    /// FR-1040-AC-11: typed ClockReference collection admission rejects a
+    /// repeated Set member at the later member without requiring a raw
+    /// snapshot decoder in this value-semantics test.
+    #[trace("TC-3084", "FR-1040-AC-11")]
+    #[test]
+    fn a_typed_clock_reference_set_rejects_duplicate_members() {
+        let components = [
+            serde_json::json!([]),
+            serde_json::json!("k"),
+            serde_json::json!([]),
+            serde_json::json!([["field"]]),
+            serde_json::json!([]),
+        ];
+        let mut text = "place/v2".to_owned();
+        for component in components {
+            text.push('/');
+            for byte in serde_json::to_vec(&component).expect("canonical place component") {
+                use std::fmt::Write;
+                write!(&mut text, "{byte:02x}").expect("write canonical place component");
+            }
+        }
+        let universe = filament_exact::UniverseId::new(
+            filament_exact::NodeKey::new(
+                "fixture",
+                vec![filament_exact::PathSegment::Text(
+                    "clock-universe".to_owned(),
+                )],
+                1,
+            )
+            .expect("universe node key"),
+        );
+        let reference = filament_exact::Value::ClockReference(
+            filament_exact::ClockPlaceReference::new(universe, &text)
+                .expect("canonical clock place reference"),
+        );
+        let set = filament_exact::CollectionType::new(
+            filament_exact::CollectionKind::Set,
+            ValueType::ClockReference,
+            None,
+        );
+        let path = vec![PathStep::Field("members".to_owned())];
+        let record = form_collection_value(&set, vec![reference.clone(), reference], &path)
+            .expect_err("a duplicated typed clock-place member refuses");
+        assert_eq!(record.catalog.code(), Code::InvalidRuntimeInput.as_str());
+        assert_eq!(record.catalog.cause(), "duplicate-member");
+        assert_eq!(
+            record.fields.get("earlier-index").map(String::as_str),
+            Some("0")
+        );
+        assert_eq!(
+            record.path,
+            vec![PathStep::Field("members".to_owned()), PathStep::Index(1)]
+        );
     }
 
     fn empty_population(population: &str, complete: bool) -> RawPopulation {

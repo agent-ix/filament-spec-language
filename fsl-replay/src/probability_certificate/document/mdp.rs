@@ -9,6 +9,7 @@ use super::*;
 pub struct ProbabilityProofDocument {
     document: ProbabilityCertificateDocument,
     cyclic_mdp: bool,
+    fair_mdp: bool,
     fairness: Vec<super::fairness::Record>,
 }
 
@@ -38,7 +39,12 @@ impl ProbabilityProofDocument {
 
     /// Whether this unchecked document selects the bounded fair profile.
     pub fn is_bounded_fair(&self) -> bool {
-        !self.fairness.is_empty()
+        !self.fairness.is_empty() && !self.fair_mdp
+    }
+
+    /// Whether this document selects the unbounded fair reachability profile.
+    pub fn is_fair_mdp(&self) -> bool {
+        self.fair_mdp
     }
 }
 
@@ -51,6 +57,10 @@ pub fn read_probability_proof_document(
     let cyclic_mdp = matches!(
         profile_dispatch(bytes, limits, cancel)?,
         ProfileDispatch::CyclicMdp | ProfileDispatch::CyclicMdpReward
+    );
+    let fair_mdp = matches!(
+        profile_dispatch(bytes, limits, cancel)?,
+        ProfileDispatch::FairMdp
     );
     let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
     let mut fairness = Vec::new();
@@ -66,6 +76,7 @@ pub fn read_probability_proof_document(
     Ok(ProbabilityProofDocument {
         document,
         cyclic_mdp,
+        fair_mdp,
         fairness,
     })
 }
@@ -85,6 +96,7 @@ pub fn write_probability_proof_document(
         limits,
         cancel,
         document.cyclic_mdp,
+        document.fair_mdp,
         &document.fairness,
     )?;
     read_probability_proof_document(&bytes, limits, cancel)?;
@@ -117,6 +129,13 @@ pub fn probability_proof_document(
     let claim = bind_claim(claims, item, cancel)?;
     if !claim.fairness.is_empty() {
         super::fairness::admit(claim)?;
+        let fair_mdp = matches!(
+            &claim.form,
+            ProbForm::Reach {
+                target: ReachTarget::Eventually(_),
+                ..
+            }
+        );
         let fairness = super::fairness::checked(
             system,
             claim,
@@ -125,6 +144,15 @@ pub fn probability_proof_document(
             &mut cx.meter,
             &mut cx.storage,
         )?;
+        if fair_mdp {
+            cx.fair_mdp = true;
+            let mut proof = construct(system, claims, item, certificate, &mut cx)?;
+            proof.document.cyclic_dtmc = false;
+            proof.cyclic_mdp = false;
+            proof.fair_mdp = true;
+            proof.fairness = fairness;
+            return Ok(proof);
+        }
         let document = construct_document(
             system,
             claims,
@@ -139,6 +167,7 @@ pub fn probability_proof_document(
         return Ok(ProbabilityProofDocument {
             document,
             cyclic_mdp: false,
+            fair_mdp,
             fairness,
         });
     }
@@ -156,6 +185,7 @@ pub fn probability_proof_document(
         Ok(document) => Ok(ProbabilityProofDocument {
             document,
             cyclic_mdp: false,
+            fair_mdp: false,
             fairness: Vec::new(),
         }),
         Err(error)
@@ -260,12 +290,58 @@ pub enum CyclicMdpProbabilityPhase {
 struct Context<'a, 'control> {
     limits: ProbabilityDocumentLimits,
     cancel: &'a Cancel,
+    fair_mdp: bool,
+    bound_side: Option<SubsystemBoundKind>,
     meter: filament_exact::Meter,
     storage: u64,
     reward: bool,
     reward_control: Option<&'a super::super::reward::RewardControl<'control>>,
     identity: fsl_foundation::IdentityLimits,
     observe: Option<&'a mut dyn FnMut(CyclicMdpProbabilityPhase)>,
+}
+
+/// Independently reconstruct the unbounded fair eventual MDP and verify that
+/// the offered deterministic scheduler has no unfair bottom component.
+pub(super) fn fair_scheduler_is_fair(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    rows: &[(ProbabilityProductKey, crate::ProductAction)],
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<bool, ProbabilityDocumentError> {
+    let claim = bind_claim(claims, item, cancel)?;
+    if claim.fairness.is_empty()
+        || !matches!(
+            &claim.form,
+            ProbForm::Reach {
+                target: ReachTarget::Eventually(_),
+                ..
+            } | ProbForm::Probability {
+                event: fsl_semantics::check::Event::Formula { .. },
+                ..
+            }
+        )
+    {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    let mut cx = Context::new(limits, cancel, None);
+    cx.fair_mdp = true;
+    let (graph, _, _, _, _) = subject(system, claims, item, &mut cx, None)?;
+    let binding = claim_binding(system, claim)?;
+    let reference = binding.as_ref().map(|binding| &binding.reference);
+    Ok(matches!(
+        super::long_run::scheduler_is_fair(
+            system,
+            graph,
+            reference,
+            rows,
+            &claim.fairness,
+            limits,
+            cancel,
+        )?,
+        Some(true)
+    ))
 }
 impl<'a, 'control> Context<'a, 'control> {
     fn new(
@@ -276,6 +352,8 @@ impl<'a, 'control> Context<'a, 'control> {
         Self {
             limits,
             cancel,
+            fair_mdp: false,
+            bound_side: None,
             meter: filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
             storage: 0,
             reward: false,
@@ -550,7 +628,7 @@ fn subject(
         return Err(ProbabilityDocumentError::Unsupported);
     };
     if !matches!(claim.scheduler, ProbScheduler::Every)
-        || !claim.fairness.is_empty()
+        || !claim.fairness.is_empty() && !cx.fair_mdp
         || fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
             != Some(fsl_semantics::check::TemporalProfile::InfiniteTrace)
         || !matches!(
@@ -633,6 +711,7 @@ fn rows(
     graph: &CheckerGraph,
     certificate: &ExactProbabilityCertificate,
     cx: &mut Context<'_, '_>,
+    allow_partial: bool,
 ) -> Result<CertificateValues, ProbabilityDocumentError> {
     for row in &certificate.values {
         cx.tick(CyclicMdpProbabilityPhase::Rows)?;
@@ -655,7 +734,12 @@ fn rows(
             return Err(ProbabilityDocumentError::Malformed);
         }
     }
-    Ok(certificate_values(graph, certificate, cx.cancel)?)
+    Ok(certificate_values(
+        graph,
+        certificate,
+        cx.cancel,
+        allow_partial,
+    )?)
 }
 
 fn sums(
@@ -729,6 +813,17 @@ fn equality_failure(
     for (key, state) in &graph.states {
         cx.tick(CyclicMdpProbabilityPhase::ActionSums)?;
         let value = values.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+        if cx.fair_mdp
+            && cx.bound_side == Some(SubsystemBoundKind::Lower)
+            && state.terminal.is_none()
+        {
+            for choice in sums.get(key).ok_or(ProbabilityDocumentError::Malformed)? {
+                if value > choice {
+                    return Ok(Some(key.clone()));
+                }
+            }
+            continue;
+        }
         let expected = match state.terminal {
             Some(_) if cx.reward => rational(0),
             Some(target) => rational(i64::from(target)),
@@ -745,7 +840,7 @@ fn equality_failure(
                             ProbabilityObjective::Workload
                             | ProbabilityObjective::WorkloadMinimum
                             | ProbabilityObjective::WorkloadMaximum => {
-                                return Err(ProbabilityDocumentError::Unsupported)
+                                return Err(ProbabilityDocumentError::Unsupported);
                             }
                         },
                     });
@@ -760,6 +855,7 @@ fn equality_failure(
     Ok(None)
 }
 
+#[cfg(test)]
 fn progress_failure(
     graph: &CheckerGraph,
     values: &Values,
@@ -768,11 +864,27 @@ fn progress_failure(
     objective: ProbabilityObjective,
     cx: &mut Context<'_, '_>,
 ) -> Result<Option<(ProbabilityCertificateRule, ProbabilityProductKey)>, ProbabilityDocumentError> {
+    progress_failure_with_fair_zero(graph, values, sums, ranks, objective, None, None, cx)
+}
+
+fn progress_failure_with_fair_zero(
+    graph: &CheckerGraph,
+    values: &Values,
+    sums: &Sums,
+    ranks: &BTreeMap<ProbabilityProductKey, u64>,
+    objective: ProbabilityObjective,
+    fair_zero: Option<&BTreeSet<ProbabilityProductKey>>,
+    selected_policy: Option<&BTreeMap<ProbabilityProductKey, usize>>,
+    cx: &mut Context<'_, '_>,
+) -> Result<Option<(ProbabilityCertificateRule, ProbabilityProductKey)>, ProbabilityDocumentError> {
     for (key, state) in &graph.states {
         let value = values.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
         let rank = ranks.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
         cx.tick(CyclicMdpProbabilityPhase::Progress)?;
-        if state.terminal == Some(true) || !cx.reward && *value == rational(0) {
+        let certified_zero = !cx.reward
+            && *value == rational(0)
+            && (!cx.fair_mdp || fair_zero.is_some_and(|states| states.contains(key)));
+        if state.terminal == Some(true) || certified_zero {
             if *rank != 0 {
                 return Ok(Some((ProbabilityCertificateRule::RankBroken, key.clone())));
             }
@@ -795,13 +907,13 @@ fn progress_failure(
                             return Ok(Some((
                                 ProbabilityCertificateRule::InequalityFails,
                                 key.clone(),
-                            )))
+                            )));
                         }
                         ProbabilityObjective::Maximum => closed = true,
                         ProbabilityObjective::Workload
                         | ProbabilityObjective::WorkloadMinimum
                         | ProbabilityObjective::WorkloadMaximum => {
-                            return Err(ProbabilityDocumentError::Unsupported)
+                            return Err(ProbabilityDocumentError::Unsupported);
                         }
                     }
                 }
@@ -821,6 +933,12 @@ fn progress_failure(
         let mut any = false;
         let mut all = true;
         for (index, choice) in state.choices.iter().enumerate() {
+            if selected_policy
+                .and_then(|policy| policy.get(key))
+                .is_some_and(|selected| *selected != index)
+            {
+                continue;
+            }
             let mut lower = false;
             for edge in choice {
                 cx.tick(CyclicMdpProbabilityPhase::Progress)?;
@@ -835,15 +953,34 @@ fn progress_failure(
                 any |= lower;
             }
         }
-        let progress = match objective {
-            ProbabilityObjective::Minimum if cx.reward => any,
-            ProbabilityObjective::Maximum if cx.reward => all && !state.choices.is_empty(),
-            ProbabilityObjective::Minimum => all && !state.choices.is_empty(),
-            ProbabilityObjective::Maximum => any,
-            ProbabilityObjective::Workload
-            | ProbabilityObjective::WorkloadMinimum
-            | ProbabilityObjective::WorkloadMaximum => {
-                return Err(ProbabilityDocumentError::Unsupported)
+        let progress = if let Some(policy) = selected_policy.filter(|_| cx.fair_mdp) {
+            let progresses = |index: usize| {
+                state.choices.get(index).is_some_and(|choice| {
+                    choice.iter().any(|edge| {
+                        edge.probability > rational(0)
+                            && ranks.get(&edge.target).is_some_and(|next| next < rank)
+                    })
+                })
+            };
+            if let Some(index) = policy.get(key) {
+                action_sums.get(*index).is_some_and(|sum| sum <= value) && progresses(*index)
+            } else {
+                state.choices.iter().enumerate().any(|(index, _)| {
+                    action_sums.get(index).is_some_and(|sum| sum <= value) && progresses(index)
+                })
+            }
+        } else {
+            match objective {
+                ProbabilityObjective::Minimum if cx.reward => any,
+                ProbabilityObjective::Minimum if cx.fair_mdp => any,
+                ProbabilityObjective::Maximum if cx.reward => all && !state.choices.is_empty(),
+                ProbabilityObjective::Minimum => all && !state.choices.is_empty(),
+                ProbabilityObjective::Maximum => any,
+                ProbabilityObjective::Workload
+                | ProbabilityObjective::WorkloadMinimum
+                | ProbabilityObjective::WorkloadMaximum => {
+                    return Err(ProbabilityDocumentError::Unsupported);
+                }
             }
         };
         if !progress {
@@ -853,6 +990,7 @@ fn progress_failure(
     Ok(None)
 }
 
+#[cfg(test)]
 fn derive_ranks(
     graph: &CheckerGraph,
     values: &Values,
@@ -860,10 +998,25 @@ fn derive_ranks(
     objective: ProbabilityObjective,
     cx: &mut Context<'_, '_>,
 ) -> Result<BTreeMap<ProbabilityProductKey, u64>, ProbabilityDocumentError> {
+    derive_ranks_with_fair_zero(graph, values, sums, objective, None, cx)
+}
+
+fn derive_ranks_with_fair_zero(
+    graph: &CheckerGraph,
+    values: &Values,
+    sums: &Sums,
+    objective: ProbabilityObjective,
+    fair_zero: Option<&BTreeSet<ProbabilityProductKey>>,
+    cx: &mut Context<'_, '_>,
+) -> Result<BTreeMap<ProbabilityProductKey, u64>, ProbabilityDocumentError> {
     let mut ranks = BTreeMap::new();
     for (key, state) in &graph.states {
         cx.tick(CyclicMdpProbabilityPhase::Ranks)?;
-        if state.terminal == Some(true) || !cx.reward && values.get(key) == Some(&rational(0)) {
+        if state.terminal == Some(true)
+            || !cx.reward
+                && values.get(key) == Some(&rational(0))
+                && (!cx.fair_mdp || fair_zero.is_some_and(|states| states.contains(key)))
+        {
             cx.reserve(std::mem::size_of::<(ProbabilityProductKey, u64)>() + key.as_bytes().len())?;
             ranks.insert(key.clone(), 0);
         }
@@ -890,7 +1043,9 @@ fn derive_ranks(
                     }
                 }
                 match objective {
-                    _ if (objective == ProbabilityObjective::Minimum && !cx.reward)
+                    _ if (objective == ProbabilityObjective::Minimum
+                        && !cx.reward
+                        && !cx.fair_mdp)
                         || (objective == ProbabilityObjective::Maximum && cx.reward) =>
                     {
                         match lower {
@@ -913,12 +1068,13 @@ fn derive_ranks(
                     ProbabilityObjective::Workload
                     | ProbabilityObjective::WorkloadMinimum
                     | ProbabilityObjective::WorkloadMaximum => {
-                        return Err(ProbabilityDocumentError::Unsupported)
+                        return Err(ProbabilityDocumentError::Unsupported);
                     }
                 }
             }
-            let universal = (objective == ProbabilityObjective::Minimum && !cx.reward)
-                || (objective == ProbabilityObjective::Maximum && cx.reward);
+            let universal =
+                (objective == ProbabilityObjective::Minimum && !cx.reward && !cx.fair_mdp)
+                    || (objective == ProbabilityObjective::Maximum && cx.reward);
             if (!universal || all) && candidate.is_some() {
                 let rank = candidate
                     .ok_or(ProbabilityDocumentError::Malformed)?
@@ -989,17 +1145,42 @@ fn construct(
     } else {
         certificate
     };
-    let values = match rows(&graph, certificate, cx)? {
+    let values = match rows(&graph, certificate, cx, false)? {
         CertificateValues::Complete(values) => values,
+        CertificateValues::Partial { .. } => {
+            return Err(ProbabilityDocumentError::MalformedMember("values"));
+        }
         CertificateValues::Rejected(_) => {
-            return Err(ProbabilityDocumentError::MalformedMember("values"))
+            return Err(ProbabilityDocumentError::MalformedMember("values"));
         }
     };
     let action_sums = sums(&graph, &values, reward.as_ref(), cx)?;
     if equality_failure(&graph, &values, &action_sums, objective, cx)?.is_some() {
         return Err(ProbabilityDocumentError::MalformedMember("values"));
     }
-    let ranks = derive_ranks(&graph, &values, &action_sums, objective, cx)?;
+    let fair_zero = if cx.fair_mdp {
+        let claim = bind_claim(claims, item, cx.cancel)?;
+        Some(super::fairness::non_target_fair_end_component_states(
+            system,
+            claim,
+            &graph,
+            cx.limits,
+            cx.cancel,
+            cx.identity,
+            &mut cx.meter,
+            &mut cx.storage,
+        )?)
+    } else {
+        None
+    };
+    let ranks = derive_ranks_with_fair_zero(
+        &graph,
+        &values,
+        &action_sums,
+        objective,
+        fair_zero.as_ref(),
+        cx,
+    )?;
     let mut ranking = admitted_vector(ranks.len(), cx)?;
     for row in ranks {
         cx.tick(CyclicMdpProbabilityPhase::Ranks)?;
@@ -1020,6 +1201,7 @@ fn construct(
     }
     Ok(ProbabilityProofDocument {
         cyclic_mdp: true,
+        fair_mdp: false,
         fairness: Vec::new(),
         document: ProbabilityCertificateDocument {
             cyclic_dtmc: false,
@@ -1032,6 +1214,7 @@ fn construct(
             timed: None,
             values: offered,
             ranking,
+            policy: None,
         },
     })
 }
@@ -1072,6 +1255,23 @@ pub(super) fn check_with_reward_control<'a, 'control>(
     check_with_context(system, claims, item, bytes, offer, cx)
 }
 
+pub(super) fn check_with_value_bound_control<'a, 'control>(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    bytes: &[u8],
+    offer: Offer<'_>,
+    side: SubsystemBoundKind,
+    limits: ProbabilityDocumentLimits,
+    cancel: &'a Cancel,
+    control: &'a super::super::reward::RewardControl<'control>,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    let mut cx = Context::new(limits, cancel, None);
+    cx.reward_control = Some(control);
+    cx.bound_side = Some(side);
+    check_with_context(system, claims, item, bytes, offer, cx)
+}
+
 fn check_with_context(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -1082,13 +1282,20 @@ fn check_with_context(
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let limits = cx.limits;
     let cancel = cx.cancel;
+    let fair_mdp = matches!(
+        profile_dispatch(bytes, limits, cancel)?,
+        ProfileDispatch::FairMdp
+    );
+    let fair_lower_bound = fair_mdp && cx.bound_side == Some(SubsystemBoundKind::Lower);
+    cx.fair_mdp = fair_mdp;
+    let mut fairness_records = Vec::new();
     let document = match read_document_profile(
         bytes,
         limits,
         cancel,
         &mut cx.meter,
-        true,
-        None,
+        !fair_mdp,
+        Some(&mut fairness_records),
         &mut cx.storage,
     ) {
         Ok(document) => document,
@@ -1096,6 +1303,29 @@ fn check_with_context(
     };
     if &document.identity != item {
         return Err(ProbabilityDocumentError::IdentityMismatch);
+    }
+    if fair_mdp {
+        let claim = bind_claim(claims, item, cancel)?;
+        let expected = super::fairness::checked(
+            system,
+            claim,
+            limits,
+            cancel,
+            &mut cx.meter,
+            &mut cx.storage,
+        )?;
+        if !super::fairness::same(
+            &expected,
+            &fairness_records,
+            limits,
+            cancel,
+            &mut cx.meter,
+            &mut cx.storage,
+        )? {
+            return Err(ProbabilityDocumentError::ObjectiveMismatch);
+        }
+    } else if !fairness_records.is_empty() {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     cx.reward = document.reward.is_some();
     if cx.reward
@@ -1132,52 +1362,110 @@ fn check_with_context(
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     if let (Some(side), Some(captured)) = (offer.side, captured) {
-        // FR-1042 bounds an unbounded eventual probability, not a reward or
-        // a state-event value.
-        if cx.reward || event.is_some() {
+        // FR-1042 value bounds currently cover cyclic reward only on a
+        // structurally valid expected-reward subject; state-event bounds use
+        // their separate profile rules.
+        if event.is_some() {
             return Err(ProbabilityDocumentError::Unsupported);
         }
         let relation = offer.relation();
         if relation.misplaced(&bound) {
             return Ok(misplaced_kind());
         }
-        let values = match rows(
+        let allow_partial_reward_lower = cx.reward && side == SubsystemBoundKind::Lower;
+        let mut values = match rows(
             &graph,
             &ExactProbabilityCertificate {
                 values: document.values,
             },
             &mut cx,
+            allow_partial_reward_lower,
         )? {
             CertificateValues::Complete(values) => values,
+            CertificateValues::Partial { values, .. } if allow_partial_reward_lower => values,
+            CertificateValues::Partial { .. } => {
+                return Err(ProbabilityDocumentError::MalformedMember("values"));
+            }
             CertificateValues::Rejected(rejection) => {
-                return Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
+                return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
             }
         };
-        let ranks = match side {
-            SubsystemBoundKind::Lower => match offered_ranks(&graph, document.ranking, &mut cx)? {
-                Some(ranks) => ranks,
-                None => return Ok(malformed_ranking()),
-            },
-            SubsystemBoundKind::Upper => BTreeMap::new(),
-        };
+        if cx.reward && side == SubsystemBoundKind::Lower {
+            for key in graph.states.keys() {
+                values.entry(key.clone()).or_insert_with(|| rational(0));
+            }
+        }
         let existential = matches!(
             (objective, side),
             (ProbabilityObjective::Minimum, SubsystemBoundKind::Upper)
                 | (ProbabilityObjective::Maximum, SubsystemBoundKind::Lower)
         );
+        let ranks = if fair_mdp && existential {
+            match offered_ranks(&graph, document.ranking, &mut cx)? {
+                Some(ranks) => ranks,
+                None => return Ok(malformed_ranking()),
+            }
+        } else if fair_mdp {
+            if !document.ranking.is_empty() {
+                return Ok(malformed_ranking());
+            }
+            BTreeMap::new()
+        } else if cx.reward {
+            match side {
+                SubsystemBoundKind::Lower => BTreeMap::new(),
+                SubsystemBoundKind::Upper => match offered_ranks(&graph, document.ranking, &mut cx)? {
+                    Some(ranks) => ranks,
+                    None => return Ok(malformed_ranking()),
+                },
+            }
+        } else {
+            match side {
+                SubsystemBoundKind::Lower => {
+                    match offered_ranks(&graph, document.ranking, &mut cx)? {
+                        Some(ranks) => ranks,
+                        None => return Ok(malformed_ranking()),
+                    }
+                }
+                SubsystemBoundKind::Upper => BTreeMap::new(),
+            }
+        };
         let hints = match offer.policy {
             None => BTreeMap::new(),
             Some(_) if !existential => {
                 return document_admission_error(ProbabilityDocumentError::MalformedMember(
                     "policy",
-                ))
+                ));
             }
             Some(rows) => match hinted_choices(system, &graph, &captured, rows, &mut cx) {
                 Ok(hints) => hints,
                 Err(error) => return document_admission_error(error),
             },
         };
-        let action_sums = sums(&graph, &values, None, &mut cx)?;
+        let fair_zero = if fair_mdp {
+            let claim = bind_claim(claims, item, cancel)?;
+            let states = super::fairness::non_target_fair_end_component_states(
+                system,
+                claim,
+                &graph,
+                limits,
+                cancel,
+                cx.identity,
+                &mut cx.meter,
+                &mut cx.storage,
+            )?;
+            for key in &states {
+                if values.get(key) != Some(&rational(0)) {
+                    return Ok(rejected(
+                        ProbabilityCertificateRule::InequalityFails,
+                        key.clone(),
+                    ));
+                }
+            }
+            Some(states)
+        } else {
+            None
+        };
+        let action_sums = sums(&graph, &values, reward.as_ref(), &mut cx)?;
         let selected = match bound_failure(
             system,
             &graph,
@@ -1188,6 +1476,7 @@ fn check_with_context(
             objective,
             side,
             &hints,
+            fair_zero.as_ref(),
             &mut cx,
         )? {
             Ok(selected) => selected,
@@ -1212,23 +1501,100 @@ fn check_with_context(
             values: document.values,
         },
         &mut cx,
+        false,
     )? {
         CertificateValues::Complete(values) => values,
+        CertificateValues::Partial { .. } => {
+            return Err(ProbabilityDocumentError::MalformedMember("values"));
+        }
         CertificateValues::Rejected(rejection) => {
-            return Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
+            return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
     };
-    let Some(ranks) = offered_ranks(&graph, document.ranking, &mut cx)? else {
+    let policy = policy_indices(document.policy.as_deref(), &graph)?;
+    let mut ranks = BTreeMap::new();
+    for (key, rank) in document.ranking {
+        cx.tick(CyclicMdpProbabilityPhase::Rows)?;
+        cx.reserve(std::mem::size_of::<(ProbabilityProductKey, u64)>() + key.as_bytes().len())?;
+        if !graph.states.contains_key(&key) {
+            return Ok(malformed_ranking());
+        }
+        ranks.insert(key, rank);
+    }
+    if fair_lower_bound {
+        if !ranks.is_empty() {
+            return Ok(malformed_ranking());
+        }
+    } else if ranks.len() != graph.states.len() {
         return Ok(malformed_ranking());
+    }
+    let fair_zero = if fair_mdp {
+        let claim = bind_claim(claims, item, cancel)?;
+        let states = super::fairness::non_target_fair_end_component_states(
+            system,
+            claim,
+            &graph,
+            limits,
+            cancel,
+            cx.identity,
+            &mut cx.meter,
+            &mut cx.storage,
+        )?;
+        for key in &states {
+            cx.tick(CyclicMdpProbabilityPhase::Rows)?;
+            if values.get(&key) != Some(&rational(0)) {
+                return Ok(rejected(
+                    ProbabilityCertificateRule::InequalityFails,
+                    key.clone(),
+                ));
+            }
+        }
+        Some(states)
+    } else {
+        None
     };
     let action_sums = sums(&graph, &values, reward.as_ref(), &mut cx)?;
-    if let Some(key) = equality_failure(&graph, &values, &action_sums, objective, &mut cx)? {
+    let fair_upper_bound = fair_mdp && cx.bound_side == Some(SubsystemBoundKind::Upper);
+    if fair_mdp && cx.bound_side.is_none() {
+        for (key, index) in &policy {
+            let actual = action_sums
+                .get(key)
+                .and_then(|actions| actions.get(*index))
+                .ok_or(ProbabilityDocumentError::MalformedMember("policy"))?;
+            if values.get(key) != Some(actual) {
+                return Ok(rejected(
+                    ProbabilityCertificateRule::InequalityFails,
+                    key.clone(),
+                ));
+            }
+        }
+    }
+    if fair_upper_bound {
+        if let Some(key) =
+            fair_upper_bound_failure(&graph, &values, &action_sums, &policy, &mut cx)?
+        {
+            return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
+        }
+    } else if let Some(key) = equality_failure(&graph, &values, &action_sums, objective, &mut cx)? {
         return Ok(rejected(ProbabilityCertificateRule::InequalityFails, key));
     }
-    if let Some((rule, key)) =
-        progress_failure(&graph, &values, &action_sums, &ranks, objective, &mut cx)?
-    {
-        return Ok(rejected(rule, key));
+    if !fair_lower_bound {
+        if let Some((rule, key)) = progress_failure_with_fair_zero(
+            &graph,
+            &values,
+            &action_sums,
+            &ranks,
+            objective,
+            fair_zero.as_ref(),
+            if fair_upper_bound || (fair_mdp && !policy.is_empty()) {
+                Some(&policy)
+            } else {
+                None
+            },
+            &mut cx,
+        )? {
+            return Ok(rejected(rule, key));
+        }
     }
     let mut result = check_threshold(&graph, &values, &bound, true, limits, cancel)?;
     if event.is_some() {
@@ -1335,9 +1701,8 @@ fn hinted_choices(
             quire_canonical::Limits::new(cx.limits.bytes),
         )
         .map_err(|_| malformed.clone())?;
-        let index = schedules_at(system, captured, &key, cx)?
-            .iter()
-            .position(|schedule| *schedule == hinted);
+        let schedules = schedules_at(system, captured, &key, cx)?;
+        let index = schedules.iter().position(|schedule| *schedule == hinted);
         cx.reserve(
             std::mem::size_of::<(ProbabilityProductKey, Option<usize>)>() + key.as_bytes().len(),
         )?;
@@ -1363,9 +1728,10 @@ fn progresses(
     for edge in choice {
         cx.tick(CyclicMdpProbabilityPhase::Progress)?;
         if edge.probability > rational(0)
-            && values
-                .get(&edge.target)
-                .is_some_and(|value| *value > rational(0))
+            && (cx.reward
+                || values
+                    .get(&edge.target)
+                    .is_some_and(|value| *value > rational(0)))
             && ranks.get(&edge.target).is_some_and(|next| *next < rank)
         {
             return Ok(true);
@@ -1393,6 +1759,7 @@ fn bound_failure(
     objective: ProbabilityObjective,
     side: SubsystemBoundKind,
     hints: &BTreeMap<ProbabilityProductKey, Option<usize>>,
+    fair_zero: Option<&BTreeSet<ProbabilityProductKey>>,
     cx: &mut Context<'_, '_>,
 ) -> Result<
     Result<
@@ -1401,6 +1768,9 @@ fn bound_failure(
     >,
     ProbabilityDocumentError,
 > {
+    if cx.reward && side == SubsystemBoundKind::Upper && !hints.is_empty() {
+        return Err(ProbabilityDocumentError::MalformedMember("policy"));
+    }
     let existential = match (objective, side) {
         (ProbabilityObjective::Minimum, SubsystemBoundKind::Upper)
         | (ProbabilityObjective::Maximum, SubsystemBoundKind::Lower) => true,
@@ -1412,19 +1782,36 @@ fn bound_failure(
             | ProbabilityObjective::WorkloadMaximum,
             _,
         ) => return Err(ProbabilityDocumentError::Unsupported),
-    };
+    } && !(cx.reward && side == SubsystemBoundKind::Upper);
     let mut selected = Vec::new();
     for (key, state) in &graph.states {
         cx.tick(CyclicMdpProbabilityPhase::ActionSums)?;
         let value = values.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
         if let Some(target) = state.terminal {
-            if *value != rational(i64::from(target)) {
+            let terminal_value = if cx.reward {
+                rational(0)
+            } else {
+                rational(i64::from(target))
+            };
+            if *value != terminal_value {
                 return Ok(Err((
                     ProbabilityCertificateRule::InequalityFails,
                     key.clone(),
                 )));
             }
             continue;
+        }
+        if cx.fair_mdp && existential {
+            let rank = ranks.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+            if (*value == rational(0)) != (*rank == 0) {
+                return Ok(Err((ProbabilityCertificateRule::RankBroken, key.clone())));
+            }
+            if fair_zero.is_some_and(|states| states.contains(key)) && *value != rational(0) {
+                return Ok(Err((
+                    ProbabilityCertificateRule::InequalityFails,
+                    key.clone(),
+                )));
+            }
         }
         let action_sums = sums.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
         if action_sums.is_empty() {
@@ -1439,8 +1826,15 @@ fn bound_failure(
                 SubsystemBoundKind::Upper => sum <= value,
             })
         };
-        // A `lower` document shows progress wherever its value is positive.
-        let needs_progress = side == SubsystemBoundKind::Lower && *value > rational(0);
+        // On a fair-MDP existential endpoint, progress proves termination
+        // outside the independently reconstructed non-target fair MEC. The
+        // ordinary bounded profile uses progress only for lower documents.
+        let needs_progress = if cx.fair_mdp {
+            existential && *value > rational(0)
+        } else {
+            cx.reward && side == SubsystemBoundKind::Upper
+                || !cx.reward && side == SubsystemBoundKind::Lower && *value > rational(0)
+        };
         let rank = if needs_progress {
             *ranks.get(key).ok_or(ProbabilityDocumentError::Malformed)?
         } else {
@@ -1469,7 +1863,7 @@ fn bound_failure(
                 return Ok(Err((
                     ProbabilityCertificateRule::InequalityFails,
                     key.clone(),
-                )))
+                )));
             }
             Some(Some(index)) => vec![*index],
             None => {
@@ -1514,6 +1908,59 @@ fn bound_failure(
         selected.push((key.clone(), crate::ProductAction::Identity(schedule)));
     }
     Ok(Ok(selected))
+}
+
+fn policy_indices(
+    rows: Option<&[(ProbabilityProductKey, Vec<u8>)]>,
+    graph: &CheckerGraph,
+) -> Result<BTreeMap<ProbabilityProductKey, usize>, ProbabilityDocumentError> {
+    let mut selected = BTreeMap::new();
+    for (state, choice) in rows.unwrap_or_default() {
+        let actions = graph
+            .actions_by_state
+            .as_ref()
+            .and_then(|actions| actions.get(state))
+            .ok_or(ProbabilityDocumentError::MalformedMember("policy"))?;
+        let index = actions
+            .iter()
+            .position(|action| {
+                action
+                    .as_ref()
+                    .is_some_and(|action| action.as_bytes() == choice)
+            })
+            .ok_or(ProbabilityDocumentError::MalformedMember("policy"))?;
+        if selected.insert(state.clone(), index).is_some() {
+            return Err(ProbabilityDocumentError::MalformedMember("policy"));
+        }
+    }
+    Ok(selected)
+}
+
+fn fair_upper_bound_failure(
+    graph: &CheckerGraph,
+    values: &Values,
+    sums: &Sums,
+    policy: &BTreeMap<ProbabilityProductKey, usize>,
+    cx: &mut Context<'_, '_>,
+) -> Result<Option<ProbabilityProductKey>, ProbabilityDocumentError> {
+    for (key, state) in &graph.states {
+        if state.terminal.is_some() {
+            continue;
+        }
+        let value = values.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+        let actions = sums.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+        let satisfying = |index: usize| actions.get(index).is_some_and(|sum| sum <= value);
+        let valid = if let Some(index) = policy.get(key) {
+            satisfying(*index)
+        } else {
+            (0..actions.len()).any(satisfying)
+        };
+        cx.tick(CyclicMdpProbabilityPhase::ActionSums)?;
+        if !valid {
+            return Ok(Some(key.clone()));
+        }
+    }
+    Ok(None)
 }
 
 /// Observe real MDP action, closure and progress work without replacing cancellation.
@@ -1570,6 +2017,7 @@ mod tests {
         let proof = ProbabilityProofDocument {
             document,
             cyclic_mdp: true,
+            fair_mdp: false,
             fairness: Vec::new(),
         };
         let cancel = Cancel::new();
@@ -1641,6 +2089,7 @@ mod tests {
                 initial: key(0),
                 states,
                 scheduler_actions: Default::default(),
+                actions_by_state: None,
             },
             BTreeMap::from([
                 (key(0), s),
@@ -1687,6 +2136,7 @@ mod tests {
         let mut cx = Context::new(super::super::tests::limits(), &cancel, None);
         let graph = CheckerGraph {
             initial: key(0),
+            actions_by_state: None,
             states: BTreeMap::from([
                 (
                     key(0),
@@ -1717,16 +2167,18 @@ mod tests {
         let values = BTreeMap::from([(key(0), rational(1)), (key(1), rational(1))]);
         let action_sums = sums(&graph, &values, None, &mut cx).unwrap();
         for objective in [ProbabilityObjective::Minimum, ProbabilityObjective::Maximum] {
-            assert!(progress_failure(
-                &graph,
-                &values,
-                &action_sums,
-                &BTreeMap::from([(key(0), 1), (key(1), 0)]),
-                objective,
-                &mut cx
-            )
-            .unwrap()
-            .is_some());
+            assert!(
+                progress_failure(
+                    &graph,
+                    &values,
+                    &action_sums,
+                    &BTreeMap::from([(key(0), 1), (key(1), 0)]),
+                    objective,
+                    &mut cx
+                )
+                .unwrap()
+                .is_some()
+            );
         }
         let mut graph = graph;
         graph.states.get_mut(&key(0)).unwrap().choices[0] = vec![ProbabilityEdge {
@@ -1747,16 +2199,18 @@ mod tests {
                 .unwrap(),
                 None
             );
-            assert!(progress_failure(
-                &graph,
-                &values,
-                &action_sums,
-                &BTreeMap::from([(key(0), 0), (key(1), 0)]),
-                objective,
-                &mut cx
-            )
-            .unwrap()
-            .is_some());
+            assert!(
+                progress_failure(
+                    &graph,
+                    &values,
+                    &action_sums,
+                    &BTreeMap::from([(key(0), 0), (key(1), 0)]),
+                    objective,
+                    &mut cx
+                )
+                .unwrap()
+                .is_some()
+            );
         }
     }
 }

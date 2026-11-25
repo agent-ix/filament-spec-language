@@ -119,6 +119,10 @@ impl NotStatisticalRequest {
 /// A refusal FR-192 settles with no terminal record.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum UnsettledRefusal {
+    /// FR-191's `Workers` refusal: invalid request input reported by EN-4's
+    /// caller, not a terminal statistical outcome.
+    #[error("statistical.workers must be greater than zero")]
+    Workers,
     /// FR-192's `NotStatistical` row: a negotiation outcome.
     #[error(transparent)]
     NotStatistical(NotStatisticalRequest),
@@ -255,7 +259,7 @@ fn expansion_stop(stop: &ExpansionStop, subject: SubjectLimits<'_>) -> Statistic
 /// # Errors
 ///
 /// [`UnsettledRefusal`] for a `NotStatistical`, `RequiresBound`,
-/// `Admission` or `Symmetry` refusal, which settles no terminal record.
+/// `Admission`, `Symmetry` or `Workers` refusal, which settles no terminal record.
 pub fn settle_statistical_refusal(
     refusal: &StatisticalRefusal,
 ) -> Result<StatisticalRecord, UnsettledRefusal> {
@@ -290,6 +294,7 @@ pub fn settle_statistical_refusal(
         StatisticalRefusal::MissingConfidence => {
             request(StatisticalRequestRefusal::MissingConfidence)
         }
+        StatisticalRefusal::Workers => return Err(UnsettledRefusal::Workers),
         StatisticalRefusal::ConfidenceBeyondPrecision => StatisticalRecord::of(
             TerminalValue::Unsupported(UnavailabilityCause::ConfidenceBeyondPrecision),
         ),
@@ -749,6 +754,10 @@ mod tests {
         let settled = |refusal: StatisticalRefusal| {
             settle_statistical_refusal(&refusal).expect("a terminal record")
         };
+        assert_eq!(
+            settle_statistical_refusal(&StatisticalRefusal::Workers),
+            Err(UnsettledRefusal::Workers)
+        );
         assert_eq!(
             settled(StatisticalRefusal::NoTest).value,
             TerminalValue::Inconclusive(InconclusiveCause::NoInitialState)

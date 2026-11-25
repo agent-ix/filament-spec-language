@@ -1303,6 +1303,86 @@ mod tests {
         );
     }
 
+    /// FR-272-AC-5: the two shared leaves are scanned by package identity even
+    /// when Cargo resolves them from a git source outside the repositories
+    /// recognized by `graph::classify`.
+    #[test]
+    #[trace("TC-747", "FR-272-AC-5")]
+    fn tc_747_shared_leaf_sources_outside_the_ecosystem_are_still_scanned() {
+        const OUTSIDE_SOURCE: &str =
+            "git+https://github.com/third-party/filament-leaves?branch=main#deadbeef";
+
+        let mut fixture = Fixture::new();
+        fixture
+            .dependency(
+                "filament-eval",
+                OUTSIDE_SOURCE,
+                "/// filament:canonical\npub struct Evaluation { pub value: u64 }\n\
+                 pub struct Evaluation { pub value: u64 }\n",
+            )
+            .dependency(
+                "filament-checked",
+                OUTSIDE_SOURCE,
+                "pub struct WorkspaceShape { pub value: u8 }\n",
+            )
+            .dependency(
+                "filament-contract-ir",
+                IR_SOURCE,
+                "pub struct Evaluation { pub value: u64 }\n",
+            )
+            .member(
+                "fsl-workspace",
+                "/// filament:canonical\npub struct WorkspaceShape { pub value: u8 }\n\
+                 pub struct Evaluation { pub value: u64 }\n",
+            );
+
+        let packages = fixture.packages();
+        for name in ["filament-eval", "filament-checked"] {
+            let package = packages
+                .iter()
+                .find(|package| package.name == name)
+                .unwrap_or_else(|| panic!("{name} from an unknown git source was not scanned"));
+            assert_eq!(package.repository, Repository::Ecosystem(name));
+        }
+        let report = scan(fixture.dir.path(), packages).expect("fixture scan");
+        assert_eq!(
+            report.findings,
+            vec![
+                finding(
+                    Rule::Identifier,
+                    "Evaluation",
+                    Some(site("filament-eval/src/lib.rs", 2)),
+                    site("fsl-workspace/src/lib.rs", 3),
+                ),
+                finding(
+                    Rule::Copy,
+                    "Evaluation",
+                    Some(site("filament-eval/src/lib.rs", 2)),
+                    site("filament-contract-ir/src/lib.rs", 1),
+                ),
+                finding(
+                    Rule::Copy,
+                    "WorkspaceShape",
+                    Some(site("fsl-workspace/src/lib.rs", 2)),
+                    site("filament-checked/src/lib.rs", 1),
+                ),
+            ],
+            "shared-leaf tags, workspace namesakes, and ecosystem copies are all reported; the second Evaluation in its owner is not"
+        );
+
+        let mut absent = Fixture::new();
+        absent.member(
+            "fsl-workspace",
+            "pub struct Evaluation { pub value: u64 }\n\
+             pub struct WorkspaceShape { pub value: u8 }\n",
+        );
+        let packages = absent.packages();
+        assert!(packages
+            .iter()
+            .all(|package| package.name != "filament-eval" && package.name != "filament-checked"));
+        assert!(absent.findings().is_empty());
+    }
+
     /// TC-747 step 3: a backend run finds the backend's copy of an FSL
     /// canonical type and not its re-export through the FSL facade; over the
     /// FSL workspace, IR's wire `ValueType` is not a copy.

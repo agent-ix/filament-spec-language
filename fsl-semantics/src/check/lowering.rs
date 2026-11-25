@@ -1171,13 +1171,13 @@ pub(crate) struct Lowering<'a> {
     /// each node built and each group keyed charges it.
     meter: &'a mut Meter,
     /// The check stage's node limit (`CheckingLimits::nodes`), and the
-    /// units typing left of it: each text or recursion leaf costs one
-    /// (FR-093 "Text leaves").
+    /// units typing left of it: each text, float or recursion leaf costs one
+    /// (FR-093 "Text leaves" and FR-397 structural IEEE equality).
     node_limit: u64,
     node_budget: u64,
-    /// Whether a text type is reachable from each composite a text-leaf
-    /// walk asked about.
-    text_reach: HashMap<NodeKey, bool>,
+    /// Whether a text or float profile leaf is reachable from each composite
+    /// a structural-equality leaf walk asked about.
+    profile_leaf_reach: HashMap<NodeKey, bool>,
     /// FR-104: the `Origin` recording one occurrence of a named operation's
     /// `frame` node, by the operation's own identity (its declaring type
     /// and name), not by the frame node's key. Two operations whose frame
@@ -1710,21 +1710,23 @@ fn ordering_suffix(operator: OrderingOperator) -> &'static str {
 }
 
 /// Which leaves an operation's catalog entry names (FR-093 "Application
-/// nodes").
+/// nodes" and FR-397 structural IEEE equality).
 #[derive(Clone, Copy)]
 enum LeafSource<'t> {
-    /// Every text leaf of this compared type (`operand:0`, `inner:0`).
+    /// Every text or float profile leaf of this compared type (`operand:0`, `inner:0`).
     Compared(&'t ValueType),
     /// Every text leaf of the element type of this `set`, `bag` or
     /// `ordered_set` result (`result_inner`).
     ResultInner(&'t ValueType),
 }
 
-/// One leaf the text-leaf walk appends at its path.
+/// One profile leaf the structural operation walk appends at its path.
 #[derive(Clone, Copy)]
 enum Leaf {
     /// A text leaf of this profile.
     Text(TextProfile),
+    /// An IEEE float leaf.
+    Float,
     /// A recursion leaf into the composite entered after this many segments.
     Recursion(usize),
 }
@@ -1800,7 +1802,7 @@ struct StackEntry<'w> {
     interned: Option<usize>,
 }
 
-/// One FR-093 text-leaf walk ("Text leaves").
+/// One structural profile-leaf walk (FR-093 text leaves; FR-397 IEEE leaves).
 ///
 /// The walk runs on the walker toolkit ([`filament_walk::walk`]), one typed
 /// frame per entered type (FR-258), so its native stack use is the same at
@@ -1817,7 +1819,7 @@ struct LeafWalk<'w> {
     /// The checking work meter: each composite the walk enters charges one
     /// unit, and each leaf charges its materialized key bytes.
     meter: &'w mut Meter,
-    /// Whether a text type is reachable from each composite asked so far.
+    /// Whether a text or float profile leaf is reachable from each composite asked so far.
     reach: &'w mut HashMap<NodeKey, bool>,
     /// The path from the compared type.
     stack: Vec<StackEntry<'w>>,
@@ -1836,7 +1838,7 @@ struct LeafWalk<'w> {
     limit: u64,
 }
 
-/// One type the text-leaf walk reaches.
+/// One type the structural profile-leaf walk reaches.
 #[derive(Clone, Copy)]
 enum LeafVisit<'w> {
     /// `value_type`, reached one `segment` below the path (none for the
@@ -1954,7 +1956,7 @@ fn into_flow<T>(result: Result<T, CheckRefusal>) -> ControlFlow<CheckRefusal, T>
 }
 
 impl<'w> LeafWalk<'w> {
-    /// Walk `value_type`, appending each text leaf and recursion leaf in the
+    /// Walk `value_type`, appending each text, float and recursion leaf in the
     /// order the walk reaches it.
     fn run(&mut self, value_type: &'w ValueType) -> Result<(), CheckRefusal> {
         let root = LeafVisit::Type {
@@ -1987,6 +1989,7 @@ impl<'w> LeafWalk<'w> {
         match value_type {
             // Rule 1.
             ValueType::Text(text) => self.append(Leaf::Text(text.profile()), location)?,
+            ValueType::Float(_) => self.append(Leaf::Float, location)?,
             // Native String is not profile-bounded Text and adds no Text leaf.
             ValueType::String => {}
             ValueType::Bytes | ValueType::JsonObject => {}
@@ -2004,10 +2007,10 @@ impl<'w> LeafWalk<'w> {
                 value_type: map.values(),
             }),
             ValueType::Composite(declaration) => {
-                // A composite from which no text type is reachable adds no
+                // A composite from which no profile leaf is reachable adds no
                 // leaf, open or not, so the walk does not enter it (rules 3
                 // and 4).
-                if !self.reaches_text(declaration.clone(), location)? {
+                if !self.reaches_profile_leaf(declaration.clone(), location)? {
                     return Ok(None);
                 }
                 // Rule 3: an open composite ends the path.
@@ -2053,7 +2056,6 @@ impl<'w> LeafWalk<'w> {
             | ValueType::Int(_)
             | ValueType::Rational(_)
             | ValueType::Decimal(_)
-            | ValueType::Float(_)
             | ValueType::Quantity(_)
             | ValueType::BoundedQuantity(_)
             | ValueType::CarriedQuantity(_)
@@ -2066,12 +2068,13 @@ impl<'w> LeafWalk<'w> {
         Ok(None)
     }
 
-    /// Whether a text type is reachable from the composite `declaration`
-    /// (FR-093 "Text leaves"). One search answers it for every composite
+    /// Whether a text or float profile leaf is reachable from `declaration`
+    /// (FR-093 "Text leaves"; FR-397 structural IEEE equality). One search
+    /// answers it for every composite
     /// reachable from `declaration` whose answer is not yet known, and keeps
     /// each answer for the lowering's later walks, so a chain of composites
     /// is searched once, not once per link.
-    fn reaches_text(
+    fn reaches_profile_leaf(
         &mut self,
         declaration: NodeKey,
         location: &Location,
@@ -2081,8 +2084,8 @@ impl<'w> LeafWalk<'w> {
         }
         let types = self.types;
         // Each composite reached and not yet answered, with the unanswered
-        // composites its members name; and those whose members name a text
-        // type, or a composite known to reach one.
+        // composites its members name; and those whose members name a profile
+        // leaf, or a composite known to reach one.
         let mut names: BTreeMap<NodeKey, Vec<NodeKey>> = BTreeMap::new();
         let mut reaching: Vec<NodeKey> = Vec::new();
         let mut pending = vec![declaration.clone()];
@@ -2106,7 +2109,7 @@ impl<'w> LeafWalk<'w> {
             let mut direct = false;
             while let Some(value_type) = members.pop() {
                 match value_type {
-                    ValueType::Text(_) => direct = true,
+                    ValueType::Text(_) | ValueType::Float(_) => direct = true,
                     ValueType::Option(payload) => members.push(payload),
                     ValueType::Collection(collection) => members.push(collection.element()),
                     ValueType::Map(map) => members.push(map.values()),
@@ -2123,7 +2126,6 @@ impl<'w> LeafWalk<'w> {
                     | ValueType::Int(_)
                     | ValueType::Rational(_)
                     | ValueType::Decimal(_)
-                    | ValueType::Float(_)
                     | ValueType::Quantity(_)
                     | ValueType::BoundedQuantity(_)
                     | ValueType::CarriedQuantity(_)
@@ -2141,8 +2143,8 @@ impl<'w> LeafWalk<'w> {
             }
             names.insert(composite, named);
         }
-        // A composite reaches a text type when one it names does: follow the
-        // names backwards from every composite that reaches one directly.
+        // A composite reaches a profile leaf when one it names does: follow
+        // the names backwards from every composite that reaches one directly.
         let mut named_by: BTreeMap<NodeKey, Vec<NodeKey>> = BTreeMap::new();
         for (composite, named) in &names {
             for next in named {
@@ -2214,7 +2216,7 @@ impl<'w> LeafWalk<'w> {
         })?;
         let path = self.intern();
         let tail = match leaf {
-            Leaf::Text(_) => 0,
+            Leaf::Text(_) | Leaf::Float => 0,
             Leaf::Recursion(entered) => key_length(
                 "recursion:".len() + decimal_digits(u64::try_from(entered).unwrap_or(u64::MAX)),
             ),
@@ -2314,7 +2316,7 @@ impl<'a> Lowering<'a> {
             meter,
             node_limit: u64::MAX,
             node_budget: u64::MAX,
-            text_reach: HashMap::new(),
+            profile_leaf_reach: HashMap::new(),
             frame_origins: BTreeMap::new(),
             population_nodes: BTreeSet::new(),
             bound_sites: BTreeSet::new(),
@@ -2338,7 +2340,7 @@ impl<'a> Lowering<'a> {
         }
     }
 
-    /// Bound the text-leaf walks by the node limit `limit`, of which typing
+    /// Bound the profile-leaf walks by the node limit `limit`, of which typing
     /// used `used`.
     pub(crate) fn with_node_limit(mut self, limit: u64, used: u64) -> Self {
         self.node_limit = limit;
@@ -3758,12 +3760,13 @@ impl<'a> Lowering<'a> {
             return Ok(Vec::new());
         };
         // The walk completes, or refuses on the node limit or the work
-        // budget, before any leaf's law is read (FR-093 "Text leaves").
+        // budget, before any leaf's law is read (FR-093 "Text leaves";
+        // FR-397 structural IEEE equality).
         let mut walk = LeafWalk {
             types: self.scope.types(),
             location,
             meter: &mut *self.meter,
-            reach: &mut self.text_reach,
+            reach: &mut self.profile_leaf_reach,
             stack: Vec::new(),
             prefixes: Vec::new(),
             leaves: Vec::new(),
@@ -3789,6 +3792,11 @@ impl<'a> Lowering<'a> {
                         path,
                         laws: vec![self.law(LawRole::TextProfile, location)?],
                         mode: Some(OperationMode::TextProfile(profile)),
+                    },
+                    Leaf::Float => OperationLeaf {
+                        path,
+                        laws: vec![self.law(LawRole::IeeeProfile, location)?],
+                        mode: None,
                     },
                     Leaf::Recursion(entered) => OperationLeaf {
                         path: {
@@ -4544,6 +4552,38 @@ impl<'a> Lowering<'a> {
         self.type_ref(&node.lowered_value_type(), node.location())
     }
 
+    /// The model package names an unparameterized floating field by its
+    /// scalar type. Preserve that identity for its projection and for IEEE
+    /// negation, whose checked result has the operand's type node.
+    fn lowering_type_ref(&mut self, node: CheckedNode<'_>) -> Result<NodeRef, CheckRefusal> {
+        let value_type = node.lowered_value_type();
+        if let NodeKind::Pre(operand) = node.kind() {
+            return self.lowering_type_ref(node.at(*operand));
+        }
+        if matches!(node.kind(), NodeKind::Attribute { .. }) {
+            if let ValueType::Float(float) = &*value_type {
+                // Equality provenance retains the checked exact-mode source
+                // type even though the model member's wire type is scalar.
+                let source_type = self.type_ref(&value_type, node.location())?;
+                if let Some(key) = source_type.admitted() {
+                    if !self.occurrences.has(key.clone()) {
+                        self.record(
+                            key.clone(),
+                            OccurrenceRole::Generated,
+                            node.location().clone(),
+                        );
+                    }
+                }
+                let scalar = match float.width() {
+                    filament_exact::IeeeWidth::Binary32 => "float32",
+                    filament_exact::IeeeWidth::Binary64 => "float64",
+                };
+                return self.scalar(scalar, node.location()).map(NodeRef::from);
+            }
+        }
+        self.type_ref(&value_type, node.location())
+    }
+
     /// Key an application node for checked `node` and return a reference to
     /// it.
     fn application(
@@ -4554,8 +4594,46 @@ impl<'a> Lowering<'a> {
         arguments: Vec<MemberTerm>,
     ) -> Result<LeafTerm, CheckRefusal> {
         let lowered_type = node.lowered_value_type();
-        let result_type = if lowered_type.as_ref() == node.value_type() {
-            self.type_ref(node.value_type(), node.location())?
+        let control_range = if matches!(node.kind(), NodeKind::If { .. }) {
+            let children = node.children().into_iter().skip(1);
+            let mut first_matching_range = None;
+            let mut narrowed_result = None;
+            for (child, argument) in children.zip(arguments.iter().skip(1)) {
+                let NodeKind::Coerce(_, interval) = child.kind() else {
+                    continue;
+                };
+                if child.value_type() != node.value_type() {
+                    continue;
+                }
+
+                if first_matching_range.is_none() {
+                    first_matching_range = Some((child, interval));
+                }
+                if let Some(result_type) = self.narrow_application_result_type(argument) {
+                    narrowed_result = Some(result_type);
+                    break;
+                }
+            }
+
+            if let Some(result_type) = narrowed_result {
+                Some(result_type)
+            } else if let Some((child, interval)) = first_matching_range {
+                Some(self.type_node(&ValueType::Int(interval.clone()), child.location())?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let result_type = if let Some(key) = control_range {
+            NodeRef::from(key)
+        } else if matches!(&*lowered_type, ValueType::Float(_)) {
+            match node.kind() {
+                NodeKind::Negate(operand) => self.lowering_type_ref(node.at(*operand))?,
+                _ => self.lowering_type_ref(node)?,
+            }
+        } else if lowered_type.as_ref() == node.value_type() {
+            self.lowering_type_ref(node)?
         } else {
             // The application lowers at the Integer node, so its checked
             // interval has no edge from it. Only an integer division keeps
@@ -4581,9 +4659,28 @@ impl<'a> Lowering<'a> {
                     }
                 }
             }
-            self.type_ref(&lowered_type, node.location())?
+            self.lowering_type_ref(node)?
         };
         self.typed_application(node.location(), result_type, operator, operation, arguments)
+    }
+
+    /// The result type of `argument` when it directly names an application
+    /// of `filament.op.numeric.narrow`.
+    fn narrow_application_result_type(&self, argument: &MemberTerm) -> Option<NodeKey> {
+        let MemberTerm::Leaf(leaf) = argument else {
+            return None;
+        };
+        let reference = leaf.reference_target()?;
+        let body = match reference {
+            NodeRef::Admitted(key) => self.graph.node(key.clone()).map(SemanticNode::body),
+            NodeRef::Pending(handle) => self.drafts.get(handle).map(|draft| &draft.content.body),
+        }?;
+        let application = body.application_term()?;
+        if application.operation.identity != "filament.op.numeric.narrow" {
+            return None;
+        }
+        let result_type = application.result_type.admitted()?.clone();
+        Some(result_type)
     }
 
     /// Key an application node typed at `result_type`, denoted by the
@@ -6624,6 +6721,7 @@ impl<'a> Lowering<'a> {
             Vec::new()
         };
         let mut enum_member_facts = Vec::new();
+        let mut enum_members_seen = HashSet::new();
         if data.schedule() == filament_semantic_value::declaration::EqualitySchedule::Enum {
             for child in node.children() {
                 let ValueType::Enum(shape) = child.value_type() else {
@@ -6688,10 +6786,7 @@ impl<'a> Lowering<'a> {
                                 KeyFault::MissingEnumMember(variant.owner().clone()),
                             ));
                         };
-                    if enum_member_facts
-                        .iter()
-                        .any(|(_, _, existing, _, _, _)| *existing == member_key)
-                    {
+                    if !enum_members_seen.insert(member_key.clone()) {
                         continue;
                     }
                     enum_member_facts.push((
@@ -7398,7 +7493,14 @@ impl<'a> Lowering<'a> {
             Value::String(value) if scalar == Some("text") => LiteralValue::Text(value.clone()),
             Value::String(value) => LiteralValue::String(value.clone()),
         };
-        let semantic_type = match scalar {
+        let float_scalar = match value {
+            Value::Float(value) => Some(match value.width() {
+                filament_exact::IeeeWidth::Binary32 => "float32",
+                filament_exact::IeeeWidth::Binary64 => "float64",
+            }),
+            _ => None,
+        };
+        let semantic_type = match scalar.or(float_scalar) {
             Some(form) => NodeRef::from(self.scalar(form, location)?),
             None => self.type_ref(declared, location)?,
         };

@@ -3,7 +3,7 @@
 
 use filament_checked::key::DeclarationKey;
 use filament_contract_model::{CheckedNodeId, CheckedTerm, RefinementKey, RefinementStepTarget};
-use filament_exact::{MemberOwner, NodeKey, Value};
+use filament_exact::{NodeKey, Value};
 use filament_semantic_value::fairness::FairnessConstraint;
 use fsl_eval::simulation::ExpansionStop;
 use fsl_eval::simulation::model::{ModelSystem, PackageModelInput, RowReading, StateObservation};
@@ -109,14 +109,16 @@ impl ObjectMapping for Object<'_> {
     }
 }
 
+struct OperationTarget<'a> {
+    key: DeclarationKey,
+    target_type: DeclarationKey,
+    receiver: Expression<'a>,
+    arguments: Vec<Expression<'a>>,
+    binds_result: bool,
+}
+
 enum Target<'a> {
-    Operation {
-        key: DeclarationKey,
-        target_type: DeclarationKey,
-        receiver: Expression<'a>,
-        arguments: Vec<Expression<'a>>,
-        binds_result: bool,
-    },
+    Operation(Box<OperationTarget<'a>>),
     Stutter,
     Any,
 }
@@ -131,21 +133,16 @@ impl StepMapping for Step<'_> {
     }
     fn target(&self) -> MappingTarget<'_> {
         match &self.target {
-            Target::Operation {
-                key,
-                target_type,
-                receiver,
-                arguments,
-                binds_result,
-            } => MappingTarget::Abstract {
-                operation: key,
-                target_type: Some(target_type),
-                receiver,
-                arguments: arguments
+            Target::Operation(operation) => MappingTarget::Abstract {
+                operation: &operation.key,
+                target_type: Some(&operation.target_type),
+                receiver: &operation.receiver,
+                arguments: operation
+                    .arguments
                     .iter()
                     .map(|argument| Some(argument as &dyn MappingExpression))
                     .collect(),
-                binds_result: *binds_result,
+                binds_result: operation.binds_result,
             },
             Target::Stutter => MappingTarget::Stutter,
             Target::Any => MappingTarget::Any,
@@ -287,26 +284,16 @@ impl<'a> PackageRefinement<'a> {
                 .package()
                 .model_object_fields(abstract_node)
                 .map_err(|_| unsupported("abstract field declarations"))?;
-            let identities = package
-                .identities()
-                .ok_or_else(|| unsupported("abstract field identities"))?;
             let identity_key = |field: &filament_contract_model::CheckedModelField|
              -> Result<DeclarationKey, PackageRefinementRefusal> {
-                let owner = package
-                    .node_key(field.declaring_node_id())
-                    .ok_or_else(|| unsupported("abstract field owner identity"))?;
-                let identity = identities
-                    .field_rows()
-                    .iter()
-                    .find(|identity| {
-                        identity.record_node == *abstract_node
-                            && identity.member_id.member() == field.name()
-                            && identity.member_id.owner() == &MemberOwner::Node(owner.clone())
-                    })
-                    .ok_or_else(|| unsupported("abstract field identity"))?;
+                // FSpec's model field key is its declaring object key with
+                // the field name appended (FR-106). The admitted model field
+                // table supplies both facts; exact-field rows in
+                // `identities.json` describe record value types instead.
+                let owner = object_key(package, field.declaring_node_id())?;
                 Ok(DeclarationKey {
-                    package: identity.selected_document.to_string(),
-                    node: identity.field_original_identity.to_string(),
+                    package: owner.package,
+                    node: format!("{}/{}", owner.node, field.name()),
                 })
             };
             let declared_keys = declared
@@ -386,7 +373,7 @@ impl<'a> PackageRefinement<'a> {
                             })
                         })
                         .collect::<Result<Vec<_>, PackageRefinementRefusal>>()?;
-                    Target::Operation {
+                    Target::Operation(Box::new(OperationTarget {
                         key: abstract_operation.key.clone(),
                         target_type,
                         receiver: Expression {
@@ -400,7 +387,7 @@ impl<'a> PackageRefinement<'a> {
                         arguments,
                         binds_result: concrete.result.is_some()
                             && abstract_operation.result.is_some(),
-                    }
+                    }))
                 }
                 RefinementStepTarget::Stutter => Target::Stutter,
                 RefinementStepTarget::Any => Target::Any,

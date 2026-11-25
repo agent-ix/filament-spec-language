@@ -3242,14 +3242,7 @@ fn derived_items(
     // FR-124-AC-12: the subject's items are over the models its universes
     // read, not over every model the unit selects.
     let selections = read_identities(package, binding);
-    derived_items_for_selections(
-        package,
-        subject,
-        registry,
-        authored,
-        first,
-        &selections,
-    )
+    derived_items_for_selections(package, subject, registry, authored, first, &selections)
 }
 
 /// The model subjects named by hyper aliases, each of which contributes its
@@ -3308,14 +3301,8 @@ fn append_hyper_subject_items(
         }
         let selections = BTreeSet::from([identity]);
         let first = resolved.len();
-        let derived = derived_items_for_selections(
-            package,
-            subject,
-            registry,
-            &[],
-            first,
-            &selections,
-        );
+        let derived =
+            derived_items_for_selections(package, subject, registry, &[], first, &selections);
         resolved.extend(derived);
     }
 }
@@ -3339,7 +3326,7 @@ fn derived_items_for_selections(
             subject: &(),
             package: graph,
         },
-        &selections,
+        selections,
     );
     let occurrences: Vec<OccurrenceKey> = authored
         .iter()
@@ -3371,7 +3358,7 @@ fn derived_items_for_selections(
                 package: graph,
             },
             &requirements,
-            &selections,
+            selections,
         );
     }
     let written = request.derived(

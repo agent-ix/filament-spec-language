@@ -149,6 +149,9 @@ pub enum ZoneError {
         /// The zone's dimension.
         dim: usize,
     },
+    /// A clock reindexing omitted the reference clock.
+    #[error("clock reindexing must start with the reference clock")]
+    MissingReferenceClock,
     /// A reset of the reference clock, which is fixed at 0.
     #[error("the reference clock cannot be reset")]
     ResetReferenceClock,
@@ -323,6 +326,99 @@ impl<W: Exact> Zone<W> {
     /// The dimension: the clock count plus the reference clock.
     pub fn dim(&self) -> usize {
         self.dim
+    }
+
+    /// Reindex a closed zone to a list of clocks in the old zone. The
+    /// reference clock stays first; repeated indices intentionally alias
+    /// one valuation in the resulting product.
+    pub fn reindex(&self, clocks: &[usize]) -> Result<Self, ZoneError> {
+        if clocks.first() != Some(&0) {
+            return Err(ZoneError::MissingReferenceClock);
+        }
+        for &clock in clocks {
+            self.check_clock(clock)?;
+        }
+        let dim = clocks.len();
+        let mut zone = Self {
+            dim,
+            cells: vec![None; dim * dim],
+        };
+        if self.is_empty() {
+            zone.cells.fill(Some(W::of(-2)));
+            return Ok(zone);
+        }
+        for (i, &old_i) in clocks.iter().enumerate() {
+            for (j, &old_j) in clocks.iter().enumerate() {
+                zone.cells[i * dim + j] = if old_i == old_j {
+                    zero_le()
+                } else {
+                    self.cell(old_i, old_j).clone()
+                };
+            }
+        }
+        Ok(zone)
+    }
+
+    /// Add clocks fixed at zero, retaining all existing clock relations.
+    pub fn append_zero_clocks(&self, count: usize) -> Self {
+        let mut clocks: Vec<_> = (0..self.dim).collect();
+        clocks.extend(std::iter::repeat_n(0, count));
+        self.reindex(&clocks)
+            .expect("the generated clock indices belong to this zone")
+    }
+
+    /// Translate selected clocks by one shared amount, preserving all
+    /// difference relations exactly.
+    pub fn translate_clocks(&mut self, clocks: &[usize], amount: &W) -> Result<(), ZoneError> {
+        let mut selected = vec![false; self.dim];
+        for &clock in clocks {
+            self.check_clock(clock)?;
+            if clock == 0 {
+                return Err(ZoneError::ReassignReferenceClock);
+            }
+            selected[clock] = true;
+        }
+        let delta = amount.plus(amount);
+        let negative_delta = delta.negated();
+        let before = self.clone();
+        for i in 0..self.dim {
+            for j in 0..self.dim {
+                let shift = match (selected[i], selected[j]) {
+                    (true, false) => &delta,
+                    (false, true) => &negative_delta,
+                    _ => continue,
+                };
+                self.cells[i * self.dim + j] =
+                    before.cell(i, j).as_ref().map(|bound| bound.plus(shift));
+            }
+        }
+        Ok(())
+    }
+
+    /// Let selected clocks elapse together while all other clocks stay
+    /// fixed, retaining their exact cross-clock correlation.
+    pub fn up_clocks(&mut self, clocks: &[usize]) -> Result<(), ZoneError> {
+        let mut selected = vec![false; self.dim];
+        for &clock in clocks {
+            self.check_clock(clock)?;
+            if clock == 0 {
+                return Err(ZoneError::SubtractReferenceClock);
+            }
+            selected[clock] = true;
+        }
+        for i in 0..self.dim {
+            if !selected[i] {
+                continue;
+            }
+            self.cells[i * self.dim] = None;
+            for j in 0..self.dim {
+                if !selected[j] {
+                    self.cells[i * self.dim + j] = None;
+                }
+            }
+        }
+        self.close();
+        Ok(())
     }
 
     /// The bound on `x_i - x_j` as `(c, strict)`, or `None` for `∞`.

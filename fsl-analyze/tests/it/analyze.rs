@@ -37,9 +37,9 @@ use fsl_semantics::check::{Capability, DeclarationFamily};
 use ix_trace_rs::trace;
 
 use crate::closure_certificate::world;
-use crate::counter::{CONTRACT, UNLIMITED};
+use crate::counter::{clause_text, CONTRACT, UNLIMITED};
 use crate::derived_request::{counter_body, derived_deadlock};
-use crate::model_settle::{case, replay};
+use crate::model_settle::{case, kernel_case, replay};
 
 fn index(at: usize) -> RequestIndex {
     RequestIndex::new(at)
@@ -445,6 +445,70 @@ fn an_undefined_claim_evaluation_settles_refuted_with_the_undefined_cause() {
     assert!(!written.to_string().contains("\"undefined\""));
 }
 
+/// FR-281-AC-25 (TC-763 step 11): an undefined evaluation at the successor
+/// state names both that position and the guarded transition. The item is
+/// refuted and its serialized outcome uses the undefined-evaluation cause,
+/// never an `undefined` result label.
+#[trace("TC-763", "FR-281-AC-25")]
+#[test]
+fn an_undefined_step_evaluation_settles_refuted_with_its_successor_and_transition() {
+    const UNDEFINED_STEP_GUARD: &str = "pre CanInc using v on M::Counter::inc { q(2 - self.value) >= 0 }\n\
+                                         post Inc using v on M::Counter::inc { self.value - pre(self.value) = 1 }\n";
+    const DIVIDE: &str = "function q using v(x: Integer): Integer pure { 6 mod x }\n";
+    let body = format!(
+        "{UNDEFINED_STEP_GUARD}{}",
+        clause_text("Bounded", "", "always holds(c.value <= 3)")
+    );
+    let case = kernel_case(&body, DIVIDE, &[0]);
+    let expected = crate::model_settle::counterexample(&case);
+    let CounterexampleKind::UndefinedEvaluation(evaluation) = &expected.kind else {
+        panic!("the precondition is undefined at its successor: {expected:?}");
+    };
+    assert_eq!(evaluation.site.position, 2);
+    assert!(evaluation.site.transition.is_some());
+
+    let mut record = only(analyze_items(
+        &en1(),
+        vec![derived_deadlock(case.model_item())],
+        &Cancel::new(),
+    ));
+    assert_eq!(value(&record), TerminalValue::Refuted);
+    let counterexample = record
+        .model_check
+        .as_ref()
+        .and_then(|model| model.counterexample.as_ref())
+        .expect("the record carries the counterexample");
+    assert_eq!(counterexample.kind, expected.kind);
+    let (node, origin, _) = case
+        .checked()
+        .graph()
+        .occurrences()
+        .next()
+        .expect("the package holds an occurrence");
+    record.claim = Some(fsl_foundation::source::provenance::OccurrenceKey::new(
+        node, origin,
+    ));
+
+    let item = record
+        .outcome_item(case.checked())
+        .expect("an item")
+        .expect("the counterexample is spelled");
+    assert_eq!(item.category(), Category::Violation);
+    let written = serde_json::to_value(&item).expect("writes");
+    assert_eq!(written["result"], "refuted");
+    assert_eq!(written["cause"]["kind"], "undefined-evaluation");
+    let where_ = written["cause"]["where"]
+        .as_str()
+        .expect("the undefined cause identifies its location");
+    assert!(where_.starts_with("position 2, state "), "{written}");
+    assert!(
+        written["counterexample"]["kind"]["where"]["transition"].is_object(),
+        "{written}"
+    );
+    assert_eq!(written["cause"]["cause"], "division-by-zero");
+    assert!(!written.to_string().contains("\"undefined\""));
+}
+
 /// FR-280-AC-1 (TC-761 step 1) for EN-1: its manifest converts into a
 /// descriptor advertising exactly the claim kinds it settles,
 /// `temporal-satisfaction` in both extent modes and, for an `invariant`
@@ -485,6 +549,7 @@ fn service_request<'w>(
     world: &'w crate::prob_world::World,
 ) -> fsl_analyze::statistical::StatisticalRequest<'w> {
     fsl_analyze::statistical::StatisticalRequest {
+        workers: 1,
         subject: world.subject(),
         claim: world.claim("Two"),
         method: fsl_replay::statistical::StatisticalMethod::Okamoto,

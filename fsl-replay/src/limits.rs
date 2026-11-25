@@ -9,11 +9,14 @@
 //! entry point.
 
 use filament_exact::{LimitKind as Counter, ScalarLimits};
+use std::collections::BTreeSet;
 use fsl_eval::execution::PrepareLimits;
 use fsl_eval::simulation::model::ExpansionLimits;
 use fsl_eval::simulation::Limits as ExploreLimits;
 use fsl_eval::temporal::evidence::TemporalEvidenceLimits;
-use fsl_foundation::{AccountingSetting, Setting, SettingLimits, SettingName, UsageRefusal};
+use fsl_foundation::{
+    AccountingSetting, Setting, SettingLimits, SettingName, UsageCause, UsageRefusal,
+};
 use fsl_semantics::library::bundle::PackageLimits as LibraryLimits;
 use fsl_semantics::model::observation::ObservationLimits;
 use fsl_semantics::model::population::PopulationAdmissionLimits;
@@ -21,9 +24,9 @@ use fsl_semantics::model::population::PopulationAdmissionLimits;
 use crate::bounds::ReplayLimits;
 use crate::certificate::zone_certificate::CertificateCheckLimits;
 use crate::model_check::limits::{ExactProbLimits, ModelCheckLimits};
-use crate::statistical::{StatisticalLimits, TimedSampling};
-use crate::SmtEncodingLimits;
 use crate::spine::{default_accounting, SpineLimits, DEFAULT_WORK_UNITS};
+use crate::statistical::{StatisticalLimits, TimedSampling};
+use crate::{SmtEncodingLimits, SmtRunLimits};
 
 /// The call's accounting limits (`filament.value.accounting/v1`): each of the
 /// ten counters is an [`AccountingSetting`] named `accounting.<counter>` (FR-255's
@@ -164,7 +167,8 @@ impl SettingLimits for RenderLimits {
 
 /// FR-255 "Engine limit setting names" defaults of the `plan_search.*` rows
 /// (FR-1011).
-const PLAN_SEARCH_DEFAULTS: [u64; 5] = [10_000_000, 100_000_000, 16_777_216, 100_000_000, 1_048_576];
+const PLAN_SEARCH_DEFAULTS: [u64; 5] =
+    [10_000_000, 100_000_000, 16_777_216, 100_000_000, 1_048_576];
 
 /// The default of `certificate_check.max_rank` (FR-255): the closed
 /// profile's Count representability ceiling.
@@ -208,7 +212,7 @@ pub struct EngineLimits {
     /// `smt_encoding.*` (FR-315).
     pub smt_encoding: SmtEncodingLimits,
     /// `smt.max_solver_steps` and `smt.max_solver_time` (FR-315).
-    pub smt: [u64; 2],
+    pub smt: SmtRunLimits,
     /// `plan_search.max_states`, `.max_work`, `.max_certificate_entries`,
     /// `.max_check_work` and `.max_state_key_bytes` (FR-1011), in that order.
     pub plan_search: [u64; 5],
@@ -232,7 +236,7 @@ impl Default for EngineLimits {
             schedule_max_demand_points: 1_048_576,
             hybrid: [1_000_000, 60],
             smt_encoding: SmtEncodingLimits::default(),
-            smt: [100_000_000, 60],
+            smt: SmtRunLimits::default(),
             plan_search: PLAN_SEARCH_DEFAULTS,
         }
     }
@@ -342,11 +346,14 @@ impl SettingLimits for EngineLimits {
             (Setting::SmtEncodingMaxMonitorStates, smt.max_monitor_states),
             (Setting::SmtEncodingMaxCandidates, smt.max_candidates),
             (Setting::SmtEncodingMaxScriptBytes, smt.max_script_bytes),
-            (Setting::SmtMaxSolverSteps, self.smt[0]),
-            (Setting::SmtMaxSolverTime, self.smt[1]),
+            (Setting::SmtMaxSolverSteps, self.smt.max_solver_steps),
+            (Setting::SmtMaxSolverTime, self.smt.max_solver_time),
             (Setting::PlanSearchMaxStates, self.plan_search[0]),
             (Setting::PlanSearchMaxWork, self.plan_search[1]),
-            (Setting::PlanSearchMaxCertificateEntries, self.plan_search[2]),
+            (
+                Setting::PlanSearchMaxCertificateEntries,
+                self.plan_search[2],
+            ),
             (Setting::PlanSearchMaxCheckWork, self.plan_search[3]),
             (Setting::PlanSearchMaxStateKeyBytes, self.plan_search[4]),
         ];
@@ -412,8 +419,8 @@ impl SettingLimits for EngineLimits {
             Setting::SmtEncodingMaxMonitorStates => smt.max_monitor_states = bound,
             Setting::SmtEncodingMaxCandidates => smt.max_candidates = bound,
             Setting::SmtEncodingMaxScriptBytes => smt.max_script_bytes = bound,
-            Setting::SmtMaxSolverSteps => self.smt[0] = bound,
-            Setting::SmtMaxSolverTime => self.smt[1] = bound,
+            Setting::SmtMaxSolverSteps => self.smt.max_solver_steps = bound,
+            Setting::SmtMaxSolverTime => self.smt.max_solver_time = bound,
             Setting::PlanSearchMaxStates => self.plan_search[0] = bound,
             Setting::PlanSearchMaxWork => self.plan_search[1] = bound,
             Setting::PlanSearchMaxCertificateEntries => self.plan_search[2] = bound,
@@ -421,6 +428,41 @@ impl SettingLimits for EngineLimits {
             Setting::PlanSearchMaxStateKeyBytes => self.plan_search[4] = bound,
             _ => return false,
         }
+        true
+    }
+}
+
+/// The three caller-selected worker counts, which are request settings rather
+/// than engine limits (FR-255 "Worker count setting names").
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WorkerCounts {
+    /// `explore.workers`.
+    pub explore: u64,
+    /// `model_check.workers`.
+    pub model_check: u64,
+    /// `statistical.workers`.
+    pub statistical: u64,
+}
+
+impl Default for WorkerCounts {
+    fn default() -> Self {
+        Self {
+            explore: 1,
+            model_check: 1,
+            statistical: 1,
+        }
+    }
+}
+
+impl WorkerCounts {
+    fn set(&mut self, name: &str, value: u64) -> bool {
+        let field = match name {
+            "explore.workers" => &mut self.explore,
+            "model_check.workers" => &mut self.model_check,
+            "statistical.workers" => &mut self.statistical,
+            _ => return false,
+        };
+        *field = value;
         true
     }
 }
@@ -454,6 +496,8 @@ pub struct CallerLimits {
     pub inspect_max_view_entries: u64,
     /// The call's accounting budgets (`filament.value.accounting/v1`).
     pub accounting: AccountingLimits,
+    /// Caller-selected worker counts, separate from resource limits.
+    pub workers: WorkerCounts,
 }
 
 impl Default for CallerLimits {
@@ -472,6 +516,7 @@ impl Default for CallerLimits {
             temporal_evidence: TemporalEvidenceLimits::default(),
             inspect_max_view_entries: 10_000_000,
             accounting: AccountingLimits::default(),
+            workers: WorkerCounts::default(),
         }
     }
 }
@@ -490,7 +535,45 @@ impl CallerLimits {
         operands: impl IntoIterator<Item = &'a str>,
     ) -> Result<Self, UsageRefusal> {
         let mut limits = Self::default();
-        for (setting, bound) in fsl_foundation::setting::parse_operands(operands)? {
+        let mut seen = BTreeSet::new();
+        for operand in operands {
+            let (name, value) = operand.split_once('=').ok_or_else(|| UsageRefusal {
+                operand: operand.to_owned(),
+                cause: UsageCause::NotAnAssignment,
+            })?;
+            if !seen.insert(name.to_owned()) {
+                return Err(UsageRefusal {
+                    operand: operand.to_owned(),
+                    cause: UsageCause::Repeated,
+                });
+            }
+            if matches!(
+                name,
+                "explore.workers" | "model_check.workers" | "statistical.workers"
+            ) {
+                let value = if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+                {
+                    value.parse::<u64>().ok()
+                } else {
+                    None
+                }
+                .ok_or_else(|| UsageRefusal {
+                    operand: operand.to_owned(),
+                    cause: UsageCause::NotAnInteger,
+                })?;
+                if value == 0 {
+                    return Err(UsageRefusal {
+                        operand: operand.to_owned(),
+                        cause: UsageCause::InvalidWorkerValue,
+                    });
+                }
+                let _ = limits.workers.set(name, value);
+                continue;
+            }
+            let (setting, bound) = fsl_foundation::setting::parse_operands([operand])?
+                .into_iter()
+                .next()
+                .expect("one operand yields one setting");
             match setting {
                 SettingName::Stage(setting) => {
                     if !limits.set_bound(setting, bound) {
@@ -753,6 +836,118 @@ mod tests {
             };
             assert_eq!(bound_of(&requested, *setting), expected, "{setting}");
         }
+    }
+
+    /// FR-255-AC-14: the settings operation returns the SMT run values and
+    /// keeps every encoding and solver bound at its published default.
+    #[trace("FR-255-AC-14", "TC-1250")]
+    #[test]
+    fn smt_run_settings_are_typed_and_independent_from_encoding_settings() {
+        let limits = CallerLimits::from_operands([
+            "smt.max_solver_steps=1000",
+            "smt.max_solver_time=5",
+            "smt_encoding.max_constants=8",
+        ])
+        .expect("the SMT settings are accepted");
+        assert_eq!(
+            limits.engines.smt,
+            SmtRunLimits {
+                max_solver_steps: 1000,
+                max_solver_time: 5,
+            }
+        );
+        assert_eq!(
+            limits.engines.smt_encoding,
+            SmtEncodingLimits {
+                max_constants: 8,
+                ..SmtEncodingLimits::default()
+            }
+        );
+        let replay_entries: StageLimits =
+            [(Setting::SmtEncodingMaxConstants, 8)].into_iter().collect();
+        let replay_limits = CallerLimits::for_request(
+            &replay_entries,
+            AccountingLimits::default().0,
+            ReplayLimits::default(),
+        );
+        assert_eq!(replay_limits.engines.smt_encoding.max_constants, 8);
+        let defaults = CallerLimits::from_operands([]).expect("defaults are available");
+        assert_eq!(defaults.engines.smt, SmtRunLimits::default());
+        assert_eq!(defaults.engines.smt_encoding, SmtEncodingLimits::default());
+        let time_zero = CallerLimits::from_operands(["smt.max_solver_time=0"])
+            .expect_err("solver time zero refuses");
+        assert_eq!(time_zero.operand, "smt.max_solver_time=0");
+        let encoding_zero = CallerLimits::from_operands(["smt_encoding.max_monitor_states=0"])
+            .expect_err("positive encoding state limit zero refuses");
+        assert_eq!(encoding_zero.operand, "smt_encoding.max_monitor_states=0");
+    }
+
+    /// FR-255-AC-21: worker settings are returned independently, default to
+    /// one, and remain outside the engine limit table.
+    #[trace("FR-255-AC-21", "TC-720")]
+    #[test]
+    fn worker_settings_are_positive_request_settings_not_engine_limits() {
+        let limits = CallerLimits::from_operands([
+            "explore.workers=4",
+            "model_check.workers=2",
+            "statistical.workers=8",
+        ])
+        .expect("worker settings are accepted");
+        assert_eq!(
+            limits.workers,
+            WorkerCounts {
+                explore: 4,
+                model_check: 2,
+                statistical: 8,
+            }
+        );
+        assert_eq!(limits.explore.max_states, 10_000_000);
+        assert_eq!(CallerLimits::default().workers, WorkerCounts::default());
+        for (operand, expected) in [
+            (
+                "explore.workers=4",
+                WorkerCounts {
+                    explore: 4,
+                    ..WorkerCounts::default()
+                },
+            ),
+            (
+                "model_check.workers=2",
+                WorkerCounts {
+                    model_check: 2,
+                    ..WorkerCounts::default()
+                },
+            ),
+            (
+                "statistical.workers=8",
+                WorkerCounts {
+                    statistical: 8,
+                    ..WorkerCounts::default()
+                },
+            ),
+        ] {
+            let one = CallerLimits::from_operands([operand]).expect("worker setting is accepted");
+            assert_eq!(one.workers, expected, "{operand}");
+            let mut expected_limits = CallerLimits::default();
+            expected_limits.workers = expected;
+            assert_eq!(one, expected_limits, "other limits changed for {operand}");
+        }
+        assert_eq!(Setting::from_name("explore.workers"), None);
+        assert_eq!(Setting::from_name("model_check.workers"), None);
+        assert_eq!(Setting::from_name("statistical.workers"), None);
+        assert!(limits
+            .engines
+            .bounds()
+            .iter()
+            .all(|(setting, _)| !setting.name().ends_with(".workers")));
+        let zero = CallerLimits::from_operands(["explore.workers=0"])
+            .expect_err("worker count zero refuses");
+        assert_eq!(zero.operand, "explore.workers=0");
+        assert_eq!(zero.cause, UsageCause::InvalidWorkerValue);
+        let unknown = CallerLimits::from_operands(["explore.threads=4"])
+            .expect_err("unregistered worker name refuses");
+        assert_eq!(unknown.operand, "explore.threads=4");
+        assert_eq!(unknown.cause, UsageCause::UnknownSetting);
     }
 
     /// FR-255-AC-20: `emit.output_bytes` changes only the output-byte bound of

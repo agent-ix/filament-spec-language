@@ -57,6 +57,9 @@ pub(super) fn run(
     ) {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
             let quantile_bound;
+            let Some(claim_type) = super::probabilistic_bound_type(&claim.form) else {
+                return not_yet();
+            };
             let bound = match &claim.form {
                 ProbForm::Reach { bound, .. }
                 | ProbForm::Probability { bound, .. }
@@ -80,6 +83,7 @@ pub(super) fn run(
                 &witness,
                 occurrence,
                 bound,
+                claim_type,
                 scope.types(),
                 scope.variant_types(),
                 &|state| system.state_key(state).ok().map(|(_, key)| key),

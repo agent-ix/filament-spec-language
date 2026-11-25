@@ -833,7 +833,10 @@ fn decimal_and_enum_history_rows_check_and_key() {
     }
     // A decimal key keeps its scale (FR-120-AC-16): 15.0 and 15 are two values.
     let decimal = "Decimal[0, 100; 0, 2; nearest-even]";
-    assert_ne!(keys[&(decimal, "decimal(150, 1)")], keys[&(decimal, "decimal(15, 0)")]);
+    assert_ne!(
+        keys[&(decimal, "decimal(150, 1)")],
+        keys[&(decimal, "decimal(15, 0)")]
+    );
 }
 
 /// FR-138-AC-9, FR-138 "S3" (TC-543): a decimal or enum row whose initial
@@ -1007,6 +1010,7 @@ fn a_failed_update_skips_the_rows_of_its_own_object_only() {
         history: initial_history(world.refinement(), &system, &pre),
         concrete: pre.clone(),
         abstract_states: vec![world.abstract_state(&[("value", int(0)), ("prev", int(0))])],
+        candidate_clock_blocks: vec![0],
         abstract_protocol_states: Vec::new(),
     };
     let (written, reached) = transition(

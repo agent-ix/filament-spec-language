@@ -361,6 +361,8 @@ fn a_malformed_certificate_is_rejected() {
         concrete: certificate.positions[0].concrete.clone(),
         history: Vec::new(),
         abstract_states: Vec::new(),
+        candidate_blocks: None,
+        candidate_clock_blocks: None,
     });
     stray.successors.push(Vec::new());
     assert_eq!(
@@ -397,6 +399,7 @@ fn listed(world: &World) -> SimulationCertificate {
             .expect("the state maps")
             .visible,
         ],
+        candidate_clock_blocks: vec![0],
         abstract_protocol_states: Vec::new(),
     };
     let certified = |position: &RefinementPosition| CertifiedPosition {
@@ -410,6 +413,8 @@ fn listed(world: &World) -> SimulationCertificate {
                 fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
             })
             .collect(),
+        candidate_blocks: None,
+        candidate_clock_blocks: None,
     };
     let mut index: BTreeMap<fsl_eval::simulation::StateKey, u64> = BTreeMap::new();
     let mut states = Vec::new();

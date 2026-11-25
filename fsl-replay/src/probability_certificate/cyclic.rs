@@ -566,6 +566,7 @@ mod tests {
                 ),
             ]),
             scheduler_actions: Default::default(),
+            actions_by_state: None,
         }
     }
 
