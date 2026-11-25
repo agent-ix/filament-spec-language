@@ -1955,7 +1955,7 @@ fn a_claim_reads_alike_with_and_without_time_stamps() {
 /// not the value its place held while the object was absent. Over the
 /// universe `{c, d}` with `d` absent, `spawn` after a delay of 2 creates `d`
 /// with `x = 0` while `c`'s clock reads 2.
-#[trace("TC-686", "FSpec-FR-415-AC-6")]
+#[trace("TC-686", "FSpec-FR-181")]
 #[test]
 fn a_created_objects_clock_starts_at_its_write() {
     let world = world(&only(&["spawn"], "urgent Eager when { self.phase = 1 };"));
@@ -2244,7 +2244,7 @@ fn timer_document() -> Vec<u8> {
 /// clocks. The state key of a state holding the record value is defined: an
 /// equal state has an equal state key, and it changes with a clock value and
 /// with the record's data field (FR-181's `record` form).
-#[trace("TC-685", "FR-230-AC-11")]
+#[trace("TC-685", "FR-230-AC-11", "FSpec-FR-415-AC-6")]
 #[test]
 fn every_object_holds_its_own_clock_of_every_record_place() {
     let holding = |n: &str| {
@@ -2268,7 +2268,9 @@ fn every_object_holds_its_own_clock_of_every_record_place() {
         .collect();
     assert_eq!(names, ["t.x", "t.y", "x"]);
     assert_eq!(timed.places().len(), 9);
-    for places in timed.places().as_chunks::<3>().0 {
+    let place_groups = timed.places().as_chunks::<3>().0;
+    for ((clock, _), places) in timed.model().clock_fields().zip(place_groups) {
+        assert!(places.iter().all(|place| place.clock() == clock));
         let owners: Vec<_> = places
             .iter()
             .map(|place| place.object().object().as_str())
