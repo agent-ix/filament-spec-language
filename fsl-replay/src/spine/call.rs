@@ -39,6 +39,7 @@ use fsl_semantics::model::normalize::{ModelRefusal, ModelRefusalCause};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::refusal::OfferedSelection;
 use fsl_semantics::value::environment_stage::membership_failure_code;
+use ix_trace_rs::implements;
 
 use super::lifecycle as front_end;
 use super::run_value::{ArgumentDefect, Forms, ReadStop};
@@ -1757,6 +1758,7 @@ fn owner_artifact(value: filament_observation::OwnerArtifact) -> &'static str {
 /// FR-650 "Population argument": FR-084 admission binds each population the
 /// call names for a `Population<T>[N]` parameter, with the parameter's
 /// declared maximum, and FR-089 records its identity in the object context.
+#[implements("FSpec-FR-650-AC-4")]
 pub(super) fn bind_snapshot_populations<'a>(
     objects: &ObjectEnvironment,
     views: impl IntoIterator<Item = &'a fsl_semantics::model::normalize::EffectiveView> + Clone,
@@ -1785,6 +1787,7 @@ pub(super) fn bind_snapshot_populations<'a>(
 
 /// Binds one named population from an already admitted snapshot, preserving
 /// the declared maximum of its parameter.
+#[implements("FSpec-FR-650-AC-4")]
 pub(super) fn bind_snapshot_population(
     objects: ObjectEnvironment,
     models: &[fsl_semantics::model::intake::SelectedModel],
@@ -1801,6 +1804,7 @@ pub(super) fn bind_snapshot_population(
     )
 }
 
+#[implements("FSpec-FR-650-AC-4")]
 fn bind_snapshot_population_views<'a>(
     objects: ObjectEnvironment,
     views: impl IntoIterator<Item = &'a fsl_semantics::model::normalize::EffectiveView>,

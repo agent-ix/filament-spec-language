@@ -904,14 +904,13 @@ mod tests {
                 ..SmtEncodingLimits::default()
             }
         );
-        let replay_entries: StageLimits =
-            [(Setting::SmtEncodingMaxConstants, 8)].into_iter().collect();
-        let replay_limits = CallerLimits::for_request(
-            &replay_entries,
-            AccountingLimits::default().0,
-            ReplayLimits::default(),
+        // A replay encodes no SMT query: a request refuses the entry.
+        assert_eq!(
+            StageLimits::default().with_named("smt_encoding.max_constants", 8),
+            Err(crate::request::StageLimitNameRefusal {
+                name: "smt_encoding.max_constants".to_owned()
+            })
         );
-        assert_eq!(replay_limits.engines.smt_encoding.max_constants, 8);
         let defaults = CallerLimits::from_operands([]).expect("defaults are available");
         assert_eq!(defaults.engines.smt, SmtRunLimits::default());
         assert_eq!(defaults.engines.smt_encoding, SmtEncodingLimits::default());
