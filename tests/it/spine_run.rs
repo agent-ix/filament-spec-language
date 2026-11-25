@@ -444,8 +444,8 @@ fn tc_450_step_3_unknown_edition_refuses_at_profile() {
 /// alone still carries a `native-rule-model/1` model and a `call`, but those
 /// two later-order checks are exercised in isolation by
 /// `tc_450_step_4_native_model_refuses_alone` and
-/// `tc_450_step_4_no_call_refuses_alone` below, since the base request here
-/// always carries a model that would refuse first.
+/// `tc_450_step_5_no_call_refuses_before_dependent_reads` below, since the
+/// base request here always carries a model that would refuse first.
 #[test]
 #[trace("TC-450", "FR-100-AC-3")]
 fn tc_450_step_4_native_only_members_refuse_before_any_model_is_read() {
@@ -453,7 +453,7 @@ fn tc_450_step_4_native_only_members_refuse_before_any_model_is_read() {
     let base = |directory: &Path| {
         std::fs::write(directory.join("program.native"), &program).unwrap();
         json!({"format":"native-run/1","request":{
-            "models":[{"format":"native-rule-model/1","source":{
+        "models":[{"format":"native-rule-model/1","source":{
                 "file":"missing-model.json","authority":"agent-ix","identity":"acme/model",
                 "document":"M","formal_revision":1}}],
             "program":{"source":program_source()},
@@ -537,7 +537,7 @@ fn tc_450_step_4_native_model_refuses_alone() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("program.native"), &program).unwrap();
     let job = json!({"format":"native-run/1","request":{
-        "models":[{"format":"native-rule-model/1","source":{
+            "models":[{"format":"native-rule-model/1","source":{
             "file":"missing-model.json","authority":"agent-ix","identity":"acme/model",
             "document":"M","formal_revision":1}}],
         "program":{"source":program_source()},
@@ -561,34 +561,55 @@ fn tc_450_step_4_native_model_refuses_alone() {
     );
 }
 
-/// FR-100-AC-3 and FR-100-AC-25 (TC-450 step 5): a `1-draft` request with no
-/// `call` or FR-031 clause-run form refuses `invalid-request` with the exact
-/// no-call message at stage `request`, exit 20, and empty stdout.
+/// FR-100-AC-3 and FR-100-AC-25 (TC-450 step 5): program- and package-selected
+/// requests with no `call` or FR-031 clause-run form refuse before opening
+/// model, library or package files, with the exact no-call message.
 #[test]
 #[trace("TC-450", "FR-100-AC-3", "FR-100-AC-25")]
-fn tc_450_step_4_no_call_refuses_alone() {
+fn tc_450_step_5_no_call_refuses_before_dependent_reads() {
     let program = std::fs::read(SEVEN_FIXTURE).unwrap();
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("program.native"), &program).unwrap();
-    let job = json!({"format":"native-run/1","request":{
-        "models":[],
+    let selections = json!({
+        "models":[{"format":"native-model-unit/1","source":{
+            "file":"missing-model.json","authority":"agent-ix","identity":"unused/model",
+            "document":"UnusedModel","formal_revision":1
+        }}],
+        "libraries":[{"identity":"unused/library","source":{
+            "file":"missing-library.native","authority":"agent-ix","identity":"unused/library",
+            "document":"UnusedLibrary","formal_revision":1
+        }}]
+    });
+    let assert_no_call_refusal = |request: Value| {
+        let job = json!({"format":"native-run/1","request":request});
+        std::fs::write(
+            directory.path().join("request.json"),
+            serde_json::to_vec(&job).unwrap(),
+        )
+        .unwrap();
+        let output = run(directory.path());
+        assert_eq!(output.status.code(), Some(20));
+        assert!(output.stdout.is_empty());
+        let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(failure["code"], "invalid-request", "{failure}");
+        assert_eq!(failure["stage"], "request", "{failure}");
+        assert_eq!(
+            failure["message"],
+            "a 1-draft program runs through the spine; the request selects no call",
+            "{failure}"
+        );
+    };
+
+    assert_no_call_refusal(json!({
+        "models":selections["models"],
+        "libraries":selections["libraries"],
         "program":{"source":program_source()},
-    }});
-    std::fs::write(
-        directory.path().join("request.json"),
-        serde_json::to_vec(&job).unwrap(),
-    )
-    .unwrap();
-    let output = run(directory.path());
-    assert_eq!(output.status.code(), Some(20));
-    assert!(output.stdout.is_empty());
-    let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
-    assert_eq!(failure["code"], "invalid-request", "{failure}");
-    assert_eq!(failure["stage"], "request", "{failure}");
-    assert_eq!(
-        failure["message"], "a 1-draft program runs through the spine; the request selects no call",
-        "{failure}"
-    );
+    }));
+    assert_no_call_refusal(json!({
+        "models":selections["models"],
+        "libraries":selections["libraries"],
+        "package":{"file":"missing-package.json"},
+    }));
 }
 
 /// FR-100-AC-4 (TC-451 step 1): `lt` binds `b` before `a` by declared name;

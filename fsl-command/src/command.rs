@@ -4514,6 +4514,21 @@ fn prepare_run_bytes_with_sources(
     // FR-1045: reject malformed correlation selection before any selected
     // program, package, model or snapshot file is opened.
     relationships::validate_request(request.call.as_ref())?;
+    // FR-100-AC-25: a bare package selection with neither a call nor another
+    // run selector refuses before opening the selected package or its models.
+    if request.package.is_some()
+        && request.call.is_none()
+        && request.clause.is_none()
+        && request.items.is_none()
+        && request.tl_lowering.is_none()
+        && request.synthesis.is_none()
+        && request.verification_plan.is_none()
+        && request.model_based_test.is_none()
+        && request.refinement_transfer.is_none()
+        && request.export_evidence.is_none()
+    {
+        return Err(RunCause::CompleteRunSelection(CompleteRunSelection::NoCall));
+    }
     // FR-100, FR-1039: a selected checked package runs from its own records,
     // refusing every member that would restate them before any file is read.
     if let Some(package) = &request.package {
