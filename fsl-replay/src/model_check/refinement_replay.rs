@@ -346,11 +346,10 @@ fn assumption_sources_match(
     identities: &[crate::refinement::AssumptionIdentity],
 ) -> Result<bool, ReplayRefusal> {
     for identity in identities {
-        if identity.granularity == filament_semantic_value::fairness::FairnessGranularity::Each
-            && identity.selected.is_none()
-        {
-            return Ok(false);
-        }
+        // An `each` identity with no selected member names a class with no
+        // application in the explored graph (for example a memory flush of a
+        // branch that never buffers a store). `assumption_lasso_matches`
+        // reads it as never enabled and never taken: vacuously satisfied.
         let matches = match (&identity.side, &identity.target) {
             (AssumptionSide::Implementation, AssumptionTarget::Model(assumption)) => {
                 identity.origin == crate::refinement::AssumptionOrigin::Authored
