@@ -51,8 +51,9 @@ clause `Fair`, TC-847's undefined and `GuardUndefined` clauses, FR-328-AC-1's
    list to the documents and read them.
 4. Evaluate FR-327-AC-6's clause with a stub `holds` atom over the finite
    trace, the infinite-trace prefix and the lasso.
-5. Run FR-330-AC-7's clause (`InUnit(c.value)`) from source over `c.value`
-   0, 2.
+5. Compile FR-330-AC-7's `InUnitAny` unit with `check_mode` `kernel` and run
+   the checked package's clause over `c.value` 0, 0 and then 0, 2. Run its
+   `holds(InUnit(c.value))` unit from source over `c.value` 0, 2.
 6. Apply each edit FR-267-AC-16 lists and read the documents.
 7. Write and read back each finite-window report FR-267-AC-18 lists
    (constructed reports, not runs), check the `indeterminate` report's exit,
@@ -119,9 +120,11 @@ step asserts.
   `integer_out_of_domain`/`outside-domain`; `Completed(false)` at position 0
   when position 0 is false; the refused condition carrying
   `CheckedInvariant`, not a `TemporalRefusal::Fault`.
-- Step 5: stage `evaluate`, `refusal`, exit 20, position 1, `outcome`
-  `refused` with `integer_out_of_domain`/`outside-domain`, `expected`
-  `Int[0, 1]` and the condition's locus; no `truth`, no `internal_fault`.
+- Step 5: over 0, 0, success, exit 0, `truth` true. Over 0, 2, stage
+  `evaluate`, `refusal`, exit 20, position 1, `outcome` `refused` with
+  `integer_out_of_domain`/`outside-domain`, `expected` `Int[0, 1]` and the
+  locus of `x` in `InUnit(x)`; no `truth`, no `internal_fault`. The source
+  run: stage `compile`, `undefined_expression`/`unproved-range`, exit 20.
 - Step 6: each edited document refuses with a located diagnostic naming
   the member.
 - Step 7: each report reads back to its row with the label `pending` or

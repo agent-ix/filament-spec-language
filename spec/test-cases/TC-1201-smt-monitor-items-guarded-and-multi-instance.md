@@ -56,9 +56,10 @@ printed script.
    `always holds(c.value <= 1)` `on each` `when c.value >= 3` under
    infinite-trace, and `Unrolling{depth: 2}` for
    `eventually[0,3] holds(c.value = 3)` `on each`
-   `when c.value + 2 = c.value` under event-position false-extension.
+   `when c.value < 2 and c.value + 2 = c.value` under event-position
+   false-extension.
 5. With a solver, check `Unrolling{depth: 3}` for the guarded TP-1 item of
-   step 4, then, with the condition `c.value = 7`, `InductionStep{depth: 2}`,
+   step 4, then, with the condition `c.value > 3`, `InductionStep{depth: 2}`,
    `InductionBase{depth: 3}` and `InductionStep{depth: 3}`; then check step
    4's false-extension query. Read each satisfiable `Unrolling` model and
    replay its prefix.
@@ -99,15 +100,13 @@ Tag the tests `#[trace("TC-1201", "FR-315-AC-n")]`.
 - Step 4: `m0.0`, `m1.0` and no `h<i>`; letter 2's term
   `(and (not C<i>) A<i>)`; the stutter disjunct in each step assertion. The
   false-extension query's condition failures `(and (not h<p>) F)` at
-  positions 0 to 2, after each position's violation and before `inc`'s
-  postcondition failure, and no atom-failure disjunct.
+  positions 0 to 2, `F` negating the implication from `s<p>.c.value < 2` to
+  `s<p>.c.value + 2` in `[0, 3]`, after each position's violation and
+  before `inc`'s postcondition failure, and no atom-failure disjunct.
 - Step 5: depth 3 satisfiable, read as the prefix `0, 1, 2, 3` and
-  replayed to `refuted`; with `c.value = 7`, the step at depth 2
+  replayed to `refuted`; with `c.value > 3`, the step at depth 2
   satisfiable and base and step at depth 3 unsatisfiable,
-  `Inductive{depth: 3}`; the false-extension query satisfiable by the
-  condition failure at position 2 only, read as the prefix `0, 1, 2` and
-  replayed to `refuted`, `UndefinedEvaluation` at position 2, its site
-  naming the activation.
+  `Inductive{depth: 3}`; the false-extension query unsatisfiable.
 - Step 6: the per-position order `s<i>.c.value`, `s<i>.d.value`, `m<i>.0`,
   `m<i>.1`; instance 0's implications before instance 1's at each position,
   over `c` and `d` respectively; `(= m<p>.0 r)` before `(= m<p>.1 r)`; the
