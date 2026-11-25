@@ -23,7 +23,7 @@ The test uses checked conversion when reconstructing extracted bytes, keeps its 
 
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
-| FND-001 | low | No code finding (placeholder). The focused test is pending a free shared Cargo build lock. | - |
+| FND-001 | low | No code finding. Follow-up execution passed all four focused cases; independent re-review found no new code issue. | - |
 
 ## Follow-up disposition
 

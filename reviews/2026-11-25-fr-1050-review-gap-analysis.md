@@ -21,7 +21,7 @@ Plan completion: not assessed.
 
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
-| FND-001 | low | No manual gap finding (placeholder). Engine-backed matrix and local focused-test evidence remain unavailable for this pass. | - |
+| FND-001 | low | No manual gap finding. Focused execution passed 4/4; engine-backed matrix output remains unavailable. | - |
 
 ## Follow-up disposition
 

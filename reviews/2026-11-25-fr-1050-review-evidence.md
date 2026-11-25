@@ -19,7 +19,7 @@ All six criteria specify test verification and each is present in an integration
 
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
-| FND-001 | low | No requirement defect found (placeholder). The criterion-to-test mapping was checked manually; matrix and local execution evidence remain unavailable for this pass. | - |
+| FND-001 | low | No requirement defect found. The criterion-to-test mapping was checked manually and focused execution passed 4/4; matrix output remains unavailable. | - |
 
 ## Follow-up disposition
 
