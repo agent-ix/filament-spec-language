@@ -44,3 +44,12 @@ Plan completion: not assessed
 
 CONDITIONAL. FND-001 is a test addition the coder can make in this PR. FND-002 is a pre-existing
 spec/code mismatch that should be ticketed with SR-7932 FND-001.
+
+## Dispositions
+
+Round 1 reviewed head dd73650661eebaa7142ca31dedc717e95d524e1d.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `a_source_operation_declares_its_effective_precondition_function` now reads each candidate's emitted `effective_precondition` handle: Order's equals the `[Order, measure, effective_precondition]` node and differs from the authored `Qs` node, Sub's is null; tagged `TC-1408`, `FR-569-AC-6`, `FSpec-FR-322-AC-544`. |
+| FND-002 | fixed | `clause_declaration_span` places a body at its `body` declaration; the new occurrence test asserts the literal text `body C using P on Order::measure(n) { n }`, `B`'s and an uncalled operation's body `T`. |

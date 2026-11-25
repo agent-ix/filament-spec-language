@@ -20,7 +20,8 @@ Method: spec-review (consistency and integrity of the edited FR-569 bullet, FR-5
 FR-569-AC-6 and TC-1408 steps 4 and 5), checked against arch ruling c9e092a7, FSpec PR #848
 (FR-322 "Clause functions" item 5 and FR-322-AC-544), FR-094 "Clause function nodes" and the code
 in `fsl-semantics/src/check/checked_dispatch.rs:1136-1176` and `dispatch_link.rs:473-482, 541-550,
-642-648`. Cargo was not run; the evidence is the author's probe logs.
+642-648`. Cargo was not run; the probe evidence is the author's logs in
+the local probe logs.
 
 The new FR-569 bullet, AC-5 and AC-6 match ruling c9e092a7 items 1 and 3 and FSpec #848's item 5
 sentence. AC-5 now states the one S/D table difference (D reuses `Qs`'s authored function for
@@ -59,3 +60,15 @@ Not mergeable yet. The AC-5/AC-6 rewrites are correct and match the ruling, FSpe
 code for table contents. FND-002 is a spec edit inside this PR's scope. FND-001 needs a disposition
 before merge: a code fix (outside the ruling's "test and spec only") or a filed defect ticket with
 a failing test. FND-003 can ride with the arch-accepted check-charge sentence.
+
+## Dispositions
+
+Round 1 reviewed head dd73650661eebaa7142ca31dedc717e95d524e1d (205ba46972 production, tests and
+spec; 68da2d5f1a `implements` tags; 3d2f69bed6 review files; dd73650661 merge of main 550adf30da).
+Cargo was not run; gate logs local gate logs.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `dispatch_link.rs` `clause_declaration_span` places an effective precondition at `source_operation_spans` (the candidate's `operation` member, filled by the assembler) and `region.rs` `clause_declaration_region` returns it for the `declaration` occurrence; `a_source_clause_function_is_located_at_the_declaration_it_is_declared_by` asserts the literal member text for Order's and Sub's. |
+| FND-002 | fixed | The FR-569 bullet now reads "for an effective precondition, the span of the candidate's `operation` member", AC-6 states Order's occurrence at `Order`'s `size` member, and TC-1408 step 5 and its expected result name every occurrence. |
+| FND-003 | fixed | The sentence is scoped: "In these evaluations only the node ids, owners and identity rows differ; S3 check charges can differ too", beside the arch-accepted e2495c29 sentence in the effective-precondition bullet. |
