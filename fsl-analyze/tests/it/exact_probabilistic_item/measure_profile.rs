@@ -353,7 +353,13 @@ fn changed_objectives_full_keys_and_shifted_range_never_alias() {
     );
 }
 
-#[trace("TC-3152", "FR-1043-AC-7", "FR-196-AC-8", "FR-196-AC-12")]
+#[trace(
+    "TC-3152",
+    "FR-1043-AC-7",
+    "FR-196-AC-8",
+    "FR-196-AC-9",
+    "FR-196-AC-12"
+)]
 #[test]
 fn a_draw_with_multiple_post_states_retains_its_full_pending_control() {
     let claim = claim(
@@ -395,6 +401,143 @@ fn a_draw_with_multiple_post_states_retains_its_full_pending_control() {
     assert!(
         matches!(checked, Ok(ExactProbabilityCertificateCheck::Accepted(_))),
         "{checked:?}"
+    );
+
+    let mut impossible = doc.clone();
+    let pending_row = impossible["values"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| !key(row)[7].is_null())
+        .expect("a pending key in the independently valid document");
+    let mut forged = key(pending_row);
+    assert_eq!(forged[7][0], "drawn");
+    assert_eq!(forged[7][2][0]["value"], "0");
+    // The random slot is well typed and canonically represented, but 2 is
+    // outside the checked parameter domain [0,1] and is not a possible draw.
+    forged[7][2][0]["value"] = json!("2");
+    pending_row["state"] = json!(
+        URL_SAFE_NO_PAD.encode(serde_json::to_vec(&forged).expect("canonical impossible key"))
+    );
+    impossible["values"]
+        .as_array_mut()
+        .unwrap()
+        .sort_by(|left, right| {
+            URL_SAFE_NO_PAD
+                .decode(left["state"].as_str().unwrap())
+                .unwrap()
+                .cmp(
+                    &URL_SAFE_NO_PAD
+                        .decode(right["state"].as_str().unwrap())
+                        .unwrap(),
+                )
+        });
+    fsl_replay::reset_product_key_membership_checks();
+    let impossible_result = check(&world, "Q", &impossible);
+    assert!(
+        matches!(
+            &impossible_result,
+            Err(fsl_replay::ProbabilityDocumentError::MalformedMember("values"))
+                | Ok(ExactProbabilityCertificateCheck::Rejected(
+                    ProbabilityCertificateRejection {
+                        rule: ProbabilityCertificateRule::Malformed,
+                        at: ProbabilityCertificateLocus::Member("values"),
+                    }
+                ))
+        ),
+        "a well-shaped but impossible pending draw is refused before membership: {impossible_result:?}"
+    );
+    assert_eq!(
+        fsl_replay::product_key_membership_checks(),
+        0,
+        "impossible pending draw refuses before certificate membership"
+    );
+}
+
+/// FR-196-AC-9: a random pending vector is bound to the operation's declared
+/// parameter order, even when both entries have the same primitive type.
+#[trace("TC-3152", "FR-196-AC-9")]
+#[test]
+fn reordered_random_support_vector_refuses_before_membership() {
+    let claim = claim(
+        "Q",
+        "every scheduler",
+        "quantile 0.4 of (steps from holds(true) until holds(m.delivered) within 2) >= 1",
+    );
+    let mut model = retry(&claim);
+    model.body = model
+        .body
+        .replace("self.delivered = (lost = 1)", "true");
+    model.integers.push(("Extra", 2, 3));
+    model.operations[0]
+        .parameters
+        .push(("extra", "ix://test/retry/Extra".into()));
+    model.body = model.body.replace(
+        "random Msg::fast(lost) ~ { 0:1,1:1 };",
+        "random Msg::fast(lost) ~ { 0:1,1:1 };\nrandom Msg::fast(extra) ~ { 2:1,3:1 };",
+    );
+    let world = World::new(&model);
+    let original = proof(&world, "Q", ratio(-2, 5));
+    let mut reordered = original.clone();
+    let row = reordered["values"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| {
+            let state = key(row);
+            !state[7].is_null()
+                && state[7][0] == "drawn"
+                && state[7][2].as_array().is_some_and(|v| v.len() == 2)
+        })
+        .expect("a drawn key with both ordered random values");
+    let mut state = key(row);
+    let random_values = state[7][2].as_array_mut().expect("random support vector");
+    assert_eq!(random_values.len(), 2);
+    assert!(matches!(
+        random_values[0]["value"].as_str(),
+        Some("0" | "1")
+    ));
+    assert!(matches!(
+        random_values[1]["value"].as_str(),
+        Some("2" | "3")
+    ));
+    random_values.reverse();
+    row["state"] =
+        json!(URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&state).expect("canonical reversed random key")));
+    reordered["values"]
+        .as_array_mut()
+        .unwrap()
+        .sort_by(|left, right| {
+            URL_SAFE_NO_PAD
+                .decode(left["state"].as_str().unwrap())
+                .unwrap()
+                .cmp(
+                    &URL_SAFE_NO_PAD
+                        .decode(right["state"].as_str().unwrap())
+                        .unwrap(),
+                )
+        });
+    fsl_replay::reset_product_key_membership_checks();
+    let result = check(&world, "Q", &reordered);
+    assert!(
+        matches!(
+            &result,
+            Err(fsl_replay::ProbabilityDocumentError::MalformedMember(
+                "values"
+            )) | Ok(ExactProbabilityCertificateCheck::Rejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::Malformed,
+                    at: ProbabilityCertificateLocus::Member("values"),
+                }
+            ))
+        ),
+        "reversing operation-parameter random values refuses at values: {result:?}"
+    );
+    assert_eq!(
+        fsl_replay::product_key_membership_checks(),
+        0,
+        "reordered random vector refuses before certificate membership"
     );
 }
 
@@ -1691,6 +1834,162 @@ fn weighted_fraction_keeps_exact_sums_and_checks_its_mean_independently() {
         "{accumulators:?}"
     );
     refuted(&world, "No");
+}
+
+/// FR-196-AC-9: the independent measure reader/checker refuses malformed
+/// accumulator rationals, phase/count combinations, and foreign payoff
+/// alternatives at the values member before accepting certificate membership.
+#[trace("TC-3152", "FR-196-AC-9")]
+#[test]
+fn malformed_measure_key_rationals_phases_and_accumulators_refuse_at_values() {
+    let mut model = retry(&claim(
+        "Yes",
+        "Steady",
+        "mean of (fraction holds(m.delivered) over [0,2] weighted by effort) >= rational(29,100)",
+    ));
+    model.body = model
+        .body
+        .replace("{ not self.delivered }", "{ true }")
+        .replace("terminal Done using v on M when { self.delivered };", "")
+        + "\nreward effort on Msg::fast = lost + 1;\nreward effort on Msg::slow = lost + 1;\n";
+    let world = World::new(&model);
+    let original = proof(&world, "Yes", ratio(71, 240));
+    assert!(matches!(
+        check(&world, "Yes", &original),
+        Ok(ExactProbabilityCertificateCheck::Accepted(_))
+    ));
+
+    let reject_values = |name: &str, document: Value| {
+        fsl_replay::reset_product_key_membership_checks();
+        let result = check(&world, "Yes", &document);
+        assert!(
+            matches!(
+                &result,
+                Err(fsl_replay::ProbabilityDocumentError::MalformedMember(
+                    "values"
+                )) | Ok(ExactProbabilityCertificateCheck::Rejected(
+                    ProbabilityCertificateRejection {
+                        rule: ProbabilityCertificateRule::Malformed,
+                        at: ProbabilityCertificateLocus::Member("values"),
+                    }
+                ))
+            ),
+            "{name} must refuse at the key values member: {result:?}"
+        );
+        assert_eq!(
+            fsl_replay::product_key_membership_checks(),
+            0,
+            "{name} refuses before certificate membership"
+        );
+        // Re-checking the unchanged baseline guards each independent mutation.
+        assert!(matches!(
+            check(&world, "Yes", &original),
+            Ok(ExactProbabilityCertificateCheck::Accepted(_))
+        ));
+    };
+    let mut noncanonical_rational = original.clone();
+    let mut state = key(&noncanonical_rational["values"][0]);
+    assert_eq!(state[6][0], "weighted-fraction");
+    state[6][3] = json!(["0", "2"]);
+    noncanonical_rational["values"][0]["state"] =
+        json!(URL_SAFE_NO_PAD.encode(serde_json::to_vec(&state).expect("canonical key bytes")));
+    reject_values("noncanonical rational 0/2", noncanonical_rational);
+
+    let mut invalid_rational = original.clone();
+    let mut state = key(&invalid_rational["values"][0]);
+    state[6][4] = json!(["1", "0"]);
+    invalid_rational["values"][0]["state"] =
+        json!(URL_SAFE_NO_PAD.encode(serde_json::to_vec(&state).expect("canonical key bytes")));
+    reject_values("zero rational denominator", invalid_rational);
+
+    let mut wrong_accumulator = original.clone();
+    let mut state = key(&wrong_accumulator["values"][0]);
+    state[6] = json!(["steps", true, "0"]);
+    wrong_accumulator["values"][0]["state"] =
+        json!(URL_SAFE_NO_PAD.encode(serde_json::to_vec(&state).expect("canonical key bytes")));
+    reject_values("wrong accumulator alternative", wrong_accumulator);
+
+    let mut wrong_phase_count = original.clone();
+    let mut state = key(&wrong_phase_count["values"][0]);
+    state[5][1] = json!("999");
+    wrong_phase_count["values"][0]["state"] =
+        json!(URL_SAFE_NO_PAD.encode(serde_json::to_vec(&state).expect("canonical key bytes")));
+    reject_values(
+        "remaining count outside the checked window",
+        wrong_phase_count,
+    );
+
+    let mut phase_mismatch = original.clone();
+    let row = phase_mismatch["values"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| key(row)[5][2] == "collecting")
+        .expect("a collecting fraction position");
+    let mut state = key(row);
+    assert!(state[5][1].as_str().unwrap().parse::<u64>().unwrap() > 0);
+    state[5][2] = json!("complete");
+    row["state"] =
+        json!(URL_SAFE_NO_PAD.encode(serde_json::to_vec(&state).expect("canonical key bytes")));
+    reject_values("complete phase with remaining positions", phase_mismatch);
+}
+
+/// FR-196-AC-9: saturation has one canonical above-bound sentinel and cannot
+/// retain a forged magnitude as a distinct accumulator state.
+#[trace("TC-3152", "FR-196-AC-9")]
+#[test]
+fn arbitrary_saturation_magnitude_is_not_a_product_key() {
+    let world = World::new(&retry(&claim(
+        "Q",
+        "Steady",
+        &format!("quantile 0.5 of ({}) <= 2", steps()),
+    )));
+    let original = proof(&world, "Q", ratio(3, 4));
+    let mut forged = original.clone();
+    let row = forged["conditional"]["numerator"]["values"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| key(row)[6][2] == json!(["above-bound"]))
+        .expect("the exact measure includes its saturation sentinel");
+    let mut state = key(row);
+    state[6][2] = json!(["above-bound", "7"]);
+    row["state"] =
+        json!(URL_SAFE_NO_PAD.encode(serde_json::to_vec(&state).expect("canonical key bytes")));
+    forged["conditional"]["numerator"]["values"]
+        .as_array_mut()
+        .unwrap()
+        .sort_by(|left, right| {
+            URL_SAFE_NO_PAD
+                .decode(left["state"].as_str().unwrap())
+                .unwrap()
+                .cmp(
+                    &URL_SAFE_NO_PAD
+                        .decode(right["state"].as_str().unwrap())
+                        .unwrap(),
+                )
+        });
+    fsl_replay::reset_product_key_membership_checks();
+    let result = check(&world, "Q", &forged);
+    assert!(
+        matches!(
+            &result,
+            Err(fsl_replay::ProbabilityDocumentError::MalformedMember(
+                "values"
+            )) | Ok(ExactProbabilityCertificateCheck::Rejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::Malformed,
+                    at: ProbabilityCertificateLocus::Member("values"),
+                }
+            ))
+        ),
+        "the above-bound amount has no authored numeric magnitude: {result:?}"
+    );
+    assert_eq!(
+        fsl_replay::product_key_membership_checks(),
+        0,
+        "arbitrary saturation magnitude refuses before certificate membership"
+    );
 }
 
 #[trace(

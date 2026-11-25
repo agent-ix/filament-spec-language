@@ -1965,6 +1965,7 @@ fn checked_values(
     {
         return Ok(Err(shape("values")));
     }
+    super::observe_product_key_membership_check();
     if document.ranking.len() != document.values.len()
         || document
             .ranking

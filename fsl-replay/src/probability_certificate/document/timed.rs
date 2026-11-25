@@ -215,6 +215,7 @@ pub(super) fn check(
     {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
+    super::observe_product_key_membership_check();
     let certificate = ExactProbabilityCertificate {
         values: document.values,
     };

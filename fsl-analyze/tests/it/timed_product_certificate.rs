@@ -739,7 +739,7 @@ fn altered_timed_witness_is_not_refuted() {
 /// in the model's place order, never by the position of the clock in the key.
 /// The same two-clock key with its clocks listed in the opposite order names
 /// the same valuation, and each value is the one its clock holds.
-#[trace("TC-2490", "FR-921-AC-2")]
+#[trace("TC-2490", "FR-921-AC-2", "FR-196-AC-9")]
 #[test]
 fn a_digital_key_valuation_does_not_depend_on_the_key_clock_order() {
     let world = retx_over(
@@ -791,11 +791,43 @@ fn a_digital_key_valuation_does_not_depend_on_the_key_clock_order() {
         let bytes = URL_SAFE_NO_PAD.decode(encoded).expect("base64 key");
         let key: Value = serde_json::from_slice(&bytes).expect("canonical key");
         let clocks = key[4][1][4].as_array().expect("clocks").clone();
+        assert_eq!(
+            clocks.len(),
+            places.len(),
+            "every declared digital clock is retained"
+        );
+        let deadline = key[4][1][5]
+            .as_array()
+            .expect("the timed claim's deadline fact");
+        assert_eq!(deadline[0], "deadline");
+        let deadline_bound: i64 = deadline[1]
+            .as_str()
+            .expect("scaled closed deadline bound")
+            .parse()
+            .expect("canonical deadline integer");
+        let elapsed: i64 = deadline[2]
+            .as_str()
+            .expect("elapsed deadline clock")
+            .parse()
+            .expect("canonical elapsed integer");
+        assert_eq!(
+            deadline_bound, 4,
+            "the claim's 4 ms deadline is retained at scale 1"
+        );
+        assert!(
+            (0..=5).contains(&elapsed),
+            "deadline clock is capped at D + 1"
+        );
+        assert!(matches!(
+            key[4][1][6].as_str(),
+            Some("running" | "idle-ready" | "idle-delayed")
+        ));
         let scale: i64 = key[4][1][3]
             .as_str()
             .expect("scale")
             .parse()
             .expect("number");
+        assert_eq!(scale, 1, "the least common denominator is retained");
         let whole = |name: &str| -> i64 {
             clocks
                 .iter()
@@ -1706,7 +1738,7 @@ fn altered_elapsed_quantile_witness_is_not_refuted() {
 }
 
 /// FR-921-AC-2: a key whose cap of `x` is changed is malformed.
-#[trace("TC-2490", "FR-921-AC-2")]
+#[trace("TC-2490", "FR-921-AC-2", "FR-196-AC-9")]
 #[test]
 fn a_wrong_clock_cap_is_malformed() {
     let world = retx(GUARD, true, "", &every_deadlines());
@@ -1735,6 +1767,106 @@ fn a_wrong_clock_cap_is_malformed() {
             assert_eq!(rejection.at, ProbabilityCertificateLocus::Member("values"));
         }
         other => panic!("expected Malformed at values, got {other:?}"),
+    }
+}
+
+/// FR-196-AC-9: independently admitted digital keys retain the checked unit
+/// and clock identity domains; changing either field refuses the row set.
+#[trace("TC-2490", "FR-196-AC-9")]
+#[test]
+fn wrong_timed_unit_and_clock_node_domains_refuse_before_membership() {
+    let world = retx_over(
+        &["x", "a"],
+        &[("send", &["late", "x", "a"])],
+        " and self.x >= 1 ms and self.a >= 0 ms",
+        true,
+        TWO_DELAYS,
+        &every_deadlines(),
+    );
+    let original = document(&settle(&world, "Deadline"));
+    for name in [
+        "unit domain",
+        "clock node domain",
+        "deadline node domain",
+        "reordered clock vector",
+    ] {
+        let mut changed = original.clone();
+        let mut touched = 0;
+        for row in changed["values"].as_array_mut().expect("values") {
+            let encoded = row["state"].as_str().expect("encoded ProductKey");
+            let bytes = URL_SAFE_NO_PAD.decode(encoded).expect("base64 ProductKey");
+            let mut key: Value = serde_json::from_slice(&bytes).expect("canonical ProductKey");
+            let digital = key[4][1].as_array_mut().expect("digital model key");
+            if name == "unit domain" {
+                let unit = digital[2].as_array_mut().expect("unit identity");
+                unit[0] = json!("foreign-unit-domain");
+            } else if name == "clock node domain" {
+                let clocks = digital[4].as_array_mut().expect("digital clocks");
+                let Some(clock) = clocks.first_mut() else {
+                    continue;
+                };
+                let identity = clock[0].as_array_mut().expect("clock identity");
+                identity[0] = json!("foreign-clock-node-domain");
+            } else if name == "deadline node domain" {
+                let deadline = digital[5].as_array_mut().expect("deadline identity");
+                deadline[0] = json!("foreign-deadline-domain");
+            } else {
+                let clocks = digital[4].as_array_mut().expect("digital clocks");
+                assert!(clocks.len() >= 2, "the claim has two digital clocks");
+                clocks.reverse();
+            }
+            row["state"] = json!(
+                URL_SAFE_NO_PAD.encode(serde_json::to_vec(&key).expect("canonical ProductKey"))
+            );
+            touched += 1;
+        }
+        assert!(touched > 0, "the timed document retains {name}");
+        let rows = changed["values"].as_array_mut().expect("values");
+        rows.sort_by(|left, right| {
+            URL_SAFE_NO_PAD
+                .decode(left["state"].as_str().expect("left key"))
+                .unwrap()
+                .cmp(
+                    &URL_SAFE_NO_PAD
+                        .decode(right["state"].as_str().expect("right key"))
+                        .unwrap(),
+                )
+        });
+        fsl_replay::reset_product_key_membership_checks();
+        let result = check(&world, "Deadline", &changed);
+        if name == "unit domain" || name == "deadline node domain" {
+            assert!(
+                matches!(result, Err(ProbabilityDocumentError::Malformed)),
+                "the strict digital-key reader refuses the foreign {name}: {result:?}"
+            );
+        } else if matches!(
+            &result,
+            Err(ProbabilityDocumentError::ObjectiveMismatch)
+        ) {
+            // The strict key decoder admits the shape, then the rebuilt timed
+            // product rejects its foreign digital identity before value checks.
+        } else {
+            match result {
+                Ok(ExactProbabilityCertificateCheck::Rejected(rejection)) => {
+                    assert_eq!(
+                        rejection.rule,
+                        ProbabilityCertificateRule::Malformed,
+                        "{name}"
+                    );
+                    assert_eq!(
+                        rejection.at,
+                        ProbabilityCertificateLocus::Member("values"),
+                        "{name}"
+                    );
+                }
+                other => panic!("{name} must be refused at key admission: {other:?}"),
+            }
+        }
+        assert_eq!(
+            fsl_replay::product_key_membership_checks(),
+            0,
+            "{name} refuses before certificate membership"
+        );
     }
 }
 

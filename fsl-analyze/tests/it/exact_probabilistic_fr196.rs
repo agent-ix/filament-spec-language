@@ -67,6 +67,63 @@ fn conditional_model() -> World {
     })
 }
 
+fn reset_conditioned_model() -> World {
+    const PACKAGE: &str = "test/fr196-reset-conditioned";
+    let operations = vec![
+        Operation {
+            name: "a",
+            parameters: vec![("success", prob_world::BOOLEAN.to_owned())],
+            modifies: vec!["activated", "holds", "dead"],
+            deletes: false,
+        },
+        Operation {
+            name: "b",
+            parameters: vec![("success", prob_world::BOOLEAN.to_owned())],
+            modifies: vec!["activated", "holds", "dead"],
+            deletes: false,
+        },
+        Operation {
+            name: "stay",
+            parameters: vec![],
+            modifies: vec!["activated", "holds", "dead"],
+            deletes: false,
+        },
+    ];
+    let claims = concat!(
+        "probabilistic Min using inf on M under every scheduler on each (x: M::T) when (x.activated) { probability >= rational(1, 2) [ eventually holds(x.holds) ] }\n",
+        "probabilistic Max using inf on M under every scheduler on each (x: M::T) when (x.activated) { probability <= rational(9, 10) [ eventually holds(x.holds) ] }\n",
+    );
+    World::new(&Model {
+        package: PACKAGE,
+        object: "T",
+        population: "ts",
+        key: "x",
+        integers: vec![],
+        fields: vec![
+            ("activated", prob_world::BOOLEAN.to_owned()),
+            ("holds", prob_world::BOOLEAN.to_owned()),
+            ("dead", prob_world::BOOLEAN.to_owned()),
+        ],
+        operations,
+        body: format!(
+            "pre AReady using v on M::T::a {{ not self.activated and not self.dead }}\n\
+             post AResult using v on M::T::a {{ self.activated = success and self.holds = success and self.dead = not success }}\n\
+             pre BReady using v on M::T::b {{ not self.activated and not self.dead }}\n\
+             post BResult using v on M::T::b {{ self.activated and self.holds = success and not self.dead }}\n\
+             pre StayReady using v on M::T::stay {{ not self.activated and not self.dead }}\n\
+             post Stayed using v on M::T::stay {{ not self.activated and not self.holds and not self.dead }}\n\
+             random T::a(success) ~ {{ true: 1, false: 3 }};\n\
+             random T::b(success) ~ {{ true: 1, false: 1 }};\n\
+             terminal Done using v on M when {{ self.activated or self.dead }};\n{claims}"
+        ),
+        initial: json!({
+            "activated": {"boolean": false},
+            "holds": {"boolean": false},
+            "dead": {"boolean": false}
+        }),
+    })
+}
+
 fn model_system<'a>(
     world: &'a World,
     claim_name: &str,
@@ -82,7 +139,7 @@ fn model_system<'a>(
 
 /// FR-196-AC-16's workload half of TC-3060: the independently specified
 /// masses are 3/8 and 5/8, so the checked conditional value is exactly 3/5.
-#[trace("TC-3060")]
+#[trace("TC-3060", "FR-196-AC-16")]
 #[test]
 fn conditional_workload_has_literal_three_fifths_value() {
     let world = conditional_model();
@@ -171,9 +228,101 @@ fn conditional_workload_has_literal_three_fifths_value() {
     );
 }
 
+/// FR-196-AC-16: the every-scheduler reset process returns the unreachable
+/// post-a state to s0, admits Reset in the stay end component, and certifies
+/// the proper conditioned extrema 1/2 and 1.
+#[trace("TC-3060", "FR-196-AC-16")]
+#[test]
+fn reset_conditioned_extrema_are_proper_and_checker_verified() {
+    let world = reset_conditioned_model();
+    let claims = world.package.graph().probabilistic_model().claims();
+    let limits = ProbabilityDocumentLimits::for_exact(
+        &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+        fsl_replay::AccountingLimits::default().0,
+    );
+    let run = |name: &str| {
+        let claim = world.claim(name);
+        let system = ModelSystem::new(
+            world
+                .request(name, ModelCheckLimits::default())
+                .subject
+                .simulation,
+        )
+        .expect("the reset model admits");
+        let item = fsl_replay::probabilistic_claim_identity(claim).expect("claim identity");
+        let outcome =
+            fsl_replay::on_each_outcome(&system, claims, &item, limits, 64, &Cancel::new())
+                .expect("the reset-conditioned optimum is produced");
+        let fsl_replay::OnEachOutcome::Holds { document } = outcome else {
+            panic!("the conditional extremum has an optimum certificate");
+        };
+        let decoded: Value = serde_json::from_slice(&document).expect("canonical certificate");
+        assert_eq!(decoded["conditional"]["mode"], "optimum");
+        assert_eq!(
+            decoded["objective"]["optimization"],
+            if name == "Min" { "minimum" } else { "maximum" }
+        );
+        let reset = decoded["conditional"]["reset"]["values"]
+            .as_array()
+            .expect("reset values");
+        assert_eq!(
+            reset.len(),
+            2,
+            "s0 and the unreachable after-a waiting state are covered"
+        );
+        let values = reset
+            .iter()
+            .map(|row| {
+                (
+                    row["value"]["numerator"].as_str().expect("numerator"),
+                    row["value"]["denominator"].as_str().expect("denominator"),
+                )
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        if name == "Min" {
+            assert_eq!(values, std::collections::BTreeSet::from([("1", "2")]));
+        } else {
+            assert_eq!(values, std::collections::BTreeSet::from([("1", "1")]));
+        }
+        let policy = decoded["conditional"]["reset"]["policy"]
+            .as_array()
+            .expect("proper reset policy");
+        assert_eq!(policy.len(), 2, "the policy covers both waiting states");
+        assert_eq!(
+            policy
+                .iter()
+                .filter(|row| row["choice"] == json!(["reset"]))
+                .count(),
+            1,
+            "the unreachable after-a state takes the reset action"
+        );
+        let checked = fsl_replay::check_probability_certificate_document(
+            &system,
+            claims,
+            &item,
+            &document,
+            limits,
+            &Cancel::new(),
+        )
+        .expect("the independent checker reads the optimum");
+        (decoded, checked)
+    };
+    let (_, accepted) = run("Min");
+    assert!(matches!(
+        accepted,
+        fsl_replay::ExactProbabilityCertificateCheck::Accepted(_)
+    ));
+    let (_, rejected) = run("Max");
+    assert!(matches!(
+        rejected,
+        fsl_replay::ExactProbabilityCertificateCheck::Rejected(ref rejection)
+            if rejection.rule == fsl_replay::ProbabilityCertificateRule::ThresholdMissed
+    ));
+}
+
 /// TC-631's unbounded exact-only event product carries genuine absent
 /// monitor and accumulator members, rather than synthesized control values.
-#[trace("TC-631")]
+#[trace("TC-631", "FR-196-AC-9")]
 #[test]
 fn exact_only_event_keys_keep_none_controls() {
     let world = World::new(&prob_world::process(TERMINATES));
@@ -192,7 +341,7 @@ fn exact_only_event_keys_keep_none_controls() {
 
 /// FR-196-AC-9's transition-budget clause: a stop before the first edge
 /// returns only the typed refusal, with no default or truncated product key.
-#[trace("TC-631")]
+#[trace("TC-631", "FR-196-AC-9")]
 #[test]
 fn a_product_budget_stop_returns_no_partial_key() {
     let world = World::new(&prob_world::process(TERMINATES));

@@ -226,6 +226,93 @@ pub fn decide_reachability(
     decide_reachability_with_blocked(product, target, None, objective, limits, cancel)
 }
 
+/// Optimize terminal rewards over proper memoryless policies.
+///
+/// Unlike ordinary reachability, this deliberately has no qualitative
+/// zero/one preprocessing: a scheduler that remains forever in a waiting
+/// component is excluded by the proper-policy constraint, not assigned a
+/// value by a reachability boundary.
+pub fn decide_proper_terminal_expectation(
+    product: &ProbProduct,
+    terminal: &[Option<Rational>],
+    objective: UnboundedObjective,
+    limits: &ExactProbLimits,
+    cancel: &Cancel,
+) -> Result<UnboundedResult, UnboundedError> {
+    if terminal.len() != product.states.len() || !terminal.iter().any(Option::is_some) {
+        return Err(UnboundedError::InvalidState);
+    }
+    let graph = Graph::with_terminals(product, terminal)?;
+    let targets = terminal.iter().map(Option::is_some).collect::<Vec<_>>();
+    let mut policy = graph.almost_sure_policy(&targets)?;
+    if !proper_policy(&graph, &targets, &policy)? {
+        return Err(UnboundedError::MissingAction);
+    }
+    let mut iterations = 0_u64;
+    loop {
+        let values = evaluate_policy(&graph, terminal, &policy, Dense::new(limits, cancel))?;
+        if values
+            .iter()
+            .any(|value| value.max_part_bits() > limits.max_rational_bits)
+        {
+            return Err(UnboundedError::MaxRationalBits);
+        }
+        let mut improvement = None;
+        for state in product.ids() {
+            let index = state.index();
+            if targets[index] {
+                continue;
+            }
+            let current = policy[index].ok_or(UnboundedError::MissingAction)?;
+            let current_value = choice_value(&graph.choices[index][current], &values)?;
+            for (candidate, choice) in graph.choices[index].iter().enumerate() {
+                let candidate_value = choice_value(choice, &values)?;
+                let better = match objective {
+                    UnboundedObjective::Min => candidate_value < current_value,
+                    UnboundedObjective::Max => candidate_value > current_value,
+                };
+                if !better {
+                    continue;
+                }
+                let mut candidate_policy = policy.clone();
+                candidate_policy[index] = Some(candidate);
+                if proper_policy(&graph, &targets, &candidate_policy)? {
+                    improvement = Some((index, candidate));
+                    break;
+                }
+            }
+            if improvement.is_some() {
+                break;
+            }
+        }
+        let Some((state, choice)) = improvement else {
+            return Ok(UnboundedResult {
+                values: values.into_iter().map(ExtRational::Finite).collect(),
+                policy,
+                policy_iterations: iterations,
+            });
+        };
+        if iterations >= limits.max_policy_iterations {
+            return Err(UnboundedError::MaxPolicyIterations);
+        }
+        policy[state] = Some(choice);
+        iterations = iterations.saturating_add(1);
+    }
+}
+
+fn proper_policy(
+    graph: &Graph<'_>,
+    targets: &[bool],
+    policy: &[Option<usize>],
+) -> Result<bool, UnboundedError> {
+    let transient = targets
+        .iter()
+        .enumerate()
+        .filter_map(|(state, target)| (!target).then_some(state))
+        .collect::<Vec<_>>();
+    Ok(policy_bottom_components(graph, &transient, policy)?.is_empty())
+}
+
 /// Decide `A until B`, fixing states where neither predicate holds to zero.
 pub fn decide_until(
     product: &ProbProduct,
@@ -1596,6 +1683,7 @@ impl<'a> Graph<'a> {
 
 pub(super) fn same_action(left: &ProductAction, right: &ProductAction) -> bool {
     match (left, right) {
+        (ProductAction::Reset, ProductAction::Reset) => true,
         (ProductAction::Identity(a), ProductAction::Identity(b)) => a == b,
         (ProductAction::PostState(a), ProductAction::PostState(b)) => a == b,
         (ProductAction::TerminalStutter, ProductAction::TerminalStutter)
@@ -3016,6 +3104,37 @@ mod tests {
             certificate_state: None,
         }));
         edge
+    }
+
+    #[trace("FR-196-AC-16")]
+    #[test]
+    fn proper_terminal_optimum_excludes_a_forever_stay_policy() {
+        let mut stay = edge(0, 0, one());
+        stay.choice = ProductAction::TerminalStutter;
+        let mut low = edge(0, 1, one());
+        low.choice = ProductAction::UnitDelay;
+        let mut high = edge(0, 2, one());
+        high.choice = ProductAction::EnterIdleDelay;
+        let product = graph(ProductKind::Mdp, vec![stay, low, high]);
+        let terminal = vec![None, Some(ratio(1, 2)), Some(one())];
+        let minimum = decide_proper_terminal_expectation(
+            &product,
+            &terminal,
+            UnboundedObjective::Min,
+            &ExactProbLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("the reset process has proper policies");
+        let maximum = decide_proper_terminal_expectation(
+            &product,
+            &terminal,
+            UnboundedObjective::Max,
+            &ExactProbLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("the reset process has proper policies");
+        assert_eq!(minimum.values[0], ExtRational::Finite(ratio(1, 2)));
+        assert_eq!(maximum.values[0], ExtRational::Finite(one()));
     }
 
     /// Trace: FR-203-AC-28. The dense system is refused against the working-

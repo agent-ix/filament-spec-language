@@ -10,9 +10,8 @@ use num_traits::Zero as _;
 
 use super::rows::Evaluation;
 use super::unbounded::{
-    maximal_end_components_from, policy_iteration, Dense, Graph, PolicyBudget, UnboundedError,
-    Choice,
-    UnboundedObjective,
+    maximal_end_components_from, policy_iteration, Choice, Dense, Graph, PolicyBudget,
+    UnboundedError, UnboundedObjective,
 };
 use super::{
     ExactProbLimits, MonitorVerdict, ProbEdge, ProbProduct, ProbStateId, ProductAction, ProductKind,
@@ -1427,6 +1426,7 @@ fn action_groups(
 
 fn action_equal(left: &ProductAction, right: &ProductAction) -> bool {
     match (left, right) {
+        (ProductAction::Reset, ProductAction::Reset) => true,
         (ProductAction::Identity(left), ProductAction::Identity(right)) => left == right,
         (ProductAction::PostState(left), ProductAction::PostState(right)) => left == right,
         (ProductAction::TerminalStutter, ProductAction::TerminalStutter)

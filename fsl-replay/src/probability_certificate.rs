@@ -696,6 +696,10 @@ pub enum ProbabilityCertificatePart {
     Numerator,
     /// The activation denominator.
     Denominator,
+    /// The value of a conditioned form after its first activating state.
+    Post,
+    /// The proper reset-process optimum of a conditioned reading.
+    Reset,
 }
 impl ProbabilityCertificatePart {
     /// Canonical published part spelling.
@@ -703,6 +707,8 @@ impl ProbabilityCertificatePart {
         match self {
             Self::Numerator => "numerator",
             Self::Denominator => "denominator",
+            Self::Post => "post",
+            Self::Reset => "reset",
         }
     }
 }
@@ -2412,7 +2418,9 @@ fn certificate_values(
         }
         let named = values.keys().cloned().collect::<BTreeSet<_>>();
         for key in graph.states.keys() {
-            values.entry(key.clone()).or_insert_with(|| Rational::from_integer(0_i64.into()));
+            values
+                .entry(key.clone())
+                .or_insert_with(|| Rational::from_integer(0_i64.into()));
         }
         return Ok(CertificateValues::Partial { values, named });
     }

@@ -485,7 +485,8 @@ pub use probability_certificate::{
     check_cyclic_mdp_probability_certificate_observing,
     check_cyclic_mdp_probability_certificate_with_identity,
     check_cyclic_reward_probability_certificate_observing, BoundedFairProbabilityPhase,
-    CyclicMdpProbabilityPhase, RewardProbabilityPhase,
+    CyclicMdpProbabilityPhase, RewardProbabilityPhase, product_key_membership_checks,
+    reset_product_key_membership_checks,
 };
 pub use probability_certificate::{
     admit_expected_reward_certificate_subject, check_claim_exact_reachability,

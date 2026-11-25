@@ -236,6 +236,8 @@ pub struct FreeDelayActionRow {
 /// FR-196's closed canonical semantic action body.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProductAction {
+    /// `["reset"]`: return to the conditioned instance's initial waiting state.
+    Reset,
     /// `["identity",schedule]`.
     Identity(Schedule),
     /// `["post-state",product_key]`: the complete canonical target key.
@@ -305,6 +307,7 @@ impl ProductAction {
     pub fn to_bytes(&self) -> Result<Vec<u8>, ProductActionError> {
         let key;
         let view = match self {
+            Self::Reset => View::Tag("reset"),
             Self::Identity(schedule) => View::Scheduled("identity", schedule),
             Self::PostState(product_key) => {
                 key = read_document(product_key.as_bytes()).ok_or(ProductActionError::Canonical)?;
@@ -345,6 +348,7 @@ impl ProductAction {
             return Err(ProductActionRefusal::Shape);
         };
         Ok(match (tag, members) {
+            ("reset", []) => Self::Reset,
             ("identity", [schedule]) => Self::Identity(Schedule::from_node(*schedule)?),
             ("post-state", [key]) => Self::PostState(product_key(*key)?),
             ("terminal-stutter", []) => Self::TerminalStutter,

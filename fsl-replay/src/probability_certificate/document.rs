@@ -8,6 +8,31 @@ use serde::{Deserialize, Serialize};
 use super::*;
 use crate::ExactProbLimits;
 
+#[cfg(feature = "test-support")]
+thread_local! {
+    static PRODUCT_KEY_MEMBERSHIP_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Reset the test-only count of product-key membership checks on this thread.
+#[cfg(feature = "test-support")]
+pub fn reset_product_key_membership_checks() {
+    PRODUCT_KEY_MEMBERSHIP_CHECKS.with(|count| count.set(0));
+}
+
+/// Return the test-only count of product-key membership checks on this thread.
+#[cfg(feature = "test-support")]
+pub fn product_key_membership_checks() -> usize {
+    PRODUCT_KEY_MEMBERSHIP_CHECKS.with(std::cell::Cell::get)
+}
+
+#[cfg(feature = "test-support")]
+fn observe_product_key_membership_check() {
+    PRODUCT_KEY_MEMBERSHIP_CHECKS.with(|count| count.set(count.get() + 1));
+}
+
+#[cfg(not(feature = "test-support"))]
+fn observe_product_key_membership_check() {}
+
 pub(super) mod measure;
 pub use measure::{
     MeasurePayoffKind, MeasureProbabilityDocument, conditional_measure_probability_certificate,
@@ -2351,6 +2376,7 @@ fn check_document_bytes(
         Some(SubsystemBoundKind::Lower) => document.cyclic_dtmc,
         Some(SubsystemBoundKind::Upper) => reward_upper,
     };
+    observe_product_key_membership_check();
     for (key, state) in graph
         .states
         .iter()

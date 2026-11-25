@@ -1973,6 +1973,127 @@ fn fair_coin_analysis_emits_independently_checked_value_one() {
         .all(|entry| entry.value == ratio(1, 1)));
 }
 
+/// FR-196-AC-9: malformed product-key octets and shape alternatives are
+/// refused by the strict reader before the value rows can reach membership.
+#[trace("TC-631", "FR-196-AC-9")]
+#[test]
+fn malformed_product_key_admission_stops_before_certificate_membership() {
+    use base64::Engine as _;
+    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+    use fsl_foundation::RequestIndex;
+    use fsl_replay::{ProbabilityDocumentError, ProbabilityDocumentLimits};
+
+    let world = World::new(&prob_world::process(REACH));
+    let records = analyze_items(
+        &Engines::fsl().expect("the exact engines are admitted"),
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request("FairTerminates", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    );
+    let bytes = records[0]
+        .terminal()
+        .expect("the fair exact claim settles")
+        .exact_certificate_document()
+        .expect("the independent checker accepted the valid document");
+    let original: serde_json::Value = serde_json::from_slice(bytes).expect("canonical document");
+    let encoded = original["values"][0]["state"]
+        .as_str()
+        .expect("a product-key member");
+    let product_key = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .expect("canonical base64url");
+    let key: serde_json::Value =
+        serde_json::from_slice(&product_key).expect("canonical product-key array");
+    assert_eq!(key.as_array().expect("eight key members").len(), 8);
+
+    let limits = ProbabilityDocumentLimits::for_exact(
+        &ExactProbLimits::default(),
+        fsl_replay::AccountingLimits::default().0,
+    );
+    let reject = |name: &str, offered: Vec<u8>, expected: ProbabilityDocumentError| {
+        let mut forged = original.clone();
+        forged["values"][0]["state"] =
+            serde_json::json!(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(offered));
+        forged["values"]
+            .as_array_mut()
+            .unwrap()
+            .sort_by(|left, right| {
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(left["state"].as_str().unwrap())
+                    .unwrap()
+                    .cmp(
+                        &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                            .decode(right["state"].as_str().unwrap())
+                            .unwrap(),
+                    )
+            });
+        let wire = serde_json::to_vec(&forged).expect("canonical outer document");
+        let result = fsl_replay::read_probability_proof_document(&wire, limits, &Cancel::new());
+        assert!(
+            matches!(&result, Err(actual) if *actual == expected),
+            "{name} must be refused by key admission before membership: {result:?}"
+        );
+    };
+
+    let mut extra = key.clone();
+    extra
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!("extra"));
+    reject(
+        "unknown/extra key member",
+        serde_json::to_vec(&extra).unwrap(),
+        ProbabilityDocumentError::Unsupported,
+    );
+    let mut missing = key.clone();
+    missing.as_array_mut().unwrap().pop();
+    reject(
+        "missing key member",
+        serde_json::to_vec(&missing).unwrap(),
+        ProbabilityDocumentError::Unsupported,
+    );
+    let mut wrong_model_domain = key.clone();
+    wrong_model_domain[4][0] = serde_json::json!("foreign-state-domain");
+    reject(
+        "incorrect model-key domain",
+        serde_json::to_vec(&wrong_model_domain).unwrap(),
+        ProbabilityDocumentError::Malformed,
+    );
+    let mut inconsistent_activation = key.clone();
+    inconsistent_activation[3] = serde_json::json!("active");
+    reject(
+        "activation without an instance",
+        serde_json::to_vec(&inconsistent_activation).unwrap(),
+        ProbabilityDocumentError::Unsupported,
+    );
+    let mut wrong_control = key.clone();
+    wrong_control[6] = serde_json::json!(["steps", false, "0"]);
+    reject(
+        "accumulator on an exact-only claim",
+        serde_json::to_vec(&wrong_control).unwrap(),
+        ProbabilityDocumentError::Unsupported,
+    );
+    let mut noncanonical_number = product_key.clone();
+    let raw = String::from_utf8(noncanonical_number.clone()).unwrap();
+    let changed = raw.replace("\"ordinal\":0", "\"ordinal\":-0");
+    assert_ne!(changed, raw, "the model identity contains its ordinal zero");
+    noncanonical_number = changed.into_bytes();
+    reject(
+        "noncanonical numeric key octets",
+        noncanonical_number,
+        ProbabilityDocumentError::Noncanonical,
+    );
+    let mut noncanonical = product_key;
+    noncanonical.insert(1, b' ');
+    reject(
+        "non-JCS product-key octets",
+        noncanonical,
+        ProbabilityDocumentError::Noncanonical,
+    );
+}
+
 /// FR-1041-AC-1/2/4: W has `wait` at s and a fair coin `go` to terminal g/f;
 /// the minimum and maximum are both 1/2, while malformed Bellman, rank and
 /// fairness records are rejected at their specified locations.
@@ -3353,12 +3474,18 @@ const COST: &str = "probabilistic Cost using ev on M over (m: M::Msg) under Even
 /// Checks FR-196 "Behavior", expected reward: the DTMC itself is the product, the
 /// target is the one state label and each send carries its `cost` on its
 /// edge; the stutter step of a terminal state carries cost 0.
-#[trace("TC-631")]
+#[trace("TC-631", "FR-196-AC-9")]
 #[test]
 fn an_expected_reward_product_keeps_rewards_on_edges() {
     let world = World::new(&prob_world::link(COST));
     let product = built(&world, "Cost");
     assert_eq!(product.kind, ProductKind::Dtmc);
+    assert!(
+        product.states.iter().all(|key| {
+            key.monitor.is_none() && key.accumulator.is_none() && key.pending.is_none()
+        }),
+        "exact-only expected-reward keys retain actual null controls"
+    );
     let cost = |edge: &ProbEdge| {
         let [(name, value)] = &edge.rewards[..] else {
             panic!("one reward: {:?}", edge.rewards);
@@ -3394,7 +3521,7 @@ const LONG_RUN: &str =
 
 /// Checks FR-196 "Behavior", long-run fraction: the DTMC itself is the product with
 /// the predicate as the state label and no control in any key.
-#[trace("TC-631")]
+#[trace("TC-631", "FR-196-AC-9")]
 #[test]
 fn a_long_run_fraction_product_is_the_chain_with_labels() {
     let world = World::new(&prob_world::service(LONG_RUN));
@@ -3405,7 +3532,7 @@ fn a_long_run_fraction_product_is_the_chain_with_labels() {
         let edges = product.outgoing(state);
         assert_eq!(total(edges), ratio(1, 1), "state {state:?}");
         let key = &product.states[state.index()];
-        assert!(key.monitor.is_none() && key.accumulator.is_none());
+        assert!(key.monitor.is_none() && key.accumulator.is_none() && key.pending.is_none());
     }
     // The chain cycles through Idle: some state is labelled and some is not.
     let idle = product.labels.iter().filter(|label| label[0]).count();
@@ -4020,9 +4147,10 @@ fn exact_unbounded_keys_keep_none_and_budget_stops_have_no_product() {
 /// monitor into EN-5's bounded product. A raw model self-cycle at the first
 /// loss therefore has a distinct remaining-horizon key, while the exact
 /// eventual and always values match their independent finite-horizon cases.
-#[trace("TC-631", "FR-196-AC-17")]
+#[trace("TC-631", "FR-196-AC-17", "FR-196-AC-9")]
 #[test]
 fn bounded_event_position_formulas_use_formula_keys_and_exact_extrema() {
+    use base64::Engine as _;
     use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
     use fsl_foundation::RequestIndex;
     use fsl_replay::{ModelCheckLimits, ProofBasis, TerminalValue};
@@ -4146,6 +4274,140 @@ fn bounded_event_position_formulas_use_formula_keys_and_exact_extrema() {
     assert_eq!(exact_value(&eventual, "WithinTwo"), ratio(3, 4));
     assert_eq!(exact_value(&always, "Minimum"), ratio(1, 4));
     assert_eq!(exact_value(&always, "Maximum"), ratio(3, 4));
+
+    let record = analyze_items(
+        &engines,
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            eventual.request("WithinTwo", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    )
+    .remove(0);
+    let certificate = record
+        .terminal()
+        .expect("the bounded exact document settles")
+        .exact_certificate_document()
+        .expect("the checker accepts the formula-key document");
+    let original: serde_json::Value =
+        serde_json::from_slice(certificate).expect("canonical formula document");
+    let limits = fsl_replay::ProbabilityDocumentLimits::for_exact(
+        &ExactProbLimits::default(),
+        fsl_replay::AccountingLimits::default().0,
+    );
+    let system = fsl_eval::simulation::model::ModelSystem::new(eventual.subject().simulation)
+        .expect("the bounded subject is admitted");
+    let claim = eventual.claim("WithinTwo");
+    let identity = fsl_replay::probabilistic_claim_identity(claim).expect("claim identity");
+    let checked = |document: &serde_json::Value| {
+        fsl_replay::check_probability_certificate_document(
+            &system,
+            system.input().probabilistic.claims(),
+            &identity,
+            &serde_json::to_vec(document).expect("canonical document bytes"),
+            limits,
+            &Cancel::new(),
+        )
+    };
+    let sort_value_rows = |document: &mut serde_json::Value| {
+        document["values"]
+            .as_array_mut()
+            .unwrap()
+            .sort_by(|left, right| {
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(left["state"].as_str().unwrap())
+                    .unwrap()
+                    .cmp(
+                        &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                            .decode(right["state"].as_str().unwrap())
+                            .unwrap(),
+                    )
+            });
+    };
+    let formula_row = original["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| {
+            let key = serde_json::from_slice::<serde_json::Value>(
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(row["state"].as_str().unwrap())
+                    .unwrap(),
+            )
+            .unwrap();
+            key[5][0] == "formula"
+        })
+        .expect("a canonical formula monitor key");
+    let original_key = serde_json::from_slice::<serde_json::Value>(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(formula_row["state"].as_str().unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    for name in ["invalid monitor index", "foreign formula context"] {
+        let mut forged = original.clone();
+        let row = forged["values"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|row| row["state"] == formula_row["state"])
+            .unwrap();
+        let mut key = original_key.clone();
+        if name == "invalid monitor index" {
+            key[5][1][2] = serde_json::json!(["state-index", "999999"]);
+        } else {
+            let context = key[5][1][1].as_array_mut().expect("four context parts");
+            assert_eq!(context.len(), 4);
+            context[0] = serde_json::json!("foreign-formula-context");
+        }
+        row["state"] = serde_json::json!(base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&key).expect("canonical forged key")));
+        sort_value_rows(&mut forged);
+        fsl_replay::reset_product_key_membership_checks();
+        let result = checked(&forged);
+        assert!(
+            matches!(
+                &result,
+                Ok(fsl_replay::ExactProbabilityCertificateCheck::Rejected(
+                    fsl_replay::ProbabilityCertificateRejection {
+                        rule: fsl_replay::ProbabilityCertificateRule::Malformed,
+                        at: fsl_replay::ProbabilityCertificateLocus::Member("values"),
+                    }
+                ))
+            ),
+            "{name} is not a member of the independently reconstructed formula product: {result:?}"
+        );
+        assert_eq!(
+            fsl_replay::product_key_membership_checks(),
+            0,
+            "{name} refuses before certificate membership"
+        );
+    }
+    let mut wrong_alternative = original.clone();
+    let row = wrong_alternative["values"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| row["state"] == formula_row["state"])
+        .unwrap();
+    let mut key = original_key;
+    key[5] = serde_json::json!(["measure", null, "inactive"]);
+    row["state"] = serde_json::json!(base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(serde_json::to_vec(&key).expect("canonical wrong-alternative key")));
+    sort_value_rows(&mut wrong_alternative);
+    let result = checked(&wrong_alternative);
+    assert!(
+        matches!(
+            &result,
+            Ok(fsl_replay::ExactProbabilityCertificateCheck::Rejected(
+                fsl_replay::ProbabilityCertificateRejection {
+                    rule: fsl_replay::ProbabilityCertificateRule::Malformed,
+                    at: fsl_replay::ProbabilityCertificateLocus::Member("values"),
+                }
+            ))
+        ),
+        "a measure control cannot stand in for the checked formula monitor: {result:?}"
+    );
 }
 
 /// Observe the real relation and full-target construction boundaries, rather

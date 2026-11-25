@@ -1016,6 +1016,7 @@ fn same_mean_time_choice(
 ) -> bool {
     use crate::exact_probabilistic::ProductAction;
     match (left, right) {
+        (ProductAction::Reset, ProductAction::Reset) => true,
         (ProductAction::Identity(left), ProductAction::Identity(right)) => left == right,
         (ProductAction::PostState(_), ProductAction::PostState(_))
         | (ProductAction::TerminalStutter, ProductAction::TerminalStutter)
@@ -4028,6 +4029,7 @@ fn canonical_action(
     let unscheduled = schedule_failure;
     use crate::exact_probabilistic::ProductAction as AnalyzerAction;
     Ok(match choice {
+        AnalyzerAction::Reset => fsl_replay::ProductAction::Reset,
         AnalyzerAction::Identity(identity) => fsl_replay::ProductAction::Identity(
             fsl_replay::Schedule::of(system, identity).map_err(unscheduled)?,
         ),
