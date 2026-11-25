@@ -8,8 +8,8 @@
 //! emits for the same model, with the values the criterion names.
 
 use super::bounded::{
-    document, mutate, replace_source_and_rebind, request_with, requests_offering,
-    requests_with_mode, run,
+    DOMAIN, document, model_source, mutate, replace_source_and_rebind, request_with,
+    requests_offering, requests_with_mode, run,
 };
 use super::certificate_kinds::likely;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -1349,6 +1349,17 @@ fn a_partial_shifted_lower_over_the_named_states_refuses_a_false_document() {
     stopped_at_max_states(&counterpart, 10);
 }
 
+/// FR-1043-AC-2's claim at `level` over its `fast` (`1/2`) and `slow` (`1/4`)
+/// model.
+fn retry(level: &str) -> String {
+    let source = model_source()
+        .replace("{ true: 1, false: 9 }", "{ true: 1, false: 1 }")
+        .replace("{ true: 1, false: 4 }", "{ true: 3, false: 1 }");
+    format!(
+        "{source}\nprobabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin {{ quantile {level} of (steps from holds(true) until holds(m.delivered) within 4) <= 2 }}\n"
+    )
+}
+
 /// FR-1042-AC-10, FSpec FR-412-AC-16: at level 0.5 a `lower` naming only the
 /// initial key at 0 fails there, over the named states as over the whole
 /// graph, since each unnamed successor counts as `-1/2`. At `-1/2` it meets
@@ -1356,14 +1367,18 @@ fn a_partial_shifted_lower_over_the_named_states_refuses_a_false_document() {
 #[trace("TC-3151", "FR-1042-AC-10", "FSpec-FR-412-AC-16")]
 #[test]
 fn a_partial_shifted_lower_naming_the_initial_key_counts_the_rest_at_minus_the_level() {
-    let proved = partial_proof(&quantile("0.4", "<= 3"), 10, (3, 5));
-    let (initial, _) = ranked(&document(&proved), 4).remove(0);
-    let mut request = edit(&proved, |doc| {
+    let (exact, settlement) =
+        request_with(&retry("0.4"), SNAPSHOT, ExactProbLimits::default(), DOMAIN);
+    let exact = exact.unwrap_or_else(|| panic!("an exact proof: {settlement:?}"));
+    let whole = bound(&exact, "lower", &[], None, true);
+    let (initial, value) = ranked(&document(&whole), 4).remove(0);
+    assert_eq!(value, rational(3, 80), "FR-1043-AC-2's initial value");
+    let mut request = edit(&whole, |doc| {
         keep_rows(doc, &[&initial]);
         set(doc, "values", &initial, "value", rational(0, 1));
         doc["objective"]["base"]["measure"]["level"] = rational(1, 2);
     });
-    replace_source_and_rebind(&mut request, &quantile("0.5", "<= 3"));
+    replace_source_and_rebind(&mut request, &retry("0.5"));
     let floor = edit(&request, |doc| {
         set(doc, "values", &initial, "value", rational(-1, 2));
     });
