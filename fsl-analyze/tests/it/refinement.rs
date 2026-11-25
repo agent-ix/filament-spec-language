@@ -10,13 +10,16 @@ mod fixture_ids;
 mod flag_world;
 mod graph_world;
 mod hyper_world;
+mod letters;
 mod litmus;
 mod model_settle_support;
 mod partial_order;
 mod por_world;
+mod prob_world;
 mod protocol_footprint_support;
 mod refinement_protocol_support;
 mod relation_claims_support;
+mod source_value_support;
 mod units;
 mod weak_memory_support;
 

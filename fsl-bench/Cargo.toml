@@ -7,10 +7,11 @@ rust-version = "1.98"
 license = "AGPL-3.0-or-later"
 description = "The committed performance benchmarks (parser, checker, CST identity hashing, model layer, evaluator and evaluator kernels) and the probe that records per-run counts."
 
-# A benchmark-only crate: no workspace crate depends on it in `[dependencies]`; only
+# A benchmark-only crate: no workspace crate depends on it in `[dependencies]`.
 # `fsl-replay`'s tests name it, as a dev-dependency, for the `unit` and `near_miss`
-# generators. It reaches the layer crates through their public API only, so an internal rewrite behind
-# that API needs no bench change; a change to the API itself does (for
+# generators, and the root integration tests for the `deep_input` generator. It
+# reaches the layer crates through their public API only, so an internal rewrite
+# behind that API needs no bench change; a change to the API itself does (for
 # example a change to `intake::admit`'s return type). Every model-intake call goes
 # through `src/model.rs` so such a change is one edit there.
 [dependencies]

@@ -34,6 +34,8 @@ pub use input::{
     ProtocolNodeReadError, StateClauseEntry, TerminalWhen,
 };
 pub use relation_input::{ModelRelationDescriptor, ModelRelationTuple};
+mod sim_state;
+pub use sim_state::ModelSimState;
 mod operation_coverage;
 pub use operation_coverage::{
     ModelOperation, ModelOperationCase, ModelOperationCoverage, ModelOperationCoverageEntry,
@@ -77,7 +79,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
     ClockPlaceReference, EffectiveId, Incomplete, Integer, IntegerInterval, Meter, NodeKey,
-    ObjectReference, Refusal, ScalarLimits, Undefined, ValueType,
+    ObjectReference, Refusal, ScalarLimits, Undefined, UniverseId, ValueType,
 };
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::declaration::TypeEnvironment;
@@ -86,7 +88,7 @@ use fsl_foundation::IdentityLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::OperationKey;
+use fsl_semantics::check::{OperationKey, PopulationDomain};
 use fsl_semantics::family::ClassifyFailure;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::clause_observation::Observation;
@@ -95,7 +97,7 @@ use fsl_semantics::model::observation::{
     AdmissionFailure, AdmissionRecord, AnchorKind, DocumentRef, ObservationLimits, SelectedAnchor,
 };
 use fsl_semantics::model::operation::OperationDeclaration;
-use fsl_semantics::model::state::{ModelState, StateField, StateModel};
+use fsl_semantics::model::state::{StateField, StateModel};
 use quire_canonical::Limits as CanonicalLimits;
 
 use crate::model_subject::ModelInstance;
@@ -256,109 +258,6 @@ pub enum ModelStateProvenance {
         /// A subsequent real step, when this restored state was expanded.
         effect: Option<StepEffect>,
     },
-}
-
-/// A model state and its explicit provenance. Provenance is not part of its key.
-#[derive(Clone)]
-pub struct ModelSimState {
-    state: ModelState,
-    provenance: ModelStateProvenance,
-    canonical_key: std::sync::Arc<std::sync::OnceLock<std::sync::Arc<crate::simulation::StateKey>>>,
-}
-
-impl std::fmt::Debug for ModelSimState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ModelSimState")
-            .field("state", &self.state)
-            .field("provenance", &self.provenance)
-            .finish()
-    }
-}
-
-impl ModelSimState {
-    fn anchored(state: ModelState, anchor: SelectedAnchor) -> Self {
-        Self {
-            state,
-            provenance: ModelStateProvenance::Anchored {
-                anchor,
-                effect: None,
-            },
-            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
-        }
-    }
-
-    fn reached(&self, state: ModelState, anchor: SelectedAnchor, effect: StepEffect) -> Self {
-        let provenance = match self.provenance {
-            ModelStateProvenance::Anchored { .. } => ModelStateProvenance::Anchored {
-                anchor,
-                effect: Some(effect),
-            },
-            ModelStateProvenance::RestoredFromKey { .. } => ModelStateProvenance::RestoredFromKey {
-                effect: Some(effect),
-            },
-        };
-        Self {
-            state,
-            provenance,
-            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
-        }
-    }
-
-    fn without_effect(&self, state: ModelState) -> Self {
-        let provenance = match &self.provenance {
-            ModelStateProvenance::Anchored { anchor, .. } => ModelStateProvenance::Anchored {
-                anchor: anchor.clone(),
-                effect: None,
-            },
-            ModelStateProvenance::RestoredFromKey { .. } => {
-                ModelStateProvenance::RestoredFromKey { effect: None }
-            }
-        };
-        Self {
-            state,
-            provenance,
-            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
-        }
-    }
-
-    /// The closed population state.
-    pub fn state(&self) -> &ModelState {
-        &self.state
-    }
-
-    /// The state's admitted provenance, including explicit key restoration.
-    pub fn provenance(&self) -> &ModelStateProvenance {
-        &self.provenance
-    }
-
-    /// The actual initialization or handler anchor. A restored state has none.
-    pub fn anchor(&self) -> Option<&SelectedAnchor> {
-        match &self.provenance {
-            ModelStateProvenance::Anchored { anchor, .. } => Some(anchor),
-            ModelStateProvenance::RestoredFromKey { .. } => None,
-        }
-    }
-
-    /// Require actual observation provenance for an API that consumes an anchor.
-    ///
-    /// # Errors
-    /// A key-restored state has no initialization or handler provenance.
-    pub fn required_anchor(&self) -> Result<&SelectedAnchor, ExpansionStop> {
-        self.anchor().ok_or_else(|| {
-            walk::stop(CatalogCode::new(
-                "invalid_runtime_input",
-                "missing-required-artifact",
-            ))
-        })
-    }
-
-    /// The actual step that reached the state, absent when none was executed.
-    pub fn reached_by(&self) -> Option<&StepEffect> {
-        match &self.provenance {
-            ModelStateProvenance::Anchored { effect, .. }
-            | ModelStateProvenance::RestoredFromKey { effect } => effect.as_ref(),
-        }
-    }
 }
 
 /// One field a step changed (FR-120 "Effects as data"), each value in
@@ -1580,19 +1479,25 @@ impl<'a> ModelSystem<'a> {
             initial.push(ModelSimState::anchored(state, anchor));
         }
 
-        // FR-125 gives an object key one type across the subject's initial
-        // states and every population that admits the bounded universe. Do
-        // this before reference bindings or any instance is formed: otherwise
-        // the same key could denote different objects depending on which
-        // population or initial snapshot supplied the row.
-        let mut admitted_types = BTreeMap::<String, DeclarationKey>::new();
+        // FR-125 gives an object universe's key one type across the subject's
+        // initial states and every bounded population. Do this before
+        // reference bindings or any instance is formed: otherwise one
+        // reference could denote different objects depending on which
+        // population or initial snapshot supplied the row. Equal keys in two
+        // object universes (unrelated type hierarchies) name two objects.
+        let mut admitted_types = BTreeMap::<(UniverseId, String), DeclarationKey>::new();
         for state in &initial {
-            for (population, objects) in &state.state.populations {
+            for (population, objects) in &state.state().populations {
                 if !universes.contains_key(population) {
                     continue;
                 }
                 for (key, object) in objects {
-                    match admitted_types.get(key) {
+                    let universe = model
+                        .object_reference(&object.type_identity, key)?
+                        .universe()
+                        .clone();
+                    let identity = (universe, key.clone());
+                    match admitted_types.get(&identity) {
                         Some(first_type) if first_type != &object.type_identity => {
                             return Err(refused(
                                 Code::InvalidRuntimeInput,
@@ -1606,7 +1511,7 @@ impl<'a> ModelSystem<'a> {
                         }
                         Some(_) => {}
                         None => {
-                            admitted_types.insert(key.clone(), object.type_identity.clone());
+                            admitted_types.insert(identity, object.type_identity.clone());
                         }
                     }
                 }
@@ -1865,7 +1770,7 @@ impl<'a> ModelSystem<'a> {
     ) -> Result<Vec<u8>, ModelKeyError> {
         encode::bounded::model_bytes(
             &self.model,
-            &state.state,
+            state.state(),
             self.typing(),
             identity,
             budget,
@@ -1878,25 +1783,20 @@ impl<'a> ModelSystem<'a> {
         &self,
         state: &ModelSimState,
     ) -> Result<crate::simulation::StateKey, crate::simulation::EncodingRefusal> {
-        self.canonical_state_key_ref(state).map(Clone::clone)
+        self.canonical_state_key_ref(state).cloned()
     }
 
     pub(crate) fn canonical_state_key_ref<'s>(
         &self,
         state: &'s ModelSimState,
     ) -> Result<&'s crate::simulation::StateKey, crate::simulation::EncodingRefusal> {
-        if let Some(key) = state.canonical_key.get() {
-            return Ok(key.as_ref());
-        }
-        let key = crate::simulation::key::canonical_state_key_of(
-            &self.canonical,
-            &encode::model_key(&self.model, &state.state, self.typing()).0,
-            identity_limits(),
-        )?;
-        Ok(state
-            .canonical_key
-            .get_or_init(|| std::sync::Arc::new(key))
-            .as_ref())
+        state.memoized_key(|state| {
+            crate::simulation::key::canonical_state_key_of(
+                &self.canonical,
+                &encode::model_key(&self.model, state, self.typing()).0,
+                identity_limits(),
+            )
+        })
     }
 
     /// The canonical writer of this system's keys.
@@ -2503,7 +2403,7 @@ impl<'a> ModelSystem<'a> {
         let held: BTreeSet<&DeclarationKey> = self
             .initial_base
             .iter()
-            .flat_map(|state| state.state.populations.keys())
+            .flat_map(|state| state.state().populations.keys())
             .collect();
         for population in held {
             let bound = self
@@ -2546,7 +2446,7 @@ impl<'a> ModelSystem<'a> {
             // supply every initial object's type identity and population.
             let admitted = self.initial_base.iter().any(|state| {
                 state
-                    .state
+                    .state()
                     .populations
                     .get(population)
                     .is_some_and(|objects| objects.contains_key(key))
@@ -2561,16 +2461,58 @@ impl<'a> ModelSystem<'a> {
         Ok(instances)
     }
 
-    /// Every declared key in each admitting population, including keys no
-    /// initial state holds. Populations follow declaration identity text
-    /// order and their keys keep the order of each universe list.
+    /// FR-172 Object parameters: the instances of a hyper clause parameter,
+    /// one per key of the universe of the one population `domain` it resolves
+    /// to, in universe order, whether or not an initial state holds the key.
+    /// `self` is the system of the parameter's alias. No other population
+    /// contributes a key, whatever its member types.
+    ///
+    /// # Errors
+    ///
+    /// [`NotSimulated::RequiresBound`] when that population has no universe;
+    /// [`NotSimulated::Extent`] when this system's model has no one population
+    /// that is `domain`, and as [`Self::instances`].
+    pub fn hyper_instances(
+        &self,
+        domain: &PopulationDomain,
+    ) -> Result<Vec<ModelInstance>, NotSimulated> {
+        let resolved = self.model.resolved_population(domain).ok_or_else(|| {
+            NotSimulated::Extent(ClassifyFailure::Fault(InternalFault::new(
+                "model-simulation",
+                "parameter-population",
+            )))
+        })?;
+        let mut seen = BTreeSet::new();
+        let instances = self
+            .universe_members_where(&|population| population.key == resolved)?
+            .filter(|(_, key)| seen.insert(*key))
+            .map(|(population, key)| ModelInstance {
+                population: population.clone(),
+                key: key.to_owned(),
+            })
+            .collect();
+        Ok(instances)
+    }
+
+    /// [`Self::universe_members_where`] the populations that overlap the
+    /// object type `parameter`.
     fn universe_members<'s>(
         &'s self,
         parameter: &EffectiveId,
     ) -> Result<impl Iterator<Item = (&'s DeclarationKey, &'s str)> + 's, NotSimulated> {
+        self.universe_members_where(&|population| self.overlaps(population, parameter.clone()))
+    }
+
+    /// Every declared key in each population `admits` selects, including keys
+    /// no initial state holds. Populations follow declaration identity text
+    /// order and their keys keep the order of each universe list.
+    fn universe_members_where<'s>(
+        &'s self,
+        admits: &dyn Fn(&fsl_semantics::model::state::StatePopulation) -> bool,
+    ) -> Result<impl Iterator<Item = (&'s DeclarationKey, &'s str)> + 's, NotSimulated> {
         let mut admitting = Vec::new();
         for population in &self.populations {
-            if self.overlaps(population, parameter.clone()) {
+            if admits(population) {
                 let text = declaration_text(&population.key, CanonicalLimits::new(u64::MAX))
                     .map_err(|_| {
                         NotSimulated::Extent(ClassifyFailure::Fault(InternalFault::new(
@@ -3010,7 +2952,7 @@ impl TransitionSystem for ModelSystem<'_> {
     }
 
     fn key(&self, state: &Self::State) -> Self::Key {
-        encode::model_key(&self.model, &state.state, self.typing())
+        encode::model_key(&self.model, state.state(), self.typing())
     }
 
     fn successors(
@@ -4241,7 +4183,7 @@ fn ranged<'s>(
     stage: &'s InitialStage,
 ) -> Box<dyn Iterator<Item = ModelSimState> + 's> {
     let holders: Vec<(DeclarationKey, String)> = state
-        .state
+        .state()
         .populations
         .iter()
         .flat_map(|(population, objects)| {
@@ -4265,7 +4207,7 @@ fn ranged<'s>(
         let mut held = state.clone();
         for ((population, key), digit) in holders.iter().zip(&current) {
             if let Some(object) = held
-                .state
+                .state_mut()
                 .populations
                 .get_mut(population)
                 .and_then(|objects| objects.get_mut(key))
@@ -4333,6 +4275,7 @@ pub(super) fn count_generated_initial_state() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fsl_semantics::model::state::ModelState;
     use ix_trace_rs::trace;
 
     /// FR-126-AC-26 (TC-521): a clock-range set of 2^40 initial states is
@@ -4376,7 +4319,7 @@ mod tests {
         let pulled: Vec<ModelSimState> = generated(&base, &stages).take(3).collect();
         assert_eq!(pulled.len(), 3);
         let set = |state: &ModelSimState| -> Vec<bool> {
-            state.state.populations[&population]
+            state.state().populations[&population]
                 .values()
                 .map(|object| matches!(object.fields[&flag], Value::Boolean(true)))
                 .collect()

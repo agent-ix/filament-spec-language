@@ -1,16 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Typed checked-subject replay and EN-5 refutation integration.
 use crate::prob_world::{self, World};
-use filament_exact::{Cancel, CancelCause, Integer, Rational, Value};
+use crate::source_value_support::source_color;
+use filament_exact::{Cancel, CancelCause, Integer, Rational, Undefined, Value};
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
-use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
+use fsl_eval::simulation::StateKey;
+use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    replay_probabilistic_witness, ExactProbLimits, ExactProbabilityGraphError, IncompleteCause,
-    ModelCheckLimit, ModelCheckLimits, ProbabilisticCounterexample, ProbabilityWitnessError,
-    ProbabilityWitnessReplay, TerminalValue,
+    probabilistic_undefined_wire, probabilistic_wire, replay_probabilistic_witness,
+    CounterexampleWireError, ExactProbLimits, ExactProbabilityGraphError, IncompleteCause,
+    ModelCheckLimit, ModelCheckLimits, ProbabilisticCounterexample, ProbabilisticValueSchema,
+    ProbabilityUndefinedWitness, ProbabilityWitnessError, ProbabilityWitnessReplay, TerminalValue,
+    UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
+use fsl_semantics::check::{Bound, EnumBinding};
 use ix_trace_rs::trace;
+use serde_json::json;
 
 const CLAIMS: &str = "
 probabilistic TooMuch using inf on M over (m: M::Msg) under every scheduler on origin
@@ -977,4 +984,204 @@ fn an_unfair_witness_settles_inconclusive_replay_parity() {
         TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::ReplayParity(_))
     ));
     assert!(record.probabilistic_counterexample.is_none());
+}
+
+/// A probabilistic counterexample whose draw and scheduled argument are source
+/// `enum` values writes both in FR-181's typed enum form, as a path set and as
+/// an undefined path. This proves the spelling of `probabilistic_wire` and
+/// `probabilistic_undefined_wire` only: the values are substituted into the
+/// witness of a claim over a domain package's object, and no production path is
+/// known to carry a source `enum` through that claim. The analyzer itself writes
+/// a source `enum` for a source object's operation, in the tests below.
+#[test]
+fn source_enum_draws_and_arguments_are_spelled_in_probabilistic_counterexamples() {
+    let world = World::new(&prob_world::link(&format!(
+        "enum Color {{ red, blue }}\n{CLAIMS}"
+    )));
+    let mut witness = evidence(&world, "TooMuch");
+    witness.paths.truncate(1);
+    let step = witness
+        .paths
+        .first_mut()
+        .and_then(|path| path.steps.first_mut())
+        .expect("a witness step");
+    step.draw = Some(vec![source_color(&world.package, "red")]);
+    let mut identity = step.action.clone().expect("an identity step");
+    identity.arguments = vec![source_color(&world.package, "blue")];
+    let at = StateKey::from_canonical_bytes(b"at".to_vec());
+    let scheduler = [(at.clone(), identity)];
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let state_key = |state: &ModelSimState| system.state_key(state).ok().map(|(_, key)| key);
+    let bound = Bound::AtMost(ratio(1, 2));
+    let scope = world.package.graph().scope();
+    let color = |member: &str| {
+        json!({"type": "enum", "name": r#"{"node":"Color","package":"package"}"#,
+            "member": member})
+    };
+    let unspelled = Err(CounterexampleWireError::Unspelled("probabilistic value"));
+
+    let path_set = |enums: &[EnumBinding]| {
+        probabilistic_wire(
+            &witness,
+            &bound,
+            "probability",
+            &ProbabilisticValueSchema::new(scope.types(), scope.variant_types(), enums),
+            &state_key,
+            &scheduler,
+        )
+    };
+    let written = path_set(scope.enums()).expect("the source enum values are spelled");
+    assert_eq!(
+        written["evidence"]["paths"][0][0]["random"],
+        json!([color("red")])
+    );
+    assert_eq!(
+        written["scheduler"]["entries"][0]["choice"]["arguments"],
+        json!([color("blue")])
+    );
+    assert_eq!(path_set(&[]), unspelled);
+
+    let undefined = ProbabilityUndefinedWitness {
+        path: witness.clone(),
+        evaluation: UndefinedEvaluation {
+            site: UndefinedSite {
+                position: 0,
+                state_key: at,
+                locus: UndefinedLocus::FractionValue,
+                transition: None,
+                time: None,
+            },
+            cause: UndefinedCause::Kernel(Undefined::DivisionByZero),
+        },
+        product_state: witness.initial_key.clone(),
+    };
+    let claim = world
+        .claim("TooMuch")
+        .occurrence()
+        .expect("the claim has an occurrence");
+    let undefined_path = |enums: &[EnumBinding]| {
+        probabilistic_undefined_wire(
+            &undefined,
+            claim,
+            &bound,
+            "probability",
+            &ProbabilisticValueSchema::new(scope.types(), scope.variant_types(), enums),
+            &state_key,
+            &scheduler,
+        )
+    };
+    let written = undefined_path(scope.enums()).expect("the source enum values are spelled");
+    assert_eq!(
+        written["evidence"]["path"][0]["random"],
+        json!([color("red")])
+    );
+    assert_eq!(
+        written["scheduler"]["entries"][0]["choice"]["arguments"],
+        json!([color("blue")])
+    );
+    assert_eq!(undefined_path(&[]), unspelled);
+}
+
+/// The counterexample the analyzer writes for the claim `Seen` over a coin no
+/// step changes, beside an object of the unit's own type `Lamp` whose one
+/// operation is scheduled with the source `enum` member `Color::red` and draws
+/// `Color::blue`. `profile` is the claim's temporal profile and `measure` its
+/// bounded measure.
+fn source_object_wire(profile: &str, measure: &str) -> serde_json::Value {
+    let mut world = World::new(&prob_world::coin(&format!(
+        "enum Color {{ red, blue }}\n\
+         object Lamp {{ lit: Boolean; population lamps; \
+         operation paint(c: Color, tint: Color) modifies self.lit; }}\n\
+         pre Dark using v on Lamp::paint {{ not self.lit and tint = Color::red }}\n\
+         post Lit using v on Lamp::paint {{ self.lit }}\n\
+         pre Never using v on M::Coin::drop {{ false }}\n\
+         random Lamp::paint(c) ~ {{ Color::blue: 1 }};\n\
+         probabilistic Seen using {profile} on M over (c: M::Coin) \
+         under every scheduler on origin\n{{ {measure} }}\n"
+    )));
+    world.add_source_object("lamps", "Lamp", "l", &json!({"lit": {"boolean": false}}));
+    let record = analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request("Seen", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    )
+    .remove(0);
+    record
+        .probabilistic_counterexample
+        .as_ref()
+        .unwrap_or_else(|| panic!("a counterexample: {:?}", record.settlement))
+        .wire
+        .clone()
+        .expect("the source enum values are spelled")
+}
+
+/// The one-member value list holding the source `enum` member `member`.
+fn color_list(member: &str) -> serde_json::Value {
+    json!([{"type": "enum", "name": r#"{"node":"Color","package":"package"}"#,
+        "member": member}])
+}
+
+/// A refuted reachability claim writes a source object operation's source
+/// `enum` draw in FR-181's typed enum form.
+#[test]
+fn a_source_enum_draw_is_spelled_in_a_reachability_counterexample() {
+    let wire = source_object_wire("inf", "probability >= 0.5 [ eventually holds(c.v = 1) ]");
+    assert_eq!(
+        wire["evidence"]["paths"][0][0]["random"],
+        color_list("blue")
+    );
+}
+
+/// A refuted mean claim writes a source object operation's source `enum`
+/// scheduled argument in FR-181's typed enum form. Its evidence is a subsystem
+/// certificate with no path, so it writes no draw.
+#[test]
+fn a_source_enum_argument_is_spelled_in_a_mean_counterexample() {
+    let wire = source_object_wire("ev", "mean of (fraction holds(c.v = 1) over [0, 1]) >= 0.5");
+    assert_eq!(
+        wire["scheduler"]["entries"][0]["choice"]["arguments"],
+        color_list("red")
+    );
+}
+
+/// A claim refuted by an undefined read writes the source `enum` draw on its
+/// path in FR-181's typed enum form. `paint` takes a coin by reference and its
+/// postcondition removes every coin, so the claim's read of `c.v` is undefined
+/// after that one step.
+#[test]
+fn a_source_enum_draw_is_spelled_in_an_undefined_counterexample() {
+    let mut world = World::new(&prob_world::coin(
+        "enum Color { red, blue }\n\
+         object Lamp { lit: Boolean; population lamps; \
+         operation paint(c: Color, coin: Reference<M::Coin>) modifies self.lit deletes coin; }\n\
+         pre Dark using v on Lamp::paint { not self.lit }\n\
+         post Lit using v on Lamp::paint \
+         { self.lit and count(o in M::coins where true) = 0 }\n\
+         pre Never using v on M::Coin::drop { false }\n\
+         random Lamp::paint(c) ~ { Color::blue: 1 };\n\
+         probabilistic Seen using ev on M over (c: M::Coin) under every scheduler on origin\n\
+         { probability >= 0.5 [ always[0,1] holds(c.v = 0) ] }\n",
+    ));
+    world.add_source_object("lamps", "Lamp", "l", &json!({"lit": {"boolean": false}}));
+    let record = analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request("Seen", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    )
+    .remove(0);
+    let wire = record
+        .probabilistic_counterexample
+        .as_ref()
+        .unwrap_or_else(|| panic!("a counterexample: {:?}", record.settlement))
+        .wire
+        .clone()
+        .expect("the source enum values are spelled");
+    assert_eq!(wire["evidence"]["type"], "undefined-path");
+    assert_eq!(wire["evidence"]["path"][0]["random"], color_list("blue"));
 }

@@ -161,7 +161,7 @@ fn qualify_scoped_passing_capability_keeps_all_gate_parts() {
         .find(|part| part["part"] == "parity")
         .expect("backend parity remains in the verdict");
     assert_eq!(lifecycle["result"], "passed");
-    assert_eq!(parity["result"], "no-backend");
+    assert_eq!(parity["result"], "passed");
 }
 
 #[test]

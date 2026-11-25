@@ -30,17 +30,14 @@ use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
 use serde_json::{json, Value as Json};
 
 use crate::counter::UNLIMITED;
+pub(crate) use crate::letters::{unguarded, unread, Reads};
 
 /// `examples/config-version`'s domain package and unit text, the datum the
 /// example's own fixtures and `fsl-package`'s corpus read.
 #[path = "../../../examples/config-version/spine_unit.rs"]
-mod config_version;
+pub(crate) mod config_version;
 
-#[allow(
-    unused_imports,
-    reason = "only the model-check integration binary uses this fixture export"
-)]
-pub(crate) use config_version::{unit_text as shipped_unit_text, PACKAGE_IDENTITY as CONFIG};
+pub(crate) use config_version::PACKAGE_IDENTITY as CONFIG;
 
 /// A domain package and where its objects live.
 pub(crate) struct Domain {
@@ -336,39 +333,6 @@ impl<'w> Atoms<'w> {
         }
     }
 }
-
-/// What a letters seam reports for an atom's footprint.
-pub(crate) type Reads = Result<
-    std::collections::BTreeSet<fsl_semantics::check::footprint::SymbolicLocation>,
-    fsl_semantics::check::footprint::FootprintRefusal,
->;
-
-/// The footprint a letters seam reports when its run selects no
-/// partial-order reduction, which is the only run that reads it.
-pub(crate) fn unread() -> Reads {
-    Ok(std::collections::BTreeSet::new())
-}
-
-/// The two guard methods of a letters seam for a run whose clauses are all
-/// unguarded: the engine reads `activation` and `activation_reads` only for
-/// a clause with a `when` condition, so reaching either is a defect.
-macro_rules! unguarded {
-    () => {
-        fn activation(
-            &self,
-            _instance: &fsl_eval::model_subject::ModelInstance,
-            _state: &fsl_eval::simulation::model::ModelSimState,
-            _meter: &mut filament_exact::Meter,
-        ) -> Result<fsl_eval::temporal::AtomReading, fsl_eval::model_subject::AtomStop> {
-            unreachable!("an unguarded clause has no activation condition")
-        }
-
-        fn activation_reads(&self) -> $crate::units::Reads {
-            unreachable!("an unguarded clause has no activation condition")
-        }
-    };
-}
-pub(crate) use unguarded;
 
 impl ModelLetters for Atoms<'_> {
     crate::units::unguarded!();

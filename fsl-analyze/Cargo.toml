@@ -63,7 +63,7 @@ test-support = []
 [dev-dependencies]
 # QSL-3162: exercise the real CG temporal SMT runner against FSL's production
 # typed settlement API; kept dev-only because CG is not an analysis runtime dep.
-filament-contract-codegen = { git = "https://github.com/agent-ix/filament-contract-codegen", rev = "6e139bed2984e86e8f0f8cc2873a6a638fd58256" }
+filament-contract-codegen = { git = "https://github.com/agent-ix/filament-contract-codegen", rev = "7f6c250bb36636c686b33374bbb64703e6154480" }
 # FR-940-AC-24 compares complete tuple-evaluation charge logs on both routes.
 filament-exact = { workspace = true, features = ["test-support"] }
 filament-specification = { workspace = true }

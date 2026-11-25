@@ -34,6 +34,8 @@ pub use mdp::{
     write_value_bounds_proof_document,
 };
 pub(super) mod long_run;
+mod partial;
+pub use partial::partial_lower_probability_proof_document;
 pub(super) mod refutation;
 pub use long_run::{
     LongRunOptimization, LongRunPolicyChoice, LongRunPolicyRow, LongRunProbabilityComponent,
@@ -72,7 +74,7 @@ const CYCLIC_MDP_STATE_PROFILE: &str =
 const CYCLIC_MDP_REWARD_PROFILE: &str =
     "filament.probability-objective/cyclic-mdp-expected-reward/v1";
 const BOUNDED_FAIR_PROFILE: &str = "filament.probability-objective/bounded-fair-eventual/v1";
-const FAIR_MDP_PROFILE: &str = "filament.probability-objective/fair-mdp-eventual/v1";
+const FAIR_MDP_PROFILE: &str = "filament.probability-objective/cyclic-mdp-fair-eventual/v1";
 const TIMED_PROFILE: &str = "filament.probability-objective/timed-product/v1";
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
 
@@ -1392,6 +1394,9 @@ type SubjectGraph = (
     Option<super::cyclic::CapturedStates>,
 );
 
+/// The graph the checker rebuilds for `item`'s base. With `expand`, it is the
+/// explored part of a partial product, those states and their successors,
+/// which only a base `partial` admits.
 #[allow(clippy::too_many_arguments)]
 fn subject_graph_with_identity(
     system: &ModelSystem<'_>,
@@ -1402,6 +1407,7 @@ fn subject_graph_with_identity(
     identity: fsl_foundation::IdentityLimits,
     cyclic_dtmc: bool,
     allow_fair: bool,
+    expand: Option<&BTreeSet<ProbabilityProductKey>>,
     meter: &mut filament_exact::Meter,
     storage: &mut u64,
     control: &super::reward::RewardControl<'_>,
@@ -1431,6 +1437,9 @@ fn subject_graph_with_identity(
             Err(TimedSubjectRefusal::NoTimedModel { .. })
         )
     {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    if expand.is_some() && (allow_fair || partial::cyclic_dtmc(claim) != Some(cyclic_dtmc)) {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     if allow_fair {
@@ -1479,6 +1488,7 @@ fn subject_graph_with_identity(
                 } else {
                     super::reward::RewardProfile::Acyclic
                 },
+                expand,
                 meter,
                 storage,
                 control,
@@ -1549,6 +1559,7 @@ fn subject_graph_with_identity(
             bound,
             super::cyclic::enumerate(
                 system, predicate, reference, workload, limits, cancel, identity, meter, storage,
+                expand,
             )
             .map(|(graph, ranks)| (graph, Some(ranks))),
         ),
@@ -1742,6 +1753,7 @@ fn admit_reward_with_identity(
         identity,
         false,
         false,
+        None,
         &mut meter,
         &mut storage,
         &super::reward::RewardControl::new(cancel),
@@ -1757,6 +1769,7 @@ fn admit_reward_with_identity(
                 identity,
                 true,
                 false,
+                None,
                 &mut meter,
                 &mut storage,
                 &super::reward::RewardControl::new(cancel),
@@ -1832,6 +1845,7 @@ pub fn admit_cyclic_eventual_certificate_subject_with_identity(
         identity,
         true,
         false,
+        None,
         &mut meter,
         &mut 0,
         &super::reward::RewardControl::new(cancel),
@@ -1886,6 +1900,7 @@ fn construct_document(
         identity,
         false,
         allow_fair,
+        None,
         meter,
         storage,
         &super::reward::RewardControl::new(cancel),
@@ -1913,6 +1928,7 @@ fn construct_document(
             identity,
             true,
             allow_fair,
+            None,
             meter,
             storage,
             &super::reward::RewardControl::new(cancel),
@@ -2204,7 +2220,17 @@ fn check_document_bytes(
     match dispatch {
         ProfileDispatch::Measure => {
             return measure::check(
-                system, claims, item, bytes, false, bound_side, offer.role, limits, cancel,
+                system,
+                claims,
+                item,
+                bytes,
+                measure::CheckOptions {
+                    partial_lower: false,
+                    bound_side,
+                    role: offer.role,
+                    limits,
+                    cancel,
+                },
             );
         }
         ProfileDispatch::Timed => {
@@ -2231,9 +2257,18 @@ fn check_document_bytes(
             );
         }
         ProfileDispatch::FairMdp => {
-            if let Some(side) = bound_side {
+            if bound_side.is_some() {
                 return mdp::check_with_value_bound_control(
-                    system, claims, item, bytes, offer, side, limits, cancel, control,
+                    system,
+                    claims,
+                    item,
+                    bytes,
+                    offer,
+                    mdp::ValueBoundControl {
+                        limits,
+                        cancel,
+                        reward: control,
+                    },
                 );
             }
             return mdp::check_with_reward_control(
@@ -2287,20 +2322,53 @@ fn check_document_bytes(
         }
     }
     fair_control.phase(fairness::BoundedFairProbabilityPhase::Graph)?;
-    let (graph, objective, bound, bounded_ranks, event, failures, reward, _captured) =
-        subject_graph_with_identity(
-            system,
-            claims,
-            item,
-            limits,
-            cancel,
-            fsl_foundation::IdentityLimits::default(),
-            document.cyclic_dtmc,
-            !fairness_records.is_empty(),
-            &mut meter,
-            &mut storage,
-            control,
-        )?;
+    // The whole graph first; its subject, or the reason it could not be built.
+    let whole = subject_graph_with_identity(
+        system,
+        claims,
+        item,
+        limits,
+        cancel,
+        fsl_foundation::IdentityLimits::default(),
+        document.cyclic_dtmc,
+        !fairness_records.is_empty(),
+        None,
+        &mut meter,
+        &mut storage,
+        control,
+    );
+    // FSpec FR-411 "Evidence on a partial product": where `max_states` stops
+    // the whole graph, a claim-side `lower` document is checked over the
+    // states it names and their successors.
+    let (subject, explored) = match whole {
+        Err(
+            exhausted @ ProbabilityDocumentError::Limit {
+                limit: ProbabilityDocumentLimit::States,
+                ..
+            },
+        ) if bound_side == Some(SubsystemBoundKind::Lower)
+            && offer.role == CertificateRole::Claim
+            && fairness_records.is_empty() =>
+        {
+            let subject = partial::explored_subject(
+                system,
+                claims,
+                item,
+                limits,
+                cancel,
+                document.cyclic_dtmc,
+                &document.values,
+                &document.targets,
+                exhausted,
+                &mut meter,
+                &mut storage,
+                control,
+            )?;
+            (subject, true)
+        }
+        whole => (whole?, false),
+    };
+    let (graph, objective, bound, bounded_ranks, event, failures, reward, _captured) = subject;
     if objective != document.optimization
         || target_keys(&graph) != document.targets
         || event != document.event
@@ -2344,6 +2412,10 @@ fn check_document_bytes(
             return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
     };
+    // Over the explored part, a ranking has rows for named states only.
+    if explored && ranks.keys().any(|key| !named.contains(key)) {
+        return Ok(malformed_ranking());
+    }
     let reward_upper = reward.is_some() && bound_side == Some(SubsystemBoundKind::Upper);
     let ranked = bound_side != Some(SubsystemBoundKind::Upper) || reward_upper;
     for (key, state) in graph
@@ -2368,9 +2440,14 @@ fn check_document_bytes(
     if ranked && !partial && ranks.len() != graph.states.len() {
         return Ok(malformed_ranking());
     }
-    if let Some(expected) = bounded_ranks
-        .filter(|_| ranked)
-        .filter(|_| !(document.cyclic_dtmc && reward.is_some()))
+    // The derived ranks are a whole graph's. A cyclic reward ranks progress
+    // instead, and so does a partial `lower` over a chain; a partial expected
+    // reward `lower` needs no ranking to be sound (FR-1042 "Conditions"). No
+    // height is derivable past a state the document does not name.
+    let progress_ranked = reward.is_some() && document.cyclic_dtmc;
+    let partial_unbounded = partial && (reward.is_some() || document.cyclic_dtmc);
+    if let Some(expected) =
+        bounded_ranks.filter(|_| ranked && !progress_ranked && !partial_unbounded)
     {
         for (key, actual) in &expected {
             poll(cancel)?;

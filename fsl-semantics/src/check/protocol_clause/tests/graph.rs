@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-218 (TC-663, TC-1056): the checked control tree, the compiled causal
 //! edge relation and its two structural rules, the node kinds' own roles
 //! and channels, and the `choice` and `repeat` decisions over constant

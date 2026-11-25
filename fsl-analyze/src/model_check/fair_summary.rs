@@ -278,6 +278,31 @@ pub(crate) fn candidate_steps_relation<'a>(
     Ok(relation)
 }
 
+/// The relation a stutter, or a delay that takes no step, induces: each
+/// source candidate that the target retains stays, taking no class.
+pub(crate) fn candidate_stutter_relation(
+    source: &[CandidateEnables<'_>],
+    target: &[CandidateEnables<'_>],
+    classes: &[AbstractClass],
+) -> CandidateRelation {
+    let mut relation = CandidateRelation::new();
+    for (ordinal, key, enabled) in source {
+        let source_occurrence = source
+            .iter()
+            .filter(|(candidate, candidate_key, _)| *candidate < *ordinal && *candidate_key == *key)
+            .count();
+        let target_matches: Vec<_> = target.iter().filter(|(_, held, _)| held == key).collect();
+        if let Some(target) = target_matches.get(source_occurrence) {
+            insert_relation_label(
+                &mut relation,
+                ((*ordinal, key.to_vec()), (target.0, key.to_vec())),
+                candidate_label(enabled, classes, |_| false),
+            );
+        }
+    }
+    relation
+}
+
 #[cfg(test)]
 mod tests {
     use ix_trace_rs::trace;
@@ -308,29 +333,4 @@ mod tests {
             ]
         );
     }
-}
-
-/// The relation a stutter, or a delay that takes no step, induces: each
-/// source candidate that the target retains stays, taking no class.
-pub(crate) fn candidate_stutter_relation(
-    source: &[CandidateEnables<'_>],
-    target: &[CandidateEnables<'_>],
-    classes: &[AbstractClass],
-) -> CandidateRelation {
-    let mut relation = CandidateRelation::new();
-    for (ordinal, key, enabled) in source {
-        let source_occurrence = source
-            .iter()
-            .filter(|(candidate, candidate_key, _)| *candidate < *ordinal && *candidate_key == *key)
-            .count();
-        let target_matches: Vec<_> = target.iter().filter(|(_, held, _)| held == key).collect();
-        if let Some(target) = target_matches.get(source_occurrence) {
-            insert_relation_label(
-                &mut relation,
-                ((*ordinal, key.to_vec()), (target.0, key.to_vec())),
-                candidate_label(enabled, classes, |_| false),
-            );
-        }
-    }
-    relation
 }

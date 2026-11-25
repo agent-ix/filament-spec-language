@@ -36,6 +36,7 @@ mod hyper_projected;
 mod hyper_projected_support;
 mod hyper_support;
 mod hyper_world;
+mod letters;
 mod litmus;
 mod manifest_registry;
 mod model_settle_support;
@@ -56,6 +57,7 @@ mod protocol_composition;
 mod protocol_counted_support;
 mod protocol_item_bounds;
 mod provider_external_contract;
+mod provider_schema_support;
 mod provider_test_support;
 mod provision_contract;
 #[path = "../../../tests/support/published_fspec.rs"]

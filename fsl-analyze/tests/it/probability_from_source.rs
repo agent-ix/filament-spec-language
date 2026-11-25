@@ -9,6 +9,7 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::prob_world::{self, World};
+use crate::provider_schema_support::{assert_valid, provider_definition};
 use filament_exact::Cancel;
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
 use fsl_analyze::exact_probabilistic::{
@@ -22,7 +23,7 @@ use fsl_replay::{
 };
 
 use crate::analyze_cli_support::{
-    analyze, assert_no_nested_node_ids, label, request_over, Workspace,
+    analyze, assert_identity_names_claim, assert_no_nested_node_ids, label, request_over, Workspace,
 };
 
 const LINK_UNIT: &str =
@@ -1859,35 +1860,13 @@ fn an_item_with_no_probabilistic_member_takes_every_default() {
     assert_eq!(request["limits"]["max_samples"], 1_u64 << 24, "{item}");
 }
 
-/// One definition of FSpec's backend-provider schema, with the checked-package
-/// schema it refers to.
-fn provider_definition(name: &str) -> jsonschema::JSONSchema {
-    let schema = crate::published_fspec::json("proposals/backend-provider-v1/schema.json");
-    let package = crate::published_fspec::json("proposals/checked-package-v2/schema.json");
-    let definition = json!({
-        "$schema": schema["$schema"],
-        "$defs": schema["$defs"],
-        "$ref": format!("#/$defs/{name}"),
-    });
-    jsonschema::JSONSchema::options()
-        .with_draft(jsonschema::Draft::Draft202012)
-        .with_document("urn:filament:checked-package:v2".to_owned(), package)
-        .compile(&definition)
-        .expect("the schema compiles")
-}
-
-fn assert_valid(compiled: &jsonschema::JSONSchema, instance: &Value, what: &str) {
-    if let Err(errors) = compiled.validate(instance) {
-        let errors: Vec<_> = errors.map(|error| error.to_string()).collect();
-        panic!("{what} violates the schema: {errors:?}\n{instance}");
-    }
-}
-
-/// FR-410, FR-741, FR-322: a real statistical `measured` item's `verdict`
-/// validates against FSpec's backend-provider schema (`StatisticalVerdict`), and
-/// the exact `proved` item's certificate identity and document validate as
-/// `CertificateIdentity` and `ProbabilityCertificate`: each node id is written
-/// in the document-held index form with the owning model named.
+/// FR-410, FR-741, FR-322, FSpec FR-412: a real statistical `measured` item's
+/// `verdict` validates against FSpec's backend-provider schema
+/// (`StatisticalVerdict`), and the exact `proved` item's certificate identity
+/// and document validate as `CertificateIdentity` and
+/// `ProbabilityCertificate`: the identity's `node_id` is the structural id
+/// with the owning model named, and every other node id is written in the
+/// document-held index form.
 #[trace("TC-2066", "FR-741-AC-1", "FR-741-AC-2")]
 #[trace("TC-3154", "FR-621-AC-16")]
 #[test]
@@ -1918,11 +1897,15 @@ fn measured_and_proved_items_validate_against_the_backend_provider_schema() {
         &verdict,
         "the measured verdict",
     );
-    let proved = run(
-        "schema-proved",
-        EVENTUALLY,
-        json!([{"claim": "Eventually", "probabilistic": {"evidence": "exact"}}]),
+    let ws = Workspace::new("schema-proved");
+    let request = request_over(
+        &ws,
+        &unit(EVENTUALLY),
+        LINK_MODEL,
+        &[LINK_START.to_vec()],
+        json!({"items": [{"claim": "Eventually", "probabilistic": {"evidence": "exact"}}]}),
     );
+    let proved = analyze(&request).document();
     let item = &proved["items"][0];
     assert_eq!(label(item), "proved", "{item}");
     let certificate = &item["certificate"];
@@ -1945,10 +1928,7 @@ fn measured_and_proved_items_validate_against_the_backend_provider_schema() {
         &item["request"]["claim"],
         "the proved item's claim locus",
     );
-    assert_eq!(
-        certificate["identity"]["node_id"], item["request"]["claim"]["node"],
-        "{item}"
-    );
+    assert_identity_names_claim(&ws, item);
 }
 
 /// FR-741-AC-2 and FR-1042-AC-6: a `ValueBounds` item writes its `certificate`

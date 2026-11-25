@@ -995,6 +995,21 @@ fn corpus_collections() {
     println!("{report}");
 }
 
+/// A function whose quantifier binder is named like its parameter checks
+/// through the corpus pipeline.
+#[test]
+fn quantifier_binder_shadowing_a_function_parameter_is_allowed() {
+    let directory = corpus_root().join("collections");
+    let stem = "quant-binder-shadow";
+    let program = directory.join(format!("{stem}.native"));
+    let expected: Expectation = serde_json::from_slice(
+        &std::fs::read(directory.join(format!("{stem}.expected.json"))).unwrap(),
+    )
+    .unwrap();
+    let actual = execute(&program, &expected).unwrap();
+    assert_eq!(mismatch(&program, &expected, &actual), None, "{stem}");
+}
+
 /// FR-100-AC-4: a Boolean result crosses the run boundary in tagged form.
 #[trace("FR-100-AC-4")]
 #[test]
@@ -1008,6 +1023,25 @@ fn unbounded_forall_run_result_uses_the_tagged_boolean_envelope() {
     .unwrap();
     let actual = execute(&program, &expected).unwrap();
     assert_eq!(mismatch(&program, &expected, &actual), None, "{stem}");
+}
+
+/// A same-named quantifier binder and qualified operation-parameter read
+/// compile together in a precondition.
+#[test]
+fn operation_parameter_quantifier_shadowing_is_allowed() {
+    let fixtures = corpus_root().join("operations/parameters");
+    let scratch = tempfile::tempdir().expect("operation parameter shadow directory");
+    let stem = "operation-parameter-quantifier-shadow";
+    for extension in ["native", "expected.json", "request.json"] {
+        let name = format!("{stem}.{extension}");
+        std::fs::copy(fixtures.join(&name), scratch.path().join(&name))
+            .unwrap_or_else(|error| panic!("stage {name}: {error}"));
+    }
+    stage_parameter_models(scratch.path(), &fixtures)
+        .unwrap_or_else(|error| panic!("stage operation parameter model: {error}"));
+    let report = run_directory(scratch.path())
+        .unwrap_or_else(|error| panic!("operation parameter shadow corpus: {error}"));
+    assert_eq!(report, "flips_with: none");
 }
 
 #[trace("TC-3064", "FR-680-AC-9")]

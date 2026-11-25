@@ -2429,7 +2429,7 @@ impl MemoryModel for Interleaving {
         _: &ModelSimState,
         post: ModelSimState,
     ) -> Vec<Chosen<Nothing>> {
-        Chosen::only(Written::Applied(post, Nothing))
+        Chosen::only(Written::Applied(Box::new(post), Nothing))
     }
 
     fn internal_steps(&self, _: &Nothing, _: &ModelSimState) -> Vec<MemoryStep<Nothing>> {

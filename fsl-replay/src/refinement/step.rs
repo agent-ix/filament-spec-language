@@ -25,7 +25,7 @@ use fsl_eval::simulation::model::{
     operation_identity_text, AbstractApplication, Judgement, ModelFinding, ModelSimState,
     ModelSystem, Rejection, ResolvedStep, RowReading,
 };
-use fsl_eval::simulation::protocol::ProtocolRefusal;
+use fsl_eval::simulation::protocol::{ProtocolRefusal, StepKind};
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop};
 use fsl_semantics::check::StepClass;
 use fsl_semantics::model::state::ModelState;
@@ -215,6 +215,30 @@ fn sorted_with_duplicate_candidates(
         .collect())
 }
 
+/// Coalesce equal hidden-state candidates for the untimed product while
+/// keeping every incoming path row pointed at the retained state.
+fn sorted_merged_candidates(
+    system: &ModelSystem<'_>,
+    states: impl IntoIterator<Item = ModelState>,
+    rows: &mut [CandidateStep],
+) -> Result<Vec<ModelState>, StepVerdict> {
+    let candidates = sorted(system, states)?;
+    let mut ordinals = std::collections::BTreeMap::<Vec<u8>, usize>::new();
+    for (ordinal, candidate) in candidates.iter().enumerate() {
+        let key = system
+            .state_key_of(candidate)
+            .map_err(|_| fault("candidate-state-encodes"))?
+            .0;
+        ordinals.insert(key, ordinal);
+    }
+    for row in rows {
+        row.post_candidate = *ordinals
+            .get(&row.post_state)
+            .ok_or_else(|| fault("candidate-post-ordinal"))?;
+    }
+    Ok(candidates)
+}
+
 fn assign_post_candidates(
     system: &ModelSystem<'_>,
     candidates: &[ModelState],
@@ -334,6 +358,30 @@ pub fn check_step(
         pre,
         step,
         false,
+        false,
+    )
+}
+
+/// FR-142: check a step in the untimed explicit-state model checker.
+///
+/// Equal hidden abstract states are one candidate in this product. Candidate
+/// step rows still retain every source-to-target path. Timed refinement uses
+/// [`check_step`] so equal states with distinct clock blocks remain separate.
+pub fn check_step_for_model(
+    refinement: &dyn RefinementRead,
+    concrete_system: &ModelSystem<'_>,
+    abstract_system: &ModelSystem<'_>,
+    pre: &RefinementPosition,
+    step: &ConcreteStep<'_>,
+) -> StepResult {
+    check_step_inner(
+        refinement,
+        concrete_system,
+        abstract_system,
+        pre,
+        step,
+        false,
+        true,
     )
 }
 
@@ -344,6 +392,7 @@ fn check_step_inner(
     pre: &RefinementPosition,
     step: &ConcreteStep<'_>,
     allow_protocol_node: bool,
+    merge_candidate_states: bool,
 ) -> StepResult {
     let mut abstract_successors = 0;
     let verdict = decide_step(
@@ -354,6 +403,7 @@ fn check_step_inner(
         step,
         &mut abstract_successors,
         allow_protocol_node,
+        merge_candidate_states,
     );
     StepResult {
         verdict,
@@ -474,6 +524,7 @@ pub fn check_protocol_step(
         pre,
         step,
         protocol_node,
+        false,
     );
     let StepVerdict::Passes { mut post, taken } = model_result.verdict else {
         if matches!(
@@ -570,7 +621,8 @@ pub fn check_protocol_step(
         };
         count = count.saturating_add(u64::try_from(expansion.successors.len()).unwrap_or(u64::MAX));
         for (transition, candidate) in expansion.successors {
-            let Some(application) = transition.application() else {
+            // FR-148: an operation's label is a step that applies it.
+            let Some(application) = transition.applied_application() else {
                 continue;
             };
             if !accepted.contains(application) {
@@ -1253,7 +1305,6 @@ pub(crate) fn protocol_class(
     system: &AbstractProtocolSystem<'_>,
     transition: &fsl_eval::simulation::protocol::ProtocolTransition,
 ) -> Option<String> {
-    use fsl_eval::simulation::protocol::StepKind;
     let protocol = &system.protocol().name;
     let member = transition
         .node()
@@ -1272,11 +1323,12 @@ pub(crate) fn protocol_class(
         }
         StepKind::Fork => format!("fork {protocol}::{}", member?),
         StepKind::Join => format!("join {protocol}::{}", member?),
-        StepKind::CAttempt => format!("{protocol}::{}", transition.template()?),
-        StepKind::CEnd => format!("cend {protocol}::{}", transition.template()?),
-        StepKind::CFail => format!("cfail {protocol}::{}", transition.template()?),
-        StepKind::CTimeout => format!("ctimeout {protocol}::{}", transition.template()?),
-        StepKind::CExpire => format!("cexpire {protocol}::{}", transition.template()?),
+        // A transition's template name already carries its protocol.
+        StepKind::CAttempt => transition.template()?.to_owned(),
+        StepKind::CEnd => format!("cend {}", transition.template()?),
+        StepKind::CFail => format!("cfail {}", transition.template()?),
+        StepKind::CTimeout => format!("ctimeout {}", transition.template()?),
+        StepKind::CExpire => format!("cexpire {}", transition.template()?),
         StepKind::Duplicate => format!("duplicate {protocol}::{}", transition.channel_queue()?.0),
         StepKind::Lose => format!("lose {protocol}::{}", transition.channel_queue()?.0),
         StepKind::Spawn => format!("spawn {protocol}::{}", transition.role_instance()?.0),
@@ -1342,6 +1394,7 @@ fn decide_step(
     step: &ConcreteStep<'_>,
     abstract_successors: &mut u64,
     allow_protocol_node: bool,
+    merge_candidate_states: bool,
 ) -> StepVerdict {
     let Some(before) = pre.abstract_states.first() else {
         return fault("a-position-holds-an-abstract-state");
@@ -1593,7 +1646,9 @@ fn decide_step(
                     position: step.position,
                 });
             }
-            let next = match if hidden {
+            let next = match if hidden && merge_candidate_states {
+                sorted_merged_candidates(abstract_system, next, &mut candidate_steps)
+            } else if hidden {
                 sorted_with_duplicate_candidates(abstract_system, next, &candidate_steps)
             } else {
                 sorted(abstract_system, next)
@@ -1601,10 +1656,12 @@ fn decide_step(
                 Ok(next) => next,
                 Err(verdict) => return verdict,
             };
-            if let Err(verdict) =
-                assign_post_candidates(abstract_system, &next, &mut candidate_steps)
-            {
-                return verdict;
+            if hidden && !merge_candidate_states {
+                if let Err(verdict) =
+                    assign_post_candidates(abstract_system, &next, &mut candidate_steps)
+                {
+                    return verdict;
+                }
             }
             if stuttered {
                 return if hidden {
@@ -1645,6 +1702,7 @@ fn decide_step(
                 arguments,
                 step,
                 abstract_successors,
+                merge_candidate_states,
                 pass_with_states,
             )
         }
@@ -2360,6 +2418,7 @@ fn judge_operation(
     arguments: Arguments,
     step: &ConcreteStep<'_>,
     abstract_successors: &mut u64,
+    merge_candidate_states: bool,
     passes: impl FnOnce(Taken, Vec<ModelState>) -> StepVerdict,
 ) -> StepVerdict {
     let completions = match completions(abstract_system, mapped) {
@@ -2428,6 +2487,8 @@ fn judge_operation(
     if !accepted.is_empty() {
         let next_result = if mapped.hidden.is_empty() {
             sorted(abstract_system, next)
+        } else if merge_candidate_states {
+            sorted_merged_candidates(abstract_system, next, &mut candidate_steps)
         } else {
             sorted_with_duplicate_candidates(abstract_system, next, &candidate_steps)
         };
@@ -2435,8 +2496,12 @@ fn judge_operation(
             (Ok(taken), Ok(next)) => (taken, next),
             (Err(verdict), _) | (_, Err(verdict)) => return verdict,
         };
-        if let Err(verdict) = assign_post_candidates(abstract_system, &next, &mut candidate_steps) {
-            return verdict;
+        if !mapped.hidden.is_empty() && !merge_candidate_states {
+            if let Err(verdict) =
+                assign_post_candidates(abstract_system, &next, &mut candidate_steps)
+            {
+                return verdict;
+            }
         }
         return if mapped.hidden.is_empty() {
             passes(Taken::Abstract(taken), next)

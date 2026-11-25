@@ -49,7 +49,8 @@ protocol `OnImpl` over `Impl` only (FR-147-AC-16).
    `CasRefinesCounter`, and an empty one.
 8. Resolve a value naming one entry of every class over `Full` and `Rich`, `Full` with a `recommend` node added; check a step row whose right side names that `recommend` node.
 9. Resolve `CasTwice`'s list, rename the abstract alias to `S` with the value
-   renamed to match, and resolve again; compare with the empty list.
+   renamed to match, and resolve again; resolve the empty list. In packages of
+   one identity, compare the refinement node's key and body across the three.
 10. Place one defect in the unit's value and the same defect in a supplied
     library's value, with the unit importing the library and with it not
     importing the library.
@@ -68,9 +69,10 @@ protocol `OnImpl` over `Impl` only (FR-147-AC-16).
     row `commitA -> node Spec::Twice::a1(self)`, the row
     `-> node Spec::Twice::a1(true)`, and the headers `abstract Spec::Thrice`,
     `abstract Spec::Counter` and `abstract Spec::LocalTwice` (a protocol the
-    unit declares over the dependency's `Spec`); compare its `refinement`
-    record's obligation identity with step 1's; emit the package and read the
-    refinement node's `protocol`, `dependencies` and node id against step 1's.
+    unit declares over the dependency's `Spec`); with the importing package of
+    the same identity as step 1's, compare `AbstractSide::Protocol`'s
+    `dependency` with step 1's, emit both packages and compare the
+    refinement node's node id, `protocol` and `dependencies` with step 1's.
 16. Check `abstract Spec::OnOther` over the dependency, `abstract
     Spec::OnImpl` over the local protocol, and `CasTwice` over a dependency
     whose `Twice` fails its own checks.
@@ -105,7 +107,10 @@ Tag the tests `#[trace("TC-552", "FR-147-AC-n")]`.
   is in the byte order of the alias-free spellings, the `recommend` node's
   bare path among them; the `recommend` right side is admitted.
 - Step 9: `abstract_internal = [Twice::Done]` before and after the rename,
-  with the same node identity; the empty list gives a different identity.
+  with an equal node key and an equal node body. The empty list gives a node
+  key equal to theirs (equal `package` and `path`, ordinal 0 in all) and an
+  unequal body: no `abstract_internal` member, where theirs is
+  `["Twice::Done"]`.
 - Step 10: the unit's defect is located at (the unit's value, pointer), the
   library's at (that library's value, pointer) and the compilation is not
   admitted whether or not the unit imports the library; no compile-request
@@ -133,11 +138,13 @@ Tag the tests `#[trace("TC-552", "FR-147-AC-n")]`.
   `package_id` and `clause` the key its checked graph holds for `Twice`,
   `abstract_internal = [Twice::Done]`; the node row checks naming `a1`;
   `ill_typed`/`type-mismatch` at `true`; `missing_declaration`/`missing-name`
-  at `Thrice`, at `Counter` and at `LocalTwice`; one `temporal-satisfaction` record whose
-  obligation identity names the dependency's `package_id` and differs from
-  step 1's; the node's `protocol` is the dependency's `package_id` with
-  `Twice`'s node id, its `dependencies` hold no entry for `Twice`, and its node
-  id differs from step 1's.
+  at `Thrice`, at `Counter` and at `LocalTwice`; one `temporal-satisfaction`
+  record; the node's `protocol` is the dependency's `package_id` with
+  `Twice`'s node id, and its `dependencies` hold no entry for `Twice`. Its node
+  id equals step 1's (equal `package` and `path`, ordinal 0 in both) and the
+  two differ: step 1's `AbstractSide::Protocol` has `dependency` `None`, step
+  1's `protocol` names `Twice` in the declaring package, and step 1's
+  `dependencies` hold that clause.
 - Step 16: `invalid_model_binding`/`malformed-declaration` at `OnOther` and
   at `OnImpl`, each with no `CheckedRefinement`; `CompileRefusal::Dependency`
   and no S3 result for the unit.

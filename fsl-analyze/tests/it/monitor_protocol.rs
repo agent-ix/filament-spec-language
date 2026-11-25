@@ -4,6 +4,7 @@
 mod analyze_cli_support;
 mod counter;
 mod fixture_ids;
+mod letters;
 mod litmus;
 mod units;
 

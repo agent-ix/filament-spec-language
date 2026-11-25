@@ -9,6 +9,7 @@ use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::model_check::{check_refinement, ModelCheckRefusal, RefinementCheckRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::operation_identity_text;
+use fsl_eval::simulation::protocol::StepKind;
 use fsl_eval::simulation::TransitionSystem;
 use fsl_replay::{
     check_protocol_initial, check_protocol_step, check_simulation_certificate,
@@ -16,12 +17,12 @@ use fsl_replay::{
     settle_refinement_safety, settle_refinement_safety_with_assumption_replay, Certification,
     ClosureRefusal, ConcreteStep, ModelCheckLimits, ProofBasis, ProtocolAssumptionReplaySettlement,
     RefinementPosition, RefinementTraceSettlement, SafetyOutcome, SettlementBasis,
-    SimulationCertificateRequest, SimulationRefusal, StepVerdict, TerminalValue,
+    SimulationCertificateRequest, SimulationRefusal, StepVerdict, Taken, TerminalValue,
 };
 use ix_trace_rs::trace;
 
 use crate::refinement_fixture::{cas_refines_counter, World, UNLIMITED};
-use crate::refinement_fixture::{key, Variant, CAS, SPEC};
+use crate::refinement_fixture::{failing_compensation, key, Variant, CAS, SPEC};
 use crate::ring_world::{
     key as ring_key, RingWorld, Variant as RingVariant, QUEUE as RING_QUEUE, RING as RING_MODEL,
     UNLIMITED as RING_UNLIMITED,
@@ -915,7 +916,9 @@ fn required_weak_whole_fairness_does_not_imply_concrete_strong_each() {
             ..
         })
     ));
-    assert_eq!(incomplete.basis, SettlementBasis::Unsettled);
+    // FR-127 V-7: a limit stop settles `resource-incomplete` with basis
+    // `unavailable`; only an inconclusive verdict is `unsettled`.
+    assert_eq!(incomplete.basis, SettlementBasis::Unavailable);
 }
 
 /// FR-148-AC-14 (TC-553): a satisfied refinement `ensure` remains a
@@ -1002,7 +1005,7 @@ fn a_satisfied_ensure_does_not_change_the_assumption_relation() {
 
 /// FR-148-AC-10 (TC-553): a TSO flush fairness member participates in
 /// the assumption relation and its paired lasso replays.
-#[trace("TC-553", "FR-148-AC-10")]
+#[trace("TC-553", "FR-148-AC-10", "FR-145-AC-7")]
 #[test]
 fn tso_flush_fairness_replays_against_an_unmet_inc_assumption() {
     let variant = Variant {
@@ -1199,6 +1202,44 @@ fn tso_flush_fairness_replays_against_an_unmet_inc_assumption() {
     let replay = replay_protocol_assumption_witness(refinement, &preopened, witness)
         .expect("the TSO fairness witness replays");
     assert_eq!(replay, ProtocolAssumptionReplaySettlement::Reproduced);
+
+    // FR-145-AC-7: a changed identity settles inconclusive. Dropping the
+    // selected member of the writer flush, which has members on the loop,
+    // must not replay.
+    let mut forged = witness.clone();
+    let writer_flush = forged
+        .identities
+        .iter_mut()
+        .find(|identity| {
+            identity.side == fsl_replay::AssumptionSide::Specification
+                && identity.origin == fsl_replay::AssumptionOrigin::Memory
+                && matches!(identity.target, fsl_replay::AssumptionTarget::Protocol(ref fairness)
+                    if matches!(fairness.target(), fsl_eval::simulation::protocol::ProtocolTarget::MemoryStep {
+                        step: "flush", branch, ..
+                    } if branch == "writer"))
+                && identity.selected.is_some()
+        })
+        .expect("the writer flush identity selects a thread");
+    writer_flush.selected = None;
+    assert!(matches!(
+        replay_protocol_assumption_witness(refinement, &preopened, &forged)
+            .expect("the forged witness replays"),
+        ProtocolAssumptionReplaySettlement::Inconclusive(_)
+    ));
+    let mut forged = witness.clone();
+    forged
+        .identities
+        .iter_mut()
+        .filter(|identity| identity.side == fsl_replay::AssumptionSide::Implementation)
+        .for_each(|identity| {
+            identity.granularity = filament_semantic_value::fairness::FairnessGranularity::Each;
+            identity.selected = None;
+        });
+    assert!(matches!(
+        replay_protocol_assumption_witness(refinement, &preopened, &forged)
+            .expect("the forged witness replays"),
+        ProtocolAssumptionReplaySettlement::Inconclusive(_)
+    ));
 }
 
 /// FR-148-AC-12 (TC-553): an undecided precondition on an identified
@@ -2917,4 +2958,307 @@ fn a_protocol_whose_classes_every_concrete_run_takes_satisfies_their_fairness() 
         "every concrete run takes both classes: {:?}",
         outcome.liveness
     );
+}
+
+/// A protocol over the abstract counter whose template `Undo` follows the
+/// increment `a1`: once `Paid` and `Fail` are taken, the compensation thread
+/// can `cattempt` a second increment, `cfail`, `ctimeout` or `cexpire`. The
+/// refinement maps both concrete commits to `inc` and leaves `value` unmapped,
+/// so the mapped state cannot tell those steps apart.
+fn compensated_increment() -> &'static str {
+    "profile p = \"filament.protocol.finite-global/v1\";\n\
+     profile t0 = \"filament.temporal.timed/v1\";\n\
+     record Fwd { ok: Boolean; }\n\
+     record Try { ok: Boolean; }\n\
+     protocol Comp using p over (c: Spec::Counter) on origin {\n\
+     role w on Spec::Counter;\n\
+     compensate Undo for Main::Paid as (fwd: Fwd) by w on Spec::Counter::inc \
+     using t0 clock \"c\" {\n\
+     activate first (trigger: Boolean) when { true } { }\n\
+     within [0,10]; attempts 1 of Try;\n\
+     retry (earlier: Try, later: Try) { false };\n\
+     commit never; recover (recovery: Boolean) { true }; }\n\
+     scheduling adversarial;\n\
+     run sequence Main {\n\
+     attempt a1 by w on Spec::Counter::inc contracts [] as (r1: Boolean) { true };\n\
+     effect Paid of Main::a1 as (pd: Fwd) { true };\n\
+     event Fail by w as (failed: Boolean) { true };\n\
+     }\n\
+     finish Done as (d: Boolean) { true };\n\
+     }\n\
+     refinement CompRefines using inf abstract Spec::Comp concrete Impl {\n\
+     population Spec::counters from Impl::counters;\n\
+     object Spec::Counter from Impl::Counter { }\n\
+     step Impl::Counter::commitA -> Spec::Counter::inc(self);\n\
+     step Impl::Counter::commitB -> Spec::Counter::inc(self);\n\
+     step Impl::Counter::beginA -> stutter;\n\
+     step Impl::Counter::beginB -> stutter;\n\
+     step Impl::Counter::retryA -> stutter;\n\
+     step Impl::Counter::retryB -> stutter;\n\
+     }"
+}
+
+/// The decision of the concrete operations `names`, in order, from the first
+/// initial state: what the last one took on the abstract side.
+fn last_taken(world: &World, systems: &fsl_replay::RefinementSystems<'_>, names: &[&str]) -> Taken {
+    let protocol = systems.abstract_protocol.as_ref().expect("a protocol side");
+    let mut state = systems.concrete.initial_states()[0].clone();
+    let initial = check_protocol_initial(
+        world.refinement(),
+        &systems.concrete,
+        &systems.abstract_system,
+        protocol,
+        0,
+        state.state(),
+    )
+    .expect("initial states settle");
+    let StepVerdict::Passes {
+        post: mut position,
+        taken: mut last,
+    } = initial.verdict
+    else {
+        panic!("the root maps: {:?}", initial.verdict);
+    };
+    for (step_index, name) in (1..).zip(names) {
+        let operation = operation_identity_text(&key(
+            crate::refinement_fixture::CAS,
+            &format!("Counter/{name}"),
+        ))
+        .expect("the concrete operation identity");
+        let (transition, post_state) = systems
+            .concrete
+            .successors(&state)
+            .expect("the concrete state expands")
+            .successors
+            .into_iter()
+            .find(|(step, _)| step.operation() == operation)
+            .unwrap_or_else(|| panic!("{name} is enabled"));
+        let result = check_protocol_step(
+            world.refinement(),
+            &systems.concrete,
+            &systems.abstract_system,
+            protocol,
+            &position,
+            &ConcreteStep {
+                position: step_index,
+                transition: Some(&transition),
+                post: &post_state,
+            },
+        );
+        let StepVerdict::Passes { post, taken } = result.verdict else {
+            panic!("{name} passes: {:?}", result.verdict);
+        };
+        last = taken;
+        position = post;
+        state = post_state;
+    }
+    *last
+}
+
+/// The abstract protocol systems of `world`, over its counter `c`.
+fn counter_protocol_systems(world: &World) -> fsl_replay::RefinementSystems<'_> {
+    open_protocol_systems(
+        world.refinement(),
+        &world.concrete_request(UNLIMITED),
+        world.package(),
+        vec![world.abstract_initial()],
+        protocol_binding().over,
+        &[],
+    )
+    .expect("the compensating protocol opens")
+}
+
+/// The decision of the concrete steps `names`, in order, over
+/// [`compensated_increment`] with `Paid`, `Fail` and `listed` as the internal
+/// list: along each abstract trace the last one took, each step's kind and the
+/// class its observation label names.
+fn compensated_run(listed: &[&str], names: &[&str]) -> Vec<Vec<(StepKind, String)>> {
+    let internal: Vec<&str> = ["Spec::Comp::Paid", "Spec::Comp::Fail"]
+        .into_iter()
+        .chain(listed.iter().copied())
+        .collect();
+    let world = World::with_internals(
+        Variant {
+            peek: false,
+            ..Variant::CAS
+        },
+        compensated_increment(),
+        serde_json::json!([{"refinement": "CompRefines", "internal": internal}]),
+    );
+    let systems = counter_protocol_systems(&world);
+    let protocol = systems.abstract_protocol.as_ref().expect("a protocol side");
+    match last_taken(&world, &systems, names) {
+        Taken::ProtocolTraces(paths) => paths
+            .iter()
+            .map(|path| {
+                path.transitions
+                    .iter()
+                    .map(|step| {
+                        let label = fsl_replay::protocol_observation_label(protocol, step)
+                            .expect("the step has an observation label");
+                        (step.kind(), label.step)
+                    })
+                    .collect()
+            })
+            .collect(),
+        Taken::Stutter => Vec::new(),
+        other => panic!("the last step takes protocol traces or stutters: {other:?}"),
+    }
+}
+
+/// The kinds of the compensation steps.
+const COMPENSATION_KINDS: [StepKind; 5] = [
+    StepKind::CAttempt,
+    StepKind::CEnd,
+    StepKind::CFail,
+    StepKind::CTimeout,
+    StepKind::CExpire,
+];
+
+/// After the first commit, the internal closure takes exactly the
+/// compensation kinds `listed` names, given the internal entries `entries`.
+fn assert_closure_takes_only(entries: &[&str], listed: &[StepKind]) {
+    let traces = compensated_run(entries, &["beginA", "commitA"]);
+    for kind in COMPENSATION_KINDS {
+        assert_eq!(
+            traces.iter().flatten().any(|(taken, _)| *taken == kind),
+            listed.contains(&kind),
+            "{entries:?}: {kind:?} in {traces:?}"
+        );
+    }
+}
+
+/// An internal template path makes the template's `cattempt` steps internal.
+#[trace("TC-553", "FR-148-AC-1", "FSpec-TC-386", "FSpec-FR-432-AC-8")]
+#[test]
+fn an_internal_template_entry_closes_over_compensation_attempts_only() {
+    assert_closure_takes_only(&["Spec::Comp::Undo"], &[StepKind::CAttempt]);
+}
+
+/// An internal `cend` entry makes the thread's end internal; a `cfail` entry
+/// beside it brings the thread to where it can end.
+#[trace("TC-553", "FR-148-AC-1", "FSpec-TC-386", "FSpec-FR-432-AC-8")]
+#[test]
+fn an_internal_cend_entry_closes_over_the_end_of_a_failed_thread() {
+    assert_closure_takes_only(
+        &["cfail Spec::Comp::Undo", "cend Spec::Comp::Undo"],
+        &[StepKind::CFail, StepKind::CEnd],
+    );
+}
+
+/// An internal `cfail` entry makes the template's failed attempts internal.
+#[trace("TC-553", "FR-148-AC-1", "FSpec-TC-386", "FSpec-FR-432-AC-8")]
+#[test]
+fn an_internal_cfail_entry_closes_over_failed_attempts_only() {
+    assert_closure_takes_only(&["cfail Spec::Comp::Undo"], &[StepKind::CFail]);
+}
+
+/// An internal `ctimeout` entry makes the template's timed-out attempts
+/// internal.
+#[trace("TC-553", "FR-148-AC-1", "FSpec-TC-386", "FSpec-FR-432-AC-8")]
+#[test]
+fn an_internal_ctimeout_entry_closes_over_timed_out_attempts_only() {
+    assert_closure_takes_only(&["ctimeout Spec::Comp::Undo"], &[StepKind::CTimeout]);
+}
+
+/// An internal `cexpire` entry makes the template's expiry internal.
+#[trace("TC-553", "FR-148-AC-1", "FSpec-TC-386", "FSpec-FR-432-AC-8")]
+#[test]
+fn an_internal_cexpire_entry_closes_over_expiry_only() {
+    assert_closure_takes_only(&["cexpire Spec::Comp::Undo"], &[StepKind::CExpire]);
+}
+
+/// A compensation step's observation label names its class, the protocol
+/// spelled once.
+#[trace("TC-553", "FR-148", "FSpec-FR-379")]
+#[test]
+fn each_compensation_step_is_labelled_with_its_class() {
+    let traces = compensated_run(
+        &[
+            "Spec::Comp::Undo",
+            "cend Spec::Comp::Undo",
+            "cfail Spec::Comp::Undo",
+            "ctimeout Spec::Comp::Undo",
+            "cexpire Spec::Comp::Undo",
+        ],
+        &["beginA", "commitA"],
+    );
+    let labels: std::collections::BTreeSet<(String, &str)> = traces
+        .iter()
+        .flatten()
+        .filter(|(kind, _)| COMPENSATION_KINDS.contains(kind))
+        .map(|(kind, label)| (format!("{kind:?}"), label.as_str()))
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            ("CAttempt", "Comp::Undo"),
+            ("CEnd", "cend Comp::Undo"),
+            ("CExpire", "cexpire Comp::Undo"),
+            ("CFail", "cfail Comp::Undo"),
+            ("CTimeout", "ctimeout Comp::Undo"),
+        ]
+        .into_iter()
+        .map(|(kind, label)| (kind.to_owned(), label))
+        .collect()
+    );
+}
+
+/// The concrete `commitB` takes the compensation's `cattempt` of `inc` and
+/// never `other`, which names the same application and applies nothing.
+fn assert_operation_row_never_takes(other: StepKind) {
+    let traces = compensated_run(&[], &["beginA", "commitA", "beginB", "commitB"]);
+    let visible: Vec<StepKind> = traces
+        .iter()
+        .filter_map(|trace| trace.first().map(|(kind, _)| *kind))
+        .collect();
+    assert!(visible.contains(&StepKind::CAttempt), "{visible:?}");
+    assert!(!visible.contains(&other), "{other:?} in {visible:?}");
+}
+
+/// FSpec FR-736: a failed compensation attempt is no step of its operation.
+#[trace("TC-553", "FR-148-AC-1")]
+#[test]
+fn an_operation_row_is_not_satisfied_by_a_cfail() {
+    assert_operation_row_never_takes(StepKind::CFail);
+}
+
+/// FSpec FR-736: a timed-out compensation attempt is no step of its
+/// operation.
+#[trace("TC-553", "FR-148-AC-1")]
+#[test]
+fn an_operation_row_is_not_satisfied_by_a_ctimeout() {
+    assert_operation_row_never_takes(StepKind::CTimeout);
+}
+
+/// A step whose abstract traces apply `add` and fail the compensation of
+/// `inc` takes the class of `add` and not the class of `inc`.
+#[trace("TC-657", "FR-212-AC-5")]
+#[test]
+fn a_failed_compensation_attempt_takes_no_abstract_operation_class() {
+    let world = failing_compensation();
+    let systems = counter_protocol_systems(&world);
+    let taken = last_taken(&world, &systems, &["bump"]);
+    let Taken::ProtocolTraces(paths) = &taken else {
+        panic!("protocol traces: {taken:?}");
+    };
+    let kinds: Vec<StepKind> = paths
+        .iter()
+        .flat_map(|path| path.transitions.iter().map(|step| step.kind()))
+        .collect();
+    assert!(kinds.contains(&StepKind::CFail), "{kinds:?}");
+    assert!(!kinds.contains(&StepKind::CAttempt), "{kinds:?}");
+
+    let fairness: Vec<_> = world
+        .refinement()
+        .abstract_operation_fairness()
+        .cloned()
+        .collect();
+    let classes = fsl_replay::abstract_classes(&systems.abstract_system, &fairness, &[])
+        .expect("both constraints name declared operations");
+    let takes: Vec<bool> = classes
+        .iter()
+        .map(|class| class.is_taken_by(&taken))
+        .collect();
+    assert_eq!(takes, [true, false], "add, then inc");
 }

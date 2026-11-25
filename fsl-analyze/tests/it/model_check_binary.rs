@@ -17,6 +17,7 @@ mod example_units;
 mod hyper_world;
 mod lasso_replay;
 mod lasso_support;
+mod letters;
 mod litmus;
 mod liveness;
 mod liveness_support;
@@ -46,6 +47,7 @@ mod protocol_replay_mode;
 mod protocol_roles;
 mod protocol_step_view;
 mod protocol_system;
+mod provider_schema_support;
 #[expect(
     dead_code,
     reason = "some shared reduction fixture helpers are used by sibling test binaries"

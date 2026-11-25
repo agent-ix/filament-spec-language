@@ -226,8 +226,10 @@ fn worker_settings_change_only_their_own_counts() {
     ] {
         let actual =
             CallerLimits::from_operands([operand]).expect("a single worker setting is accepted");
-        let mut expected = CallerLimits::default();
-        expected.workers = workers;
+        let expected = CallerLimits {
+            workers,
+            ..CallerLimits::default()
+        };
         assert_eq!(actual, expected, "{operand}");
     }
     for name in [

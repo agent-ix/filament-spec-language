@@ -479,19 +479,21 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
         witness,
         bound,
         "probability",
-        scope.types(),
-        scope.variant_types(),
+        &fsl_replay::ProbabilisticValueSchema::new(
+            scope.types(),
+            scope.variant_types(),
+            scope.enums(),
+        ),
         &state_key,
         &scheduler,
     )
     .expect("source declarations spell the actual evidence");
-    let actual = fsl_replay::probabilistic_wire_with_enum_members(
+    let actual = fsl_replay::probabilistic_wire(
         witness,
         bound,
         "probability",
-        world.types(),
-        &[],
-        world.enum_members(),
+        &fsl_replay::ProbabilisticValueSchema::new(world.types(), &[], &[])
+            .with_enum_members(world.enum_members()),
         &state_key,
         &scheduler,
     )

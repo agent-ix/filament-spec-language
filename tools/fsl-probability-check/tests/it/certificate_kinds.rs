@@ -184,10 +184,10 @@ fn value_bounds_certificates_are_accepted() {
     let source = likely(
         "inf",
         "Even",
-        "probability >= rational(1,2) [ eventually holds(m.delivered) ]",
+        "probability >= rational(2,5) [ eventually holds(m.delivered) ]",
     );
     let limits = ExactProbLimits {
-        max_rational_bits: 2,
+        max_rational_bits: 1,
         ..ExactProbLimits::default()
     };
     accepted_then_rejected(&certified(&source, limits), &["lower", "upper"]);

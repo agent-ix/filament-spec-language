@@ -80,9 +80,7 @@ mod orders_model {
     include!("../../../../fsl-semantics/tests/fixtures/orders_model.rs");
 }
 
-#[path = "../../../../fsl-semantics/tests/support/tc235_k2.rs"]
-#[allow(dead_code, reason = "the correspondence fixture uses a small subset")]
-mod correspondence_fixture;
+use super::tc235_k2 as correspondence_fixture;
 
 /// TC-1408 variant S-M: S with `model M = "test/orders";` selecting fixture
 /// D's package and the protocol `Sell`, whose roles and `over` name the model
@@ -141,9 +139,41 @@ fn fixture_s_m_emits_the_selected_and_source_object_routes() {
     let wire = wire(&emission);
     source_object_node(&wire, "Order");
     source_object_node(&wire, "Sub");
+    // One correspondence node, for the selected model: the source model is no
+    // model selection and contributes none.
+    let correspondence: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "model_correspondence")
+        .collect();
+    let [selected] = correspondence.as_slice() else {
+        panic!("one model correspondence node: {correspondence:?}");
+    };
+    let declarations: Vec<&str> = selected["body"]["members"]
+        .as_array()
+        .expect("the correspondence body is an aggregate")
+        .iter()
+        .filter_map(|member| member["value"].as_str())
+        .filter(|value| value.starts_with("ix://"))
+        .collect();
+    assert!(declarations.contains(&"ix://test/orders/Order"));
+    assert!(
+        declarations
+            .iter()
+            .all(|declaration| declaration.starts_with("ix://test/orders/")),
+        "only the selected model's declarations: {declarations:?}"
+    );
 }
 
 fn correspondence_fixture(diamond: bool) -> (Emission, Vec<u8>) {
+    correspondence_unit(
+        diamond,
+        "model M = \"test/orders\";\nfunction keep(): Boolean pure { true }\n",
+    )
+}
+
+/// The unit of `declarations` emitted against the TC-195 domain package, and
+/// that package's document.
+fn correspondence_unit(diamond: bool, declarations: &str) -> (Emission, Vec<u8>) {
     use correspondence_fixture::{construct, declaration, domain_document, field, id};
 
     let mut types = vec![
@@ -205,8 +235,7 @@ fn correspondence_fixture(diamond: bool) -> (Emission, Vec<u8>) {
     .expect("the TC-195 domain package encodes");
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
         .expect("the TC-195 model package admits");
-    let text =
-        format!("{HEADER}model M = \"test/orders\";\nfunction keep(): Boolean pure {{ true }}\n");
+    let text = format!("{HEADER}{declarations}");
     let mut declarations = assemble_with_models(text.as_bytes(), &packages)
         .expect("the unit assembles against the TC-195 package");
     let pending = declarations
@@ -512,6 +541,124 @@ fn tc195_n02_checked_package_reader_retains_one_diamond_member_with_direct_links
             vec!["ix://test/orders/C", "ix://test/orders/A/x"],
         ]
     );
+}
+
+/// Each row's `(owner original node, original node)`, sorted, repeats kept.
+/// Every original is the TC-195 package's.
+fn identity_nodes(
+    rows: &[fsl_semantics::model::key::EffectiveDeclarationPreimage],
+) -> Vec<(Option<String>, String)> {
+    let mut nodes: Vec<_> = rows
+        .iter()
+        .map(|row| {
+            assert_eq!(row.original.package, "test/orders");
+            (
+                row.owner_effective_type
+                    .as_ref()
+                    .map(|owner| owner.original().node().to_owned()),
+                row.original.node.clone(),
+            )
+        })
+        .collect();
+    nodes.sort();
+    nodes
+}
+
+/// The effective declarations of the TC-195 N01 chain: types `A` and `B`,
+/// `A`'s two fields, and `B`'s two inherited fields and own field.
+fn n01_identity_nodes() -> Vec<(Option<String>, String)> {
+    [
+        (None, "A"),
+        (None, "B"),
+        (Some("A"), "A/id"),
+        (Some("A"), "A/x"),
+        (Some("B"), "A/id"),
+        (Some("B"), "A/x"),
+        (Some("B"), "B/bid"),
+    ]
+    .into_iter()
+    .map(|(owner, node)| {
+        (
+            owner.map(|owner| format!("ix://test/orders/{owner}")),
+            format!("ix://test/orders/{node}"),
+        )
+    })
+    .collect()
+}
+
+#[trace("FR-400-AC-14", "FSpec-TC-195")]
+#[test]
+fn a_source_object_package_reads_back_only_the_selected_models_rows() {
+    const WIDGET: &str = "object Widget { ready: Boolean; population widgets; }\n";
+    let (mixed, document) =
+        correspondence_unit(false, &format!("model M = \"test/orders\";\n{WIDGET}"));
+    source_object_node(&wire(&mixed), "Widget");
+    assert_eq!(
+        identity_nodes(&read_correspondence(&mixed, &document)),
+        n01_identity_nodes()
+    );
+
+    let (source_only, _) = correspondence_unit(false, WIDGET);
+    source_object_node(&wire(&source_only), "Widget");
+    let read = crate::checked_v2::read_checked_package_v2(
+        source_only.package().bytes(),
+        library(),
+        crate::checked_v2::V2ReadLimits::fixture(),
+        source_only.evidence(),
+    )
+    .expect("the source-only package reads");
+    assert_eq!(read.into_value().package.model_correspondence(), []);
+}
+
+#[trace("FR-400-AC-14", "FSpec-TC-195")]
+#[test]
+fn two_aliases_of_one_package_read_back_each_row_once() {
+    let (emission, document) = correspondence_unit(
+        false,
+        "model M = \"test/orders\";\nmodel N = \"test/orders\";\n\
+         function keep(): Boolean pure { true }\n",
+    );
+    assert_eq!(
+        identity_nodes(&read_correspondence(&emission, &document)),
+        n01_identity_nodes()
+    );
+}
+
+/// A view under an alias with no `model_root` is not the source model's, so
+/// emission refuses it rather than leaving its declarations out.
+#[test]
+fn a_selected_view_without_a_model_root_refuses() {
+    let emit = |rootless: bool| {
+        let packages =
+            fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
+        let text = format!("{HEADER}function keep(): Boolean pure {{ true }}\n");
+        let mut declarations =
+            assemble_with_models(text.as_bytes(), &packages).expect("the unit assembles");
+        let pending = declarations
+            .link_dispatch(Default::default())
+            .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+        if rootless {
+            let fsl_semantics::model::normalize::NormalizeOutcome::Completed(view) =
+                fsl_semantics::model::normalize::normalize(
+                    &orders_model::model_package(false),
+                    fsl_semantics::model::accounting::ModelNormalizationLimits::UNLIMITED,
+                )
+            else {
+                panic!("fixture D normalizes");
+            };
+            declarations.selected_views.insert("Ghost".to_owned(), view);
+        }
+        let graph = declarations
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
+            .unwrap_or_else(|refusals| panic!("{:?}", pending.report(refusals)));
+        emit_checked(&CheckedPackage::link(graph)).map(|_| ())
+    };
+    assert!(matches!(emit(false), Ok(())));
+    assert!(matches!(emit(true), Err(EmitRefusal::SourceMapInvariant)));
 }
 
 #[trace("FR-400-AC-14", "FSpec-TC-195")]

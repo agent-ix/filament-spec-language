@@ -431,11 +431,50 @@ pub(crate) fn analyze_under(request: &Path, settings: &[(fsl_foundation::Setting
     }
 }
 
+/// FSpec FR-412 `CertificateNodeId`: every operand of `node_id` is a string or
+/// a nested node id, never an index segment.
+pub(crate) fn assert_structural_node_id(node_id: &Value) {
+    let mut pending = vec![node_id];
+    while let Some(current) = pending.pop() {
+        let object = current
+            .as_object()
+            .unwrap_or_else(|| panic!("{current} is no node id in {node_id}"));
+        let mut members: Vec<&str> = object.keys().map(String::as_str).collect();
+        members.sort_unstable();
+        assert_eq!(members, ["ordinal", "package", "path"], "{node_id}");
+        let path = object["path"].as_array().expect("a node path");
+        pending.extend(path.iter().filter(|segment| !segment.is_string()));
+    }
+}
+
+/// FSL FR-621: `item`'s certificate identity names the node its request claim
+/// locus holds. The locus node, resolved through the graph of the package the
+/// request in `ws` compiles to, is the identity's structural `node_id`.
+pub(crate) fn assert_identity_names_claim(ws: &Workspace, item: &Value) {
+    let written = std::fs::read(ws.path("analyze.json")).expect("the request document");
+    let document: Value = serde_json::from_slice(&written).expect("the request is JSON");
+    let (_, package) = package_selection(ws, &document["request"]);
+    let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(&package)
+        .expect("the package has a graph");
+    let claim = graph
+        .structural_value(&item["request"]["claim"]["node"])
+        .expect("the claim node resolves");
+    assert_eq!(item["certificate"]["identity"]["node_id"], claim, "{item}");
+}
+
 /// FSpec FR-322 "A path never holds a node_id object": no object in `document`
-/// is a node id whose path holds another node id.
+/// is a node id whose path holds another node id. A certificate identity's
+/// `node_id` is the one exception (FSpec FR-412): it is the structural id.
 pub(crate) fn assert_no_nested_node_ids(document: &Value) {
     let mut pending = vec![document];
     while let Some(current) = pending.pop() {
+        if let Some(identity) = current
+            .as_object()
+            .filter(|object| fsl_semantics::check::wire_id::certificate_identity(object))
+        {
+            assert_structural_node_id(&identity["node_id"]);
+            continue;
+        }
         let nested = current
             .get("path")
             .and_then(Value::as_array)

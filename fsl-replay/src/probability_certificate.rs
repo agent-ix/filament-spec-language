@@ -1076,6 +1076,7 @@ fn enumerate_model_graph_with_distributions<P: StatePredicate>(
         max_edges,
         cancel,
         stop_at_target,
+        None,
         key_of,
         reserve,
         distributions,
@@ -1092,6 +1093,13 @@ enum ModelVisitPhase {
     AfterTarget,
 }
 
+/// Rebuild the model graph breadth-first from the one initial state.
+///
+/// With `expand`, only those keys are expanded (FSpec FR-411 "Evidence on a
+/// partial product"): every other reached state has its target read and is kept
+/// with no choices, and is never passed to `visit`. `max_states` then bounds
+/// nothing here, since the caller bounds `expand` by it, and `max_edges` still
+/// bounds the successors kept.
 #[allow(clippy::too_many_arguments)]
 fn enumerate_model_graph_visiting<P: StatePredicate>(
     system: &ModelSystem<'_>,
@@ -1101,6 +1109,7 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
     max_edges: usize,
     cancel: &Cancel,
     stop_at_target: bool,
+    expand: Option<&BTreeSet<ProbabilityProductKey>>,
     key_of: &impl Fn(&ModelSimState) -> Result<ProbabilityProductKey, ExactProbabilityGraphError>,
     reserve: &mut impl FnMut(usize) -> Result<(), ExactProbabilityGraphError>,
     distributions: &mut impl FnMut(
@@ -1146,7 +1155,8 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
     let mut edge_count = 0usize;
     while let Some((key, state)) = pending.pop_front() {
         poll_cancel(cancel)?;
-        if visit_phase == ModelVisitPhase::BeforeTarget {
+        let expanded = expand.is_none_or(|named| named.contains(&key));
+        if expanded && visit_phase == ModelVisitPhase::BeforeTarget {
             visit(&key, &state, None)?;
         }
         let terminal = if let Some(target) = target {
@@ -1177,10 +1187,10 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
         } else {
             None
         };
-        if visit_phase == ModelVisitPhase::AfterTarget {
+        if expanded && visit_phase == ModelVisitPhase::AfterTarget {
             visit(&key, &state, terminal)?;
         }
-        let (choices, action_hints) = if terminal.is_some() && stop_at_target {
+        let (choices, action_hints) = if !expanded || (terminal.is_some() && stop_at_target) {
             (Vec::new(), Vec::new())
         } else {
             let distributions = distributions(&state, failure)?;
@@ -1230,7 +1240,7 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
                         probability,
                     });
                     if !seen.contains(&target_key) {
-                        if seen.len() >= max_states {
+                        if expand.is_none() && seen.len() >= max_states {
                             return Err(ExactProbabilityGraphError::LimitReached);
                         }
                         reserve(

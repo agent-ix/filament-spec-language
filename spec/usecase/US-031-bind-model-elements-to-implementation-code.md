@@ -49,7 +49,8 @@ an unbound element are held back, and the rest go on to generation.
   `attemptUpdate` to a Rust function
 - **When** the unit compiles
 - **Then** the checked package carries the three bindings, and recompiling
-  after changing one field binding gives a different `package_id`
+  after changing one field binding gives a package whose relation node holds
+  the new binding and is unequal to the first
 
 ### US-031-EX-2: An unbound element is refused by name
 

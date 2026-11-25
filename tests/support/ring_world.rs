@@ -17,7 +17,9 @@
 use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
-use filament_exact::{Integer, ScalarLimits, Value};
+use filament_exact::{
+    FieldValue, Integer, ScalarLimits, UnionMember, UnionValue, Value, ValueType,
+};
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
@@ -29,12 +31,12 @@ use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
 use fsl_semantics::model::state::{ModelState, StateObject};
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 #[path = "ring_queue.rs"]
 pub(crate) mod ring_queue;
 
-pub use ring_queue::{QUEUE, RING, key, node};
+pub use ring_queue::{key, node, QUEUE, RING};
 
 const BOOLEAN: &str = "ix://filament/native/Boolean";
 
@@ -113,6 +115,17 @@ pub struct Variant {
     /// The abstract `Queue` also has `x: Int[0, 1]` and `y: Int[0, 1]`
     /// (FR-140-AC-13).
     pub xy: bool,
+    /// A record field whose payload is a reference to the owning object type.
+    pub boxed_reference: bool,
+    /// Both models carry `Pair(Reference<self>, Boolean)`.
+    pub tuple_reference: bool,
+    /// Both models carry `Holder { Empty, Has(Reference<self>) }`.
+    pub union_reference: bool,
+    /// Both models carry `Parcel { owners: Sequence<Option<Reference<self>>> }`.
+    pub parcel_reference: bool,
+    /// Initial `a` references a distinct initial `b` for record and parcel
+    /// certificate fixtures (FR-630-AC-7/10).
+    pub composite_two_targets: bool,
     /// The abstract `enq` postcondition is its conjunction repeated this
     /// many times more, so it costs more than the concrete clauses
     /// (`HeavyEnq`, FR-141-AC-9).
@@ -140,6 +153,53 @@ fn framed(
     operation["frame"]["modifies"] = json!(identities(modifies));
     operation["frame"]["modifies_receiver"] = json!(identities(receiver_modifies));
     operation
+}
+
+fn pair_type(package: &str, object: &str) -> Json {
+    ring_queue::declaration(
+        package,
+        "Pair",
+        "tuple_type",
+        json!({"positions": [
+            {"identity": node(package, "Pair/p0"), "typeRef": node(package, object), "origin": ring_queue::origin(package, "Pair/p0")},
+            {"identity": node(package, "Pair/p1"), "typeRef": BOOLEAN, "origin": ring_queue::origin(package, "Pair/p1")},
+        ]}),
+    )
+}
+
+fn holder_type(package: &str, object: &str) -> Json {
+    let source = |line| {
+        json!({"source": {
+            "sourceIdentity": node(package, "spec"), "path": "spec.fspec",
+            "startLine": line, "startColumn": 1,
+        }})
+    };
+    ring_queue::declaration(
+        package,
+        "Holder",
+        "variant_type",
+        json!({"variants": [
+            {"identity": node(package, "variant/Holder-Empty"), "name": "Empty", "origin": source(1)},
+            {"identity": node(package, "variant/Holder-Has"), "name": "Has", "payloadType": node(package, object), "origin": source(2)},
+        ]}),
+    )
+}
+
+fn parcel_type(package: &str, object: &str) -> (Json, Json) {
+    let option = ring_queue::option(package, "MaybeRef", &node(package, object));
+    let parcel = ring_queue::declaration(
+        package,
+        "Parcel",
+        "record_value_type",
+        json!({"fields": [ring_queue::field(
+            package,
+            "Parcel",
+            "owners",
+            &node(package, "MaybeRef"),
+            (0, 2, true),
+        )]}),
+    );
+    (option, parcel)
 }
 
 /// The abstract package: `Queue { items }` with `enq(x)` and `deq()`.
@@ -191,6 +251,19 @@ fn queue_document(variant: Variant) -> Vec<u8> {
             "OptionDigit",
             &node(QUEUE, "Digit"),
         ));
+    }
+    if variant.boxed_reference || variant.tuple_reference || variant.union_reference || variant.parcel_reference {
+        types.push(ring_queue::declaration(
+            QUEUE,
+            "Box",
+            "record_value_type",
+            json!({"fields": [ring_queue::single(QUEUE, "Box", "target", &node(QUEUE, "Queue"))]}),
+        ));
+        types.push(pair_type(QUEUE, "Queue"));
+        types.push(holder_type(QUEUE, "Queue"));
+        let (option, parcel) = parcel_type(QUEUE, "Queue");
+        types.push(option);
+        types.push(parcel);
     }
     types.push(ring_queue::object_type(
         QUEUE,
@@ -278,6 +351,32 @@ fn queue_fields(variant: Variant) -> Vec<Json> {
         fields.push(ring_queue::single(QUEUE, "Queue", "x", &digit));
         fields.push(ring_queue::single(QUEUE, "Queue", "y", &digit));
     }
+    if variant.boxed_reference {
+        fields.push(ring_queue::single(
+            QUEUE,
+            "Queue",
+            "box",
+            &node(QUEUE, "Box"),
+        ));
+    }
+    if variant.tuple_reference {
+        let mut pair = ring_queue::single(QUEUE, "Queue", "pair", &node(QUEUE, "Pair"));
+        pair["presence"] = json!("optional");
+        fields.push(pair);
+    }
+    if variant.union_reference {
+        let mut holder = ring_queue::single(QUEUE, "Queue", "holder", &node(QUEUE, "Holder"));
+        holder["presence"] = json!("optional");
+        fields.push(holder);
+    }
+    if variant.parcel_reference {
+        fields.push(ring_queue::single(
+            QUEUE,
+            "Queue",
+            "parcel",
+            &node(QUEUE, "Parcel"),
+        ));
+    }
     fields
 }
 
@@ -309,30 +408,46 @@ fn ring_document(variant: Variant) -> Vec<u8> {
         &["Ring/head", "Ring/size"],
         &[],
     );
+    let mut types = vec![
+        ring_queue::bounded(RING, "Digit", 1),
+        ring_queue::bounded(RING, "Two", 2),
+    ];
+    if variant.boxed_reference || variant.tuple_reference || variant.union_reference || variant.parcel_reference {
+        types.push(ring_queue::declaration(
+            RING,
+            "Box",
+            "record_value_type",
+            json!({"fields": [ring_queue::single(RING, "Box", "target", &node(RING, "Ring"))]}),
+        ));
+        types.push(pair_type(RING, "Ring"));
+        types.push(holder_type(RING, "Ring"));
+        let (option, parcel) = parcel_type(RING, "Ring");
+        types.push(option);
+        types.push(parcel);
+    }
+    types.extend([
+        ring_queue::object_type(RING, "Ring", ring_fields(variant), Vec::new()),
+        ring_queue::object_type(
+            RING,
+            "Slot",
+            vec![
+                ring_queue::single(RING, "Slot", "ring", &node(RING, "Ring")),
+                ring_queue::single(RING, "Slot", "index", &digit),
+                ring_queue::single(RING, "Slot", "value", &digit),
+            ],
+            if variant.subtypes {
+                vec![put, put2, take, take2]
+            } else {
+                vec![put, take]
+            },
+        ),
+    ]);
     ring_queue::document(
         RING,
-        vec![
-            ring_queue::bounded(RING, "Digit", 1),
-            ring_queue::bounded(RING, "Two", 2),
-            ring_queue::object_type(RING, "Ring", ring_fields(variant), Vec::new()),
-            ring_queue::object_type(
-                RING,
-                "Slot",
-                vec![
-                    ring_queue::single(RING, "Slot", "ring", &node(RING, "Ring")),
-                    ring_queue::single(RING, "Slot", "index", &digit),
-                    ring_queue::single(RING, "Slot", "value", &digit),
-                ],
-                if variant.subtypes {
-                    vec![put, put2, take, take2]
-                } else {
-                    vec![put, take]
-                },
-            ),
-        ]
-        .into_iter()
-        .chain((variant.next || variant.sub_ring || variant.chain).then(sub_ring))
-        .collect(),
+        types
+            .into_iter()
+            .chain((variant.next || variant.sub_ring || variant.chain).then(sub_ring))
+            .collect(),
         vec![
             rings_population(variant),
             ring_queue::population(RING, "slots", "Slot"),
@@ -361,6 +476,27 @@ fn ring_fields(variant: Variant) -> Vec<Json> {
             "chain",
             &node(RING, "Ring"),
             (0, 2, true),
+        ));
+    }
+    if variant.boxed_reference {
+        fields.push(ring_queue::single(RING, "Ring", "box", &node(RING, "Box")));
+    }
+    if variant.tuple_reference {
+        let mut pair = ring_queue::single(RING, "Ring", "pair", &node(RING, "Pair"));
+        pair["presence"] = json!("optional");
+        fields.push(pair);
+    }
+    if variant.union_reference {
+        let mut holder = ring_queue::single(RING, "Ring", "holder", &node(RING, "Holder"));
+        holder["presence"] = json!("optional");
+        fields.push(holder);
+    }
+    if variant.parcel_reference {
+        fields.push(ring_queue::single(
+            RING,
+            "Ring",
+            "parcel",
+            &node(RING, "Parcel"),
         ));
     }
     fields
@@ -458,6 +594,27 @@ pub fn ring_is_queue(items: &str) -> String {
          step R::Slot::take -> Q::Queue::deq(self.ring);\n\
          }}"
     )
+}
+
+/// `RingIsQueue` with a by-name `Box.target: Reference<Ring>` carrier.
+pub fn boxed_refinement() -> String {
+    ring_is_queue("items = sequence[]; box = self.box;")
+}
+
+/// `RingIsQueue` with an ordinal-paired `Pair` row.
+pub fn pair_refinement() -> String {
+    ring_is_queue("items = sequence[]; pair = self.pair;")
+}
+
+/// `RingIsQueue` with a tag-paired `Holder` row.
+pub fn holder_refinement() -> String {
+    ring_is_queue("items = sequence[]; holder = self.holder;")
+}
+
+/// `RingIsQueue` with recursively paired Parcel fields, sequence positions,
+/// and option payloads.
+pub fn parcel_refinement() -> String {
+    ring_is_queue("items = sequence[]; parcel = self.parcel;")
 }
 
 /// `RingIsQueue` over the `twin` variant: the one concrete `Ring` is the
@@ -605,6 +762,7 @@ fn snapshot(
 
 /// The unit's package, the two models' documents and their initial states.
 pub struct RingWorld {
+    composite_two_targets: bool,
     package: CheckedPackage,
     packages: fsl_semantics::model::intake::PackageInput,
     snapshots: fsl_semantics::model::observation::DocumentProvision,
@@ -653,10 +811,42 @@ impl RingWorld {
             queue_fields["x"] = json!({"integer": "0"});
             queue_fields["y"] = json!({"integer": "0"});
         }
+        if variant.boxed_reference {
+            queue_fields["box"] = json!({"record": {"type": node(QUEUE, "Box"), "fields": {
+                "target": {"reference": {"population": node(QUEUE, "queues"), "key":
+                    if variant.composite_two_targets { "b" } else { "r" }}}
+            }}});
+        }
+        if variant.tuple_reference {
+            queue_fields["pair"] = json!({"absent": {}});
+        }
+        if variant.union_reference {
+            queue_fields["holder"] = json!({"absent": {}});
+        }
+        if variant.parcel_reference {
+            let owners = if variant.composite_two_targets {
+                json!({"sequence": [
+                    {"present": {"reference": {"population": node(QUEUE, "queues"), "key": "b"}}},
+                    {"absent": {}}
+                ]})
+            } else {
+                json!({"sequence": []})
+            };
+            queue_fields["parcel"] = json!({"record": {"type": node(QUEUE, "Parcel"), "fields": {
+                "owners": owners
+            }}});
+        }
+        let queue_objects = if variant.composite_two_targets {
+            vec![
+                json!({"key": "a", "type": node(QUEUE, "Queue"), "fields": queue_fields.clone()}),
+                json!({"key": "b", "type": node(QUEUE, "Queue"), "fields": queue_fields.clone()}),
+            ]
+        } else {
+            vec![json!({"key": "r", "type": node(QUEUE, "Queue"), "fields": queue_fields})]
+        };
         let mut queue_populations = vec![
             json!({"population": node(QUEUE, "queues"), "complete": true,
-            "objects": [{"key": "r", "type": node(QUEUE, "Queue"),
-                "fields": queue_fields}]}),
+            "objects": queue_objects}),
         ];
         if variant.subtypes {
             queue_populations
@@ -677,24 +867,58 @@ impl RingWorld {
         if variant.chain {
             ring_fields["chain"] = json!({"sequence": []});
         }
+        if variant.boxed_reference {
+            ring_fields["box"] = json!({"record": {"type": node(RING, "Box"), "fields": {
+                "target": {"reference": {"population": node(RING, "rings"), "key":
+                    if variant.composite_two_targets { "b" } else { "r" }}}
+            }}});
+        }
+        if variant.tuple_reference {
+            ring_fields["pair"] = json!({"absent": {}});
+        }
+        if variant.union_reference {
+            ring_fields["holder"] = json!({"absent": {}});
+        }
+        if variant.parcel_reference {
+            let owners = if variant.composite_two_targets {
+                json!({"sequence": [
+                    {"present": {"reference": {"population": node(RING, "rings"), "key": "b"}}},
+                    {"absent": {}}
+                ]})
+            } else {
+                json!({"sequence": []})
+            };
+            ring_fields["parcel"] = json!({"record": {"type": node(RING, "Parcel"), "fields": {
+                "owners": owners
+            }}});
+        }
         let slot = |key: &str, index: u8| {
             json!({"key": key, "type": node(RING, "Slot"), "fields": {
-                "ring": {"reference": {"population": node(RING, "rings"), "key": "r"}},
+                "ring": {"reference": {"population": node(RING, "rings"), "key":
+                    if variant.composite_two_targets { "a" } else { "r" } }},
                 "index": {"integer": index.to_string()}, "value": {"integer": "0"},
             }})
+        };
+        let ring_objects = if variant.composite_two_targets {
+            vec![
+                json!({"key": "a", "type": node(RING, "Ring"), "fields": ring_fields.clone()}),
+                json!({"key": "b", "type": node(RING, "Ring"), "fields": ring_fields.clone()}),
+            ]
+        } else {
+            vec![json!({"key": "r", "type": node(RING, "Ring"), "fields": ring_fields})]
         };
         let ring_initial = snapshot(
             RING,
             vec![
                 json!({"population": node(RING, "rings"), "complete": true,
-                    "objects": [{"key": "r", "type": node(RING, "Ring"),
-                        "fields": ring_fields}]}),
+                    "objects": ring_objects}),
                 json!({"population": node(RING, "slots"), "complete": true,
                     "objects": [slot("s0", 0), slot("s1", 1)]}),
             ],
             &mut snapshots,
         );
         Self {
+            composite_two_targets: variant.composite_two_targets,
             package: CheckedPackage::link(graph),
             packages: packages(variant),
             snapshots,
@@ -751,13 +975,21 @@ impl RingWorld {
         let universes = if model == QUEUE {
             vec![PopulationUniverse {
                 population: key(QUEUE, "queues"),
-                keys: vec!["r".to_owned()],
+                keys: if self.composite_two_targets {
+                    vec!["a".to_owned(), "b".to_owned()]
+                } else {
+                    vec!["r".to_owned()]
+                },
             }]
         } else {
             vec![
                 PopulationUniverse {
                     population: key(RING, "rings"),
-                    keys: vec!["r".to_owned()],
+                    keys: if self.composite_two_targets {
+                        vec!["a".to_owned(), "b".to_owned()]
+                    } else {
+                        vec!["r".to_owned()]
+                    },
                 },
                 PopulationUniverse {
                     population: key(RING, "slots"),
@@ -814,6 +1046,86 @@ pub fn ring_state(system: &ModelSystem<'_>, head: i64, size: i64, values: [i64; 
     let reference = system
         .object_reference(&key(RING, "Ring"), "r")
         .expect("the ring is referenced");
+    let mut ring_fields =
+        BTreeMap::from([(ring("head"), integer(head)), (ring("size"), integer(size))]);
+    if let Some(ValueType::Composite(box_type)) = system
+        .fields_of(&key(RING, "Ring"))
+        .and_then(|fields| fields.iter().find(|field| field.name == "box"))
+        .map(|field| &field.value_type)
+    {
+        ring_fields.insert(
+            ring("box"),
+            filament_exact::from_admitted_slots(
+                box_type.clone(),
+                vec![FieldValue::Present(Value::Reference(reference.clone()))].into_boxed_slice(),
+            ),
+        );
+    }
+    if let Some(ValueType::Composite(pair_type)) = system
+        .fields_of(&key(RING, "Ring"))
+        .and_then(|fields| fields.iter().find(|field| field.name == "pair"))
+        .map(|field| &field.value_type)
+    {
+        ring_fields.insert(
+            ring("pair"),
+            filament_exact::from_admitted_slots(
+                pair_type.clone(),
+                vec![
+                    FieldValue::Present(Value::Reference(reference.clone())),
+                    FieldValue::Present(Value::Boolean(true)),
+                ]
+                .into_boxed_slice(),
+            ),
+        );
+    }
+    if let Some(ValueType::Composite(holder_type)) = system
+        .fields_of(&key(RING, "Ring"))
+        .and_then(|fields| fields.iter().find(|field| field.name == "holder"))
+        .map(|field| &field.value_type)
+    {
+        let member = UnionMember::from_admitted(holder_type.clone(), "Has")
+            .expect("the Holder Has tag is admitted");
+        ring_fields.insert(
+            ring("holder"),
+            UnionValue::from_admitted(member, vec![Value::Reference(reference.clone())]),
+        );
+    }
+    if let Some(ValueType::Composite(parcel_type)) = system
+        .fields_of(&key(RING, "Ring"))
+        .and_then(|fields| fields.iter().find(|field| field.name == "parcel"))
+        .map(|field| &field.value_type)
+    {
+        let filament_semantic_value::declaration::CompositeShape::Record(fields) = system
+            .composite_shape(parcel_type)
+            .expect("the Parcel declaration is admitted")
+        else {
+            panic!("Parcel is a record");
+        };
+        let ValueType::Collection(owners) = &fields
+            .iter()
+            .find(|field| field.name() == "owners")
+            .expect("Parcel.owners")
+            .value_type()
+        else {
+            panic!("Parcel.owners is a sequence");
+        };
+        let ValueType::Option(owner) = owners.element() else {
+            panic!("Parcel.owners contains options");
+        };
+        let some = filament_exact::OptionValue::from_admitted(
+            (**owner).clone(),
+            Some(Value::Reference(reference.clone())),
+        );
+        let none = filament_exact::OptionValue::from_admitted((**owner).clone(), None);
+        let values = filament_exact::from_admitted((**owners).clone(), vec![some, none]);
+        ring_fields.insert(
+            ring("parcel"),
+            filament_exact::from_admitted_slots(
+                parcel_type.clone(),
+                vec![FieldValue::Present(values)].into_boxed_slice(),
+            ),
+        );
+    }
     let slots = values
         .iter()
         .enumerate()
@@ -842,10 +1154,7 @@ pub fn ring_state(system: &ModelSystem<'_>, head: i64, size: i64, values: [i64; 
                     "r".to_owned(),
                     StateObject {
                         type_identity: key(RING, "Ring"),
-                        fields: BTreeMap::from([
-                            (ring("head"), integer(head)),
-                            (ring("size"), integer(size)),
-                        ]),
+                        fields: ring_fields,
                     },
                 )]),
             ),

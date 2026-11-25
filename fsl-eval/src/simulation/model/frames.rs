@@ -1041,6 +1041,16 @@ struct Delta {
     deleted: Vec<(DeclarationKey, String)>,
 }
 
+struct CompletionContext<'a> {
+    candidate: (ModelState, Vec<WrittenSlots>),
+    delta: &'a Delta,
+    post_references: &'a [ObjectReference],
+    budget: &'a mut Budget,
+    contract: &'a mut Vec<ContractFinding>,
+    successors: &'a mut Vec<Applied>,
+    result_independent: bool,
+}
+
 impl Run<'_, '_, '_> {
     fn effect(&self) -> &OperationEffect {
         self.application.declaration.effect()
@@ -1105,7 +1115,7 @@ impl Run<'_, '_, '_> {
             if types.is_empty() {
                 continue;
             }
-            let used = self.walk.state.state.populations.get(population);
+            let used = self.walk.state.state().populations.get(population);
             for key in keys {
                 if used.is_some_and(|objects| objects.contains_key(key)) {
                     continue;
@@ -1466,15 +1476,15 @@ impl Run<'_, '_, '_> {
                 // a broken internal invariant.
                 return Err(stop(BROKEN));
             };
-            self.complete(
-                self.collection_writes(candidate, &delta)?,
-                &delta,
-                &post_references,
+            self.complete(CompletionContext {
+                candidate: self.collection_writes(candidate, &delta)?,
+                delta: &delta,
+                post_references: &post_references,
                 budget,
                 contract,
                 successors,
-                plan.result_independent,
-            )?;
+                result_independent: plan.result_independent,
+            })?;
             if plan.stop_after_first && successors.len() > initial {
                 return Ok(true);
             }
@@ -1492,7 +1502,7 @@ impl Run<'_, '_, '_> {
         dimensions: &[Dimension<'_>],
         digits: &[u128],
     ) -> Result<ModelState, ExpansionStop> {
-        let state = &self.walk.state.state;
+        let state = self.walk.state.state();
         let mut populations = state.populations.clone();
         for (population, key) in deleted {
             if let Some(objects) = populations.get_mut(*population) {
@@ -1569,7 +1579,7 @@ impl Run<'_, '_, '_> {
         candidate: &ModelState,
         touched: Option<&BTreeSet<&DeclarationKey>>,
     ) -> Result<Result<Delta, FrameRefused>, ExpansionStop> {
-        let pre = &self.walk.state.state;
+        let pre = self.walk.state.state();
         let empty = BTreeMap::new();
         let populations: BTreeSet<&DeclarationKey> = pre
             .populations
@@ -1708,7 +1718,7 @@ impl Run<'_, '_, '_> {
     /// one field, and the frame decision accepts or refuses it.
     fn writable_fields(&self) -> Result<WritableFields, ExpansionStop> {
         let system = self.walk.system;
-        let pre = &self.walk.state.state;
+        let pre = self.walk.state.state();
         let references = self.walk.references();
         let mut writable = BTreeSet::new();
         for row in &self.walk.rows {
@@ -1781,7 +1791,7 @@ impl Run<'_, '_, '_> {
         delta: &Delta,
     ) -> Result<StepEffect, ExpansionStop> {
         let system = self.walk.system;
-        let pre = &self.walk.state.state;
+        let pre = self.walk.state.state();
         let reference = |state: &ModelState, population: &DeclarationKey, key: &str| {
             state
                 .populations
@@ -2135,16 +2145,16 @@ impl Run<'_, '_, '_> {
     /// Pair `candidate` with each result and keep it as a successor when some
     /// pair's effective postcondition is true, its effect naming the
     /// collections `written`.
-    fn complete(
-        &self,
-        (candidate, written): (ModelState, Vec<WrittenSlots>),
-        delta: &Delta,
-        post_references: &[ObjectReference],
-        budget: &mut Budget,
-        contract: &mut Vec<ContractFinding>,
-        successors: &mut Vec<Applied>,
-        result_independent: bool,
-    ) -> Result<(), ExpansionStop> {
+    fn complete(&self, context: CompletionContext<'_>) -> Result<(), ExpansionStop> {
+        let CompletionContext {
+            candidate: (candidate, written),
+            delta,
+            post_references,
+            budget,
+            contract,
+            successors,
+            result_independent,
+        } = context;
         let mut effect = self.effect_of(&candidate, delta)?;
         effect.written = written;
         let plain = if self.walk.candidate_visitor.is_some() {
@@ -2303,7 +2313,7 @@ fn retain_outcome(walk: &Walk<'_, '_>, next: &Applied) -> Result<(), ExpansionSt
         for argument in &applied.arguments {
             count = count.add(&argument.occ());
         }
-        for objects in applied.state.state.populations.values() {
+        for objects in applied.state.state().populations.values() {
             count = count.add(&filament_exact::Integer::one());
             for object in objects.values() {
                 count = count.add(&filament_exact::Integer::one());

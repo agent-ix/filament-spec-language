@@ -18,7 +18,7 @@ use super::state::AnchorInput;
 use super::{Binder, Binders, Lowering, fault};
 use crate::check::claims::BinderSite;
 use crate::check::family::OccurrenceRole;
-use crate::check::node_key::{LeafTerm, LiteralValue};
+use crate::check::node_key::{BindingValue, BodyTerm, LeafTerm, LiteralValue, MemberTerm};
 use crate::check::refinement::{
     CheckedRefinement, CheckedRow, KeyedCatalogClass, KeyedFairnessRow, KeyedHistoryRow,
     KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows, KeyedStepRow, KeyedStepTarget,
@@ -179,34 +179,50 @@ impl Lowering<'_> {
         Ok(key)
     }
 
-    /// The term of a history field's initial value, typed at the field's declared
-    /// type and located at the refinement: an inline literal for an enum member or
-    /// an absent option, otherwise a reference to a `literal` node (FSpec FR-322
-    /// "Refinement row expressions": a local history-literal reference).
+    /// The lowered initial term of a history field, typed at its declared
+    /// type and located at the refinement. Present options are `option_value`
+    /// nodes around the recursively lowered payload.
     fn history_initial(
         &mut self,
         value: &Value,
         declared: &ValueType,
         location: &Location,
     ) -> Result<LeafTerm, CheckRefusal> {
-        // An enum member and an absent option are written inline. An enum member's
-        // node is an `enum_value`, and at an option-typed history the reader admits
-        // only a reference to an `option_value` node, never to a `literal` (FSpec
-        // FR-375 `histories`).
-        let inline = match value {
-            Value::Enum(member) => Some(LiteralValue::Enum(member.variant().case().to_owned())),
-            Value::Option(option) if option.payload().is_none() => Some(LiteralValue::None),
-            _ => None,
-        };
-        if let Some(literal) = inline {
+        let mut current_value = value;
+        let mut current_type = declared;
+        let mut option_types = Vec::new();
+        while let (Value::Option(option), ValueType::Option(payload_type)) =
+            (current_value, current_type)
+        {
+            let Some(payload) = option.payload() else {
+                break;
+            };
+            option_types.push(current_type);
+            current_value = payload;
+            current_type = payload_type;
+        }
+        // An enum member is written inline as a history initial; the enum's
+        // own node is not a literal (FSpec FR-375 `histories`).
+        let mut term = if let Value::Enum(member) = current_value {
             let ty = self
-                .type_ref(declared, location)?
+                .type_ref(current_type, location)?
                 .admitted()
                 .cloned()
                 .ok_or_else(|| fault(location, KeyFault::UnresolvedDraft))?;
-            return Ok(LeafTerm::literal(ty, literal));
+            LeafTerm::literal(ty, LiteralValue::Enum(member.variant().case().to_owned()))
+        } else {
+            self.literal_at(location, current_value, current_type, None)?
+        };
+        for option_type in option_types.into_iter().rev() {
+            let semantic_type = self.type_ref(option_type, location)?;
+            term = self.value_node_at(
+                location,
+                "option_value",
+                semantic_type,
+                BodyTerm::aggregate(vec![MemberTerm::binding("value", BindingValue::Leaf(term))]),
+            )?;
         }
-        self.literal_at(location, value, declared, None)
+        Ok(term)
     }
 
     /// The lowered term of one row expression, over one `parameter` node per

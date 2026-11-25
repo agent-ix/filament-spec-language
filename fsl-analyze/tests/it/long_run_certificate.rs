@@ -621,29 +621,58 @@ fn reachable_undefined_predicate_retains_its_family_cause() {
     );
 }
 
+/// An event-position workload claim settles as its infinite-trace twin does
+/// ("Long-run claim profile admission"): `Service` is at phase 0 for 1 of an
+/// expected 151/50 positions per cycle, so both are refuted by the DTMC
+/// long-run certificate of value 50/151 and neither issues a proof document.
 #[trace("TC-1401", "FR-201-AC-30")]
+#[trace("TC-3190", "FR-201-AC-74")]
 #[test]
-fn finite_profile_claims_issue_no_long_run_document() {
-    {
-        let source = "probabilistic Unsupported using ev on M over (s: M::Server) under Steady on origin { long_run_fraction holds(s.phase = 0) >= rational(1,2) }";
-        let world = World::new(&prob_world::service(source));
+fn an_event_position_workload_claim_settles_as_its_infinite_trace_twin_does() {
+    for profile in ["ev", "inf"] {
+        let source = format!("probabilistic Below using {profile} on M over (s: M::Server) under Steady on origin {{ long_run_fraction holds(s.phase = 0) >= rational(1,2) }}");
+        let world = World::new(&prob_world::service(&source));
         let records = analyze_items(
             &Engines::fsl().unwrap(),
             vec![exact_probabilistic_item(
                 RequestIndex::new(0),
-                world.request("Unsupported", ModelCheckLimits::default()),
+                world.request("Below", ModelCheckLimits::default()),
             )],
             &Cancel::new(),
         );
-        let fsl_analyze::analyze::Settlement::Disposed(disposed) = &records[0].settlement else {
-            panic!("expected unsupported disposition: {:?}", records[0]);
-        };
+        let terminal = records[0]
+            .terminal()
+            .unwrap_or_else(|| panic!("{profile} settles: {:?}", records[0].settlement));
         assert_eq!(
-            disposed.kind,
-            fsl_analyze::analyze::DispositionKind::Unsupported
+            terminal.value(),
+            &fsl_replay::TerminalValue::Refuted,
+            "{profile}"
         );
-        assert!(records[0].terminal().is_none());
-        assert!(records[0].exact_probabilistic.is_none());
+        assert!(terminal.exact_certificate_document().is_none(), "{profile}");
+        assert!(records[0].exact_probabilistic.is_none(), "{profile}");
+        let witness = records[0]
+            .probabilistic_counterexample
+            .as_ref()
+            .expect("the refutation carries its replayed counterexample")
+            .evidence();
+        let document: serde_json::Value = serde_json::from_slice(
+            witness
+                .subsystem
+                .as_ref()
+                .expect("a subsystem certificate")
+                .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(document["kind"], "long-run", "{profile}");
+        assert_eq!(
+            document["objective"]["profile"], "filament.probability-objective/dtmc-long-run/v1",
+            "{profile}"
+        );
+        assert_eq!(
+            document["components"][0]["value"],
+            serde_json::json!({"numerator": "50", "denominator": "151"}),
+            "{profile}"
+        );
     }
 }
 

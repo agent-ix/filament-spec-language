@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-381's recorded outputs over a protocol that checks as a whole, and the
 //! commit-dominance rule over the compiled causal edge relation (TC-1057,
 //! TC-1058).

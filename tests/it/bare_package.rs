@@ -7,14 +7,14 @@ use filament_contract_model::CheckedPackageV2;
 use fsl_eval::temporal::evidence::{ActivationState, EvidencePackage, Truth};
 use fsl_package::{BarePackage, IdentityFileRefusal, IdentityMember, ReadIdentityRows};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::checked_handoff::{admitted, request, tree, KINDS};
+use super::checked_handoff::{KINDS, admitted, request, tree};
 use super::temporal_package_route::{
     clause_ids, event_clauses, event_clauses_over, recipe, recipe_naming,
     request as evidence_request, run,
 };
-use fsl_command::checked_handoff::{evidence, write, Corpus};
+use fsl_command::checked_handoff::{Corpus, evidence, write};
 
 #[trace("TC-2624", "FR-944-AC-10")]
 #[test]
@@ -28,9 +28,11 @@ fn bare_reader_route_keeps_the_exact_admitted_package_bytes() {
         bare.canonical_bytes(),
         Some(built.emission.package().bytes())
     );
-    assert!(BarePackage::new(read.admitted())
-        .canonical_bytes()
-        .is_none());
+    assert!(
+        BarePackage::new(read.admitted())
+            .canonical_bytes()
+            .is_none()
+    );
 }
 
 use super::bare_equality::tc1070 as population_fixture;
@@ -41,8 +43,8 @@ fn matrix(
     package: &EvidencePackage<'_>,
     clause: &filament_contract_model::CheckedNodeId,
 ) -> Vec<(String, fsl_eval::temporal::evidence::EvidenceRequest)> {
-    use fsl_eval::temporal::evidence::{EvidenceCounter, TemporalEvidenceLimits};
     use fsl_eval::temporal::Valuation;
+    use fsl_eval::temporal::evidence::{EvidenceCounter, TemporalEvidenceLimits};
     let base = evidence_request(package, clause, None, 3);
     let mut requests = vec![("true".to_owned(), base.clone())];
     let mut falsified = base.clone();
@@ -1219,8 +1221,7 @@ fn through(import: &str, name: &str, callee: &str) -> String {
     )
 }
 
-const CLAUSE: &str =
-    "temporal Due using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin { \
+const CLAUSE: &str = "temporal Due using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin { \
      always[0,2] holds(%CALL%(c.versionNumber >= 1)) }";
 
 /// IR-1325 AC3: the closure over a chain (root, mid, leaf) and a diamond
@@ -1280,8 +1281,7 @@ fn the_dependency_closure_follows_a_chain_and_lists_a_diamond_once() {
     );
 }
 
-const ONE_CLAUSE: &str =
-    "temporal Due using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin { \
+const ONE_CLAUSE: &str = "temporal Due using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin { \
      always[0,3] holds(c.versionNumber >= 1) }";
 
 /// Rewrite the interval of the `always` node of `built`'s package.
@@ -1443,8 +1443,8 @@ fn the_reader_refuses_absent_clock_rows_and_a_missing_profile_row() {
 #[trace("FR-532-AC-3", "TC-1332")]
 #[test]
 fn every_temporal_operator_gives_the_same_result_over_the_three_routes() {
-    use fsl_eval::temporal::evidence::EvidencePosition;
     use fsl_eval::temporal::Valuation;
+    use fsl_eval::temporal::evidence::EvidencePosition;
     let p = "holds(c.versionNumber >= 1)";
     let q = "holds(c.versionNumber >= 2)";
     let bodies = [
@@ -1826,6 +1826,10 @@ fn two_joins_on_one_budget_are_charged_cumulatively() {
 
 /// FR-531-AC-24 (TC-1331): the view, the evidence constructors and the handoff
 /// writer refuse a native budget one short with their own typed denial.
+/// FR-255-AC-17/18/19 (TC-721): I2's native identity join accepts both bounds
+/// at their maximum, refuses zero storage at its first positive storage
+/// charge, and reports exact work/storage boundaries as typed limit evidence.
+#[trace("TC-721", "FR-255-AC-17", "FR-255-AC-18", "FR-255-AC-19")]
 #[trace("TC-1331", "FR-531-AC-24")]
 #[test]
 fn the_view_the_constructors_and_the_writer_refuse_a_budget_one_short() {
@@ -1858,10 +1862,45 @@ fn the_view_the_constructors_and_the_writer_refuse_a_budget_one_short() {
             .with_work(work)
             .with_storage(storage)
     };
+    let maximum = built
+        .try_read_under(&built.emission, limits(u64::MAX, u64::MAX))
+        .expect("u64::MAX native-join bounds admit the I2 read");
+    maximum
+        .evaluation_view()
+        .expect("u64::MAX native-join bounds admit the evaluation view");
     let exact = built
         .try_read_under(&built.emission, limits(view_need.work, view_need.storage))
         .expect("the reader admits");
     assert!(exact.evaluation_view().is_ok());
+    let zero_storage = built
+        .try_read_under(&built.emission, limits(u64::MAX, 0))
+        .expect("zero native-join storage does not block the I2 byte read");
+    match zero_storage.evaluation_view() {
+        Err(fsl_package::ViewFailure::Exhausted(denial)) => {
+            use filament_semantic_value::catalog::CatalogCoded;
+            let fsl_package::NativeJoinFailure::Rows(native) = &denial.native else {
+                panic!(
+                    "zero storage refuses during the identity row join: {:?}",
+                    denial.native
+                );
+            };
+            assert_eq!(native.code(), fsl_package::NativeRowErrorCode::StorageLimit);
+            let denied = native
+                .denied()
+                .expect("NativeRowError exposes its typed denied charge");
+            assert_eq!(
+                denied.kind,
+                filament_contract_model::NativeJoinChargeKind::Storage
+            );
+            assert!(denied.amount > 0, "the first storage charge is positive");
+            assert_eq!(denial.limit.setting().name(), "i2.native_join_storage");
+            assert_eq!(denial.limit.configured_bound(), 0);
+            assert_eq!(denial.limit.actual(), denied.amount);
+            assert_eq!(denial.limit.catalog_code().code(), "stage_limit_exceeded");
+        }
+        Err(other) => panic!("zero storage returned the wrong refusal: {other:?}"),
+        Ok(_) => panic!("zero storage admitted the first positive join charge"),
+    }
     for (work, storage, code) in [
         (view_need.work - 1, view_need.storage, Code::ExhaustedWork),
         (
@@ -1876,14 +1915,29 @@ fn the_view_the_constructors_and_the_writer_refuse_a_budget_one_short() {
         match short.evaluation_view() {
             Err(fsl_package::ViewFailure::Exhausted(denial)) => {
                 use filament_semantic_value::catalog::CatalogCoded;
+                let fsl_package::NativeJoinFailure::Projection(native) = &denial.native else {
+                    panic!("{code:?} exposes the typed ExactTypeProjectionError");
+                };
+                assert_eq!(native.code, code);
                 assert!(
-                    matches!(&denial.native, fsl_package::NativeJoinFailure::Projection(native) if native.code == code)
+                    !format!("{native:?}").contains("cause"),
+                    "ExactTypeProjectionError has no separate public cause field"
                 );
                 let (bound, setting) = if code == Code::ExhaustedWork {
                     (work, "i2.work_units")
                 } else {
                     (storage, "i2.native_join_storage")
                 };
+                let denied = native
+                    .denied
+                    .expect("ExactTypeProjectionError has a typed denied charge");
+                let expected_kind = if code == Code::ExhaustedWork {
+                    filament_contract_model::NativeJoinChargeKind::Work
+                } else {
+                    filament_contract_model::NativeJoinChargeKind::Storage
+                };
+                assert_eq!(denied.kind, expected_kind);
+                assert!(denied.amount > 0);
                 assert_eq!(denial.limit.setting().name(), setting);
                 assert_eq!(denial.limit.configured_bound(), bound);
                 assert!(denial.limit.actual() > u128::from(bound));

@@ -33,11 +33,9 @@ use crate::model_check::settle::{Execution, ResultLabel, Row, Truth, EXPLICIT_ST
 use crate::witness::FamilyPayload;
 use filament_exact::Cancel;
 use fsl_eval::hyper::{CheckedHyperLetters, CheckedStepMatch, ParameterBinding};
-use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::smt::{Measure, Refusal as SmtRefusal, SmtEncodingRefusal};
-use fsl_foundation::bound::DomainKey;
 use fsl_semantics::check::HyperForm;
 
 use crate::proof_result::{
@@ -804,48 +802,23 @@ fn with_hyper_replay<T>(
                     "each-parameter-alias-has-a-subject",
                 ))
             })?;
-        let DomainKey::Population { ordinal, .. } = package
-            .graph()
-            .population_key(parameter.population.clone())
-            .map_err(ReplayRefusal::Fault)?
-        else {
-            return Err(ReplayRefusal::Fault(
-                filament_semantic_value::catalog::InternalFault::new(
-                    "hyper-settle-smt",
-                    "a-population-domain-has-a-population-key",
-                ),
-            ));
+        let fault = |invariant| {
+            ReplayRefusal::Fault(filament_semantic_value::catalog::InternalFault::new(
+                "hyper-settle-smt",
+                invariant,
+            ))
         };
-        let member_type = package
-            .graph()
-            .object_type_key(parameter.population.object())
-            .ok_or_else(|| {
-                ReplayRefusal::Fault(filament_semantic_value::catalog::InternalFault::new(
-                    "hyper-settle-smt",
-                    "a-population-domain-has-a-member-type-key",
-                ))
-            })?;
-        let population = systems_by_alias
+        let instance = systems_by_alias
             .get(alias_index)
-            .and_then(|system| {
-                system
-                    .populations()
-                    .iter()
-                    .filter(|population| population.member_types.contains(member_type))
-                    .nth(usize::try_from(ordinal).unwrap_or(usize::MAX))
-            })
-            .ok_or_else(|| {
-                ReplayRefusal::Fault(filament_semantic_value::catalog::InternalFault::new(
-                    "hyper-settle-smt",
-                    "a-population-domain-has-a-subject-population",
-                ))
-            })?;
+            .ok_or_else(|| fault("each-parameter-alias-has-a-subject"))?
+            .hyper_instances(&parameter.population)
+            .map_err(|_| fault("a-population-domain-has-a-subject-population"))?
+            .into_iter()
+            .find(|instance| &instance.key == key)
+            .ok_or_else(|| fault("an-instance-is-a-key-of-its-population"))?;
         bindings.push(ParameterBinding {
             parameter: parameter.name.clone(),
-            instance: ModelInstance {
-                population: population.key.clone(),
-                key: key.clone(),
-            },
+            instance,
         });
     }
     let cancel = Cancel::new();

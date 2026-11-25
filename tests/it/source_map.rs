@@ -69,7 +69,7 @@ fn source_byte_ceiling_is_a_stage_limit() {
 /// no hidden 1 MiB ceiling underneath it. A limit raised past the 1 MiB
 /// default admits a source the default refuses, and one byte past the raised
 /// limit refuses `resource_exhausted` naming that limit.
-#[trace("TC-011", "FR-001-AC-4")]
+#[trace("TC-011", "FR-001-AC-4", "NFR-001-M-1")]
 #[test]
 fn a_caller_raised_byte_limit_is_enforced_as_given() {
     let id = SourceIdentity {
@@ -425,6 +425,49 @@ fn malformed_segment_and_query_ranges_never_panic_or_partially_succeed() {
         )
         .is_err());
     }
+}
+
+/// NFR-001-M-4: the source-map segment ceiling is inclusive at 50,000 and
+/// refuses the next segment even if the caller asks for a larger limit.
+#[trace("NFR-001-M-4")]
+#[test]
+fn source_map_segment_ceiling_is_inclusive_and_hard_bounded() {
+    use fsl_foundation::source_map::MAX_SEGMENTS;
+
+    let segments = |count: usize| {
+        (0..count)
+            .map(|index| segment(index, index, 1))
+            .collect::<Vec<_>>()
+    };
+    let make_source = |identity: &str, length: usize| source(identity, &"a".repeat(length));
+    let accepted = SourceMap::verify(
+        make_source("source-at-limit", MAX_SEGMENTS),
+        make_source("body-at-limit", MAX_SEGMENTS),
+        Span {
+            start: 0,
+            end: MAX_SEGMENTS,
+        },
+        segments(MAX_SEGMENTS),
+        Layout::default(),
+        usize::MAX,
+    )
+    .expect("exactly MAX_SEGMENTS is admitted");
+    assert_eq!(accepted.segments().len(), 50_000);
+
+    let refused = SourceMap::verify(
+        make_source("source-over-limit", MAX_SEGMENTS + 1),
+        make_source("body-over-limit", MAX_SEGMENTS + 1),
+        Span {
+            start: 0,
+            end: MAX_SEGMENTS + 1,
+        },
+        segments(MAX_SEGMENTS + 1),
+        Layout::default(),
+        usize::MAX,
+    )
+    .expect_err("MAX_SEGMENTS plus one refuses regardless of caller limit");
+    assert_eq!(refused.code, fsl_foundation::Code::ResourceExhausted);
+    assert!(refused.message.contains("segment"), "{refused:?}");
 }
 
 #[trace("TC-014")]

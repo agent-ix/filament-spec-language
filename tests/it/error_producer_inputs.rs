@@ -804,6 +804,58 @@ fn real_population_inputs_reach_foreign_incomplete_and_cardinality_codes() {
     }
 }
 
+/// NFR-012-M-8/-9: a concrete admitted member cannot pass either population
+/// extent or admission-work ceiling when the configured bound is zero.
+#[test]
+#[trace("NFR-012-M-8", "NFR-012-M-9")]
+fn population_member_and_admission_work_ceilings_return_typed_denials() {
+    use fsl_semantics::model::dispatch::GeneralizationClosure;
+    use fsl_semantics::model::population::{
+        admit_binding, AdmissionLimitKind, AdmissionMeter, AdmissionOutcome,
+        PopulationAdmissionLimits, PopulationDocument, PopulationMember,
+    };
+
+    let domain = population_domain();
+    let view = population_view(&domain);
+    let document = PopulationDocument {
+        model_identity: population_fixture::PACKAGE.into(),
+        members: vec![PopulationMember {
+            object: "parcel-a".into(),
+            type_identity: population_fixture::key("Counter"),
+            field_values: Vec::new(),
+        }],
+    };
+
+    for (kind, limits, expected_setting) in [
+        (
+            AdmissionLimitKind::PopulationMembers,
+            PopulationAdmissionLimits::default().with_population_members(0),
+            "admission.population_members",
+        ),
+        (
+            AdmissionLimitKind::WorkUnits,
+            PopulationAdmissionLimits::default().with_work_units(0),
+            "admission.work_units",
+        ),
+    ] {
+        let mut meter = AdmissionMeter::new(limits);
+        let AdmissionOutcome::Incomplete(stop) = admit_binding(
+            &view,
+            &document,
+            &population_fixture::key("counters"),
+            GeneralizationClosure::Closed,
+            Some(1),
+            &mut meter,
+        ) else {
+            panic!("{expected_setting} must refuse the concrete member")
+        };
+        assert_eq!(stop.limit_kind, kind);
+        assert_eq!((stop.limit, stop.consumed, stop.next_charge), (0, 0, 1));
+        assert_eq!(stop.denial().setting().name(), expected_setting);
+        assert_eq!(stop.charge_point.as_str(), "binding.member");
+    }
+}
+
 #[test]
 #[trace("FSpec-FR-151")]
 fn an_actual_abstract_instance_produces_invalid_runtime_input() {
