@@ -400,7 +400,7 @@ fn a_replay_package_member_refusal_uses_the_request_document_locus() {
 /// The `CommandLimits` an entry point refuses when it belongs to another
 /// operation, before any work: the request path need not exist.
 #[test]
-#[trace("TC-721", "FR-121-AC-12")]
+#[trace("TC-721")]
 fn an_entry_point_refuses_the_limits_of_another_operation() {
     use fsl_command::command::{CommandLimits, MonitorPreparationLimits, RunLimits};
     let absent = Path::new("absent-request.json");
@@ -477,7 +477,7 @@ fn an_entry_point_refuses_the_limits_of_another_operation() {
 /// bounds the reader, and `accounting.work_units` reaches the replay's
 /// accounting.
 #[test]
-#[trace("TC-721")]
+#[trace("TC-721", "FR-121-AC-12")]
 fn replay_with_limits_applies_the_callers_settings() {
     use fsl_command::command::{CommandLimits, RunLimits};
     use fsl_foundation::{AccountingSetting, SettingName};
