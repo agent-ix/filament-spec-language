@@ -2593,3 +2593,73 @@ fn on_each_statistical_evidence_builds_no_product() {
         records[0].settlement
     );
 }
+
+/// The `native-analyze/1` document of the claim `OverBase`, whose
+/// `over (b: M::Base)` ranges over the key `m`: the `Link` model with `Msg`
+/// extending a fieldless `Base`, so the admitted record under `m` is a `Msg`.
+/// `event` is the path formula the claim asks to have probability at least
+/// one half.
+fn run_over_base(name: &str, event: &str) -> Value {
+    const BASE: &str = "ix://test/link/Base";
+    let mut model: Value = serde_json::from_slice(LINK_MODEL).expect("the Link model");
+    let types = model["types"].as_array_mut().expect("types");
+    let msg = types
+        .iter_mut()
+        .find(|declared| declared["identity"] == "ix://test/link/Msg")
+        .expect("Msg is declared");
+    msg["supertypes"] = json!([BASE]);
+    let mut base = msg.clone();
+    base["identity"] = json!(BASE);
+    base["displayName"] = json!(BASE);
+    base["supertypes"] = json!([]);
+    base["fields"] = json!([]);
+    base["operations"] = json!([]);
+    base["origin"] = json!({"generated": {"generatorIdentity": BASE,
+        "generatorVersion": "1.0.0", "inputIdentities": [BASE]}});
+    types.push(base);
+    let claim = format!(
+        "probabilistic OverBase using ev on M over (b: M::Base) under Even on origin \
+         {{ probability >= rational(1, 2) [ {event} ] }}"
+    );
+    let ws = Workspace::new(name);
+    analyze(&request_over(
+        &ws,
+        &unit(&claim),
+        &serde_json::to_vec(&model).expect("model JSON"),
+        &[LINK_START.to_vec()],
+        json!({"items": [{"claim": "OverBase"}]}),
+    ))
+    .document()
+}
+
+/// FR-125 "Instancing": the refuted binding of `over (b: M::Base)` at the key
+/// `m` carries the admitted type `Msg`, not the declared `over` type `Base`.
+#[trace("TC-520")]
+#[test]
+fn a_refuted_probability_binding_names_the_admitted_member_type() {
+    let document = run_over_base("over-base-refuted", "eventually[0,2] holds(b != b)");
+    let item = &document["items"][0];
+    assert!(item.is_object(), "{document}");
+    assert_eq!(label(item), "refuted", "{document}");
+    let binding = &item["counterexample"]["binding"];
+    assert_eq!(binding["identity"], "m", "{document}");
+    assert_eq!(
+        binding["object_type"]["original"],
+        json!({"node": "ix://test/link/Msg", "package": "test/link"}),
+        "{binding}"
+    );
+}
+
+/// FR-125 "Instancing", FR-741 "Binding": an exact entry's `over` binding is
+/// a typed reference and carries no population.
+#[trace("TC-520")]
+#[test]
+fn a_probability_entry_over_binding_carries_no_population() {
+    let document = run_over_base("over-base-entry", "eventually[0,2] holds(b = b)");
+    let item = &document["items"][0];
+    assert!(item.is_object(), "{document}");
+    assert_eq!(label(item), "proved", "{document}");
+    let binding = &item["record"]["basis"]["entries"][0]["binding"];
+    assert!(binding.is_object(), "{document}");
+    assert_eq!(binding.get("population"), None, "{binding}");
+}
