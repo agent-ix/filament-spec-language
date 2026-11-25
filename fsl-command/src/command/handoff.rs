@@ -598,10 +598,18 @@ mod tests {
         unpaid: filament_contract_model::NativeJoinDeniedCharge,
     }
 
+    #[derive(Debug, PartialEq)]
+    struct CompletedPass {
+        consumed: filament_contract_model::NativeJoinCharge,
+        /// Work of the root's declaration projection, measured on its own
+        /// budget. It is the last charging step of the pass.
+        declarations_work: u64,
+    }
+
     fn load(
         directory: &Path,
         limits: fsl_package::V2ReadLimits,
-    ) -> std::result::Result<filament_contract_model::NativeJoinCharge, Box<NativeDenial>> {
+    ) -> std::result::Result<CompletedPass, Box<NativeDenial>> {
         let mut intake = super::super::intake_with_bytes(
             directory,
             super::super::FileCounts {
@@ -616,7 +624,7 @@ mod tests {
         let mut loaded = admit(&mut intake, "handoff", bytes, &BTreeMap::new(), limits).expect(
             "the one-short completed-pass bound still admits all strict reads and witness files",
         );
-        let _view = fsl_package::BarePackage::new(&loaded.package)
+        let view = fsl_package::BarePackage::new(&loaded.package)
             .with_dependency_artifacts(&loaded.dependencies, &mut loaded.budget)
             .and_then(|package| {
                 package.with_supply(
@@ -637,7 +645,20 @@ mod tests {
                         .expect("a native denial retains its unpaid charge"),
                 })
             })?;
-        Ok(loaded.budget.consumed())
+        let mut alone = filament_contract_model::NativeJoinBudget::new(u64::MAX, u64::MAX);
+        loaded
+            .package
+            .project_selected_type_declarations(
+                view.identities().expect("the root identity witness joins"),
+                &[],
+                &[],
+                &mut alone,
+            )
+            .expect("the root declarations project on their own");
+        Ok(CompletedPass {
+            consumed: loaded.budget.consumed(),
+            declarations_work: alone.consumed().work,
+        })
     }
 
     #[test]
@@ -647,12 +668,13 @@ mod tests {
         chain(directory.path());
         let mut limits = fsl_package::V2ReadLimits::bounded(1 << 40);
         limits.work = 1 << 40;
-        let measured =
+        let completed_pass =
             load(directory.path(), limits).expect("measure complete root and dependency admission");
+        let measured = completed_pass.consumed;
         assert!(measured.work > 0 && measured.storage > 0);
         limits.work = measured.work;
         limits.storage = measured.storage;
-        assert_eq!(load(directory.path(), limits).unwrap(), measured);
+        assert_eq!(load(directory.path(), limits).unwrap(), completed_pass);
         for (shortened, setting, kind, completed) in [
             (
                 fsl_package::V2ReadLimits {
@@ -716,6 +738,16 @@ mod tests {
             assert_eq!(
                 projection.configured_bound,
                 Some(completed - 1),
+                "{refusal:?}"
+            );
+            assert_eq!(projection.requested, None, "{refusal:?}");
+            assert_eq!(projection.at, None, "{refusal:?}");
+            assert_eq!(projection.form, None, "{refusal:?}");
+            // A declaration projection reports the work it admitted since it
+            // started, so the work the pass left unpaid is all missing from it.
+            assert_eq!(
+                projection.work,
+                completed_pass.declarations_work - (measured.work - refusal.consumed.work),
                 "{refusal:?}"
             );
         }
