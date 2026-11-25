@@ -250,13 +250,13 @@ fn an_each_clause_has_an_activate_class_with_the_trigger_record() {
     assert!(!classes(catalog.concrete()).contains(&"activate Local"));
 }
 
-/// A contributing clause that is not written yet (it holds a post-test
-/// `repeat`, STD-493) has no node for its classes, so it leaves the catalog
-/// unlowered: the refinement has its checked catalog but no keyed one, so
-/// it is not in the V2 emission slice.
+/// A contributing clause holding an `attempt`, whose node is written after
+/// the state clauses, and a post-test `repeat`, whose guard reads a binder
+/// its body declares, keys its class catalog: the attempt and the event in
+/// the repeat body are classes keyed by their own control nodes.
 #[trace("FR-375-AC-23", "TC-310")]
 #[test]
-fn a_clause_class_with_no_node_leaves_the_catalog_unlowered() {
+fn a_clause_holding_an_attempt_and_a_post_test_repeat_keys_its_catalog() {
     let sub = sub_counter();
     let local = LOCAL.replace(
         "run sequence Main { }",
@@ -266,27 +266,58 @@ fn a_clause_class_with_no_node_leaves_the_catalog_unlowered() {
          sequence Body { event E by w as (e: Ack) { true }; }\n\
          }",
     );
-    let spec = counter_spec();
-    let (_, declarations) = assemble(
-        PROFILES,
-        &[("Spec", SPEC, &spec), ("Impl", SUB, &sub)],
+    let graph = checked(
+        (SUB, &sub),
         &format!("record Ack {{ ok: Boolean; }}\n{local}{SUB_ROWS}"),
     );
-    let graph = declarations
-        .expect("the unit assembles")
-        .with_unwritten_refinements()
-        .with_unwritten_protocols()
-        .check(
-            CheckMode::Linked,
-            CheckingLimits::default(),
-            &crate::reward_evaluator::ZeroRewardEvaluator,
-        )
-        .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let refinement = the_refinement(&graph);
     let catalog = refinement.class_catalog().expect("a checked catalog");
-    assert!(classes(catalog.concrete()).contains(&"Local::Try"));
-    assert!(refinement.class_catalog_keys().is_none());
-    assert!(!refinement.v2_emittable());
+    let expected = [
+        "Counter::peek",
+        "Local::Done",
+        "Local::E",
+        "Local::Try",
+        "SubCounter::bump",
+        "SubCounter::peek",
+        "duplicate Local::ch",
+        "lose Local::ch",
+    ];
+    assert_eq!(classes(catalog.concrete()), expected);
+    let keyed = refinement.class_catalog_keys().expect("every node minted");
+    let spelled: Vec<&str> = keyed
+        .concrete()
+        .iter()
+        .map(KeyedCatalogClass::class)
+        .collect();
+    assert_eq!(spelled, expected);
+    for (name, path) in [
+        ("Local::Try", &["Local", "run", "Main", "Try"][..]),
+        (
+            "Local::E",
+            &["Local", "run", "Main", "Again", "Body", "E"][..],
+        ),
+    ] {
+        let Some(KeyedCatalogClass::Declared { node, .. }) =
+            keyed.concrete().iter().find(|class| class.class() == name)
+        else {
+            panic!("{name}: a keyed class");
+        };
+        let control = graph
+            .semantic_graph()
+            .nodes()
+            .find(|candidate| {
+                candidate.declaration().is_some_and(|declared| {
+                    declared
+                        .iter()
+                        .map(filament_exact::Identifier::as_str)
+                        .eq(path.iter().copied())
+                })
+            })
+            .unwrap_or_else(|| panic!("{name}: a control node declared at {path:?}"));
+        assert_eq!(control.semantic_form(), "control", "{name}");
+        assert_eq!(*node, control.key(), "{name}");
+    }
+    assert!(refinement.v2_emittable());
 }
 
 /// A contributing clause holding a `choice` and a pre-test `repeat`, both
