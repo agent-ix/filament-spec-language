@@ -31,3 +31,9 @@ Audited the changed parser behavior against the owning ticket criterion, the rel
 - Changed behavior inventory: one parser predicate adjustment, owned by the bit-constructor syntax behavior and QSL-2198 AC-4; no new public surface, untraced behavior, or source/test stub introduced by this diff.
 - Plan completion: not assessed
 - Semantic review: skipped (not requested).
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | QSL-3110 explicitly owns repository-wide untagged-criteria triage and reconciliation; QSL-3220 has a verified `related` relation to QSL-3110. This baseline gap is outside the parser fix. |

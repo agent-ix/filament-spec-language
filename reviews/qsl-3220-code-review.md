@@ -38,3 +38,9 @@ Reviewed QSL-3220's parser predicate and uppercase-hex diagnostic test at the pi
 - Diagnostic shape compatibility: `cargo test -p fsl-cst --test it protocol_memory_refinement::a_history_row_refuses_a_non_literal_initial_value_at_its_first_token -- --exact` passed (1 test); uppercase constructor still reports refusal at the constructor token.
 - `git diff --check origin/main...HEAD` passed. No production-code stub, panic, boundary, or duplicated-logic issue found in the changed lines.
 
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The test now carries the owning `FR-397-AC-11` trace instead of unrelated `FR-762-AC-4`; focused test passed 1/1. |
