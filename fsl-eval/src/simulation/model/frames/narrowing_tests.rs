@@ -14,6 +14,9 @@ use ix_trace_rs::trace;
 use serde_json::json;
 use std::collections::BTreeMap;
 
+use super::{Allowed, FieldTargets};
+use crate::simulation::model::domain::Domain;
+
 use super::super::application::{Applications, OperationRef};
 use super::super::walk::{rows_of, Budget};
 use super::super::{explore_model, ModelSystem, StepEffect};
@@ -23,6 +26,38 @@ use crate::simulation::sampled::world::{initial, Model, Operation, World, BOOLEA
 use crate::simulation::TransitionSystem;
 
 const PACKAGE: &str = "test/rover";
+
+/// A solved integer equation selects its position in a size-ordered domain
+/// too large to scan, and an out-of-domain value selects no positions.
+#[test]
+fn a_solved_size_integer_assignment_uses_its_domain_index() {
+    let domain = Domain::SizeInteger { bits: 24 };
+    let equal = Value::Integer(Integer::from(1_234_567_i64));
+    let targets = FieldTargets {
+        equations: vec![Some(equal.clone())],
+        bounds: Vec::new(),
+    };
+
+    let Allowed::Listed(positions) = Allowed::of(&domain, &targets).expect("one equation") else {
+        panic!("an equation selects listed domain positions")
+    };
+    let [position] = positions.as_slice() else {
+        panic!("one in-domain integer has one position: {positions:?}")
+    };
+    let Some(Value::Integer(actual)) = domain.nth(*position) else {
+        panic!("the selected position contains an integer")
+    };
+    assert_eq!(actual, Integer::from(1_234_567_i64));
+
+    let outside = FieldTargets {
+        equations: vec![Some(Value::Integer(Integer::from(1_i64 << 24)))],
+        bounds: Vec::new(),
+    };
+    assert!(matches!(
+        Allowed::of(&domain, &outside),
+        Some(Allowed::Listed(positions)) if positions.is_empty()
+    ));
+}
 
 /// `loseLidar`'s postcondition, with its speed bound `cap`.
 fn lose_lidar(cap: u32) -> String {

@@ -287,7 +287,7 @@ fn located_dependency() -> CheckedPackage {
 /// FR-151 synthesized dispatch candidate has) and a key no function has.
 #[trace("FR-401-AC-5")]
 #[test]
-fn registration_is_decided_from_the_packages_admitted_signature() {
+pub(super) fn registration_is_decided_from_the_packages_admitted_signature() {
     let dependency = located_dependency();
     let g = identity(&dependency, "g");
     let guard = FunctionDeclaration::clause(
@@ -486,7 +486,7 @@ fn begin_observes_the_meters_cancelled_handle() {
 /// closure tests.)
 #[trace("FR-262-AC-11")]
 #[test]
-fn invalid_child_requests_fault_and_a_valid_one_is_applied() {
+pub(super) fn invalid_child_requests_fault_and_a_valid_one_is_applied() {
     let package = package(vec![f(), stand_in("host")]);
     let objects = ObjectEnvironment::default();
     let (f_key, host) = (identity(&package, "f"), identity(&package, "host"));
@@ -550,7 +550,7 @@ fn invalid_child_requests_fault_and_a_valid_one_is_applied() {
 /// earlier spend and leaving the denied charge unrecorded.
 #[trace("FR-262-AC-4", "FR-262-AC-6")]
 #[test]
-fn a_mixed_chain_steps_to_the_synchronous_result_and_stops_at_its_fuel() {
+pub(super) fn a_mixed_chain_steps_to_the_synchronous_result_and_stops_at_its_fuel() {
     let package = package(vec![f(), stand_in("first"), stand_in("second")]);
     let objects = ObjectEnvironment::default();
     let (f_key, first, second) = (
@@ -627,7 +627,7 @@ fn a_mixed_chain_steps_to_the_synchronous_result_and_stops_at_its_fuel() {
 /// with the located incomplete result, no child body and no later charge.
 #[trace("FR-262-AC-7")]
 #[test]
-fn cancelling_after_a_request_is_saved_ends_at_the_childs_call_charge() {
+pub(super) fn cancelling_after_a_request_is_saved_ends_at_the_childs_call_charge() {
     let package = package(vec![f(), stand_in("host")]);
     let objects = ObjectEnvironment::default();
     let (f_key, host) = (identity(&package, "f"), identity(&package, "host"));
@@ -1004,4 +1004,4 @@ fn begin_observes_a_handle_that_trips_during_admission() {
     assert_no_consumption(&meter);
 }
 
-mod lifecycle;
+pub(super) mod lifecycle;

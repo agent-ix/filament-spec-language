@@ -368,6 +368,34 @@ fn workers_preserve_counter_lassos_certificates_and_state_limit() {
     }
 }
 
+/// The capped per-pass product caches preserve a Counter lasso across worker
+/// batching, including overlapping prefetch windows.
+#[trace("TC-1417", "FR-126-AC-20")]
+#[test]
+fn parallel_counter_lasso_matches_serial_with_bounded_caches() {
+    let fixture = temporal_worker_fixture("always eventually holds(c.value = 0)");
+    let serial = run_temporal_fixture_with_workers(
+        &fixture,
+        |value| Some(value == 0),
+        ModelCheckLimits::default(),
+        1,
+    )
+    .expect("the serial request is admitted");
+    let parallel = run_temporal_fixture_with_workers(
+        &fixture,
+        |value| Some(value == 0),
+        ModelCheckLimits::default(),
+        4,
+    )
+    .expect("the parallel request is admitted");
+
+    let serial_counterexample = violated(&serial);
+    let parallel_counterexample = violated(&parallel);
+    assert_eq!(serial_counterexample, parallel_counterexample);
+    assert!(serial.stats().product_states >= 50);
+    assert_eq!(serial.stats(), parallel.stats());
+}
+
 /// FR-126-AC-20: the model safety and reduced expansion paths return the same
 /// records as the worker count changes.
 #[trace("TC-1417", "FR-126-AC-20")]
