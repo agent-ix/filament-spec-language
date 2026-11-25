@@ -884,6 +884,7 @@ dependencies = [
  "nix",
  "proptest",
  "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
+ "serde",
  "serde_json",
 ]
 

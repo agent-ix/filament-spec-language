@@ -496,15 +496,19 @@ arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core
 # -- timing is not a pass/fail gate.
 BENCH_ARGS ?=
 BENCH_AXES := parser checker cst model evaluator evaluator_kernel text_cluster mc reach key en4 package
-BENCH_GENERIC_AXES := $(filter-out evaluator_kernel,$(BENCH_AXES))
+BENCH_GENERIC_AXES := $(filter-out evaluator_kernel package,$(BENCH_AXES))
 BENCH_PACKAGE_FILTER := $(filter package/emit package/read replay/request,$(BENCH_ARGS))
+BENCH_A_TARGET ?= target/qsl1919-a
+BENCH_B_TARGET ?= target/qsl1919-b
+BENCH_A_RESULTS ?= target/qsl1919-a-results.json
+BENCH_B_RESULTS ?= target/qsl1919-b-results.json
 ifeq ($(strip $(BENCH_PACKAGE_FILTER)),)
 BENCH_PACKAGE_REPORT := report
 else
 BENCH_PACKAGE_REPORT := report-axis $(BENCH_PACKAGE_FILTER)
 endif
 
-.PHONY: bench bench-probe $(addprefix bench-,$(BENCH_AXES))
+.PHONY: bench bench-probe bench-package-ab $(addprefix bench-,$(BENCH_AXES))
 
 bench: $(addprefix bench-,$(BENCH_AXES))
 
@@ -518,6 +522,9 @@ bench-package:
 	cargo run --locked --release -p fsl-bench --features counters --bin fsl-bench-probe -- package replay/request 10
 	cargo run --locked --release -p fsl-bench --features counters --bin fsl-bench-probe -- package replay/request 100
 	cargo run --locked -p fsl-bench --bin fsl-bench-package-report -- $(BENCH_PACKAGE_REPORT)
+
+bench-package-ab:
+	cargo run --locked --release -j 4 -p fsl-bench --bin fsl-bench-package-report -- run-ab "$(BENCH_A_TARGET)" "$(BENCH_B_TARGET)" "$(BENCH_A_RESULTS)" "$(BENCH_B_RESULTS)"
 
 bench-evaluator_kernel:
 	cargo run --locked -p fsl-bench --bin fsl-bench-kernel-report -- start

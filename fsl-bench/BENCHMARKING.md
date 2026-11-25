@@ -61,14 +61,40 @@ checked package before timing; the emit row calls the package emitter and the
 read row admits the already emitted bytes through the evaluation-package
 reader. The replay row executes one end-to-end function replay request over
 the same source package. The invocation-local reporter prints Criterion's
-live estimates as milliseconds per package for each M and the 1→10→100
-scaling exponent; `BENCH_ARGS='package/emit'`, `package/read` or
-`replay/request` selects one axis. The shared `counters` feature counts parser
-calls at the replay spine's actual parse-call boundary using a caller-owned
-counter; the report gives calls per source document and M. The separate probe
-command `fsl-bench-probe package replay/request <1|10|100>` runs one replay per
-process and reports wall milliseconds and peak RSS in KiB; `make bench-package`
-runs all three sizes and includes those isolated probe rows in the reporter.
+live estimates as milliseconds per package for emit/read and milliseconds per
+request for replay; emit/read also print the 1→10→100 scaling exponent.
+`BENCH_ARGS='package/emit'`, `package/read` or `replay/request` selects one
+axis. Parse-call counts are collected separately with the `counters` feature
+at the replay spine's parser boundary using a caller-owned counter, so timed
+Criterion replay does not include counter overhead.
+
+The isolated replay RSS probe starts a fixture-preparation child and then a
+fresh replay child. Preparation compiles the checked fixture and writes a
+benchmark-local request artifact. The replay child reconstructs the prepared
+request from that artifact before starting its wall-time timer; it does not
+build the checked package or emission. Its peak RSS is process-wide and
+includes artifact decoding and request reconstruction, but excludes the
+fixture-preparation process. The report requires numeric positive RSS in KiB.
+
+For the five-round A/B protocol, first build the same benchmark harness on
+both source revisions in separate target subdirectories within the ticket's
+single worktree. A is `origin/main` plus this PR's replay-counter seam patch;
+B is the candidate source. Then run the report binary's `run-ab <A-target>
+<B-target> <A-results.json> <B-results.json>` command. It alternates A then B
+for five rounds, records load average before and after each side's round,
+collects every required Criterion estimate and isolated probe at M=1, 10, 100,
+and writes generated side result files without overwriting existing files.
+`report-ab <A-results.json> <B-results.json>` prints per-round measurements,
+medians, session noise and the emit/read scaling exponents. Missing rows,
+failed runs, missing load records, or incomplete rounds invalidate the report;
+the runner preserves failed measurements and never substitutes a later run.
+Criterion uses 10 samples per estimate in this harness.
+Each target directory must contain the optimized `package` Criterion binary
+built without the `counters` feature and the optimized `fsl-bench-probe`
+binary built with `--features counters`. The reporter uses non-instrumented
+Criterion estimates for AC-1 through AC-3 and the isolated counter probe for
+numeric RSS plus AC-5 counts. A probe built without `counters` has zero parse
+calls and invalidates its result row.
 
 ## Comparing a candidate with current main
 

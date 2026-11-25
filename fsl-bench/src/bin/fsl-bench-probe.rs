@@ -21,7 +21,7 @@
 //! and monotone (`fsl_bench::rss`); run it once per size.
 
 use std::num::NonZeroUsize;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 use std::time::Instant;
 
 use fsl_bench::check::{self, call_head, completed_with_five, linked_chain};
@@ -187,6 +187,13 @@ fn probe_eval(functions: usize) -> ExitCode {
 /// time and process peak RSS retained for the size.
 #[string_edge]
 fn probe_package(axis: &str, count: usize) -> ExitCode {
+    if axis == "replay/request" {
+        return probe_isolated_replay(count);
+    }
+    probe_package_fixture(axis, count)
+}
+
+fn probe_package_fixture(axis: &str, count: usize) -> ExitCode {
     let fixture = match package::fixture(count) {
         Ok(fixture) => fixture,
         Err(error) => {
@@ -194,26 +201,11 @@ fn probe_package(axis: &str, count: usize) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let unit = package::source(count);
-    let replay_request = if axis == "replay/request" {
-        match package::replay_request(&fixture, &unit) {
-            Ok(request) => Some(request),
-            Err(error) => {
-                eprintln!("replay request refused: {error}");
-                return ExitCode::FAILURE;
-            }
-        }
-    } else {
-        None
-    };
     let read_identity =
         fsl_semantics::library::LibraryName::new("package").expect("benchmark library identity");
     let read_limits = fsl_package::V2ReadLimits::bounded(1 << 24);
     let witness_supplier = fsl_package::SourceWitnessSupplier::new(&fixture.emission);
     let started = Instant::now();
-    #[cfg(feature = "counters")]
-    let mut parse_calls = None;
-    #[cfg(not(feature = "counters"))]
     let parse_calls: Option<u64> = None;
     let succeeded = match axis {
         "emit" => fsl_package::emit_package(
@@ -232,20 +224,6 @@ fn probe_package(axis: &str, count: usize) -> ExitCode {
             witness_supplier,
         )
         .is_ok(),
-        "replay/request" => {
-            let request = replay_request.expect("replay request prepared before timing");
-            let limits = fsl_replay::ReplayLimits::default().with_input_bytes(1 << 30);
-            #[cfg(feature = "counters")]
-            {
-                let (result, calls) = fsl_bench::counters::replay_with_parse_calls(request, limits);
-                parse_calls = Some(calls);
-                result.is_ok()
-            }
-            #[cfg(not(feature = "counters"))]
-            {
-                fsl_replay::replay(request, limits).is_ok()
-            }
-        }
         _ => {
             eprintln!("unknown package axis: {axis}");
             return ExitCode::from(2);
@@ -258,23 +236,135 @@ fn probe_package(axis: &str, count: usize) -> ExitCode {
     println!(
         "axis={axis} M={count} wall_ms={elapsed_ms:.6} peak_rss_kib={peak_rss} parse_calls_per_source_document={parse_calls} source_documents=1 succeeded={succeeded}"
     );
-    if axis == "replay/request" {
-        use std::fs;
-        use std::path::PathBuf;
-        let target = std::env::var_os("CARGO_TARGET_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("target"));
-        let report = target.join("package-probe-report");
-        if fs::create_dir_all(&report).is_ok() {
-            let _ = fs::write(
-                report.join(format!("replay-{count}")),
-                format!(
-                    "M={count} wall_ms={elapsed_ms:.6} peak_rss_kib={peak_rss} parse_calls_per_source_document={parse_calls} source_documents=1 succeeded={succeeded}"
-                ),
+    if succeeded {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn probe_isolated_replay(count: usize) -> ExitCode {
+    let artifact_dir = std::env::temp_dir().join(format!(
+        "fsl-bench-replay-probe-{}-{count}",
+        std::process::id()
+    ));
+    if let Err(error) = std::fs::create_dir_all(&artifact_dir) {
+        eprintln!("create replay probe artifact directory: {error}");
+        return ExitCode::FAILURE;
+    }
+    let artifact_path = artifact_dir.join("request.json");
+    let executable = match std::env::current_exe() {
+        Ok(executable) => executable,
+        Err(error) => {
+            eprintln!("locate replay probe executable: {error}");
+            let _ = std::fs::remove_dir_all(&artifact_dir);
+            return ExitCode::FAILURE;
+        }
+    };
+    let preparation = Command::new(&executable)
+        .arg("package-fixture-worker")
+        .arg(count.to_string())
+        .arg(&artifact_path)
+        .output();
+    match preparation {
+        Ok(output) if output.status.success() => {}
+        Ok(output) => {
+            eprintln!(
+                "replay fixture preparation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
             );
+            let _ = std::fs::remove_dir_all(&artifact_dir);
+            return ExitCode::FAILURE;
+        }
+        Err(error) => {
+            eprintln!("start replay fixture preparation: {error}");
+            let _ = std::fs::remove_dir_all(&artifact_dir);
+            return ExitCode::FAILURE;
         }
     }
-    if axis == "replay/request" && peak_rss == "unavailable" {
+    let replay = Command::new(&executable)
+        .arg("package-replay-worker")
+        .arg(count.to_string())
+        .arg(&artifact_path)
+        .output();
+    let replay = match replay {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("start isolated replay worker: {error}");
+            let _ = std::fs::remove_dir_all(&artifact_dir);
+            return ExitCode::FAILURE;
+        }
+    };
+    let report = String::from_utf8_lossy(&replay.stdout);
+    print!("{report}");
+    if !replay.status.success() {
+        eprint!("{}", String::from_utf8_lossy(&replay.stderr));
+    }
+    let row = report
+        .lines()
+        .find(|line| line.starts_with("axis=replay/request "));
+    let write_result = row.map_or_else(
+        || Err("isolated replay worker did not emit a report row".to_owned()),
+        |row| write_replay_probe_report(count, row),
+    );
+    let _ = std::fs::remove_dir_all(&artifact_dir);
+    if let Err(error) = write_result {
+        eprintln!("write replay probe report: {error}");
+        return ExitCode::FAILURE;
+    }
+    if replay.status.success() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn prepare_replay_probe_artifact(count: usize, path: &std::path::Path) -> ExitCode {
+    let fixture = match package::fixture(count) {
+        Ok(fixture) => fixture,
+        Err(error) => {
+            eprintln!("package fixture refused: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let unit = package::source(count);
+    let request = match package::replay_request(&fixture, &unit) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("replay request refused: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match package::write_replay_probe_artifact(path, &request) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("prepare replay probe artifact: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn replay_probe_worker(count: usize, path: &std::path::Path) -> ExitCode {
+    let request = match package::read_replay_probe_artifact(path) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("replay probe request reconstruction failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let limits = fsl_replay::ReplayLimits::default().with_input_bytes(1 << 30);
+    let started = Instant::now();
+    #[cfg(feature = "counters")]
+    let (result, parse_calls) = fsl_bench::counters::replay_with_parse_calls(request, limits);
+    #[cfg(not(feature = "counters"))]
+    let (result, parse_calls) = (fsl_replay::replay(request, limits), 0_u64);
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1e3;
+    let peak_rss = rss();
+    let succeeded = result.is_ok();
+    println!(
+        "axis=replay/request M={count} wall_ms={elapsed_ms:.6} peak_rss_kib={peak_rss} parse_calls_per_source_document={parse_calls} source_documents=1 succeeded={succeeded}"
+    );
+    if peak_rss == "unavailable" {
         eprintln!("replay/request requires a numeric peak RSS measurement");
         return ExitCode::FAILURE;
     }
@@ -283,6 +373,25 @@ fn probe_package(axis: &str, count: usize) -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+fn write_replay_probe_report(count: usize, row: &str) -> Result<(), String> {
+    let path = if let Some(path) = std::env::var_os("QSL_PACKAGE_PROBE_REPORT") {
+        std::path::PathBuf::from(path)
+    } else {
+        std::env::var_os("CARGO_TARGET_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("target"))
+            .join("package-probe-report")
+            .join(format!("replay-{count}"))
+    };
+    let parent = path
+        .parent()
+        .ok_or_else(|| "replay probe report path has no parent directory".to_owned())?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("create replay probe report directory: {error}"))?;
+    std::fs::write(&path, row.as_bytes())
+        .map_err(|error| format!("write {}: {error}", path.display()))
 }
 
 fn probe_model(shape: ModelShape, members: usize) -> ExitCode {
@@ -528,6 +637,18 @@ fn main() -> ExitCode {
         Some("package") => match (arguments.get(1), size(arguments.get(2))) {
             (Some(axis), Some(count)) if package::MODEL_COUNTS.contains(&count) => {
                 probe_package(axis, count)
+            }
+            _ => usage(),
+        },
+        Some("package-fixture-worker") => match (size(arguments.get(1)), arguments.get(2)) {
+            (Some(count), Some(path)) if package::MODEL_COUNTS.contains(&count) => {
+                prepare_replay_probe_artifact(count, std::path::Path::new(path))
+            }
+            _ => usage(),
+        },
+        Some("package-replay-worker") => match (size(arguments.get(1)), arguments.get(2)) {
+            (Some(count), Some(path)) if package::MODEL_COUNTS.contains(&count) => {
+                replay_probe_worker(count, std::path::Path::new(path))
             }
             _ => usage(),
         },

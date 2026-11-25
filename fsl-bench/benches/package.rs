@@ -35,7 +35,7 @@ fn package_axes(criterion: &mut Criterion) {
         read_group.throughput(Throughput::Elements(widen(count)));
         read_group.bench_function(BenchmarkId::from_parameter(count), |b| {
             b.iter(|| {
-                black_box(read_evaluation_emission(
+                let result = read_evaluation_emission(
                     fixture.checked.package(),
                     &fixture.emission,
                     identity.clone(),
@@ -43,7 +43,9 @@ fn package_axes(criterion: &mut Criterion) {
                     read_limits,
                     EmitLimits::new(1 << 32),
                     SourceWitnessSupplier::new(&fixture.emission),
-                ))
+                );
+                assert!(result.is_ok(), "checked package read succeeds");
+                black_box(result)
             });
         });
         read_group.finish();
