@@ -3031,7 +3031,15 @@ mod tests {
             0,
         )
         .expect("type key is valid");
-        let field = |ordinal| {
+        let record_type = filament_exact::NodeKey::new(
+            "paid-short",
+            vec![filament_exact::PathSegment::Text(
+                "composite_type".to_owned(),
+            )],
+            0,
+        )
+        .expect("record key is valid");
+        let field = |name: &str| {
             filament_exact::NodeKey::new(
                 "paid-short",
                 vec![
@@ -3039,16 +3047,19 @@ mod tests {
                     filament_exact::PathSegment::Text("query".to_owned()),
                     filament_exact::PathSegment::Node(receiver.clone()),
                     filament_exact::PathSegment::Text("filament.op.record.project".to_owned()),
+                    filament_exact::PathSegment::Node(record_type.clone()),
+                    filament_exact::PathSegment::Text(name.to_owned()),
                     filament_exact::PathSegment::Text("false".to_owned()),
                     filament_exact::PathSegment::Text("query".to_owned()),
                     filament_exact::PathSegment::Node(int_type.clone()),
+                    filament_exact::PathSegment::Node(int_type.clone()),
                 ],
-                ordinal,
+                0,
             )
             .expect("field key is valid")
         };
-        let charged = field(0);
-        let total = field(1);
+        let charged = field("charged");
+        let total = field("total");
         let comparison = filament_exact::NodeKey::new(
             "paid-short",
             vec![

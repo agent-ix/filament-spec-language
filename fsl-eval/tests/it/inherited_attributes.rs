@@ -14,8 +14,8 @@ use filament_eval::CallFailure;
 use filament_eval::Evaluation;
 use filament_eval::FamilyOutcome;
 use filament_exact::{
-    EffectiveId, FieldValue, IllTypedCause, Integer, Meter, ObjectId, ObjectReference, Outcome,
-    Presence, ScalarLimits, Value, ValueType,
+    EffectiveId, FieldValue, Integer, Meter, ObjectId, ObjectReference, Outcome, Presence,
+    ScalarLimits, Value, ValueType,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::declaration::{
@@ -159,9 +159,13 @@ fn assert_missing_field_at_check(package: &CheckedPackage, static_type: &str, fi
         panic!("StateModel ownership for missing {field}: {cause:?}");
     };
     assert_eq!(owner.family(), FamilyKind::StateModel);
-    assert_eq!(
-        owner.cause,
-        CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+    assert_eq!(owner.cause.code(), fsl_foundation::Code::IllTyped);
+    assert_eq!(owner.cause.cause(), Some("type-mismatch"));
+    assert!(
+        matches!(&owner.cause, CheckCause::UnknownField { field: absent, span: None, .. }
+            if &**absent == field),
+        "{:?}",
+        owner.cause
     );
 }
 

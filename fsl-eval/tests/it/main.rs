@@ -66,6 +66,7 @@ mod machine_contexts;
 mod mltl_differential;
 mod model_based_tests;
 mod model_operation_coverage;
+mod model_operations;
 mod model_reference_queries;
 mod model_simulation;
 mod monitor_vs_infinite_trace;

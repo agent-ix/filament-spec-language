@@ -248,6 +248,33 @@ fn read<'a>(
     Ok(document)
 }
 
+/// Whether `bytes` are a `filament.simulation.state-key/v1` encoding: the
+/// RFC 8785 text of a model state in its outer envelope. It reads the bytes
+/// alone, so it says nothing of whether a subject has such a state.
+///
+/// # Errors
+///
+/// [`quire_canonical::ReadError::Allocation`] or
+/// [`quire_canonical::Error::Allocation`], as the latter, when memory runs
+/// out before the bytes are judged.
+pub(crate) fn is_model_state_key(bytes: &[u8]) -> Result<bool, quire_canonical::Error> {
+    let length = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let document = match quire_canonical::read(bytes, length) {
+        Ok(document) => document,
+        Err(quire_canonical::ReadError::Allocation { requested }) => {
+            return Err(quire_canonical::Error::Allocation { requested });
+        }
+        Err(_) => return Ok(false),
+    };
+    if !model_form(document.root()) {
+        return Ok(false);
+    }
+    // The canonical text of an input can be longer than the input itself, so
+    // the comparison, not a byte limit, decides.
+    let canonical = quire_canonical::to_vec(&document, quire_canonical::Limits::new(u64::MAX))?;
+    Ok(canonical == bytes)
+}
+
 // This is only the owner-defined outer model envelope. Typed state content and
 // actual state membership are independently rederived from ModelSystem.
 pub(super) fn model_form(node: NodeRef<'_>) -> bool {
