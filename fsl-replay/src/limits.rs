@@ -715,10 +715,11 @@ mod tests {
     use super::*;
     use crate::request::StageLimits;
 
-    const MONITOR_SETTINGS: [Setting; 5] = [
+    const MONITOR_SETTINGS: [Setting; 6] = [
         Setting::MonitorMaxWindowValues,
         Setting::MonitorRetainedPositions,
         Setting::MonitorRetainedIdentities,
+        Setting::MonitorMaxActivations,
         Setting::MonitorPreparationWorkUnits,
         Setting::MonitorPreparationStorage,
     ];
