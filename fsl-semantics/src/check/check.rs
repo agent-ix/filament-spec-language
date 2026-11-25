@@ -3603,42 +3603,6 @@ impl<'a> Typer<'a> {
         kind: LocalKind,
         site: Option<(&Location, usize)>,
     ) -> Result<Slot, CheckRefusal> {
-        self.bind_declared_inner(name, value_type, location, kind, site, false)
-    }
-
-    /// Bind a `let` name. FR-104 permits a precondition `let` to shadow an
-    /// operation parameter; other lets and expression binders keep the
-    /// ordinary duplicate-name refusal.
-    pub(crate) fn bind_let_declared(
-        &mut self,
-        name: &str,
-        value_type: ValueType,
-        location: &Location,
-        site: Option<(&Location, usize)>,
-    ) -> Result<Slot, CheckRefusal> {
-        let may_shadow_parameter = self
-            .state
-            .as_ref()
-            .is_some_and(|state| state.kind == fsl_forms::StateClauseKind::Precondition);
-        self.bind_declared_inner(
-            name,
-            value_type,
-            location,
-            LocalKind::Bound,
-            site,
-            may_shadow_parameter,
-        )
-    }
-
-    fn bind_declared_inner(
-        &mut self,
-        name: &str,
-        value_type: ValueType,
-        location: &Location,
-        kind: LocalKind,
-        site: Option<(&Location, usize)>,
-        may_shadow_parameter: bool,
-    ) -> Result<Slot, CheckRefusal> {
         if let Some(mut refusal) = reserved_slot_refusal(name, None, location) {
             if let CheckCause::ReservedSlotName(cause) = refusal.cause.as_mut() {
                 cause.binder = site.map(|(node, ordinal)| (node.clone(), ordinal));
@@ -3659,8 +3623,10 @@ impl<'a> Typer<'a> {
                 },
             ));
         }
+        // FR-016: a `let` or expression binder may shadow a parameter; a name
+        // that an active binder holds, or a second parameter, refuses.
         if let Some(existing) = self.local(name) {
-            if !(may_shadow_parameter && existing.kind == LocalKind::Parameter) {
+            if !(kind == LocalKind::Bound && existing.kind == LocalKind::Parameter) {
                 return Err(refuse(
                     location,
                     CheckCause::AmbiguousName {
