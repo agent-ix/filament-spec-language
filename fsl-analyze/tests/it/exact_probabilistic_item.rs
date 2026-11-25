@@ -1661,6 +1661,10 @@ fn fair_cyclic_rejects_a_flipped_lower_bellman_direction() {
         &system, claims, &item, &certificate, doc_limits, &cancel,
     )
     .expect("the unchecked fair cyclic document can be written");
+    let exact = fsl_replay::write_probability_proof_document(&document, doc_limits, &cancel)
+        .expect("the fair cyclic exact profile is writable");
+    let wire: serde_json::Value = serde_json::from_slice(&exact).expect("the profile is JSON");
+    assert_eq!(wire["objective"]["optimization"], "minimum", "{wire}");
     let bytes = fsl_replay::write_value_bounds_proof_document(
         &document,
         fsl_replay::SubsystemBoundKind::Lower,
@@ -1759,6 +1763,17 @@ fn fair_cyclic_rejects_positive_values_on_refined_fair_mecs() {
         &cancel,
     )
     .expect("the unchecked fair cyclic document can be written");
+    let exact = fsl_replay::write_probability_proof_document(
+        &document,
+        fsl_replay::ProbabilityDocumentLimits::for_exact(
+            &limits,
+            fsl_replay::AccountingLimits::default().0,
+        ),
+        &cancel,
+    )
+    .expect("the fair cyclic exact profile is writable");
+    let wire: serde_json::Value = serde_json::from_slice(&exact).expect("the profile is JSON");
+    assert_eq!(wire["objective"]["optimization"], "minimum", "{wire}");
     let bytes = fsl_replay::write_value_bounds_proof_document(
         &document,
         fsl_replay::SubsystemBoundKind::Lower,
