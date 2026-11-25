@@ -165,6 +165,7 @@ fn enum_draws_and_arguments_preserve_package_refutation_witness_parity() {
 
 /// A fairness-bearing Every claim settles identically from source and package.
 #[trace(
+    "TC-2958",
     "FR-200-AC-8",
     "FR-200-AC-9",
     "FR-200-AC-10",
