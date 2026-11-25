@@ -365,7 +365,7 @@ fn public_monitor_refuses_a_missing_clause_before_consuming_the_stream() {
 }
 
 #[test]
-#[trace("FR-621", "FR-330")]
+#[trace("TC-1581", "FR-126-AC-26", "FR-330")]
 fn public_analyze_proves_fair_each_service_and_refutes_unfair_service() {
     let examples = rover_root().parent().unwrap().to_path_buf();
     let root = examples.join("lock");
