@@ -5,6 +5,10 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-383
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-383-AC-27
+    type: verifies
+  - target: ix://agent-ix/filament-specification/FR-322-AC-538
+    type: verifies
 ---
 # TC-1063: Protocol emission refusals, read-back equality and the reader's refusals
 
@@ -15,7 +19,7 @@ with an S3 refusal emits no node of its own and no package for the unit while
 the other protocols keep their results (TC-1297), that FSL's I2 reader returns the emitted
 protocol equal to the in-process checked clause, that it refuses each mutated
 emitted package with FSpec's code at FSpec's locus, and that emission has no
-limit or depth of its own. Scope: FR-383-AC-17 to FR-383-AC-21, FR-383-AC-32 to FR-383-AC-61, FR-383-AC-63 to FR-383-AC-66.
+limit or depth of its own. Scope: FR-383-AC-17 to FR-383-AC-21, FR-383-AC-27, FR-383-AC-32 to FR-383-AC-61, FR-383-AC-63 to FR-383-AC-66, and FSpec FR-322-AC-538.
 
 Catches a stale key repaired by a name lookup, a protocol dropped silently
 when its temporal profile is missing, a
@@ -88,7 +92,7 @@ same-id layout row, and `CH14a` through `CH14a-1` to `CH14a-8`. The run records
 the executed count for each of `admit`, `refuse` and `property`, fails when
 any is zero or when an executable row was not executed, and reports a `pending`
 or `later` entry with no executable row as not executed with its count, never
-as passing. The test is traced `TC-1063` and `FR-383-AC-20`.
+as passing. The test is traced `TC-1063`, `FR-383-AC-20`, `FR-383-AC-27` and FSpec `FR-322-AC-538`.
 
 ### Protocol term locations
 
@@ -136,6 +140,7 @@ as passing. The test is traced `TC-1063` and `FR-383-AC-20`.
 | 9 | a protocol whose controls outnumber `i2.nodes`, emitted with the limit raised | emitted; read under the default limit it returns `StageFailure::Limit` of kind node count, setting `i2.nodes`; read with the setting raised it verifies |
 | 10 | a `parallel` inside a `repeat` inside a branch of another `parallel`; a `sequence` of 5,000 children | each emits with no limit or depth refusal at S4 |
 | 11 | a protocol whose `over` input is `Boolean`, `Option<M::T>` or `Sequence<M::T>`; a clause with its `owner_model` removed, copied to a `role`, written as an external key, left out of `dependencies`, pointed at a Boolean scalar node | the first is refused `unsupported_construct`/`not-yet-implemented` naming `NoOwnerModel` and writes no clause; the reader refuses the rest `malformed_wire`, `malformed_wire`, `malformed_wire`, `invalid_semantic_graph`, and `ill_typed`/`operator-ineligible` |
+| 12 | an admitted `M::Order` protocol package with a local `owner_model` target `M::Order` and its dependency; change the node-level `owner_model` to the other valid selected model node `M::Person`, replace the dependency entry with `M::Person` in canonical order, and leave the clause's owner-model operand in `node_id.path` resolving to `M::Order` | the reader refuses `invalid_package`/`stale-node-key` at `/semantic_graph/nodes/{C}/owner_model`, with the protocol-clause node as graph-node locus and no admitted package; the separately emitted `M::Person` protocol, whose edge, dependency and owner-model key operand all resolve to `M::Person`, is admitted (FR-383-AC-27; FSpec FR-322-AC-538) |
 
 ## Expected Results
 

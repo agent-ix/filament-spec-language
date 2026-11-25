@@ -3,9 +3,9 @@
 
 use filament_exact::{Cancel, Identifier, Integer, Rational, Value};
 use fsl_analyze::exact_probabilistic::{
-    build_product, decide_expected_reward, decide_reachability, decide_reachability_threshold,
     ExactProbLimits, ExtRational, MonitorVerdict, ProbBuild, ProbEdge, ProbKey, ProbProduct,
     ProductAction, ProductKind, UnboundedError, UnboundedObjective, UnboundedOutcome,
+    build_product, decide_expected_reward, decide_reachability, decide_reachability_threshold,
 };
 use ix_trace_rs::trace;
 
@@ -18,6 +18,7 @@ fn key(id: u8) -> ProbKey {
         binding: None,
         model: vec![id],
         monitor: None,
+        timed_history: None,
         accumulator: None,
         pending: None,
         certificate_state: None,

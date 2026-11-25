@@ -2,6 +2,7 @@
 //! FR-201 bounded-event checker primitives over the actual property monitor.
 //! FR-338 owns the canonical representation; local numbering never enters it.
 
+use crate::simulation::model::encode::Enc;
 use fsl_semantics::check::{CheckedFormula, FormulaNodeId, TemporalProfile};
 
 use super::{
@@ -33,6 +34,7 @@ pub enum QualifiedBoundedError {
 pub struct QualifiedBoundedMonitor {
     translation: BoundedTranslation,
     monitor: Monitor<PropertyAutomaton>,
+    nested_eventually_always: bool,
 }
 
 impl QualifiedBoundedMonitor {
@@ -41,7 +43,7 @@ impl QualifiedBoundedMonitor {
     pub fn supports(formula: &CheckedFormula, profile: TemporalProfile) -> bool {
         profile == TemporalProfile::EventPositionFalseExtension
             && matches!(
-                super::bounded::qualified_formula_shape(formula, profile),
+                qualified_shape(formula, profile),
                 Some((BoundedKind::Eventually | BoundedKind::Always, _, _))
             )
     }
@@ -51,7 +53,7 @@ impl QualifiedBoundedMonitor {
     pub fn supports_observations(formula: &CheckedFormula, profile: TemporalProfile) -> bool {
         profile == TemporalProfile::EventPositionFalseExtension
             && matches!(
-                super::bounded::qualified_formula_shape(formula, profile),
+                qualified_shape(formula, profile),
                 Some((BoundedKind::Eventually | BoundedKind::Always, _, _))
             )
     }
@@ -135,6 +137,11 @@ impl QualifiedBoundedMonitor {
         Ok(Self {
             translation,
             monitor: Monitor::bad_prefix(automaton, max_states)?,
+            nested_eventually_always: super::bounded::qualified_nested_eventually_always_shape(
+                formula,
+                context.profile,
+            )
+            .is_some(),
         })
     }
 
@@ -175,6 +182,18 @@ impl QualifiedBoundedMonitor {
         if members.is_empty() {
             return Ok(BoundedState::Reject);
         }
+        if self.nested_eventually_always {
+            let mut settled = false;
+            for member in members {
+                settled |= self.monitor.automaton().is_settled(*member)?;
+            }
+            if settled {
+                return Ok(BoundedState::Accept);
+            }
+            return Ok(BoundedState::Open {
+                remaining: self.nested_rank(state)?,
+            });
+        }
         let mut remaining = None;
         for member in members {
             if self.monitor.automaton().is_settled(*member)? {
@@ -202,6 +221,9 @@ impl QualifiedBoundedMonitor {
     /// The full canonical monitor key, including the checked item context,
     /// binding, real remaining horizon and pending window debt.
     pub fn key(&self, state: StateId) -> Result<AutomatonStateKey, QualifiedBoundedError> {
+        if self.nested_eventually_always {
+            return self.formula_state_key(state).map_err(Into::into);
+        }
         Ok(self.translation.key(self.state(state)?)?)
     }
 
@@ -209,6 +231,12 @@ impl QualifiedBoundedMonitor {
     /// discard the local monitor handle after settlement; no remaining
     /// horizon is introduced when encoding that verdict.
     pub fn decision_key(&self, accepted: bool) -> Result<AutomatonStateKey, QualifiedBoundedError> {
+        if self.nested_eventually_always {
+            return self
+                .translation
+                .formula_state_key(Enc::Array(vec![Enc::text("decided"), Enc::Bool(accepted)]))
+                .map_err(Into::into);
+        }
         Ok(self.translation.key(if accepted {
             BoundedState::Accept
         } else {
@@ -230,4 +258,98 @@ impl QualifiedBoundedMonitor {
     pub fn terminal(&self, state: StateId) -> Result<BoundedState, QualifiedBoundedError> {
         Ok(self.translation.terminal(self.state(state)?))
     }
+
+    fn formula_state_key(
+        &self,
+        state: StateId,
+    ) -> Result<AutomatonStateKey, QualifiedBoundedError> {
+        let members = self
+            .monitor
+            .members(state)
+            .ok_or(AutomatonError::UnknownState { state })?;
+        let mut keys = members
+            .iter()
+            .map(|member| {
+                self.monitor
+                    .automaton()
+                    .state_key(
+                        *member,
+                        fsl_foundation::IdentityLimits::default().input_bytes,
+                    )
+                    .map(|key| Enc::text(String::from_utf8_lossy(key.as_bytes()).into_owned()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        keys.sort();
+        Ok(self.translation.formula_state_key(Enc::Array(keys))?)
+    }
+
+    fn nested_rank(&self, state: StateId) -> Result<u64, QualifiedBoundedError> {
+        let members = self
+            .monitor
+            .members(state)
+            .ok_or(AutomatonError::UnknownState { state })?;
+        let mut rank = 0_u64;
+        for member in members {
+            let configuration = self.monitor.automaton().configuration(
+                *member,
+                fsl_foundation::IdentityLimits::default().input_bytes,
+            )?;
+            let mut outer = 0_u64;
+            let mut inner = 0_u64;
+            for obligation in &configuration.obligations {
+                if let super::Obligation::Interval {
+                    occurrence,
+                    upper: Some(remaining),
+                    ..
+                } = obligation
+                {
+                    if occurrence.path.is_empty() {
+                        outer = outer.max(*remaining);
+                    } else if occurrence.path == [0] {
+                        inner = inner.max(*remaining);
+                    }
+                }
+            }
+            for window in configuration.windows {
+                match window {
+                    super::Window::Deadline(occurrence, remaining)
+                        if occurrence.path.is_empty() =>
+                    {
+                        outer = outer.max(remaining);
+                    }
+                    super::Window::Extent(occurrence, remaining) if occurrence.path == [0] => {
+                        inner = inner.max(remaining);
+                    }
+                    super::Window::Offsets(occurrence, offsets) if occurrence.path.is_empty() => {
+                        outer =
+                            outer.max(offsets.iter().map(|(_, upper)| *upper).max().unwrap_or(0));
+                    }
+                    super::Window::Offsets(occurrence, offsets) if occurrence.path == [0] => {
+                        inner =
+                            inner.max(offsets.iter().map(|(_, upper)| *upper).max().unwrap_or(0));
+                    }
+                    _ => {}
+                }
+            }
+            // An outer tick can launch a fresh inner obligation. Weighting
+            // its deadline by 11 makes that reset remain strictly below the
+            // preceding outer tick in the ranking function.
+            rank = rank.max(outer.saturating_mul(11).saturating_add(inner));
+        }
+        if rank == 0 {
+            return Err(AutomatonError::Invariant {
+                invariant: "qualified-nested-bounded-open-rank",
+            }
+            .into());
+        }
+        Ok(rank)
+    }
+}
+
+fn qualified_shape(
+    formula: &CheckedFormula,
+    profile: TemporalProfile,
+) -> Option<(BoundedKind, u64, FormulaNodeId)> {
+    super::bounded::qualified_formula_shape(formula, profile)
+        .or_else(|| super::bounded::qualified_nested_eventually_always_shape(formula, profile))
 }

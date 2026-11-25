@@ -1516,7 +1516,7 @@ fn read_wire(
 }
 
 /// Decode strict canonical finite-horizon measure evidence, without accepting it.
-fn decode_measure_probability_certificate(
+pub(super) fn decode_measure_probability_certificate(
     bytes: &[u8],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
@@ -1775,7 +1775,7 @@ impl Encode for Events<'_> {
         writer.end_object()
     }
 }
-fn encode(
+pub(super) fn encode(
     document: &MeasureProbabilityDocument,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
@@ -2366,7 +2366,7 @@ pub(super) fn check(
     if plan.objective != document.objective {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
-    if document.conditional.is_none() {
+    if document.conditional.is_none() && bound_side.is_none() {
         if let Err(error) = validate_ranges(&document, cancel, &mut meter) {
             return document_admission_error(error);
         }
@@ -2604,7 +2604,11 @@ pub(super) fn check(
         &mut storage,
         None,
     )?;
-    if let Some(side) = bound_side {
+    let partial_lower = partial_lower
+        || (bound_side == Some(super::SubsystemBoundKind::Lower)
+            && role == super::CertificateRole::Claim
+            && document.values.len() < graph.states.len());
+    if let Some(side) = bound_side.filter(|_| !partial_lower) {
         return check_value_bounds(
             &document, &graph, &plan, side, role, bytes, limits, cancel, &mut meter,
         );
@@ -2883,9 +2887,9 @@ fn check_value_bounds(
     }
     let accepted_side = if document.payoff == MeasurePayoffKind::Shifted {
         if plan.strict {
-            ProbabilityBoundSide::AtLeast
-        } else {
             ProbabilityBoundSide::AtMost
+        } else {
+            ProbabilityBoundSide::AtLeast
         }
     } else {
         match plan.bound {
