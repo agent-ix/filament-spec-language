@@ -34,7 +34,10 @@ pub struct OutsideCoverage {
 /// Traversal is pre-order with an explicit stack so a deep checked body does
 /// not consume native call stack. Parameters precede the body as FR-294
 /// requires.
-#[must_use]
+///
+/// # Errors
+/// Returns an internal fault if the package does not hold the function, or a
+/// checked operation has lost its semantic key.
 pub fn first_outside(
     package: &CheckedPackage,
     entry: &str,
@@ -143,11 +146,14 @@ pub fn entry_within_coverage(
     Ok(true)
 }
 
+/// A callable entry's parameters and body.
+type EntryBody<'g> = (&'g [(String, ValueType)], CheckedNode<'g>);
+
 /// The parameters and body of the function callable as `entry`.
 fn function_entry<'g>(
     graph: &'g CheckedGraph,
     entry: &str,
-) -> Result<(&'g [(String, ValueType)], CheckedNode<'g>), InternalFault> {
+) -> Result<EntryBody<'g>, InternalFault> {
     let callable = graph.callable(entry).ok_or_else(|| {
         InternalFault::new(
             "execution-coverage",

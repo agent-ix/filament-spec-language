@@ -27,8 +27,8 @@ use filament_checked::node::{
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
     ArithmeticOperator, CardinalityBound, CollectionKind, CollectionType, DecimalType,
-    DivisionMember, Integer, IntegerDomain, IntegerInterval, Meter, NodeKey, OrderingOperator,
-    Outcome, RationalDomain, ScalarLimits, Value, ValueType,
+    DivisionMember, DivisionProfile, Integer, IntegerDomain, IntegerInterval, Meter, NodeKey,
+    OrderingOperator, Outcome, RationalDomain, ScalarLimits, Value, ValueType,
 };
 use filament_semantic_value::declaration::CheckedEquality;
 use filament_semantic_value::declaration::EqualityOperand;
@@ -262,7 +262,8 @@ fn untranslated(node: CheckedNode<'_>) -> Outside {
 }
 
 /// The interval of a declared parameter or result type, when it is a type
-/// this backend carries in a register.
+/// this backend carries in a register. An integer interval wider than 64 bits
+/// is not one: a body that reads such a value is not translated.
 pub(crate) fn type_of(value_type: &ValueType) -> Option<Ty> {
     match value_type {
         ValueType::Boolean => Some(Ty::Boolean),
@@ -278,7 +279,7 @@ pub(crate) fn type_of(value_type: &ValueType) -> Option<Ty> {
                 })
             };
             let (lo, hi) = (bound(interval.lower()), bound(interval.upper()));
-            Some(Ty::Int(lo, hi))
+            fits_i64((lo, hi)).then_some(Ty::Int(lo, hi))
         }
         ValueType::Rational(_)
         | ValueType::Decimal(_)
@@ -304,8 +305,7 @@ pub(crate) enum RegisterKind {
 pub(crate) fn register_kind(value_type: &ValueType) -> Option<RegisterKind> {
     match type_of(value_type)? {
         Ty::Boolean => Some(RegisterKind::Boolean),
-        Ty::Int(low, high) if fits_i64((low, high)) => Some(RegisterKind::Integer),
-        Ty::Int(..) => None,
+        Ty::Int(..) => Some(RegisterKind::Integer),
         Ty::Opaque => Some(RegisterKind::ExactValue),
     }
 }
@@ -764,11 +764,20 @@ impl Emitter<'_, '_, '_> {
                 );
                 Ok((result, Ty::Opaque))
             }
-            NodeKind::Local(slot) => self
-                .slots
-                .get(slot)
-                .copied()
-                .ok_or_else(|| self.unsupported(node)),
+            NodeKind::Local(slot) => self.slots.get(slot).copied().ok_or_else(|| {
+                // A binding with no register image has no slot.
+                match node.value_type() {
+                    value_type @ ValueType::Int(_) if type_of(value_type).is_none() => {
+                        Failure::Unsupported(Outside {
+                            construct: filament_eval::UntranslatableConstruct::ValueType(Box::new(
+                                value_type.clone(),
+                            )),
+                            location: node.location().clone(),
+                        })
+                    }
+                    _ => self.unsupported(node),
+                }
+            }),
             NodeKind::Let {
                 slot, value, body, ..
             } => {
@@ -1754,31 +1763,39 @@ impl Emitter<'_, '_, '_> {
 }
 
 /// A sound interval for the kernel's `div`, `rem` or `mod` of operands in
-/// the given intervals, whose divisor interval excludes 0.
+/// the given intervals (FR-562), or `None` when no 64-bit interval is known.
 ///
-/// The quotient is monotone in each operand while the divisor keeps one
-/// sign, so its extremes are at the operand interval ends and are found by
-/// running the kernel there with an unlimited meter. The remainder is not
-/// monotone (`a mod 5` over `a` in `[0, 10]` takes 0 at both ends and 4 in
-/// between), so `rem` and `mod` take the interval every admitted law keeps
-/// them in: strictly smaller than the divisor in magnitude. FR-562's table
-/// text, which takes the extremes at the ends for all three, is unsound for
-/// the remainders; this follows the soundness the rule exists for.
+/// The quotient is monotone in each operand while the divisor keeps one sign,
+/// so its extremes are found by running the kernel, with an unlimited meter,
+/// at the dividend's ends against the ends of each sign's part of the divisor
+/// interval. A divisor of 0 yields no value. The remainder is not monotone
+/// (`a mod 5` is 0 at both ends of `[0, 10]` and 4 in between), so its
+/// interval comes from the largest divisor magnitude and the law.
 fn division_interval(
     operator: IntegerDivisionOperator,
     selection: Option<AdmittedIntegerDivision>,
     (al, ah): (i128, i128),
     (bl, bh): (i128, i128),
 ) -> Option<(i128, i128)> {
-    if operator == IntegerDivisionOperator::Rem && selection.is_none() {
-        return None;
-    }
-    if matches!(
-        operator,
-        IntegerDivisionOperator::Rem | IntegerDivisionOperator::Mod
-    ) {
-        let bound = bl.saturating_abs().max(bh.saturating_abs()).saturating_sub(1);
-        return Some((-bound, bound));
+    let remainder_law = match operator {
+        IntegerDivisionOperator::Mod => Some(DivisionProfile::Euclidean),
+        IntegerDivisionOperator::Rem => Some(selection?.profile()),
+        IntegerDivisionOperator::Div => None,
+    };
+    if let Some(law) = remainder_law {
+        let bound = bl
+            .saturating_abs()
+            .max(bh.saturating_abs())
+            .saturating_sub(1)
+            .max(0);
+        return Some(match law {
+            DivisionProfile::Euclidean => (0, bound),
+            DivisionProfile::Floor if bl > 0 => (0, bound),
+            DivisionProfile::Floor if bh < 0 => (-bound, 0),
+            DivisionProfile::Truncating if al >= 0 => (0, bound),
+            DivisionProfile::Truncating if ah <= 0 => (-bound, 0),
+            DivisionProfile::Floor | DivisionProfile::Truncating => (-bound, bound),
+        });
     }
     let mut meter = Meter::new(ScalarLimits {
         integer_bits: u64::MAX,
@@ -1792,10 +1809,13 @@ fn division_interval(
         work_units: u64::MAX,
         result_units: u64::MAX,
     });
-    let mut low = i128::MAX;
-    let mut high = i128::MIN;
-    for dividend in [al, ah] {
-        for divisor in [bl, bh] {
+    // The ends of the negative and of the positive part of the divisor.
+    let divisors = [bl, bh, -1, 1]
+        .into_iter()
+        .filter(|divisor| *divisor != 0 && (bl..=bh).contains(divisor));
+    let mut interval: Option<(i128, i128)> = None;
+    for divisor in divisors {
+        for dividend in [al, ah] {
             let result = divide(
                 operator,
                 selection.as_ref(),
@@ -1806,12 +1826,14 @@ fn division_interval(
             let Outcome::Completed(result) = result else {
                 return None;
             };
-            let value = integer_to_i64(&result)?;
-            low = low.min(value.into());
-            high = high.max(value.into());
+            let value = i128::from(integer_to_i64(&result)?);
+            interval = Some(interval.map_or((value, value), |(low, high)| {
+                (low.min(value), high.max(value))
+            }));
         }
     }
-    Some((low, high))
+    // A divisor that is only ever 0 yields no value, so any interval is sound.
+    Some(interval.unwrap_or((0, 0)))
 }
 
 /// The kernel call the interpreter makes for `operator` (S6a,
@@ -1861,7 +1883,7 @@ mod tests {
         );
         assert_eq!(
             division_interval(IntegerDivisionOperator::Mod, None, (0, 10), (1, 5)),
-            Some((-4, 4))
+            Some((0, 4))
         );
     }
 }

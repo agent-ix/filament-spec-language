@@ -664,7 +664,7 @@ fn compare_unit(
         let prepared = match backend.prepare_entries(package, &selections, &limits.prepare, cancel)
         {
             Ok(prepared) => prepared,
-            Err(failure) if matches!(failure, PrepareFailure::Cancelled(_)) => {
+            Err(PrepareFailure::Cancelled(_)) => {
                 return Err(ParityRefusal::Cancelled);
             }
             Err(failure) => {

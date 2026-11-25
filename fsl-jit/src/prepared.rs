@@ -703,6 +703,8 @@ fn registers(
             (Some(RegisterKind::ExactValue), value) => frame
                 .store_value(value.clone())
                 .map_err(|invariant| CallFailure::Fault(InternalFault::new("FR-560", invariant))),
+            // The translator binds no slot for a parameter without a register
+            // kind, so no translated body reads this word.
             (None, _) => Ok(0),
             _ => Err(broken()),
         })
