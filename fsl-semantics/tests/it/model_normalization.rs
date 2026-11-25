@@ -2793,7 +2793,7 @@ fn fixture_wide_ancestry_contested_redefiners(n_parents: usize) -> DomainPackage
 /// the original `conformance-depth` refusal at both widths — confirmed by
 /// hand: reintroducing that walk locally makes this test fail at both 128
 /// and 200, restoring the fix returns it to green.
-#[trace("FSpec-TC-195", "FSpec-TC-196", "FSpec-FR-151-AC-2")]
+#[trace("FSpec-TC-195", "FSpec-TC-196")]
 #[test]
 fn n06_wide_ancestry_with_two_contesting_redefiners_completes() {
     for n_parents in [128usize, 200usize] {
