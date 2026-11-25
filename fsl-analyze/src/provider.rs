@@ -32,6 +32,7 @@ use fsl_semantics::check::Capability;
 use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::PackageInput;
+use ix_trace_rs::implements;
 
 use crate::analyze::{AnalyzeItem, Engine, EngineReport, Refusal};
 use crate::claim_family::claim_family;
@@ -1249,6 +1250,7 @@ pub(crate) fn read_package<'p>(
 }
 
 /// Read the source package under its checked acquisition's clock selections.
+#[implements("FR-940-AC-21")]
 pub(crate) fn read_package_with_temporal_selections<'p>(
     package: &'p CheckedPackage,
     packages: &PackageInput,
