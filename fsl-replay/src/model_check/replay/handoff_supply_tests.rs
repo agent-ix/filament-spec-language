@@ -258,3 +258,15 @@ fn a_library_selecting_the_root_name_refuses() {
         "a library selects the root's name",
     );
 }
+
+/// An artifact is named by the package in its bytes: a root-named one refuses
+/// under whatever identity it is supplied.
+#[test]
+fn a_root_named_artifact_supplied_under_another_identity_refuses() {
+    let mut relabelled = library(2);
+    relabelled.identity = "other".to_owned();
+    assert_refuses(
+        admit(&library(1), &[relabelled]),
+        "a root-named package supplied as `other`",
+    );
+}

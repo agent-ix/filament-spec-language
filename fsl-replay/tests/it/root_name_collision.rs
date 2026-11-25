@@ -148,6 +148,20 @@ fn an_artifact_named_as_the_root_refuses_at_the_join() {
     assert_join_refuses(&root, &[package("dep", 1000)], "the root's own content");
 }
 
+/// An artifact is named by the package in its bytes: a root-named one refuses
+/// under whatever identity it is supplied.
+#[test]
+fn a_root_named_artifact_under_another_identity_refuses_at_the_join() {
+    let root = package("dep", 1000);
+    let mut relabelled = package("dep", 2000);
+    relabelled.identity = "lib".to_owned();
+    assert_join_refuses(
+        &root,
+        &[relabelled],
+        "a root-named package supplied as `lib`",
+    );
+}
+
 /// A repeated dependency name refuses, with equal contents or differing ones.
 #[test]
 fn a_repeated_dependency_name_refuses_at_the_join() {
