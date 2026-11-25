@@ -333,12 +333,15 @@ fn settle(wire: ReplayRequestWire) -> TerminalRecord {
 
 /// FR-290-AC-2: a provider counterexample that reproduces the function
 /// contract is refuted; an application claim that evaluates true and a
-/// function contract that evaluates true settle replay-parity; a parameter
-/// from another function is refused with the closed replay refusal code.
+/// function contract that evaluates true settle replay-parity; an assignment
+/// naming another function's parameter settles with replay-refused.
 #[trace("TC-774", "FR-290-AC-2")]
 #[test]
 fn provider_counterexamples_settle_contract_application_parity_and_refusal() {
-    let source = unit("");
+    let source = format!(
+        "{}function other using v(y: Int[0, 9]): Integer pure {{ y + 1 }}\n",
+        unit("")
+    );
     let context = oracle(&source, CallerLimits::default());
     let site = call_site(
         identity(),
@@ -393,7 +396,12 @@ fn provider_counterexamples_settle_contract_application_parity_and_refusal() {
 
     let contract_parity = settle(
         context
-            .request(&site.site.declaration, &bounds, &plugin(), assign(p_x, 5))
+            .request(
+                &site.site.declaration,
+                &bounds,
+                &plugin(),
+                assign(p_x.clone(), 5),
+            )
             .expect("the function contract has a replay request"),
     );
     assert!(matches!(
@@ -402,10 +410,19 @@ fn provider_counterexamples_settle_contract_application_parity_and_refusal() {
     ));
     assert_eq!(contract_parity.backend(), Some(&plugin()));
 
-    let q_x = parameter(&source, "q");
+    let other_y = parameter(&source, "other");
+    assert_ne!(
+        other_y, p_x,
+        "the other function has a distinct parameter id"
+    );
     let wrong_parameter = settle(
         context
-            .request(&site.site.declaration, &bounds, &plugin(), assign(q_x, 0))
+            .request(
+                &site.site.declaration,
+                &bounds,
+                &plugin(),
+                assign(other_y, 0),
+            )
             .expect("the provider request is formed before replay refusal"),
     );
     assert_eq!(

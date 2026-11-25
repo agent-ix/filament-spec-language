@@ -737,7 +737,8 @@ const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile v = \"filament.value.complete/v1\";\n\
     function p using v(x: Int[0, 9]): Boolean pure { x > 3 }\n\
     function q using v(x: Int[0, 9]): Integer pure { x + 1 }\n\
-    function r using v(x: Int[0, 9]): Boolean pure { x + 1 > 3 }\n";
+    function r using v(x: Int[0, 9]): Boolean pure { x + 1 > 3 }\n\
+    function other using v(y: Int[0, 9]): Integer pure { y + 1 }\n";
 
 struct Fixture {
     checked: crate::spine::CheckedUnit,
@@ -894,9 +895,9 @@ fn tc_774_function_contract_and_application_items_replay() {
         TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(_))
     ));
 
-    let (_, q_x) = declaration(&fixture, "q");
-    assert_ne!(q_x, p_x, "q's parameter id must differ from p's");
-    let missing_parameter = settle(&context, &p, &bounds, input(q_x, 0));
+    let (_, other_y) = declaration(&fixture, "other");
+    assert_ne!(other_y, p_x, "the other function's parameter id differs");
+    let missing_parameter = settle(&context, &p, &bounds, input(other_y, 0));
     assert!(
         matches!(
             missing_parameter.value(),
