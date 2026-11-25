@@ -34,7 +34,7 @@ resolves the identity and every delay a `discrete` delay distribution
 gives, so the subject is a DTMC over digital timed states; a delay no
 distribution gives stays the scheduler's choice and is decided by its
 minimum and maximum. Strict constraints, bounded-window forms other than a
-deadline event (decided over the region MDP), delay distributions over every
+deadline event or its `always[0, D]` complement (decided over the region MDP), delay distributions over every
 scheduler, zero-delay cycles and time-locks are decided by the rules under
 Admission; only continuous delay
 distributions, whose probabilities exact evidence cannot state, go to the
@@ -81,18 +81,33 @@ unsupported cause `DelayDistribution{operation}`.
   state predicates, a TA-4 deadline event `eventually[0, D] holds(P)` or
   `holds(A) until[0, D] holds(B)` and its complement `always[0, D] holds(P)`,
   each over state predicates (predicates over the discrete state, with no
-  clock atom), and the elapsed forms of FR-877, when every clock constraint
-  is closed. Every other bounded-window formula SHALL be decided over the
-  region MDP (FR-922), closed or not. ADR-028 TA-3's equality of digital and
+  clock atom), `expected elapsed until holds(B)`, the elapsed measures and
+  quantiles of FR-877, and a `steps` measure or an `accumulate` of per-step
+  rewards within a time horizon, when every clock constraint is closed. Every
+  other bounded-window formula SHALL be decided over the region MDP
+  (FR-922), closed or not. A `steps` or per-step `accumulate` measure within
+  a horizon is a reachability over the closed automaton: its count or sum is
+  discrete state, its activation resets a closed horizon clock, and its
+  event is reaching a completing position before that clock passes the
+  horizon, which TA-3 covers. This rule does not settle the route of a
+  `weighted by delay` fraction over a window, a `weighted by delay`
+  long-run fraction, or an unweighted fraction over a time window: they keep
+  the rule they had before it (digital when every constraint is closed,
+  region otherwise), pending an arch ruling (QSL-3324). ADR-028 TA-3's equality of digital and
   dense extrema covers reachability and expected time only; a bounded-window
   value can turn on a position being absent from a window, which integer
   time stamps cannot always arrange, so the digital MDP can give a wrong
   extremum (AC-26).
-- **Pending target times.** When the number of pending target times the
-  claim's monitor needs is not bounded on the region MDP for an admitted
-  form, the product grows until a limit stops it, and the item SHALL settle
-  FR-203's `Incomplete(LimitReached{limit, value, setting})` naming that
-  limit; it SHALL NOT settle `unsupported`, and SHALL NOT settle `proved`.
+- **Pending target times.** For some admitted forms the number of pending
+  target times the claim's monitor keeps can grow without bound on the region
+  MDP (an interval operator nested under another, read at arbitrarily many
+  positions of its window). While EN-5 cannot decide such a case within the
+  request's limits, the run stops with FR-203's
+  `Incomplete(LimitReached{limit, value, setting})` naming the limit it
+  reached, as any exact run does, and settles neither `unsupported` nor a
+  verdict it has not decided. That stop is what the product may do while it
+  cannot decide a case; it is not a replacement for any criterion, and every
+  exact value a criterion states (AC-21 and AC-26 here, FR-498-AC-8) stands.
 - **Strict constraints.** When a guard, a time invariant or a timed interval
   of the claim is strict, EN-5 SHALL decide the claim over the region MDP
   instead of the digital MDP: each clock keeps its integer part, capped as in

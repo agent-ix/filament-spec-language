@@ -533,8 +533,10 @@ computes it.
   `o` is the zero-based pre-order index of an interval operator node among
   the interval operator nodes of the checked formula; negation normal form
   keeps that index and changes only the operator's kind.
-- **Obligation.** `[kind,o,integer,fraction]`, kind one of `"eventually"`,
-  `"always"`, `"until"`, `"release"`: occurrence `o`, read with that kind,
+- **Obligation.** `[kind,o,integer,fraction]`, kind the JSON string
+  `"eventually"`, `"always"`, `"until"` or `"release"`, and `o`, `integer`
+  and `fraction` canonical nonnegative decimal integer strings as clock
+  `value` and `cap` are above (no leading zero or sign; `"0"` for zero): occurrence `o`, read with that kind,
   started at an earlier position, whose elapsed time since that position is
   given as a region clock entry (`integer` its integer part in scaled units,
   `fraction` as FR-920 defines it; obligation clocks take part in the
