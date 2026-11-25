@@ -1,0 +1,10 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile t = "filament.temporal.complete/v1";
+model Config = "catalog/timed";
+dimension Time;
+unit ms : Time = rational(1, 1);
+time Config dense unit ms;
+urgent Busy when { self.versionNumber > 0 };
+urgent Prompt Config::ConfigVersion::attemptUpdate;
+urgent Known when { present(lookup<Config::ConfigVersion>(Config::config_history, self) absent empty) };

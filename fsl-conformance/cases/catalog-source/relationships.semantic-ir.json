@@ -1,0 +1,290 @@
+{
+  "canonicalization": {
+    "algorithm": "rfc8785-v1"
+  },
+  "constructs": [
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.object-type/v1",
+        "members": {},
+        "shape": "record"
+      },
+      "kind": {
+        "module": "catalog/relationships",
+        "name": "entity"
+      },
+      "moduleVersion": "1.0.0"
+    },
+    {
+      "construct": {
+        "identity": "none",
+        "meaning": "filament.meaning.model.population/v1",
+        "members": {},
+        "shape": "record"
+      },
+      "kind": {
+        "module": "catalog/relationships",
+        "name": "population"
+      },
+      "moduleVersion": "1.0.0"
+    }
+  ],
+  "contractVersion": "2.0.0",
+  "extensions": [],
+  "occurrences": [],
+  "package": {
+    "identity": "catalog/relationships",
+    "mappingVersions": [],
+    "profileVersions": [],
+    "version": "1.0.0"
+  },
+  "populations": [
+    {
+      "displayName": "ix://catalog/relationships/orders",
+      "extent": "closed",
+      "identity": "ix://catalog/relationships/orders",
+      "kind": {
+        "module": "catalog/relationships",
+        "name": "population"
+      },
+      "members": [
+        "ix://catalog/relationships/Order"
+      ],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/relationships/orders",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/relationships/orders"
+          ]
+        }
+      }
+    }
+  ],
+  "source": {
+    "dialect": "spec-bundle",
+    "identity": "ix://catalog/relationships/spec",
+    "version": "1.0.0"
+  },
+  "types": [
+    {
+      "constraints": [],
+      "displayName": "Order",
+      "extensions": [],
+      "fields": [
+        {
+          "defaultKind": "none",
+          "identity": "ix://catalog/relationships/Order/trail",
+          "multiplicity": {
+            "lower": 1,
+            "ordered": false,
+            "unique": true,
+            "upper": 1
+          },
+          "name": "trail",
+          "nullable": false,
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://catalog/relationships/spec",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://catalog/relationships/Widget/code"
+              ]
+            }
+          },
+          "presence": "optional",
+          "typeRef": "ix://catalog/relationships/Order"
+        }
+      ],
+      "identity": "ix://catalog/relationships/Order",
+      "kind": {
+        "module": "catalog/relationships",
+        "name": "entity"
+      },
+      "operations": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://catalog/relationships/spec",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://catalog/relationships/Widget"
+          ]
+        }
+      },
+      "relationships": [
+        {
+          "category": "structural",
+          "composite": false,
+          "direction": "source-to-target",
+          "identity": "ix://catalog/relationships/relationship/Order-next",
+          "origin": {
+            "source": {
+              "path": "spec.fspec",
+              "sourceIdentity": "ix://catalog/relationships/spec",
+              "startColumn": 1,
+              "startLine": 1
+            }
+          },
+          "sourceEnd": {
+            "multiplicity": {
+              "lower": 0,
+              "ordered": false,
+              "unique": true,
+              "upper": 1
+            },
+            "role": "next",
+            "type": "ix://catalog/relationships/Order"
+          },
+          "targetEnd": {
+            "multiplicity": {
+              "lower": 0,
+              "ordered": false,
+              "unique": true,
+              "upper": 1
+            },
+            "role": "previous",
+            "type": "ix://catalog/relationships/Order"
+          }
+        },
+        {
+          "category": "structural",
+          "composite": false,
+          "direction": "bidirectional",
+          "identity": "ix://catalog/relationships/relationship/Order-link",
+          "origin": {
+            "source": {
+              "path": "spec.fspec",
+              "sourceIdentity": "ix://catalog/relationships/spec",
+              "startColumn": 1,
+              "startLine": 1
+            }
+          },
+          "sourceEnd": {
+            "multiplicity": {
+              "lower": 0,
+              "ordered": false,
+              "unique": true,
+              "upper": 1
+            },
+            "role": "outgoing",
+            "type": "ix://catalog/relationships/Order"
+          },
+          "targetEnd": {
+            "multiplicity": {
+              "lower": 0,
+              "ordered": false,
+              "unique": true,
+              "upper": 1
+            },
+            "role": "incoming",
+            "type": "ix://catalog/relationships/Order"
+          }
+        },
+        {
+          "category": "structural",
+          "composite": false,
+          "direction": "undirected",
+          "identity": "ix://catalog/relationships/relationship/Order-mate",
+          "origin": {
+            "source": {
+              "path": "spec.fspec",
+              "sourceIdentity": "ix://catalog/relationships/spec",
+              "startColumn": 1,
+              "startLine": 1
+            }
+          },
+          "sourceEnd": {
+            "multiplicity": {
+              "lower": 0,
+              "ordered": false,
+              "unique": true,
+              "upper": 1
+            },
+            "role": "mate",
+            "type": "ix://catalog/relationships/Order"
+          },
+          "targetEnd": {
+            "multiplicity": {
+              "lower": 0,
+              "ordered": false,
+              "unique": true,
+              "upper": 1
+            },
+            "role": "mateOf",
+            "type": "ix://catalog/relationships/Order"
+          }
+        },
+        {
+          "category": "structural",
+          "composite": false,
+          "direction": "source-to-target",
+          "identity": "ix://catalog/relationships/relationship/Order-kids",
+          "origin": {
+            "source": {
+              "path": "spec.fspec",
+              "sourceIdentity": "ix://catalog/relationships/spec",
+              "startColumn": 1,
+              "startLine": 1
+            }
+          },
+          "sourceEnd": {
+            "multiplicity": {
+              "lower": 0,
+              "ordered": false,
+              "unique": true,
+              "upper": 1
+            },
+            "role": "kids",
+            "type": "ix://catalog/relationships/Order"
+          },
+          "targetEnd": {
+            "multiplicity": {
+              "lower": 0,
+              "ordered": false,
+              "unique": true,
+              "upper": 3
+            },
+            "type": "ix://catalog/relationships/Order"
+          }
+        },
+        {
+          "category": "structural",
+          "composite": false,
+          "direction": "source-to-target",
+          "identity": "ix://catalog/relationships/relationship/Order-litter",
+          "origin": {
+            "source": {
+              "path": "spec.fspec",
+              "sourceIdentity": "ix://catalog/relationships/spec",
+              "startColumn": 1,
+              "startLine": 1
+            }
+          },
+          "sourceEnd": {
+            "multiplicity": {
+              "lower": 0,
+              "ordered": false,
+              "unique": true,
+              "upper": 1
+            },
+            "role": "litter",
+            "type": "ix://catalog/relationships/Order"
+          },
+          "targetEnd": {
+            "multiplicity": {
+              "lower": 0,
+              "ordered": false,
+              "unique": false,
+              "upper": 3
+            },
+            "type": "ix://catalog/relationships/Order"
+          }
+        }
+      ],
+      "roles": [],
+      "supertypes": [],
+      "unknownPolicy": "reject"
+    }
+  ]
+}
