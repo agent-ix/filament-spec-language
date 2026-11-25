@@ -10,12 +10,14 @@ relationships:
 
 ## Description
 
-Verify FR-1047-AC-1 to FR-1047-AC-8 and FR-1047-AC-10 through
-`fsl_command::command` in process: missing members listed at once as JSON pointers with one-of groups,
-the accepted formats of each entry family, the export member's shape, and
-`request_example`'s documents fed back through their entries. Each test
-asserts the exact `message` string and the exact `details` value, and is
-tagged `#[trace("TC-3170", "FR-1047-AC-n")]` with the criterion it backs.
+Verify FR-1047-AC-1 to FR-1047-AC-8 and FR-1047-AC-10 to FR-1047-AC-16
+through `fsl_command::command` in process: missing members listed at once as
+JSON pointers with one-of groups, the accepted formats of each entry family,
+the export member's shape, `request_example`'s documents fed back through
+their entries, and which refusal a request with no run member gets. Each
+test asserts what its criterion states, the exact `message` string and
+`details` value where the criterion gives them, and is tagged
+`#[trace("TC-3170", "FR-1047-AC-n")]` with the criterion it backs.
 
 ## Test Procedure
 
@@ -46,6 +48,15 @@ tagged `#[trace("TC-3170", "FR-1047-AC-n")]` with the criterion it backs.
    `read_clause_run_request` over FR-1047-AC-10's program request and package
    request, then over the program request without `models`, then over the
    package request with a `libraries` entry.
+8. Make each call of FR-1047-AC-11 over both of AC-10's requests, in an
+   empty directory.
+9. Make each call of FR-1047-AC-12 and of FR-1047-AC-13 in an empty
+   directory, adding one member at a time.
+10. Make each call of FR-1047-AC-14 in an empty directory, changing the
+    program request one way at a time.
+11. In a build with `quire-extraction`, make each call of FR-1047-AC-15.
+12. Make each call of FR-1047-AC-16, those over AC-15's request in a build
+    with `quire-extraction`.
 
 ## Expected Results
 
@@ -74,3 +85,8 @@ tagged `#[trace("TC-3170", "FR-1047-AC-n")]` with the criterion it backs.
   `Display` texts, `known` list and `code()` of FR-1047-AC-8.
 - Step 7 gives the messages and `details` of FR-1047-AC-10, at stage
   `request`, exit 20, with no file read.
+- Steps 8 to 11 give the refusal or limit outcome their criteria state, with
+  no `details.missing`, never AC-10's message, and no file read other than
+  the request.
+- Step 12 gives AC-10's refusal for each call's source, with no file read
+  other than the request.
