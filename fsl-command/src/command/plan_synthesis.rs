@@ -534,7 +534,12 @@ fn state_document(
                 if let Some(value) = object.fields.get(&field.key) {
                     fields.insert(
                         field.name.clone(),
-                        typed_value_json(value, scope.types(), scope.variant_types())?,
+                        typed_value_json(
+                            value,
+                            scope.types(),
+                            scope.variant_types(),
+                            scope.enums(),
+                        )?,
                     );
                 }
             }

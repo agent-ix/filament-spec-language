@@ -1776,10 +1776,16 @@ mod tests {
     use ix_trace_rs::trace;
     use unicode_normalization::UnicodeNormalization;
 
+    use super::super::encode::{value_enc, Enc, Typing};
     use super::*;
 
     fn types() -> TypeEnvironment {
         TypeEnvironment::new([], []).expect("an empty environment admits")
+    }
+
+    /// `value`'s typed canonical form over the declarations `types`.
+    fn typed(value: &Value, types: &TypeEnvironment) -> Enc {
+        value_enc(value, Typing::with_variants(types, &[]))
     }
 
     fn int(lower: i64, upper: i64) -> ValueType {
@@ -2201,12 +2207,7 @@ mod tests {
         let all = values(outer, &mut charged);
         let distinct: std::collections::BTreeSet<String> = all
             .iter()
-            .map(|value| {
-                format!(
-                    "{:?}",
-                    super::super::encode::typed_value_enc(value, &types, &[])
-                )
-            })
+            .map(|value| format!("{:?}", typed(value, &types)))
             .collect();
         assert_eq!(distinct.len(), 12);
     }
@@ -2247,7 +2248,7 @@ mod tests {
         .expect("a finite domain");
         assert_eq!(values.len(), 2 + 4 + 1);
         let written = quire_canonical::to_vec(
-            &super::super::encode::typed_value_enc(&values[1], &types, &[]),
+            &typed(&values[1], &types),
             quire_canonical::Limits::new(u64::MAX),
         )
         .expect("encodes");
@@ -2409,7 +2410,7 @@ mod tests {
         .expect("a finite domain")
         .remove(0);
         let written = quire_canonical::to_vec(
-            &super::super::encode::typed_value_enc(&first, &types, &[]),
+            &typed(&first, &types),
             quire_canonical::Limits::new(u64::MAX),
         )
         .expect("encodes");

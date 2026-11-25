@@ -86,6 +86,7 @@ pub(super) fn run(
                 claim_type,
                 scope.types(),
                 scope.variant_types(),
+                scope.enums(),
                 &|state| system.state_key(state).ok().map(|(_, key)| key),
                 &scheduler,
             );
