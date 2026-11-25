@@ -71,6 +71,8 @@ use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::observation::DocumentRef;
 
 mod timed;
+#[cfg(test)]
+mod handoff_supply_tests;
 
 #[cfg(test)]
 #[path = "../../../fsl-semantics/tests/support/tc1070.rs"]

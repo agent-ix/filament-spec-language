@@ -5376,6 +5376,82 @@ fn refinement_node(
     ))
 }
 
+/// FR-322 "Operand index segments": the `node` of a refinement's external
+/// `{package, node}` key is a document-held id of that dependency's graph, so
+/// each operand it holds is written as the index segment of the operand's node
+/// there. A key whose path holds no operand is already in that form.
+fn write_external_keys(
+    ids: &StructuralIds,
+    package: &CheckedPackage,
+    limits: EmitLimits,
+    body: &mut CheckedTerm,
+) -> Result<(), EmitRefusal> {
+    use filament_contract_model::{
+        CheckedNodePathSegment as Segment, RefinementAbstractClass, RefinementKey,
+    };
+    let CheckedTerm::Refinement {
+        abstract_key,
+        protocol,
+        class_catalog,
+        ..
+    } = body
+    else {
+        return Ok(());
+    };
+    let mut written = vec![abstract_key.as_mut()];
+    written.extend(protocol.as_deref_mut());
+    for class in class_catalog
+        .iter_mut()
+        .flat_map(|catalog| &mut catalog.r#abstract)
+    {
+        if let RefinementAbstractClass::Declared {
+            node, binder_types, ..
+        } = class
+        {
+            written.push(node);
+            written.extend(binder_types);
+        }
+    }
+    let mut keys = ids.key_reader();
+    let mut graphs = BTreeMap::new();
+    for key in written {
+        let RefinementKey::External(external) = key else {
+            continue;
+        };
+        if !holds_segment(&external.node, |segment| {
+            matches!(segment, Segment::Node(_))
+        }) {
+            continue;
+        }
+        let library = fsl_semantics::library::LibraryName::new(&*external.package)
+            .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+        let graph = match graphs.entry(library) {
+            std::collections::btree_map::Entry::Occupied(held) => held.into_mut(),
+            std::collections::btree_map::Entry::Vacant(vacant) => {
+                let dependency = package
+                    .dependencies()
+                    .get(vacant.key())
+                    .ok_or(EmitRefusal::SourceMapInvariant)?;
+                // The dependency's own bytes, held to `limits.output_bytes`
+                // by `emit_checked`, give its graph order.
+                let emission = emit_checked(dependency, limits)?;
+                let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(
+                    emission.package().bytes(),
+                )
+                .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+                vacant.insert(graph)
+            }
+        };
+        let structural = keys
+            .key(&external.node)
+            .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+        external.node = graph
+            .wire_id(&structural)
+            .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+    }
+    Ok(())
+}
+
 /// `origin`'s role as FR-322 spells it.
 fn occurrence_role(node: &NodeKey, origin: &Origin) -> Result<CheckedOccurrenceRole, EmitRefusal> {
     crate::checked_v2::occurrence_role(origin.role().as_str()).ok_or_else(|| {
@@ -7744,7 +7820,8 @@ fn emit_package_nodes(
             .refinement_declaration_region(refinement)
             .filter(|region| region.start() < region.end())
             .ok_or(EmitRefusal::UnlocatedRefinementDeclaration)?;
-        let (node, entries, rows) = refinement_node(ids, graph, refinement, &region)?;
+        let (mut node, entries, rows) = refinement_node(ids, graph, refinement, &region)?;
+        write_external_keys(ids, package, limits, &mut node.body)?;
         step_rows.extend(rows);
         let insertion = nodes.partition_point(|existing| existing.node_id < node.node_id);
         nodes.insert(insertion, node.clone());
@@ -10193,6 +10270,7 @@ struct WrittenTemporalRows {
     refs: Vec<TemporalClauseRef>,
 }
 
+#[implements("FR-640-AC-15")]
 fn temporal_binding_rows(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
@@ -10475,29 +10553,25 @@ fn temporal_binding_rows(
             let Some(profile) = awaited.profile else {
                 continue;
             };
-            if !matches!(
-                profile,
-                TemporalProfile::EventPositionFalseExtension
-                    | TemporalProfile::FixedSampleFalseExtension
-                    | TemporalProfile::TimestampedEventFiniteWindow
-            ) {
+            if profile == TemporalProfile::InfiniteTrace {
                 continue;
             }
             let span = awaited.span;
             let key = (source.clone(), span.start, span.end, None);
-            let declaration_name = format!("await {}::{}", protocol.name, awaited.name);
             let Some(selection) = selected.remove(&key) else {
-                missing.push((
-                    MissingClockKind::Await,
-                    source.clone(),
-                    span,
-                    declaration_name,
-                ));
+                if profile != TemporalProfile::Timed {
+                    let name = format!("await {}::{}", protocol.name, awaited.name);
+                    missing.push((MissingClockKind::Await, source.clone(), span, name));
+                }
                 continue;
             };
             check_selected_definition(&source, span, profile, selection)?;
             let clock = &selection.clock;
             validate_temporal_clock(&source, span, awaited.clock.as_str(), clock)?;
+            // A `timed` protocol clock is checked and takes no row.
+            if profile == TemporalProfile::Timed {
+                continue;
+            }
             let node_key = keys
                 .nodes
                 .get(&awaited.node)
@@ -10533,8 +10607,8 @@ fn temporal_binding_rows(
     // FSpec FR-322-AC-305: a `compensate` node reads a clock too, so it is
     // keyed by its own node identity, named by the template's clock text,
     // and shares the one array with the clause rows. Its profile is the one
-    // its `using` alias selects; a node of a profile that is not a
-    // clock-configured one writes no row.
+    // its `using` alias selects; a `timed` template's selection is checked and
+    // takes no row, and an infinite-trace template reads no clock.
     let compensation_nodes: HashMap<Vec<&str>, &CheckedNodeId> = nodes
         .iter()
         .filter(|node| is_compensation_node(node))
@@ -10556,12 +10630,7 @@ fn temporal_binding_rows(
             let Some(profile) = template.temporal_profile else {
                 continue;
             };
-            if !matches!(
-                profile,
-                TemporalProfile::EventPositionFalseExtension
-                    | TemporalProfile::FixedSampleFalseExtension
-                    | TemporalProfile::TimestampedEventFiniteWindow
-            ) {
+            if profile == TemporalProfile::InfiniteTrace {
                 continue;
             }
             let path = [protocol.name.as_str(), "compensate", template.name.as_str()];
@@ -10572,17 +10641,23 @@ fn temporal_binding_rows(
             let span = template.span;
             let key = (source.clone(), span.start, span.end, None);
             let Some(selection) = selected.remove(&key) else {
-                missing.push((
-                    MissingClockKind::CompensationTemplate,
-                    source.clone(),
-                    span,
-                    format!("compensate template `{}::{}`", protocol.name, template.name),
-                ));
+                if profile != TemporalProfile::Timed {
+                    missing.push((
+                        MissingClockKind::CompensationTemplate,
+                        source.clone(),
+                        span,
+                        format!("compensate template `{}::{}`", protocol.name, template.name),
+                    ));
+                }
                 continue;
             };
             check_selected_definition(&source, span, profile, selection)?;
             let clock = &selection.clock;
             validate_temporal_clock(&source, span, template.clock.as_str(), clock)?;
+            // A `timed` protocol clock is checked and takes no row.
+            if profile == TemporalProfile::Timed {
+                continue;
+            }
             let node_key = key_of_id
                 .get(&declaration)
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
