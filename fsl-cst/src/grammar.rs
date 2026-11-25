@@ -1505,9 +1505,9 @@ fn expressions(g: &mut Grammar) {
                 r(P::Expression),
                 x(")"),
             ]),
-            // FSpec FR-376-AC-8: `only` is a keyword spelling in its two
-            // forms and an ordinary identifier elsewhere, so this head
-            // reserves nothing.
+            // FSpec shared grammar (FR-339): `only` is a keyword spelling in
+            // its forms and an identifier elsewhere, so this head reserves
+            // nothing.
             s(vec![
                 literal("only"),
                 x("("),
