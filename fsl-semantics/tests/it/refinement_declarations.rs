@@ -2331,7 +2331,12 @@ fn present_option_history_initials_lower_through_the_package_route() {
                 BindingValue::Leaf(LeafTerm::Reference { target }) => {
                     let literal = graph
                         .semantic_graph()
-                        .node(target.admitted().expect("literal reference is admitted").clone())
+                        .node(
+                            target
+                                .admitted()
+                                .expect("literal reference is admitted")
+                                .clone(),
+                        )
                         .expect("literal node exists");
                     let BodyTerm::Leaf(LeafTerm::Literal { value, .. }) = literal.body() else {
                         panic!("history Option payload resolves to a literal: {literal:?}");
@@ -2342,21 +2347,17 @@ fn present_option_history_initials_lower_through_the_package_route() {
             }
         })
         .collect::<Vec<_>>();
-    assert_eq!(
-        option_payloads.len(),
-        3,
-        "one option_value per history row"
-    );
-    assert!(option_payloads.iter().any(
-        |value| matches!(value, LiteralValue::Enum(case) if case == "idle")
-    ));
+    assert_eq!(option_payloads.len(), 3, "one option_value per history row");
+    assert!(option_payloads
+        .iter()
+        .any(|value| matches!(value, LiteralValue::Enum(case) if case == "idle")));
     assert!(option_payloads.iter().any(|value| matches!(
         value,
         LiteralValue::Integer(number) if number.to_string() == "1"
     )));
-    assert!(option_payloads.iter().any(
-        |value| matches!(value, LiteralValue::Decimal(number) if number == "15.0")
-    ));
+    assert!(option_payloads
+        .iter()
+        .any(|value| matches!(value, LiteralValue::Decimal(number) if number == "15.0")));
 }
 
 /// FR-138-AC-2 (TC-543): an Option-wrapped integer remains subject to its
