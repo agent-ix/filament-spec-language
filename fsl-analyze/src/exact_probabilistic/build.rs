@@ -8,13 +8,15 @@ use fsl_foundation::IdentityLimits;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use filament_exact::{Cancel, Identifier, Integer, ObjectReference, Rational, Value, ValueType};
+use filament_exact::{
+    Cancel, Identifier, Integer, ObjectReference, Rational, Value, ValueType, WorkScope,
+};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{AutomatonError, Monitor, PropertyAutomaton};
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::{
-    same_rewards, Action, ModelSimState, ModelSystem, NotMarkov, PredicateReading,
-    ScheduledIdentity, Unsteppable,
+    same_rewards, Action, ModelSimState, ModelSimulationRequest, ModelSystem, NotMarkov,
+    PredicateReading, ScheduledIdentity, Unsteppable,
 };
 use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
 use fsl_eval::simulation::StateKey;
@@ -56,7 +58,18 @@ pub(crate) fn build_retaining_monitor(
     request: ProductRequest<'_>,
     cancel: &Cancel,
 ) -> Result<(ProbBuild, Option<Monitor<PropertyAutomaton>>), ProductRefusal> {
-    match build_configured(request, cancel, None) {
+    let work = WorkScope::new(request.subject.simulation.meter);
+    build_retaining_monitor_in_scope(request, work, cancel)
+}
+
+/// [`build_retaining_monitor`] under the item's `work` allowance, so that a
+/// later reading of the same item spends only what the build left (FR-203).
+pub(crate) fn build_retaining_monitor_in_scope(
+    request: ProductRequest<'_>,
+    work: WorkScope,
+    cancel: &Cancel,
+) -> Result<(ProbBuild, Option<Monitor<PropertyAutomaton>>), ProductRefusal> {
+    match build_configured(request, work, cancel, None) {
         Ok(result) => Ok(result),
         Err(BudgetedProductError::Product(error)) => Err(error),
         Err(BudgetedProductError::Key(_) | BudgetedProductError::Undefined(_)) => {
@@ -91,11 +104,24 @@ pub(crate) fn build_retaining_monitor_with_budget(
     budget: &mut dyn ModelKeyBudget,
     cancel: &Cancel,
 ) -> Result<(ProbBuild, Option<Monitor<PropertyAutomaton>>), BudgetedProductError> {
+    let work = WorkScope::new(request.subject.simulation.meter);
+    build_retaining_monitor_with_budget_in_scope(request, identity, budget, work, cancel)
+}
+
+/// [`build_retaining_monitor_with_budget`] under the item's `work` allowance,
+/// as [`build_retaining_monitor_in_scope`] is for an unbudgeted build.
+pub(crate) fn build_retaining_monitor_with_budget_in_scope(
+    request: ProductRequest<'_>,
+    identity: IdentityLimits,
+    budget: &mut dyn ModelKeyBudget,
+    work: WorkScope,
+    cancel: &Cancel,
+) -> Result<(ProbBuild, Option<Monitor<PropertyAutomaton>>), BudgetedProductError> {
     let policy = KeyPolicy {
         identity,
         budget: RefCell::new(budget),
     };
-    build_configured(request, cancel, Some(&policy))
+    build_configured(request, work, cancel, Some(&policy))
 }
 
 /// Exercise the production budgeted builder without changing public requests.
@@ -109,8 +135,44 @@ pub fn build_product_with_key_budget(
     build_retaining_monitor_with_budget(request, identity, budget, cancel).map(|(build, _)| build)
 }
 
+/// Admit `simulation` under the item's `work` allowance.
+///
+/// # Errors
+///
+/// [`ProductRefusal`] when the cancellation is tripped, the subject does not
+/// admit, or the allowance cannot pay a reading admission makes.
+pub(crate) fn admit_in_scope<'a>(
+    simulation: ModelSimulationRequest<'a>,
+    work: WorkScope,
+    cancel: &Cancel,
+) -> Result<ModelSystem<'a>, ProductRefusal> {
+    ModelSystem::new_with_work_scope(simulation, work, cancel).map_err(|failure| {
+        if let Some(cause) = cancel.tripped() {
+            ProductRefusal::Stopped(ProductStop::Cancelled(cause))
+        } else {
+            match failure {
+                fsl_eval::simulation::model::ProbabilityAdmissionFailure::Admission(failure) => {
+                    ProductRefusal::Admission(failure)
+                }
+                fsl_eval::simulation::model::ProbabilityAdmissionFailure::Evaluation(
+                    incomplete,
+                ) => ProductRefusal::Expansion(fsl_eval::simulation::ExpansionStop {
+                    cause: filament_semantic_value::catalog::CatalogCode::new(
+                        "resource_exhausted",
+                        "insufficient-next-charge",
+                    ),
+                    limit: Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
+                        incomplete.limit_kind,
+                    )),
+                }),
+            }
+        }
+    })
+}
+
 fn build_configured(
     request: ProductRequest<'_>,
+    work: WorkScope,
     cancel: &Cancel,
     key_policy: Option<&KeyPolicy<'_>>,
 ) -> Result<(ProbBuild, Option<Monitor<PropertyAutomaton>>), BudgetedProductError> {
@@ -122,30 +184,7 @@ fn build_configured(
     let limits_all = limits;
     let limits = limits_all.model;
     let probabilistic = subject.simulation.input.probabilistic;
-    let scope = filament_exact::WorkScope::new(subject.simulation.meter);
-    let system =
-        ModelSystem::new_with_work_scope(subject.simulation, scope, cancel).map_err(|failure| {
-            if let Some(cause) = cancel.tripped() {
-                ProductRefusal::Stopped(ProductStop::Cancelled(cause))
-            } else {
-                match failure {
-                    fsl_eval::simulation::model::ProbabilityAdmissionFailure::Admission(
-                        failure,
-                    ) => ProductRefusal::Admission(failure),
-                    fsl_eval::simulation::model::ProbabilityAdmissionFailure::Evaluation(
-                        incomplete,
-                    ) => ProductRefusal::Expansion(fsl_eval::simulation::ExpansionStop {
-                        cause: filament_semantic_value::catalog::CatalogCode::new(
-                            "resource_exhausted",
-                            "insufficient-next-charge",
-                        ),
-                        limit: Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
-                            incomplete.limit_kind,
-                        )),
-                    }),
-                }
-            }
-        })?;
+    let system = admit_in_scope(subject.simulation, work, cancel)?;
     match TimedSystem::new(&system, &claim.subject.alias) {
         Ok(timed) => {
             if key_policy.is_some() {
