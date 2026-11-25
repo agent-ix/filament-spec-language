@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-219 and FR-220 at S3: memory defaults, weak joins, fences.
 
 use filament_semantic_value::checking::CheckMode;

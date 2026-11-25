@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-113's binder no-shadowing rule.
 
 use ix_trace_rs::trace;

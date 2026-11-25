@@ -1667,20 +1667,29 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
     ) -> Result<(), ExpansionStop> {
         let mut initial = BTreeMap::new();
         let identity = IdentityLimits::default();
-        for model in self
+        'models: for model in self
             .system
             .initial_for_check_with_symmetry(max_states, group)
         {
-            let model = model.map_err(|refusal| match refusal {
-                InitialStateRefusal::OverBudget(_) => self.record(Halt::InitialStates),
-                InitialStateRefusal::Encoding(refusal) => {
-                    self.record(Halt::Refusal(ModelCheckRefusal::Encoding(refusal)))
+            let model = match model {
+                Ok(model) => model,
+                Err(InitialStateRefusal::OverBudget(_)) => {
+                    // Keep the roots already admitted. The product explorer
+                    // must account for those states before this initial-set
+                    // limit becomes the result.
+                    self.record(Halt::InitialStates);
+                    break 'models;
                 }
-                InitialStateRefusal::Expansion(stop) => self.record(Halt::Expansion(stop)),
-                InitialStateRefusal::Construction(refusal) => {
-                    self.record(Halt::Refusal(ModelCheckRefusal::Protocol(refusal)))
+                Err(InitialStateRefusal::Encoding(refusal)) => {
+                    return Err(self.record(Halt::Refusal(ModelCheckRefusal::Encoding(refusal))));
                 }
-            })?;
+                Err(InitialStateRefusal::Expansion(stop)) => {
+                    return Err(self.record(Halt::Expansion(stop)));
+                }
+                Err(InitialStateRefusal::Construction(refusal)) => {
+                    return Err(self.record(Halt::Refusal(ModelCheckRefusal::Protocol(refusal))));
+                }
+            };
             let (model_key, reading) = self.reading_at(&model, true)?;
             let properties = self.step(Before::Start, &reading)?;
             if properties.is_empty() {
@@ -1715,10 +1724,11 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
                         EncodingRefusal::of(&error, identity),
                     )))
                 })?;
-                initial.entry(key).or_insert(state);
-                if initial.len() > max_states {
-                    return Err(self.record(Halt::InitialStates));
+                if !initial.contains_key(&key) && initial.len() >= max_states {
+                    self.record(Halt::InitialStates);
+                    break 'models;
                 }
+                initial.entry(key).or_insert(state);
             }
         }
         self.initial = initial.into_values().collect();
@@ -2637,31 +2647,36 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             }
         }
         self.charge_lifted(totals);
-        let ending = match &exploration.outcome {
-            Outcome::Exhaustive(_) => Ending::Complete,
-            Outcome::Bounded { limit, .. } => {
-                let (limit, value) = match limit {
-                    Limit::States(_) => (ModelCheckLimit::MaxStates, widen(spent.max_states)),
-                    Limit::Transitions(_) => (
-                        ModelCheckLimit::MaxTransitions,
-                        widen(spent.max_transitions),
-                    ),
-                };
-                Ending::Stopped(
-                    IncompleteCause::ResourceExhausted,
-                    Some(ReachedLimit { limit, value }),
-                )
-            }
-            Outcome::Cancelled { .. } => match self.cancel.cause() {
-                Some(source) => Ending::Stopped(IncompleteCause::Cancelled { source }, None),
-                None => return Err(fault("a-cancelled-run-has-a-cause")),
-            },
-            Outcome::Stopped { .. } => match self.halt_ending(&product)? {
-                Some(ending) => ending,
-                None => return Err(fault("a-stopped-expansion-recorded-its-halt")),
-            },
-            Outcome::BoundReached { .. } => {
-                return Err(fault("the-horizon-is-the-product-s-not-the-exploration-s"));
+        let initial_limit = matches!(product.halt.borrow().as_ref(), Some(Halt::InitialStates));
+        let ending = if initial_limit {
+            self.ending(Halt::InitialStates)?
+        } else {
+            match &exploration.outcome {
+                Outcome::Exhaustive(_) => Ending::Complete,
+                Outcome::Bounded { limit, .. } => {
+                    let (limit, value) = match limit {
+                        Limit::States(_) => (ModelCheckLimit::MaxStates, widen(spent.max_states)),
+                        Limit::Transitions(_) => (
+                            ModelCheckLimit::MaxTransitions,
+                            widen(spent.max_transitions),
+                        ),
+                    };
+                    Ending::Stopped(
+                        IncompleteCause::ResourceExhausted,
+                        Some(ReachedLimit { limit, value }),
+                    )
+                }
+                Outcome::Cancelled { .. } => match self.cancel.cause() {
+                    Some(source) => Ending::Stopped(IncompleteCause::Cancelled { source }, None),
+                    None => return Err(fault("a-cancelled-run-has-a-cause")),
+                },
+                Outcome::Stopped { .. } => match self.halt_ending(&product)? {
+                    Some(ending) => ending,
+                    None => return Err(fault("a-stopped-expansion-recorded-its-halt")),
+                },
+                Outcome::BoundReached { .. } => {
+                    return Err(fault("the-horizon-is-the-product-s-not-the-exploration-s"));
+                }
             }
         };
         Ok(Ok(Explored {

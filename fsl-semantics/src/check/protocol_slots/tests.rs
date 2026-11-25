@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The C1b3 protocol members over fixture R of the protocol obligation
 //! tests (FR-211, FR-218): the `terminal when` predicate, replicated roles
 //! and the binder reader sets with the `scope` region.
