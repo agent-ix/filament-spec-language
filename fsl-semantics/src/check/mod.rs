@@ -9824,7 +9824,7 @@ impl CheckedGraph {
         })
     }
 
-    /// FR-081/FR-400:the completed effective declaration view for each
+    /// FR-081/FR-400: the completed effective declaration view for each
     /// selected model alias, as produced during S3 admission. Package
     /// emission reads these retained views rather than normalizing source
     /// documents a second time.

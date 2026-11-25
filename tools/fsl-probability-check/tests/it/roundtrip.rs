@@ -18,10 +18,11 @@ use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
 use fsl_foundation::{RequestIndex, SourceIdentity};
-use fsl_package::ObligationIdentity;
+use fsl_package::{ModelIdentity, ObligationIdentity};
 use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
 use fsl_replay::{
-    probability_certificate_document, write_probability_certificate, ProbabilityDocumentLimits,
+    probability_certificate_document, write_probability_certificate, ProbabilityDocumentError,
+    ProbabilityDocumentLimits,
 };
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
@@ -123,7 +124,6 @@ fn proof_source_request(
         ProbabilityDocumentLimits,
     ),
 ) -> Value {
-    let identity = SourceIdentity::new("test", "certificate-source");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let (checked, packages) = compile_source(source);
@@ -265,6 +265,13 @@ fn proof_source_request(
         &certificate,
         document_limits,
     );
+    source_request(source, &item, String::from_utf8(certificate).unwrap())
+}
+
+/// The checker's source request for `certificate` over `source`, naming
+/// `item`.
+fn source_request(source: &str, item: &ObligationIdentity, certificate: String) -> Value {
+    let identity = SourceIdentity::new("test", "certificate-source");
     json!({
         "source": {"authority": identity.authority, "identity": identity.identity, "content": source},
         "package_name": "certificate-fixture",
@@ -273,7 +280,7 @@ fn proof_source_request(
         "documents": [DOMAIN, SNAPSHOT],
         "initial": [{"authority":"test", "identity":"s0"}],
         "universes": [{"population":{"package":"test/link", "node":"ix://test/link/msgs"}, "keys":["m"]}],
-        "certificate": String::from_utf8(certificate).unwrap(),
+        "certificate": certificate,
         "claim_side": true,
         "limits": {"bytes":1_000_000,"storage_bytes":8_000_000, "states":100, "edges":1000, "scalar_bits":128, "expansion":100_000, "stages":{}},
     })
@@ -283,10 +290,7 @@ fn proof_source_request(
 #[test]
 fn cancelling_at_every_observed_document_graph_and_arithmetic_poll_returns_no_acceptance() {
     use filament_exact::CancelCause;
-    use fsl_replay::{
-        check_probability_certificate_document, ExactProbabilityCertificateCheck,
-        ProbabilityDocumentError,
-    };
+    use fsl_replay::{check_probability_certificate_document, ExactProbabilityCertificateCheck};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, OnceLock};
 
@@ -575,13 +579,13 @@ fn an_actual_en5_proof_is_checked_in_a_fresh_process_using_its_source() {
     );
 }
 
-#[trace("TC-764", "FR-282-AC-1", "FR-201-AC-11")]
-#[test]
-fn certificate_checks_independently() {
-    let scratch = std::env::temp_dir().join(format!("qsl-2158-certificate-{}", std::process::id()));
+/// The item `fsl analyze` writes for the claim `Likely` of `source`, run
+/// from files in a scratch directory named for `name`.
+fn analyzed_item(name: &str, source: &str) -> Value {
+    let scratch = std::env::temp_dir().join(format!("qsl-2158-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(&scratch).unwrap();
-    std::fs::write(scratch.join("program.fsl"), format!("{SOURCE}{CLAIM}")).unwrap();
+    std::fs::write(scratch.join("program.fsl"), source).unwrap();
     std::fs::write(scratch.join("model.json"), DOMAIN).unwrap();
     std::fs::write(scratch.join("snapshot.json"), SNAPSHOT).unwrap();
     let analyze_request = json!({
@@ -605,11 +609,45 @@ fn certificate_checks_independently() {
         &Cancel::new(),
     )
     .expect("fsl analyze runs from source");
-    assert_eq!(analyzed.exit_code, 0);
     let outcome = serde_json::to_value(analyzed.value).expect("the analyze document is JSON");
-    let item = &outcome["items"][0];
+    assert_eq!(analyzed.exit_code, 0, "{outcome}");
+    std::fs::remove_dir_all(scratch).unwrap();
+    let item = outcome["items"][0].clone();
     assert_eq!(item["record"]["result"], "proved", "{item}");
     assert!(item["certificate"]["document"].is_object(), "{item}");
+    item
+}
+
+/// The claim `Likely` of `source`, named under `model`.
+fn claim_under(source: &str, model: &str) -> ObligationIdentity {
+    let (checked, _) = compile_source(source);
+    let claim = checked
+        .package()
+        .graph()
+        .probabilistic_model()
+        .claim("Likely")
+        .unwrap();
+    let claimed = fsl_replay::probabilistic_claim_identity(claim).unwrap();
+    ObligationIdentity::new(
+        claimed.node().clone(),
+        Some(ModelIdentity::new(model.to_owned())),
+        claimed.ordinal(),
+    )
+}
+
+/// The checker refuses `request` for `cause`.
+fn assert_refused(request: &Value, cause: &ProbabilityDocumentError) {
+    let (code, result) = run(request, &[]);
+    assert_ne!(code, 0, "{result}");
+    assert_eq!(result["status"], "refused", "{result}");
+    assert_eq!(result["reason"], cause.to_string(), "{result}");
+}
+
+#[trace("TC-764", "FR-282-AC-1", "FR-201-AC-11")]
+#[trace("TC-3154", "FR-621-AC-16")]
+#[test]
+fn certificate_checks_independently() {
+    let item = analyzed_item("certificate", &format!("{SOURCE}{CLAIM}"));
     let certificate = &item["certificate"]["document"];
 
     let mut checker_request = proof_request(CLAIM);
@@ -665,12 +703,77 @@ fn certificate_checks_independently() {
     let mut held = certificate.clone();
     held["identity"]["node_id"] = item["request"]["claim"]["node"].clone();
     checker_request["certificate"] = json!(serde_json::to_string(&held).unwrap());
-    let (code, result) = run(&checker_request, &[]);
-    assert_ne!(
-        code, 0,
-        "a certificate identity is the structural id: {result}"
+    // A certificate identity is the structural id.
+    assert_refused(&checker_request, &ProbabilityDocumentError::Malformed);
+}
+
+/// FR-621-AC-16: the `ratio` certificate analyze writes for a workload
+/// quantile claim, and for an `on each` claim, is accepted unchanged by the
+/// separate checker, and refused when a part's identity names another model.
+#[trace("TC-3154", "FR-621-AC-16")]
+#[test]
+fn held_ratio_certificates_check_independently() {
+    // A finite-horizon quantile reads the event-position profile.
+    let quantile = "\nprobabilistic Likely using ev on M over (m: M::Msg) under Even on origin { quantile 0.5 of (steps from holds(true) until holds(m.delivered) within 4) <= 3 }\n";
+    let event_position = SOURCE.replacen(
+        "profile inf = ",
+        "profile ev = \"filament.temporal.event-position.false-extension/v1\";\nprofile inf = ",
+        1,
     );
-    std::fs::remove_dir_all(scratch).unwrap();
+    let on_each = "\nprobabilistic Likely using inf on M under Even on each (k: M::Msg) when (not k.delivered) { probability >= rational(9, 10) [ eventually holds(k.delivered) ] }\n";
+    for (name, source) in [
+        ("quantile-ratio", format!("{event_position}{quantile}")),
+        ("on-each-ratio", format!("{SOURCE}{on_each}")),
+    ] {
+        let item = analyzed_item(name, &source);
+        let certificate = &item["certificate"]["document"];
+        assert_eq!(certificate["conditional"]["mode"], "ratio", "{item}");
+        let model = certificate["identity"]["model"].as_str().expect("a model");
+        for part in ["numerator", "denominator"] {
+            assert_eq!(
+                certificate["conditional"][part]["identity"], certificate["identity"],
+                "{item}"
+            );
+        }
+        let named = claim_under(&source, model);
+        let mut request = source_request(&source, &named, certificate.to_string());
+        let (code, result) = run(&request, &[]);
+        assert_eq!(code, 0, "{name}: {result}");
+        assert_eq!(result["status"], "accepted", "{name}: {result}");
+        for part in ["numerator", "denominator"] {
+            let mut foreign = certificate.clone();
+            foreign["conditional"][part]["identity"]["model"] = json!("foreign-model");
+            request["certificate"] = json!(foreign.to_string());
+            assert_refused(&request, &ProbabilityDocumentError::IdentityMismatch);
+        }
+    }
+}
+
+/// FR-621-AC-16, FR-282-AC-12: a certificate whose identity nests far past
+/// any thread stack's recursion depth is read and refused as another claim's.
+#[trace("TC-3154", "FR-621-AC-16")]
+#[test]
+fn a_hostile_depth_certificate_identity_is_refused() {
+    const DEPTH: usize = 50_000;
+    let source = format!("{SOURCE}{CLAIM}");
+    let item = analyzed_item("hostile-depth", &source);
+    let mut certificate = item["certificate"]["document"].clone();
+    let model = certificate["identity"]["model"]
+        .as_str()
+        .expect("a model")
+        .to_owned();
+    // The identity is spliced in as text: a JSON value this deep cannot be
+    // built or written by recursion.
+    certificate["identity"]["node_id"] = json!("hostile");
+    let open = r#"{"ordinal":0,"package":"own","path":["application","#.repeat(DEPTH);
+    let leaf = r#"{"ordinal":0,"package":"own","path":["leaf"]}"#;
+    let hostile = format!("{open}{leaf}{}", "]}".repeat(DEPTH));
+    let text = certificate.to_string().replace(r#""hostile""#, &hostile);
+    let named = claim_under(&source, &model);
+    let mut request = source_request(&source, &named, text);
+    request["limits"]["bytes"] = json!(16_000_000);
+    request["limits"]["storage_bytes"] = json!(256_000_000);
+    assert_refused(&request, &ProbabilityDocumentError::IdentityMismatch);
 }
 
 #[trace("TC-764", "FR-282-AC-1", "FR-282-AC-2", "FR-282-AC-11", "FR-201-AC-10")]
