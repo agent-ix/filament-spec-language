@@ -224,9 +224,8 @@ fn an_altered_certificate_is_rejected_at_the_rule_the_alteration_breaks() {
 }
 
 /// A transposition of two components in the weakly fair finite `Counter`
-/// liveness certificate creates a backward edge. The current core rejection
-/// locates that edge at its source state, without retaining the transition
-/// that made the edge backward.
+/// liveness certificate creates a backward edge. The rejection is located at
+/// that edge: its source state, and its target state in an earlier component.
 #[trace("TC-526")]
 #[test]
 fn swapping_counter_components_reports_the_source_of_a_backward_edge() {
@@ -253,19 +252,23 @@ fn swapping_counter_components_reports_the_source_of_a_backward_edge() {
             {
                 TemporalCertificateCheck::Rejected(CertificateRejection {
                     rule: CertificateRule::BackwardEdge,
-                    at: CertificateLocus::ProductState(at),
-                }) => Some((swapped, at)),
+                    at: CertificateLocus::ProductEdge { source, target },
+                }) => Some((swapped, source, target)),
                 _ => None,
             }
         })
         .expect("swapping two components out of topological order is rejected");
-    let (swapped, at) = backward;
-    assert!(
+    let (swapped, source, target) = backward;
+    let listed_at = |state: &ProductStateRef| {
         swapped
             .components
             .iter()
-            .any(|component| component.states.contains(&at)),
-        "the current cause names the backward edge's source state"
+            .position(|component| component.states.contains(state))
+            .expect("the cause names a state of the certificate")
+    };
+    assert!(
+        listed_at(&target) < listed_at(&source),
+        "the cause names an edge into an earlier component"
     );
 }
 
