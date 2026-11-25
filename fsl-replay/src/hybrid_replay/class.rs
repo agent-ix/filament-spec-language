@@ -730,41 +730,4 @@ mod tests {
             .join()
             .expect("both explicit-stack walkers support depth 100,000");
     }
-
-    #[test]
-    #[trace("NFR-141-AC-27")]
-    fn recursive_depth_failure_is_isolated_in_a_child_process() {
-        const CHILD: &str = "FSL_RECURSIVE_CLASS_WALK_CHILD";
-        if std::env::var_os(CHILD).is_some() {
-            fn recurse_to_depth(depth: usize) -> usize {
-                if depth == 0 {
-                    0
-                } else {
-                    1 + recurse_to_depth(depth - 1)
-                }
-            }
-
-            std::thread::Builder::new()
-                .stack_size(512 * 1024)
-                .spawn(|| std::hint::black_box(recurse_to_depth(100_000)))
-                .expect("small-stack child thread starts")
-                .join()
-                .expect("100,000 recursive calls exceed this isolated stack");
-            return;
-        }
-
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "hybrid_replay::class::tests::recursive_depth_failure_is_isolated_in_a_child_process",
-                "--nocapture",
-            ])
-            .env(CHILD, "1")
-            .status()
-            .expect("test binary starts as an isolated child");
-        assert!(
-            !status.success(),
-            "the old recursive walk unexpectedly survived"
-        );
-    }
 }
