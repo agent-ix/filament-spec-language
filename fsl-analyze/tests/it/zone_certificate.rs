@@ -20,7 +20,8 @@ use fsl_replay::{
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use ix_trace_rs::trace;
 
-use crate::component_certificate::{assert_written_rejection, state_locus};
+use crate::component_certificate::{assert_written_rejection, state_locus, written_cause};
+use crate::probability_from_source::{assert_valid, provider_definition};
 use crate::timed_world::{document, world, World, DENSE};
 use crate::zone_replay::{fault, lock_resetting};
 use crate::zone_search::{
@@ -402,21 +403,44 @@ fn a_locked_node_is_checked_for_divergence() {
 }
 
 /// FR-245-AC-7 (TC-1197): the zone loci are written in FSpec FR-331's
-/// `{node}`, `{edge}`, `{component}` and `{member}` forms, each index a
-/// `U64String`.
+/// `{node}`, `{edge}`, `{component}` and `{member}` forms, each index an
+/// integer `Count`, and FR-331's schema admits each written cause and not
+/// its decimal-string index.
 #[trace("TC-1197", "FR-245-AC-7")]
 #[test]
 fn zone_loci_are_written_in_their_fr331_forms() {
-    for (locus, written) in [
-        (node(3), serde_json::json!({"node": "3"})),
+    let schema = provider_definition("CertificateRejected");
+    for (rule, spelled, locus, member, index) in [
+        (CertificateRule::BadState, "bad-state", node(3), "node", 3),
         (
+            CertificateRule::BackwardEdge,
+            "backward-edge",
             CertificateLocus::ZoneEdge { edge: 7 },
-            serde_json::json!({"edge": "7"}),
+            "edge",
+            7,
         ),
         (
+            CertificateRule::WitnessFails,
+            "witness-fails",
             CertificateLocus::ZoneComponent { component: 0 },
-            serde_json::json!({"component": "0"}),
+            "component",
+            0,
         ),
+    ] {
+        let mut cause = written_cause(TerminalValue::Inconclusive(
+            InconclusiveCause::CertificateRejected { rule, at: locus },
+        ));
+        assert_eq!(
+            cause,
+            serde_json::json!(
+                {"type": "certificate-rejected", "rule": spelled, "at": {member: index}}
+            )
+        );
+        assert_valid(&schema, &cause, spelled);
+        cause["at"][member] = serde_json::json!(index.to_string());
+        assert!(!schema.is_valid(&cause), "{cause}");
+    }
+    for (locus, written) in [
         (
             CertificateLocus::CertificateMember(CertificateMember::Bounds),
             serde_json::json!({"member": "bounds"}),

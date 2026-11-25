@@ -128,7 +128,8 @@ pub enum CertificateRule {
 /// a model state locus itself, as its State object `{key}`. Query loci
 /// serialize with FSpec FR-331's query-part spelling. A proof-step
 /// locus serializes as an object containing its part and its canonical decimal
-/// `u64` index string.
+/// `u64` index string. A zone node, edge or component locus writes its index
+/// as an integer, FR-331's `Count`.
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CertificateLocus {
@@ -295,17 +296,17 @@ impl Serialize for CertificateLocus {
             }
             Self::ZoneNode { node } => {
                 let mut object = serializer.serialize_struct("CertificateLocus", 1)?;
-                object.serialize_field("node", &node.to_string())?;
+                object.serialize_field("node", node)?;
                 object.end()
             }
             Self::ZoneEdge { edge } => {
                 let mut object = serializer.serialize_struct("CertificateLocus", 1)?;
-                object.serialize_field("edge", &edge.to_string())?;
+                object.serialize_field("edge", edge)?;
                 object.end()
             }
             Self::ZoneComponent { component } => {
                 let mut object = serializer.serialize_struct("CertificateLocus", 1)?;
-                object.serialize_field("component", &component.to_string())?;
+                object.serialize_field("component", component)?;
                 object.end()
             }
             Self::ProofStep { part, index } => {
