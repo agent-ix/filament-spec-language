@@ -121,8 +121,9 @@ checked on the original subject continuation, not an absorbed goal sink.
 
 ### Rational budget
 
-These rules cover exact policy iteration for a claim with no fairness set,
-outside the derived TS-5 case;
+These rules cover exact policy iteration, for probabilities and expected
+rewards, under a workload and over every scheduler, for a claim with no
+fairness set outside the derived TS-5 case;
 [FR-1041](FR-1041-certify-unbounded-fair-eventual-verdicts.md) and ADR-028
 §13a state those.
 
@@ -137,9 +138,12 @@ outside the derived TS-5 case;
 - A solve that computes a value past the budget SHALL keep none of its
   values: EN-5 SHALL NOT return them as `Exact`, nor round them into `Bounds`
   or `PrecisionBudget`. It SHALL double the precision, up to
-  `max_precision_bits`, and run interval iteration again. A `Bounds` result
-  SHALL carry that iteration's enclosure, `precision_bits` and `sweeps`, and a
-  `ValueBounds` proof from it SHALL record the method
+  `max_precision_bits`, and run interval iteration again from its starting
+  vectors. `max_iterations` bounds the sweeps at each precision. A `Bounds`
+  result SHALL carry the enclosure and `precision_bits` of the iteration that
+  decided it, and as `sweeps` the number of sweeps the claim's interval
+  iteration ran at that precision and every earlier one; a `ValueBounds` proof
+  from it SHALL record the method
   `IntervalIteration{precision_bits, sweeps}`. When a solve passes the budget
   and no higher precision remains, so that the interval at
   `max_precision_bits` still contains the threshold, an end point equal to it
@@ -189,9 +193,10 @@ outside the derived TS-5 case;
 | FR-198-AC-4 | With `max_policy_iterations` 0 and AC-3's equality threshold, the result is `Stopped(MaxPolicyIterations)`. Two runs of one request return equal results and equal policies. Exhausting the derived component or randomized-evidence construction budget returns the actual stop; it does not substitute a deterministic policy or observation bound. | Test (TC-633) |
 | FR-198-AC-5 | A `Mec` model whose live state has the actions `a_stay`, back to itself with probability 1, and `b_exit`, to `goal` or `fail` with `1/2` each: over every scheduler the maximum of `Pr(eventually holds(goal))` is `1/2`, and the witness policy takes `b_exit` at the live state, though `a_stay` comes first in canonical order and attains the same iterate value. `probability <= 0.25` over the same event settles `refuted` on that policy, and its evidence replays. | Test (TC-633) |
 | FR-198-AC-6 | Over ADR-028 §15.5 `Retx`, with the checked fairness set `[fair strong Msg::send]`, `expected elapsed until holds(m.delivered) >= 1 ms` settles `proved` at the fair minimum `10/9 ms`, and `expected elapsed until holds(m.delivered) <= 3 ms` settles `proved` at the fair maximum `20/9 ms`. Both `timed-product/v1` documents retain exactly that fairness set and their respective `minimum`/`maximum` optimization; the independent checker accepts each. The time invariant forces each attempt by 2 ms, and each attempt succeeds with probability `9/10`; fairness does not add a waiting bound or change either extremum. | Test |
-| FR-198-AC-7 | Over AC-3's `Loop` with `max_iterations` 3 and threshold `1/2`, `max_rational_bits` 2 returns `Exact` with `1/2`, whose numerator takes one bit and denominator two. Over AC-1's `Link` under every scheduler, `probability >= 0.95 [holds(m.attempts <= 2) until holds(m.delivered)]` and `probability >= 0.95 [always holds(m.attempts <= 1 or m.delivered)]`, each with `max_rational_bits` 8 and the default precision limits, settle `proved`, `ExactValue{24/25}`, with no counterpart document: 24 and 25 take five bits each. | Test (TC-633) |
-| FR-198-AC-8 | Over `Loop`, `probability >= rational(12,25) [eventually holds(goal)]` under every scheduler runs with `max_rational_bits` 1 (the denominator of `1/2` takes two), `max_iterations` 100 and `precision_bits` 4. With `max_precision_bits` 16 the result is `Bounds` at `precision_bits` 8 with `12/25 < lower <= 1/2 <= upper` and `lower < upper`, and the item settles `proved`, `ValueBounds` with method `IntervalIteration` at `precision_bits` 8. With `max_precision_bits` 4 the result is `PrecisionBudget{lower, upper}` with `lower <= 12/25 <= upper`, and the item settles `incomplete` with that precision budget and no certificate. | Test (TC-633) |
-| FR-198-AC-9 | AC-7's `always` claim over `Link`, with `max_rational_bits` 4, `max_iterations` 100, `precision_bits` 4 and `max_precision_bits` 4, settles `incomplete`, `PrecisionBudget{lower, upper}` with `lower <= 24/25 <= upper`, and no certificate. | Test (TC-633) |
+| FR-198-AC-7 | Over AC-3's `Loop` with `max_iterations` 3 and threshold `1/2`, `max_rational_bits` 2 returns `Exact` with `1/2`, whose numerator takes one bit and denominator two. Over AC-1's `Link` under every scheduler, `probability >= rational(24,25) [holds(m.attempts <= 2) until holds(m.delivered)]` and `probability >= rational(24,25) [always holds(m.attempts <= 1 or m.delivered)]`, each with `max_rational_bits` 8, `max_iterations` 3 and the default precision limits, settle `proved`, `ExactValue{24/25}`, with no counterpart document: each threshold is the value, so no interval decides it, and 24 and 25 take five bits each. | Test (TC-633) |
+| FR-198-AC-8 | Over `Loop`, `probability >= rational(12,25) [eventually holds(goal)]` under every scheduler runs with `max_rational_bits` 1 (the denominator of `1/2` takes two), `max_iterations` 100 and `precision_bits` 4. With `max_precision_bits` 16 the result is `Bounds` at `precision_bits` 8 with `sweeps` 103 (100 at precision 4, then 3 at 8), `12/25 < lower <= 1/2 <= upper` and `lower < upper`, and the item settles `proved`, `ValueBounds` with method `IntervalIteration{precision_bits: 8, sweeps: 103}`. With `max_precision_bits` 4 the result is `PrecisionBudget{lower, upper}` with `lower <= 12/25 <= upper`, and the item settles `incomplete` with that precision budget and no certificate. | Test (TC-633) |
+| FR-198-AC-9 | Over AC-1's `Link` under every scheduler, `probability >= 0.95 [always holds(m.attempts <= 1 or m.delivered)]`, with `max_rational_bits` 4, `max_iterations` 100, `precision_bits` 4 and `max_precision_bits` 4, settles `incomplete`, `PrecisionBudget{lower, upper}` with `lower <= 24/25 <= upper`, and no certificate. | Test (TC-633) |
+| FR-198-AC-10 | Over AC-2's `Link` `cost` claim under every scheduler, a Markov decision process whose minimum is `11/10` and maximum `6/5`, each run with `max_rational_bits` 3 (11 takes four bits), `max_iterations` 100, `precision_bits` 4 and `max_precision_bits` 4: `expected accumulate cost until holds(m.delivered or m.attempts = 2) >= 1` settles `proved`, `ValueBounds` with method `IntervalIteration` at `precision_bits` 4, with `1 <= lower <= 11/10 <= upper` and accepted `lower` and `upper` documents; `expected accumulate cost until holds(m.delivered or m.attempts = 2) <= rational(6,5)`, at the maximum itself, settles `incomplete`, `PrecisionBudget{lower, upper}` with `lower <= 6/5 <= upper`, and no certificate. | Test (TC-633) |
 
 ## Dependencies
 
