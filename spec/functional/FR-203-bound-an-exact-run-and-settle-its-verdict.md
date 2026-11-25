@@ -114,6 +114,19 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
   `Incomplete(LimitReached{limit, value, setting})` naming the budget, its
   value and its setting otherwise, unless partial evidence already settles the
   item (FR-202).
+- EN-5 SHALL debit all `work_units` charges made while settling one exact item
+  against the same cumulative `accounting.work_units` allowance defined by
+  FR-120, including product construction, exact certificate production and
+  checking, counterexample witness production and replay, and any undefined
+  re-exploration used to classify that item's outcome. None of these phases
+  SHALL receive a replenished allowance. Their local ceilings, document
+  storage limits, and cancellation checks remain independently enforced. A
+  separate exact item begins with its own allowance as specified by FR-120.
+  If the next charge would exceed the allowance, EN-5 SHALL stop before doing
+  that charged work and settle `incomplete` with
+  `Incomplete(LimitReached{work_units, B, accounting.work_units})`, where `B`
+  is the configured bound; it SHALL emit no proof, refutation, accepted
+  certificate, or replayed witness for that item.
 
 ### Product admission before materialization
 
@@ -293,6 +306,11 @@ pub struct ExactEntry { pub initial: u32, pub binding: Option<Binding>, pub inst
 | FR-203-AC-26 | For an unconditional subsystem claim, EN-5 evaluates every admitted initial product state and settles the claim-side objective using the minimum across initial states for `>=` and the maximum for `<=`; entries retain every initial-state identity and its value (QSL-3142). | Test |
 | FR-203-AC-27 | For an unconditional elapsed-time claim, EN-5 evaluates every admitted initial product state and settles the claim-side objective using the minimum across initial states for `>=` and the maximum for `<=`; entries retain every initial-state identity and its value (QSL-3142). | Test |
 | FR-203-AC-28 | The exact solver refuses before it builds a dense linear system and stops when cancelled while it solves one. Policy evaluation, reward evaluation, stationary distribution and bias each check the inline bytes of a `rows x (rows + 1)` system, counted for the rational system and for the integer system the elimination builds from it, against `certificate_check.max_working_bytes` (`ExactProbLimits.document.storage_bytes`) before the first row is allocated; digits a cell holds on the heap are not counted. A system over the bound settles `incomplete`, `Incomplete(LimitReached{CertificateMaxWorkingBytes, bound, certificate_check.max_working_bytes})`. The bound is exact to the byte, a request for 2^40 rows is refused without allocating, and a system at or under the bound is solved as before. The elimination polls the run's cancel handle at every matrix row and every pivot row, and a cancelled handle settles `incomplete`, `Incomplete(Cancelled{source})`. | Test (TC-638) |
+| FR-203-AC-29 | With `accounting.work_units = B`, an exact item whose product construction consumes `P` units and whose certificate production requires `C` units, where `P <= B`, `C <= B` and `P + C > B`, stops at the first unpaid certificate-production charge with `incomplete`, `Incomplete(LimitReached{work_units, B, accounting.work_units})`; it emits no certificate and has no truth value. The same subject and claim with a bound of `P + C` completes certificate production as before. | Test |
+| FR-203-AC-30 | With `accounting.work_units = B`, an exact item whose product construction and certificate production consume `P` units and whose independent certificate check requires `C` units, where `P <= B`, `C <= B` and `P + C > B`, stops at the first unpaid certificate-check charge with `incomplete`, `Incomplete(LimitReached{work_units, B, accounting.work_units})`; it emits no accepted certificate and has no truth value. The same subject and claim with a bound of `P + C` completes certificate checking as before. | Test |
+| FR-203-AC-31 | With `accounting.work_units = B`, an exact item whose product construction consumes `P` units and whose counterexample witness production requires `W` units, where `P <= B`, `W <= B` and `P + W > B`, stops at the first unpaid witness-production charge with `incomplete`, `Incomplete(LimitReached{work_units, B, accounting.work_units})`; it emits no witness and has no truth value. The same subject and claim with a bound of `P + W` completes witness production as before. | Test |
+| FR-203-AC-32 | With `accounting.work_units = B`, an exact item whose product construction and witness production consume `P` units and whose witness replay requires `W` units, where `P <= B`, `W <= B` and `P + W > B`, stops at the first unpaid replay charge with `incomplete`, `Incomplete(LimitReached{work_units, B, accounting.work_units})`; it does not settle `refuted` or emit a replayed witness. The same subject and claim with a bound of `P + W` completes replay as before. | Test |
+| FR-203-AC-33 | For FR-196-AC-5's `Coin` model and `probability >= 0.5 [ always[0,3] holds(c.v = 0) ]` claim over `(c: M::Coin)` under workload `Even`, evidence `exact`, an instrumented run records the `work_units` charges of the first proof-only build (`P`), undefined-path re-exploration (`R`), and all later certificate or witness work (`W`). With `accounting.work_units = P + R - 1`, where `P <= P + R - 1` and `R <= P + R - 1`, the first unpaid re-exploration charge settles `incomplete`, `Incomplete(LimitReached{work_units, P + R - 1, accounting.work_units})` with no truth value. With a bound of `P + R`, the re-exploration completes, even if a later certificate or witness charge then stops the item. With a bound equal to the recorded full-run total `P + R + W`, the item settles as FR-196-AC-5 specifies, with `UndefinedEvaluation{where: 1, cause: absent-key}`; a separate item starts with a fresh allowance. | Test |
 
 ## Dependencies
 

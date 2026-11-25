@@ -3621,7 +3621,8 @@ mod tests {
     use super::*;
 
     /// The same root fault is reported within budget and never constructed
-    /// when its root identity crosses the budget, even with repeated keys.
+    /// when its root identity crosses the budget. A repeated key coalesces:
+    /// it takes no slot and its root is not constructed again.
     #[trace("TC-521", "FR-126-AC-26")]
     #[test]
     fn protocol_initial_faults_follow_distinct_root_admission() {
@@ -3642,10 +3643,10 @@ mod tests {
         };
         let (within, settled) = run(2);
         assert!(matches!(within, Err(InitialStateRefusal::Construction(found)) if found == fault));
-        assert_eq!(settled, 3);
+        assert_eq!(settled, 2);
         let (outside, settled) = run(1);
         assert!(matches!(outside, Err(InitialStateRefusal::OverBudget(1))));
-        assert_eq!(settled, 2);
+        assert_eq!(settled, 1);
     }
 
     /// Trace: FR-230, FR-390
