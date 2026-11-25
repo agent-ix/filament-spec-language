@@ -4290,30 +4290,60 @@ fn history_refusals(unit: &str, documents: &[Vec<u8>]) -> Vec<fsl_semantics::che
 const HISTORY_STEP: &str =
     "step C::ConfigVersion::attemptUpdate -> A::ConfigVersion::attemptUpdate(self);";
 
-/// FR-901-AC-1 (TC-2540): a `Boolean` initial is a reference to a `literal` node
-/// built by the one literal path a checked expression's literal uses, and an
-/// optional-absent initial is an inline `literal` term; each package is admitted
-/// by the strict reader, and the refinement body holds the `histories` row.
+/// FR-901-AC-1 (TC-2540): a `Boolean` or integer initial is a reference to a
+/// `literal` node, an absent-option initial is an inline `literal` term and a
+/// present-option initial is a reference to an `option_value` node of the
+/// history's type; each package is admitted by the strict reader, and the
+/// refinement body holds the `histories` row.
 #[trace("TC-2540", "FR-901-AC-1")]
 #[test]
 fn history_initials_of_each_literal_form_are_written() {
-    for (declared, initial) in [
-        ("Int[0, 1]", "0"),
-        ("Boolean", "false"),
-        ("Option<Int[0, 1]>", "none"),
+    for (declared, initial, update, referenced) in [
+        ("Int[0, 1]", "0", "0", Some("literal")),
+        ("Boolean", "false", "false", Some("literal")),
+        ("Option<Int[0, 1]>", "none", "none", None),
+        ("Option<Int[0, 1]>", "0", "none", Some("option_value")),
     ] {
         let rows = format!(
             "{MAPS}\n{HISTORY_STEP}\nhistory C::ConfigVersion.last : {declared} = {initial} \
-             {{ on C::ConfigVersion::attemptUpdate : {initial}; }}"
+             {{ on C::ConfigVersion::attemptUpdate : {update}; }}"
         );
         let (emitted, _) = emit_rows(&rows, &["attemptUpdate"]);
         let node = refinement_node(&emitted.emission);
         let histories = node["body"]["histories"].as_array().expect("histories");
         assert_eq!(histories.len(), 1, "{declared}: {histories:?}");
         assert_eq!(histories[0]["name"], "last", "{declared}");
-        // An enum or absent-option initial is written inline; others reference a node.
-        let form = if initial == "none" { "literal" } else { "reference" };
-        assert_eq!(histories[0]["initial"]["term"], form, "{declared}");
+        let term = &histories[0]["initial"];
+        match referenced {
+            Some(form) => {
+                assert_eq!(term["term"], "reference", "{declared} = {initial}");
+                let wire = wire(&emitted.emission);
+                let node_of = |target: &Value| {
+                    nodes(&wire)
+                        .iter()
+                        .find(|node| node["node_id"] == *target)
+                        .expect("the referenced node")
+                };
+                let target = node_of(&term["target"]);
+                assert_eq!(target["semantic_form"], form, "{declared} = {initial}");
+                assert_eq!(
+                    target["semantic_type"], histories[0]["type"],
+                    "{declared} = {initial}"
+                );
+                if form == "option_value" {
+                    let member = &target["body"]["members"][0];
+                    assert_eq!(member["name"], "value", "{target}");
+                    let payload = node_of(&member["value"]["target"]);
+                    assert_eq!(payload["semantic_form"], "literal", "{payload}");
+                    assert_eq!(payload["body"]["value"], "0", "{payload}");
+                }
+            }
+            None => {
+                assert_eq!(term["term"], "literal", "{declared} = {initial}");
+                assert_eq!(term["value_kind"], "none", "{declared} = {initial}");
+                assert_eq!(term["type"], histories[0]["type"], "{declared} = {initial}");
+            }
+        }
         assert_eq!(
             histories[0]["updates"].as_array().map(Vec::len),
             Some(1),
@@ -4322,30 +4352,6 @@ fn history_initials_of_each_literal_form_are_written() {
         let admitted = read(&emitted);
         assert!(admitted.is_ok(), "{declared}: {admitted:?}");
     }
-}
-
-/// FR-901-AC-1: an initial with no `literal` form (a present `Option`
-/// payload) keeps the refinement out of the emission with the typed
-/// refusal, not an internal fault.
-#[trace("TC-2540", "FR-901-AC-1")]
-#[test]
-fn a_present_option_history_initial_has_no_literal_form_and_is_refused_typed() {
-    let rows = format!(
-        "{MAPS}\n{HISTORY_STEP}\nhistory C::ConfigVersion.last : Option<Int[0, 1]> = 0 \
-         {{ on C::ConfigVersion::attemptUpdate : none; }}"
-    );
-    let (unit, documents) = rows_refinement(&rows, &["attemptUpdate"]);
-    let found = history_refusals(&unit, &documents);
-    let [refusal] = &found[..] else {
-        panic!("one refusal: {found:?}");
-    };
-    assert!(
-        matches!(
-            refusal.cause.as_ref(),
-            fsl_semantics::check::CheckCause::RefinementNotEmitted { name, .. } if name == "R"
-        ),
-        "a typed refusal naming the refinement: {refusal:?}"
-    );
 }
 
 /// FR-901-AC-2 and FSpec FR-322 "History read" (TC-2540): a row that reads a

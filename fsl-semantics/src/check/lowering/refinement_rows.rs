@@ -180,8 +180,9 @@ impl Lowering<'_> {
     }
 
     /// The lowered initial term of a history field, typed at its declared
-    /// type and located at the refinement. Present options are `option_value`
-    /// nodes around the recursively lowered payload.
+    /// type and located at the refinement. An absent option is an inline
+    /// `literal` term; present options are `option_value` nodes around the
+    /// recursively lowered payload.
     fn history_initial(
         &mut self,
         value: &Value,
@@ -201,15 +202,27 @@ impl Lowering<'_> {
             current_value = payload;
             current_type = payload_type;
         }
-        // An enum member is written inline as a history initial; the enum's
-        // own node is not a literal (FSpec FR-375 `histories`).
-        let mut term = if let Value::Enum(member) = current_value {
+        // An enum member and an absent initial are written inline. An enum
+        // member's node is an `enum_value`, and at an option-typed history the
+        // reader admits only an inline `literal` term or a reference to an
+        // `option_value` node, never a reference to a `literal` node (FSpec
+        // FR-375 `histories`).
+        let inline = match current_value {
+            Value::Enum(member) => Some(LiteralValue::Enum(member.variant().case().to_owned())),
+            // An absent payload of a present option is a node, which the
+            // enclosing `option_value` refers to.
+            Value::Option(option) if option_types.is_empty() && option.payload().is_none() => {
+                Some(LiteralValue::None)
+            }
+            _ => None,
+        };
+        let mut term = if let Some(literal) = inline {
             let ty = self
                 .type_ref(current_type, location)?
                 .admitted()
                 .cloned()
                 .ok_or_else(|| fault(location, KeyFault::UnresolvedDraft))?;
-            LeafTerm::literal(ty, LiteralValue::Enum(member.variant().case().to_owned()))
+            LeafTerm::literal(ty, literal)
         } else {
             self.literal_at(location, current_value, current_type, None)?
         };
