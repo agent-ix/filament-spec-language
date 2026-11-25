@@ -370,7 +370,10 @@ fn a_rejected_certificate_never_settles_proved() {
         fsl_eval::simulation::StateKey::from_canonical_bytes(expected.as_bytes().to_vec()),
     ))
     .unwrap();
-    assert_eq!(wire, serde_json::json!({"product_key": expected_wire}));
+    assert_eq!(
+        wire,
+        serde_json::json!({"product_key": expected_wire["key"]})
+    );
     let outcome = serde_json::to_value(fsl_replay::OutcomeItem::from_terminal(terminal)).unwrap();
     assert_eq!(outcome["result"], "inconclusive");
     assert_eq!(
@@ -1536,8 +1539,7 @@ fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
         method,
         &fsl_replay::BoundsMethod::BackwardInduction { precision_bits: 64 }
     );
-    let fsl_replay::ExactBound::Finite(upper) = upper
-    else {
+    let fsl_replay::ExactBound::Finite(upper) = upper else {
         panic!("complete product interval has a finite upper endpoint");
     };
     let exact = ratio(9_999_999, 10_000_000)

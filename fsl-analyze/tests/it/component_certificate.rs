@@ -20,7 +20,7 @@ use filament_exact::{Cancel, CancelCause, Meter, ScalarLimits};
 use fsl_analyze::model_check::{check_model, ModelCheckRequest};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
-use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_foundation::BackendId;
 use fsl_replay::{
@@ -305,7 +305,7 @@ fn swapping_counter_components_reports_the_source_of_a_backward_edge() {
 
 /// The `cause` the outcome writer writes for an item settled `value`, under
 /// FR-331's member name `type` for the writer's `kind`.
-fn written_cause(value: TerminalValue) -> serde_json::Value {
+pub(crate) fn written_cause(value: TerminalValue) -> serde_json::Value {
     let TerminalValue::Inconclusive(cause) = value else {
         panic!("a rejected certificate settles inconclusive: {value:?}");
     };
@@ -325,6 +325,34 @@ fn written_cause(value: TerminalValue) -> serde_json::Value {
         .expect("the cause names its kind");
     cause["type"] = kind;
     cause
+}
+
+/// The State locus FSpec FR-331 spells for the state key `key`.
+pub(crate) fn state_locus(key: &StateKey) -> serde_json::Value {
+    use base64::Engine as _;
+    json!({"key": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key.as_bytes())})
+}
+
+/// `value` is written as a `certificate-rejected` cause under `rule` at
+/// exactly `at`, which FSpec FR-331 admits as the locus form `locus` and in
+/// that pair.
+pub(crate) fn assert_written_rejection(
+    value: TerminalValue,
+    rule: &str,
+    locus: &str,
+    at: &serde_json::Value,
+) {
+    let cause = written_cause(value);
+    assert_eq!(
+        cause,
+        json!({"type": "certificate-rejected", "rule": rule, "at": at})
+    );
+    assert_valid(&provider_definition(locus), &cause["at"], locus);
+    assert_valid(
+        &provider_definition("CertificateRejected"),
+        &cause,
+        "the certificate-rejected cause",
+    );
 }
 
 /// `value` is written as a `backward-edge` rejection at `source`, in FSpec

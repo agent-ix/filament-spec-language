@@ -20,6 +20,7 @@ use fsl_replay::{
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use ix_trace_rs::trace;
 
+use crate::component_certificate::{assert_written_rejection, state_locus};
 use crate::timed_world::{document, world, World, DENSE};
 use crate::zone_replay::{fault, lock_resetting};
 use crate::zone_search::{
@@ -226,6 +227,16 @@ fn each_tampering_is_rejected_at_its_rule_and_locus() {
         panic!("the initial discrete state's locus");
     };
     assert_eq!(state_key, certificate.nodes[0].state_key.clone());
+    let written = state_locus(&state_key);
+    assert_written_rejection(
+        TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+            rule: CertificateRule::InitialMissing,
+            at: CertificateLocus::ModelState(state_key),
+        }),
+        "initial-missing",
+        "StateLocus",
+        &written,
+    );
 }
 
 /// Part of FR-245-AC-3 (TC-700): `NoLateReply`'s certificate checked for the
