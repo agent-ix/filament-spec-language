@@ -4637,6 +4637,8 @@ impl<'a> Typer<'a> {
             | (ValueType::Composite(_), ValueType::Composite(_))
             | (ValueType::Collection(_), ValueType::Collection(_))
             | (ValueType::Reference(_), ValueType::Reference(_))
+            // FR-1040: two place ids have equality and no order.
+            | (ValueType::ClockReference, ValueType::ClockReference)
             // FR-056 "Unit-language equality on native String, UUID and
             // Timestamp": their key order is a representation order, not an
             // ordering capability.
