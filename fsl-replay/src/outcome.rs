@@ -49,6 +49,7 @@ use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef};
 use fsl_foundation::source::{SourceLabel, SourceReadCause};
 use fsl_foundation::{LocatedSpan, RequestIndex};
 use fsl_semantics::model::observation::AdmissionFailure;
+use ix_trace_rs::implements;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
@@ -2362,6 +2363,7 @@ pub struct DocumentObjectLocus {
     pub key: String,
 }
 
+#[implements("FR-663-AC-3", "FR-663-AC-5")]
 pub(crate) fn snapshot_admission_locus(
     record: &fsl_semantics::model::observation::AdmissionRecord,
     document: &fsl_semantics::model::observation::DocumentRef,
@@ -2419,6 +2421,7 @@ pub(crate) fn snapshot_admission_locus(
 /// defect, a member inside that value, and is the one reported, except for
 /// `ill_typed`, whose `member` names the model declaration that has no
 /// checked type (FR-056-AC-43).
+#[implements("FR-663-AC-5")]
 fn failing_member(record: &fsl_semantics::model::observation::AdmissionRecord) -> Option<&String> {
     let member = record.fields.get("member");
     let field = record

@@ -2779,6 +2779,7 @@ pub(super) fn untyped_member_record(
 /// when supplied (its value unread) and `missing-member` when a `required`
 /// one is omitted. An omitted `optional` one is absent, as FR-106 check 10
 /// admits it, and nothing is bound for it.
+#[implements("FR-056-AC-43")]
 pub(super) fn check_untyped_parameters(
     views: &[ModelView],
     context_name: &str,
@@ -2835,6 +2836,7 @@ pub(super) fn check_untyped_parameters(
 /// FR-056-AC-43 over an invocation's result: a non-null `result` of an
 /// operation whose result has no checked type refuses `ill_typed`/
 /// `operator-ineligible`, its value unread.
+#[implements("FR-056-AC-43")]
 pub(super) fn check_untyped_result(
     views: &[ModelView],
     context_name: &str,
@@ -3715,6 +3717,7 @@ fn population_qualified_identity_refusal(
     )
 }
 
+#[implements("FR-663-AC-5")]
 pub(super) fn admit_population_values<'t>(
     views: &[ModelView],
     types: &'t TypeEnvironment,
@@ -4160,6 +4163,7 @@ fn is_state_machine(view: &ModelView, key: &DeclarationKey) -> bool {
 /// document order. Every entry is validated, whichever machine it is of;
 /// those whose machine is `read_machine` or specializes it are the read
 /// contexts the clause evaluates over, and are returned.
+#[implements("FR-663-AC-6")]
 fn admit_contexts<'t>(
     views: &[ModelView],
     types: &'t TypeEnvironment,
