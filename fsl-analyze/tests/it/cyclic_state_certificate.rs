@@ -6,7 +6,9 @@ use crate::prob_world::{Model, Operation, World};
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
-use fsl_analyze::exact_probabilistic::build_product;
+use fsl_analyze::exact_probabilistic::{
+    build_product, decide_until, ProbBuild, UnboundedError, UnboundedObjective,
+};
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
@@ -493,24 +495,71 @@ fn a_violated_quantity_past_the_rational_budget_settles_incomplete() {
     ));
 }
 
+/// One byte short of the storage the run needs to reach the rational budget's
+/// settlement, it stops on the storage budget, although the first solve fits
+/// that storage and reaches the rational budget itself. The refused bytes are
+/// therefore the cyclic-subject check's, which reads the graph after the solve.
 #[trace("TC-3187", "FR-201-AC-65", "FR-203")]
 #[test]
 fn a_storage_stop_while_reading_the_cyclic_subject_names_the_storage_budget() {
     let world = World::new(&model(false, &claim("Likely", ">= rational(3,5)", UNTIL)));
-    let record = settle(&world, "Likely", ModelCheckLimits::default(), |request| {
-        request.limits.max_rational_bits = 1;
-        request.limits.document.storage_bytes = 0;
-    });
-    assert_eq!(
-        record.terminal().unwrap().value(),
-        &TerminalValue::Incomplete(IncompleteCause::LimitReached {
-            limit: ModelCheckLimit::CertificateMaxWorkingBytes,
-            value: 0,
+    let settled = |storage_bytes: u64| {
+        let record = settle(&world, "Likely", ModelCheckLimits::default(), |request| {
+            request.limits.max_rational_bits = 1;
+            request.limits.document.storage_bytes = storage_bytes;
+        });
+        assert!(record.exact_probabilistic.is_none());
+        record.terminal().unwrap().value().clone()
+    };
+    let stopped = |limit, value| {
+        TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit,
+            value,
             required: None,
-        }),
-        "{record:#?}"
+        })
+    };
+    let rational = stopped(ModelCheckLimit::ExactProbMaxRationalBits, 1);
+    let mut request = world.request("Likely", ModelCheckLimits::default());
+    let (mut short, mut enough) = (0, request.limits.document.storage_bytes);
+    assert_eq!(settled(enough), rational);
+    while enough - short > 1 {
+        let middle = short + (enough - short) / 2;
+        if settled(middle) == rational {
+            enough = middle;
+        } else {
+            short = middle;
+        }
+    }
+    assert_eq!(
+        settled(short),
+        stopped(ModelCheckLimit::CertificateMaxWorkingBytes, short)
     );
-    assert!(record.exact_probabilistic.is_none());
+
+    request.limits.max_rational_bits = 1;
+    request.limits.document.storage_bytes = short;
+    let limits = request.limits;
+    let ProbBuild::Built(product) = build_product(request, &Cancel::new()).unwrap() else {
+        panic!("the cyclic product builds");
+    };
+    let operand = |at: usize| {
+        product
+            .labels
+            .iter()
+            .map(|labels| labels[at])
+            .collect::<Vec<_>>()
+    };
+    let solved = decide_until(
+        &product,
+        &operand(0),
+        &operand(1),
+        UnboundedObjective::Min,
+        &limits,
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(solved, Err(UnboundedError::MaxRationalBits)),
+        "the first solve fits {short} bytes: {solved:?}"
+    );
 }
 
 /// Past the rational budget the run's last readings admit the subject again

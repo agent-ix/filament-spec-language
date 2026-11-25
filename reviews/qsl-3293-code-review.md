@@ -45,3 +45,28 @@ PASS with low findings. Mergeable at 8b24beca8885dfc2354fe0041ef3efe2539eb0f6 as
 | FND-001 | low | The cyclic-subject fallback re-admits ModelSystem and enumerates the whole model graph under a fresh Meter built from system.meter_limits(), so this work is not charged to the item's caller meter (FR-203 cumulative allowance). An item can spend up to one extra meter allowance past the caller's budget. This repeats the existing call at exact.rs:2222. | fsl-analyze/src/analyze/exact.rs:1737-1760; fsl-replay/src/probability_certificate/cyclic.rs:39 |
 | FND-002 | low | No test reaches the new fallback branches other than Ok(false): cancel after re-admission, admission refusal, document_failure from the shape enumeration, and the Ok(true) acyclic continuation under a small max_rational_bits. | fsl-analyze/src/analyze/exact.rs:1736-1759 |
 | FND-003 | low | The test finite_profile_claims_issue_no_long_run_document now asserts that both profiles refute with a long-run subsystem certificate. Its name and the claim it states no longer describe what it checks (it issues no proof document, but it does issue a long-run document). | fsl-analyze/tests/it/long_run_certificate.rs:640 |
+
+## New findings (disposition pass 1)
+
+Head ae23b33b4adb75748e80a9be4ed9bb640f19227d, one commit on 8b24beca88. Still not run: MemAvailable inside the lock-C flock was 26.1 GB, below the 30 GB gate. Review from source.
+
+New work, checked clean:
+- long_run.rs:92 and measure.rs:84/378 now settle Incomplete(LimitReached{ExactProbMaxStates}) on a partial product that settles nothing (FR-203). This mirrors exact.rs.
+- long_run.rs:131 is the unbudgeted rebuild after an Undefined stop under the same limits; settling there at the budget rather than as broken is acceptable.
+- The coder said exact.rs ~669/~1104 and elapsed.rs ~385 never see Partial. Verified: each is a timed route (TimedSystem::new must succeed). build.rs sends every timed subject to digital::build, and ProbBuild::Partial is built only at build.rs:590 in the untimed Builder.
+- The cyclic fallback's admission-refusal arm re-admits the same simulation that was already admitted for the product build. It is unreachable apart from cancellation, which is checked first. Accepted.
+- The new test a_partial_product_that_settles_nothing_stops_at_the_state_budget covers measure.rs:84 (Mean), measure.rs:378 (Compared) and long_run.rs:92 (Weighted, Every).
+- cancelling_the_cyclic_subject_check_past_the_rational_budget_keeps_its_cause does reach the fallback: the run ends in it, so the last readings it cancels are the fallback's.
+- an_acyclic_subject_past_the_rational_budget_goes_on_to_the_threshold_solve does reach Ok(true): 24/25 has 5-bit parts, which pass policy iteration at 8 bits, while the 11-bit scalar check fails.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | medium | a_storage_stop_while_reading_the_cyclic_subject_names_the_storage_budget never reaches the fallback. With storage_bytes = 0, the first decide_until already fails: phase 0 is transient, so policy_iteration builds dense_system(rows >= 1) against max_bytes 0 and returns MaxWorkingBytes before the rational-bits check. That maps to the same CertificateMaxWorkingBytes/0 settlement the test asserts. The test passes without exercising document_failure from the shape enumeration, yet its trace (FR-201-AC-65) and its name say it does. | fsl-analyze/tests/it/cyclic_state_certificate.rs:496-513; fsl-analyze/src/exact_probabilistic/unbounded.rs:1953,2937-2943 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | QSL-3315. The fix needs exact_probabilistic/build.rs, which open PR #3907 is editing. The older identical call at exact.rs ~2219 is in the same ticket's scope. |
+| FND-002 | still-open | Cancellation (reached) and the acyclic Ok(true) continuation (reached) are now covered, and the admission-refusal arm is unreachable (accepted). The shape-enumeration error branch is still uncovered: the storage test stops in the first solve (FND-004). |
+| FND-003 | fixed | Test renamed to an_event_position_workload_claim_settles_as_its_infinite_trace_twin_does. |

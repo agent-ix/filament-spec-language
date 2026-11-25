@@ -38,3 +38,9 @@ CONDITIONAL (low only). Every criterion the diff cites is tagged. The new produc
 - Semantic review: done manually for the tests named stale (see SR-967178). The full opt-in pass was skipped.
 - Tests: not run (MemAvailable 28.9 GB, below the 30 GB gate).
 - Plan completion: not assessed
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Both fair long-run tests now carry an FR-200 binding. |
