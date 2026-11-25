@@ -751,6 +751,25 @@ fn a_release_backed_claim_routes_to_en_6_only_when_named() {
     assert_eq!(label(&without.item(1)), "unsupported");
 }
 
+/// FR-246-AC-5: releases back schedulable claims, never response claims.
+#[trace("TC-3009", "FR-246-AC-5", "FR-075-AC-23")]
+#[test]
+fn a_release_does_not_make_a_response_claim_release_backed() {
+    let declarations = format!(
+        "{PAIR}{}response PairAResponse on Pair.a <= 3 ms under fixed_priority;\n",
+        sources("Pair", &["a"])
+    );
+    let run = run(
+        "release-does-not-back-response",
+        &["a", "b"],
+        &declarations,
+        json!([{"claim": "PairAResponse", "backend": "en-6"}]),
+    );
+    let item = run.item(0);
+    assert_eq!(item["request"]["candidates"]["backends"], json!([]), "{item}");
+    assert_eq!(label(&item), "unsupported", "{item}");
+}
+
 /// A caller registering only EN-6 still resolves an unnamed release-backed
 /// claim in that provider's bounded mode, including default request items.
 #[trace("TC-3009", "FR-246-AC-5", "FR-075-AC-23", "FR-633")]

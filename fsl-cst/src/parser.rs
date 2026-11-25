@@ -305,7 +305,7 @@ pub(super) fn parse(
     for diagnostic in bit_constructor_diagnostics(&source, &cst) {
         let span = diagnostic.byte_span();
         diagnostics.retain(|existing| {
-            existing.byte_span().map_or(true, |existing_span| {
+            existing.byte_span().is_none_or(|existing_span| {
                 span.is_some_and(|span| {
                     existing_span.end <= span.start || span.end <= existing_span.start
                 })

@@ -13,6 +13,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-096
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-150
+    type: references
+  - target: ix://agent-ix/filament-specification/FR-322
+    type: references
 ---
 # FR-400: Separate the checked terms the evaluator reads from the checker
 
@@ -397,10 +401,20 @@ move MAY land in steps, in this order: expression terms; clause records;
 | FR-400-AC-7 | After the move, `fsl-eval`'s suite, the FR-262 tests and FSL's checked-package conformance invocation `FSPEC_DIR=<FSpec repository> cargo test -p fsl-package --lib checked_v2` pass without edits to their expected values. | Test |
 | FR-400-AC-8 | Before the first move step, a test over a fixture unit with a function, a dispatch table, a `model` selection, a state clause and a protocol compares, for equality between `origin/main` and the working tree: every node's `Location`, every `NodeKey` and `DeclarationKey`, every model-correspondence entry, the `SourceRegion` each `Location` resolves to, and the code, cause and locus of the FR-096 refusal record of a refusing evaluation of that unit. After each move step, the same test passes. | Test |
 | FR-400-AC-9 | `filament-checked` builds for `thumbv7em-none-eabi` with default features off, and its manifest forbids unsafe code; no normal or build dependency in FSL enables its `test-support` feature. | Test |
-| FR-400-AC-10 | After the move, `fsl_semantics::model::key::EffectiveDeclarationPreimage::identity` and `fsl_semantics::model::key::EffectiveDeclarationPreimage::validate_derivation` resolve from another crate. `identity` reproduces each published effective-declaration identity vector from FSpec FR-150-AC-6; `validate_derivation` rejects FSpec's `unsorted-derivation` mutation (TC-195) with `UnsortedDerivation` naming its position and ordinal, rejects an FSL test preimage whose first two facts have the same `rule` and equal `inputs` with `DuplicatePath{earlier: 0, later: 1}`, and accepts the unmutated vector. `filament_checked` exposes no `EffectiveDeclarationPreimage`, `Fact` or `RuleRef`, `filament-checked`'s `DeclarationKey` has no `identity` or `validate_derivation` method (a call to either fails to compile), and no `filament-checked` item names `ModelRefusalCause`. | Test |
+| FR-400-AC-10 | After the move, `fsl_semantics::model::key::EffectiveDeclarationPreimage::identity` resolves from another crate. | Test |
 | FR-400-AC-11 | A stored `NodeKind` and its `NodeRead` projection match the same exhaustive generic enum: every variant, nested operand position, literal value, metadata/evidence identity, checked type and location are preserved. A probe variant makes both evaluator paths non-exhaustive. No parallel operation enum exists; the layer-C read descriptors compile without `std`, FSL or IR dependencies. | Test |
 | FR-400-AC-12 | Constructing a `NodeRead` or a parameterized operation descriptor cannot create a checked term or an admitted FR-390 view: passing a descriptor to the public evaluator as a checked input fails to compile. Existing checked-term constructor and mutation rejection checks remain failing, with their positive pairs compiling. | Test |
 | FR-400-AC-13 | For FR-931-AC-13's leaves, the in-process read and the reader-backed read of each `case`, `let` and nested `case` binding site give equal declared names in equal positions (outer arms `Circle` `[r]`, `Rect` `[w, h]` and `[_, h]`, `Empty` `[]`; inner arms `Circle` `[x]`, `Rect` `[a, b]`, `Empty` `[]`; `let` `k`); evaluating each leaf gives the same outcome and charges with every binder renamed. | Test (TC-3039) |
+| FR-400-AC-14 | For each effective declaration produced by an admitted row of FSpec TC-195, `EffectiveDeclarationPreimage::identity` returns the FR-150 structural pair `{owner_effective_type, original}` unchanged in the checked-package/v2 `model_correspondence` reader result; it emits no digest. Literal checks include N01: type `A` has `{owner_effective_type: null, original: {package: "test/orders", node: "ix://test/orders/A"}}`, type `B` has `{owner_effective_type: null, original: {package: "test/orders", node: "ix://test/orders/B"}}`, and member `(B, A/x)` has `{owner_effective_type: {owner_effective_type: null, original: {package: "test/orders", node: "ix://test/orders/B"}}, original: {package: "test/orders", node: "ix://test/orders/A/x"}}`; N02: type `D` has `{owner_effective_type: null, original: {package: "test/orders", node: "ix://test/orders/D"}}` and member `(D, A/x)` has `{owner_effective_type: {owner_effective_type: null, original: {package: "test/orders", node: "ix://test/orders/D"}}, original: {package: "test/orders", node: "ix://test/orders/A/x"}}` exactly once, with inherit facts linked to `(B, A/x)` then `(C, A/x)`. | Test |
+| FR-400-AC-15 | For FSpec TC-195 N01's type `B`, the unmutated facts `qualify` ordinal `0` then `inherit` ordinal `1` pass `EffectiveDeclarationPreimage::validate_derivation`; swapping those fact rows while retaining their ordinals refuses as `UnsortedDerivation` with position `0` and ordinal `1`. | Test |
+| FR-400-AC-16 | A preimage with `owner_effective_type: null`, original key `{package: "test/orders", node: "ix://test/orders/A/x"}`, and two facts at ordinals `0` and `1`, both `rule: {identity: "filament.model.normalize.qualify/v1"}`, both `inputs: [{package: "test/orders", node: "ix://test/orders/A/x"}]`, and both `parent: null` refuses as `DuplicatePath{earlier: 0, later: 1}`. | Test |
+| FR-400-AC-17 | After the move, `fsl_semantics::model::key::EffectiveDeclarationPreimage::validate_derivation` resolves from another crate. | Test |
+| FR-400-AC-18 | `filament_checked` does not expose `EffectiveDeclarationPreimage`. | Test |
+| FR-400-AC-19 | `filament_checked` does not expose `Fact`. | Test |
+| FR-400-AC-20 | `filament_checked` does not expose `RuleRef`. | Test |
+| FR-400-AC-21 | `filament-checked`'s `DeclarationKey` has no `identity` method; a call to it from another crate fails to compile. | Test |
+| FR-400-AC-22 | `filament-checked`'s `DeclarationKey` has no `validate_derivation` method; a call to it from another crate fails to compile. | Test |
+| FR-400-AC-23 | No `filament-checked` item names `ModelRefusalCause`. | Test |
 
 ## Dependencies
 
@@ -410,10 +424,13 @@ move MAY land in steps, in this order: expression terms; clause records;
   that evaluates T12-G.
 - [FR-059](FR-059-check-backend-dependency-direction.md): the backend
   direction check that refuses a backend enabling `construct`.
-- FSpec FR-322 defines the checked-package vectors used to verify FSL's
-  emitted package; FR-150-AC-6 publishes the effective-declaration identity
-  vectors FSL compares against. TC-195 checks the unsorted-derivation
-  mutation.
+- FSpec FR-150 defines effective-declaration identities as structural pairs
+  `{owner_effective_type, original}`; its TC-195 N01/N02 model cases give
+  literal chain and diamond examples. FSpec FR-322 defines the checked-package
+  `model_correspondence` reader representation compared with those identities.
+  FSpec TC-234 I06 records that the former effective-declaration vectors and
+  their hash were withdrawn; this requirement uses the current structural
+  criteria and does not require their publication.
 - [FR-096](FR-096-stage-limits-refusal-records-and-readers-carry-a-locus.md):
   the refusal-record locus the checker-side record keeps.
 - [ADR-011](../decisions/ADR-011-stage-dag-and-dependency-architecture.md)
