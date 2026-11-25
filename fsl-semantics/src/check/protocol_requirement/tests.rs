@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-218 "Requirements" (TC-1056, TC-1065) over fixture R of the protocol
 //! obligation tests, whose header selects the temporal profile `t` a
 //! temporal clause is written `using`.

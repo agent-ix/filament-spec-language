@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-218 "Observe-only boundaries" (TC-2989): an observe-only role or
 //! control that reads and recommends checks, and every side-effecting action
 //! behind the boundary refuses at the action itself.
