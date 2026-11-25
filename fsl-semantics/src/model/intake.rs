@@ -2272,6 +2272,63 @@ fn duplicate_member_identity_refusal(
 /// Translate only the reader's typed unresolved-reference codes, using its
 /// actual pointer and the selected document. Diagnostic prose never selects
 /// a cause or supplies a declaration identity.
+const FCD_UNRESOLVED_DIMENSION_REF: &str = "agent-ix.semantic-ir.UNRESOLVED_DIMENSION_REF";
+const FCD_UNRESOLVED_UNIT_REF: &str = "agent-ix.semantic-ir.UNRESOLVED_UNIT_REF";
+
+fn unresolved_dimension_or_unit_reference(pointer: &str, code: &str) -> Option<&'static str> {
+    let mut segments = pointer.strip_prefix('/')?.split('/');
+    let collection = segments.next()?;
+    segments.next()?.parse::<usize>().ok()?;
+    match (code, collection) {
+        (FCD_UNRESOLVED_DIMENSION_REF, "dimensions") => {
+            if segments.next()? != "terms" {
+                return None;
+            }
+            segments.next()?.parse::<usize>().ok()?;
+            (segments.next()? == "dimension" && segments.next().is_none()).then_some("dimension")
+        }
+        (FCD_UNRESOLVED_DIMENSION_REF, "units") => {
+            (segments.next()? == "dimension" && segments.next().is_none()).then_some("dimension")
+        }
+        (FCD_UNRESOLVED_UNIT_REF, "units") => {
+            (segments.next()? == "target" && segments.next().is_none()).then_some("unit")
+        }
+        _ => None,
+    }
+}
+
+/// The one identity segment after a selected package's dimension or unit
+/// namespace.
+fn package_graph_identity_segment<'a>(
+    package_identity: &str,
+    namespace: &str,
+    identity: &'a str,
+) -> Option<&'a str> {
+    let rest = identity
+        .strip_prefix("ix://")?
+        .strip_prefix(package_identity)?
+        .strip_prefix('/')?;
+    let (actual_namespace, name) = rest.split_once('/')?;
+    (actual_namespace == namespace
+        && !name.is_empty()
+        && !name.contains('/')
+        && is_artifact_id_segment(name))
+    .then_some(name)
+}
+
+/// Resolve the owning dimension or unit for one of the graph-reference
+/// pointers recognized above. Those declarations live beside `types` in the
+/// package document, so `declared_node_for_pointer` cannot resolve them.
+fn graph_reference_owner<'a>(document: &'a PackageDocument, pointer: &str) -> Option<&'a Value> {
+    let mut segments = pointer.strip_prefix('/')?.split('/');
+    let collection = segments.next()?;
+    let position = segments.next()?.parse::<usize>().ok()?;
+    if !matches!(collection, "dimensions" | "units") {
+        return None;
+    }
+    document.tree.get(collection)?.as_array()?.get(position)
+}
+
 #[ix_trace_rs::string_edge]
 fn missing_reader_reference(
     document: &PackageDocument,
@@ -2304,9 +2361,11 @@ fn missing_reader_reference(
             "occurrenceField" | "persists" | "members"
         )
         && located.code == agent_ix_semantic_ir::constructs::UNRESOLVED_CONSTRUCT_REF;
+    let graph_reference_kind = unresolved_dimension_or_unit_reference(pointer, located.code);
     if !transition_reference
         && !process_step_reference
         && !occurrence_reference
+        && graph_reference_kind.is_none()
         && located.code != agent_ix_semantic_ir::rules::UNRESOLVED_RELATIONSHIP_TARGET
         && located.code != agent_ix_semantic_ir::rules::UNRESOLVED_TYPE_REF
         && located.code != agent_ix_semantic_ir::rules::UNRESOLVED_OPTION_INNER
@@ -2330,7 +2389,9 @@ fn missing_reader_reference(
     let package = document.tree.get("package")?.get("identity")?.as_str()?;
     // A malformed native or foreign identity is not a missing declaration
     // of this selected package.
-    if !transition_reference && transition_member != "occurrenceField" {
+    if let Some(kind) = graph_reference_kind {
+        package_graph_identity_segment(package, kind, reference)?;
+    } else if !transition_reference && transition_member != "occurrenceField" {
         type_identity_segment(package, reference)?;
     }
     if process_step_reference {
@@ -2361,7 +2422,11 @@ fn missing_reader_reference(
             ),
         });
     }
-    let owner = declared_node_for_pointer(document, pointer)?;
+    let owner = if graph_reference_kind.is_some() {
+        graph_reference_owner(document, pointer)?
+    } else {
+        declared_node_for_pointer(document, pointer)?
+    };
     let origin = owner.get("origin")?.clone();
     // TC-235 M05/M06: a transition's unresolved `from`, `to`, `trigger`,
     // `guard` or `emits` names the state machine, not the transition node.

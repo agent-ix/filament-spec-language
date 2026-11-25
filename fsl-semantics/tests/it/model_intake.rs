@@ -178,7 +178,12 @@ fn assert_reference_refusal(
     member: &str,
 ) {
     assert_eq!(refusals.len(), 1, "{refusals:?}");
-    assert_eq!(refusals[0].code, fsl_foundation::Code::MissingDeclaration);
+    assert_eq!(
+        refusals[0].code,
+        fsl_foundation::Code::MissingDeclaration,
+        "unexpected intake refusal: {:?}",
+        refusals[0]
+    );
     assert_eq!(refusals[0].cause.as_str(), "missing-name");
     assert_eq!(
         refusals[0].cause,
@@ -219,7 +224,7 @@ fn intake_maps_an_unresolved_dimension_term_to_missing_name() {
         "ix://acme/orders/dimension/Missing",
         &term_origin,
         "/dimensions/1/terms/0/dimension",
-        "Dimension.terms[0].dimension",
+        "$.dimensions[1].terms[0].dimension",
     );
 }
 
@@ -237,7 +242,7 @@ fn intake_maps_an_unresolved_unit_dimension_to_missing_name() {
         "ix://acme/orders/dimension/Missing",
         &unit_origin,
         "/units/0/dimension",
-        "Unit.dimension",
+        "$.units[0].dimension",
     );
 }
 
@@ -255,7 +260,7 @@ fn intake_maps_an_unresolved_unit_target_to_missing_name() {
         "ix://acme/orders/unit/Missing",
         &origin,
         "/units/1/target",
-        "Unit.target",
+        "$.units[1].target",
     );
 }
 
