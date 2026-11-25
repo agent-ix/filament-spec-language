@@ -26,6 +26,7 @@ use serde_json::{json, Value};
 use crate::long_run_support::limits;
 use crate::timed_world::{self, World};
 
+mod absent_position;
 mod bounded_monitor_profile;
 
 const PROFILES: &str = "profile ev = \"filament.temporal.timed/v1\";\n\
