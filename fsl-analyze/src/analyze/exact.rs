@@ -364,14 +364,6 @@ fn not_yet() -> EngineReport {
     EngineReport::Refused(Refusal::Unsupported(NOT_YET))
 }
 
-fn fair_interval_none_fallback(
-    fair_eventual: bool,
-    interval_available: bool,
-    holds: bool,
-) -> Option<EngineReport> {
-    (fair_eventual && !interval_available && holds).then(not_yet)
-}
-
 /// How a failed unbounded solve settles: a reached limit names itself, any
 /// other fault is the engine's.
 fn unbounded_failure(
@@ -1636,8 +1628,17 @@ fn run(
             let threshold = match bound {
                 Bound::AtLeast(threshold) | Bound::AtMost(threshold) => threshold,
             };
+            // The sweeps start no higher than the precision ceiling.
+            let mut interval_limits = limits.clone();
+            interval_limits.precision_bits = limits.precision_bits.min(precision);
             decide_fair_reachability_interval(
-                &product, None, &target, objective, threshold, &limits, cancel,
+                &product,
+                None,
+                &target,
+                objective,
+                threshold,
+                &interval_limits,
+                cancel,
             )
         } else {
             crate::exact_probabilistic::decide_fair_reachability(
@@ -2155,8 +2156,8 @@ fn run(
             evidence,
         }));
     }
-    if let Some(report) = fair_interval_none_fallback(fair_eventual, interval.is_some(), holds) {
-        return report;
+    if fair_eventual && interval.is_none() && holds {
+        return broken();
     }
     if !holds {
         if interval.is_some() {
@@ -4720,16 +4721,6 @@ mod threshold_tests {
         };
         assert!(is_fault(&report));
         assert!(!is_not_yet(&report));
-    }
-
-    #[test]
-    fn fair_interval_unavailable_returns_not_yet_instead_of_rejection() {
-        let report = fair_interval_none_fallback(true, false, true)
-            .expect("a held fair eventual claim without intervals is not yet implemented");
-        assert!(is_not_yet(&report));
-        assert!(!is_fault(&report));
-        assert!(fair_interval_none_fallback(true, true, true).is_none());
-        assert!(fair_interval_none_fallback(true, false, false).is_none());
     }
 
     /// QSL-2850 FR-281 "Engine refusals": a swallowed identity, binding or

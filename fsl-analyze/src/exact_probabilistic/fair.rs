@@ -378,7 +378,10 @@ pub fn decide_fair_reachability(
 }
 
 /// Decide a fair reachability threshold with outward-rounded Bellman sweeps
-/// under the caller's rational and precision budgets.
+/// under the caller's rational and precision budgets. As in
+/// [`decide_fair_reachability`], the sweeps run on the product's evaluation:
+/// bounds and components are per product state, and the policy also holds an
+/// entry for each row node.
 pub fn decide_fair_reachability_interval(
     product: &ProbProduct,
     from: Option<&[bool]>,
@@ -388,10 +391,63 @@ pub fn decide_fair_reachability_interval(
     limits: &ExactProbLimits,
     cancel: &Cancel,
 ) -> Result<FairReachabilityOutcome, FairProductError> {
-    if product.kind != ProductKind::Mdp
-        || target.len() != product.states.len()
+    if target.len() != product.states.len()
         || from.is_some_and(|labels| labels.len() != product.states.len())
     {
+        return Err(FairProductError::InvalidForm);
+    }
+    let evaluation = evaluation_of(product)?;
+    let target = evaluation
+        .extend(target)
+        .ok_or(FairProductError::InvalidForm)?;
+    let from = from
+        .map(|from| evaluation.extend(from).ok_or(FairProductError::InvalidForm))
+        .transpose()?;
+    let mut outcome = fair_reachability_interval(
+        &evaluation.product,
+        from.as_deref(),
+        &target,
+        objective,
+        threshold,
+        limits,
+        cancel,
+    )?;
+    match &mut outcome {
+        FairReachabilityOutcome::Exact(result) => {
+            result.values = evaluation.restrict(std::mem::take(&mut result.values));
+            result.components = std::mem::take(&mut result.components)
+                .into_iter()
+                .map(|component| restrict_component(&evaluation, component))
+                .collect();
+        }
+        FairReachabilityOutcome::Bounds {
+            lower,
+            upper,
+            components,
+            ..
+        } => {
+            *lower = evaluation.restrict(std::mem::take(lower));
+            *upper = evaluation.restrict(std::mem::take(upper));
+            *components = std::mem::take(components)
+                .into_iter()
+                .map(|component| restrict_component(&evaluation, component))
+                .collect();
+        }
+        FairReachabilityOutcome::PrecisionBudget { .. } | FairReachabilityOutcome::Stopped(_) => {}
+    }
+    Ok(outcome)
+}
+
+fn fair_reachability_interval(
+    product: &ProbProduct,
+    from: Option<&[bool]>,
+    target: &[bool],
+    objective: UnboundedObjective,
+    threshold: &Rational,
+    limits: &ExactProbLimits,
+    cancel: &Cancel,
+) -> Result<FairReachabilityOutcome, FairProductError> {
+    if product.kind != ProductKind::Mdp {
         return Err(FairProductError::InvalidForm);
     }
     let graph = Graph::new(product)?;

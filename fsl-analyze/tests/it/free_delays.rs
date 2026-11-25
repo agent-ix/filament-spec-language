@@ -19,8 +19,9 @@ use filament_semantic_value::catalog::CatalogCode;
 use fsl_analyze::analyze::{Engines, analyze_items, exact_probabilistic_item};
 use fsl_analyze::exact_probabilistic::{
     action_steps, build_product, decide_bounded_event, decide_fair_expected_reward,
-    decide_fair_reachability, decide_reachability, free_delays_choice, produce_witness,
-    witness_scheduler, ActionChoice, EntryChoice, ExactProbLimits, ExtRational, FhResult,
+    decide_fair_reachability, decide_fair_reachability_interval, decide_reachability,
+    free_delays_choice, produce_witness, witness_scheduler, ActionChoice, EntryChoice,
+    ExactProbLimits, ExtRational, FairEndComponent, FairReachabilityOutcome, FhResult,
     FreeDelayRow, MonitorVerdict, ProbBuild, ProbProduct, ProbStateId, ProductAction, ProductKind,
     ProductRequest, SchedulerChoice, UnboundedObjective, WitnessError, WitnessScope,
 };
@@ -681,6 +682,68 @@ fn fair_decisions_read_two_rows_through_the_row_factored_operator() {
         maximum.values[start.index()],
         ExtRational::Finite(ratio(3, 2))
     );
+}
+
+/// FR-204 "row-factored operator" for FR-200's interval fair reachability:
+/// over AC-12's `Loop` with two rows, the dyadic bounds of each optimization
+/// decide the threshold and enclose the exact value at every product state,
+/// the components name product states only, and the scheduler also covers the
+/// row nodes.
+#[trace("TC-642", "FR-204")]
+#[test]
+fn fair_interval_reads_two_rows_through_the_row_factored_operator() {
+    let world = loop_world("1 ms: 1, 2 ms: 1");
+    let built = build(&world, "Reach");
+    let start = built.initial[0].2;
+    let target: Vec<bool> = built.labels.iter().map(|labels| labels[0]).collect();
+    let limits = ExactProbLimits::default();
+    let threshold = ratio(2, 7);
+    for objective in [UnboundedObjective::Max, UnboundedObjective::Min] {
+        let exact =
+            decide_fair_reachability(&built, None, &target, objective, &limits, &Cancel::new())
+                .expect("the exact fair value is decided");
+        let outcome = decide_fair_reachability_interval(
+            &built,
+            None,
+            &target,
+            objective,
+            &threshold,
+            &limits,
+            &Cancel::new(),
+        )
+        .expect("the fair bounds are decided");
+        let FairReachabilityOutcome::Bounds {
+            lower,
+            upper,
+            components,
+            policy,
+            ..
+        } = outcome
+        else {
+            panic!("dyadic bounds: {outcome:?}");
+        };
+        assert_eq!(lower.len(), built.states.len());
+        assert_eq!(upper.len(), built.states.len());
+        for ((lower, upper), value) in lower.iter().zip(&upper).zip(&exact.values) {
+            let ExtRational::Finite(value) = value else {
+                panic!("a probability is finite");
+            };
+            assert!(lower.rational() <= *value && *value <= upper.rational());
+        }
+        assert!(
+            lower[start.index()].rational() >= threshold
+                || upper[start.index()].rational() <= threshold
+        );
+        let members = |components: &[FairEndComponent]| {
+            components
+                .iter()
+                .map(|component| (component.states.clone(), component.actions.clone()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(members(&components), members(&exact.components));
+        assert!(policy.len() > built.states.len());
+        assert_eq!(policy.len(), exact.policy.len());
+    }
 }
 
 /// FR-204-AC-12 (TC-642 step 8): `Loop`'s `B` delay 1 returns to the initial

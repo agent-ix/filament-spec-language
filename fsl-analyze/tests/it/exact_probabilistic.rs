@@ -2623,9 +2623,10 @@ fn fair_mdp_checker_rejects_a_fair_non_target_end_component() {
     );
 }
 
-/// FR-1042-AC-22: strong fairness does not change the one-shot `go` draw;
-/// the only fair scheduler reaches `done` with probability exactly one half.
-#[trace("FR-1042-AC-22")]
+/// FR-200 fair infimum: strong fairness does not change the one-shot `go`
+/// draw; the only fair scheduler reaches `done` with probability exactly one
+/// half.
+#[trace("TC-635", "FR-200")]
 #[test]
 fn fair_one_shot_go_has_exactly_one_half_reachability() {
     const CLAIM: &str = "probabilistic FairHalf using inf on M over (o: M::Once) under every scheduler fair strong Once::go on origin { probability >= 0.4 [ eventually holds(o.done) ] }";

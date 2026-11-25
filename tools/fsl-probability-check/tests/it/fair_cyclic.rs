@@ -17,7 +17,6 @@ fn fair_cyclic_interval_documents_pass_in_a_fresh_process() {
     let source = fair_w_source().replace("rational(1,2)", "rational(2,5)");
     let limits = ExactProbLimits {
         max_rational_bits: 1,
-        precision_bits: 16,
         max_precision_bits: 16,
         ..ExactProbLimits::default()
     };

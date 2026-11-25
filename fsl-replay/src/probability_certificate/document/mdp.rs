@@ -1253,7 +1253,7 @@ fn construct(
         offered.push(ExactProbabilityValue { state, value });
     }
     Ok(ProbabilityProofDocument {
-        cyclic_mdp: fair_cyclic,
+        cyclic_mdp: true,
         fair_mdp: cx.fair_mdp,
         fairness,
         document: ProbabilityCertificateDocument {
@@ -1346,7 +1346,7 @@ fn check_with_context(
         limits,
         cancel,
         &mut cx.meter,
-        fair_cyclic,
+        !fair_mdp,
         Some(&mut fairness_records),
         &mut cx.storage,
     ) {

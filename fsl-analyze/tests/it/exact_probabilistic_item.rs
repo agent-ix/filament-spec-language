@@ -1534,7 +1534,6 @@ fn fair_cyclic_low_rational_budget_proves_with_value_bounds() {
     let world = World::new(&prob_world::fair_bounds_w(CLAIM));
     let mut request = world.request("FairHalf", ModelCheckLimits::default());
     request.limits.max_rational_bits = 1;
-    request.limits.precision_bits = 16;
     request.limits.max_precision_bits = 16;
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
