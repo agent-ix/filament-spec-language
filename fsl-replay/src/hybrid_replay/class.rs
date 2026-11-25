@@ -493,7 +493,7 @@ mod tests {
     use ix_trace_rs::trace;
 
     fn q(numerator: i64) -> Rational {
-        Rational::new(numerator.into(), 1.into()).expect("one is a nonzero denominator")
+        Rational::new(numerator.into(), 1_i64.into()).expect("one is a nonzero denominator")
     }
 
     fn deep_term(depth: usize) -> &'static HybridTerm {
