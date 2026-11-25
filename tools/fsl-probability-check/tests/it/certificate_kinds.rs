@@ -77,7 +77,7 @@ fn fair_link_model() -> String {
     )
 }
 
-fn likely(profile: &str, scheduler: &str, form: &str) -> String {
+pub(super) fn likely(profile: &str, scheduler: &str, form: &str) -> String {
     format!(
         "{}\nprobabilistic Likely using {profile} on M over (m: M::Msg) under {scheduler} on origin {{ {form} }}\n",
         model()
