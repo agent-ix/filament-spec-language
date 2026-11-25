@@ -111,7 +111,7 @@ impl ModelSystem<'_> {
             let mut combinations = 1_u128;
             for (stage_index, stage) in self.initial_stages.iter().enumerate() {
                 let holders: Vec<_> = base
-                    .state
+                    .state()
                     .populations
                     .iter()
                     .flat_map(|(population, objects)| {
@@ -203,7 +203,7 @@ impl ModelSystem<'_> {
             let mut overrides = encode::InitialOverrides::new();
             for (factor, value) in plan.factors.iter().zip(&values) {
                 if let Some(object) = base
-                    .state
+                    .state()
                     .populations
                     .get(&factor.population)
                     .and_then(|objects| objects.get(&factor.object))
@@ -249,7 +249,7 @@ impl ModelSystem<'_> {
                 };
                 let mut permutation = crate::simulation::Permutation::identity();
                 for class in &group.classes {
-                    let objects = base.state.populations.get(&class.population);
+                    let objects = base.state().populations.get(&class.population);
                     let mut sorted = Vec::with_capacity(class.keys.len());
                     for key in &class.keys {
                         let Some(original) = objects.and_then(|objects| objects.get(key)) else {
@@ -296,7 +296,7 @@ impl ModelSystem<'_> {
             let projected_key = key::state_key(
                 &encode::initial_model_key(
                     &self.model,
-                    &base.state,
+                    base.state(),
                     self.typing(),
                     &overrides,
                     &renaming,
@@ -319,7 +319,7 @@ impl ModelSystem<'_> {
                 }
                 admitted.insert(key.clone());
             }
-            let mut state = base.state.clone();
+            let mut state = base.state().clone();
             for (factor, value) in plan.factors.iter().zip(values) {
                 if let Some(object) = state
                     .populations
@@ -716,7 +716,7 @@ impl ModelSystem<'_> {
             }
             let candidate = ModelSimState::anchored(state, anchor.clone());
             if self.invariant_findings_at(&candidate)?.is_empty() {
-                let mut state = candidate.state;
+                let mut state = candidate.into_state();
                 // Evaluation uses the native ClockReference value, while
                 // completed ModelState data exposes Reference<Clock> as the
                 // ordinary reference value expected by callers.

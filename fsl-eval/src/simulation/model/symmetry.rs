@@ -226,7 +226,7 @@ impl ModelSystem<'_> {
         state: &ModelSimState,
         permutation: &Permutation,
     ) -> Result<ModelSimState, ExpansionStop> {
-        Ok(state.without_effect(self.permute_state(&state.state, permutation)?))
+        Ok(state.without_effect(self.permute_state(state.state(), permutation)?))
     }
 
     /// The state-only projection of [`Self::permute`], for initial recipes
@@ -387,7 +387,7 @@ impl ModelSystem<'_> {
                     .map(|(_, _, _, enc)| enc.clone())
             };
             for class in &group.classes {
-                let objects = state.state.populations.get(&class.population);
+                let objects = state.state().populations.get(&class.population);
                 let mut sorted = Vec::with_capacity(class.keys.len());
                 for key in &class.keys {
                     let bytes = match objects.and_then(|objects| objects.get(key)) {
@@ -585,7 +585,7 @@ mod tests {
         let mut state = system.initial().into_iter().next().expect("initial state");
         let class = &group.classes[0];
         let object_type = state
-            .state
+            .state()
             .populations
             .get(&class.population)
             .and_then(|objects| objects.get("a"))
@@ -624,13 +624,13 @@ mod tests {
             .collect();
         let projected = super::super::encode::initial_model_key(
             &system.model,
-            &state.state,
+            state.state(),
             system.typing(),
             &Default::default(),
             &renaming,
         );
         let permuted = system
-            .permute_state(&state.state, &permutation)
+            .permute_state(state.state(), &permutation)
             .expect("permutation applies");
         let expected = super::super::encode::model_key(&system.model, &permuted, system.typing());
 

@@ -1528,7 +1528,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             .filter(|(_, _, _, max)| max.is_none())
             .flat_map(|(type_key, field, min, _)| {
                 state
-                    .state
+                    .state()
                     .populations
                     .iter()
                     .flat_map(move |(population, objects)| {
