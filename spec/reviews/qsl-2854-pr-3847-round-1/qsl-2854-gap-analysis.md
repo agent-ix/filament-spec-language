@@ -34,3 +34,14 @@ The full static matrix was computed for the repository, with reverse-gap and stu
 - Changed production behavior inventoried: one graph construction for declared composites, ordered hidden-field membership for refinement objects, and iterative hybrid class-gap walks. Each maps to the new NFR-141 ACs; no additional unowned behavior or source/test stubs were found in the changed surface.
 - Plan completion: not assessed
 - Semantic review: skipped
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | `FR-001-AC-1` is now an active criterion backed by `TC-424` and the tagged source-identity test `admission_mints_the_caller_named_source_reference`. |
+| FND-002 | fixed | `FR-056-AC-60` is backed by the runnable `a_float_field_model_explores_by_its_ieee_bits` test, including direct solved field writes and the signed-zero successor assertion. |
+| FND-003 | fixed | The AC-25 test trace now names only `NFR-141-AC-25`; the unminted parent ids are removed. |
+| FND-004 | fixed | Hybrid class test traces now name only `NFR-141-AC-27`; the unminted parent id is removed. |
+
+Disposition verification at `85747e97a81f91d20d0dd02167746b3de015e80b` on Titan: `cargo test --locked -p fsl-foundation --lib admission_mints_the_caller_named_source_reference -- --test-threads=3` passed (1); `cargo test --locked -p fsl-eval --test it a_float_field_model_explores_by_its_ieee_bits -- --test-threads=3` passed (1); the declared-composites, hidden-field, and hybrid class tests passed (1, 1 and 3); `cargo check --locked --workspace --all-targets` passed with default features (not `--all-features`); and `cargo clippy --locked -p fsl-package --all-targets -- -D warnings` passed. The full repository matrix still has its previously reported unrelated baseline coverage gaps; the four findings in this PR's original review are resolved.
