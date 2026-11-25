@@ -16,8 +16,9 @@ terms in ascending root-unit node-id order, and that a compound unit the
 check stage's unit scope does not hold is an internal fault.
 
 This catches a wrapper node that splits a declared unit's quantity type from
-its unit, terms emitted in source order instead of canonical order, and a
-single-term compound unit merged with its declared unit.
+its unit, terms emitted in source order instead of canonical order, a
+single-term compound unit merged with its declared unit, and foreign package
+endpoints incorrectly represented as local graph dependencies.
 
 Scope: FR-094-AC-6, FR-094-AC-7 (its compound-unit and declared-unit cases), FR-094-AC-8, FR-094-AC-11, FR-094-AC-13, FR-094-AC-15, FR-094-CON-1.
 
@@ -53,10 +54,11 @@ For steps 1–7, the unit table admits FSpec's `dimension-length`, `dimension-ti
    `dimension F::Time ~ R::Time by 1000 F::ms = 1 R::s;` in its place, and with
    `dimension R::Time ~ Time by 1 R::s = 1 s;` added; then with a third package
    `acme/clock` (alias `G`, root `ms`) `dimension R::Time ~ G::Time by 1 R::s = 1000 G::ms;`
-   and its reversed spelling; read the equivalence nodes and the `Time` nodes,
-   read each package back through IR's v2 reader, and read the same packages
-   with the node's `root_scale` set to `0/1`, `-1/1`, `2000/2`, removed, and
-   with the base ratios not multiplying to one.
+   and its reversed spelling; read the equivalence nodes, their ordered
+   `dimension_node_ids` Package references and dependencies, and the `Time`
+   nodes; read each package back through IR's v2 reader; and read the same
+   packages with the node's `root_scale` set to `0/1`, `-1/1`, `2000/2`,
+   removed, and with the base ratios not multiplying to one.
 
 8. Independently place `ix://filament/unit/U` in each of FR-094-AC-15's eight publicly admitted model type positions, leaving every other model type unitless. Select that model from a source declaring dimension `Money`, root unit `Base`, derived unit `U = 2 × Base` and unrelated unit `Unused`. For Rational, also declare the model's own `Money` dimension and `U` root unit, satisfying its namespace rule. Check only a Boolean expression that names no unit. Write each checked handoff through the production writer and read it through the production IR reader. Verify that `Unused` remains a checked-graph declaration node under FR-910, but does not enter the quantity-type node root set seeded by the selected model's type positions.
 
@@ -90,13 +92,17 @@ Tag the tests `#[trace("FR-094-AC-n", "TC-419")]` with the AC each backs.
   of the nodes is the `m` unit node.
 - Step 7: one `scalar_type`/`dimension_equivalence` node with no
   `declaration`, self-typed, relating the two package `Time` nodes in ascending
-  node-id order with `root_scale` 1/1, exactly the two
-  package `Time` nodes as dependencies and one `anchor` occurrence of ordinal 0; the
-  reversed spelling gives the same node; the added `R::Time ~ Time` is a second node of
-  ordinal 1; the `acme/clock` pair has `root_scale` 1000/1 in
-  both spellings; the `Time` nodes are unchanged; the node is emitted with no
-  quantity type naming either dimension; IR admits each package and refuses each
-  changed `root_scale` with `invalid_semantic_graph`.
+  node-id order with `root_scale` 1/1, an empty `dependencies` list, ordered
+  `dimension_node_ids` references to both package endpoints, selected-model
+  evidence authenticating those endpoints, and one `anchor` occurrence of
+  ordinal 0; the reversed spelling gives the same node. The added
+  `R::Time ~ Time` is a second node of ordinal 1, whose only dependency is the
+  locally declared source `Time` node and whose `R::Time` endpoint is represented
+  by its ordered Package reference and selected-model evidence. The
+  `acme/clock` pair has `root_scale` 1000/1 in both spellings; the `Time` nodes
+  are unchanged; the node is emitted with no quantity type naming either
+  dimension; IR admits each package and refuses each changed `root_scale` with
+  `invalid_semantic_graph`.
 
 - Step 8: each package contains source-owned `U`, `Base` and `Money` nodes; `U` is a unit typed by `Money` with exactly `Money` and `Base` as dependencies, and `Base` is typed by `Money`. `Unused` remains a checked-graph declaration node under FR-910, but is not a root in the quantity-type node set seeded by the selected model's type positions. Each independently emitted package is admitted by IR's checked-package/v2 reader.
 
