@@ -1360,9 +1360,10 @@ fn a_body_may_use_enum_members_declared_functions_and_let() {
     }
 }
 
-/// The same forms refuse when they are misused: a member of no enum, an enum
-/// compared with an integer, a call of no function or with the wrong
-/// arguments, and a `let` binder used past its body.
+/// The same forms refuse when they are misused: a case a declared enum lacks,
+/// a member whose qualifier names no type, an enum compared with an integer,
+/// a call of no function or with the wrong arguments, and a `let` binder used
+/// past its body.
 #[trace("TC-597", "FR-013-AC-3")]
 #[test]
 fn misused_enum_members_calls_and_let_binders_refuse() {
@@ -1373,6 +1374,10 @@ fn misused_enum_members_calls_and_let_binders_refuse() {
     for (declarations, code) in [
         (
             format!("{PHASE}{}", relation_over("Phase::NONE = Phase::OPEN")),
+            Code::IllTyped,
+        ),
+        (
+            format!("{PHASE}{}", relation_over("Nope::OPEN = Phase::OPEN")),
             Code::MissingDeclaration,
         ),
         (
