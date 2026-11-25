@@ -2154,6 +2154,27 @@ fn node_verdicts_in(prefix: &Value, node: &str) -> Vec<String> {
         .collect()
 }
 
+/// The verdict and cause of each control obligation for `node` in `prefix`.
+fn control_results_in(prefix: &Value, node: &str) -> Vec<(String, Option<String>)> {
+    prefix["obligations"]
+        .as_array()
+        .expect("obligations")
+        .iter()
+        .filter(|entry| {
+            entry["obligation"]["kind"] == "control" && entry["obligation"]["node"] == node
+        })
+        .map(|entry| {
+            (
+                entry["verdict"]
+                    .as_str()
+                    .expect("control verdict")
+                    .to_owned(),
+                entry["cause"].as_str().map(str::to_owned),
+            )
+        })
+        .collect()
+}
+
 /// An open incremental assessment of `observations` over [`cancel_in_repeat_protocol`]:
 /// `Buyer`'s observations at `buyer` in order, `Seller`'s at `seller`, and
 /// the correlations `(send, receive)`.
@@ -2632,8 +2653,8 @@ fn a_step_inside_an_inner_repeat_does_not_count_toward_the_iteration() {
 /// iteration. With a `choice` taking `a` and then `b` before the inner
 /// `repeat` of the cancelling `parallel` and no `P`, the recording `a`, `A`,
 /// `L`, `R`, `Placed`, `Got`, `yes`, `b`, `B`, `L`, `R`, `Placed`, `Got`,
-/// `yes` leaves the second iteration's `L` and `R` `satisfied` in batch, as
-/// under `outstanding continue`.
+/// `yes` leaves both iterations' `L` and `R` `satisfied` in batch and every
+/// prefix, as under `outstanding continue`.
 #[trace("TC-2531", "FR-895-AC-42")]
 #[test]
 fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
@@ -2672,16 +2693,125 @@ fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
             &[5, 6, 12, 13],
             &[(4, 5), (11, 12)],
         );
-        // Only the second iteration is asserted: QSL-3009 makes the first
-        // iteration's `L` and `R` violated, whatever the join policy.
-        for node in [NESTED_LEFT, NESTED_RIGHT] {
-            assert_eq!(
-                node_verdicts_in(&item, node).get(1).map(String::as_str),
-                Some("satisfied"),
-                "{outstanding} {node}: {item}"
+        let prefixes = item["prefixes"].as_array().expect("prefixes");
+        assert_eq!(prefixes.len(), 14, "{outstanding}: {item}");
+        for prefix in prefixes {
+            for node in [NESTED_LEFT, NESTED_RIGHT] {
+                assert!(
+                    node_verdicts_in(prefix, node)
+                        .iter()
+                        .all(|verdict| verdict == "satisfied"),
+                    "{outstanding} {node}: {prefix}"
+                );
+            }
+        }
+        let order: Vec<usize> = (0..14).collect();
+        assert_every_verdict_only_advances(prefixes, &order);
+        assert_eq!(prefixes[13]["obligations"], item["obligations"], "{item}");
+    }
+}
+
+/// FR-895-AC-45 (TC-2531): repeat control counts belong to each repeat
+/// invocation. An outer repeat may execute twice while its inner repeat runs
+/// once per outer iteration. Without a counter fixing the outer iteration,
+/// the inner repeat is never falsely reported duplicated; when `L` runs
+/// twice in one known outer iteration, the second `L` is the over-limit
+/// witness.
+#[trace("TC-2531", "FR-895-AC-45")]
+#[test]
+fn nested_repeat_control_counts_are_scoped_to_each_outer_iteration() {
+    let source = repeat_protocol().replace(
+        "sequence Body {",
+        "sequence Body { event P by Buyer as (p: Ack) { true }; repeat Inner by Buyer visible () max 1 while { true } sequence IBody { event L by Buyer as (l: Ack) { true }; } exhausted sequence IOut { }",
+    );
+    let outer = "Flow::Main::Loop";
+    let inner = "Flow::Main::Loop::Body::Inner";
+    let step = |path: &str| loop_event(path);
+    let nested_item = |name: &str, observations: Value| {
+        let count = observations.as_array().expect("observations").len();
+        nested_cancel_item(
+            name,
+            &source,
+            observations,
+            &(0..count).collect::<Vec<_>>(),
+            &[],
+            &[],
+        )
+    };
+
+    let legitimate = nested_item(
+        "replay-repeat-controls-nested-within-max",
+        json!([step("P"), step("Inner::IBody::L"), step("P"), step("Inner::IBody::L")]),
+    );
+    let prefixes = legitimate["prefixes"].as_array().expect("prefixes");
+    assert_eq!(prefixes.len(), 4, "{legitimate}");
+    for prefix in prefixes {
+        for node in [outer, inner] {
+            assert!(
+                control_results_in(prefix, node)
+                    .iter()
+                    .all(|(verdict, _)| verdict != "violated"),
+                "{node}: {prefix}"
             );
         }
     }
+    for node in [outer, inner] {
+        assert_eq!(
+            control_results_in(&legitimate, node),
+            [("satisfied".to_owned(), None)],
+            "{node}: {legitimate}"
+        );
+    }
+    let order: Vec<usize> = (0..4).collect();
+    assert_every_verdict_only_advances(prefixes, &order);
+    assert_eq!(prefixes[3]["obligations"], legitimate["obligations"], "{legitimate}");
+
+    let undetermined = nested_item(
+        "replay-repeat-controls-outer-iteration-undetermined",
+        json!([step("Inner::IBody::L"), step("Inner::IBody::L")]),
+    );
+    let prefixes = undetermined["prefixes"].as_array().expect("prefixes");
+    for prefix in prefixes {
+        assert!(
+            control_results_in(prefix, inner)
+                .iter()
+                .all(|(verdict, _)| verdict != "violated"),
+            "{inner}: {prefix}"
+        );
+    }
+    assert!(
+        control_results_in(&undetermined, inner)
+            .iter()
+            .all(|(verdict, _)| verdict != "violated"),
+        "{undetermined}"
+    );
+    assert_eq!(prefixes[1]["obligations"], undetermined["obligations"], "{undetermined}");
+
+    let over_limit = nested_item(
+        "replay-repeat-controls-inner-over-max",
+        json!([step("P"), step("Inner::IBody::L"), step("Inner::IBody::L")]),
+    );
+    let prefixes = over_limit["prefixes"].as_array().expect("prefixes");
+    for prefix in &prefixes[..2] {
+        assert!(
+            control_results_in(prefix, inner)
+                .iter()
+                .all(|(verdict, _)| verdict != "violated"),
+            "{inner}: {prefix}"
+        );
+    }
+    assert_eq!(
+        control_results_in(&prefixes[2], inner),
+        [("violated".to_owned(), Some("duplicated".to_owned()))],
+        "{inner}: {}",
+        prefixes[2]
+    );
+    assert_eq!(
+        control_results_in(&over_limit, inner),
+        [("violated".to_owned(), Some("duplicated".to_owned()))],
+        "{over_limit}"
+    );
+    assert_eq!(prefixes[2]["obligations"], over_limit["obligations"], "{over_limit}");
 }
 
 /// [`cancel_in_repeat_protocol`] with `extra` after `P` in the loop body.
