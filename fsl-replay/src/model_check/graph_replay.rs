@@ -27,7 +27,7 @@ use crate::model_check::graph_settle::{GraphReplayResult, GraphReplaySettlement}
 use crate::model_check::identity::StateGraphIdentity;
 use crate::model_check::limits::{ModelCheckLimit, ReachedLimit};
 use crate::model_check::replay::ModelTraceSubject;
-use crate::model_check::replay::{fault, refused, ModelTraceRefusal};
+use crate::model_check::replay::{fault, handoff_join_refusal, refused, ModelTraceRefusal};
 use crate::model_check::state_graph::{GraphEvidence, ModelPath, TrapClosure, WitnessPath};
 use crate::request::{ReplayRequest, ReplayRequestWire};
 use crate::result::{DisagreementCause, Verdict};
@@ -380,15 +380,17 @@ pub fn replay_model_graph_from_package(
     let bare = fsl_package::BarePackage::new(&admitted)
         .with_dependency_artifacts(&dependencies, &mut budget)
         .and_then(|package| {
-            package.with_supply(
-                fsl_package::BareSupply {
-                    identities: &identities,
-                    equality: equality.as_ref(),
-                },
-                &mut budget,
-            )
+            package
+                .with_supply(
+                    fsl_package::BareSupply {
+                        identities: &identities,
+                        equality: equality.as_ref(),
+                    },
+                    &mut budget,
+                )
+                .map_err(fsl_package::DependencyJoinRefusal::from)
         })
-        .map_err(|_| fault("handoff-supply-joins"))?;
+        .map_err(handoff_join_refusal)?;
     let input =
         fsl_eval::simulation::model::PackageModelInput::of(&bare, &packages, caller.spine.model)
             .map_err(|_| fault("package-route-input"))?;

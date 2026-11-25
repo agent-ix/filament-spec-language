@@ -59,10 +59,11 @@ relationships:
 A limit outcome SHALL tell the caller everything needed to run the input
 again under a larger limit (ADR-030 D-3). Every configurable resource limit
 of FSL's front end and engines has one stable setting name. The same name
-raises the limit from the library, from a replay request (every setting but
-`replay.input_bytes`) and from the driver CLI (`quire`, ADR-029 CB-1), which
-exposes the caller limits through FSL's settings operation, wherever that
-entry point takes the setting. Every `stage_limit_exceeded` outcome names the
+raises the limit from the library, from a replay request (the settings replay
+consumes, see "Lifecycle caller-limit coverage") and from the driver CLI
+(`quire`, ADR-029 CB-1), which exposes the caller limits through FSL's
+settings operation, wherever that entry point takes the setting. Every
+`stage_limit_exceeded` outcome names the
 limit, its value and its setting. Each execution budget under
 `filament.value.accounting/v1` also has a setting name, `accounting.` and its
 counter name (see Accounting setting names), and a reached budget names it.
@@ -434,8 +435,11 @@ request can execute: `s1.input_bytes`, `s1.tokens`, `s1.nodes`, `s1.work_units`,
 `library.dependency_edges`, `library.artifact_bytes`,
 `library.single_artifact_bytes`, `intake.input_bytes`, `replay.input_bytes`,
 `model_check.max_states`,
-`model_check.max_transitions`, and `model_check.max_automaton_states`. Replay does not execute
-`exact_prob.*`, `statistical.*`, `zone_check.*`, `schedule.max_demand_points`
+`model_check.max_transitions`, and `model_check.max_automaton_states`. It SHALL
+also accept `emit.output_bytes`, because replay's recompile emits the checked
+package (FR-263, FR-264). Replay does not execute
+`exact_prob.*`, `statistical.*`, `zone_check.*`, `schedule.max_demand_points`,
+`hybrid.*`, `smt_encoding.*`, `smt.*`, `certificate_check.*`
 or `plan_search.*`; it also does not consume
 `model_check.witness_samples`, `model_check.max_walk_steps`,
 `model_check.max_witness_set`, `model_check.max_relation_tuples`,
@@ -520,7 +524,8 @@ take rows; reaching one settles its owner's V-6 outcome
 states}`), not `LimitReached`. That outcome names the request member and
 its value, as FR-209 and FR-225 state (`bound: max_live_instances 1`), and
 carries no setting; the row's setting is the name the settings operation
-and a replay request accept to raise the bound. These request members are not limits and take
+accepts to raise the bound (a replay request does not carry it, "Lifecycle
+caller-limit coverage"). These request members are not limits and take
 no row: the search horizon `max_depth`, a method parameter that settles
 V-5 and is never a limit (FSpec FR-460); the method settings `q` (FR-254), the seed,
 the statistical method, `min_cycles` and `max_witnesses` (FR-191), which
@@ -650,7 +655,7 @@ these names through the same operand grammar as the stage settings
    operation's or engine's limits type SHALL offer a builder method for each
    field in its table, which sets that field's bound and changes nothing
    else.
-5. **The replay request raises every limit by name.** Replay SHALL read the
+5. **The replay request raises every limit it consumes by name.** Replay SHALL read the
    request's `stage_limits` as a map from setting name to bound and pass
    every entry through to its stage (FR-263).
 6. **The settings operation raises every limit by name.** The driver CLI
@@ -710,9 +715,9 @@ these names through the same operand grammar as the stage settings
 11. **Engine limit names.** When an engine item stops at a limit of its
    limits type, its `LimitReached` SHALL name `limit` as the engine
    table's limit name and `setting` as that row's setting name, never a
-   hyphenated or undotted spelling, and the settings operation and a
-   replay request's `stage_limits` SHALL raise that limit by that setting
-   name.
+   hyphenated or undotted spelling, and the settings operation SHALL raise
+   that limit by that setting name, as SHALL a replay request's `stage_limits`
+   for an engine limit replay consumes ("Lifecycle caller-limit coverage").
 
 ## Acceptance Criteria
 
@@ -731,7 +736,7 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-11 | Two replay requests that differ only in how they reach the same effective accounting limits, one carrying every counter in its accounting limits and no accounting entry in `stage_limits`, the other carrying `accounting.work_units` and `accounting.value_occurrences` only as `stage_limits` entries over accounting limits holding other values for them, give the same function-level value-parity claim identity (`claim()`, FR-357) on every outcome, settle the same, and charge the same. | Test (TC-921) |
 | FR-255-AC-12 | Every limit name of the engine table matches `^[a-z][a-z0-9_]*$`; every setting name in the setting and engine tables matches `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`; and setting names are distinct across the setting, engine and accounting tables. Each engine limits type and the typed inspection operation maps each limit member to the table's (limit name, setting name) pair (`ExactProbLimits.model`'s members map to the `exact_prob.*` product rows; `InspectLimits.max_view_entries` maps to `max_view_entries`/`inspect.max_view_entries`; `TimedSampling.q` maps to none). Each engine's `LimitReached` names its member's pair. The inspection operation's `StageFailure::Limit` identifies `max_view_entries`, its configured bound and attempted count, and `inspect.max_view_entries` (FR-277, FR-297). Method-bound stops (`max_live_instances`, `max_store_buffer`, `max_messages`) retain their owner's member and value naming; their row's setting raises them through the settings operation. A stop outside the listed limits (evaluation meter, `MaxCandidates` of an engine without `ExpansionLimits`, `Time`, `ClauseMeter` or cancellation) is not covered here. Given `model_check.max_states=0`, the settings operation returns a usage refusal naming the operand; given `model_check.witness_samples=0`, it returns `ModelCheckLimits` with `witness_samples` 0. | Test (TC-1161) |
 | FR-255-AC-13 | FR-126-AC-8's run stopped by `max_states` 2 settles `incomplete`, `LimitReached{limit: max_states, value: 2, setting: model_check.max_states}`, and the settings operation given `model_check.max_states=3` raises it; FR-101-AC-15's exploration with `max_states` 2 returns `Outcome::Bounded` at `Limit::States` with value 2 under setting `explore.states`, and `explore.states=3` leaves a model check's `max_states` at its default. FR-126-AC-6's `max_automaton_states` 50 stop names `max_automaton_states` and `model_check.max_automaton_states`; FR-254-AC-3's `max_sample_steps` 1 stop names `statistical.max_sample_steps`. | Test (TC-1161) |
-| FR-255-AC-14 | The settings operation given `smt_encoding.max_constants=8` returns `SmtEncodingLimits` with `max_constants` 8 and its other five members at their defaults, and given `smt.max_solver_steps=1000` and `smt.max_solver_time=5` returns `SmtRunLimits` with those values; given no operand it returns both at the engine table's defaults; given `smt.max_solver_time=0` or `smt_encoding.max_monitor_states=0` it returns a usage refusal naming the operand. A replay request's `stage_limits` entry `smt_encoding.max_constants` at 8 runs the item's encoding under 8. FR-315-AC-40's `max_constants` 7 refusal names the row's limit name and setting, and FR-182-AC-14's solver stops name `max_solver_steps` with `smt.max_solver_steps` and `max_solver_time` with `smt.max_solver_time`. | Test (TC-1250) |
+| FR-255-AC-14 | The settings operation given `smt_encoding.max_constants=8` returns `SmtEncodingLimits` with `max_constants` 8 and its other five members at their defaults, and given `smt.max_solver_steps=1000` and `smt.max_solver_time=5` returns `SmtRunLimits` with those values; given no operand it returns both at the engine table's defaults; given `smt.max_solver_time=0` or `smt_encoding.max_monitor_states=0` it returns a usage refusal naming the operand. A replay request's `stage_limits` entry `smt_encoding.max_constants` at 8 refuses at decode, naming the entry: a replay encodes no SMT query, so it consumes no `smt_encoding.*` setting ("Lifecycle caller-limit coverage"). FR-315-AC-40's `max_constants` 7 refusal names the row's limit name and setting, and FR-182-AC-14's solver stops name `max_solver_steps` with `smt.max_solver_steps` and `max_solver_time` with `smt.max_solver_time`. | Test (TC-1250) |
 | FR-255-AC-15 | With no I2 limits supplied by the outer configuration, the native-join budget for an I2 v2 read uses work limit 1000000 from `i2.work_units` and storage limit 16777216 from `i2.native_join_storage`; `V2ReadLimits.storage` has no `Default`, so a limits value built without a storage value does not compile and a fixture states an explicit value. | Test (TC-721) |
 | FR-255-AC-16 | Setting `i2.work_units` through the library limits, a replay request's `stage_limits`, and the settings operation changes only `V2ReadLimits.work`; setting `i2.native_join_storage` the same three ways changes only `V2ReadLimits.storage`; the FR-517 handoff request's `native_join` work and storage follow the same two names. | Test (TC-721) |
 | FR-255-AC-17 | Both `i2.work_units` and `i2.native_join_storage` accept 0 and `u64::MAX`; with storage 0 the nonempty identity join is refused at its first positive storage charge, and with `u64::MAX` it is admitted. | Test (TC-721) |
