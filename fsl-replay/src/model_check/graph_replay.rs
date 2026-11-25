@@ -905,7 +905,7 @@ fn graph_over(
                 })
                 .ok_or_else(|| refused(ModelTraceRefusal::OverBinding))?;
             system
-                .bound_reference(parameter.object.clone(), &model_instance)
+                .written_reference(parameter.object.clone(), &model_instance)
                 .map(Some)
                 .map_err(|_| fault("state-graph-over-reference"))
         }
