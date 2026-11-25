@@ -346,10 +346,15 @@ fn assumption_sources_match(
     identities: &[crate::refinement::AssumptionIdentity],
 ) -> Result<bool, ReplayRefusal> {
     for identity in identities {
-        // An `each` identity with no selected member names a class with no
-        // application in the explored graph (for example a memory flush of a
-        // branch that never buffers a store). `assumption_lasso_matches`
-        // reads it as never enabled and never taken: vacuously satisfied.
+        // An implementation `each` identity always names its member. A
+        // specification one may name none: `assumption_lasso_matches`
+        // confirms the class has no member on the loop.
+        if identity.side == AssumptionSide::Implementation
+            && identity.granularity == FairnessGranularity::Each
+            && identity.selected.is_none()
+        {
+            return Ok(false);
+        }
         let matches = match (&identity.side, &identity.target) {
             (AssumptionSide::Implementation, AssumptionTarget::Model(assumption)) => {
                 identity.origin == crate::refinement::AssumptionOrigin::Authored
@@ -647,6 +652,22 @@ fn assumption_lasso_matches(
                     let expansion = protocol
                         .successors(state)
                         .map_err(|_| fault("assumption-replay-protocol-lasso-expands"))?;
+                    // An `each` identity naming no member is vacuous only
+                    // while no loop step or successor belongs to its class.
+                    if identity.granularity == FairnessGranularity::Each
+                        && identity.selected.is_none()
+                        && (expansion
+                            .successors
+                            .iter()
+                            .any(|(transition, _)| assumption.class_of(transition).is_some())
+                            || transitions.get(index).is_some_and(|(_, edge)| {
+                                edge.as_ref().is_some_and(|transition| {
+                                    assumption.class_of(transition).is_some()
+                                })
+                            }))
+                    {
+                        return Ok(false);
+                    }
                     enabled.push(expansion.successors.iter().any(|(transition, _)| {
                         assumption.class_of(transition).is_some_and(|class| {
                             identity.granularity
