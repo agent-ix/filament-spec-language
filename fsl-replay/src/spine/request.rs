@@ -976,16 +976,23 @@ fn canonical_text(raw: &RawValue, member: &str) -> Result<String, ClauseRequestR
     String::from_utf8(bytes).map_err(|error| invalid(member, error.to_string()))
 }
 
-/// The identity text of the operation member `raw`. FSpec FR-181 writes an
-/// operation as one string holding that text (FR-120); a string that holds no
-/// JSON text is itself the operation's typed value.
+/// The identity text of the operation member `raw`, by FR-120's reader rule:
+/// a string holding an identity text is that text, any other string is a name,
+/// and an object is its canonical text.
 fn operation_text(raw: &RawValue, member: &str) -> Result<String, ClauseRequestReadError> {
     let text = canonical_text(raw, member)?;
-    match serde_json::from_str::<String>(&text) {
-        Ok(identity) if serde_json::from_str::<serde::de::IgnoredAny>(&identity).is_ok() => {
-            Ok(identity)
+    match text.bytes().next() {
+        Some(b'"') => {
+            let wire: String =
+                serde_json::from_str(&text).map_err(|error| invalid(member, error.to_string()))?;
+            Ok(if crate::outcome::is_identity_text(&wire) {
+                wire
+            } else {
+                text
+            })
         }
-        _ => Ok(text),
+        Some(b'{') => Ok(text),
+        _ => Err(invalid(member, "an operation is a string or an object")),
     }
 }
 
@@ -2127,6 +2134,38 @@ mod tests {
             {"type": "transition", "operation": "increment", "receiver": null, "arguments": []}
         ));
         assert_eq!(named.operation(), r#""increment""#);
+    }
+
+    /// FR-120-AC-39 (TC-471): an operation string spelled like a JSON literal
+    /// or array is a name, an object member is its canonical text, and any
+    /// other member is refused.
+    #[trace("TC-471", "FR-120-AC-39")]
+    #[test]
+    fn an_observed_model_step_reads_a_literal_spelling_as_a_name() {
+        let read = |operation: serde_json::Value| {
+            let step: super::ModelStepWire = serde_json::from_value(serde_json::json!({
+                "transition": {"type": "transition", "operation": operation,
+                    "receiver": null, "arguments": []},
+                "post_state": {"key": ""},
+            }))
+            .expect("the closed step shape");
+            super::model_step(&step, "trace.steps[0]")
+                .map(|step| step.expect("not the terminal stutter").transition)
+        };
+        for name in ["true", "false", "null", "1", "[1]"] {
+            let transition = read(serde_json::json!(name)).expect("a name");
+            assert_eq!(transition.operation(), format!("\"{name}\""));
+        }
+        let object = read(serde_json::json!({"name": "tick"})).expect("an object");
+        assert_eq!(object.operation(), r#"{"name":"tick"}"#);
+        for other in [
+            serde_json::json!(true),
+            serde_json::json!(1),
+            serde_json::json!([1]),
+        ] {
+            let refused = read(other).expect_err("neither a string nor an object");
+            assert_eq!(refused.member, "trace.steps[0].transition.operation");
+        }
     }
 
     #[test]

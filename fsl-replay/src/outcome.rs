@@ -614,6 +614,13 @@ pub(super) struct TaskSourceTransitionWire {
     arguments: Vec<serde_json::Value>,
 }
 
+/// Whether a written `operation` string is itself an identity text (FR-120):
+/// the JSON text of an object or of a string. Any other string is a name.
+pub(crate) fn is_identity_text(wire: &str) -> bool {
+    matches!(wire.trim_start().bytes().next(), Some(b'{' | b'"'))
+        && serde_json::from_str::<serde::de::IgnoredAny>(wire).is_ok()
+}
+
 /// Select the existing task-source operation spelling without copying it.
 pub(crate) fn task_source_operation<'a>(
     operation: &'a serde_json::Value,

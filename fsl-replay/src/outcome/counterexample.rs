@@ -450,13 +450,12 @@ fn read_document(
         }
         let operation_wire = required(value, "operation", pointer)?;
         // FR-364 carries source operations as their stable node URI. Recover
-        // the canonical node/package identity used by ModelTransition. Other
-        // canonical operation identities, including a model arm's structured
-        // operation value, are preserved verbatim.
+        // the canonical node/package identity used by ModelTransition. Any
+        // other member is read by FR-120's reader rule.
         let operation_value = match operation_wire {
             Json::String(operation) => match serde_json::from_str::<Json>(operation) {
-                Ok(value) => value,
-                Err(_) if operation.starts_with("ix://") => {
+                Ok(value) if super::is_identity_text(operation) => value,
+                _ if operation.starts_with("ix://") => {
                     let mut parts = operation
                         .strip_prefix("ix://")
                         .unwrap_or_default()
@@ -471,7 +470,7 @@ fn read_document(
                         })?;
                     json!({"node": operation, "package": package})
                 }
-                Err(_) => Json::String(operation.clone()),
+                _ => Json::String(operation.clone()),
             },
             Json::Object(_) => operation_wire.clone(),
             _ => {
@@ -2579,6 +2578,45 @@ mod tests {
                 "delay": {"numerator": "3", "denominator": "2"},
             })
         );
+    }
+
+    /// FR-120-AC-39 (TC-471): an operation string spelled like a JSON literal
+    /// or array is a name; an identity text and an object keep their reading;
+    /// any other member is refused.
+    #[trace("TC-471", "FR-120-AC-39")]
+    #[test]
+    fn a_counterexample_operation_spelled_like_a_literal_is_a_name() {
+        let mut found = counterexample(1, CounterexampleKind::Formula);
+        found.lasso = Some(Lasso {
+            entry: 0,
+            terminal_stutter: false,
+            terminal_stutter_delay: None,
+        });
+        let wire = temporal_wire(&found, None, None).expect("lasso spelling");
+        let read = |operation: Json| {
+            let mut written = wire.clone();
+            written["loop"][0]["transition"]["operation"] = operation;
+            read_temporal_counterexample::<ModelTransition>(&written)
+                .map(|read| read.prefix[0].transition.operation().to_owned())
+        };
+        for name in ["true", "false", "null", "1", "[1]"] {
+            assert_eq!(read(json!(name)).expect("a name"), format!("\"{name}\""));
+        }
+        for spelled in [json!(r#"{"name":"s1"}"#), json!({"name": "s1"})] {
+            assert_eq!(
+                read(spelled).expect("an identity"),
+                r#"{"name":"s1"}"#.to_owned()
+            );
+        }
+        for other in [json!(true), json!(1), json!([1]), json!(null)] {
+            assert_eq!(
+                read(other),
+                Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                    cause: "wrong-value-kind",
+                    pointer: "/loop/0/transition/operation".to_owned(),
+                })
+            );
+        }
     }
 
     fn counterexample(steps: usize, kind: CounterexampleKind) -> TemporalCounterexample {

@@ -201,6 +201,7 @@ fn holds(row: &str) -> Refining {
 /// refinement item's obligation; FR-245 accepts it (FR-245-AC-8), and two
 /// runs give equal certificates.
 #[trace("TC-699", "FR-244-AC-5")]
+#[trace("TC-1197", "FR-245-AC-7")]
 #[trace("TC-700", "FR-245-AC-8")]
 #[test]
 fn the_treq_certificate_is_a_refinement_form_the_checker_accepts() {
@@ -252,6 +253,7 @@ fn the_treq_certificate_is_a_refinement_form_the_checker_accepts() {
 /// FR-331's zone edge step with the failing verdict.
 #[trace("TC-699", "FR-244-AC-5")]
 #[trace("TC-699", "FR-244-AC-8")]
+#[trace("TC-1197", "FR-245-AC-7")]
 #[trace("TC-700", "FR-245-AC-8")]
 #[trace("TC-700", "FR-245-AC-12")]
 #[trace("TC-1170", "FR-430-AC-8")]
@@ -395,6 +397,7 @@ fn a_step_inside_the_locked_region_lists_no_taken() {
 /// `Malformed` at that member before any successor is recomputed; with one
 /// edge's target position replaced, or its `taken` changed to `Stutter`, it
 /// is `Rejected` `PostDiffers` at that edge.
+#[trace("TC-1197", "FR-245-AC-7")]
 #[trace("TC-700", "FR-245-AC-8")]
 #[trace("TC-1170", "FR-430-AC-8")]
 #[test]
@@ -462,6 +465,7 @@ fn a_tampered_treq_certificate_is_rejected() {
 /// true, so its half is `Violated`) with a forged certificate, the `TReq`
 /// one, whose initial node lists the abstract state `sent` false and no
 /// `locked` mark, is `Rejected` `InitialMismatch` at the initial node.
+#[trace("TC-1197", "FR-245-AC-7")]
 #[trace("TC-700", "FR-245-AC-8")]
 #[test]
 fn a_forged_initial_position_is_an_initial_mismatch() {
@@ -491,6 +495,7 @@ fn a_forged_initial_position_is_an_initial_mismatch() {
 /// at the first `check_initial` or `check_step`, never `Rejected`; checked
 /// against the refinement over another abstract package it refuses
 /// `stale_dependency`.
+#[trace("TC-1197", "FR-245-AC-7")]
 #[trace("TC-700", "FR-245-AC-8")]
 #[test]
 fn a_meter_stop_is_no_rejection_and_another_package_is_stale() {
@@ -702,6 +707,7 @@ fn no_positioned_initial_state_is_no_admitted_behaviour() {
 /// forged for the variant whose `undo` post-state has no time invariant
 /// (its half `Violated`), with the entry widened to the universe so it
 /// covers that post-state, is rejected `BadState` at the entry.
+#[trace("TC-1197", "FR-245-AC-7")]
 #[trace("TC-700", "FR-245-AC-8")]
 #[test]
 fn a_forged_step_level_locked_entry_that_diverges_is_a_bad_state() {

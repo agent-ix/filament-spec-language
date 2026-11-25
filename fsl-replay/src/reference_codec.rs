@@ -11,7 +11,6 @@ use fsl_package::{CheckedPackage, CheckedPackageV2, ReferenceCatalog, ReferenceD
 use fsl_semantics::model::intake::SelectedModels;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::population::PopulationBinding;
-use serde::de::IgnoredAny;
 use serde_json::{Map, Value};
 use std::cell::RefCell;
 mod json;
@@ -1377,9 +1376,10 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         if map["type"].as_str() != Some("transition") {
             return Err(scope.fail(ReferenceFailure::MalformedWire));
         }
-        // A string holding JSON text is the identity text itself (FSpec FR-181).
+        // FR-120's reader rule: a string holding an identity text is that
+        // text, any other string a name, and an object its canonical text.
         let operation = scope.member("operation", |s| match &map["operation"] {
-            Value::String(text) if serde_json::from_str::<IgnoredAny>(text).is_ok() => s.text(text),
+            Value::String(text) if crate::outcome::is_identity_text(text) => s.text(text),
             Value::String(_) | Value::Object(_) => {
                 let operation = s.json(&map["operation"], 0)?;
                 canonical_text(&operation, s, limits)
@@ -1875,6 +1875,7 @@ mod tests {
         Cancel, Integer, IntegerDecimalBudget, Meter, Reservation, ReservationDenied,
     };
     use fsl_eval::simulation::model::{ModelKeyBudget, ModelKeyError, ModelRestoreBudget};
+    use ix_trace_rs::trace;
 
     struct Budget {
         meter: Meter,
@@ -2276,6 +2277,7 @@ mod tests {
     }
 
     /// Trace: FSpec-FR-181
+    #[trace("TC-471", "FR-120-AC-39")]
     #[test]
     fn reference_catalog_genuine_config_version_source_and_admitted_roundtrip() {
         use super::{ReferenceCodec, reference_fixture};
@@ -2547,6 +2549,38 @@ mod tests {
                 .unwrap(),
             transition
         );
+        // FR-120-AC-39: a literal spelling is a name, an object its canonical
+        // text, and no other member is read.
+        let mut restore_written = |operation: Value| {
+            let mut written = encoded.clone();
+            written["operation"] = operation;
+            codec.restore_transition(
+                &written,
+                &mut budget,
+                &cancel,
+                64,
+                quire_canonical::Limits::new(100000),
+            )
+        };
+        for name in ["true", "false", "null", "1", "[1]"] {
+            assert_eq!(
+                restore_written(json!(name)).unwrap().operation(),
+                format!("\"{name}\"")
+            );
+        }
+        assert_eq!(
+            restore_written(json!({"name": "tick"})).unwrap().operation(),
+            r#"{"name":"tick"}"#
+        );
+        for other in [json!(true), json!(1), json!([1]), json!(null)] {
+            assert!(matches!(
+                restore_written(other),
+                Err(super::ReferenceCodecError::Refused {
+                    reason: super::ReferenceFailure::MalformedWire,
+                    ..
+                })
+            ));
+        }
         assert_eq!(system.state_key_of(&initial).unwrap().0, before);
         let (environment, _, views) = admit_current_snapshot_with_views(
             checked.graph().model_inputs(),
