@@ -401,7 +401,7 @@ fn zeno_only_unit() -> String {
 fn a_state_graph_certificate_over_a_zeno_only_graph_needs_no_divergence_witness() {
     let unit = zeno_only_unit();
     assert!(unit.contains("when { true } { self.x <= 0 ms }"), "{unit}");
-    let ws = Workspace::new("timed-sg-zeno-only");
+    let ws = Workspace::new("timed-sg-zeno-certificate");
     let run = analyze(&request_over(
         &ws,
         &unit,
