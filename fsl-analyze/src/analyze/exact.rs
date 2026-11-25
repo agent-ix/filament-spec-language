@@ -2064,7 +2064,6 @@ fn run(
         };
         (solved.values, solved.policy)
     };
-    record_work_checkpoint(ExactWorkPhase::Product, &work, true);
     let values = values
         .into_iter()
         .take(product.states.len())
@@ -2489,6 +2488,7 @@ fn run(
             Err(report) => *report,
         };
     }
+    record_work_checkpoint(ExactWorkPhase::Product, &work, true);
     record_work_checkpoint(ExactWorkPhase::CertificateProduction, &work, false);
     let certificate = match (bounded_formula, monitor) {
         (Some(formula), Some(monitor)) => {
@@ -3387,6 +3387,7 @@ fn replay_refutation(
     };
     let mut producer_meter = work.meter().with_cancel(cancel.clone());
     let mut producer_storage = 0u64;
+    record_work_checkpoint(ExactWorkPhase::Product, work, true);
     record_work_checkpoint(ExactWorkPhase::WitnessProduction, work, false);
     // Classify direct state boundaries in one pass over the source-labelled
     // product. The replay core independently derives the same outcomes.
