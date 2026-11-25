@@ -31,7 +31,7 @@
 
 use std::sync::Arc;
 
-use filament_exact::{EffectiveId, Integer, ObjectReference, Rational, ValueType};
+use filament_exact::{EffectiveId, Integer, ObjectReference, Rational};
 use filament_semantic_value::catalog::UndefinedReason;
 use filament_semantic_value::model_transition::ModelTransition;
 

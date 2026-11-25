@@ -2268,7 +2268,7 @@ fn every_object_holds_its_own_clock_of_every_record_place() {
         .collect();
     assert_eq!(names, ["t.x", "t.y", "x"]);
     assert_eq!(timed.places().len(), 9);
-    for places in timed.places().chunks_exact(3) {
+    for places in timed.places().as_chunks::<3>().0 {
         let owners: Vec<_> = places
             .iter()
             .map(|place| place.object().object().as_str())
