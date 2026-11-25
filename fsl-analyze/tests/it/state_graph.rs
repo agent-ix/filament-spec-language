@@ -2443,6 +2443,181 @@ fn a_refused_terminal_predicate_opens_its_node_and_outranks_an_undefined_one() {
     }
 }
 
+fn terminal_alias_world(terminals: &str) -> World {
+    let model = Model {
+        package: "test/terminal",
+        alias: "M",
+        object: "Vault",
+        population: "vaults",
+        symmetric: false,
+        fields: vec![Field {
+            name: "l",
+            range: Some((0, 1)),
+        }],
+        operations: vec![Operation {
+            name: "step",
+            modifies: &["l"],
+        }],
+    };
+    let body = format!(
+        "model N = \"test/terminal\";\n\
+         function q using v(x: Integer): Integer pure {{ 6 mod x }}\n\
+         pre Step using v on M::Vault::step {{ self.l < 1 }}\n\
+         post Step using v on M::Vault::step {{ self.l = pre(self.l) + 1 }}\n\
+         {terminals}\n\
+         possible AlwaysTrue using v over (x: M::Vault) {{ true }}\n"
+    );
+    World::new(model, &body, &[&[("v", &[("l", 0)])]])
+}
+
+/// FR-391-AC-13: an unknown terminal keeps the completed node open; a witness
+/// does not make the possible item proved while well-definedness is unchecked.
+#[trace("FSpec-FR-391-AC-13")]
+#[test]
+fn an_unknown_terminal_keeps_a_possible_witness_unchecked() {
+    let body = format!(
+        "terminal Done using v on C when {{ remainder(3 - self.value) = 0 }};\n\
+         terminal Stop using v on N when {{ narrow(self.value) = 0 }};\n\
+         possible AlwaysTrue using v over (c: C::Counter) {{ true }}\n"
+    );
+    let world = counter_kernel_world(SECOND_ALIAS, &body);
+    let claim = world.claim("AlwaysTrue");
+    let request = world.request(&["c"], vec![world.item("AlwaysTrue")], no_samples());
+    let settled = check_and_settle_state_graph(request, &Cancel::new(), |instance| {
+        let StateGraphOutcome::WitnessedUnchecked { paths, .. } = &instance.outcome else {
+            panic!(
+                "an unknown terminal leaves the witness unchecked: {:?}",
+                instance.outcome
+            );
+        };
+        let witness = paths.first().expect("one initial-state witness");
+        Ok(world.replay_witness(
+            claim,
+            instance.over.clone(),
+            witness.path.clone(),
+            witness.source.clone(),
+            &["c"],
+        ))
+    })
+    .expect("the state-graph run and witness replay complete");
+
+    assert!(matches!(
+        settled.run.items[0][0].outcome,
+        StateGraphOutcome::WitnessedUnchecked { .. }
+    ));
+    assert_eq!(
+        settled.records[0][0].value,
+        TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::WellDefinednessUnchecked {
+            sources: vec![WitnessSource::Explored]
+        })
+    );
+    assert_eq!(
+        settled.records[0][0].basis,
+        SettlementBasis::Unsettled
+    );
+    let unknown = state_key_where(&world, &["c"], |state| world.value(state, "c", "value") == 3);
+    assert_eq!(
+        settled.run.graph.open.get(&node_of(&settled.run, unknown)),
+        Some(&OpenCause::UndecidedSuccessor)
+    );
+}
+
+/// FR-391-AC-15: an intended terminal declaration wins over another alias's
+/// undefined predicate, so the possible-item witness settles without an
+/// Undefined evidence arm.
+#[trace("FSpec-FR-391-AC-15")]
+#[test]
+fn an_intended_terminal_alias_settles_a_possible_item_with_undefined_sibling() {
+    let world = terminal_alias_world(
+        "terminal Done using v on M when { q(1 - self.l) = 0 };\n\
+         terminal Stop using v on N when { true };",
+    );
+    let claim = world.claim("AlwaysTrue");
+    let request = world.request(&["v"], vec![world.item("AlwaysTrue")], no_samples());
+    let settled = check_and_settle_state_graph(request, &Cancel::new(), |instance| {
+        let StateGraphOutcome::Witnessed { paths, .. } = &instance.outcome else {
+            panic!(
+                "intended terminal keeps the witness decisive: {:?}",
+                instance.outcome
+            );
+        };
+        let witness = paths.first().expect("one initial-state witness");
+        Ok(world.replay_witness(
+            claim,
+            instance.over.clone(),
+            witness.path.clone(),
+            witness.source.clone(),
+            &["v"],
+        ))
+    })
+    .expect("the state-graph run and witness replay complete");
+
+    assert!(settled.run.graph.open.is_empty());
+    assert!(matches!(
+        settled.run.items[0][0].outcome,
+        StateGraphOutcome::Witnessed { .. }
+    ));
+    assert!(matches!(
+        settled.records[0][0].value,
+        TerminalValue::Proved { .. }
+    ));
+    assert_eq!(
+        settled.records[0][0].basis,
+        SettlementBasis::DecisiveWitness
+    );
+}
+
+/// FR-391-AC-17: when every terminal declaration is undefined, undefined
+/// evidence naming the first declaration replays and refutes the item.
+#[trace("FSpec-FR-391-AC-17")]
+#[test]
+fn undefined_terminal_aliases_refute_with_replayed_first_declaration() {
+    let world = terminal_alias_world(
+        "terminal Done using v on M when { q(1 - self.l) = 0 };\n\
+         terminal Stop using v on N when { q(1 - self.l) = 0 };",
+    );
+    let over = bound_to(&world, &["v"], "v");
+    let settled = settle_undefined(&world, &["v"], "AlwaysTrue", &over);
+    let StateGraphOutcome::Undefined { stem, undefined } = &settled.run.items[0][0].outcome else {
+        panic!(
+            "both terminal predicates are undefined: {:?}",
+            settled.run.items[0][0].outcome
+        );
+    };
+
+    assert_eq!(settled.run.graph.end, RunEnd::Completed);
+    assert_eq!(settled.records[0][0].value, TerminalValue::Refuted);
+    assert_eq!(
+        settled.records[0][0].basis,
+        SettlementBasis::DecisiveCounterexample
+    );
+    assert_eq!(undefined.predicate, None);
+    assert_eq!(
+        undefined.cause,
+        fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
+    );
+    assert_eq!(
+        undefined.locus,
+        system(&world, &["v"]).terminal_locus(
+            &TerminalModel::new("ix://test/terminal", "M").with_ordinal(0)
+        )
+    );
+    assert_eq!(
+        world.value(
+            positions(&world, &["v"], stem)
+                .last()
+                .expect("terminal state in the undefined stem"),
+            "v",
+            "l"
+        ),
+        1
+    );
+    assert!(matches!(
+        settled.records[0][0].undefined,
+        Some(ref evidence) if evidence == undefined
+    ));
+}
+
 /// `Low` holds only at `versionNumber = 0`.
 const LOW: &str = "invariant Bounded using v on Config::ConfigVersion at current { \
      self.versionNumber <= 3 }\n\
