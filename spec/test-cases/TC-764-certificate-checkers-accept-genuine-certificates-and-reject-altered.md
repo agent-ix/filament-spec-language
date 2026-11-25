@@ -21,7 +21,7 @@ Scope: FR-282-AC-1 to FR-282-AC-3 and FR-282-AC-5 to FR-282-AC-8.
 3. Run ADR-026's zone search over a dense-time fixture model, write its certificate, and pass it to the zone checker; repeat with one zone removed.
 4. Prove an invariant over a finite fixture model with EN-1 and pass its closure certificate to the EN-1 closure checker; repeat with one reachable product state removed.
 5. Prove `always eventually q` under `fair weak inc` over a finite fixture model with EN-1 and pass its component certificate to the SCC and ranking checker; repeat with two components swapped out of topological order.
-6. Check a refinement that holds and pass its simulation-relation certificate to the simulation-relation checker; repeat with one pair removed from the relation.
+6. Check a refinement that holds and pass its simulation-relation certificate to the simulation-relation checker; repeat with one pair (one abstract state of one position) removed from the relation, for a position listed for an initial state and for one that is not.
 7. Prove a two-copy hyperproperty over a finite fixture model with EN-1 and pass its product-closure certificate to the product-closure checker; repeat with one product-state key removed.
 
 Tag the tests `#[trace("TC-764", "<AC id>")]`.
@@ -33,5 +33,5 @@ Tag the tests `#[trace("TC-764", "<AC id>")]`.
 - Step 3: the genuine certificate is accepted; the altered one is rejected.
 - Step 4: accepted; the altered certificate is rejected naming the missing successor.
 - Step 5: accepted; the altered certificate is rejected naming the backward edge.
-- Step 6: accepted; the altered certificate is rejected naming the unmatched concrete step.
+- Step 6: accepted; the altered certificate is rejected with `verdict: None`. For a position listed for an initial state: rule `InitialMismatch` at `SimulationStep{position, edge: None}`, naming that position, which no step precedes. Otherwise: rule `PostDiffers` at the `SimulationStep{position, edge}` of the first edge, in position then edge order, whose post position lost the pair, naming the concrete step left without a matching abstract position.
 - Step 7: accepted; the altered certificate is rejected naming the missing successor.
