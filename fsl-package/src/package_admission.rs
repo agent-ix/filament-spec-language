@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use filament_contract_model::{
     CheckedPackageDispatchResult, CheckedPackageEvidence, CheckedPackageRefusal,
-    CheckedPackageRefusalCode, CheckedPackageV2, read_checked_package,
+    CheckedPackageRefusalCause, CheckedPackageRefusalCode, CheckedPackageV2,
+    read_checked_package,
 };
 use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_semantics::value::DefinitionRole;
@@ -27,7 +28,7 @@ pub struct PackageAdmissionRefusal {
     /// denial, and `invalid_package` for every other refusal.
     pub code: Code,
     /// The reader's typed cause tag, such as `missing-selection`.
-    pub cause: Option<String>,
+    pub cause: Option<CheckedPackageRefusalCause>,
     /// The RFC 6901 pointer the reader names, absent for a byte-stream defect.
     pub pointer: Option<String>,
     /// The domain or library identity a `missing-selection` refusal names.
@@ -166,7 +167,7 @@ pub fn admit_checked_package_with_evidence(
             actual,
         ))),
         code: Code::StageLimitExceeded,
-        cause: Some("insufficient-next-charge".to_owned()),
+        cause: Some(CheckedPackageRefusalCause::InsufficientNextCharge),
         pointer,
         identity: None,
         host_allocation_failure: None,
@@ -232,7 +233,7 @@ pub fn checked_package_evidence(
             return Err(PackageAdmissionRefusal {
                 limit: None,
                 code: Code::InvalidPackage,
-                cause: Some("conflicting-definition".to_owned()),
+                cause: Some(CheckedPackageRefusalCause::ConflictingDefinition),
                 pointer: None,
                 identity: Some(identity.clone()),
                 host_allocation_failure: None,
@@ -245,7 +246,7 @@ pub fn checked_package_evidence(
             .map_err(|_| PackageAdmissionRefusal {
                 limit: None,
                 code: Code::InvalidPackage,
-                cause: Some("conflicting-definition".to_owned()),
+                cause: Some(CheckedPackageRefusalCause::ConflictingDefinition),
                 pointer: None,
                 identity: Some(identity.clone()),
                 host_allocation_failure: None,
@@ -263,16 +264,12 @@ fn of_reader_refusal(refusal: &CheckedPackageRefusal) -> PackageAdmissionRefusal
         .first()
         .and_then(|locus| locus.path.as_ref())
         .map(|path| path.as_str().to_owned());
-    let cause = refusal.cause.as_ref().and_then(|cause| {
-        serde_json::to_value(cause)
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_owned))
-    });
+    let cause = refusal.cause;
     // FR-940 "Claim names": a name shared by two `claim_names` rows is the one
     // ambiguous declaration, whichever reader found it. QSL-2545: the
     // contract-ir reader still reports `invalid_package` here; delete this
     // remap once the reader returns `ambiguous_declaration` itself.
-    let ambiguous_claim = cause.as_deref() == Some("ambiguous-name")
+    let ambiguous_claim = cause == Some(CheckedPackageRefusalCause::AmbiguousName)
         && pointer
             .as_deref()
             .is_some_and(|pointer| pointer.starts_with("/claim_names/"));
@@ -294,6 +291,12 @@ fn of_reader_refusal(refusal: &CheckedPackageRefusal) -> PackageAdmissionRefusal
 }
 
 impl PackageAdmissionRefusal {
+    /// The strict reader's cause, when the reader supplied one.
+    #[must_use]
+    pub fn reader_cause(&self) -> Option<&'static str> {
+        self.cause.map(cause_spelling)
+    }
+
     /// The refusal spelled `code/cause for identity at pointer`, each part
     /// when present.
     #[must_use]
@@ -305,9 +308,9 @@ impl PackageAdmissionRefusal {
             );
         }
         let mut label = self.code.as_str().to_owned();
-        if let Some(cause) = &self.cause {
+        if let Some(cause) = self.cause {
             label.push('/');
-            label.push_str(cause);
+            label.push_str(&cause_spelling(cause));
         }
         if let Some(identity) = &self.identity {
             label.push_str(" for ");
@@ -325,73 +328,13 @@ impl PackageAdmissionRefusal {
     /// ceiling, `missing-selection` for a missing import, `invalid-value`
     #[must_use]
     pub fn catalog_cause(&self) -> &'static str {
-        // The strict reader has a closed, kebab-case cause enum; keep canonical spellings here instead of interning runtime strings.
-        const CAUSES: &[&str] = &[
-            "malformed-json",
-            "missing-member",
-            "unknown-member",
-            "wrong-value-kind",
-            "definition-cycle",
-            "incompatible-definition",
-            "feature-set-mismatch",
-            "insufficient-next-charge",
-            "missing-name",
-            "wrong-observation",
-            "malformed-declaration",
-            "wrong-export",
-            "invalid-derived-shape",
-            "unknown-operation",
-            "operation-class-mismatch",
-            "operation-law-missing",
-            "operation-law-mismatch",
-            "operation-law-unselected",
-            "operation-mode-mismatch",
-            "operation-mode-type-mismatch",
-            "operation-member-mismatch",
-            "operator-ineligible",
-            "expression-form",
-            "declaration-form",
-            "declaration-nominal-mismatch",
-            "ambiguous-name",
-            "missing-selection",
-            "wrong-model-selection",
-            "conflicting-binding",
-            "unpreserved-model-meaning",
-            "conflicting-definition",
-            "invalid-semantic-graph",
-            "invalid-value",
-            "duplicate-member",
-            "type-mismatch",
-            "unit-mismatch",
-            "non-boolean-root",
-            "missing-timed-model",
-            "timed-node-reference",
-            "duplicate-clock-place",
-            "malformed-clock-place",
-            "invalid-time-quantity",
-            "clock-without-dense-time",
-            "unsupported-selection",
-            "wrong-selection-role",
-            "inexact-integer",
-            "inexact-number",
-            "invalid-task-set",
-            "clock-read-outside-constraint",
-        ];
         let default = match self.code {
             Code::ResourceExhausted => "insufficient-next-charge",
             Code::MissingImport => "missing-selection",
             _ => "invalid-value",
         };
-        match self.cause.as_deref() {
-            Some(cause) => CAUSES
-                .iter()
-                .copied()
-                .find(|known| *known == cause)
-                .expect("checked package refusal causes are catalog spellings"),
-            None => default,
-        }
+        self.reader_cause().unwrap_or(default)
     }
-
     /// The strict reader's refusal inside a failed evaluation read of a
     /// package the run compiled, with the reader's code, cause and pointer;
     /// `bytes` are the package bytes the read refused, from which a missing
@@ -444,6 +387,60 @@ impl PackageAdmissionRefusal {
                 .and_then(|(pointer, bytes)| identity_at(bytes, pointer));
         }
         self
+    }
+}
+
+fn cause_spelling(cause: CheckedPackageRefusalCause) -> &'static str {
+    match cause {
+        CheckedPackageRefusalCause::MalformedJson => "malformed-json",
+        CheckedPackageRefusalCause::MissingMember => "missing-member",
+        CheckedPackageRefusalCause::UnknownMember => "unknown-member",
+        CheckedPackageRefusalCause::WrongValueKind => "wrong-value-kind",
+        CheckedPackageRefusalCause::DefinitionCycle => "definition-cycle",
+        CheckedPackageRefusalCause::IncompatibleDefinition => "incompatible-definition",
+        CheckedPackageRefusalCause::FeatureSetMismatch => "feature-set-mismatch",
+        CheckedPackageRefusalCause::InsufficientNextCharge => "insufficient-next-charge",
+        CheckedPackageRefusalCause::MissingName => "missing-name",
+        CheckedPackageRefusalCause::WrongObservation => "wrong-observation",
+        CheckedPackageRefusalCause::MalformedDeclaration => "malformed-declaration",
+        CheckedPackageRefusalCause::WrongExport => "wrong-export",
+        CheckedPackageRefusalCause::InvalidDerivedShape => "invalid-derived-shape",
+        CheckedPackageRefusalCause::UnknownOperation => "unknown-operation",
+        CheckedPackageRefusalCause::OperationClassMismatch => "operation-class-mismatch",
+        CheckedPackageRefusalCause::OperationLawMissing => "operation-law-missing",
+        CheckedPackageRefusalCause::OperationLawMismatch => "operation-law-mismatch",
+        CheckedPackageRefusalCause::OperationLawUnselected => "operation-law-unselected",
+        CheckedPackageRefusalCause::OperationModeMismatch => "operation-mode-mismatch",
+        CheckedPackageRefusalCause::OperationModeTypeMismatch => "operation-mode-type-mismatch",
+        CheckedPackageRefusalCause::OperationMemberMismatch => "operation-member-mismatch",
+        CheckedPackageRefusalCause::OperatorIneligible => "operator-ineligible",
+        CheckedPackageRefusalCause::ExpressionForm => "expression-form",
+        CheckedPackageRefusalCause::DeclarationForm => "declaration-form",
+        CheckedPackageRefusalCause::DeclarationNominalMismatch => "declaration-nominal-mismatch",
+        CheckedPackageRefusalCause::AmbiguousName => "ambiguous-name",
+        CheckedPackageRefusalCause::MissingSelection => "missing-selection",
+        CheckedPackageRefusalCause::WrongModelSelection => "wrong-model-selection",
+        CheckedPackageRefusalCause::ConflictingBinding => "conflicting-binding",
+        CheckedPackageRefusalCause::UnpreservedModelMeaning => "unpreserved-model-meaning",
+        CheckedPackageRefusalCause::ConflictingDefinition => "conflicting-definition",
+        CheckedPackageRefusalCause::InvalidSemanticGraph => "invalid-semantic-graph",
+        CheckedPackageRefusalCause::InvalidValue => "invalid-value",
+        CheckedPackageRefusalCause::DuplicateMember => "duplicate-member",
+        CheckedPackageRefusalCause::TypeMismatch => "type-mismatch",
+        CheckedPackageRefusalCause::UnitMismatch => "unit-mismatch",
+        CheckedPackageRefusalCause::NonBooleanRoot => "non-boolean-root",
+        CheckedPackageRefusalCause::MissingTimedModel => "missing-timed-model",
+        CheckedPackageRefusalCause::TimedNodeReference => "timed-node-reference",
+        CheckedPackageRefusalCause::DuplicateClockPlace => "duplicate-clock-place",
+        CheckedPackageRefusalCause::MalformedClockPlace => "malformed-clock-place",
+        CheckedPackageRefusalCause::InvalidTimeQuantity => "invalid-time-quantity",
+        CheckedPackageRefusalCause::ClockWithoutDenseTime => "clock-without-dense-time",
+        CheckedPackageRefusalCause::UnsupportedSelection => "unsupported-selection",
+        CheckedPackageRefusalCause::WrongSelectionRole => "wrong-selection-role",
+        CheckedPackageRefusalCause::InexactInteger => "inexact-integer",
+        CheckedPackageRefusalCause::InexactNumber => "inexact-number",
+        CheckedPackageRefusalCause::InvalidTaskSet => "invalid-task-set",
+        CheckedPackageRefusalCause::ClockReadOutsideConstraint => "clock-read-outside-constraint",
     }
 }
 

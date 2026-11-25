@@ -46,16 +46,16 @@ fn a_refused_read_carries_the_readers_code_cause_and_pointer() {
 #[test]
 #[trace("FR-286-AC-2")]
 fn a_refusal_spells_the_readers_cause_or_its_codes_default() {
-    let refusal = |code, cause: Option<&str>| PackageAdmissionRefusal {
+    let refusal = |code, cause: Option<filament_contract_model::CheckedPackageRefusalCause>| PackageAdmissionRefusal {
         limit: None,
         code,
-        cause: cause.map(str::to_owned),
+        cause,
         pointer: Some("/claim_names/2".to_owned()),
         identity: None,
         host_allocation_failure: None,
     };
     assert_eq!(
-        refusal(Code::InvalidPackage, Some("missing-member")).catalog_cause(),
+        refusal(Code::InvalidPackage, Some(filament_contract_model::CheckedPackageRefusalCause::MissingMember)).catalog_cause(),
         "missing-member"
     );
     assert_eq!(

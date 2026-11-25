@@ -1484,7 +1484,7 @@ impl AnalyzeRefusal {
                     if refusal.code == fsl_foundation::Code::MissingImport {
                         Some(refusal.catalog_cause())
                     } else {
-                        refusal.cause.as_deref()
+                        refusal.reader_cause()
                     },
                     refusal.code.as_str(),
                     None,
