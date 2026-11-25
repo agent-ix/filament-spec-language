@@ -54,7 +54,7 @@ pub fn record_evaluation_probe(
 ) -> Result<(fsl_semantics::check::ChildTraversalProfile, u64), Box<dyn Error>> {
     use fsl_semantics::check::{begin_child_traversal_profile, end_child_traversal_profile};
 
-    begin_child_traversal_profile();
+    begin_child_traversal_profile(measure_child_allocations);
     let evaluation = allocation_counter::measure(evaluate);
     let evaluation_allocation_count = evaluation.count_total;
     let traversal = end_child_traversal_profile();
@@ -70,6 +70,11 @@ pub fn record_evaluation_probe(
         },
     )?;
     Ok((traversal, evaluation_allocation_count))
+}
+
+#[cfg(feature = "allocation-probe")]
+fn measure_child_allocations(operation: &mut dyn FnMut()) -> u64 {
+    allocation_counter::measure(operation).count_total
 }
 
 /// Whether a report is describing the baseline A or verifying candidate B.

@@ -15,41 +15,54 @@ pub struct ChildTraversalProfile {
 }
 
 thread_local! {
-    static ACTIVE: Cell<Option<ChildTraversalProfile>> = const { Cell::new(None) };
+    static ACTIVE: Cell<Option<(ChildTraversalProfile, AllocatorMeasure)>> = const { Cell::new(None) };
 }
 
+/// Callback that measures allocations made by one child-iteration operation.
+pub type AllocatorMeasure = fn(&mut dyn FnMut()) -> u64;
+
 /// Start dynamic child-traversal accounting on the current thread.
-pub fn begin_child_traversal_profile() {
-    ACTIVE.with(|active| active.set(Some(ChildTraversalProfile::default())));
+pub fn begin_child_traversal_profile(measure: AllocatorMeasure) {
+    ACTIVE.with(|active| active.set(Some((ChildTraversalProfile::default(), measure))));
 }
 
 /// Finish dynamic child-traversal accounting on the current thread.
 pub fn end_child_traversal_profile() -> ChildTraversalProfile {
-    ACTIVE.with(|active| active.take().unwrap_or_default())
+    ACTIVE.with(|active| {
+        active
+            .take()
+            .map_or_else(ChildTraversalProfile::default, |(profile, _)| profile)
+    })
 }
 
 pub(crate) fn measure_child<T>(iterator_construction: bool, operation: impl FnOnce() -> T) -> T {
-    let active = ACTIVE.with(|active| {
-        if let Some(mut profile) = active.get() {
+    let measure = ACTIVE.with(|active| {
+        if let Some((mut profile, measure)) = active.get() {
             if iterator_construction {
                 profile.iterator_count += 1;
             }
-            active.set(Some(profile));
-            true
+            active.set(Some((profile, measure)));
+            Some(measure)
         } else {
-            false
+            None
         }
     });
-    if !active {
+    let Some(measure) = measure else {
         return operation();
-    }
+    };
 
     let mut value = None;
-    let allocations = allocation_counter::measure(|| value = Some(operation()));
+    let mut pending = Some(operation);
+    let mut invoke = || {
+        if let Some(operation) = pending.take() {
+            value = Some(operation());
+        }
+    };
+    let allocation_count = measure(&mut invoke);
     ACTIVE.with(|active| {
-        if let Some(mut profile) = active.get() {
-            profile.allocation_count += allocations.count_total;
-            active.set(Some(profile));
+        if let Some((mut profile, measure)) = active.get() {
+            profile.allocation_count += allocation_count;
+            active.set(Some((profile, measure)));
         }
     });
     match value {
@@ -60,9 +73,9 @@ pub(crate) fn measure_child<T>(iterator_construction: bool, operation: impl FnOn
 
 pub(crate) fn note_child_yielded() {
     ACTIVE.with(|active| {
-        if let Some(mut profile) = active.get() {
+        if let Some((mut profile, measure)) = active.get() {
             profile.child_count += 1;
-            active.set(Some(profile));
+            active.set(Some((profile, measure)));
         }
     });
 }

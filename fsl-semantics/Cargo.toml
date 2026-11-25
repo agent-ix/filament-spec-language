@@ -19,13 +19,12 @@ default = []
 # (`no_shipped_dependency_enables_test_support`) refuses any normal or build
 # dependency that does.
 test-support = []
-child-traversal-profile = ["dep:allocation-counter"]
+child-traversal-profile = []
 
 # ADR-011 §6.1 layer 3 depends on "2, F, SV, K" only; the FCD crates are named by
 # `model::intake` alone. The root crate's `tests/it/family_outcome_layering.rs`
 # (TC-390) asserts that this table names no other workspace crate.
 [dependencies]
-allocation-counter = { version = "0.8.1", optional = true }
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 fsl-forms = { path = "../fsl-forms" }
 fsl-foundation = { path = "../fsl-foundation" }

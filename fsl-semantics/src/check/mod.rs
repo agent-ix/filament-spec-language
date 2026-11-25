@@ -506,7 +506,8 @@ pub use ir::{
 };
 #[cfg(feature = "child-traversal-profile")]
 pub use child_traversal_profile::{
-    begin_child_traversal_profile, end_child_traversal_profile, ChildTraversalProfile,
+    begin_child_traversal_profile, end_child_traversal_profile, AllocatorMeasure,
+    ChildTraversalProfile,
 };
 
 pub(crate) use assemble::dense_model_data_environment;
