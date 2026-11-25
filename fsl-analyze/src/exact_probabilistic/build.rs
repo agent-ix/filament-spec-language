@@ -392,7 +392,6 @@ mod tests {
             accumulator: None,
             pending: None,
             certificate_state: None,
-            timed_history: None,
         };
         let half = Rational::new(Integer::one(), Integer::from(2_i64)).unwrap();
         let edge = |from, probability| ProbEdge {
@@ -703,7 +702,6 @@ impl Builder<'_, '_, '_, '_> {
                             binding: self.bindings[binding].0.clone(),
                             model: hit.model.clone(),
                             monitor,
-                            timed_history: None,
                             accumulator,
                             pending: None,
                             certificate_state: None,
@@ -905,7 +903,6 @@ impl Builder<'_, '_, '_, '_> {
             binding: self.bindings[binding].0.clone(),
             model,
             monitor,
-            timed_history: None,
             accumulator,
             pending,
             certificate_state: None,

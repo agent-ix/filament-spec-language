@@ -175,9 +175,8 @@ fn hyper_bindings(
     match (clause.parameters(), over) {
         ([], None) => Ok(Vec::new()),
         ([parameter], Some(instance)) => {
-            let value_type = filament_exact::ValueType::Reference(parameter.population.object());
             let admitted = system
-                .instances(&value_type)
+                .hyper_instances(&parameter.population)
                 .map_err(|_| refused(ModelTraceRefusal::OverBinding))?;
             if !admitted.iter().any(|candidate| {
                 candidate.population == instance.population && candidate.key == instance.key

@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use filament_exact::{Cancel, ScalarLimits, ValueType};
+use filament_exact::{Cancel, ScalarLimits};
 use fsl_eval::automaton::PropertyAutomaton;
 use fsl_eval::fairness::{Analysis, Constraint, EdgeLabel, Graph, Identity, Outcome, Strength};
 use fsl_eval::hyper::{
@@ -431,7 +431,7 @@ fn complete_hyper_scope(
             .get(slot)
             .ok_or(ProductClosureRefusal::Input("parameter-subject"))?;
         let instances = system
-            .instances(&ValueType::Reference(parameter.population.object()))
+            .hyper_instances(&parameter.population)
             .map_err(|_| ProductClosureRefusal::Input("parameter-universe"))?;
         domains.push(
             instances
@@ -596,7 +596,7 @@ fn check(
             .get(slot(parameter.alias.as_str())?)
             .ok_or(ProductClosureRefusal::Input("parameter-alias"))?;
         let admitted = system
-            .instances(&ValueType::Reference(parameter.population.object()))
+            .hyper_instances(&parameter.population)
             .map_err(|_| ProductClosureRefusal::Input("parameter-universe"))?;
         let found = admitted
             .into_iter()

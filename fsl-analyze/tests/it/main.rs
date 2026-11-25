@@ -64,6 +64,7 @@ mod hyper;
 mod hyper_closed;
 mod hyper_lowering;
 mod hyper_object_free;
+mod hyper_parameters;
 mod hyper_projected;
 mod hyper_reductions;
 mod hyper_replay;

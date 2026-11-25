@@ -542,6 +542,22 @@ fn settle_with_witness_limits(
     .expect("the outcome answers the item")
 }
 
+/// FR-172 "Object parameters": settlement binds `v` in the population it
+/// resolves to, so the witness is checked there where the model declares
+/// another population before it.
+#[test]
+fn a_match_witness_binds_its_instance_behind_another_population() {
+    let world = World::behind_another_population(&["v"], &non_interference(EQUAL_INPUTS, ""));
+    let witness = fsl_replay::MatchWitness {
+        instance: instance("v"),
+        traces: vec![reset_loop(&world, "a", 0), reset_loop(&world, "b", 0)],
+        loop_entry: 0,
+    };
+    let accepted = settle_with_witness(&world, &witness);
+    assert!(matches!(accepted.value, TerminalValue::Proved { .. }));
+    assert_eq!(accepted.basis, SettlementBasis::DecisiveWitness);
+}
+
 /// A refused, mismatched or over-limit witness is not proof evidence.
 #[trace("TC-607", "FR-182-AC-10")]
 #[test]
