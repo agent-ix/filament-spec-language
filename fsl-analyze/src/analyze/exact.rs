@@ -2489,6 +2489,7 @@ fn run(
             Err(report) => *report,
         };
     }
+    record_work_checkpoint(ExactWorkPhase::CertificateProduction, &work, false);
     let certificate = match (bounded_formula, monitor) {
         (Some(formula), Some(monitor)) => {
             let context = match fsl_replay::probabilistic_formula_monitor_context(claim, reference)
@@ -2551,7 +2552,6 @@ fn run(
     }
     let checked = (|| {
         let claims = probabilistic.claims();
-        record_work_checkpoint(ExactWorkPhase::CertificateProduction, &work, false);
         let document = probability_proof_document_with_work_scope(
             &system,
             claims,
@@ -3387,6 +3387,7 @@ fn replay_refutation(
     };
     let mut producer_meter = work.meter().with_cancel(cancel.clone());
     let mut producer_storage = 0u64;
+    record_work_checkpoint(ExactWorkPhase::WitnessProduction, work, false);
     // Classify direct state boundaries in one pass over the source-labelled
     // product. The replay core independently derives the same outcomes.
     let state_outcomes = match &claim.form {
@@ -3550,7 +3551,6 @@ fn replay_refutation(
         })
     };
     let mut produce = |policy: &[Option<usize>]| {
-        record_work_checkpoint(ExactWorkPhase::WitnessProduction, work, false);
         let result = if let Some(stopped) = stopped.as_deref() {
             crate::exact_probabilistic::produce_witness_stopping(
                 product,
@@ -3576,11 +3576,6 @@ fn replay_refutation(
                 &mut control,
             )
         };
-        record_work_checkpoint(
-            ExactWorkPhase::WitnessProduction,
-            work,
-            matches!(&result, Ok(Some(_))),
-        );
         result
     };
     let mut produced = produce(policy);
@@ -3629,6 +3624,7 @@ fn replay_refutation(
         }
         Err(_) => return broken(),
     };
+    record_work_checkpoint(ExactWorkPhase::WitnessProduction, work, true);
     record_work_checkpoint(ExactWorkPhase::WitnessReplay, work, false);
     let replayed = replay_produced_witness(
         system,
