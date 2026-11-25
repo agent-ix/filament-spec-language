@@ -67,7 +67,13 @@ share:
    the time-locks (FR-924);
 6. the deadline and elapsed clocks, activation, completion, censoring and the
    quantile transform's terminal reward (FR-877);
-7. FR-201's targets, decided states, `Prob0`, `Prob1` and tight actions.
+7. the claim monitor of every other bounded-window formula, nested interval
+   operators included: its readings at positions only and the pending target
+   times it keeps, giving FSpec FR-416's pointwise value (FR-204 "Form
+   shapes" and "Positions"), by code of its own that neither EN-5 nor any
+   crate EN-5 links provides, so a defect in the producer's monitor is not
+   certified;
+8. FR-201's targets, decided states, `Prob0`, `Prob1` and tight actions.
 
 ### Not trusted
 

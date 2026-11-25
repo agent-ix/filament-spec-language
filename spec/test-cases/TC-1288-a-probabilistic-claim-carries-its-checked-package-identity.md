@@ -84,7 +84,9 @@ Vectors are referenced by FSpec case ID, never copied.
   identities.
 - Step 3: the elapsed-time, punctual-interval and bounded nested punctual
   claims settle exact verdicts against the selected claim's
-  `{node, occurrence}`, never `unsupported` and never `PunctualInterval`.
+  `{node, occurrence}`, never `unsupported` and never `PunctualInterval`;
+  the bounded nested punctual claim settles `refuted` on its pointwise
+  minimum `ExactValue{0}` (FR-498-AC-8).
   Both root and nested `[2 ms, *]` forms refuse at S3 as
   `unsupported_construct`/`expression-form` at the unbounded interval, before
   EN-5, and have no admitted claim identity or formula member path. The
