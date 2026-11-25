@@ -5045,6 +5045,14 @@ fn tc465_row35_missing_parameter_refuses_missing_member() {
         record.fields.get("field").map(String::as_str),
         Some("target")
     );
+    assert_eq!(
+        record.fields.get("member").map(String::as_str),
+        Some("target")
+    );
+    assert_eq!(
+        record.fields.get("path").map(String::as_str),
+        Some("/parameters/target")
+    );
 }
 
 /// Row 36 (check 10): probe invocation with an extra parameter `other`.
@@ -5062,6 +5070,14 @@ fn tc465_row36_unknown_parameter_refuses_unknown_member() {
         record.fields.get("field").map(String::as_str),
         Some("other")
     );
+    assert_eq!(
+        record.fields.get("member").map(String::as_str),
+        Some("other")
+    );
+    assert_eq!(
+        record.fields.get("path").map(String::as_str),
+        Some("/parameters/other")
+    );
 }
 
 /// Row 37 (check 10): probe invocation with `target` `{"integer": "1"}`.
@@ -5072,7 +5088,15 @@ fn tc465_row37_wrong_parameter_kind_refuses_wrong_value_kind() {
     let result = run_tc465_probe(&document, |value| {
         value["parameters"]["target"] = json!({"integer": "1"});
     });
-    assert_tc465_refused(result, "invalid_runtime_input", "wrong-value-kind");
+    let record = assert_tc465_refused(result, "invalid_runtime_input", "wrong-value-kind");
+    assert_eq!(
+        record.fields.get("field").map(String::as_str),
+        Some("target")
+    );
+    assert_eq!(
+        record.fields.get("path").map(String::as_str),
+        Some("/parameters/target")
+    );
 }
 
 /// Row 38 (check 10): probe invocation with `result` `{"boolean": true}`
