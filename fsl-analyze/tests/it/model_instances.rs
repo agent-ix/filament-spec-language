@@ -1045,12 +1045,12 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
 #[trace("TC-520", "FR-125-AC-13")]
 #[test]
 fn model_instancing_compares_shared_float_fields_by_wire_bits() {
-    let populations = &[P1, P2];
+    let populations = &[("left", &["Animal"][..]), ("right", &["Animal"][..])];
     let held = &[
-        ("P1", &[("c", "Animal")][..]),
-        ("P2", &[("c", "Animal")][..]),
+        ("left", &[("c", "Animal")][..]),
+        ("right", &[("c", "Animal")][..]),
     ];
-    let bounded_universes = || universes(&[("P1", &["c"]), ("P2", &["c"])]);
+    let bounded_universes = || universes(&[("left", &["c"]), ("right", &["c"])]);
 
     let agreeing = world(populations, held);
     let (package, _) = agreeing.clause("Animal");
