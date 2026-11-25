@@ -1577,7 +1577,7 @@ mod tests {
     fn replay_origin_reexport_names_exact_owner_path() {
         let source = include_str!("../../fsl-replay/src/lib.rs");
         assert!(source.contains(
-            "pub use filament_exact::{Identifier, NodeKey, Origin, Role, ScalarLimits, Value};"
+            "pub use filament_exact::{Identifier, NodeKey, Origin, PathSegment, Role, ScalarLimits, Value};"
         ));
         assert!(!source.contains("Origin as"));
         assert_no_reexport_finding("Origin");

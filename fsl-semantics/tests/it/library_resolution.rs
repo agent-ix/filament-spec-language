@@ -58,6 +58,7 @@ fn package(library: &str, label: &str, imports: Vec<ImportDeclaration>) -> Libra
                 )
             })
             .collect(),
+        model_correspondence: Vec::new(),
     }
 }
 

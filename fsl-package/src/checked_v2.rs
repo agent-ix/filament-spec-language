@@ -903,10 +903,11 @@ pub(crate) fn read_checked_package_v2_at(
                 library: identity,
                 imports: Vec::new(),
                 exports,
+                model_correspondence,
             };
             match ImportView::of(&candidate) {
                 Ok(view) => Ok(Staged::new(V2Read {
-                    package: view.with_model_correspondence(model_correspondence),
+                    package: view,
                     source_map,
                     effective_limits: limits,
                     admitted: Arc::from(package),
