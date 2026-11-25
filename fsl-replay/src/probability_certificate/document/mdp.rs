@@ -25,6 +25,20 @@ impl ProbabilityProofDocument {
         }
     }
 
+    /// Make this whole stopped graph's rows those of a `lower` document
+    /// (FR-1042 "Document"): it names only states of that graph, whose keys
+    /// are the ranking's, and ranks only the states it names. An explored part
+    /// continues past a target, so it can offer values the graph does not hold.
+    pub(super) fn name_lower_rows(&mut self) {
+        let ProbabilityCertificateDocument {
+            values, ranking, ..
+        } = &mut self.document;
+        let graph: BTreeSet<_> = ranking.iter().map(|(key, _)| key).collect();
+        values.retain(|row| graph.contains(&row.state));
+        let named: BTreeSet<_> = values.iter().map(|row| &row.state).collect();
+        ranking.retain(|(key, _)| named.contains(key));
+    }
+
     /// Borrow the untrusted identity, values, ranks and objective data.
     pub fn document(&self) -> &ProbabilityCertificateDocument {
         &self.document

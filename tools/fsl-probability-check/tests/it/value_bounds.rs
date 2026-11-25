@@ -877,3 +877,137 @@ fn cyclic_mdp_bounds_check_hinted_and_selected_policies() {
         at_member("policy"),
     );
 }
+
+/// An `eventually` chain with no cycle before its target, under `Even`:
+/// `send_b` takes `s` to the delivered `g` or the stopped terminal `f` with
+/// `1/2` each (value `1/2`). With `continues`, the model runs one `send_a`
+/// step past `g` to a terminal state; otherwise it stops there.
+fn acyclic(threshold: &str, continues: bool) -> String {
+    let (after, stop) = if continues {
+        ("self.delivered and self.attempts = 1", "self.attempts = 2")
+    } else {
+        ("false", "self.delivered or self.attempts = 2")
+    };
+    let chain = format!(
+        "{}\
+        pre A using v on M::Msg::send_a {{ {after} }}\n\
+        post A_done using v on M::Msg::send_a {{ self.attempts = 2 and self.delivered }}\n\
+        pre B using v on M::Msg::send_b {{ self.attempts = 0 and not self.delivered }}\n\
+        post BD using v on M::Msg::send_b {{ self.attempts - (if lost = 1 then 1 else 2) = 0 and self.delivered = (lost = 1) }}\n\
+        pre C using v on M::Msg::send_c {{ false }}\n\
+        post CD using v on M::Msg::send_c {{ self.attempts = 0 and not self.delivered }}\n\
+        random Msg::send_a(lost) ~ {{ 0: 1, 1: 1, 2: 1 }};\n\
+        random Msg::send_b(lost) ~ {{ 1: 1, 2: 1 }};\n\
+        random Msg::send_c(lost) ~ {{ 0: 1, 1: 1, 2: 1 }};\n\
+        terminal Stop using v on M when {{ {stop} }};\n{}",
+        header(),
+        claim(">=", threshold)
+    )
+    .replace("under every scheduler", "under Even");
+    format!(
+        "{chain}workload Even on M {{ weight Msg::send_a = 1; weight Msg::send_b = 1; weight Msg::send_c = 1; }}\n"
+    )
+}
+
+/// FR-1042 "Bases" and "Conditions": the acyclic `reachability/v1` base of an
+/// unbounded `eventually` under a workload takes `lower` and `upper`
+/// documents, checked like a chain's: every value, the threshold and the
+/// `lower` document's progress ranking.
+#[trace("TC-3151")]
+#[test]
+fn an_acyclic_eventual_base_takes_checked_bounds() {
+    let exact = proof(&acyclic("rational(2,5)", false));
+    assert_eq!(
+        document(&exact)["objective"]["profile"],
+        "filament.probability-objective/reachability/v1"
+    );
+    let keys = keys(&exact);
+    let s = &keys.s;
+
+    let lower = bound(&exact, "lower", &[(s, rational(7, 16))], None, true);
+    accepted(&lower, rational(7, 16));
+    let upper = bound(&exact, "upper", &[(s, rational(9, 16))], None, false);
+    accepted(&upper, rational(9, 16));
+
+    rejected(
+        &bound(&exact, "lower", &[(s, rational(5, 8))], None, true),
+        "inequality-fails",
+        at_key(s),
+    );
+    rejected(
+        &bound(&exact, "upper", &[(s, rational(7, 16))], None, false),
+        "inequality-fails",
+        at_key(s),
+    );
+    rejected(
+        &bound(&exact, "lower", &[(&keys.f, rational(1, 16))], None, true),
+        "inequality-fails",
+        at_key(&keys.f),
+    );
+    rejected(
+        &bound(&exact, "lower", &[(s, rational(3, 8))], None, true),
+        "threshold-missed",
+        at_key(s),
+    );
+    let unranked = edit(&lower, |doc| {
+        doc.as_object_mut().unwrap().remove("ranking");
+    });
+    rejected(&unranked, "malformed", at_member("ranking"));
+    let flat = edit(&lower, |doc| set(doc, "ranking", s, "rank", json!(0)));
+    rejected(&flat, "rank-broken", at_key(s));
+    // An unnamed successor counts as 0, so without `g` no successor of `s`
+    // shows progress.
+    let unnamed = edit(&lower, |doc| {
+        drop_row(doc, "values", &keys.g);
+        drop_row(doc, "ranking", &keys.g);
+    });
+    rejected(&unnamed, "rank-broken", at_key(s));
+}
+
+/// FR-1042 "Document", FSpec FR-411 "Evidence on a partial product": where
+/// `max_states` stops the explored model past a target but admits the graph
+/// that stops there, the `lower` document keeps the acyclic base, names that
+/// graph's states alone and proves without a counterpart.
+#[trace("TC-3151")]
+#[test]
+fn a_partial_lower_over_an_acyclic_eventual_names_only_the_stopped_graph() {
+    // `max_states` 3 admits `s`, `g` and `f` and omits the state past `g`.
+    // `max_states` 2 admits the initial state and one past it, where the
+    // target already holds initially and the graph is that one state.
+    let initially =
+        link_under_even(">=", "rational(2,5)").replace("holds(m.delivered)", "holds(true)");
+    for (source, max_states, rows, value) in [
+        (acyclic("rational(2,5)", true), 3, 3, rational(1, 2)),
+        (initially, 2, 1, rational(1, 1)),
+    ] {
+        let mut limits = ExactProbLimits::default();
+        limits.model.limits.max_states = max_states;
+        let (requests, settlement) =
+            requests_with_mode(&source, SNAPSHOT, limits, domain().as_bytes(), false);
+        let [claim] = requests.as_slice() else {
+            panic!("one claim-side document and no counterpart: {settlement:?}");
+        };
+        assert!(
+            matches!(&settlement, Settlement::Terminal(record) if matches!(
+                record.value(),
+                fsl_replay::TerminalValue::Proved {
+                    basis: fsl_replay::ProofBasis::ValueBounds {
+                        exploration: fsl_replay::BoundsExploration::Partial,
+                        ..
+                    },
+                    ..
+                }
+            )),
+            "{settlement:?}"
+        );
+        let emitted = document(claim);
+        assert_eq!(emitted["kind"], "lower");
+        assert_eq!(
+            emitted["objective"]["base"]["profile"],
+            "filament.probability-objective/reachability/v1"
+        );
+        assert_eq!(emitted["values"].as_array().map(Vec::len), Some(rows));
+        assert_eq!(emitted["ranking"].as_array().map(Vec::len), Some(rows));
+        accepted(claim, value);
+    }
+}

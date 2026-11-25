@@ -1688,6 +1688,17 @@ fn subject_graph_with_identity(
     ))
 }
 
+/// Whether `claim` asks for unbounded `eventually` reachability.
+fn is_eventual_reach(claim: &CheckedProbabilisticClaim) -> bool {
+    matches!(
+        claim.form,
+        ProbForm::Reach {
+            target: ReachTarget::Eventually(_),
+            ..
+        }
+    )
+}
+
 fn target_keys(graph: &CheckerGraph) -> Vec<ProbabilityProductKey> {
     graph
         .states
@@ -2379,12 +2390,18 @@ fn check_document_bytes(
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     // FR-1042: a bounded base's acyclic product bounds a value by the
-    // one-step inequalities alone; an unbounded eventual chain adds the
-    // `lower` document's progress ranking.
+    // one-step inequalities alone; an unbounded eventual chain, cyclic or
+    // not, adds the `lower` document's progress ranking. The acyclic
+    // `reachability/v1` base is checked under a workload alone: an
+    // every-scheduler bound needs one action that meets the inequality and
+    // progress together, which these checks do not select.
+    let acyclic_eventual = !document.cyclic_dtmc
+        && objective == ProbabilityObjective::Workload
+        && is_eventual_reach(claim);
     let bound_base = if document.cyclic_dtmc {
         event.is_none()
     } else {
-        bounded_ranks.is_some()
+        bounded_ranks.is_some() || acyclic_eventual
     };
     if bound_side.is_some() && (!bound_base || !fairness_records.is_empty()) {
         return Err(ProbabilityDocumentError::Unsupported);
@@ -2465,7 +2482,7 @@ fn check_document_bytes(
     // remaining horizon instead, and an `upper` document has no ranking.
     let progress_checked = match bound_side {
         None => true,
-        Some(SubsystemBoundKind::Lower) => document.cyclic_dtmc,
+        Some(SubsystemBoundKind::Lower) => document.cyclic_dtmc || acyclic_eventual,
         Some(SubsystemBoundKind::Upper) => reward_upper,
     };
     for (key, state) in graph
