@@ -1861,7 +1861,7 @@ fn an_item_with_no_probabilistic_member_takes_every_default() {
 
 /// One definition of FSpec's backend-provider schema, with the checked-package
 /// schema it refers to.
-fn provider_definition(name: &str) -> jsonschema::JSONSchema {
+pub(crate) fn provider_definition(name: &str) -> jsonschema::JSONSchema {
     let schema = crate::published_fspec::json("proposals/backend-provider-v1/schema.json");
     let package = crate::published_fspec::json("proposals/checked-package-v2/schema.json");
     let definition = json!({
@@ -1876,7 +1876,7 @@ fn provider_definition(name: &str) -> jsonschema::JSONSchema {
         .expect("the schema compiles")
 }
 
-fn assert_valid(compiled: &jsonschema::JSONSchema, instance: &Value, what: &str) {
+pub(crate) fn assert_valid(compiled: &jsonschema::JSONSchema, instance: &Value, what: &str) {
     if let Err(errors) = compiled.validate(instance) {
         let errors: Vec<_> = errors.map(|error| error.to_string()).collect();
         panic!("{what} violates the schema: {errors:?}\n{instance}");

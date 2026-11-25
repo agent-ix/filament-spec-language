@@ -2206,3 +2206,96 @@ fn bounded_nested_multiple_and_unresolved_forms_issue_no_proof_in_these_profiles
 fn claim_text(scope: &str, event: &str) -> String {
     format!("probabilistic V using inf on M over (x: M::Item) under {scope} on origin {{ probability >= rational(1,2) [ {event} ] }}\n")
 }
+
+/// The least `accounting.work_units` under which `completes` holds.
+fn least_work_units(completes: impl Fn(u64) -> bool) -> u64 {
+    let (mut short, mut enough) = (0, 1_000_000);
+    assert!(completes(enough), "the default allowance completes");
+    while enough - short > 1 {
+        let middle = short + (enough - short) / 2;
+        if completes(middle) {
+            enough = middle;
+        } else {
+            short = middle;
+        }
+    }
+    enough
+}
+
+/// An allowance that pays the product build of `name`, and pays the reading of
+/// whether its subject is acyclic, but not the one after the other.
+fn one_short_of_the_build_and_the_cyclic_check(world: &World, name: &str) -> u64 {
+    let build = least_work_units(|work_units| {
+        let mut request = world.request(name, ModelCheckLimits::default());
+        request.subject.simulation.meter.work_units = work_units;
+        build_product(request, &Cancel::new()).is_ok()
+    });
+    let check = least_work_units(|work_units| {
+        let mut request = world.request(name, ModelCheckLimits::default());
+        request.subject.simulation.meter.work_units = work_units;
+        let limits = request.limits;
+        ModelSystem::new(request.subject.simulation).is_ok_and(|system| {
+            fsl_replay::admit_acyclic_probabilistic_refutation_subject(
+                &system,
+                &limits,
+                &Cancel::new(),
+            )
+            .is_ok()
+        })
+    });
+    build + check - 1
+}
+
+fn assert_work_units_stop(record: &fsl_analyze::analyze::AnalyzeRecord, work_units: u64) {
+    assert_eq!(
+        record.terminal().expect("a settled claim").value(),
+        &TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::EvaluationMeter {
+                counter: filament_exact::LimitKind::WorkUnits
+            },
+            value: work_units,
+            required: None,
+        }),
+        "{record:#?}"
+    );
+    assert!(record.exact_probabilistic.is_none());
+}
+
+/// Past the rational budget, the cyclic until item reads its subject's shape
+/// under what its build left of `accounting.work_units`, not under a second
+/// allowance.
+#[trace("TC-638", "FR-203-AC-13")]
+#[test]
+fn the_cyclic_check_past_the_rational_budget_spends_the_items_work_allowance() {
+    let world = World::new(&model(false, &claim("Likely", ">= rational(3,5)", UNTIL)));
+    let work_units = one_short_of_the_build_and_the_cyclic_check(&world, "Likely");
+    let record = settle(&world, "Likely", ModelCheckLimits::default(), |request| {
+        request.limits.max_rational_bits = 1;
+        request.subject.simulation.meter.work_units = work_units;
+    });
+    assert_work_units_stop(&record, work_units);
+}
+
+/// A failing unwindowed `always` reads its subject's shape, to choose its
+/// refutation, under what its build left of `accounting.work_units`.
+#[trace("TC-638", "FR-203-AC-13")]
+#[test]
+fn the_cyclic_check_of_a_refutation_spends_the_items_work_allowance() {
+    let world = World::new(&model(
+        false,
+        &claim("Surely", ">= rational(4,5)", "always holds(x.phase <= 1)"),
+    ));
+    let record = settle(&world, "Surely", ModelCheckLimits::default(), |_| {});
+    assert!(
+        matches!(
+            record.terminal().expect("a settled claim").value(),
+            TerminalValue::Refuted
+        ),
+        "{record:#?}"
+    );
+    let work_units = one_short_of_the_build_and_the_cyclic_check(&world, "Surely");
+    let record = settle(&world, "Surely", ModelCheckLimits::default(), |request| {
+        request.subject.simulation.meter.work_units = work_units;
+    });
+    assert_work_units_stop(&record, work_units);
+}

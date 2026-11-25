@@ -16,8 +16,8 @@ mod measure;
 mod subsystem;
 mod undefined;
 
-use filament_exact::{Cancel, ObjectReference, Rational};
-use fsl_eval::simulation::model::ModelSystem;
+use filament_exact::{Cancel, ObjectReference, Rational, WorkScope};
+use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem};
 use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::statistical::{ClaimForm, SubjectLimits};
@@ -49,10 +49,10 @@ use super::items::{admission, BROKEN, NOT_YET};
 use super::timed_item::subject_refusal;
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::exact_probabilistic::{
-    build_retaining_monitor, decide_always, decide_bounded_event, decide_expected_reward,
-    decide_reachability, decide_until, manifest as en5, settle_product_refusal, ExtRational,
-    FhError, FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest, UnboundedError,
-    UnboundedObjective,
+    admit_in_scope, build_retaining_monitor, build_retaining_monitor_in_scope, decide_always,
+    decide_bounded_event, decide_expected_reward, decide_reachability, decide_until,
+    manifest as en5, settle_product_refusal, ExtRational, FhError, FhResult, ProbBuild,
+    ProbProduct, ProductRefusal, ProductRequest, UnboundedError, UnboundedObjective,
 };
 
 /// The FR-413 claim type for a checked exact form, using the shared type
@@ -508,6 +508,21 @@ fn max_states_limit(
     )
 }
 
+/// The complete product of a timed route's build. Only the untimed builder
+/// returns `Partial`, so no request reaches that arm; it settles as FR-196
+/// states for a `Partial` that settles nothing, whatever a builder returns.
+fn timed_product(
+    built: ProbBuild,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    subject: SubjectLimits<'_>,
+) -> Result<ProbProduct, Box<EngineReport>> {
+    match built {
+        ProbBuild::Built(product) => Ok(product),
+        ProbBuild::Partial { .. } => Err(Box::new(max_states_limit(limits, subject))),
+        ProbBuild::Undefined(_) => Err(Box::new(not_yet())),
+    }
+}
+
 /// A finite-horizon solve that held its probabilities only as outward-rounded
 /// intervals for a form whose interval is not certified: the certificate carries
 /// exact rationals, so the run stopped at the caller's `max_rational_bits`.
@@ -681,8 +696,9 @@ fn run_timed(
         Err(refusal) => return build_refusal(refusal, subject),
     };
     let (built, _) = built;
-    let ProbBuild::Built(product) = built else {
-        return not_yet();
+    let product = match timed_product(built, &limits, subject) {
+        Ok(product) => product,
+        Err(report) => return *report,
     };
     let [(_, _, start)] = product.initial.as_slice() else {
         return not_yet();
@@ -1116,8 +1132,9 @@ fn run_timed_mean(
             return build_refusal(refusal, subject);
         }
     };
-    let ProbBuild::Built(product) = built else {
-        return not_yet();
+    let product = match timed_product(built, &limits, subject) {
+        Ok(product) => product,
+        Err(report) => return *report,
     };
     let [(_, _, start)] = product.initial.as_slice() else {
         return not_yet();
@@ -1346,6 +1363,9 @@ fn run(
     let probabilistic = simulation.input.probabilistic;
     let limits = request.limits;
     let meter = simulation.meter;
+    // The item's cumulative work allowance (FR-120, FR-203), which the product
+    // build and each cyclic-subject check below spend.
+    let work = WorkScope::new(meter);
     let subject = SubjectLimits {
         expansion: simulation.expansion,
         meter: &meter,
@@ -1486,12 +1506,18 @@ fn run(
         .then(|| candidate::CandidateBudget::new(candidate_limits, cancel));
     let built = if let Some(budget) = candidate_budget.as_mut() {
         use crate::exact_probabilistic::{
-            build_retaining_monitor_with_budget, BudgetedProductError,
+            build_retaining_monitor_with_budget_in_scope, BudgetedProductError,
         };
         let identity = budget.identity;
         let mut admission = budget.admission();
         let proof_bounds = std::mem::take(&mut request.subject.proof_bounds);
-        match build_retaining_monitor_with_budget(request, identity, &mut admission, cancel) {
+        match build_retaining_monitor_with_budget_in_scope(
+            request,
+            identity,
+            &mut admission,
+            work.clone(),
+            cancel,
+        ) {
             Ok(built) => built,
             Err(BudgetedProductError::Product(error)) => return build_refusal(error, subject),
             Err(BudgetedProductError::Key(error)) => {
@@ -1517,7 +1543,7 @@ fn run(
             }
         }
     } else {
-        match build_retaining_monitor(request, cancel) {
+        match build_retaining_monitor_in_scope(request, work.clone(), cancel) {
             Ok(built) => built,
             Err(error) => return build_refusal(error, subject),
         }
@@ -1727,28 +1753,20 @@ fn run(
                 // FR-1042 bases, so a cyclic subject has no interval document
                 // and the budget is its stop.
                 if state_predicate {
-                    let admitted = ModelSystem::new_with_cancel(simulation.clone(), cancel);
-                    if let Some(cause) = cancel.tripped() {
-                        return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
-                    }
-                    let system = match admitted {
-                        Ok(system) => system,
-                        Err(error) => {
-                            return build_refusal(ProductRefusal::Admission(error), subject)
-                        }
-                    };
                     // The scalar budget that stopped the solve does not bound
                     // this question about the model graph's shape.
                     let mut shape_limits = limits.clone();
                     shape_limits.max_rational_bits = u64::MAX;
-                    match fsl_replay::admit_acyclic_probabilistic_refutation_subject(
-                        &system,
+                    match acyclic_subject(
+                        simulation.clone(),
+                        work.clone(),
                         &shape_limits,
                         cancel,
+                        subject,
                     ) {
                         Ok(true) => {}
                         Ok(false) => return rational_bits_limit(&limits, subject),
-                        Err(error) => return document_failure(error, subject),
+                        Err(report) => return *report,
                     }
                 }
                 let threshold = match bound {
@@ -1976,7 +1994,7 @@ fn run(
     };
     let admitted = match reward_system {
         Some(system) => Ok(system),
-        None => ModelSystem::new_with_cancel(simulation, cancel),
+        None => ModelSystem::new_with_cancel(simulation.clone(), cancel),
     };
     if let Some(cause) = cancel.tripped() {
         return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
@@ -2235,12 +2253,10 @@ fn run(
         // unwindowed `eventually`, `always` or `until` there is refuted by
         // the event-avoidance lower certificate for its violation.
         if let ProbForm::Reach { .. } = &claim.form {
-            match fsl_replay::admit_acyclic_probabilistic_refutation_subject(
-                &system, &limits, cancel,
-            ) {
+            match acyclic_subject(simulation, work, &limits, cancel, subject) {
                 Ok(true) => {}
                 Ok(false) => return subsystem_refutation(),
-                Err(error) => return document_failure(error, subject),
+                Err(report) => return *report,
             }
         }
         let bounded_monitor = match (bounded_formula, monitor) {
@@ -2418,6 +2434,22 @@ fn run(
         Ok::<_, ProbabilityDocumentError>(check)
     })();
     checked_report(checked, certificate, binding, extremum, subject)
+}
+
+/// Whether the subject's model graph is acyclic. The reading admits the model
+/// and enumerates its graph under the item's `work` allowance, so it spends
+/// only what the item's build left (FR-120, FR-203).
+fn acyclic_subject(
+    simulation: ModelSimulationRequest<'_>,
+    work: WorkScope,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    cancel: &Cancel,
+    subject: SubjectLimits<'_>,
+) -> Result<bool, Box<EngineReport>> {
+    let system = admit_in_scope(simulation, work, cancel)
+        .map_err(|refusal| Box::new(build_refusal(refusal, subject)))?;
+    fsl_replay::admit_acyclic_probabilistic_refutation_subject(&system, limits, cancel)
+        .map_err(|error| Box::new(document_failure(error, subject)))
 }
 
 fn checked_report(
