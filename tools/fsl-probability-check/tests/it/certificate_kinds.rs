@@ -5,7 +5,7 @@
 //! The certificates are produced by the analyzer over the cyclic `link`
 //! model, as the other suites of this binary produce theirs.
 
-use super::bounded::{document, key, mutate, request_with, run};
+use super::bounded::{document, key, mutate, replace_source_and_rebind, request_with, run};
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -191,6 +191,113 @@ fn an_unbounded_fair_eventual_certificate_is_accepted() {
     accepted_then_rejected(&later, &["exact"]);
 }
 
+/// The measure `Pr(activated and M <= 3)` over every scheduler has the
+/// minimum `40/81`, so the full run proves `>= 0.3` and refutes `>= 0.5`. One
+/// state of the product shows neither (FSpec FR-411 "Evidence on a partial
+/// product"). A `lower` naming the initial state and its delivered successor
+/// proves `>= 0.3`, each unnamed successor counting as 0 (FR-1042
+/// "Document"), and cannot prove `>= 0.5`.
+fn measure_bounds_are_checked_over_a_prefix(one_state: ExactProbLimits) {
+    let claim = |bound: &str| {
+        likely(
+            "ev",
+            "every scheduler",
+            &format!(
+                "probability >= {bound} [steps from holds(m.delivered) until holds(true) within 4 <= 3]"
+            ),
+        )
+    };
+    let settle = |bound: &str, limits: ExactProbLimits| {
+        request_with(&claim(bound), SNAPSHOT, limits, domain().as_bytes())
+    };
+
+    let exact = certified(&claim("0.3"), ExactProbLimits::default());
+    let (code, output) = run(&exact);
+    assert_eq!(code, 0, "{output}");
+    assert_eq!(
+        output["value"],
+        json!({"numerator": "40", "denominator": "81"})
+    );
+    let (_, full) = settle("0.5", ExactProbLimits::default());
+    assert!(
+        matches!(&full, fsl_analyze::analyze::Settlement::Terminal(record)
+            if matches!(record.value(), fsl_replay::TerminalValue::Refuted)),
+        "the full run refutes 0.5: {full:?}"
+    );
+
+    let (request, stopped) = settle("0.5", one_state);
+    assert!(request.is_none(), "{request:?}");
+    assert!(
+        matches!(&stopped, fsl_analyze::analyze::Settlement::Terminal(record)
+        if record.value() == &fsl_replay::TerminalValue::Incomplete(
+            fsl_replay::IncompleteCause::LimitReached {
+                limit: fsl_replay::ModelCheckLimit::ExactProbMaxStates,
+                value: 1,
+                required: None,
+            }
+        )),
+        "one state settles nothing: {stopped:?}"
+    );
+
+    // The initial state and the delivered successor it steps to, with the
+    // exact document's own ranks.
+    let prefix = [
+        json!(["measure", "4", "inactive"]),
+        json!(["measure", "3", "complete"]),
+    ];
+    let lower = mutate(&exact, |doc| {
+        let named = |rows: &Value| {
+            let rows = rows.as_array().expect("certificate rows");
+            let named: Vec<Value> = rows
+                .iter()
+                .filter(|row| prefix.contains(&key(&row["state"])[5]))
+                .cloned()
+                .collect();
+            assert_eq!(named.len(), prefix.len(), "{named:?}");
+            named
+        };
+        let mut values = named(&doc["values"]);
+        for row in &mut values {
+            if key(&row["state"])[5] == prefix[0] {
+                row["value"] = json!({"numerator": "1", "denominator": "3"});
+            }
+        }
+        *doc = json!({
+            "identity": doc["identity"],
+            "objective": {
+                "profile": "filament.probability-objective/value-bounds/v1",
+                "base": doc["objective"],
+            },
+            "kind": "lower",
+            "values": values,
+            "ranking": named(&doc["ranking"]),
+        });
+    });
+    let (code, output) = run(&lower);
+    assert_eq!(code, 0, "{output}");
+    assert_eq!(
+        output["value"],
+        json!({"numerator": "1", "denominator": "3"})
+    );
+
+    let raised = mutate(&lower, |doc| {
+        for row in doc["values"].as_array_mut().expect("certificate values") {
+            if key(&row["state"])[5] == prefix[0] {
+                row["value"] = json!({"numerator": "2", "denominator": "5"});
+            }
+        }
+    });
+    let (code, output) = run(&raised);
+    assert_eq!(code, 1, "{output}");
+    assert_eq!(output["rule"], "inequality-fails", "{output}");
+
+    let mut higher = lower.clone();
+    replace_source_and_rebind(&mut higher, &claim("0.5"));
+    let (code, output) = run(&higher);
+    assert_eq!(code, 1, "{output}");
+    assert_eq!(output["rule"], "threshold-missed", "{output}");
+}
+
 /// A value-bounds proof under a tight rational budget: `lower` and `upper`
 /// certificates the checker accepts.
 #[trace("TC-2065", "FR-201-AC-51")]
@@ -242,37 +349,7 @@ fn value_bounds_certificates_are_accepted() {
     let (code, output) = run(&partial);
     assert_eq!(code, 0, "{output}");
 
-    let partial_measure_source = likely(
-        "ev",
-        "every scheduler",
-        "probability >= 0.5 [steps from holds(m.delivered) until holds(true) within 4 <= 3]",
-    );
-    let (partial_measure, measure_settlement) = request_with(
-        &partial_measure_source,
-        SNAPSHOT,
-        partial_limits,
-        domain().as_bytes(),
-    );
-    let partial_measure = partial_measure.unwrap_or_else(|| {
-        panic!("the explored measure prefix proves the zero lower bound: {measure_settlement:?}")
-    });
-    assert_eq!(document(&partial_measure)["kind"], "lower");
-    let (code, output) = run(&partial_measure);
-    assert_eq!(code, 0, "{output}");
-    let fsl_analyze::analyze::Settlement::Terminal(record) = measure_settlement else {
-        panic!("partial measure proof settles: {measure_settlement:?}");
-    };
-    assert!(matches!(
-        record.value(),
-        fsl_replay::TerminalValue::Proved {
-            basis: fsl_replay::ProofBasis::ValueBounds {
-                upper: fsl_replay::ExactBound::Finite(value),
-                exploration: fsl_replay::BoundsExploration::Partial,
-                ..
-            },
-            ..
-        } if value.value() == &filament_exact::Rational::from_integer(1_i64.into())
-    ));
+    measure_bounds_are_checked_over_a_prefix(partial_limits);
 
     let shifted_source = likely(
         "ev",

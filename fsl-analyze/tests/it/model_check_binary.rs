@@ -78,6 +78,7 @@ mod zone_search;
 #[path = "zone_support.rs"]
 mod zone_support;
 
+mod certificate_rejection_support;
 mod check_mode_record;
 mod claim_family;
 mod clause_route;

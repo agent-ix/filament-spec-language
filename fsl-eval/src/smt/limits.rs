@@ -1,8 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-315's caller-selected bounds on temporal SMT query encoding and runs.
-
-use fsl_foundation::{Setting, SettingLimits};
-use std::vec::Vec;
+//! FR-315's caller-selected bounds on temporal SMT query encoding.
 
 /// Size limits for one temporal SMT query encoding (FR-315).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -31,41 +28,5 @@ impl Default for SmtEncodingLimits {
             max_candidates: 1 << 16,
             max_script_bytes: 1 << 28,
         }
-    }
-}
-
-/// Caller-selected bounds on one SMT solver run (FR-315).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SmtRunLimits {
-    /// Maximum solver steps, in work units.
-    pub max_solver_steps: u64,
-    /// Maximum solver wall-clock time, in whole seconds.
-    pub max_solver_time: u64,
-}
-
-impl Default for SmtRunLimits {
-    fn default() -> Self {
-        Self {
-            max_solver_steps: 100_000_000,
-            max_solver_time: 60,
-        }
-    }
-}
-
-impl SettingLimits for SmtRunLimits {
-    fn bounds(&self) -> Vec<(Setting, u64)> {
-        vec![
-            (Setting::SmtMaxSolverSteps, self.max_solver_steps),
-            (Setting::SmtMaxSolverTime, self.max_solver_time),
-        ]
-    }
-
-    fn set_bound(&mut self, setting: Setting, bound: u64) -> bool {
-        match setting {
-            Setting::SmtMaxSolverSteps => self.max_solver_steps = bound,
-            Setting::SmtMaxSolverTime => self.max_solver_time = bound,
-            _ => return false,
-        }
-        true
     }
 }

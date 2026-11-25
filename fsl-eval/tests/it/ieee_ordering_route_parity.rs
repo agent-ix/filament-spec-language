@@ -8,8 +8,8 @@
 
 use filament_eval::{CallFailure, FamilyOutcome};
 use filament_exact::{
-    ChargePoint, IeeeFlag, IeeeValue, LimitKind, Meter, ObjectId, ObjectReference, ScalarLimits,
-    UniverseId, Value, ValueType,
+    ChargePoint, FieldValue, IeeeFlag, IeeeValue, Integer, LimitKind, Meter, ObjectId,
+    ObjectReference, ScalarLimits, UniverseId, Value, ValueType,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::location::ExpressionOwner as LocationOwner;
@@ -21,9 +21,6 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::model::observation::{
-    AdmissionUsage, AdmittedObservations, DocumentRef, Observation, SelfKind,
-};
 use fsl_semantics::value::{DefinitionRole, admit_ieee_profile};
 use ix_trace_rs::trace;
 
@@ -860,8 +857,10 @@ fn a_source_models_clause_function_is_named_alike_on_both_routes() {
 }
 
 /// FR-531-AC-40: the source-owned operation clause is selected by its
-/// admitted operation anchor on the bytes route, and both evaluators retain
-/// the source identity and child paths across the full work-unit sweep.
+/// operation anchor on both routes, and both evaluators retain the source
+/// identity and child paths across the full work-unit sweep. A label of
+/// another operation's precondition selects nothing on either route.
+#[trace("TC-3133", "FR-531-AC-40")]
 #[test]
 fn source_operation_precondition_is_selected_by_anchor_and_located_on_both_routes() {
     let text = "language \"ix:native\" edition \"1-draft\";\n\
@@ -873,7 +872,7 @@ fn source_operation_precondition_is_selected_by_anchor_and_located_on_both_route
         body sizeB using v on Sub::size() { 2 }\n\
         body sizeC using v on Leaf::size() { 3 }\n\
         pre rootCall using v on ConfigVersion::probe { self.size() > 0 }\n\
-        pre sqrtPre using v on ConfigVersion::size { filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) <= filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) }\n";
+        pre sqrtPre using v on ConfigVersion::size { filament::value::ieee::sqrt(convert<Float64[nearest-even]>(float64(bits: 0x4000000000000000))) <= filament::value::ieee::sqrt(convert<Float64[nearest-even]>(float64(bits: 0x4000000000000000))) }\n";
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("agent-ix", "u"),
         "unit.native",
@@ -925,43 +924,46 @@ fn source_operation_precondition_is_selected_by_anchor_and_located_on_both_route
         source_clause.context(),
         ObjectId::new("size-instance").expect("non-empty object identity"),
     );
-    let pre = Observation {
-        identity: DocumentRef {
-            authority: "fixture".to_owned(),
-            identity: "fr531-ac40-pre".to_owned(),
-        },
-        environment: ObjectEnvironment::default(),
-        populations: Default::default(),
-        out_of_range: Vec::new(),
-    };
-    let observations = AdmittedObservations {
-        usage: AdmissionUsage::default(),
-        clause: source_clause.identity(),
-        current: None,
-        pre: Some(pre),
-        post: None,
-        self_object: reference.clone(),
-        self_population: None,
-        value_origins: Default::default(),
-        invocation: None,
-        self_kind: SelfKind::Object,
-        receiver_pre: None,
-        receiver_post: None,
-        parameters: Vec::new(),
-        result: None,
-        created: Vec::new(),
-        deleted: Vec::new(),
+    let source_operation = source_clause
+        .operation()
+        .expect("a precondition names its operation");
+    let source_anchor = package
+        .graph()
+        .operation_anchor_of(
+            source_operation.declaring.clone(),
+            source_operation.declaration.name(),
+        )
+        .expect("the checked size operation has an anchor");
+    let source_objects = ObjectEnvironment::new(
+        ObjectClosure::new(
+            package.graph().scope().types(),
+            [(
+                reference.clone(),
+                vec![(
+                    "versionNumber",
+                    FieldValue::Present(Value::Integer(Integer::from(1_i64))),
+                )],
+            )],
+            &[],
+        )
+        .expect("the source-owned receiver admits in the checked package"),
+    );
+    let evaluate_source_clause = |name: &str, meter: &mut Meter| {
+        fsl_eval::value::evaluate_source_operation_clause(
+            &package,
+            &source_anchor,
+            &fsl_package::SourceOperationClause::Precondition {
+                name: name.to_owned(),
+            },
+            vec![Value::Reference(reference.clone())],
+            &source_objects,
+            meter,
+        )
     };
     let evaluate_source = |limits| {
         let mut meter = Meter::new(limits);
-        let evaluation = package
-            .evaluate_clause(
-                &QualifiedName::unqualified("sqrtPre").expect("the authored clause name"),
-                &observations,
-                &mut meter,
-            )
-            .expect("the checked source precondition evaluates")
-            .evaluation;
+        let evaluation = evaluate_source_clause("sqrtPre", &mut meter)
+            .expect("the checked source precondition evaluates");
         (evaluation, meter)
     };
     let (source, source_meter) = evaluate_source(UNLIMITED);
@@ -1096,6 +1098,30 @@ fn source_operation_precondition_is_selected_by_anchor_and_located_on_both_route
         &packaged.outcome,
         FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(Value::Boolean(true)))
     ));
+
+    let mut source_refusal_meter = Meter::new(UNLIMITED);
+    let source_refusal = evaluate_source_clause("rootCall", &mut source_refusal_meter)
+        .expect_err("rootCall is a precondition of probe, not of size");
+    let mut package_refusal_meter = Meter::new(UNLIMITED);
+    let mut refusal_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let Err(fsl_eval::value::BareSourceOperationEvaluationFailure::Call(package_refusal)) =
+        fsl_eval::value::evaluate_bare_source_operation_clause(
+            &bare,
+            &anchor,
+            fsl_package::SourceOperationClause::Precondition {
+                name: "rootCall".to_owned(),
+            },
+            vec![Value::Reference(reference.clone())],
+            &objects,
+            &mut package_refusal_meter,
+            &mut refusal_budget,
+        )
+    else {
+        panic!("the bytes route refuses another operation's precondition label");
+    };
+    assert_eq!(source_refusal, package_refusal);
+    assert_eq!(source_refusal_meter.consumed(LimitKind::WorkUnits), 0);
+    assert_eq!(package_refusal_meter.consumed(LimitKind::WorkUnits), 0);
 
     let wire: serde_json::Value = serde_json::from_slice(bytes).expect("canonical JSON");
     let rows = wire["checked_term_data"]["body_locations"]
