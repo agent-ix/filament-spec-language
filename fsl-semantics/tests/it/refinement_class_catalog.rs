@@ -82,7 +82,7 @@ fn class<'c>(side: &'c [RefinementCatalogClass], name: &str) -> &'c RefinementCa
 /// is (receiver, parameters…, result). The model abstract side lists the
 /// abstract model's operation classes (FR-375 "or the abstract model's
 /// operation classes otherwise").
-#[trace("FR-375-AC-23", "TC-310", "FR-432-AC-14")]
+#[trace("FSpec-FR-375-AC-23", "FSpec-TC-310", "FSpec-FR-432-AC-14")]
 #[test]
 fn a_model_abstract_catalog_lists_effective_operations_with_attempt_records() {
     let sub = sub_counter();
@@ -143,7 +143,7 @@ fn a_model_abstract_catalog_lists_effective_operations_with_attempt_records() {
 /// A name two unrelated ancestors declare has no effective operation on
 /// the subtype, so the subtype has no class of it; each ancestor keeps its
 /// own.
-#[trace("FR-375-AC-23", "TC-310")]
+#[trace("FSpec-FR-375-AC-23", "FSpec-TC-310")]
 #[test]
 fn an_ambiguous_inherited_operation_is_no_class_of_the_subtype() {
     let diamond = diamond_counter();
@@ -161,7 +161,7 @@ fn an_ambiguous_inherited_operation_is_no_class_of_the_subtype() {
 
 /// The catalog lowered to node keys keeps every class in order, and every
 /// class node and binder type is a node of the package graph.
-#[trace("FR-375-AC-23", "TC-310")]
+#[trace("FSpec-FR-375-AC-23", "FSpec-TC-310")]
 #[test]
 fn the_catalog_lowers_to_nodes_of_the_package_graph() {
     let sub = sub_counter();
@@ -207,7 +207,7 @@ fn the_catalog_lowers_to_nodes_of_the_package_graph() {
 /// when it is no record, so `[Boolean]` for a Boolean trigger and one
 /// reference type for an object trigger. An `origin` clause has no such
 /// class.
-#[trace("FR-375-AC-27", "FR-375-AC-23", "TC-310")]
+#[trace("FSpec-FR-375-AC-27", "FSpec-FR-375-AC-23", "FSpec-TC-310")]
 #[test]
 fn an_each_clause_has_an_activate_class_with_the_trigger_record() {
     let sub = sub_counter();
@@ -254,7 +254,7 @@ fn an_each_clause_has_an_activate_class_with_the_trigger_record() {
 /// the state clauses, and a post-test `repeat`, whose guard reads a binder
 /// its body declares, keys its class catalog: the attempt and the event in
 /// the repeat body are classes keyed by their own control nodes.
-#[trace("FR-375-AC-23", "TC-310")]
+#[trace("FSpec-FR-375-AC-23", "FSpec-TC-310")]
 #[test]
 fn a_clause_holding_an_attempt_and_a_post_test_repeat_keys_its_catalog() {
     let sub = sub_counter();
@@ -324,7 +324,7 @@ fn a_clause_holding_an_attempt_and_a_post_test_repeat_keys_its_catalog() {
 /// written as V2 control nodes (QSL-1186b), keys its class catalog: the
 /// events inside the case and the repeat body are classes with nodes
 /// (SR-1737002 FND-003).
-#[trace("FR-375-AC-23", "TC-310")]
+#[trace("FSpec-FR-375-AC-23", "FSpec-TC-310")]
 #[test]
 fn a_clause_holding_a_choice_and_a_repeat_keys_its_catalog() {
     let sub = sub_counter();

@@ -1585,8 +1585,7 @@ impl<'a> ModelSystem<'a> {
         // reference bindings or any instance is formed: otherwise one
         // reference could denote different objects depending on which
         // population or initial snapshot supplied the row. Equal keys in two
-        // object universes (unrelated type hierarchies, as two models' are)
-        // name two objects.
+        // object universes (unrelated type hierarchies) name two objects.
         let mut admitted_types = BTreeMap::<(UniverseId, String), DeclarationKey>::new();
         for state in &initial {
             for (population, objects) in &state.state.populations {
