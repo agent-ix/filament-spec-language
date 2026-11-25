@@ -4895,6 +4895,7 @@ impl<'a> Lowering<'a> {
     /// operand in its place; any other node builds its own type and member
     /// nodes, pushes its frame and descends into its first operand.
     #[deny(clippy::wildcard_enum_match_arm)]
+    #[implements("FR-093-AC-78")]
     fn lower_node<'n>(
         &mut self,
         node: CheckedNode<'n>,
@@ -8360,6 +8361,7 @@ fn exact_decimal_or_ratio(value: &filament_exact::Rational) -> String {
 }
 
 /// The body-walk operands of [`derived_operands`].
+#[implements("FR-093-AC-78")]
 fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     use filament_exact::PathSegment;
     struct Walk {
