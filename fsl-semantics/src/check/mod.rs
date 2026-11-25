@@ -993,6 +993,9 @@ pub struct CheckedGraph {
     /// ADR-011 §2.4 `model_selections`: each admitted domain package's
     /// selection, ascending by identity.
     model_selections: Vec<DomainPackageRef>,
+    /// FR-081/FR-400: retain the effective views formed for the selected
+    /// model aliases so package emission uses admitted facts directly.
+    selected_views: BTreeMap<String, crate::model::normalize::EffectiveView>,
     /// Exact identity rows issued by model intake for the same selected
     /// documents, carried to the package's IR projection boundary.
     selected_exact_identity_rows: (
@@ -1242,6 +1245,7 @@ impl DebugWith for CheckedGraph {
             synthesized_spans,
             embedding,
             model_selections,
+            selected_views,
             selected_exact_identity_rows,
             selected_tuple_declaration_rows,
             operation_effects,
@@ -1363,6 +1367,7 @@ impl DebugWith for CheckedGraph {
             .field("synthesized_spans", &synthesized_spans)
             .field("embedding", &embedding)
             .field("model_selections", &model_selections)
+            .field("selected_views", &selected_views)
             .field(
                 "selected_exact_identity_rows",
                 &selected_exact_identity_rows,
@@ -8716,6 +8721,7 @@ impl PackageDeclarations {
             synthesized_spans,
             embedding,
             model_selections,
+            selected_views: self.selected_views,
             selected_exact_identity_rows: self.selected_exact_identity_rows,
             selected_tuple_declaration_rows: self.selected_tuple_declaration_rows,
             operation_effects,
@@ -9791,6 +9797,16 @@ impl CheckedGraph {
     /// `model_selections`.
     pub fn model_selections(&self) -> &[DomainPackageRef] {
         &self.model_selections
+    }
+
+    /// FR-081/FR-400: the completed effective declaration view for each
+    /// selected model alias, as produced during S3 admission. Package
+    /// emission reads these retained views rather than normalizing source
+    /// documents a second time.
+    pub fn selected_model_views(
+        &self,
+    ) -> &BTreeMap<String, crate::model::normalize::EffectiveView> {
+        &self.selected_views
     }
 
     /// The model-intake declaration and field rows, validated against the
