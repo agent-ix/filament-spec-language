@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Source producers of published checked-operation identities and node forms.
 
+use std::collections::btree_map::Entry;
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use filament_exact::Cancel;
 use filament_verification_contracts::operation_catalog::CHECKED_OPERATION_CATALOG_V1;
@@ -12,6 +14,8 @@ use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::PackageInput;
 use ix_trace_rs::trace;
 use serde_json::Value;
+
+use crate::fspec_standard::is_ticket_key;
 
 struct Case {
     name: &'static str,
@@ -49,27 +53,6 @@ macro_rules! original {
             source: include_str!(concat!("../../../", $path)),
             operations: $operations,
             forms: $forms,
-        }
-    };
-}
-
-macro_rules! structural_equality {
-    ($name:literal, $declarations:literal, $ty:literal) => {
-        Case {
-            name: $name,
-            source: concat!(
-                "language \"ix:native\" edition \"1-draft\";\n",
-                "profile v = \"filament.value.complete/v1\";\n",
-                $declarations,
-                "\n",
-                "function equal using v(a: ",
-                $ty,
-                ",b: ",
-                $ty,
-                "): Boolean pure { a=b }\n",
-            ),
-            operations: &["filament.op.structural.eq"],
-            forms: &[],
         }
     };
 }
@@ -122,9 +105,9 @@ source_cases! {
     quantity_ordering => operators!("quantity-ordering", "quantity", ["lt"]),
     enum_equality => operators!("enum-equality", "enum", ["eq"]),
     enum_ordering => operators!("enum-ordering", "enum", ["lt"]),
-    integer_record_equality => structural_equality!("integer-record-equality", "record R { n: Integer; }", "R"),
-    integer_tuple_equality => structural_equality!("integer-tuple-equality", "tuple T(Integer,Integer);", "T"),
-    integer_union_equality => structural_equality!("integer-union-equality", "union U { A(Integer),B }", "U"),
+    integer_record_equality => sourced!("integer-record-equality", &["filament.op.structural.eq"], &[]),
+    integer_tuple_equality => sourced!("integer-tuple-equality", &["filament.op.structural.eq"], &[]),
+    integer_union_equality => sourced!("integer-union-equality", &["filament.op.structural.eq"], &[]),
     option_presence => Case {
         name: "option-presence",
         source: include_str!("../../cases/type-operators/option-presence-accepted.native"),
@@ -250,8 +233,6 @@ fn catalog_identities() -> BTreeSet<String> {
         .collect()
 }
 
-/// Compiles and reads a source through the public front end and the strict
-/// reader; every refusal is returned, never raised.
 /// A refusal of a source on the way to an admitted package, with the stage
 /// that refused it.
 #[derive(Debug)]
@@ -269,45 +250,79 @@ impl Refusal {
     }
 }
 
+/// Keys each domain package among `documents` by the identity it declares. A
+/// document that is no domain package is skipped. An identity that two
+/// different documents declare is supplied by neither, so a source selecting
+/// it is refused whatever order the documents are read in.
+fn pool_of<'a>(documents: impl IntoIterator<Item = &'a [u8]>) -> PackageInput {
+    let mut pool = PackageInput::new();
+    let mut conflicting = BTreeSet::new();
+    for bytes in documents {
+        let Ok(one) = fsl_semantics::model::intake::package_input([bytes]) else {
+            continue;
+        };
+        for (identity, document) in one {
+            match pool.entry(identity) {
+                Entry::Vacant(slot) => {
+                    slot.insert(document);
+                }
+                Entry::Occupied(slot) => {
+                    if *slot.get() != document {
+                        conflicting.insert(slot.key().clone());
+                    }
+                }
+            }
+        }
+    }
+    pool.retain(|identity, _| !conflicting.contains(identity));
+    pool
+}
+
 /// The domain packages the checked-in sources select by identity: the conformance
 /// packages, the example packages and the test fixtures. A source that selects
 /// none of them is unaffected.
 fn model_pool() -> &'static PackageInput {
     static POOL: std::sync::OnceLock<PackageInput> = std::sync::OnceLock::new();
     POOL.get_or_init(|| {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let mut pool = PackageInput::new();
-        for dir in ["fsl-conformance/cases", "examples", "tests/fixtures"] {
-            let mut stack = vec![root.join(dir)];
-            while let Some(path) = stack.pop() {
-                if path.is_dir() {
-                    stack.extend(
-                        std::fs::read_dir(&path)
-                            .into_iter()
-                            .flatten()
-                            .flatten()
-                            .map(|entry| entry.path()),
-                    );
-                } else if path
-                    .extension()
-                    .is_some_and(|extension| extension == "json")
-                {
-                    let Ok(bytes) = std::fs::read(&path) else {
-                        continue;
-                    };
-                    if let Ok(one) = fsl_semantics::model::intake::package_input([bytes.as_slice()])
-                    {
-                        for (identity, document) in one {
-                            pool.entry(identity).or_insert(document);
-                        }
-                    }
-                }
-            }
-        }
-        pool
+        let documents: Vec<Vec<u8>> = checked_in_files(
+            &["fsl-conformance/cases", "examples", "tests/fixtures"],
+            "json",
+        )
+        .iter()
+        .map(|path| std::fs::read(path).expect("a checked-in document reads"))
+        .collect();
+        pool_of(documents.iter().map(Vec::as_slice))
     })
 }
 
+/// The repository root.
+fn repository_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
+}
+
+/// Every file with `extension` under `directories` of the repository, sorted.
+fn checked_in_files(directories: &[&str], extension: &str) -> Vec<PathBuf> {
+    let mut stack: Vec<PathBuf> = directories
+        .iter()
+        .map(|directory| repository_root().join(directory))
+        .collect();
+    let mut files = Vec::new();
+    while let Some(directory) = stack.pop() {
+        for entry in std::fs::read_dir(&directory).expect("a checked-in directory reads") {
+            let path = entry.expect("a checked-in directory entry reads").path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|found| found == extension) {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+/// Compiles and reads a source through the public front end and the strict
+/// reader; every refusal is returned, never raised.
 fn try_compile_and_read(name: &str, source: &str) -> Result<Value, Refusal> {
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
@@ -464,6 +479,7 @@ fn assert_producers(case: &Case, catalog: &BTreeSet<String>, package: &Value) {
 }
 
 /// How a listed entry's probe is judged.
+#[derive(Clone, Copy)]
 enum Detect {
     /// The emitted package applies this catalog operation.
     Operation(&'static str),
@@ -474,6 +490,7 @@ enum Detect {
 }
 
 /// What the probe source of an entry must do today.
+#[derive(Clone, Copy)]
 enum Expect {
     /// The source is admitted and does not emit the item.
     Admitted,
@@ -494,14 +511,16 @@ enum Expect {
 }
 
 /// A checked-in source that must not yet produce what its entry names.
+#[derive(Clone, Copy)]
 struct Probe {
     source: &'static str,
     detect: Detect,
     expect: Expect,
 }
 
-/// One thing the language cannot yet produce, with the open tickets that
-/// own it. Keys are ticket keys only; no hashes.
+/// One thing the language cannot yet produce, with the tickets that own it.
+/// Keys are ticket keys only; no hashes.
+#[derive(Clone, Copy)]
 struct Unproduced {
     /// A catalog operation identity, a node form `tag/form`, or one of
     /// `FEATURES`.
@@ -513,6 +532,8 @@ struct Unproduced {
 /// The ids that name neither a catalog operation nor a node form.
 const FEATURES: &[&str] = &[
     "source-declared-object-navigation",
+    "source-declared-object-reference-equality",
+    "source-declared-object-reaches-field",
     "float-record-equality",
     "float-tuple-equality",
     "float-union-equality",
@@ -615,6 +636,33 @@ const UNPRODUCED: &[Unproduced] = &[
             expect: Expect::Refused {
                 stage: "admit",
                 cause: "InvalidSemanticGraph",
+            },
+        },
+    },
+    // `reference.eq` and `model.reaches_field` have cases over domain package
+    // declarations; the same operations over a source-declared object do not
+    // reach an admitted package.
+    Unproduced {
+        id: "source-declared-object-reference-equality",
+        keys: &["QSL-1880"],
+        probe: Probe {
+            source: include_str!("../../cases/type-operators/reference-equality-accepted.native"),
+            detect: Detect::Operation("filament.op.reference.eq"),
+            expect: Expect::Refused {
+                stage: "admit",
+                cause: "OperatorIneligible",
+            },
+        },
+    },
+    Unproduced {
+        id: "source-declared-object-reaches-field",
+        keys: &["QSL-1880"],
+        probe: Probe {
+            source: probe_source!("probe-reaches-field"),
+            detect: Detect::Operation("filament.op.model.reaches_field"),
+            expect: Expect::Refused {
+                stage: "admit",
+                cause: "OperatorIneligible",
             },
         },
     },
@@ -1329,16 +1377,6 @@ const UNPRODUCED: &[Unproduced] = &[
     },
 ];
 
-fn is_ticket_key(key: &str) -> bool {
-    let Some((team, number)) = key.split_once('-') else {
-        return false;
-    };
-    !team.is_empty()
-        && team.bytes().all(|byte| byte.is_ascii_uppercase())
-        && !number.is_empty()
-        && number.bytes().all(|byte| byte.is_ascii_digit())
-}
-
 /// Whether an emitted package holds what a probe's detector looks for.
 fn detected(detect: &Detect, package: &Value) -> bool {
     match detect {
@@ -1391,24 +1429,26 @@ fn compiled_cases() -> &'static [(&'static Case, Value)] {
     })
 }
 
-/// Every operation each checked-in case emits.
-fn represented_operations() -> BTreeSet<String> {
+/// The operation identities and node forms an emitted package holds.
+fn emitted_items(package: &Value) -> BTreeSet<String> {
+    let mut items = emitted_operations(package);
+    items.extend(emitted_forms(package));
+    items
+}
+
+/// Every operation identity and node form the checked-in cases emit.
+fn produced() -> BTreeSet<String> {
     compiled_cases()
         .iter()
-        .flat_map(|(_, package)| emitted_operations(package))
+        .flat_map(|(_, package)| emitted_items(package))
         .collect()
 }
 
-/// Every node form each checked-in case emits.
-fn represented_forms() -> BTreeSet<String> {
-    compiled_cases()
-        .iter()
-        .flat_map(|(_, package)| emitted_forms(package))
-        .collect()
-}
-
-fn listed_ids() -> BTreeSet<String> {
-    UNPRODUCED.iter().map(|entry| entry.id.to_owned()).collect()
+/// Every catalog operation identity and every node form.
+fn published() -> BTreeSet<String> {
+    let mut published = catalog_identities();
+    published.extend(node_forms());
+    published
 }
 
 /// Every FR-322 node form as `tag/form`: the strict reader's closed
@@ -1420,67 +1460,124 @@ fn node_forms() -> BTreeSet<String> {
         .collect()
 }
 
-/// The catalog operations that no case emits and no list entry owns. This is
-/// the logic of `every_catalog_operation_has_a_source`; the negative test
-/// calls it too.
-fn operations_without_source(catalog: &BTreeSet<String>) -> BTreeSet<String> {
-    let represented = represented_operations();
-    let listed = listed_ids();
-    catalog
-        .iter()
-        .filter(|identity| !represented.contains(*identity) && !listed.contains(*identity))
-        .cloned()
-        .collect()
+/// Why a run over the unproduced list fails.
+#[derive(Debug, PartialEq, Eq)]
+enum ListFailure {
+    /// A published operation or node form that no case produces and no entry
+    /// lists.
+    Unlisted(String),
+    /// A listed operation or node form that a case produces.
+    Stale(&'static str),
+    /// A listed entry with no key (`None`), or with a key that is empty or no
+    /// ticket key.
+    BadKey {
+        id: &'static str,
+        key: Option<&'static str>,
+    },
+    /// A listed id that names no published item and no feature.
+    Unknown(&'static str),
+    /// An id listed more than once.
+    Duplicate(&'static str),
+    /// Full qualification was requested while these ids remain listed.
+    Unqualified(Vec<&'static str>),
 }
 
-/// The FR-322 node forms that no case emits and no list entry owns.
-fn forms_without_source() -> BTreeSet<String> {
-    let represented = represented_forms();
-    let listed = listed_ids();
-    node_forms()
+/// The decision over one run of the unproduced list.
+struct ListRun {
+    /// One line for each listed entry, printed by every run.
+    summary: Vec<String>,
+    /// Everything that fails the run.
+    failures: Vec<ListFailure>,
+}
+
+/// Checks `list` as a whole against what is `published` and what the cases
+/// `produced`. A listed entry is summarised and passes; under
+/// `full_qualification` any remaining entry fails the run.
+fn run_list(
+    list: &[Unproduced],
+    published: &BTreeSet<String>,
+    produced: &BTreeSet<String>,
+    full_qualification: bool,
+) -> ListRun {
+    let mut listed = BTreeSet::new();
+    let mut summary = Vec::new();
+    let mut failures = Vec::new();
+    for entry in list {
+        let id = entry.id;
+        summary.push(format!(
+            "pending ({}): catalog-source: {id}",
+            entry.keys.join(", ")
+        ));
+        if !listed.insert(id) {
+            failures.push(ListFailure::Duplicate(id));
+        }
+        if !published.contains(id) && !FEATURES.contains(&id) {
+            failures.push(ListFailure::Unknown(id));
+        }
+        if produced.contains(id) {
+            failures.push(ListFailure::Stale(id));
+        }
+        if entry.keys.is_empty() {
+            failures.push(ListFailure::BadKey { id, key: None });
+        }
+        failures.extend(
+            entry
+                .keys
+                .iter()
+                .filter(|key| !is_ticket_key(key))
+                .map(|key| ListFailure::BadKey { id, key: Some(key) }),
+        );
+    }
+    failures.extend(
+        published
+            .iter()
+            .filter(|item| !produced.contains(*item) && !listed.contains(item.as_str()))
+            .map(|item| ListFailure::Unlisted(item.clone())),
+    );
+    if full_qualification && !list.is_empty() {
+        failures.push(ListFailure::Unqualified(
+            list.iter().map(|entry| entry.id).collect(),
+        ));
+    }
+    ListRun { summary, failures }
+}
+
+/// The members of `universe` that no case emits and no list entry owns.
+fn without_source(universe: &BTreeSet<String>) -> BTreeSet<String> {
+    run_list(UNPRODUCED, universe, &produced(), false)
+        .failures
         .into_iter()
-        .filter(|form| !represented.contains(form) && !listed.contains(form))
+        .filter_map(|failure| match failure {
+            ListFailure::Unlisted(item) => Some(item),
+            ListFailure::Stale(_)
+            | ListFailure::BadKey { .. }
+            | ListFailure::Unknown(_)
+            | ListFailure::Duplicate(_)
+            | ListFailure::Unqualified(_) => None,
+        })
         .collect()
 }
 
 /// Every `.native` source under the case, corpus and example directories that
 /// the strict reader admits, with its emitted package.
 fn corpus_packages() -> &'static [(String, Value)] {
-    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, out);
-            } else if path
-                .extension()
-                .is_some_and(|extension| extension == "native")
-            {
-                out.push(path);
-            }
-        }
-    }
     static CORPUS: std::sync::OnceLock<Vec<(String, Value)>> = std::sync::OnceLock::new();
     CORPUS.get_or_init(|| {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-        let mut files = Vec::new();
-        for dir in ["fsl-conformance/cases", "tests/corpus", "examples"] {
-            walk(&root.join(dir), &mut files);
-        }
-        files.sort();
-        files
-            .into_iter()
-            .filter_map(|file| {
-                let source = std::fs::read_to_string(&file).ok()?;
-                let name = file.strip_prefix(&root).ok()?.display().to_string();
-                let package = std::panic::catch_unwind(|| try_compile_and_read(&name, &source))
-                    .ok()?
-                    .ok()?;
-                Some((name, package))
-            })
-            .collect()
+        let root = repository_root();
+        checked_in_files(
+            &["fsl-conformance/cases", "tests/corpus", "examples"],
+            "native",
+        )
+        .into_iter()
+        .filter_map(|file| {
+            let source = std::fs::read_to_string(&file).expect("a checked-in source reads");
+            let name = file.strip_prefix(&root).ok()?.display().to_string();
+            let package = std::panic::catch_unwind(|| try_compile_and_read(&name, &source))
+                .ok()?
+                .ok()?;
+            Some((name, package))
+        })
+        .collect()
     })
 }
 
@@ -1506,7 +1603,7 @@ fn a_wrong_expected_operation_names_the_source_case_and_identity() {
 
 /// The assertion of `every_catalog_operation_has_a_source`, over any catalog.
 fn assert_catalog_has_sources(catalog: &BTreeSet<String>) {
-    let gaps = operations_without_source(catalog);
+    let gaps = without_source(catalog);
     assert!(
         gaps.is_empty(),
         "catalog operations with neither a source case nor an unproduced entry: {gaps:?}"
@@ -1536,7 +1633,7 @@ fn every_catalog_operation_has_a_source_and_is_admitted() {
 #[test]
 #[trace("FR-350", "FSpec-FR-322")]
 fn every_node_form_has_a_source() {
-    let gaps = forms_without_source();
+    let gaps = without_source(&node_forms());
     assert!(
         gaps.is_empty(),
         "FR-322 node forms with neither a source case nor an unproduced entry: {gaps:?}"
@@ -1608,12 +1705,11 @@ fn listed_entries_are_still_unproduced() {
     );
 }
 
-/// Pinned probes exist where the language has syntax; the rest are
-/// corpus-guard-only. The count is stated so that dropping a probe is a
-/// visible change.
+/// An unprobed entry carries no source, and every other entry has the source
+/// its expectation is judged on.
 #[test]
 #[trace("FR-350")]
-fn entries_without_a_probe_say_why() {
+fn a_probe_has_a_source_exactly_when_it_is_judged() {
     for entry in UNPRODUCED {
         match &entry.probe.expect {
             Expect::Unprobed => assert!(
@@ -1628,23 +1724,6 @@ fn entries_without_a_probe_say_why() {
             ),
         }
     }
-}
-
-/// No checked-in case emits a listed operation or form.
-#[test]
-#[trace("FR-350", "FSpec-FR-322")]
-fn no_case_emits_a_listed_id() {
-    let operations = represented_operations();
-    let forms = represented_forms();
-    let overlap: Vec<_> = UNPRODUCED
-        .iter()
-        .filter(|entry| operations.contains(entry.id) || forms.contains(entry.id))
-        .map(|entry| entry.id)
-        .collect();
-    assert!(
-        overlap.is_empty(),
-        "listed ids that a case emits: {overlap:?}"
-    );
 }
 
 /// The corpus-wide guard: no `.native` source under the case, corpus and
@@ -1674,45 +1753,220 @@ fn no_source_emits_a_listed_id() {
     );
 }
 
-/// A listed id names a catalog operation, a node form or a known feature.
+/// FR-350-AC-24, FR-350-AC-25: every published catalog operation and node form
+/// is emitted by a checked-in native case or is listed with a ticket key. The
+/// listed entries are printed; `FSPEC_FULL_QUALIFICATION` fails the run while
+/// any of them remains.
 #[test]
-#[trace("FR-350", "FSpec-FR-322")]
-fn listed_ids_name_something_real() {
+#[trace("TC-3218", "FR-350-AC-24", "FR-350-AC-25")]
+fn conformance_catalog_source_coverage() {
     let catalog = catalog_identities();
-    let forms = node_forms();
-    let stale: Vec<_> = UNPRODUCED
-        .iter()
-        .map(|entry| entry.id)
-        .filter(|id| !catalog.contains(*id) && !forms.contains(*id) && !FEATURES.contains(id))
-        .collect();
-    assert!(stale.is_empty(), "listed ids that name nothing: {stale:?}");
-    let duplicated = UNPRODUCED.len() - listed_ids().len();
-    assert_eq!(duplicated, 0, "an id is listed twice");
-}
-
-#[test]
-#[trace("FR-350", "FSpec-FR-322")]
-fn listed_entries_carry_ticket_keys() {
-    let keyless: Vec<_> = UNPRODUCED
-        .iter()
-        .filter(|entry| entry.keys.is_empty() || !entry.keys.iter().all(|key| is_ticket_key(key)))
-        .map(|entry| entry.id)
-        .collect();
+    for (case, package) in compiled_cases() {
+        assert_producers(case, &catalog, package);
+    }
+    let run = run_list(
+        UNPRODUCED,
+        &published(),
+        &produced(),
+        std::env::var_os("FSPEC_FULL_QUALIFICATION").is_some(),
+    );
+    for line in &run.summary {
+        println!("{line}");
+    }
     assert!(
-        keyless.is_empty(),
-        "listed entries without a well-formed ticket key: {keyless:?}"
+        run.failures.is_empty(),
+        "the unproduced list fails the run: {:#?}",
+        run.failures
     );
 }
 
-/// The control for the key check: an entry without a key is rejected.
+/// The entry of the checked-in list for `id`.
+fn listed(id: &str) -> Unproduced {
+    *UNPRODUCED
+        .iter()
+        .find(|entry| entry.id == id)
+        .unwrap_or_else(|| panic!("{id} is listed"))
+}
+
+/// An entry with no probe, for altering a copy of the list.
+fn unprobed(id: &'static str) -> Unproduced {
+    Unproduced {
+        id,
+        keys: &["QSL-2051"],
+        probe: Probe {
+            source: "",
+            detect: Detect::Admitted,
+            expect: Expect::Unprobed,
+        },
+    }
+}
+
+/// A copy of the checked-in list with `entry` added.
+fn list_with(entry: Unproduced) -> Vec<Unproduced> {
+    let mut list = UNPRODUCED.to_vec();
+    list.push(entry);
+    list
+}
+
+/// A copy of the checked-in list without `id`.
+fn list_without(id: &str) -> Vec<Unproduced> {
+    assert_eq!(listed(id).id, id);
+    UNPRODUCED
+        .iter()
+        .filter(|entry| entry.id != id)
+        .copied()
+        .collect()
+}
+
+/// A copy of the checked-in list with the keys of `id` replaced.
+fn list_rekeyed(id: &str, keys: &'static [&'static str]) -> Vec<Unproduced> {
+    assert_eq!(listed(id).id, id);
+    UNPRODUCED
+        .iter()
+        .map(|entry| {
+            if entry.id == id {
+                Unproduced { keys, ..*entry }
+            } else {
+                *entry
+            }
+        })
+        .collect()
+}
+
+/// FR-350-AC-24: an item leaves the list only when a case covers it. The
+/// `ordered-set-drop-first` case is taken away and its operation listed in its
+/// place; dropping the entry without the case then fails, and so does keeping
+/// the entry once the case is back.
+#[test]
+#[trace("TC-3218", "FR-350-AC-24")]
+fn the_unproduced_list_shrinks_only_by_a_covering_case() {
+    const ITEM: &str = "filament.op.collection.ordered_set.drop_first";
+    let without_case: BTreeSet<String> = compiled_cases()
+        .iter()
+        .filter(|(case, _)| case.name != "ordered-set-drop-first")
+        .flat_map(|(_, package)| emitted_items(package))
+        .collect();
+    let with_case = produced();
+    let listing_it = list_with(unprobed(ITEM));
+    let failures = |list: &[Unproduced], produced: &BTreeSet<String>| {
+        run_list(list, &published(), produced, false).failures
+    };
+
+    assert_eq!(failures(&listing_it, &without_case), []);
+    assert_eq!(
+        failures(UNPRODUCED, &without_case),
+        [ListFailure::Unlisted(ITEM.to_owned())]
+    );
+    assert_eq!(
+        failures(&listing_it, &with_case),
+        [ListFailure::Stale(ITEM)]
+    );
+    assert_eq!(failures(UNPRODUCED, &with_case), []);
+}
+
+/// FR-350-AC-25: removing the entry of an unproduced item, listing a produced
+/// one, and blanking or garbling a key each fail the run, naming the item.
+#[test]
+#[trace("TC-3218", "FR-350-AC-25")]
+fn each_alteration_of_the_unproduced_list_fails_naming_the_entry() {
+    const OPERATION: &str = "filament.op.collection.index";
+    const FORM: &str = "extension/extension_form";
+    let published = published();
+    let produced = produced();
+    let failures = |list: &[Unproduced]| run_list(list, &published, &produced, false).failures;
+
+    assert_eq!(failures(UNPRODUCED), []);
+    for removed in [OPERATION, FORM] {
+        assert_eq!(
+            failures(&list_without(removed)),
+            [ListFailure::Unlisted(removed.to_owned())]
+        );
+    }
+    for stale in ["filament.op.boolean.not", "composite_type/option"] {
+        assert_eq!(
+            failures(&list_with(unprobed(stale))),
+            [ListFailure::Stale(stale)]
+        );
+    }
+    assert_eq!(
+        failures(&list_rekeyed(OPERATION, &[])),
+        [ListFailure::BadKey {
+            id: OPERATION,
+            key: None
+        }]
+    );
+    let malformed: [&'static [&'static str]; 4] =
+        [&[""], &["IR-"], &["ir-1491"], &["cd0c8ef67e5d"]];
+    for keys in malformed {
+        assert_eq!(
+            failures(&list_rekeyed(FORM, keys)),
+            [ListFailure::BadKey {
+                id: FORM,
+                key: Some(keys[0])
+            }]
+        );
+    }
+    assert_eq!(
+        failures(&list_with(unprobed("filament.op.conformance.nonexistent"))),
+        [ListFailure::Unknown("filament.op.conformance.nonexistent")]
+    );
+    assert_eq!(
+        failures(&list_with(listed(OPERATION))),
+        [ListFailure::Duplicate(OPERATION)]
+    );
+}
+
+/// FR-350-AC-25: a listed entry passes the default run and is in its summary;
+/// full qualification fails while any entry remains, and passes an empty list.
+#[test]
+#[trace("TC-3218", "FR-350-AC-25")]
+fn a_listed_entry_is_summarised_and_fails_only_full_qualification() {
+    let list = [
+        listed("filament.op.collection.index"),
+        listed("float-record-equality"),
+    ];
+    let published = BTreeSet::from(["filament.op.collection.index".to_owned()]);
+    let nothing = BTreeSet::new();
+    let summary = [
+        "pending (IR-1491): catalog-source: filament.op.collection.index",
+        "pending (IR-1320, STD-654): catalog-source: float-record-equality",
+    ];
+
+    let default_run = run_list(&list, &published, &nothing, false);
+    assert_eq!(default_run.summary, summary);
+    assert_eq!(default_run.failures, []);
+
+    let full_run = run_list(&list, &published, &nothing, true);
+    assert_eq!(full_run.summary, summary);
+    assert_eq!(
+        full_run.failures,
+        [ListFailure::Unqualified(vec![
+            "filament.op.collection.index",
+            "float-record-equality",
+        ])]
+    );
+
+    assert_eq!(run_list(&[], &nothing, &nothing, true).failures, []);
+}
+
+/// Two different documents declaring one identity leave it unsupplied, in
+/// either order; a repeated document supplies it once.
 #[test]
 #[trace("FR-350")]
-fn an_entry_without_a_key_or_with_a_hash_is_rejected() {
-    assert!(is_ticket_key("IR-1491"));
-    assert!(!is_ticket_key(""));
-    assert!(!is_ticket_key("IR-"));
-    assert!(!is_ticket_key("cd0c8ef67e5d"));
-    assert!(!is_ticket_key("ir-1491"));
+fn an_identity_two_documents_declare_is_not_pooled() {
+    let plain: &[u8] = include_bytes!("../../../tests/fixtures/spine-model.semantic-ir.json");
+    let related: &[u8] =
+        include_bytes!("../../../tests/fixtures/spine-model-relationship.semantic-ir.json");
+    assert_ne!(plain, related);
+
+    for alone in [plain, related] {
+        let pool = pool_of([alone, alone]);
+        assert_eq!(pool.keys().collect::<Vec<_>>(), ["acme/orders"]);
+        assert_eq!(pool["acme/orders"], alone);
+    }
+    assert!(pool_of([plain, related]).is_empty());
+    assert!(pool_of([related, plain, plain]).is_empty());
+    assert!(!model_pool().contains_key("acme/orders"));
 }
 
 /// The named unproduced owners are all listed with their keys.
@@ -1736,9 +1990,7 @@ fn the_named_unproduced_owners_are_listed_with_their_keys() {
 #[test]
 #[trace("FR-350")]
 fn listed_keys_are_among_the_filed_set() {
-    const FILED: &[&str] = &[
-        "IR-1491", "IR-1492", "QSL-1880", "QSL-1904", "IR-1320", "STD-654",
-    ];
+    const FILED: &[&str] = &["IR-1491", "IR-1492", "QSL-1880", "IR-1320", "STD-654"];
     let outside: Vec<_> = UNPRODUCED
         .iter()
         .flat_map(|entry| entry.keys.iter().map(move |key| (entry.id, *key)))
