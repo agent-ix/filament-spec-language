@@ -3792,7 +3792,7 @@ impl<'a> Typer<'a> {
     ) -> Result<Step<'e, 'r>, CheckRefusal> {
         match frame.value.take() {
             None => {
-                let slot = self.bind_declared(
+                let slot = self.bind_let_declared(
                     frame.name,
                     frame
                         .annotation
@@ -3800,7 +3800,6 @@ impl<'a> Typer<'a> {
                         .unwrap_or(&typed.value_type)
                         .clone(),
                     &frame.location,
-                    LocalKind::Bound,
                     Some((&frame.location, 0)),
                 )?;
                 if self.lowers_as_integer(&typed) {
