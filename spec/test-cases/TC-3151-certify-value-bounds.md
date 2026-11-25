@@ -55,8 +55,9 @@ FR-1042-AC-27 and FR-203-AC-9.
     `ranking` row for the state it leaves out, and offer EN-5 a certificate
     that leaves one out; over the bounded base change a named rank of the
     subset.
-15. Over FR-1043-AC-2's model offer FR-1042-AC-27's claim-side documents of
-    the wrong kind, over the whole graph and naming the initial key alone.
+15. Over the cyclic `link` chain's measure claims, `probability` and `quantile` in
+    both directions, offer FR-1042-AC-27's claim-side documents of the wrong
+    kind, over the whole graph and naming the initial key alone.
 
 Tag the tests `#[trace("TC-3151", "FR-1042-AC-n")]`.
 

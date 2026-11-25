@@ -1495,3 +1495,38 @@ fn a_claim_side_measure_bound_of_the_wrong_kind_is_rejected() {
         }
     }
 }
+
+/// Only a `shifted` payoff and a comparison event, with no fairness set, have
+/// a part a `lower` shows: a `fraction` `lower`, and a fair claim's, that
+/// names the initial key alone stays stopped at `max_states`.
+#[trace("TC-3151")]
+#[test]
+fn a_fraction_or_fair_lower_over_a_stopped_graph_stays_stopped() {
+    let fraction = likely(
+        "ev",
+        "every scheduler",
+        "mean of (fraction holds(m.delivered) over [0,2]) >= rational(1,10)",
+    );
+    let fair = likely(
+        "ev",
+        "every scheduler fair weak Msg::send_a",
+        "probability >= 0.3 [steps from holds(true) until holds(m.delivered) within 4 <= 3]",
+    );
+    for source in [fraction, fair] {
+        let whole = measure_bound(&source, "lower");
+        let initial = document(&whole)["ranking"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .max_by_key(|row| row["rank"].as_u64())
+            .expect("a ranked initial key")["state"]
+            .clone();
+        let alone = edit(&whole, |doc| {
+            keep_rows(doc, &[&initial]);
+            set(doc, "values", &initial, "value", rational(0, 1));
+        });
+        // Over the whole graph the document is read and misses the threshold.
+        rejected(&within(&alone, 100), "threshold-missed", at_key(&initial));
+        stopped_at_max_states(&within(&alone, 1), 1);
+    }
+}
