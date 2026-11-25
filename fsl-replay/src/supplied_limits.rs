@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! The strict wire reader of `limits.supplied` (FSpec FR-323), shared by the
 //! replay request and the command request.
 

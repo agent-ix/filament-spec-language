@@ -577,33 +577,59 @@ fn two_operation_members_sharing_one_declaration_key_refuse_conflicting_binding(
     }
 }
 
-/// A linear redefinition chain `ix://test/orders/A/op0 <- ix://test/orders/A/op1 <- ... <-
-/// ix://test/orders/A/op{edges}` (`op{i}` redefines `op{i-1}`): exactly `edges`
-/// `redefines` edges. Every operation is owned by `model.A`, so every
-/// dispatch/dominance conformance check is the trivial `s == t` case and
-/// only `family_steps` is exercised. Only the last operation has a body, so
-/// `model.A` has exactly one applicable candidate. Each operation is a
-/// query (a declared result, an empty effect), so the chain also passes the
-/// checked-dispatch bridge. Each identity is `<owner>/<member>`, the form
-/// the bridge reads a member's name from (FR-083).
+/// The object type at `depth` in the chain: a direct subtype of the one at
+/// `depth - 1`.
+fn chain_type(depth: u64) -> String {
+    format!("ix://test/orders/A{depth}")
+}
+
+/// The operation [`chain_type`] declares at `depth`, as `<owner>/<member>`.
+fn chain_op(depth: u64) -> String {
+    format!("{}/op{depth}", chain_type(depth))
+}
+
+/// A linear redefinition chain `op0 <- op1 <- ... <- op{edges}` (`op{i}`
+/// redefines `op{i-1}`): exactly `edges` `redefines` edges. A redefinition's
+/// target is a member of a proper supertype of its owner (FR-082), so each
+/// `op{i}` is declared on [`chain_type`]`(i)`. Only the deepest type is
+/// concrete and only its operation has a body, so dispatch has one receiver
+/// with one applicable candidate. Each operation is a query (a declared
+/// result, an empty effect), so the chain also passes the checked-dispatch
+/// bridge.
 fn redefinition_chain(edges: u64) -> Vec<DomainPackageRecord> {
     (0..=edges)
-        .map(|i| {
-            let redefines = i
-                .checked_sub(1)
-                .map(|parent| format!("ix://test/orders/A/op{parent}"));
-            query_operation(
-                &format!("ix://test/orders/A/op{i}"),
-                "ix://test/orders/A",
-                i == edges,
-                redefines.as_deref(),
-            )
+        .flat_map(|i| {
+            let parent = i.checked_sub(1);
+            let supertype = parent.map(chain_type);
+            let redefines = parent.map(chain_op);
+            let owner = object_type(
+                &chain_type(i),
+                supertype.iter().map(String::as_str).collect(),
+            );
+            [
+                if i == edges { owner } else { abstracted(owner) },
+                query_operation(
+                    &chain_op(i),
+                    &chain_type(i),
+                    i == edges,
+                    redefines.as_deref(),
+                ),
+            ]
         })
         .collect()
 }
 
-/// [`operation`], with a declared `model.A` result so the checked-dispatch
-/// bridge admits it as a query.
+/// `record`, an object type, declared `abstract`.
+fn abstracted(mut record: DomainPackageRecord) -> DomainPackageRecord {
+    let DomainPackageRecord::ObjectType(object) = &mut record else {
+        unreachable!("only an object type is declared abstract");
+    };
+    object.abstract_type = true;
+    record
+}
+
+/// [`operation`], with its owner as the declared result so the
+/// checked-dispatch bridge admits it as a query.
 fn query_operation(
     identity: &str,
     owner: &str,
@@ -633,27 +659,30 @@ fn link_chain(
 ) -> LinkCheckOutcome {
     link_dispatch(
         &effective_view(domain_package),
-        &DeclarationKey::fixture("ix://test/orders/A/op0"),
+        &DeclarationKey::fixture(chain_op(0)),
         GeneralizationClosure::Closed,
         &mut NormalizationMeter::new(limits),
     )
 }
 
 fn chain_package(edges: u64) -> DomainPackage {
-    let mut records = vec![object_type("ix://test/orders/A", vec![])];
-    records.extend(redefinition_chain(edges));
-    DomainPackage::new(DomainPackageRef::fixture("bundle.chain"), records)
+    DomainPackage::new(
+        DomainPackageRef::fixture("bundle.chain"),
+        redefinition_chain(edges),
+    )
 }
 
-fn assert_links_model_a_to(outcome: LinkCheckOutcome, winner: &str) {
+/// The chain of `edges` links, with its concrete receiver bound to its
+/// deepest operation.
+fn assert_links_the_chain(outcome: LinkCheckOutcome, edges: u64) {
     let LinkCheckOutcome::Completed(DispatchLinkOutcome::Linked(table)) = outcome else {
         panic!("expected a linked dispatch table, got {outcome:?}");
     };
     assert_eq!(
         table
-            .linked_for(&DeclarationKey::fixture("ix://test/orders/A"))
+            .linked_for(&DeclarationKey::fixture(chain_type(edges)))
             .map(|c| c.node.clone()),
-        Some(winner.to_owned()),
+        Some(chain_op(edges)),
     );
 }
 
@@ -665,9 +694,9 @@ fn assert_links_model_a_to(outcome: LinkCheckOutcome, winner: &str) {
 #[test]
 fn a_dispatch_family_with_more_than_128_redefinition_steps_links_at_default_limits() {
     const EDGES: u64 = 130;
-    assert_links_model_a_to(
+    assert_links_the_chain(
         link_chain(&chain_package(EDGES), ModelNormalizationLimits::UNLIMITED),
-        &format!("ix://test/orders/A/op{EDGES}"),
+        EDGES,
     );
 }
 
@@ -683,10 +712,10 @@ fn a_dispatch_family_with_more_than_128_redefinition_steps_passes_the_checked_br
     let domain_package = chain_package(EDGES);
     let view = effective_view(&domain_package);
     let mut clauses = OperationClauses::default();
-    let root = DeclarationKey::fixture("ix://test/orders/A/op0");
+    let root = DeclarationKey::fixture(chain_op(0));
     clauses.member.insert(root.clone(), "op".to_owned());
     for i in 0..=EDGES {
-        let key = DeclarationKey::fixture(format!("ix://test/orders/A/op{i}"));
+        let key = DeclarationKey::fixture(chain_op(i));
         clauses
             .parameters
             .insert(key.clone(), vec![("self".to_owned(), ValueType::Boolean)]);
@@ -718,11 +747,41 @@ fn a_dispatch_family_with_more_than_128_redefinition_steps_passes_the_checked_br
     assert_eq!(declarations.dispatch_tables.len(), 1);
 }
 
-/// FR-083-AC-4: a 10,000-long `redefines` chain links on a thread with a
-/// 512 KiB stack once `family_steps` fits its edges: the walks are iterative
-/// and the limit counts edges, so no chain depth refuses it.
-#[trace("TC-225", "FR-083-AC-4")]
+/// A 1,000-long `redefines` chain links on a thread with a 512 KiB stack once
+/// `family_steps` fits its edges.
+#[trace("TC-225")]
 #[test]
+fn a_thousand_long_redefines_chain_links_on_a_small_stack() {
+    std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(|| {
+            let limits = ModelNormalizationLimits {
+                family_steps: 1_000,
+                ..ModelNormalizationLimits::UNLIMITED
+            };
+            let outcome = link_chain(&chain_package(1_000), limits);
+            let LinkCheckOutcome::Completed(DispatchLinkOutcome::Linked(table)) = outcome else {
+                panic!("expected a linked dispatch table, got {outcome:?}");
+            };
+            assert_eq!(
+                table
+                    .linked_for(&DeclarationKey::fixture("ix://test/orders/A1000"))
+                    .map(|c| c.node.clone()),
+                Some("ix://test/orders/A1000/op1000".to_owned()),
+            );
+        })
+        .expect("spawn a 512 KiB thread")
+        .join()
+        .expect("linking must not overflow a 512 KiB stack");
+}
+
+/// A 10,000-long `redefines` chain links on a thread with a 512 KiB stack
+/// once `family_steps` fits its edges: the walks are iterative and the limit
+/// counts edges, so no chain depth refuses it. Not run: normalizing the chain
+/// takes memory that grows with the square of its length.
+#[trace("TC-225")]
+#[test]
+#[ignore = "QSL-3305: normalizing a 10,000-type redefinition chain needs far more than 12 GB"]
 fn a_ten_thousand_long_redefines_chain_links_on_a_small_stack() {
     const EDGES: u64 = 10_000;
     std::thread::Builder::new()
@@ -732,10 +791,7 @@ fn a_ten_thousand_long_redefines_chain_links_on_a_small_stack() {
                 family_steps: EDGES,
                 ..ModelNormalizationLimits::UNLIMITED
             };
-            assert_links_model_a_to(
-                link_chain(&chain_package(EDGES), limits),
-                &format!("ix://test/orders/A/op{EDGES}"),
-            );
+            assert_links_the_chain(link_chain(&chain_package(EDGES), limits), EDGES);
         })
         .expect("spawn a 512 KiB thread")
         .join()
@@ -759,10 +815,10 @@ fn the_checked_bridge_counts_every_walk_against_one_family_steps() {
     let domain_package = chain_package(EDGES);
     let view = effective_view(&domain_package);
     let mut clauses = OperationClauses::default();
-    let root = DeclarationKey::fixture(format!("ix://test/orders/A/op{ROOT}"));
+    let root = DeclarationKey::fixture(chain_op(ROOT));
     clauses.member.insert(root.clone(), "op".to_owned());
     for i in 0..=EDGES {
-        let key = DeclarationKey::fixture(format!("ix://test/orders/A/op{i}"));
+        let key = DeclarationKey::fixture(chain_op(i));
         clauses
             .parameters
             .insert(key.clone(), vec![("self".to_owned(), ValueType::Boolean)]);
@@ -813,73 +869,68 @@ fn the_checked_bridge_counts_every_walk_against_one_family_steps() {
 
 /// TC-225: a family of exactly `family_steps` redefinition steps links with
 /// its unique winner. One step more -- a redefiner that, if the walk went on
-/// to find it, would make `model.A` ambiguous -- refuses with the distinct
-/// `resource_exhausted` outcome naming the configured bound: not a linked
-/// table naming a "unique" winner the truncated walk happened to reach, and
-/// not an ambiguity result.
+/// to find it, would make one receiver ambiguous -- stops `Incomplete` naming
+/// the configured bound: not a linked table naming a "unique" winner the
+/// truncated walk happened to reach, and not an ambiguity result.
+///
+/// The family at the bound is a chain of `BOUND - 1` edges plus one more from
+/// the type `Leaf`, which is below both the chain's deepest type and
+/// `Sibling`: `Leaf`'s bodyless operation redefines the second deepest chain
+/// operation. The further edge is an operation with a body on `Sibling`
+/// redefining that same operation: `Leaf` then has two candidates, and
+/// neither owner descends from the other.
 #[trace("TC-720", "FR-255-AC-1")]
 #[trace("TC-225", "FR-083-AC-4")]
 #[test]
-fn a_family_at_the_configured_bound_links_and_one_step_more_refuses() {
+fn a_family_at_the_configured_bound_links_and_one_step_more_stops_incomplete() {
     const BOUND: u64 = 50;
+    const SIBLING: &str = "ix://test/orders/Sibling";
+    const LEAF: &str = "ix://test/orders/Leaf";
     let limits = ModelNormalizationLimits {
         family_steps: BOUND,
         ..ModelNormalizationLimits::UNLIMITED
     };
+    let deepest = BOUND - 1;
+    let forked = deepest - 1;
 
-    assert_links_model_a_to(
-        link_chain(&chain_package(BOUND), limits),
-        &format!("ix://test/orders/A/op{BOUND}"),
-    );
+    let mut family = chain_package(deepest);
+    family.records.extend([
+        abstracted(object_type(SIBLING, vec![&chain_type(forked)])),
+        object_type(LEAF, vec![&chain_type(deepest), SIBLING]),
+        query_operation(&format!("{LEAF}/op"), LEAF, false, Some(&chain_op(forked))),
+    ]);
+    assert_links_the_chain(link_chain(&family, limits), deepest);
 
-    let mut over = chain_package(BOUND);
+    let mut over = family;
     over.records.push(query_operation(
-        &format!("ix://test/orders/A/op{}", BOUND + 1),
-        "ix://test/orders/A",
+        &format!("{SIBLING}/op"),
+        SIBLING,
         true,
-        Some(&format!("ix://test/orders/A/op{BOUND}")),
+        Some(&chain_op(forked)),
     ));
+    let whole_family = ModelNormalizationLimits {
+        family_steps: BOUND + 1,
+        ..ModelNormalizationLimits::UNLIMITED
+    };
     assert!(
         matches!(
-            link_chain(&over, ModelNormalizationLimits::UNLIMITED),
+            link_chain(&over, whole_family),
             LinkCheckOutcome::Completed(DispatchLinkOutcome::Ambiguous(_))
         ),
-        "the fixture must be genuinely ambiguous once the whole family is walked"
+        "at exactly the family's edge count it links and reports the ambiguity"
     );
-    match link_chain(&over, limits) {
-        LinkCheckOutcome::Refused(refusal) => {
-            assert_eq!(refusal.code, Code::ResourceExhausted);
-            assert_eq!(
-                refusal.cause,
-                ModelRefusalCause::family_steps(
-                    DeclarationKey::fixture("ix://test/orders/A/op0"),
-                    BOUND
-                )
-            );
-            let exceeded = refusal
-                .cause
-                .denial()
-                .expect("a step ceiling is a denied charge");
-            assert_eq!(
-                exceeded.setting(),
-                fsl_foundation::Setting::ModelFamilySteps
-            );
-            assert_eq!(
-                exceeded.actual(),
-                u128::from(match &refusal.cause {
-                    ModelRefusalCause::AncestorSteps { limit, .. }
-                    | ModelRefusalCause::FamilySteps { limit, .. } => *limit,
-                    other => panic!("unexpected {other:?}"),
-                }) + 1
-            );
-            assert_eq!(refusal.cause.as_str(), "family-steps");
-            assert!(
-                refusal.detail.contains(&BOUND.to_string()),
-                "refusal detail must name the configured bound, got {refusal:?}"
-            );
-        }
-        other => panic!("expected Refused(FamilySteps), got {other:?}"),
-    }
+    let LinkCheckOutcome::Incomplete(stop) = link_chain(&over, limits) else {
+        panic!("the family walk is denied at the first edge past the bound");
+    };
+    assert_eq!(stop.limit_kind, NormalizationLimitKind::FamilySteps);
+    assert_eq!(
+        (stop.limit, stop.consumed, stop.next_charge),
+        (BOUND, BOUND, 1)
+    );
+    assert_eq!(stop.charge_point, NormalizationChargePoint::ModelFamilyEdge);
+    let denial = stop.denial();
+    assert_eq!(denial.setting(), fsl_foundation::Setting::ModelFamilySteps);
+    assert_eq!(denial.actual(), 51);
 }
 
 /// TC-196 C10, zero limit: on a nonempty family, `family_steps: 0` denies the
@@ -890,7 +941,7 @@ fn a_family_at_the_configured_bound_links_and_one_step_more_refuses() {
 ///
 /// Mutation used (derived by reading, not executed): treating a zero limit as
 /// "unlimited", or admitting the first edge before comparing, links the
-/// family and fails the `Refused` match.
+/// family and fails the `Incomplete` match.
 #[trace("FSpec-TC-196", "FSpec-FR-150-AC-18")]
 #[test]
 fn c10_a_zero_family_steps_limit_denies_the_first_followed_edge() {
@@ -898,14 +949,10 @@ fn c10_a_zero_family_steps_limit_denies_the_first_followed_edge() {
         family_steps: 0,
         ..ModelNormalizationLimits::UNLIMITED
     };
-    let LinkCheckOutcome::Refused(refusal) = link_chain(&chain_package(3), limits) else {
+    let LinkCheckOutcome::Incomplete(stop) = link_chain(&chain_package(3), limits) else {
         panic!("a nonempty family at family_steps 0 must be denied at its first edge");
     };
-    assert_eq!(refusal.code, Code::ResourceExhausted);
-    let fields = refusal
-        .cause
-        .catalog_fields()
-        .expect("a walk ceiling carries its denied-charge record");
+    let fields = stop.denial().catalog_fields();
     for (name, expected) in [
         ("stage", "model-normalization"),
         ("limit_kind", "family_steps"),

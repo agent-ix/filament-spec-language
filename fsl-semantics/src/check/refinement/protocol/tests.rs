@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-136 "Selecting the concrete protocol", "Coverage over a protocol
 //! subject" and "Order of the checks", and FR-214 (TC-541, TC-659): the S3
 //! check of a refinement whose step rows select a protocol clause, over

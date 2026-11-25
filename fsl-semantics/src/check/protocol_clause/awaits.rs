@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! An `await`'s own local checks (FSpec FR-466 "Per-operator checks" 2 and
 //! 6, FSpec FR-464 "Profiles and laws"): the awaited event is a `receive`,
 //! an `effect` or an `event`; `within` is a closed interval with
