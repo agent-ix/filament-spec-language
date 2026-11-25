@@ -2160,10 +2160,14 @@ fn hyper_product_closure_is_checked_before_a_projected_violation() {
         check_product_closure, product_state_key, ProductClosureCertificate, ProductClosureRequest,
     };
 
-    let declaration = crate::hyper_projected::aligned(&[])
+    let declaration = crate::hyper_projected_support::aligned(&[])
         .replace("v.l", "v.h")
         .replace("v.h @ a = v.h @ b", "v.h @ a != v.h @ b");
-    let world = World::busy(Vault::Busy, &crate::hyper_projected::IDLE, &declaration);
+    let world = World::busy(
+        Vault::Busy,
+        &crate::hyper_projected_support::IDLE,
+        &declaration,
+    );
     let subject = world.subject();
     let system = ModelSystem::new(subject.simulation.clone()).expect("subject");
     let systems = vec![&system; world.clause.quantifiers().len()];
@@ -2264,8 +2268,8 @@ fn hyper_product_closure_is_checked_before_a_projected_violation() {
         *state = serde_json::json!({"key": state.take()});
     }
     assert_eq!(wire, expected);
-    crate::probability_from_source::assert_valid(
-        &crate::probability_from_source::provider_definition("HyperProductStateLocus"),
+    crate::provider_schema_support::assert_valid(
+        &crate::provider_schema_support::provider_definition("HyperProductStateLocus"),
         &wire,
         "the missing target locus",
     );

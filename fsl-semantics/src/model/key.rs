@@ -270,7 +270,7 @@ pub struct RuleRef {
 }
 
 /// One derivation fact: `{ordinal, rule, inputs, parent}`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Fact {
     /// Zero-based decimal-string position in the declaration's `derivation` array.
     pub ordinal: usize,
@@ -286,7 +286,7 @@ pub struct Fact {
 /// One effective declaration's structural facts: the owner, the original
 /// producer key and the derivation. `owner_effective_type` is `None` for an
 /// effective type, `Some` for an effective member of that owning effective type.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct EffectiveDeclarationPreimage {
     /// `None` for an effective type; the owning effective type's identity for
     /// an effective member.

@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(
+    dead_code,
+    reason = "shared fixture support spans split integration test binaries"
+)]
 //! Shared harness for the `native-analyze/1` stubs (FR-620 to FR-636): writes
 //! a request document and its files into a fresh directory, hands it to the
 //! in-process command adapter (`fsl_command::command::analyze`) with an FSpec
@@ -389,7 +393,10 @@ pub(crate) fn order_protocol(receive: bool) -> String {
 pub(crate) fn analyze_under_replay_bytes(request: &Path, replay_input_bytes: u64) -> Run {
     analyze_under(
         request,
-        &[(fsl_foundation::Setting::ReplayInputBytes, replay_input_bytes)],
+        &[(
+            fsl_foundation::Setting::ReplayInputBytes,
+            replay_input_bytes,
+        )],
     )
 }
 

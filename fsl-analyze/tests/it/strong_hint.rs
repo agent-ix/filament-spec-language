@@ -21,10 +21,11 @@ use ix_trace_rs::trace;
 
 use crate::counter::{document, document_with_ranged_parameter, CONTRACT};
 use crate::example_units::{config_over, decide, receiver, violated, Versions, FORMULA, WHOLE};
-use crate::lasso_replay::{bounded_fixture, hints_of};
-use crate::liveness::{counter, is_zero};
-use crate::model_settle;
-use crate::model_settle::{envelope_at, request};
+use crate::lasso_replay::hints_of;
+use crate::lasso_support::bounded_fixture;
+use crate::liveness_support::{counter, is_zero};
+use crate::model_settle_support;
+use crate::model_settle_support::{envelope_at, request};
 use crate::units::World;
 
 fn is_two(version: i64) -> Option<bool> {
@@ -214,10 +215,10 @@ fn a_stutter_loop_a_bounded_prefix_and_a_deadlock_carry_no_hint() {
     assert_eq!(counterexample.prefix.len(), 1);
     assert!(hints_of(&bounded, counterexample, is_three).is_empty());
 
-    let case = model_settle::case(CONTRACT, &[0]);
-    let deadlock = model_settle::counterexample(&case);
+    let case = model_settle_support::case(CONTRACT, &[0]);
+    let deadlock = model_settle_support::counterexample(&case);
     assert_eq!(deadlock.kind, CounterexampleKind::Deadlock);
-    let replayed = model_settle::replay(&case, deadlock).expect("replays");
+    let replayed = model_settle_support::replay(&case, deadlock).expect("replays");
     assert!(matches!(
         replayed.settlement,
         ModelTraceSettlement::Reproduced { .. }
@@ -369,12 +370,12 @@ pub(crate) fn is_one(value: i64) -> Option<bool> {
 
 /// ADR-019 section 6's mutex over `Counter`'s ranged `setTo`, with
 /// `fairness`.
-pub(crate) fn mutex(fairness: &str) -> crate::liveness::Fixture {
+pub(crate) fn mutex(fairness: &str) -> crate::liveness_support::Fixture {
     let body = "pre Free using v on M::Counter::setTo { self.value = 0 and n >= 1 and n <= 2 }\n\
         post Takes using v on M::Counter::setTo { self.value = n }\n\
         pre Held using v on M::Counter::inc { self.value != 0 }\n\
         post Frees using v on M::Counter::inc { self.value = 0 }\n";
-    crate::liveness::fixture(
+    crate::liveness_support::fixture(
         document_with_ranged_parameter(),
         body,
         fairness,
@@ -471,7 +472,7 @@ fn operation_names(base_name: &str, reversed: bool, admitted: &str) -> (Vec<Stri
         })
         .collect();
     domain["populations"][0]["members"] = serde_json::json!(members);
-    let fixture = crate::liveness::fixture(
+    let fixture = crate::liveness_support::fixture(
         domain.to_string().into_bytes(),
         "",
         "",

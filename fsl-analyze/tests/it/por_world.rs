@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(
+    dead_code,
+    reason = "shared model fixture support spans split integration test binaries"
+)]
 //! The subjects of ADR-021 §7.5 and §7.6 and FR-156-AC-3 for the
 //! partial-order tests (`crate::partial_order`): a `test/por` domain package
 //! of object types with boolean and bounded-integer fields, references and
@@ -18,13 +22,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Meter, Value};
 use filament_semantic_value::checking::CheckingLimits;
-use fsl_analyze::model_check::{ModelCheckRefusal, ModelCheckRequest, check_model};
+use fsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
 use fsl_eval::automaton::translate;
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ModelSubject};
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimState, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
 use fsl_foundation::SourceIdentity;
 use fsl_package::CheckedPackage;
@@ -37,10 +41,10 @@ use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId, PackageDeclarat
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 use crate::counter::UNLIMITED;
-use crate::reduction_world::{ReplayUnit, clause_identity, replay_unit};
+use crate::reduction_world::{clause_identity, replay_unit, ReplayUnit};
 
 const PACKAGE: &str = "test/por";
 const BOOLEAN: &str = "ix://filament/native/Boolean";
@@ -1192,19 +1196,17 @@ pub(crate) fn deleting_any_job() -> Fixture {
 fn operation_over(owner: &str, name: &str, params: &[(&str, &str)], frame: &Json) -> Json {
     let mut node = operation(owner, name, None, frame);
     let identity = ident(&format!("{owner}/{name}"));
-    node["params"] = json!(
-        params
-            .iter()
-            .map(|(parameter, of)| {
-                let parameter_identity = format!("{identity}/{parameter}");
-                json!({
-                    "identity": parameter_identity, "name": parameter, "typeRef": type_ref(of),
-                    "presence": "required", "nullable": false, "defaultKind": "none",
-                    "multiplicity": one(), "origin": origin(&parameter_identity),
-                })
+    node["params"] = json!(params
+        .iter()
+        .map(|(parameter, of)| {
+            let parameter_identity = format!("{identity}/{parameter}");
+            json!({
+                "identity": parameter_identity, "name": parameter, "typeRef": type_ref(of),
+                "presence": "required", "nullable": false, "defaultKind": "none",
+                "multiplicity": one(), "origin": origin(&parameter_identity),
             })
-            .collect::<Vec<_>>()
-    );
+        })
+        .collect::<Vec<_>>());
     node
 }
 

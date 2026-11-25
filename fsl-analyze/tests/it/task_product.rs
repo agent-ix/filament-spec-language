@@ -148,7 +148,7 @@ fn fixed_work_release_completes_or_emits_a_deadline_miss() {
     assert_eq!(dispatched.identity.action, TaskTransitionAction::Dispatch);
     assert!(
         product
-            .delay(&dispatched.state, &crate::zone_search::exact(2, 1))
+            .delay(&dispatched.state, &crate::zone_support::exact(2, 1))
             .expect("source permits the larger time span")
             .is_none(),
         "time cannot pass the one-unit completion event"
@@ -156,9 +156,9 @@ fn fixed_work_release_completes_or_emits_a_deadline_miss() {
     let events = product
         .next_event_delays(&dispatched.state)
         .expect("task and source event boundaries");
-    assert!(events.contains(&crate::zone_search::exact(1, 1)));
+    assert!(events.contains(&crate::zone_support::exact(1, 1)));
     let elapsed = product
-        .delay(&dispatched.state, &crate::zone_search::exact(1, 1))
+        .delay(&dispatched.state, &crate::zone_support::exact(1, 1))
         .expect("source remains admissible")
         .expect("one millisecond is admissible");
     let completed = product
@@ -199,7 +199,7 @@ fn fixed_work_release_completes_or_emits_a_deadline_miss() {
         .next()
         .expect("ready job dispatches");
     let at_deadline = product
-        .delay(&dispatched.state, &crate::zone_search::exact(1, 1))
+        .delay(&dispatched.state, &crate::zone_support::exact(1, 1))
         .expect("source remains admissible")
         .expect("the deadline instant is admissible");
     let miss = product
@@ -209,22 +209,22 @@ fn fixed_work_release_completes_or_emits_a_deadline_miss() {
         .expect("deadline miss is an explicit product transition");
     assert_eq!(miss.identity.action, TaskTransitionAction::DeadlineMiss);
     assert_eq!(miss.identity.task, "command");
-    assert_eq!(miss.identity.demand, crate::zone_search::exact(2, 1));
+    assert_eq!(miss.identity.demand, crate::zone_support::exact(2, 1));
     assert!(miss.state.deadline_missed());
     let trace = TaskProductTrace {
         initial_state: 0,
         lasso_entry: None,
         steps: vec![
             TaskProductTraceStep {
-                delay: crate::zone_search::exact(0, 1),
+                delay: crate::zone_support::exact(0, 1),
                 transition: activated.transitions()[0].clone(),
             },
             TaskProductTraceStep {
-                delay: crate::zone_search::exact(0, 1),
+                delay: crate::zone_support::exact(0, 1),
                 transition: dispatched.transition(),
             },
             TaskProductTraceStep {
-                delay: crate::zone_search::exact(1, 1),
+                delay: crate::zone_support::exact(1, 1),
                 transition: miss.transition(),
             },
         ],
@@ -242,7 +242,7 @@ fn fixed_work_release_completes_or_emits_a_deadline_miss() {
                     .source()
                     .state_key(activated.state.source())
                     .expect("activation state key"),
-                delay: Some(crate::zone_search::exact(0, 1)),
+                delay: Some(crate::zone_support::exact(0, 1)),
             },
             ModelStep {
                 transition: dispatched.transition().into(),
@@ -250,7 +250,7 @@ fn fixed_work_release_completes_or_emits_a_deadline_miss() {
                     .source()
                     .state_key(dispatched.state.source())
                     .expect("dispatch state key"),
-                delay: Some(crate::zone_search::exact(0, 1)),
+                delay: Some(crate::zone_support::exact(0, 1)),
             },
             ModelStep {
                 transition: miss.transition().into(),
@@ -258,7 +258,7 @@ fn fixed_work_release_completes_or_emits_a_deadline_miss() {
                     .source()
                     .state_key(miss.state.source())
                     .expect("miss state key"),
-                delay: Some(crate::zone_search::exact(1, 1)),
+                delay: Some(crate::zone_support::exact(1, 1)),
             },
         ],
         over_binding: None,
@@ -324,7 +324,7 @@ fn task_product_replay_rejects_a_tampered_miss_identity() {
         .find(|step| step.identity.action == TaskTransitionAction::Dispatch)
         .expect("ready job dispatches");
     let at_deadline = product
-        .delay(&dispatched.state, &crate::zone_search::exact(1, 1))
+        .delay(&dispatched.state, &crate::zone_support::exact(1, 1))
         .expect("source admits the deadline")
         .expect("deadline instant is admissible");
     let missed = product
@@ -337,15 +337,15 @@ fn task_product_replay_rejects_a_tampered_miss_identity() {
         lasso_entry: None,
         steps: vec![
             TaskProductTraceStep {
-                delay: crate::zone_search::exact(0, 1),
+                delay: crate::zone_support::exact(0, 1),
                 transition: activated.transitions()[0].clone(),
             },
             TaskProductTraceStep {
-                delay: crate::zone_search::exact(0, 1),
+                delay: crate::zone_support::exact(0, 1),
                 transition: dispatched.transition(),
             },
             TaskProductTraceStep {
-                delay: crate::zone_search::exact(1, 1),
+                delay: crate::zone_support::exact(1, 1),
                 transition: missed.transition(),
             },
         ],
@@ -355,7 +355,7 @@ fn task_product_replay_rejects_a_tampered_miss_identity() {
         .expect("exact prefix replays")
         .deadline_missed());
     let after_miss = product
-        .delay(&missed.state, &crate::zone_search::exact(1, 1))
+        .delay(&missed.state, &crate::zone_support::exact(1, 1))
         .expect("the latched miss does not stop later scheduler behavior")
         .expect("the job can receive its remaining service");
     let completed = product
@@ -378,8 +378,8 @@ fn task_product_replay_rejects_a_tampered_miss_identity() {
             unreachable!("the last transition is the task miss");
         };
         match field {
-            "deadline" => identity.deadline = crate::zone_search::exact(2, 1),
-            "demand" => identity.demand = crate::zone_search::exact(3, 1),
+            "deadline" => identity.deadline = crate::zone_support::exact(2, 1),
+            "demand" => identity.demand = crate::zone_support::exact(3, 1),
             "priority" => identity.priority = Some(2),
             _ => unreachable!(),
         }
@@ -426,7 +426,7 @@ fn one_source_step_can_activate_multiple_bound_tasks() {
             .transitions()
             .into_iter()
             .map(|transition| TaskProductTraceStep {
-                delay: crate::zone_search::exact(0, 1),
+                delay: crate::zone_support::exact(0, 1),
                 transition,
             })
             .collect(),
@@ -649,7 +649,7 @@ fn missed_deadline_settles_only_with_a_replayed_positive_time_lasso() {
                     .state_key(&source_step.state)
                     .expect("source successor key"),
             ),
-            delay: Some(crate::zone_search::exact(0, 1)),
+            delay: Some(crate::zone_support::exact(0, 1)),
         }],
         over_binding: None,
         fairness: Vec::new(),
@@ -699,7 +699,7 @@ fn terminal_stutter_replay_advances_once_from_a_quiescent_product_terminal() {
         .find(|step| step.identity.action == TaskTransitionAction::Dispatch)
         .expect("the released job dispatches");
     let at_deadline = product
-        .delay(&dispatch.state, &crate::zone_search::exact(2, 1))
+        .delay(&dispatch.state, &crate::zone_support::exact(2, 1))
         .expect("the source admits the deadline delay")
         .expect("the deadline is reachable");
     let miss = product
@@ -708,7 +708,7 @@ fn terminal_stutter_replay_advances_once_from_a_quiescent_product_terminal() {
         .find(|step| step.identity.action == TaskTransitionAction::DeadlineMiss)
         .expect("the first deadline is missed");
     let at_completion = product
-        .delay(&miss.state, &crate::zone_search::exact(1, 1))
+        .delay(&miss.state, &crate::zone_support::exact(1, 1))
         .expect("time remains admissible after the miss")
         .expect("the job can complete");
     let complete = product
@@ -720,23 +720,23 @@ fn terminal_stutter_replay_advances_once_from_a_quiescent_product_terminal() {
         initial_state: 0,
         steps: vec![
             TaskProductTraceStep {
-                delay: crate::zone_search::exact(0, 1),
+                delay: crate::zone_support::exact(0, 1),
                 transition: activation.transitions()[0].clone(),
             },
             TaskProductTraceStep {
-                delay: crate::zone_search::exact(0, 1),
+                delay: crate::zone_support::exact(0, 1),
                 transition: dispatch.transition(),
             },
             TaskProductTraceStep {
-                delay: crate::zone_search::exact(2, 1),
+                delay: crate::zone_support::exact(2, 1),
                 transition: miss.transition(),
             },
             TaskProductTraceStep {
-                delay: crate::zone_search::exact(1, 1),
+                delay: crate::zone_support::exact(1, 1),
                 transition: complete.transition(),
             },
             TaskProductTraceStep {
-                delay: crate::zone_search::exact(1, 1),
+                delay: crate::zone_support::exact(1, 1),
                 transition: TaskProductTransition::TerminalStutter,
             },
         ],
@@ -745,13 +745,13 @@ fn terminal_stutter_replay_advances_once_from_a_quiescent_product_terminal() {
     let states = product
         .replay_trace_states(&trace)
         .expect("the terminal loop replays with one positive delay");
-    assert_eq!(states[4].now(), &crate::zone_search::exact(3, 1));
-    assert_eq!(states[5].now(), &crate::zone_search::exact(4, 1));
+    assert_eq!(states[4].now(), &crate::zone_support::exact(3, 1));
+    assert_eq!(states[5].now(), &crate::zone_support::exact(4, 1));
     assert!(states[5].deadline_missed());
     assert!(states[5].jobs().is_empty());
 
     let mut zero_delay = trace;
-    zero_delay.steps[4].delay = crate::zone_search::exact(0, 1);
+    zero_delay.steps[4].delay = crate::zone_support::exact(0, 1);
     assert!(product.replay_trace_states(&zero_delay).is_err());
 }
 
@@ -777,12 +777,12 @@ fn mode_switch_emits_and_replays_the_live_hi_budget_change() {
         .find(|step| step.identity.action == TaskTransitionAction::Dispatch)
         .expect("the HI job dispatches in LO mode");
     let at_low_allowance = product
-        .delay(&dispatch.state, &crate::zone_search::exact(2, 1))
+        .delay(&dispatch.state, &crate::zone_support::exact(2, 1))
         .expect("the source admits time through C(LO)")
         .expect("the exact allowance boundary is reachable");
     assert_eq!(
         at_low_allowance.jobs()[0].service,
-        crate::zone_search::exact(2, 1)
+        crate::zone_support::exact(2, 1)
     );
     let exhaustion = product
         .scheduler_steps(&at_low_allowance)
@@ -792,7 +792,7 @@ fn mode_switch_emits_and_replays_the_live_hi_budget_change() {
     assert_eq!(exhaustion.identity.action, TaskTransitionAction::Preempt);
     assert_eq!(exhaustion.identity.source_transition, None);
     let at_reply = product
-        .delay(&dispatch.state, &crate::zone_search::exact(1, 1))
+        .delay(&dispatch.state, &crate::zone_support::exact(1, 1))
         .expect("the dense source admits one millisecond")
         .expect("reply boundary is reachable");
     let mode_switch = product
@@ -817,7 +817,7 @@ fn mode_switch_emits_and_replays_the_live_hi_budget_change() {
     assert_eq!(budget_change.identity.task, "command");
     assert_eq!(
         budget_change.identity.budget_delta,
-        Some(crate::zone_search::exact(1, 1))
+        Some(crate::zone_support::exact(1, 1))
     );
     assert_eq!(
         budget_change.identity.source_transition,
@@ -853,25 +853,25 @@ fn mode_switch_emits_and_replays_the_live_hi_budget_change() {
         .transitions()
         .into_iter()
         .map(|transition| TaskProductTraceStep {
-            delay: crate::zone_search::exact(0, 1),
+            delay: crate::zone_support::exact(0, 1),
             transition,
         })
         .collect();
     trace_steps.extend([
         TaskProductTraceStep {
-            delay: crate::zone_search::exact(0, 1),
+            delay: crate::zone_support::exact(0, 1),
             transition: dispatch.transition(),
         },
         TaskProductTraceStep {
-            delay: crate::zone_search::exact(1, 1),
+            delay: crate::zone_support::exact(1, 1),
             transition: mode_switch.transitions()[0].clone(),
         },
         TaskProductTraceStep {
-            delay: crate::zone_search::exact(0, 1),
+            delay: crate::zone_support::exact(0, 1),
             transition: budget_change.transition(),
         },
         TaskProductTraceStep {
-            delay: crate::zone_search::exact(0, 1),
+            delay: crate::zone_support::exact(0, 1),
             transition: second_budget_change.transition(),
         },
     ]);
@@ -923,7 +923,7 @@ fn budget_changes_keep_task_order_when_release_declarations_reverse() {
         .find(|step| step.identity.action == TaskTransitionAction::Dispatch)
         .expect("the HI job dispatches in LO mode");
     let at_reply = product
-        .delay(&dispatch.state, &crate::zone_search::exact(1, 1))
+        .delay(&dispatch.state, &crate::zone_support::exact(1, 1))
         .expect("the dense source admits one millisecond")
         .expect("reply boundary is reachable");
     let mode_switch = product
@@ -1010,7 +1010,7 @@ fn no_mode_declaration_never_emits_budget_changes() {
         .find(|step| step.identity.action == TaskTransitionAction::Dispatch)
         .expect("the HI job dispatches in LO mode");
     let at_reply = product
-        .delay(&dispatch.state, &crate::zone_search::exact(1, 1))
+        .delay(&dispatch.state, &crate::zone_support::exact(1, 1))
         .expect("the dense source admits one millisecond")
         .expect("reply boundary is reachable");
     let source_step = product
@@ -1043,11 +1043,11 @@ fn task_product_lowering_preserves_each_period_and_deadline() {
         .expect("checked tasks fit the FR-418 queue schema");
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].task, "alpha");
-    assert_eq!(rows[0].interarrival, crate::zone_search::exact(4, 1));
-    assert_eq!(rows[0].relative_deadline, crate::zone_search::exact(2, 1));
+    assert_eq!(rows[0].interarrival, crate::zone_support::exact(4, 1));
+    assert_eq!(rows[0].relative_deadline, crate::zone_support::exact(2, 1));
     assert_eq!(rows[1].task, "beta");
-    assert_eq!(rows[1].interarrival, crate::zone_search::exact(4, 1));
-    assert_eq!(rows[1].relative_deadline, crate::zone_search::exact(2, 1));
+    assert_eq!(rows[1].interarrival, crate::zone_support::exact(4, 1));
+    assert_eq!(rows[1].relative_deadline, crate::zone_support::exact(2, 1));
     assert_eq!(product.plan().tasks.len(), 2);
     assert_eq!(product.plan().releases.len(), 2);
 }
@@ -1064,11 +1064,11 @@ fn task_product_key_quotients_source_clocks_above_checked_bounds() {
     let product = TaskProductSystem::new(timed, "TaskClaim").expect("checked task product");
     let initial = product.initial().into_iter().next().expect("initial state");
     let at_four = product
-        .delay(&initial, &crate::zone_search::exact(4, 1))
+        .delay(&initial, &crate::zone_support::exact(4, 1))
         .expect("source admits time outside its active invariant")
         .expect("the source remains live");
     let at_ten = product
-        .delay(&initial, &crate::zone_search::exact(10, 1))
+        .delay(&initial, &crate::zone_support::exact(10, 1))
         .expect("source admits unconstrained time")
         .expect("the source remains live");
     assert_eq!(
@@ -1079,7 +1079,7 @@ fn task_product_key_quotients_source_clocks_above_checked_bounds() {
         product.lasso_state_key(&at_four).expect("lasso key"),
         product.lasso_state_key(&at_ten).expect("lasso key")
     );
-    let one_more = crate::zone_search::exact(1, 1);
+    let one_more = crate::zone_support::exact(1, 1);
     let after_four = product
         .delay(&at_four, &one_more)
         .expect("source admits a successor delay beyond its checked bound")
@@ -1128,11 +1128,11 @@ fn task_product_key_quotients_source_clocks_above_checked_bounds() {
     // not collapse fractional clock values or erase their ordering, which
     // guards and invariants may still observe.
     let at_one_third = product
-        .delay(&initial, &crate::zone_search::exact(1, 3))
+        .delay(&initial, &crate::zone_support::exact(1, 3))
         .expect("source admits fractional time below its bound")
         .expect("the source remains live");
     let at_two_thirds = product
-        .delay(&initial, &crate::zone_search::exact(2, 3))
+        .delay(&initial, &crate::zone_support::exact(2, 3))
         .expect("source admits a later fractional time below its bound")
         .expect("the source remains live");
     let one_third_key = product.state_key(&at_one_third).expect("state key");
@@ -1170,22 +1170,22 @@ fn interval_work_is_replayed_as_a_concrete_choice_and_stays_incomplete() {
     assert!(activation.unresolved_demand);
     assert_eq!(
         activation.activations[0].demand,
-        crate::zone_search::exact(2, 1)
+        crate::zone_support::exact(2, 1)
     );
     let job = activation.state.jobs().first().expect("activated job");
-    assert_eq!(job.demand, crate::zone_search::exact(2, 1));
+    assert_eq!(job.demand, crate::zone_support::exact(2, 1));
     let dispatched = product
         .scheduler_steps(&activation.state)
         .into_iter()
         .find(|step| step.identity.action == TaskTransitionAction::Dispatch)
         .expect("endpoint job dispatches");
     let after_service = product
-        .delay(&dispatched.state, &crate::zone_search::exact(1, 1))
+        .delay(&dispatched.state, &crate::zone_support::exact(1, 1))
         .expect("source admits service time")
         .expect("one unit of service is admissible");
     assert_eq!(
         after_service.jobs()[0].demand,
-        crate::zone_search::exact(2, 1)
+        crate::zone_support::exact(2, 1)
     );
 
     let outcome = check_task_product(&product, TaskProductSearchLimits { max_work: 64 })
@@ -1421,7 +1421,7 @@ fn tampered_task_steps_refuse_at_their_member() {
         "/prefix/0/transition/source_transition"
     );
     assert_eq!(
-        member(&|found| task_step(found, miss).deadline = crate::zone_search::exact(3, 1)).0,
+        member(&|found| task_step(found, miss).deadline = crate::zone_support::exact(3, 1)).0,
         format!("/prefix/{miss}/transition/deadline")
     );
     assert_eq!(
@@ -1449,7 +1449,7 @@ fn tampered_task_steps_refuse_at_their_member() {
         "/prefix/1/transition"
     );
     assert_eq!(
-        member(&|found| found.prefix[1].delay = Some(crate::zone_search::exact(1, 1))).0,
+        member(&|found| found.prefix[1].delay = Some(crate::zone_support::exact(1, 1))).0,
         "/prefix/1/delay"
     );
     // The move written as its source `tick` step is not the activation.
@@ -1471,7 +1471,7 @@ fn tampered_task_steps_refuse_at_their_member() {
     assert_eq!(
         member(&|found| {
             if let Some(lasso) = found.lasso.as_mut() {
-                lasso.terminal_stutter_delay = Some(crate::zone_search::exact(0, 1));
+                lasso.terminal_stutter_delay = Some(crate::zone_support::exact(0, 1));
             }
         })
         .0,
@@ -1506,7 +1506,7 @@ fn a_model_alphabet_payload_for_a_task_item_refuses_trace_alphabet() {
                     .state_key(&source_step.state)
                     .expect("source successor key"),
             ),
-            delay: Some(crate::zone_search::exact(0, 1)),
+            delay: Some(crate::zone_support::exact(0, 1)),
         }],
         over_binding: None,
         fairness: Vec::new(),
@@ -1521,7 +1521,7 @@ fn a_model_alphabet_payload_for_a_task_item_refuses_trace_alphabet() {
     let occurrence = claim.occurrence().expect("the claim has an occurrence");
     let request = world.request();
     let refused = fsl_replay::replay_model_trace(
-        crate::model_settle::request(
+        crate::model_settle_support::request(
             &world.package,
             &[],
             &world.document,
@@ -1540,7 +1540,7 @@ fn a_model_alphabet_payload_for_a_task_item_refuses_trace_alphabet() {
             expansion: request.expansion,
             stutter_closure: false,
         },
-        &crate::model_settle::envelope_at(
+        &crate::model_settle_support::envelope_at(
             projection,
             claim.node_id().expect("the claim has a node").clone(),
             occurrence,

@@ -3,7 +3,7 @@
 //! protocol subject as two derived items of the repeat, `loop-invariant` and
 //! `loop-termination`, each settling `proved`, `refuted` or `incomplete`.
 
-use crate::derived_request::{items_of_kind, protocol_request_under};
+use crate::derived_request_support::{items_of_kind, protocol_request_under};
 use crate::protocol_system::Case;
 use filament_exact::Cancel;
 use fsl_analyze::analyze::{
@@ -78,7 +78,7 @@ fn sibling_loop_items_follow_tree_order_after_freedom_items() {
     let zulu = u64::try_from(repeat("Zulu").0).expect("repeat ordinal");
     let alpha = u64::try_from(repeat("Alpha").0).expect("repeat ordinal");
     let bounded = u64::try_from(repeat("Bounded").0).expect("repeat ordinal");
-    let occurrence = crate::model_settle::protocol_anchor(&checked, "P").1;
+    let occurrence = crate::model_settle_support::protocol_anchor(&checked, "P").1;
     let item = ProtocolTemporalItem {
         occurrence: &occurrence,
         subject: &"P",
@@ -87,7 +87,7 @@ fn sibling_loop_items_follow_tree_order_after_freedom_items() {
         non_atomic_access: false,
     };
     for count in [1, 2] {
-        let written = crate::derived_request::protocol_request(&vec![item; count]);
+        let written = crate::derived_request_support::protocol_request(&vec![item; count]);
         let actual: Vec<_> = written
             .items()
             .iter()
@@ -179,8 +179,8 @@ fn loop_items(body: &str) -> Vec<&'static str> {
 /// The loop-proof item kinds written for `request_count` caller requests of
 /// the same protocol subject.
 fn loop_items_for_request_count(body: &str, request_count: usize) -> Vec<&'static str> {
-    use crate::derived_request::protocol_request;
-    use crate::model_settle::protocol_anchor;
+    use crate::derived_request_support::protocol_request;
+    use crate::model_settle_support::protocol_anchor;
     use fsl_route::deadlock::ProtocolTemporalItem;
 
     let checked = crate::fill::package_with(crate::fill::PROTOCOL_PROFILE, body);
@@ -257,7 +257,7 @@ fn analyze_case_items(
     kinds: &[ItemKind],
 ) -> Vec<(ItemKind, TerminalValue, bool)> {
     let protocol = case.checked.graph().protocol("P").expect("P");
-    let occurrence = crate::model_settle::protocol_anchor(&case.checked, "P").1;
+    let occurrence = crate::model_settle_support::protocol_anchor(&case.checked, "P").1;
     let subject = case.subject("P");
     let models = subject
         .memory

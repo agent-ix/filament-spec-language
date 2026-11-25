@@ -53,7 +53,7 @@ use crate::fill::{
     package_with, package_with_name, protocol, reachable, sc_system, single_object_document,
     subject, tcb_01_event_position_selection, unit_text, universe, v, Documents,
 };
-use crate::model_settle::{envelope_at, request};
+use crate::model_settle_support::{envelope_at, request};
 
 /// `Chatter`'s channel: unordered, of capacity 2, with delivery `unknown`,
 /// so its queued entries are duplicated and lost.

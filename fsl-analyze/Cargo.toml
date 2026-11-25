@@ -96,6 +96,26 @@ proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 name = "it"
 path = "tests/it/main.rs"
 
+[[test]]
+name = "it_monitor_protocol"
+path = "tests/it/monitor_protocol.rs"
+
+[[test]]
+name = "it_probabilistic"
+path = "tests/it/probabilistic.rs"
+
+[[test]]
+name = "it_model_check"
+path = "tests/it/model_check_binary.rs"
+
+[[test]]
+name = "it_refinement"
+path = "tests/it/refinement.rs"
+
+[[test]]
+name = "it_refinement_cx1"
+path = "tests/it_refinement_cx1.rs"
+
 [lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
