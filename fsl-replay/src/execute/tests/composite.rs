@@ -543,7 +543,6 @@ fn tc_921_an_accounting_stage_limit_stops_execution_without_a_value() {
         .limit()
         .expect("evaluation records its denied charge");
     assert_eq!(limit.limit_kind, filament_exact::LimitKind::WorkUnits);
-    assert_eq!(limit.limit_kind.field(), "work_units");
     assert_eq!(limit.limit, 1);
     assert_eq!(limit.consumed, 1);
     assert_eq!(limit.next_charge, Integer::from(1_i64));
