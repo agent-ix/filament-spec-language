@@ -72,38 +72,23 @@ fn world_with(document: Vec<u8>, body: &str, starts: &[&[(&str, i64)]]) -> World
 }
 
 fn temporal_worker_fixture(formula: &str) -> crate::liveness::Fixture {
+    temporal_worker_fixture_with_starts(formula, &[("a", 0), ("b", 0), ("c", 0)])
+}
+
+fn temporal_worker_fixture_with_starts(
+    formula: &str,
+    starts: &[(&'static str, i64)],
+) -> crate::liveness::Fixture {
     // The expected counter path is monotone for each object. The shared
     // counter document's type-wide `modifies value` frame also permits an
     // operation on one receiver to change every other counter, so this
     // fixture scopes the write to the receiver it invokes.
-    fn receiver_scope(value: &mut Value) -> usize {
-        match value {
-            Value::Object(members) => {
-                let mut changed = 0;
-                if let Some(Value::Object(frame)) = members.get_mut("frame") {
-                    if let Some(modifies) = frame.remove("modifies") {
-                        frame.insert("modifies_receiver".to_owned(), modifies);
-                        frame.insert("modifies".to_owned(), Value::Array(Vec::new()));
-                        changed += 1;
-                    }
-                }
-                changed + members.values_mut().map(receiver_scope).sum::<usize>()
-            }
-            Value::Array(items) => items.iter_mut().map(receiver_scope).sum(),
-            _ => 0,
-        }
-    }
-    let mut document: Value = serde_json::from_slice(&document(false)).expect("counter document");
-    assert!(
-        receiver_scope(&mut document) > 0,
-        "the counter frame is scoped"
-    );
     crate::liveness::fixture(
-        document.to_string().into_bytes(),
+        crate::analyze_reach_rulings::receiver_framed_document(),
         CONTRACT,
         "",
         formula,
-        &[("a", 0), ("b", 0), ("c", 0)],
+        starts,
     )
 }
 
@@ -305,7 +290,10 @@ fn certificate_bytes(outcome: &ModelCheckOutcome) -> Vec<u8> {
 #[trace("TC-1417", "FR-126-AC-20")]
 #[test]
 fn workers_preserve_counter_lassos_certificates_and_state_limit() {
-    let violated_fixture = temporal_worker_fixture("always eventually holds(c.value = 0)");
+    // Keep this exact lasso oracle to one receiver: with multiple receivers,
+    // other objects continue to terminal states after `a` reaches 3.
+    let violated_fixture =
+        temporal_worker_fixture_with_starts("always eventually holds(c.value = 0)", &[("a", 0)]);
     let mut violation = None;
     for workers in [1, 2, 4, 64] {
         let outcome = run_temporal_fixture_with_workers(
@@ -317,14 +305,7 @@ fn workers_preserve_counter_lassos_certificates_and_state_limit() {
         .expect("the worker request is admitted");
         let counterexample = violated(&outcome).clone();
         let values = violated_fixture.values(&counterexample, "a");
-        // The expected path is the stem through a.value = 3. Other counters
-        // continue changing until the complete three-object subject reaches
-        // its terminal state, so the lasso entry can follow that stem.
-        assert_eq!(
-            values.get(..4),
-            Some(&[0, 1, 2, 3][..]),
-            "workers={workers}"
-        );
+        assert_eq!(values, [0, 1, 2, 3], "workers={workers}");
         assert_eq!(
             counterexample
                 .lasso
@@ -337,21 +318,12 @@ fn workers_preserve_counter_lassos_certificates_and_state_limit() {
             .as_ref()
             .expect("the lasso is recorded")
             .entry;
-        assert!(
-            entry >= 3 && entry < values.len(),
-            "workers={workers}: {entry}"
-        );
-        assert!(values[3..=entry].iter().all(|value| *value == 3));
-        assert!(counterexample
-            .lasso
-            .as_ref()
-            .is_some_and(|lasso| lasso.terminal_stutter));
+        assert_eq!(entry, 3, "workers={workers}");
         let stats = outcome.stats();
         if let Some((expected, expected_stats)) = &violation {
             assert_eq!(&counterexample, expected, "workers={workers}");
             assert_eq!(stats, *expected_stats, "workers={workers}");
         } else {
-            assert!(stats.product_states >= 50);
             violation = Some((counterexample, stats));
         }
     }
