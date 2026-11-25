@@ -273,12 +273,20 @@ standing.
 
 ### Package and identity
 
-- The `CheckedRefinement` SHALL enter the checked package as a node, so its
-  identity enters the `package_id` and the obligation identity of every
-  item that cites it (ADR-013 O-02, O-09). Its v2 wire node is FSpec's
-  (ADR-020 QS-4).
-- Two refinement declarations that differ in any row SHALL have different
-  node identities.
+- The `CheckedRefinement` SHALL enter the checked package as a node, and its
+  node key enters the obligation identity of every item that cites it
+  (ADR-013 O-09). Its v2 wire node, node id included, is FSpec's (FSpec
+  FR-375; ADR-020 QS-4). Remaining work: QSL-3277 (the `path` FSL writes in
+  the node id).
+- A row SHALL be part of the node's body and not of its node key. The key is
+  the declaring package, a `path` the refinement's authored name determines
+  and ordinal 0 (FSpec FR-375, FR-322), so two checks of one package whose
+  refinement of one name differs in a row SHALL give that refinement equal
+  node keys and unequal node bodies. Renaming the refinement SHALL change the
+  key's `path`.
+- The package identity (identity and version, ADR-013 O-02) SHALL NOT depend
+  on a row. Two checked packages that differ in a row are told apart by
+  comparing their values (FSpec FR-322).
 
 ## Acceptance Criteria
 
@@ -287,7 +295,7 @@ standing.
 | FR-135-AC-1 | ADR-020 §8's `CasRefinesCounter`, with `Spec` and `Impl` both local, checks to a `CheckedRefinement` with one population row (`counters` from `counters`), one object row with the field row `value = self.value` and no hidden field. The same declaration with `Spec` supplied as a dependency package checks with `AbstractSide::Dependency` carrying that package's `package_id`. | Test (TC-540) |
 | FR-135-AC-2 | Refusals, each at its span with no `CheckedRefinement`: the abstract alias `Nope`, resolving to no model (`missing_declaration`/`missing-name`); the `population` row removed (`missing_declaration`/`missing-name` naming `Spec::counters`); the row written twice (`invalid_model_binding`/`conflicting-binding`); the row reversed as `population Impl::counters from Spec::counters` (`invalid_model_binding`/`malformed-declaration`); the `object` row removed (`missing_declaration`/`missing-name` naming `Spec::Counter`); `value` mapped twice (`invalid_model_binding`/`conflicting-binding` naming both rows); the declaration in a unit that selects a bounded profile (`unknown_profile`/`wrong-selection-role` at the alias). | Test (TC-540) |
 | FR-135-AC-3 | `value = self.busyA` refuses `ill_typed`/`type-mismatch` at the expression's span. In ADR-020 §8's `RingIsQueue`, a field of type `Reference<Q::Queue>` mapped by `self.ring` (of type `Reference<R::Ring>`) checks, and the same field mapped by an expression of type `Reference<R::Slot>` refuses `ill_typed`/`type-mismatch`. | Test (TC-540) |
-| FR-135-AC-4 | With the `value` row removed, `CasRefinesCounter` checks with `value` in `hidden`. Changing the `value` row to `value = self.tmpA` changes the refinement's node identity and the `package_id`. | Test (TC-540) |
+| FR-135-AC-4 | With the `value` row removed, `CasRefinesCounter` checks with `value` in `hidden`. Checked with the row `value = self.value` and, in a package of the same identity and version, with `value = self.tmpA`, the two refinements have equal node keys (equal `package` and `path`, ordinal 0 in both) and unequal node bodies: the one object row's field row `value` reads `self.value` in the first and `self.tmpA` in the second, and neither has a hidden field. The two checked packages have the same package identity (ADR-013 O-02). | Test (TC-540) |
 | FR-135-AC-5 | A declaration whose abstract side is a protocol (`CasTwice`, FR-147), in a build whose support set omits `protocol-abstract-side`, refuses `unsupported_construct`/`not-yet-implemented` at the span of `Twice`, naming `protocol-abstract-side`, `CasTwice` and the profile identity, with a payload that has no `subject` member, no other diagnostic about the abstract side and no `CheckedRefinement`. It classifies `unsupported` (FR-341-AC-5). `CasRefinesCounter`, which uses none of the features, checks as FR-135-AC-1 states. The vector refuses a row that uses a feature the build has not built; it does not select a support set. | Test (TC-540) |
 | FR-135-AC-6 | `RingIsQueue` with a `Sequence<Reference<Queue>>[0, 2]` field mapped by a row of type `Sequence<Reference<Ring>>[0, 2]` checks, each nested reference lifted element by element through the object row that maps `Queue` from `Ring` (FR-630), and so do an `Option<Reference<Ring>>` row for an `Option<Reference<Queue>>` field and a `Sequence<Option<Reference<Ring>>>[0, 2]` row for a `Sequence<Option<Reference<Queue>>>[0, 2]` field, an option, collection or map at any depth; map-key and map-value lifting at any depth is also asserted by TC-1086/FR-140-AC-16's `lift_nested` unit cases, since no validated package declares a map type. A population-reference row `cells = R::slots` checks, as does the same field as a plain `Reference<Queue>` mapped by `self`. A nested reference whose concrete type no object row maps (a `Sequence<Reference<Slot>>[0, 2]` row for the `Sequence<Reference<Queue>>[0, 2]` field, `Slot` mapping to `Cell`) refuses `ill_typed`/`type-mismatch` at the row's expression, as a top-level one does (AC-3), and no `CheckedRefinement`. | Test (TC-540) |
 | FR-135-AC-7 | `RingIsQueue` with the abstract `Queue` declaring a relationship refuses `unsupported_construct`/`declaration-form` at the abstract alias `Q` of the declaration header, once, whatever the support set holds, and no `CheckedRefinement`. | Test (TC-540) |
