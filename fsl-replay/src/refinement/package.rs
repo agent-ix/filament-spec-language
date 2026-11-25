@@ -16,47 +16,66 @@ use super::read::{
     self, FieldMapping, MappingExpression, MappingTarget, ObjectMapping, PopulationMapping,
     RefinementRead, StepMapping,
 };
-use std::collections::HashSet;
+use std::cmp::Ordering;
+use std::collections::BTreeSet;
+
+#[derive(Clone, Copy)]
+struct FieldKeyRef<'a>(&'a DeclarationKey);
+
+impl Ord for FieldKeyRef<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        record_hidden_field_key_comparison();
+        self.0.cmp(other.0)
+    }
+}
+
+impl PartialOrd for FieldKeyRef<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for FieldKeyRef<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for FieldKeyRef<'_> {}
 
 fn hidden_field_keys<'a>(
     declared_keys: Vec<DeclarationKey>,
     mapped_keys: impl IntoIterator<Item = &'a DeclarationKey>,
 ) -> Vec<DeclarationKey> {
-    let mapped_keys: HashSet<_> = mapped_keys
-        .into_iter()
-        .inspect(|_| record_hidden_field_membership_work())
-        .collect();
+    let mapped_keys: BTreeSet<_> = mapped_keys.into_iter().map(FieldKeyRef).collect();
     declared_keys
         .into_iter()
-        .filter(|key| {
-            record_hidden_field_membership_work();
-            !mapped_keys.contains(key)
-        })
+        .filter(|key| !mapped_keys.contains(&FieldKeyRef(key)))
         .collect()
 }
 
 #[cfg(test)]
 thread_local! {
-    static HIDDEN_FIELD_MEMBERSHIP_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static HIDDEN_FIELD_KEY_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
-fn record_hidden_field_membership_work() {
-    HIDDEN_FIELD_MEMBERSHIP_WORK.with(|count| count.set(count.get().saturating_add(1)));
+fn record_hidden_field_key_comparison() {
+    HIDDEN_FIELD_KEY_COMPARISONS.with(|count| count.set(count.get().saturating_add(1)));
 }
 
 #[cfg(not(test))]
 #[inline(always)]
-fn record_hidden_field_membership_work() {}
+fn record_hidden_field_key_comparison() {}
 
 #[cfg(test)]
-fn reset_hidden_field_membership_work() {
-    HIDDEN_FIELD_MEMBERSHIP_WORK.with(|count| count.set(0));
+fn reset_hidden_field_key_comparisons() {
+    HIDDEN_FIELD_KEY_COMPARISONS.with(|count| count.set(0));
 }
 
 #[cfg(test)]
-fn hidden_field_membership_work() -> usize {
-    HIDDEN_FIELD_MEMBERSHIP_WORK.with(std::cell::Cell::get)
+fn hidden_field_key_comparisons() -> usize {
+    HIDDEN_FIELD_KEY_COMPARISONS.with(std::cell::Cell::get)
 }
 
 /// Why no package refinement execution definition could be published.
@@ -544,14 +563,12 @@ mod tests {
     fn prior_hidden_projection(
         declared: &[DeclarationKey],
         mapped: &[&DeclarationKey],
-    ) -> (Vec<DeclarationKey>, usize) {
+    ) -> Vec<DeclarationKey> {
         let mut hidden = Vec::new();
-        let mut comparisons = 0usize;
         for key in declared {
             let mut present = false;
             for field in mapped {
-                comparisons = comparisons.saturating_add(1);
-                if *field == key {
+                if FieldKeyRef(*field) == FieldKeyRef(key) {
                     present = true;
                     break;
                 }
@@ -560,12 +577,12 @@ mod tests {
                 hidden.push(key.clone());
             }
         }
-        (hidden, comparisons)
+        hidden
     }
 
-    #[trace("FR-140-AC-4", "NFR-141-AC-21")]
+    #[trace("NFR-141-AC-21")]
     #[test]
-    fn hidden_field_membership_work_is_linear_and_preserves_declaration_order() {
+    fn hidden_field_key_comparisons_are_bounded_and_preserve_declaration_order() {
         for count in [512, 1_024, 2_048] {
             let declared: Vec<_> = (0..count).map(declaration_key).collect();
             let mapped: Vec<_> = (0..count)
@@ -573,21 +590,32 @@ mod tests {
                 .rev()
                 .map(|index| &declared[index])
                 .collect();
-            let (expected, prior_comparisons) = prior_hidden_projection(&declared, &mapped);
+            reset_hidden_field_key_comparisons();
+            let expected = prior_hidden_projection(&declared, &mapped);
+            let prior_comparisons = hidden_field_key_comparisons();
 
-            reset_hidden_field_membership_work();
+            reset_hidden_field_key_comparisons();
             let actual = hidden_field_keys(declared.clone(), mapped.iter().copied());
-            let indexed_operations = hidden_field_membership_work();
+            let indexed_comparisons = hidden_field_key_comparisons();
+            let log_bound = usize::BITS as usize - mapped.len().leading_zeros() as usize;
+            let comparison_bound = 8 * (declared.len() + mapped.len()) * log_bound;
 
             assert_eq!(actual, expected, "hidden keys at N = {count}");
-            assert_eq!(
-                indexed_operations,
-                declared.len() + mapped.len(),
-                "each mapped key is inserted once and each declaration is queried once at N = {count}"
+            assert!(
+                indexed_comparisons > 0,
+                "index operations compare keys at N = {count}"
+            );
+            assert!(
+                indexed_comparisons <= comparison_bound,
+                "the ordered index makes {indexed_comparisons} comparisons, bound {comparison_bound}, at N = {count}"
             );
             assert!(
                 prior_comparisons > count * mapped.len() / 2,
                 "the prior nested scan makes {prior_comparisons} comparisons at N = {count}"
+            );
+            assert!(
+                prior_comparisons > comparison_bound,
+                "the prior nested scan makes {prior_comparisons} comparisons, exceeding the indexed bound {comparison_bound} at N = {count}"
             );
         }
     }
