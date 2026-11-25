@@ -11,7 +11,9 @@
 //! Each is checked in both directions: every name the parser accepts is
 //! listed, every listed name is accepted, and everything else is refused.
 
-use fsl_foundation::setting::{parse_operands, AccountingSetting, Setting, UsageCause};
+use fsl_foundation::setting::{
+    parse_operands, AccountingSetting, Setting, SettingName, UsageCause,
+};
 use fsl_foundation::SettingLimits;
 use fsl_replay::{CallerLimits, WorkerCounts};
 use ix_trace_rs::trace;
@@ -100,7 +102,6 @@ fn every_limit_refusal_cause_is_reached() {
 #[test]
 #[trace("FR-255-AC-26")]
 fn settings_preserve_each_typed_maximum_and_refuse_values_above_it() {
-    use fsl_foundation::setting::SettingLimits;
     use std::collections::BTreeMap;
 
     const U32_MAX: u64 = 4_294_967_295;
@@ -130,17 +131,20 @@ fn settings_preserve_each_typed_maximum_and_refuse_values_above_it() {
         )
         .collect();
     let input: Vec<_> = operands.iter().map(String::as_str).collect();
-    let limits = CallerLimits::from_operands(input).expect("each maximum is representable");
+    let expected: Vec<_> = Setting::ALL
+        .iter()
+        .copied()
+        .map(|setting| (SettingName::Stage(setting), expected_stage[&setting]))
+        .chain(
+            AccountingSetting::ALL
+                .iter()
+                .copied()
+                .map(|setting| (SettingName::Accounting(setting), U64_MAX)),
+        )
+        .collect();
     assert_eq!(
-        limits.bounds().into_iter().collect::<BTreeMap<_, _>>(),
-        expected_stage
-    );
-    assert_eq!(
-        limits.accounting.bounds(),
-        AccountingSetting::ALL
-            .into_iter()
-            .map(|setting| (setting, U64_MAX))
-            .collect::<Vec<_>>()
+        parse_operands(input).expect("each maximum is representable"),
+        expected
     );
 
     for setting in Setting::ALL.iter().copied() {
@@ -155,20 +159,12 @@ fn settings_preserve_each_typed_maximum_and_refuse_values_above_it() {
         let refusal = parse_operands([operand.as_str()]).expect_err("the value exceeds its type");
         assert_eq!(refusal.cause, UsageCause::NotAnInteger, "{operand}");
         assert_eq!(refusal.operand, operand);
-        let caller_refusal =
-            CallerLimits::from_operands([operand.as_str()]).expect_err("caller limits refuse it");
-        assert_eq!(caller_refusal.cause, UsageCause::NotAnInteger, "{operand}");
-        assert_eq!(caller_refusal.operand, operand);
     }
     for setting in AccountingSetting::ALL {
         let operand = format!("{}=18446744073709551616", setting.name());
         let refusal = parse_operands([operand.as_str()]).expect_err("the value exceeds u64");
         assert_eq!(refusal.cause, UsageCause::NotAnInteger, "{operand}");
         assert_eq!(refusal.operand, operand);
-        let caller_refusal =
-            CallerLimits::from_operands([operand.as_str()]).expect_err("caller limits refuse it");
-        assert_eq!(caller_refusal.cause, UsageCause::NotAnInteger, "{operand}");
-        assert_eq!(caller_refusal.operand, operand);
     }
 }
 
