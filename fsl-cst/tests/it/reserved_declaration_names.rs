@@ -127,6 +127,39 @@ fn lowercase_tuple_still_refuses_as_a_record_name() {
     assert_eq!(refusal.cause, CompleteCause::UnexpectedToken);
 }
 
+/// FSpec FR-376-AC-8 (QSL-3301): `only` and `seq` are keyword spellings in
+/// their forms alone, so each names every native position, a protocol step's
+/// binder included.
+#[trace("FSpec-TC-311", "FSpec-FR-376-AC-8")]
+#[test]
+fn population_form_words_name_every_native_position() {
+    const SEND: (&str, &str) = (
+        "protocol send binder",
+        "{P}protocol Flow using v over (k: M::Cell) on origin { role Planning on M::Cell; \
+         run sequence Main { send Step via Release as (@: M::Attempt) { @.n = 0 }; } \
+         finish Over as (closing: Boolean) { closing }; }",
+    );
+    const REFERENCES: (&str, &str) = (
+        "call and name reference",
+        "{P}function f using v(x: Integer): Integer pure { @(x) + @ }",
+    );
+    for (position, template) in FUNCTION_POSITIONS
+        .into_iter()
+        .chain(OTHER_POSITIONS)
+        .chain([SEND, REFERENCES])
+    {
+        for name in ["only", "seq"] {
+            let text = unit(template, name);
+            let parsed = parse(&text);
+            assert!(
+                parsed.is_admissible(),
+                "{position}: {text}: {:?}",
+                parsed.diagnostics()
+            );
+        }
+    }
+}
+
 #[trace("TC-113", "FR-035-AC-7")]
 #[test]
 fn collection_constructor_words_are_admitted_as_parameter_and_binder_names() {

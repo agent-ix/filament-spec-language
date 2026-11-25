@@ -1505,8 +1505,11 @@ fn expressions(g: &mut Grammar) {
                 r(P::Expression),
                 x(")"),
             ]),
+            // FSpec FR-376-AC-8: `only` is a keyword spelling in its two
+            // forms and an ordinary identifier elsewhere, so this head
+            // reserves nothing.
             s(vec![
-                x("only"),
+                literal("only"),
                 x("("),
                 ident(),
                 x("in"),
