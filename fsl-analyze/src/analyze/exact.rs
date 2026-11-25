@@ -1620,7 +1620,7 @@ fn run(
     let mut fair_policy: Option<Vec<Option<crate::exact_probabilistic::SchedulerChoice>>> = None;
     let (values, policy) = if fair_eventual {
         let precision = limits.max_precision_bits;
-        let mut solve_limits = limits.clone();
+        let mut solve_limits = limits;
         let precision_scalar_cap = u64::from(precision).saturating_mul(8);
         let fair_bounds = limits.max_rational_bits < precision_scalar_cap;
         if fair_bounds {
@@ -1755,7 +1755,7 @@ fn run(
                 if state_predicate {
                     // The scalar budget that stopped the solve does not bound
                     // this question about the model graph's shape.
-                    let mut shape_limits = limits.clone();
+                    let mut shape_limits = limits;
                     shape_limits.max_rational_bits = u64::MAX;
                     match acyclic_subject(
                         simulation.clone(),
@@ -1814,11 +1814,11 @@ fn run(
                             }) => Ok(crate::exact_probabilistic::UnboundedOutcome::Bounds {
                                 lower: upper
                                     .iter()
-                                    .map(|bound| complement_dyadic(bound))
+                                    .map(complement_dyadic)
                                     .collect(),
                                 upper: lower
                                     .iter()
-                                    .map(|bound| complement_dyadic(bound))
+                                    .map(complement_dyadic)
                                     .collect(),
                                 precision_bits,
                                 sweeps,
@@ -2038,7 +2038,7 @@ fn run(
                     probabilistic.claims(),
                     &item,
                     &bytes,
-                    interval_role(side, &bound),
+                    interval_role(side, bound),
                     document_limits,
                     cancel,
                 )?;
@@ -4046,28 +4046,23 @@ fn finish_replay(
             let state_key = |state: &fsl_eval::simulation::model::ModelSimState| {
                 system.state_key(state).ok().map(|(_, key)| key)
             };
-            let wire = match input.enum_members {
-                Some(enum_members) => fsl_replay::probabilistic_wire_with_enum_members(
-                    witness,
-                    bound,
-                    claim_type,
-                    input.types,
-                    input.variant_types,
-                    enum_members,
-                    &state_key,
-                    spelled_scheduler,
-                ),
-                None => fsl_replay::probabilistic_wire(
-                    witness,
-                    bound,
-                    claim_type,
-                    input.types,
-                    input.variant_types,
-                    input.enums,
-                    &state_key,
-                    spelled_scheduler,
-                ),
+            let value_schema = fsl_replay::ProbabilisticValueSchema::new(
+                input.types,
+                input.variant_types,
+                input.enums,
+            );
+            let value_schema = match input.enum_members {
+                Some(enum_members) => value_schema.with_enum_members(enum_members),
+                None => value_schema,
             };
+            let wire = fsl_replay::probabilistic_wire(
+                witness,
+                bound,
+                claim_type,
+                &value_schema,
+                &state_key,
+                spelled_scheduler,
+            );
             EngineReport::Exact(Box::new(ExactReport::Refuted(token, Box::new(wire))))
         }
         Ok(ProbabilityWitnessReplay::Parity) => {

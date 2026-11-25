@@ -85,7 +85,7 @@ fn public_root_consumer_runs_builds_and_settles() {
         .request(
             result.package_id(),
             member.request_index(),
-            &[bound.clone()],
+            std::slice::from_ref(&bound),
             &plugin,
             vec![CanonicalAssignment {
                 parameter,

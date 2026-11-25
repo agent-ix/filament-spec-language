@@ -4053,7 +4053,7 @@ pub fn settle_run_with_smt_proofs(
             return Err(AnalyzeDocumentError::Fault);
         };
         let clock_selections = super::clause_item::clock_selections(package, &provision);
-        let encoding = temporal.smt_encoding.clone().unwrap_or_default();
+        let encoding = temporal.smt_encoding.unwrap_or_default();
         if evidence.item_kind() != temporal.item_kind
             || evidence.temporal_clock_selections() != clock_selections
             || evidence.smt_encoding() != &encoding

@@ -73,7 +73,8 @@ fn shared_grammar_lexical_terminals() -> BTreeSet<String> {
     let terminals: BTreeSet<String> = names
         .split('`')
         .enumerate()
-        .filter_map(|(index, name)| (index % 2 == 1).then(|| name.to_owned()))
+        .filter(|(index, _)| index % 2 == 1)
+        .map(|(_, name)| name.to_owned())
         .collect();
     assert!(
         !terminals.is_empty(),
