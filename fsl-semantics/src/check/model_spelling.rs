@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{EffectiveId, ValueType};
 use fsl_foundation::source::provenance::RawSourceRef;
+use ix_trace_rs::implements;
 
 use super::lowering::AdmittedModel;
 use crate::model::domain_package::DomainPackageRef;
@@ -366,6 +367,23 @@ impl ModelSpellings {
             Spelled::Model(found) => found.and_then(|found| found.object.clone()),
             Spelled::Other => None,
         }
+    }
+
+    /// The type's declared model spelling, independent of a source import
+    /// alias. Source-model types keep their one-segment name.
+    #[implements("FR-363-AC-9")]
+    pub(crate) fn object_type_name(
+        &self,
+        unit: Option<&RawSourceRef>,
+        object: &EffectiveId,
+    ) -> Option<String> {
+        self.declared_aliases(unit).iter().find_map(|alias| {
+            let package = self.package(unit, alias)?;
+            package.names.iter().find_map(|(member, name)| {
+                (name.object.as_ref() == Some(object))
+                    .then(|| super::source_model::qualified(alias, member))
+            })
+        })
     }
 
     /// Whether `name`, written in `unit`, names a package-owned type through

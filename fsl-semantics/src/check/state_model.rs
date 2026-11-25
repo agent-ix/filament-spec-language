@@ -10,6 +10,7 @@ use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_forms::{ClauseKind, TypeForm};
 use fsl_foundation::diagnostic::{StageFailure, Staged};
+use ix_trace_rs::implements;
 
 use super::check::Scope;
 use super::check::UntypedKind;
@@ -223,6 +224,7 @@ impl FamilyContract for StateModelFamily {
     type Claim = ();
 
     #[deny(clippy::wildcard_enum_match_arm)]
+    #[implements("FR-363-AC-9")]
     fn check<'a>(
         request: &Request,
         cx: &mut CheckContext<'a, Scope>,
@@ -302,25 +304,22 @@ impl FamilyContract for StateModelFamily {
                             // absent field, after `deref` or not, is
                             // `ill_typed`/`type-mismatch` keeping its owner,
                             // spelling and token span (FR-363).
-                            return Err(
-                                match scope.untyped_member(object, field, UntypedKind::Field) {
-                                    Some(untyped) => refuse(location, untyped_cause(untyped)),
-                                    None => refuse(
-                                        location,
-                                        CheckCause::UnknownField {
-                                            owner: object
-                                                .original()
-                                                .node()
-                                                .rsplit('/')
-                                                .next()
-                                                .unwrap_or(object.original().node())
-                                                .into(),
-                                            field: field.as_str().into(),
-                                            span: *member_span,
-                                        },
-                                    ),
+                            if let Some(untyped) =
+                                scope.untyped_member(object, field, UntypedKind::Field)
+                            {
+                                return Err(refuse(location, untyped_cause(untyped)));
+                            }
+                            let owner = scope
+                                .object_type_name(source_owner.as_ref(), object)
+                                .ok_or_else(|| fault(location))?;
+                            return Err(refuse(
+                                location,
+                                CheckCause::UnknownField {
+                                    owner,
+                                    field: field.as_str().into(),
+                                    span: *member_span,
                                 },
-                            );
+                            ));
                         }
                         (Some(_), []) if !*field_reads => return Err(mismatch(location)),
                         (Some(attribute), []) => {
