@@ -380,7 +380,15 @@ state key alone or a partial tuple SHALL NOT replace it.
 
 `probabilityProductKey` SHALL be the RFC 8785 UTF-8 JCS octets of
 `["filament.probability-product-key/v1",binding,instance,activation,model,monitor,accumulator,pending]`,
-through ADR-013/FR-259's one encoder. These are complete octets.
+through ADR-013/FR-259's one encoder, except that a reset process over more
+than one initial root uses
+`["filament.probability-product-key/v1",binding,instance,activation,model,monitor,accumulator,pending,root]`.
+In that reset process, `root` is the zero-based index of the initial root in
+FR-101's canonical initial-root order; it is retained through every product
+state and reset edge. This conditional component identifies which initial
+state a reset returns to. A single-root model and any model without a reset
+process SHALL use the original eight-member array byte-for-byte, including
+the absence of a trailing null or default root. These are complete octets.
 Equality SHALL compare complete canonical octets;
 ordering SHALL be ascending unsigned lexicographic octet order. All
 array members are required. JSON null denotes actual None and SHALL NOT
@@ -877,8 +885,9 @@ acceptance justified only by a post-D predicate. Terminal closure and a
 resource stop must preserve the same complete digital form.
 
 These vectors prescribe prospective qualification, not implementation PASS.
-All eight members must be round-tripped by each consumer, including
-rejection loci, with no model-only shortcut.
+Every component of the applicable canonical key form must be round-tripped
+by each consumer, including the conditional `root` component when present,
+with rejection loci and no model-only shortcut.
 
 ## Behavior
 
@@ -955,6 +964,7 @@ rejection loci, with no model-only shortcut.
 | FR-196-AC-15 | Over FR-875's `Link` claim `E` under `Even`, with a start snapshot holding `m` undelivered and `n` delivered, the product has one initial key with `instance` `m` and `activation` `"active"` and one with `instance` `n` and `activation` `"waiting"`; every key reachable from `n`'s is waiting, so `n` holds vacuously with no value computed; `m`'s numerator is `391/400` and its denominator 1, so its value `391/400` equals the `on origin` claim's. Keys of `m` and `n` at one model state are distinct octets, and a key with the six members of an `on origin` claim is refused. | Test (TC-3060) |
 | FR-196-AC-16 | Over FSpec FR-407-AC-18's model with a further action `stay` at `s0` that loops at `s0` without activating, the reset process sends the state after `a` from which `g` is unreachable back to `s0` and gives the end component `{s0}` under `stay` a reset action; the conditioned minimum is `1/2` and the maximum 1, never 0 by a scheduler that stays forever, and over the model without `stay`, under the workload choosing `a` and `b` with `1/2` each, the value is `3/5`. | Test (TC-3060) |
 | FR-196-AC-17 | Under `filament.temporal.event-position.false-extension/v1`, EN-5 builds the bounded formula product with its FR-338 monitor for the reachability/v1 subset FR-201 admits: `eventually[0,2] holds(P)` over FR-201-AC-13's horizon-2 model settles with its exact value `3/4`, and `always[0,1] holds(P)` over FR-201-AC-16's model has minimum `1/4` and maximum `3/4`, accepted at those bounds. Each product reads a formula position once at its model state and applies the event-position false-extension closure at terminal model states; EN-5 does not substitute the timed-deadline monitor or refuse these admitted forms as `unsupported` or `not-yet-implemented`. | Test |
+| FR-196-AC-18 | For a conditional reading whose reset process is built from a model with more than one canonical initial root, every product key in that reset process has the ninth `root` member equal to that root's zero-based index in FR-101 canonical initial-root order, including states reached after convergence and reset edges. For a single-root model, and for any model without a reset process, the key is exactly the existing eight-member canonical array with its existing RFC 8785 bytes. | Test |
 
 ## Dependencies
 

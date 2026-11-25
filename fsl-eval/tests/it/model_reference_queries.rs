@@ -18,7 +18,7 @@
 //! does (ADR-013 §8 OQ-C ruling).
 
 use filament_checked::key::DeclarationKey;
-use filament_eval::{CallFailure, Evaluation};
+use filament_eval::{CallFailure, Evaluation, ExecutionBackendChoice, SessionLimits};
 use filament_eval::{FamilyOutcome, FamilyResult};
 use filament_exact::NodeKey;
 use filament_exact::{
@@ -39,6 +39,7 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use filament_semantic_value::object_closure::ObjectClosure;
+use fsl_eval::execution::{ExecuteLimits, ExecuteRequest, ExecuteSelection, SuppliedBackends};
 use fsl_eval::value::{undefined_contract_code, CheckedPackageEvaluation, QualifiedName};
 use fsl_forms::{BinaryOperator, Expression, FunctionDeclaration, TypeForm};
 use fsl_package::CheckedPackage;
@@ -80,6 +81,146 @@ const SCALAR_UNLIMITED: ScalarLimits = ScalarLimits {
     work_units: u64::MAX,
     result_units: u64::MAX,
 };
+
+/// TC-1121 FR-403-AC-5: evaluate the recorded three-member population through
+/// the explicit no_std entry using fsl-eval's ObjectEnvironment implementation.
+pub(super) fn no_std_all_instances_over_recorded_population() -> Result<Evaluation, CallFailure> {
+    let scenario = descending_population_scenario();
+    let package = package_with_instances_function(&scenario);
+    let limits = ExecuteLimits {
+        accounting: SCALAR_UNLIMITED,
+        prepare: fsl_eval::execution::PrepareLimits::default(),
+        session: SessionLimits::default(),
+    };
+    let mut final_result = None;
+    for iteration in 0..10 {
+        let actual_log = fsl_semantics::model::object_environment::ReadLog::default();
+        let request = ExecuteRequest {
+            selection: ExecuteSelection::Function {
+                name: QualifiedName::unqualified("F").expect("function name"),
+                arguments: vec![Value::Population(scenario.binding.population_id())],
+                environment: population_environment(&scenario).with_read_log(actual_log.clone()),
+            },
+            backend: ExecutionBackendChoice::Interpreter,
+        };
+        let cancel = filament_exact::Cancel::new();
+        let mut run = filament_semantic_value::supplied_stop::SuppliedRun::new(
+            filament_semantic_value::supplied_stop::SuppliedLimits::default(),
+            cancel.clone(),
+        )
+        .expect("supplied run initializes");
+        let actual = fsl_eval::execution::execute(
+            &package,
+            &request,
+            &SuppliedBackends::default(),
+            &limits,
+            &mut run,
+            &cancel,
+        )?;
+        let expected_order = vec![
+            object_reference(&scenario.universe, &scenario.a, "a1"),
+            object_reference(&scenario.universe, &scenario.a, "a2"),
+            object_reference(&scenario.universe, &scenario.b, "b1"),
+        ];
+        let FamilyOutcome::Evaluated(Outcome::Completed(value)) = &actual.outcome else {
+            panic!(
+                "allInstances no_std result is not complete: {:?}",
+                actual.outcome
+            );
+        };
+        assert_eq!(
+            reference_elements(value),
+            expected_order,
+            "descending population input is returned in canonical reference order"
+        );
+        let expected_log = fsl_semantics::model::object_environment::ReadLog::default();
+        let expected = package
+            .call(
+                &QualifiedName::unqualified("F").expect("function name"),
+                vec![Value::Population(scenario.binding.population_id())],
+                &population_environment(&scenario).with_read_log(expected_log.clone()),
+                &mut Meter::new(SCALAR_UNLIMITED),
+            )
+            .expect("the reference allInstances call runs");
+        assert_eq!(
+            format!("{actual:?}"),
+            format!("{expected:?}"),
+            "no_std/reference allInstances mismatch on run {iteration}"
+        );
+        assert_eq!(
+            actual_log.reads(),
+            expected_log.reads(),
+            "no_std/reference ReadLog mismatch on run {iteration}"
+        );
+        final_result = Some(actual);
+    }
+    Ok(final_result.expect("ten no_std/reference runs"))
+}
+
+fn descending_population_scenario() -> Scenario {
+    let domain_package = fixture_f1();
+    let view = view_of(&domain_package);
+    let universe = view
+        .object_universe()
+        .identity()
+        .expect("the universe has an identity");
+    let a = type_id(&view, "model.A");
+    let b = type_id(&view, "model.B");
+    let document = PopulationDocument {
+        model_identity: "test/orders".to_owned(),
+        members: vec![
+            member("b1", "model.B"),
+            member("a2", "model.A"),
+            member("a1", "model.A"),
+        ],
+    };
+    let binding = admitted_binding(&view, &document);
+    let model = AdmittedModel::new(&domain_package, &view).unwrap();
+    Scenario {
+        universe,
+        a,
+        b,
+        binding,
+        model,
+    }
+}
+
+/// TC-1121 FR-403-AC-6: an unrecorded population is refused at argument
+/// admission by the no_std evaluator's closure-only environment.
+pub(super) fn no_std_unrecorded_population_is_wrong_value_kind() -> Result<(), CallFailure> {
+    let scenario = scenario();
+    let package = package_with_function(&scenario);
+    let request = ExecuteRequest {
+        selection: ExecuteSelection::Function {
+            name: QualifiedName::unqualified("F").expect("function name"),
+            arguments: vec![Value::Population(scenario.binding.population_id())],
+            environment: ObjectEnvironment::default(),
+        },
+        backend: ExecutionBackendChoice::Interpreter,
+    };
+    let limits = ExecuteLimits {
+        accounting: SCALAR_UNLIMITED,
+        prepare: fsl_eval::execution::PrepareLimits::default(),
+        session: SessionLimits::default(),
+    };
+    let mut run = filament_semantic_value::supplied_stop::SuppliedRun::new(
+        filament_semantic_value::supplied_stop::SuppliedLimits::default(),
+        filament_exact::Cancel::new(),
+    )
+    .expect("supplied run initializes");
+    match fsl_eval::execution::execute(
+        &package,
+        &request,
+        &SuppliedBackends::default(),
+        &limits,
+        &mut run,
+        &filament_exact::Cancel::new(),
+    ) {
+        Err(CallFailure::Input(InputRefusal::WrongValueKind { parameter: 0 })) => Ok(()),
+        Err(error) => Err(error),
+        Ok(evaluation) => panic!("unrecorded population was accepted: {evaluation:?}"),
+    }
+}
 
 fn object_type(identity: &str, supertypes: Vec<&str>) -> DomainPackageRecord {
     DomainPackageRecord::ObjectType(ObjectTypeRecord {
@@ -497,6 +638,39 @@ fn package_with_collection_function(scenario: &Scenario) -> CheckedPackage {
             crate::support::type_form::type_form(&ValueType::Integer),
             None,
             Expression::size(Expression::name("elements".to_owned()), None),
+        )];
+        declarations
+    }
+    .check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_eval::value::S6aRewardEvaluator,
+    )
+    .unwrap();
+    CheckedPackage::link(graph)
+}
+
+fn package_with_instances_function(scenario: &Scenario) -> CheckedPackage {
+    let graph = {
+        let mut declarations = PackageDeclarations::new(
+            fsl_semantics::check::fixture_source(),
+            "fixture".to_owned(),
+            fsl_foundation::IdentityLimits::default(),
+        );
+        declarations.types = types(scenario);
+        declarations.models = vec![scenario.model.clone()];
+        declarations.functions = vec![FunctionDeclaration::new(
+            "F",
+            vec![(
+                "p".to_owned(),
+                crate::support::type_form::type_form(&ValueType::Population(Some(3)))
+                    .with_arguments(vec![crate::support::type_form::named_type_form("M::A")]),
+            )],
+            TypeForm::collection(CollectionKind::Set, crate::support::type_form::SPAN)
+                .with_arguments(vec![crate::support::type_form::named_type_form("M::A")])
+                .with_bounds(vec!["0".to_owned(), "3".to_owned()]),
+            None,
+            all_instances(ValueType::Reference(scenario.a.clone())),
         )];
         declarations
     }
@@ -4558,7 +4732,7 @@ fn model_query_shapes_fault_at_the_real_producers_without_added_query_charges() 
 /// is private, so that branch is `filament-eval`'s toy-closure test.)
 #[test]
 #[trace("FR-262-AC-11", "FR-089-AC-5")]
-fn the_adapter_validates_a_population_request_by_its_declared_maximum() {
+pub(super) fn the_adapter_validates_a_population_request_by_its_declared_maximum() {
     use filament_eval::{CheckedClosure, RequestRefusal};
     use fsl_eval::value::PackageClosure;
 
