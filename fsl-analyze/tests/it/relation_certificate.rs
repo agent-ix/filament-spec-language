@@ -144,7 +144,12 @@ impl Fixture {
         let mut keys: Vec<_> = system
             .initial()
             .iter()
-            .map(|state| system.state_key(state).expect("state key").1)
+            .map(|state| {
+                system
+                    .state_key(state, fsl_foundation::IdentityLimits::default())
+                    .expect("state key")
+                    .1
+            })
             .collect();
         keys.sort();
         keys.dedup();
@@ -846,8 +851,14 @@ fn hp1_result_expansion_keeps_all_results_and_ordinary_successors_stay_unchanged
             .iter()
             .filter(|(edge, candidate)| {
                 &edge.transition == transition
-                    && system.state_key(candidate).expect("post key").1
-                        == system.state_key(post).expect("ordinary post key").1
+                    && system
+                        .state_key(candidate, fsl_foundation::IdentityLimits::default())
+                        .expect("post key")
+                        .1
+                        == system
+                            .state_key(post, fsl_foundation::IdentityLimits::default())
+                            .expect("ordinary post key")
+                            .1
             })
             .collect();
         assert_eq!(matching.len(), 2);

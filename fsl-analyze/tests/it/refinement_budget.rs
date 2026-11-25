@@ -322,7 +322,11 @@ fn a_replay_over_the_budget_settles_incomplete_not_parity() {
     let world = heavy();
     let systems = systems(&world, b);
     let (transition, reached, _) = put(&world, &systems);
-    let state_key = systems.concrete.state_key(&reached).expect("a key").1;
+    let state_key = systems
+        .concrete
+        .state_key(&reached, fsl_foundation::IdentityLimits::default())
+        .expect("a key")
+        .1;
     let recorded = RefinementFailure::AbstractStepRejected {
         position: 1,
         transition: ModelTransition::new(

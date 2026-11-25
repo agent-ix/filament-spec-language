@@ -265,7 +265,7 @@ fn a_state_graph_replay_allocation_stops_before_the_next_real_instance() {
 /// independently selected typed clock row.
 #[test]
 fn state_graph_identity_readback_uses_the_explicit_temporal_selection() {
-    let world = crate::graph_world::temporal_config_world_ordered();
+    let world = crate::graph_world::temporal_config_world();
     let claim = world.claim("ReachesTwo");
     let mut selections = crate::fill::tcb_01_event_position_selection(&world.package);
     let hyper = &world.package.graph().hyper_clauses()[0];
@@ -890,6 +890,7 @@ fn undefined_and_altered_count_certificates_never_settle_proved() {
         },
         sampled: Vec::new(),
         walks_stopped: 0,
+        boundary_states: 0,
     };
     let mut replays = 0;
     assert_rejected(
@@ -937,6 +938,7 @@ fn undefined_and_altered_count_certificates_never_settle_proved() {
         },
         sampled: Vec::new(),
         walks_stopped: 0,
+        boundary_states: 0,
     };
     assert_rejected(
         &settle(
@@ -1018,6 +1020,7 @@ fn a_bad_state_certificate_settles_certificate_rejected() {
         },
         sampled: Vec::new(),
         walks_stopped: 0,
+        boundary_states: 0,
     };
     let mut replays = 0;
     assert_rejected(
@@ -1330,6 +1333,53 @@ fn horizon_limit_undecided_and_empty_runs_settle_their_rows() {
         TerminalValue::Inconclusive(InconclusiveCause::NoInitialState)
     );
     assert_eq!(replays, 1, "only the trap carries evidence");
+}
+
+/// FR-169-AC-19: a completed `NoDecision` with a `ConstraintBoundary` open
+/// cause settles `inconclusive`, `ConstraintReached` with the run's boundary
+/// states, ahead of a search horizon, and `UndecidedSuccessor` comes before
+/// it; no evidence is replayed.
+#[trace("TC-594", "FR-169-AC-19")]
+#[test]
+fn a_boundary_open_cause_settles_constraint_reached_after_an_undecided_one() {
+    let world = config_world(REACHES_TWO, &[(0, 0)]);
+    let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
+    let reached = InconclusiveCause::ConstraintReached { boundary_states: 2 };
+    let mut replays = 0;
+    for (open, cause) in [
+        (vec![OpenCause::ConstraintBoundary], reached.clone()),
+        (
+            vec![OpenCause::MaxDepth, OpenCause::ConstraintBoundary],
+            reached,
+        ),
+        (
+            vec![OpenCause::ConstraintBoundary, OpenCause::UndecidedSuccessor],
+            InconclusiveCause::UndecidedSuccessor,
+        ),
+    ] {
+        let instance = StateGraphInstanceOutcome {
+            outcome: StateGraphOutcome::NoDecision {
+                end: RunEnd::Completed,
+                open: open.iter().copied().collect(),
+            },
+            boundary_states: 2,
+            ..result.items[0][0].clone()
+        };
+        let record = settle(
+            &world,
+            AB,
+            "ReachesTwo",
+            &instance,
+            no_samples(),
+            &mut replays,
+        );
+        assert_eq!(record.value, TerminalValue::Inconclusive(cause), "{open:?}");
+        assert_eq!(
+            (record.label, record.basis),
+            (ResultLabel::Inconclusive, SettlementBasis::Unsettled)
+        );
+    }
+    assert_eq!(replays, 0);
 }
 
 /// FR-169-AC-1, AC-5: a `Witnessed` outcome whose replay settles

@@ -490,7 +490,10 @@ fn listed(world: &World) -> SimulationCertificate {
             .into_iter()
             .map(|(transition, post)| {
                 let order = concrete.transition_key(&transition).expect("a key");
-                let key = concrete.state_key(&post).expect("a key").0;
+                let key = concrete
+                    .state_key(&post, fsl_foundation::IdentityLimits::default())
+                    .expect("a key")
+                    .0;
                 (order, key, Some(transition), post)
             })
             .collect::<Vec<_>>();

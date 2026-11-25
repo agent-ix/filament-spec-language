@@ -688,7 +688,7 @@ pub(super) fn replay_undefined(
             cancel,
         )?;
         let (_, state_key) = system
-            .state_key(&state)
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
         if position > 0 && !selected.control.reads_post(Some(control)) {
             match selected.control.step(

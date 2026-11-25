@@ -121,7 +121,7 @@ pub fn replay_protocol_assumption_witness(
     let Some(mut concrete) = systems.concrete.initial().into_iter().find(|state| {
         systems
             .concrete
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .is_ok_and(|(_, key)| key == witness.path.concrete_initial)
     }) else {
         return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
@@ -144,7 +144,7 @@ pub fn replay_protocol_assumption_witness(
     let mut paired_keys = vec![(
         systems
             .concrete
-            .state_key(&concrete)
+            .state_key(&concrete, fsl_foundation::IdentityLimits::default())
             .map_err(|_| fault("assumption-replay-concrete-state-has-a-key"))?
             .1,
         protocol
@@ -164,7 +164,7 @@ pub fn replay_protocol_assumption_witness(
         paired_keys.push((
             systems
                 .concrete
-                .state_key(&concrete)
+                .state_key(&concrete, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| fault("assumption-replay-concrete-state-has-a-key"))?
                 .1,
             protocol
@@ -185,7 +185,7 @@ pub fn replay_protocol_assumption_witness(
                 enabled == transition
                     && systems
                         .concrete
-                        .state_key(next)
+                        .state_key(next, fsl_foundation::IdentityLimits::default())
                         .is_ok_and(|(_, key)| key == step.concrete_post)
             }) else {
                 return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
@@ -195,7 +195,7 @@ pub fn replay_protocol_assumption_witness(
             concrete = next;
         } else if systems
             .concrete
-            .state_key(&concrete)
+            .state_key(&concrete, fsl_foundation::IdentityLimits::default())
             .map_or(true, |(_, key)| key != step.concrete_post)
         {
             return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
@@ -257,7 +257,7 @@ pub fn replay_protocol_assumption_witness(
         paired_keys.push((
             systems
                 .concrete
-                .state_key(&concrete)
+                .state_key(&concrete, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| fault("assumption-replay-concrete-state-has-a-key"))?
                 .1,
             protocol

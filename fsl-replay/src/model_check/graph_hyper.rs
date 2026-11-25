@@ -460,7 +460,7 @@ fn replay_product_trap(
         }));
     }
     let wanted = system
-        .state_key(&initial)
+        .state_key(&initial, fsl_foundation::IdentityLimits::default())
         .map_err(|_| fault("HP-5-initial-state-key"))?
         .1;
     let roots: Vec<HyperState> = product
@@ -469,7 +469,7 @@ fn replay_product_trap(
         .filter(|state| {
             state.components.first().is_some_and(|component| {
                 system
-                    .state_key(component)
+                    .state_key(component, fsl_foundation::IdentityLimits::default())
                     .is_ok_and(|(_, state_key)| state_key == wanted)
             })
         })
@@ -610,7 +610,7 @@ fn product_key(
         .first()
         .ok_or_else(|| fault("an-HP-5-product-state-has-one-component"))?;
     let (bytes, _) = system
-        .state_key(component)
+        .state_key(component, fsl_foundation::IdentityLimits::default())
         .map_err(|_| fault("HP-5-product-model-state-key"))?;
     let key = StateKey::from_canonical_bytes(bytes);
     let property = match &state.property {

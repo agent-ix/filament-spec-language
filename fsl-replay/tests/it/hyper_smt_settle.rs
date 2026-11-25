@@ -28,7 +28,9 @@ fn reset_loop(world: &World, variable: &str, initial: usize) -> fsl_replay::Hype
         .into_iter()
         .nth(initial)
         .expect("initial index");
-    let (key, _) = system.state_key(&state).expect("state key");
+    let (key, _) = system
+        .state_key(&state, fsl_foundation::IdentityLimits::default())
+        .expect("state key");
     let key = fsl_eval::simulation::StateKey::from_canonical_bytes(key);
     let expansion = system
         .successors(&state)
@@ -39,7 +41,7 @@ fn reset_loop(world: &World, variable: &str, initial: usize) -> fsl_replay::Hype
         .find(|(transition, post)| {
             transition.operation().contains("Vault/reset")
                 && system
-                    .state_key(post)
+                    .state_key(post, fsl_foundation::IdentityLimits::default())
                     .is_ok_and(|(bytes, _)| bytes == key.as_bytes())
         })
         .expect("reset has a self-loop");

@@ -1294,7 +1294,9 @@ fn written_nodes(package: &CheckedPackage) -> Vec<Value> {
         .into_iter()
         .map(|candidate| {
             candidate
-                .wire_node(&StructuralIds::default(), &|_, _| Some(CheckMode::Linked))
+                .wire_node(&StructuralIds::default(), &BTreeSet::new(), &|_, _| {
+                    Some(CheckMode::Linked)
+                })
                 .unwrap()
         })
         .collect();
@@ -4959,8 +4961,8 @@ fn a_package_remembers_its_emission_and_link_with_reuses_it() {
     assert!(unemitted.remembered_emission().is_some());
 }
 
-/// QSL-1448: a dimension equivalence operand from another package is not
-/// minted as a Local id (FR-322-AC-299); a same-package pair is.
+/// QSL-1448: an unselected dimension package is refused rather than minted
+/// as a Local id (FR-322-AC-299).
 #[ix_trace_rs::trace("QSL-1448", "FR-322-AC-299")]
 #[test]
 fn dimension_equivalence_refuses_a_foreign_package_operand_and_keeps_local_ones() {
@@ -4979,7 +4981,7 @@ fn dimension_equivalence_refuses_a_foreign_package_operand_and_keeps_local_ones(
         [key("pkg", "Time"), key("other", "Time")],
         scale(),
     ));
-    match nominal_term(&ids, &equivalence, &foreign) {
+    match nominal_term(&ids, &equivalence, &foreign, &BTreeSet::new()) {
         Err(EmitRefusal::ForeignDimensionOperand { node, operand }) => {
             assert_eq!(node.package.as_ref(), "pkg");
             assert_eq!(operand.package.as_ref(), "other");
@@ -4992,9 +4994,526 @@ fn dimension_equivalence_refuses_a_foreign_package_operand_and_keeps_local_ones(
         scale(),
     ));
     assert!(
-        nominal_term(&ids, &equivalence, &local).is_ok(),
+        nominal_term(&ids, &equivalence, &local, &BTreeSet::new()).is_ok(),
         "same-package operands stay Local"
     );
+}
+
+/// FR-094-AC-13: selected foreign dimension operands retain the selected
+/// package identity and declared node, while local dimensions remain Local.
+#[trace("FR-094-AC-13")]
+#[test]
+fn dimension_equivalence_emits_a_package_operand_for_a_selected_model() {
+    use filament_exact::{Integer, Rational};
+    use fsl_semantics::value::nominal_payload::{DimensionEquivalencePayload, NominalPayload};
+
+    let key = |package: &str, name: &str| {
+        NodeKey::new(package, vec![PathSegment::Text(name.to_owned())], 0)
+            .expect("a fixture dimension has a structural declaration key")
+    };
+    let local = key("acme/rpc", "Time");
+    let foreign = key("acme/flow", "Time");
+    let equivalence = key("acme/rpc", "equivalence");
+    let payload = NominalPayload::DimensionEquivalence(DimensionEquivalencePayload::new(
+        [local.clone(), foreign.clone()],
+        Rational::from_integer(Integer::one()),
+    ));
+    let selected = BTreeSet::from(["acme/rpc", "acme/flow"]);
+    let term = nominal_term(&StructuralIds::default(), &equivalence, &payload, &selected)
+        .expect("both operands belong to selected models");
+    let CheckedTerm::NominalBody(body) = term else {
+        panic!("the equivalence has its typed nominal body");
+    };
+    let (operands, scale) = body
+        .dimension_equivalence_details()
+        .expect("the IR nominal body exposes equivalence operands");
+    assert_eq!(operands[0], CheckedDimensionOperand::Local(node_id(&local)));
+    assert_eq!(
+        operands[1],
+        CheckedDimensionOperand::Package(CheckedPackageNodeRef {
+            package: "acme/flow".into(),
+            node: CheckedDeclaredNodeId::try_new(node_id(&foreign))
+                .expect("the foreign dimension uses a declared node path"),
+        })
+    );
+    assert_eq!(scale.numerator.as_ref(), "1");
+    assert_eq!(scale.denominator.as_ref(), "1");
+}
+
+/// FR-094-AC-13: source declarations derive the cross-package scale through
+/// the selected root units, emit one canonical package-referenced node, and
+/// survive reversal of the declaration's source order and the checked read.
+fn flow_millisecond_dimension_equivalence_fixture(include_negative_controls: bool) {
+    const RPC: &str = "language \"ix:native\" edition \"1-draft\";\n\
+        domain \"acme/rpc\";\n\
+        dimension Time;\n\
+        unit s: Time = rational(1, 1);\n\
+        object Rpc identity (id) { id: Int[0, 1]; }\n";
+    const FLOW: &str = "language \"ix:native\" edition \"1-draft\";\n\
+        domain \"acme/flow\";\n\
+        dimension Time;\n\
+        unit s: Time = rational(1, 1);\n\
+        unit ms: Time = rational(1, 1);\n\
+        object Flow identity (id) { id: Int[0, 1]; }\n";
+    const CLOCK: &str = "language \"ix:native\" edition \"1-draft\";\n\
+        domain \"acme/clock\";\n\
+        dimension Time;\n\
+        unit ms: Time = rational(1, 1);\n\
+        object ClockRecord identity (id) { id: Int[0, 1]; }\n";
+    let mut models = fsl_semantics::model::intake::package_input([
+        RPC.as_bytes(),
+        FLOW.as_bytes(),
+        CLOCK.as_bytes(),
+    ])
+    .expect("the rpc, flow, and clock model units compile");
+    let mut flow: Value = serde_json::from_slice(&models["acme/flow"])
+        .expect("the compiled flow model is an admitted JSON document");
+    let flow_ms = flow["units"]
+        .as_array_mut()
+        .expect("the flow's declared units")
+        .iter_mut()
+        .find(|unit| unit["name"] == "ms")
+        .expect("the source-derived ms unit carries its own origin");
+    flow_ms["target"] = json!("ix://acme/flow/unit/s");
+    flow_ms["scale"] = json!("1/1000");
+    assert_eq!(flow_ms["target"], "ix://acme/flow/unit/s");
+    assert_eq!(flow_ms["scale"], "1/1000");
+    models.insert(
+        "acme/flow".to_owned(),
+        quire_canonical::to_vec(&flow, ceiling().canonical())
+            .expect("the flow model with a derived unit remains canonical"),
+    );
+    let read_equivalence = |declaration: &str| {
+        let source_time = if declaration.contains("~ Time by") {
+            "dimension Time;\n\
+             unit s: Time = rational(1, 1);\n"
+        } else {
+            ""
+        };
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             model R = \"acme/rpc\";\n\
+             model F = \"acme/flow\";\n\
+             model G = \"acme/clock\";\n\
+             {source_time}\
+             {declaration}\n"
+        );
+        let graph = assemble_with_models(source.as_bytes(), &models)
+            .expect("the selected dimensions and units assemble")
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
+            .expect("the cross-package equivalence checks");
+        let emission =
+            emit_checked(&CheckedPackage::link(graph)).expect("the selected package operands emit");
+        let raw_wire = raw_wire(&emission);
+        let wire = wire(&emission);
+        let mut evidence = CheckedPackageEvidence::new();
+        for feature in wire["lock"]["required_features"]
+            .as_array()
+            .expect("the lock lists required features")
+        {
+            evidence.support_feature(feature.as_str().expect("a feature identity"));
+        }
+        for identity in ["acme/rpc", "acme/flow", "acme/clock"] {
+            evidence
+                .insert_domain_package_document(identity.to_owned(), models[identity].as_slice())
+                .expect("each selected model document is fresh evidence");
+        }
+        let result = read_v2(
+            emission.package.bytes(),
+            library(),
+            V2ReadLimits::fixture(),
+            &evidence,
+        );
+        let admitted = match result {
+            Read::Verified { admitted, .. } => admitted,
+            other => panic!(
+                "the emitted selected-model equivalence admits through IR: {other:?}; nodes={}",
+                wire["semantic_graph"]["nodes"]
+            ),
+        };
+        assert_eq!(
+            admitted.selected_model_packages().collect::<Vec<_>>(),
+            ["acme/clock", "acme/flow", "acme/rpc"]
+        );
+        let nodes = admitted
+            .resolved_graph()
+            .nodes
+            .iter()
+            .filter(|node| {
+                admitted.node_kind(&node.node_id)
+                    == Some(CheckedNodeKind::ScalarType(
+                        ScalarTypeForm::DimensionEquivalence,
+                    ))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        (wire, nodes, raw_wire)
+    };
+
+    let only_equivalence = |nodes: &[filament_contract_model::CheckedSemanticNodeV2]| {
+        assert_eq!(nodes.len(), 1);
+        let node = &nodes[0];
+        assert_eq!(node.semantic_type, node.node_id);
+        assert!(node.declaration.is_none());
+        assert_eq!(node.occurrences.len(), 1);
+        assert_eq!(
+            node.occurrences[0].role,
+            filament_contract_model::CheckedOccurrenceRole::Anchor
+        );
+        assert_eq!(node.occurrences[0].ordinal, 0);
+        let CheckedTerm::NominalBody(body) = &node.body else {
+            panic!("the admitted equivalence has its nominal body");
+        };
+        let (operands, scale) = body
+            .dimension_equivalence_details()
+            .expect("the IR reader admits a typed dimension equivalence");
+        assert_eq!(operands.len(), 2);
+        assert!(matches!(operands[0], CheckedDimensionOperand::Package(_)));
+        assert!(matches!(operands[1], CheckedDimensionOperand::Package(_)));
+        let package_ids = operands
+            .iter()
+            .map(|operand| match operand {
+                CheckedDimensionOperand::Package(reference) => {
+                    reference.package.as_ref().to_owned()
+                }
+                CheckedDimensionOperand::Local(_) => panic!("model dimensions stay package refs"),
+            })
+            .collect::<Vec<_>>();
+        let package_refs = operands
+            .iter()
+            .map(|operand| match operand {
+                CheckedDimensionOperand::Package(reference) => json!({
+                    "package": reference.package.as_ref(),
+                    "node": reference.node.node_id(),
+                }),
+                CheckedDimensionOperand::Local(_) => panic!("model dimensions stay package refs"),
+            })
+            .collect::<Vec<_>>();
+        let operand_ids = operands
+            .iter()
+            .map(|operand| match operand {
+                CheckedDimensionOperand::Local(id) => id.clone(),
+                CheckedDimensionOperand::Package(reference) => reference.node.node_id().clone(),
+            })
+            .collect::<Vec<_>>();
+        assert!(operand_ids[0] < operand_ids[1]);
+        let local_ids = operands
+            .iter()
+            .filter_map(|operand| match operand {
+                CheckedDimensionOperand::Local(id) => Some(id.clone()),
+                CheckedDimensionOperand::Package(_) => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(node.dependencies, local_ids);
+        (
+            node.node_id.clone(),
+            package_ids,
+            package_refs,
+            (scale.numerator.to_string(), scale.denominator.to_string()),
+        )
+    };
+
+    let (forward_wire, forward_nodes, forward_raw_wire) =
+        read_equivalence("dimension R::Time ~ F::Time by 1 R::s = 1000 F::ms;");
+    let (reverse_wire, reverse_nodes, _) =
+        read_equivalence("dimension F::Time ~ R::Time by 1000 F::ms = 1 R::s;");
+    let forward = only_equivalence(&forward_nodes);
+    let reverse = only_equivalence(&reverse_nodes);
+    assert_eq!(forward.1, ["acme/flow", "acme/rpc"]);
+    assert_eq!(
+        forward.2,
+        vec![
+            json!({
+                "package": "acme/flow",
+                "node": {
+                    "package": "acme/flow",
+                    "path": ["scalar_type", "dimension", "ix://acme/flow/dimension/Time"],
+                    "ordinal": 0
+                }
+            }),
+            json!({
+                "package": "acme/rpc",
+                "node": {
+                    "package": "acme/rpc",
+                    "path": ["scalar_type", "dimension", "ix://acme/rpc/dimension/Time"],
+                    "ordinal": 0
+                }
+            }),
+        ]
+    );
+    assert_eq!(forward.3, ("1".to_owned(), "1".to_owned()));
+    assert_eq!(forward.0, reverse.0);
+    assert_eq!(forward_nodes, reverse_nodes);
+
+    let (_, third_nodes, _) =
+        read_equivalence("dimension R::Time ~ G::Time by 1 R::s = 1000 G::ms;");
+    let third = only_equivalence(&third_nodes);
+    assert_eq!(third.1, ["acme/clock", "acme/rpc"]);
+    assert_eq!(
+        third.2,
+        vec![
+            json!({
+                "package": "acme/clock",
+                "node": {
+                    "package": "acme/clock",
+                    "path": ["scalar_type", "dimension", "ix://acme/clock/dimension/Time"],
+                    "ordinal": 0
+                }
+            }),
+            json!({
+                "package": "acme/rpc",
+                "node": {
+                    "package": "acme/rpc",
+                    "path": ["scalar_type", "dimension", "ix://acme/rpc/dimension/Time"],
+                    "ordinal": 0
+                }
+            }),
+        ]
+    );
+    assert_eq!(third.3, ("1".to_owned(), "1000".to_owned()));
+    let (_, reverse_third_nodes, _) =
+        read_equivalence("dimension G::Time ~ R::Time by 1000 G::ms = 1 R::s;");
+    let reverse_third = only_equivalence(&reverse_third_nodes);
+    assert_eq!(third.0, reverse_third.0);
+    assert_eq!(third_nodes, reverse_third_nodes);
+
+    let (self_wire, self_nodes, _) = read_equivalence(
+        "dimension R::Time ~ F::Time by 1 R::s = 1000 F::ms;\n\
+         dimension R::Time ~ Time by 1 R::s = 1 s;",
+    );
+    assert_eq!(self_nodes.len(), 2);
+    let local_equivalence = self_nodes
+        .iter()
+        .find(|node| {
+            matches!(&node.body, CheckedTerm::NominalBody(body) if body.dimension_equivalence_details().is_some_and(|(operands, _)| operands.iter().any(|operand| matches!(operand, CheckedDimensionOperand::Local(_)))))
+        })
+        .expect("the equivalence over the source Time is emitted");
+    assert_eq!(local_equivalence.node_id.ordinal, 0);
+    assert!(local_equivalence.declaration.is_none());
+    assert_eq!(local_equivalence.semantic_type, local_equivalence.node_id);
+    assert_eq!(local_equivalence.dependencies.len(), 1);
+    assert_eq!(local_equivalence.occurrences.len(), 1);
+    assert_eq!(local_equivalence.occurrences[0].ordinal, 1);
+    assert!(
+        matches!(&local_equivalence.body, CheckedTerm::NominalBody(body) if body.dimension_equivalence_details().is_some_and(|(operands, scale)| operands.iter().any(|operand| matches!(operand, CheckedDimensionOperand::Local(_))) && (&*scale.numerator, &*scale.denominator) == ("1", "1")))
+    );
+    let selected_time_nodes = |nodes: &[filament_contract_model::CheckedSemanticNodeV2]| {
+        nodes
+            .iter()
+            .flat_map(|node| {
+                let CheckedTerm::NominalBody(body) = &node.body else {
+                    return Vec::new();
+                };
+                let Some((operands, _)) = body.dimension_equivalence_details() else {
+                    return Vec::new();
+                };
+                operands
+                    .iter()
+                    .filter_map(|operand| match operand {
+                        CheckedDimensionOperand::Package(reference)
+                            if matches!(reference.package.as_ref(), "acme/rpc" | "acme/flow") =>
+                        {
+                            Some(reference.node.node_id().clone())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<BTreeSet<_>>()
+    };
+    assert_eq!(
+        selected_time_nodes(&forward_nodes),
+        selected_time_nodes(&self_nodes)
+    );
+    assert!(self_wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("the source package nodes")
+        .iter()
+        .all(|node| node["semantic_form"] != "quantity"));
+
+    if !include_negative_controls {
+        return;
+    }
+
+    let node_position = forward_wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("the wire semantic nodes")
+        .iter()
+        .position(|node| node["semantic_form"] == "dimension_equivalence")
+        .expect("the forward equivalence row");
+    let mut invalid_scale_refusals = Vec::new();
+    for (numerator, denominator) in [("0", "1"), ("-1", "1"), ("2000", "2")] {
+        let mut invalid = forward_raw_wire.clone();
+        invalid["semantic_graph"]["nodes"][node_position]["body"]["root_scale"] =
+            json!({"numerator": numerator, "denominator": denominator});
+        let bytes = quire_canonical::to_vec(&invalid, ceiling().canonical())
+            .expect("the changed ratio remains canonical JSON");
+        let evidence = {
+            let mut evidence = CheckedPackageEvidence::new();
+            for feature in forward_wire["lock"]["required_features"]
+                .as_array()
+                .expect("the required features")
+            {
+                evidence.support_feature(feature.as_str().expect("feature identity"));
+            }
+            for identity in ["acme/rpc", "acme/flow", "acme/clock"] {
+                evidence
+                    .insert_domain_package_document(
+                        identity.to_owned(),
+                        models[identity].as_slice(),
+                    )
+                    .expect("selected evidence is unique");
+            }
+            evidence
+        };
+        let filament_contract_model::CheckedPackageV2ReadResult::Refused(refusal) =
+            filament_contract_model::CheckedPackageV2::read(
+                &bytes,
+                filament_contract_model::CheckedPackageReadLimits::bounded(),
+                &evidence,
+            )
+        else {
+            panic!("nonpositive or unreduced root scales must be refused");
+        };
+        invalid_scale_refusals.push((numerator, denominator, refusal));
+    }
+    let (_, _, cycle_raw_wire) = read_equivalence(
+        "dimension R::Time ~ F::Time by 1 R::s = 1000 F::ms;\n\
+         dimension F::Time ~ G::Time by 1 F::ms = 1 G::ms;\n\
+         dimension R::Time ~ G::Time by 1 R::s = 1000 G::ms;",
+    );
+    let mut inconsistent_cycle = cycle_raw_wire;
+    let clock_equivalence_position = inconsistent_cycle["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("the third-package wire nodes")
+        .iter()
+        .position(|node| {
+            node["semantic_form"] == "dimension_equivalence"
+                && node["body"].to_string().contains("acme/clock")
+                && node["body"].to_string().contains("acme/rpc")
+        })
+        .expect("the rpc-to-clock equivalence row");
+    inconsistent_cycle["semantic_graph"]["nodes"][clock_equivalence_position]["body"]
+        ["root_scale"] = json!({"numerator": "999", "denominator": "1"});
+    let mutated_cycle_node =
+        inconsistent_cycle["semantic_graph"]["nodes"][clock_equivalence_position].clone();
+    let bytes = quire_canonical::to_vec(&inconsistent_cycle, ceiling().canonical())
+        .expect("the inconsistent cycle remains canonical JSON");
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in inconsistent_cycle["lock"]["required_features"]
+        .as_array()
+        .expect("the required features")
+    {
+        evidence.support_feature(feature.as_str().expect("feature identity"));
+    }
+    for identity in ["acme/rpc", "acme/flow", "acme/clock"] {
+        evidence
+            .insert_domain_package_document(identity.to_owned(), models[identity].as_slice())
+            .expect("selected evidence is unique");
+    }
+    let filament_contract_model::CheckedPackageV2ReadResult::Refused(refusal) =
+        filament_contract_model::CheckedPackageV2::read(
+            &bytes,
+            filament_contract_model::CheckedPackageReadLimits::bounded(),
+            &evidence,
+        )
+    else {
+        panic!("inconsistent dimension ratios around a cycle must be refused");
+    };
+    let cycle_code = refusal.code;
+    let cycle_path = refusal.loci[0].path.as_ref().map(ToString::to_string);
+    let cycle_cause = refusal.cause;
+    let cycle_refusal = refusal;
+
+    let mut missing = forward_raw_wire;
+    missing["semantic_graph"]["nodes"][node_position]["body"]
+        .as_object_mut()
+        .expect("the equivalence body object")
+        .remove("root_scale");
+    let bytes = quire_canonical::to_vec(&missing, ceiling().canonical())
+        .expect("the body with missing scale is canonical JSON");
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in reverse_wire["lock"]["required_features"]
+        .as_array()
+        .expect("the required features")
+    {
+        evidence.support_feature(feature.as_str().expect("feature identity"));
+    }
+    for identity in ["acme/rpc", "acme/flow", "acme/clock"] {
+        evidence
+            .insert_domain_package_document(identity.to_owned(), models[identity].as_slice())
+            .expect("selected evidence is unique");
+    }
+    let filament_contract_model::CheckedPackageV2ReadResult::Refused(refusal) =
+        filament_contract_model::CheckedPackageV2::read(
+            &bytes,
+            filament_contract_model::CheckedPackageReadLimits::bounded(),
+            &evidence,
+        )
+    else {
+        panic!("a missing root scale must be refused");
+    };
+    let missing_path = refusal.loci[0].path.as_ref().map(ToString::to_string);
+    let missing_refusal = refusal;
+    assert_eq!(
+        missing_refusal.code,
+        filament_contract_model::CheckedPackageRefusalCode::MalformedWire,
+        "missing scale: {missing_refusal:?}"
+    );
+    assert_eq!(missing_refusal.cause, None);
+    let expected_node_path = format!("/semantic_graph/nodes/{node_position}");
+    assert_eq!(
+        missing_path.as_deref(),
+        Some(expected_node_path.as_str()),
+        "missing scale must identify its equivalence node: {missing_refusal:?}"
+    );
+    assert_eq!(
+        cycle_code,
+        filament_contract_model::CheckedPackageRefusalCode::InvalidSemanticGraph,
+        "inconsistent cycle: {cycle_refusal:?}; node={mutated_cycle_node}"
+    );
+    assert_eq!(
+        cycle_path.as_deref(),
+        Some(format!("/semantic_graph/nodes/{clock_equivalence_position}").as_str()),
+        "inconsistent cycle must identify the closing edge's equivalence node"
+    );
+    assert_eq!(cycle_cause, None);
+    for (numerator, denominator, refusal) in invalid_scale_refusals {
+        let expected_code = if numerator == "2000" {
+            filament_contract_model::CheckedPackageRefusalCode::InvalidSemanticGraph
+        } else {
+            filament_contract_model::CheckedPackageRefusalCode::MalformedWire
+        };
+        assert_eq!(
+            refusal.code, expected_code,
+            "root scale {numerator}/{denominator}: {refusal:?}"
+        );
+        assert_eq!(refusal.cause, None);
+        let path = refusal.loci[0].path.as_ref().map(ToString::to_string);
+        assert_eq!(
+            path.as_deref(),
+            Some(expected_node_path.as_str()),
+            "root scale {numerator}/{denominator} must identify its equivalence node: {refusal:?}"
+        );
+    }
+}
+
+/// FR-094-AC-13 positive producer, strict IR admission and FSL readback path.
+#[trace("FR-094-AC-13", "TC-419")]
+#[test]
+fn flow_millisecond_dimension_equivalence_emits_and_reads_canonically() {
+    flow_millisecond_dimension_equivalence_fixture(false);
+}
+
+/// FR-094-AC-13 independent reader controls for malformed scales and cycles.
+#[trace("FR-094-AC-13", "TC-419")]
+#[test]
+fn flow_millisecond_dimension_equivalence_reader_rejects_invalid_scales() {
+    flow_millisecond_dimension_equivalence_fixture(true);
 }
 
 /// FR-094-AC-17 (QSL-2652): over the `ConfigVersion` domain package, every

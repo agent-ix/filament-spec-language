@@ -351,7 +351,7 @@ fn bit_constructors_keep_expected_types_and_exact_payloads() {
 
 /// FR-397-AC-11 (TC-1091): malformed bit syntax refuses as a located invalid
 /// token; a valid constructor with an incompatible expected type is ill-typed.
-#[trace("TC-1091", "FR-397-AC-11")]
+#[trace("TC-1091", "FR-397-AC-11", "FR-091-AC-49")]
 #[test]
 fn malformed_and_mistyped_bit_constructors_refuse_at_the_constructor() {
     use fsl_cst::{CompleteCause, CompleteCode};
@@ -391,6 +391,13 @@ fn malformed_and_mistyped_bit_constructors_refuse_at_the_constructor() {
             CompleteCause::InvalidToken,
             "{constructor}"
         );
+        if constructor.contains("0x3FF") {
+            assert_eq!(
+                diagnostic.message, "expected a lowercase hex digit",
+                "{constructor}"
+            );
+            assert!(!diagnostic.message.contains("malformed"), "{constructor}");
+        }
         let span = diagnostic.byte_span().expect("the refusal is located");
         let constructor_start = text.find(constructor).expect("constructor occurs");
         assert!(
