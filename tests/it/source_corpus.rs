@@ -996,8 +996,8 @@ fn corpus_collections() {
     println!("{report}");
 }
 
-/// FR-016-AC-11: a quantifier binder shadows the same-named function parameter.
-#[trace("TC-3083", "FR-016-AC-11")]
+/// A function whose quantifier binder is named like its parameter checks
+/// through the corpus pipeline.
 #[test]
 fn quantifier_binder_shadowing_a_function_parameter_is_allowed() {
     let directory = corpus_root().join("collections");
@@ -1026,9 +1026,8 @@ fn unbounded_forall_run_result_uses_the_tagged_boolean_envelope() {
     assert_eq!(mismatch(&program, &expected, &actual), None, "{stem}");
 }
 
-/// FR-104-AC-18 / TC-3083: a same-named quantifier binder and qualified
-/// operation-parameter read are admitted together in a precondition.
-#[trace("TC-3083", "FR-104-AC-18")]
+/// A same-named quantifier binder and qualified operation-parameter read
+/// compile together in a precondition.
 #[test]
 fn operation_parameter_quantifier_shadowing_is_allowed() {
     let fixtures = corpus_root().join("operations/parameters");

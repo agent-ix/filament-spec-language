@@ -558,8 +558,21 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
     step["origin"]["generated"]["generatorIdentity"] = step_identity.into();
     step["origin"]["generated"]["inputIdentities"] = json!([step_identity]);
 
+    let steps_identity = "ix://test/decimal/Meter/adjust/steps";
+    let mut steps = by.clone();
+    steps["identity"] = steps_identity.into();
+    steps["name"] = "steps".into();
+    steps["multiplicity"] = json!({
+        "lower": 0,
+        "upper": 3,
+        "ordered": true,
+        "unique": false,
+    });
+    steps["origin"]["generated"]["generatorIdentity"] = steps_identity.into();
+    steps["origin"]["generated"]["inputIdentities"] = json!([steps_identity]);
+
     let mut adjust = type_mut(&mut document, "Meter")["operations"][0].clone();
-    adjust["params"] = json!([by.clone(), step]);
+    adjust["params"] = json!([by.clone(), step, steps]);
     let mut reset = adjust.clone();
     reset["identity"] = "ix://test/decimal/Meter/reset".into();
     reset["name"] = "reset".into();
@@ -593,11 +606,21 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
         post APost using v on Config::Meter::adjust { Config::Meter::adjust::by >= 0.00 }\n\
         pre S1 using v on Config::Meter::adjust { Config::Meter::adjust::step >= 0.00 }\n\
         pre S2 using v on Config::Meter::adjust { step >= 0.00 }\n\
+        pre QuantifierPre using v on Config::Meter::adjust { forall(step in steps: step >= Config::Meter::adjust::step) }\n\
+        post QuantifierPost using v on Config::Meter::adjust { forall(step in steps: step >= Config::Meter::adjust::step) }\n\
         pre LetStep using v on Config::Meter::adjust { let step = Config::Meter::adjust::by in Config::Meter::adjust::step >= step }\n\
         pre AfterLet using v on Config::Meter::adjust { (let step = Config::Meter::adjust::by in step >= 0.00) and step >= 0.00 }\n\
         pre Gauge using v on Config::Gauge::adjust { Config::Gauge::adjust::by >= 0.00 }\n";
     let checked = check(&bytes, &unit_text(PACKAGE, "Config", source));
-    for name in ["A", "APost", "S1", "S2", "LetStep"] {
+    for name in [
+        "A",
+        "APost",
+        "S1",
+        "S2",
+        "QuantifierPre",
+        "QuantifierPost",
+        "LetStep",
+    ] {
         let clause = checked
             .graph
             .state_clause(name)
@@ -608,14 +631,16 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
                 .iter()
                 .any(|(parameter, value_type)| parameter == "by" && value_type == &p)
         );
-        assert!(
-            clause
-                .body()
-                .children()
-                .iter()
-                .any(|node| node.value_type() == &p),
-            "{name} has an operand typed P"
-        );
+        if !name.starts_with("Quantifier") {
+            assert!(
+                clause
+                    .body()
+                    .children()
+                    .iter()
+                    .any(|node| node.value_type() == &p),
+                "{name} has an operand typed P"
+            );
+        }
     }
     let gauge = checked.graph.state_clause("Gauge").unwrap();
     let inherited_by = gauge
@@ -639,6 +664,64 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
     let qualified_step = checked.graph.state_clause("S1").unwrap().body().children();
     let bare_step = checked.graph.state_clause("S2").unwrap().body().children();
     assert_eq!(qualified_step[0].id(), bare_step[0].id());
+
+    // `self` takes slot 0 and a postcondition's `result` slot 1, ahead of
+    // `by`, `step` and `steps`.
+    for (name, step_slot, steps_slot) in [("QuantifierPre", 2, 3), ("QuantifierPost", 3, 4)] {
+        let body = checked.graph.state_clause(name).unwrap().body();
+        let NodeKind::Query {
+            visit,
+            slot,
+            source,
+            body: predicate_id,
+            ..
+        } = body.kind()
+        else {
+            panic!("{name} lowers to a collection query: {:?}", body.kind());
+        };
+        assert_eq!(
+            *visit,
+            filament_checked::node::Visit::Forall,
+            "{name} retains the authored universal quantifier"
+        );
+        let source_read = body.at(*source);
+        let NodeKind::Local(source_slot) = source_read.kind() else {
+            panic!("the quantifier ranges over the operation's steps parameter");
+        };
+        assert!(matches!(source_read.value_type(), ValueType::Collection(_)));
+        assert_ne!(source_read.id(), *predicate_id);
+
+        let predicate = body.at(*predicate_id);
+        let NodeKind::Order(_, _, left, right) = predicate.kind() else {
+            panic!("{name} has the authored ordered comparison");
+        };
+        let binder_read = predicate.at(*left);
+        let parameter_read = predicate.at(*right);
+        let NodeKind::Local(binder_slot) = binder_read.kind() else {
+            panic!("the predicate bare name resolves to the quantifier binder");
+        };
+        let NodeKind::Local(parameter_slot) = parameter_read.kind() else {
+            panic!("the qualified name resolves to an operation parameter");
+        };
+        assert_eq!(binder_slot, slot);
+        assert_eq!(*source_slot, steps_slot, "{name} ranges over `steps`");
+        assert_eq!(
+            *parameter_slot, step_slot,
+            "{name} reads the parameter `step`"
+        );
+        assert_ne!(binder_slot, parameter_slot);
+        assert_ne!(binder_slot, source_slot);
+        assert_ne!(parameter_slot, source_slot);
+        assert_eq!(binder_read.value_type(), &p);
+        assert_eq!(parameter_read.value_type(), &p);
+        assert_ne!(source_read.id(), parameter_read.id());
+        assert_ne!(
+            binder_read.id(),
+            parameter_read.id(),
+            "{name} gives the binder and qualified parameter distinct identities"
+        );
+    }
+
     let let_children = checked
         .graph
         .state_clause("LetStep")
@@ -653,7 +736,7 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
         let_comparison[0].kind()
     );
     assert!(
-        matches!(let_comparison[1].kind(), NodeKind::Local(3)),
+        matches!(let_comparison[1].kind(), NodeKind::Local(4)),
         "let-bound step node: {:?}",
         let_comparison[1].kind()
     );
