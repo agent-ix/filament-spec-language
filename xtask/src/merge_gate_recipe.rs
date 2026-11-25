@@ -318,227 +318,123 @@ const PROTOCOL_STATE_KEY_CONSUMERS: &[ItFilter] = &[
 const FOUNDATION_CONSUMERS: &[ItFilter] = &[
     ItFilter {
         package: "fsl-cst",
-        rule: ItRule::AllModules("fsl-cst"),
+        rule: ItRule::Fixed("cst_identity"),
     },
     ItFilter {
         package: "fsl-source",
-        rule: ItRule::AllModules("fsl-source"),
+        rule: ItRule::Fixed("quire_source"),
     },
     ItFilter {
         package: "fsl-forms",
-        rule: ItRule::AllModules("fsl-forms"),
-    },
-    ItFilter {
-        package: "fsl-route",
-        rule: ItRule::AllModules("fsl-route"),
+        rule: ItRule::Fixed("source_grammar_vectors"),
     },
     ItFilter {
         package: "fsl-semantics",
-        rule: ItRule::AllModules("fsl-semantics"),
+        rule: ItRule::Fixed("identity_golden_vectors"),
     },
     ItFilter {
         package: "fsl-package",
-        rule: ItRule::AllModules("fsl-package"),
-    },
-    ItFilter {
-        package: "fsl-eval",
-        rule: ItRule::AllModules("fsl-eval"),
-    },
-    ItFilter {
-        package: "fsl-replay",
-        rule: ItRule::AllModules("fsl-replay"),
-    },
-    ItFilter {
-        package: "fsl-analyze",
-        rule: ItRule::AllModules("fsl-analyze"),
+        rule: ItRule::Fixed("source_object_identity_rows_public"),
     },
     ItFilter {
         package: "fsl-command",
-        rule: ItRule::AllModules("fsl-command"),
+        rule: ItRule::Fixed("check_source_identity"),
     },
     ItFilter {
-        package: "fsl-conformance",
-        rule: ItRule::AllModules("fsl-conformance"),
-    },
-    ItFilter {
-        package: "fsl-inspect",
-        rule: ItRule::AllModules("fsl-inspect"),
-    },
-    ItFilter {
-        package: "fsl-hybrid-reference",
-        rule: ItRule::AllModules("fsl-hybrid-reference"),
-    },
-    ItFilter {
-        package: "fsl-jit",
-        rule: ItRule::AllModules("fsl-jit"),
-    },
-    ItFilter {
-        package: "fsl-bench",
-        rule: ItRule::AllModules("fsl-bench"),
-    },
-    ItFilter {
-        package: "fsl-probability-check",
-        rule: ItRule::AllModules("fsl-probability-check"),
-    },
-    ItFilter {
-        package: "fsl-hybrid-test-provider",
-        rule: ItRule::AllModules("fsl-hybrid-test-provider"),
+        package: "fsl-replay",
+        rule: ItRule::Fixed("source_diagnostic_outcome"),
     },
     ItFilter {
         package: "filament-spec-language",
-        rule: ItRule::AllModules("filament-spec-language"),
+        rule: ItRule::Fixed("layer_crate_reexports"),
     },
 ];
 const SOURCE_CONSUMERS: &[ItFilter] = &[
     ItFilter {
         package: "fsl-replay",
-        rule: ItRule::AllModules("fsl-replay"),
+        rule: ItRule::Fixed("source_diagnostic_outcome"),
     },
     ItFilter {
         package: "fsl-command",
-        rule: ItRule::AllModules("fsl-command"),
+        rule: ItRule::Fixed("extraction_request_refusals"),
     },
     ItFilter {
         package: "filament-spec-language",
-        rule: ItRule::AllModules("filament-spec-language"),
+        rule: ItRule::Fixed("formal_source"),
     },
 ];
 const CST_CONSUMERS: &[ItFilter] = &[
     ItFilter {
         package: "fsl-forms",
-        rule: ItRule::AllModules("fsl-forms"),
+        rule: ItRule::Fixed("source_grammar_vectors"),
     },
     ItFilter {
         package: "fsl-package",
-        rule: ItRule::AllModules("fsl-package"),
-    },
-    ItFilter {
-        package: "fsl-semantics",
-        rule: ItRule::AllModules("fsl-semantics"),
-    },
-    ItFilter {
-        package: "fsl-eval",
-        rule: ItRule::AllModules("fsl-eval"),
+        rule: ItRule::Fixed("checked_ir_surface"),
     },
     ItFilter {
         package: "fsl-replay",
-        rule: ItRule::AllModules("fsl-replay"),
+        rule: ItRule::Fixed("compile_package_facade"),
     },
     ItFilter {
-        package: "fsl-analyze",
-        rule: ItRule::AllModules("fsl-analyze"),
+        package: "fsl-replay",
+        rule: ItRule::Fixed("compile_text_literals"),
     },
     ItFilter {
-        package: "fsl-command",
-        rule: ItRule::AllModules("fsl-command"),
+        package: "fsl-cst",
+        rule: ItRule::Fixed("complete_cst"),
     },
     ItFilter {
-        package: "fsl-conformance",
-        rule: ItRule::AllModules("fsl-conformance"),
-    },
-    ItFilter {
-        package: "fsl-inspect",
-        rule: ItRule::AllModules("fsl-inspect"),
-    },
-    ItFilter {
-        package: "fsl-jit",
-        rule: ItRule::AllModules("fsl-jit"),
-    },
-    ItFilter {
-        package: "fsl-bench",
-        rule: ItRule::AllModules("fsl-bench"),
-    },
-    ItFilter {
-        package: "filament-spec-language",
-        rule: ItRule::AllModules("filament-spec-language"),
+        package: "fsl-cst",
+        rule: ItRule::Fixed("complete_grammar"),
     },
 ];
 const FORMS_CONSUMERS: &[ItFilter] = &[
     ItFilter {
         package: "fsl-semantics",
-        rule: ItRule::AllModules("fsl-semantics"),
-    },
-    ItFilter {
-        package: "fsl-package",
-        rule: ItRule::AllModules("fsl-package"),
+        rule: ItRule::Fixed("type_decisions"),
     },
     ItFilter {
         package: "fsl-eval",
-        rule: ItRule::AllModules("fsl-eval"),
-    },
-    ItFilter {
-        package: "fsl-replay",
-        rule: ItRule::AllModules("fsl-replay"),
+        rule: ItRule::Fixed("union_value_profile"),
     },
     ItFilter {
         package: "fsl-analyze",
-        rule: ItRule::AllModules("fsl-analyze"),
+        rule: ItRule::Fixed("package_forms"),
     },
     ItFilter {
         package: "fsl-command",
-        rule: ItRule::AllModules("fsl-command"),
-    },
-    ItFilter {
-        package: "fsl-conformance",
-        rule: ItRule::AllModules("fsl-conformance"),
-    },
-    ItFilter {
-        package: "fsl-inspect",
-        rule: ItRule::AllModules("fsl-inspect"),
-    },
-    ItFilter {
-        package: "fsl-jit",
-        rule: ItRule::AllModules("fsl-jit"),
-    },
-    ItFilter {
-        package: "fsl-bench",
-        rule: ItRule::AllModules("fsl-bench"),
+        rule: ItRule::Fixed("fr311_s3_forms"),
     },
     ItFilter {
         package: "filament-spec-language",
-        rule: ItRule::AllModules("filament-spec-language"),
+        rule: ItRule::Fixed("forms_package_contracts"),
     },
 ];
 const PACKAGE_CONSUMERS: &[ItFilter] = &[
     ItFilter {
         package: "fsl-eval",
-        rule: ItRule::AllModules("fsl-eval"),
+        rule: ItRule::Fixed("checked_route_owner"),
     },
     ItFilter {
         package: "fsl-replay",
-        rule: ItRule::AllModules("fsl-replay"),
+        rule: ItRule::Fixed("emit_admit_agreement"),
     },
     ItFilter {
         package: "fsl-analyze",
-        rule: ItRule::AllModules("fsl-analyze"),
+        rule: ItRule::Fixed("analyze_package_selection"),
     },
     ItFilter {
         package: "fsl-command",
-        rule: ItRule::AllModules("fsl-command"),
-    },
-    ItFilter {
-        package: "fsl-conformance",
-        rule: ItRule::AllModules("fsl-conformance"),
-    },
-    ItFilter {
-        package: "fsl-inspect",
-        rule: ItRule::AllModules("fsl-inspect"),
-    },
-    ItFilter {
-        package: "fsl-jit",
-        rule: ItRule::AllModules("fsl-jit"),
-    },
-    ItFilter {
-        package: "fsl-bench",
-        rule: ItRule::AllModules("fsl-bench"),
+        rule: ItRule::Fixed("run_requirement_items"),
     },
     ItFilter {
         package: "fsl-probability-check",
-        rule: ItRule::AllModules("fsl-probability-check"),
+        rule: ItRule::Fixed("roundtrip"),
     },
     ItFilter {
         package: "filament-spec-language",
-        rule: ItRule::AllModules("filament-spec-language"),
+        rule: ItRule::Fixed("run_items"),
     },
 ];
 const ABSTRACTION_CONSUMERS: &[ItFilter] = &[
