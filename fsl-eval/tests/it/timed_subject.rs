@@ -1488,6 +1488,113 @@ fn clock_reference_enumeration_on_the_source_route() {
     }
 }
 
+/// FR-106 AC-72: the Source route retains clock-place identities in scalar,
+/// optional and sequence fields, scoped to each admitted owner.
+#[trace("FR-106-AC-72", "TC-3084")]
+#[test]
+fn source_clock_reference_admission_retains_values_per_owner() {
+    let mut document: Json = serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON");
+    let mut reference = wire_type(
+        &ident("ClockRef"),
+        "unused",
+        json!({"target": "ix://filament/native/Clock"}),
+    );
+    reference["kind"] = json!("reference");
+    document["types"]
+        .as_array_mut()
+        .expect("types")
+        .push(reference);
+
+    let scalar = wire_field("r", &ident("ClockRef"));
+    let mut optional = wire_field("maybe", &ident("ClockRef"));
+    optional["presence"] = json!("optional");
+    let mut sequence = wire_field("refs", &ident("ClockRef"));
+    sequence["multiplicity"] = json!({
+        "lower": 1,
+        "upper": 2,
+        "ordered": true,
+        "unique": false
+    });
+    document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Call fields")
+        .extend([scalar, optional, sequence]);
+
+    let place = |owner: &str, field: &str| {
+        json!({"reference": {
+            "population": ident("calls"),
+            "key": place_oracle(owner, field)
+        }})
+    };
+    let object = |key: &str| {
+        json!({
+            "key": key,
+            "type": ident("Call"),
+            "fields": initial_fields(json!({
+                "r": place(key, "x"),
+                "maybe": {"present": place(key, "y")},
+                "refs": {"sequence": [place(key, "x"), place(key, "y")]}
+            }))
+        })
+    };
+    let world = world_of(
+        serde_json::to_vec(&document).expect("JSON"),
+        "",
+        &only(&["point"], ""),
+        json!([object("c1"), object("c2")]),
+    );
+    let system = system_over(&world, &["c1", "c2"]);
+    let initial = &system.initial_states()[0];
+    let state = initial.state();
+
+    let text = |value: &filament_exact::Value| match value {
+        filament_exact::Value::ClockReference(reference) => reference.text().to_owned(),
+        filament_exact::Value::Reference(reference) => reference.object().as_str().to_owned(),
+        other => panic!("a retained clock-place identity, got {other:?}"),
+    };
+    let population = ident("calls");
+    let objects = &state.populations[&DeclarationKey {
+        package: PACKAGE.to_owned(),
+        node: population,
+    }];
+    for owner in ["c1", "c2"] {
+        let fields = &objects[owner].fields;
+        let scalar = fields
+            .iter()
+            .find(|(key, _)| key.node == ident("Call/r"))
+            .map(|(_, value)| text(value))
+            .expect("required scalar clock reference");
+        assert_eq!(scalar, place_oracle(owner, "x"));
+
+        let optional = fields
+            .iter()
+            .find(|(key, _)| key.node == ident("Call/maybe"))
+            .map(|(_, value)| text(value))
+            .expect("present optional clock reference");
+        assert_eq!(optional, place_oracle(owner, "y"));
+
+        let sequence = fields
+            .iter()
+            .find(|(key, _)| key.node == ident("Call/refs"))
+            .map(|(_, value)| match value {
+                filament_exact::Value::Collection(collection) => {
+                    collection.elements().iter().map(text).collect::<Vec<_>>()
+                }
+                other => panic!("a sequence of clock references, got {other:?}"),
+            })
+            .expect("clock-reference sequence");
+        assert_eq!(
+            sequence,
+            vec![place_oracle(owner, "x"), place_oracle(owner, "y")]
+        );
+    }
+    assert_ne!(
+        place_oracle("c1", "x"),
+        place_oracle("c2", "x"),
+        "identical place templates remain distinct for different owners"
+    );
+}
+
 /// Ordinary protocol preflight retains every binder domain and the
 /// classifier's resource precedence beside native clock-place simulation.
 #[trace("FR-215-AC-4")]
