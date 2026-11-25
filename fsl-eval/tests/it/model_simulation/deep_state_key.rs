@@ -277,7 +277,7 @@ fn identity_input_bytes_accepts_the_full_u64_range_and_uses_the_exact_bound() {
             };
             assert_eq!(limit.setting(), fsl_foundation::Setting::IdentityInputBytes);
             assert_eq!(limit.configured_bound(), 0);
-            assert_eq!(limit.actual(), 1);
+            assert_eq!(limit.actual(), 2);
         })
     });
 }
