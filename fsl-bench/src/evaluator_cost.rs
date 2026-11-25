@@ -436,7 +436,8 @@ fn append_recorded_round(
 fn write_json_atomically(path: &Path, value: &serde_json::Value) -> Result<(), Box<dyn Error>> {
     let temporary = path.with_extension("tmp");
     fs::write(&temporary, serde_json::to_vec_pretty(value)?)?;
-    fs::rename(temporary, path)
+    fs::rename(temporary, path)?;
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -456,7 +457,7 @@ fn system_load_average() -> Result<serde_json::Value, Box<dyn Error>> {
         .take(3)
         .map(str::parse::<f64>)
         .collect::<Result<Vec<_>, _>>()?;
-    load_average_value(values)
+    Ok(load_average_value(values)?)
 }
 
 #[cfg(target_os = "linux")]
