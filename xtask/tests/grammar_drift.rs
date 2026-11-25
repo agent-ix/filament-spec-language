@@ -851,9 +851,15 @@ fn the_language_forms_recorded_in_the_standard_are_mapped() {
 /// name is defined or is a lexical terminal.
 #[trace("FSpec-TC-1010", "FSpec-FR-503-AC-1", "FSpec-FR-503-AC-2")]
 #[test]
-#[ignore = "QSL-2960: the pinned standard uses decimal-literal, step-target and step-argument without an ebnf definition and outside the five lexical terminals; a filament-specification change"]
 fn every_name_the_shared_grammar_uses_is_defined() {
-    const TERMINALS: [&str; 5] = ["ident", "member-name", "string", "uint", "EOF"];
+    const TERMINALS: [&str; 6] = [
+        "ident",
+        "member-name",
+        "string",
+        "uint",
+        "decimal-literal",
+        "EOF",
+    ];
     let text = published_file(SHARED_GRAMMAR).expect("published");
     let defined = shared_grammar_productions();
     assert!(!defined.is_empty());
