@@ -32,6 +32,7 @@ use crate::counter::UNLIMITED;
 use crate::graph_world::{
     config_kernel_world_over, config_version, config_world_over, World, CONFIG_CONTRACT,
 };
+use crate::value_validity::source_color;
 
 /// The world with `extra` declarations and one initial state `a` at
 /// `start`.
@@ -940,4 +941,41 @@ fn a_bound_step_relation_is_unsupported_with_no_implementation_engine() {
 
     let model = relation.occurrence().expect("the shared claim occurrence");
     assert_eq!(model, code, "the code and model items share one occurrence");
+}
+
+/// A contract counterexample whose execution holds source `enum` values as an
+/// argument and as the result writes them in FR-181's typed enum form.
+#[test]
+fn a_source_enum_argument_and_result_are_spelled_in_a_contract_counterexample() {
+    let world = world(
+        "enum Color { red, blue }\n\
+         invariant Low using v on Config::ConfigVersion at current { self.versionNumber <= 1 }\n",
+        0,
+    );
+    let claim = clause(&world, "Low");
+    let record = run(&world, &claim, None);
+    let mut counterexample = refuted(&record).clone();
+    let [execution] = counterexample.executions.as_mut_slice() else {
+        panic!("one execution");
+    };
+    execution.arguments = vec![source_color(&world.package, "red")];
+    execution.result = Some(source_color(&world.package, "blue"));
+
+    let selected = select_contract(&world.package, &claim).expect("selects");
+    let system = ModelSystem::new(world.subject(&["a"], UNLIMITED).simulation).expect("admits");
+    let target = ContractTarget::new(selected, &world.package, &system, None)
+        .expect("no fault")
+        .expect("decided");
+    let wire = target
+        .wire(&counterexample)
+        .expect("the source enum values are spelled");
+    let color = |member: &str| {
+        serde_json::json!({"type": "enum", "name": r#"{"node":"Color","package":"package"}"#,
+            "member": member})
+    };
+    assert_eq!(
+        wire["executions"][0]["arguments"],
+        serde_json::json!([{"parameter": 0, "value": color("red")}])
+    );
+    assert_eq!(wire["executions"][0]["result"], color("blue"));
 }

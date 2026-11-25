@@ -2601,6 +2601,7 @@ impl AnalyzeRecord {
                         found.reproduced.assignment(),
                         &filament_semantic_value::declaration::TypeEnvironment::default(),
                         &[],
+                        &[],
                     )
                 } else {
                     Err(CounterexampleWireError::Unspelled("value-check scope"))
@@ -2612,6 +2613,7 @@ impl AnalyzeRecord {
                 found.reproduced.assignment(),
                 scope.types(),
                 scope.variant_types(),
+                scope.enums(),
                 scope.enum_member_index(),
             ));
         }

@@ -1111,6 +1111,7 @@ pub fn sampled_witness_wire(
     witness: &crate::statistical::SampledWitness,
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    enums: &[fsl_semantics::check::EnumBinding],
 ) -> Result<Json, super::WitnessOmission> {
     use crate::statistical::{MeasureValue, WitnessValue};
     use fsl_eval::simulation::model::TransitionId;
@@ -1138,7 +1139,7 @@ pub fn sampled_witness_wire(
         let mut random = Vec::with_capacity(step.random.len());
         for drawn in &step.random {
             random.push(
-                fsl_eval::simulation::model::typed_value_json(drawn, types, variants)
+                fsl_eval::simulation::model::typed_value_json(drawn, types, variants, enums)
                     .ok_or_else(|| witness_omission(witness))?,
             );
         }
@@ -1934,7 +1935,7 @@ pub fn protocol_temporal_wire(
 
 /// FR-286's `Assignments` spelling `{type: "assignments", values}`: one typed
 /// value per parameter node, in the parameters' order, each in FR-181's typed
-/// canonical form read from `types` and `variants`.
+/// canonical form read from `types`, `variants` and `enums`.
 ///
 /// # Errors
 ///
@@ -1945,9 +1946,10 @@ pub fn assignments_wire(
     values: &[Value],
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    enums: &[fsl_semantics::check::EnumBinding],
 ) -> Result<Json, CounterexampleWireError> {
     assignments_wire_using(parameters, values, |value| {
-        fsl_eval::simulation::model::typed_value_json(value, types, variants)
+        fsl_eval::simulation::model::typed_value_json(value, types, variants, enums)
     })
 }
 
@@ -1961,6 +1963,7 @@ pub fn assignments_wire_with_enum_members(
     values: &[Value],
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    enums: &[fsl_semantics::check::EnumBinding],
     enum_members: &filament_semantic_value::enumeration::EnumMemberIndex,
 ) -> Result<Json, CounterexampleWireError> {
     assignments_wire_using(parameters, values, |value| {
@@ -1968,6 +1971,7 @@ pub fn assignments_wire_with_enum_members(
             value,
             types,
             variants,
+            enums,
             enum_members,
         )
     })
@@ -2013,6 +2017,7 @@ pub fn probabilistic_wire(
     claim_type: &str,
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    enums: &[fsl_semantics::check::EnumBinding],
     state_key: &dyn Fn(
         &fsl_eval::simulation::model::ModelSimState,
     ) -> Option<fsl_eval::simulation::StateKey>,
@@ -2022,7 +2027,7 @@ pub fn probabilistic_wire(
     )],
 ) -> Result<Json, CounterexampleWireError> {
     probabilistic_wire_using(witness, bound, claim_type, state_key, scheduler, |value| {
-        fsl_eval::simulation::model::typed_value_json(value, types, variants)
+        fsl_eval::simulation::model::typed_value_json(value, types, variants, enums)
     })
 }
 
@@ -2037,6 +2042,7 @@ pub fn probabilistic_wire_with_enum_members(
     claim_type: &str,
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    enums: &[fsl_semantics::check::EnumBinding],
     enum_members: &filament_semantic_value::enumeration::EnumMemberIndex,
     state_key: &dyn Fn(
         &fsl_eval::simulation::model::ModelSimState,
@@ -2051,6 +2057,7 @@ pub fn probabilistic_wire_with_enum_members(
             value,
             types,
             variants,
+            enums,
             enum_members,
         )
     })
@@ -2237,6 +2244,7 @@ pub fn probabilistic_undefined_wire(
     claim_type: &str,
     types: &filament_semantic_value::declaration::TypeEnvironment,
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    enums: &[fsl_semantics::check::EnumBinding],
     state_key: &dyn Fn(
         &fsl_eval::simulation::model::ModelSimState,
     ) -> Option<fsl_eval::simulation::StateKey>,
@@ -2252,6 +2260,7 @@ pub fn probabilistic_undefined_wire(
         claim_type,
         types,
         variants,
+        enums,
         state_key,
         scheduler,
     )?;
@@ -3449,7 +3458,7 @@ mod tests {
         .expect("a node");
         let types = filament_semantic_value::declaration::TypeEnvironment::default();
         let one = [Value::Integer(Integer::from(1_i64))];
-        let wire = assignments_wire(std::slice::from_ref(&parameter), &one, &types, &[])
+        let wire = assignments_wire(std::slice::from_ref(&parameter), &one, &types, &[], &[])
             .expect("one value per parameter");
         assert_eq!(
             wire["values"][0]["value"],
@@ -3460,7 +3469,7 @@ mod tests {
             (&[][..], &one[..]),
         ] {
             assert_eq!(
-                assignments_wire(parameters, values, &types, &[]),
+                assignments_wire(parameters, values, &types, &[], &[]),
                 Err(CounterexampleWireError::Unspelled("assignment arity"))
             );
         }

@@ -472,6 +472,7 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
         "probability",
         scope.types(),
         scope.variant_types(),
+        scope.enums(),
         &state_key,
         &scheduler,
     )
@@ -481,6 +482,7 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
         bound,
         "probability",
         world.types(),
+        &[],
         &[],
         world.enum_members(),
         &state_key,

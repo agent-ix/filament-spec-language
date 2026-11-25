@@ -1,16 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Typed checked-subject replay and EN-5 refutation integration.
 use crate::prob_world::{self, World};
-use filament_exact::{Cancel, CancelCause, Integer, Rational, Value};
+use crate::value_validity::source_color;
+use filament_exact::{Cancel, CancelCause, Integer, Rational, Undefined, Value};
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
-use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
+use fsl_eval::simulation::StateKey;
+use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
-    replay_probabilistic_witness, ExactProbLimits, ExactProbabilityGraphError, IncompleteCause,
-    ModelCheckLimit, ModelCheckLimits, ProbabilisticCounterexample, ProbabilityWitnessError,
-    ProbabilityWitnessReplay, TerminalValue,
+    probabilistic_undefined_wire, probabilistic_wire, replay_probabilistic_witness,
+    CounterexampleWireError, ExactProbLimits, ExactProbabilityGraphError, IncompleteCause,
+    ModelCheckLimit, ModelCheckLimits, ProbabilisticCounterexample, ProbabilityUndefinedWitness,
+    ProbabilityWitnessError, ProbabilityWitnessReplay, TerminalValue, UndefinedEvaluation,
+    UndefinedLocus, UndefinedSite,
 };
+use fsl_semantics::check::{Bound, EnumBinding};
 use ix_trace_rs::trace;
+use serde_json::json;
 
 const CLAIMS: &str = "
 probabilistic TooMuch using inf on M over (m: M::Msg) under every scheduler on origin
@@ -977,4 +984,100 @@ fn an_unfair_witness_settles_inconclusive_replay_parity() {
         TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::ReplayParity(_))
     ));
     assert!(record.probabilistic_counterexample.is_none());
+}
+
+/// A probabilistic counterexample whose draw and scheduled argument are source
+/// `enum` values writes both in FR-181's typed enum form, as a path set and as
+/// an undefined path.
+#[test]
+fn source_enum_draws_and_arguments_are_spelled_in_probabilistic_counterexamples() {
+    let world = World::new(&prob_world::link(&format!(
+        "enum Color {{ red, blue }}\n{CLAIMS}"
+    )));
+    let mut witness = evidence(&world, "TooMuch");
+    witness.paths.truncate(1);
+    let step = witness
+        .paths
+        .first_mut()
+        .and_then(|path| path.steps.first_mut())
+        .expect("a witness step");
+    step.draw = Some(vec![source_color(&world.package, "red")]);
+    let mut identity = step.action.clone().expect("an identity step");
+    identity.arguments = vec![source_color(&world.package, "blue")];
+    let at = StateKey::from_canonical_bytes(b"at".to_vec());
+    let scheduler = [(at.clone(), identity)];
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let state_key = |state: &ModelSimState| system.state_key(state).ok().map(|(_, key)| key);
+    let bound = Bound::AtMost(ratio(1, 2));
+    let scope = world.package.graph().scope();
+    let color = |member: &str| {
+        json!({"type": "enum", "name": r#"{"node":"Color","package":"package"}"#,
+            "member": member})
+    };
+    let unspelled = Err(CounterexampleWireError::Unspelled("probabilistic value"));
+
+    let path_set = |enums: &[EnumBinding]| {
+        probabilistic_wire(
+            &witness,
+            &bound,
+            "probability",
+            scope.types(),
+            scope.variant_types(),
+            enums,
+            &state_key,
+            &scheduler,
+        )
+    };
+    let written = path_set(scope.enums()).expect("the source enum values are spelled");
+    assert_eq!(
+        written["evidence"]["paths"][0][0]["random"],
+        json!([color("red")])
+    );
+    assert_eq!(
+        written["scheduler"]["entries"][0]["choice"]["arguments"],
+        json!([color("blue")])
+    );
+    assert_eq!(path_set(&[]), unspelled);
+
+    let undefined = ProbabilityUndefinedWitness {
+        path: witness.clone(),
+        evaluation: UndefinedEvaluation {
+            site: UndefinedSite {
+                position: 0,
+                state_key: at,
+                locus: UndefinedLocus::FractionValue,
+                transition: None,
+                time: None,
+            },
+            cause: UndefinedCause::Kernel(Undefined::DivisionByZero),
+        },
+        product_state: witness.initial_key.clone(),
+    };
+    let claim = world
+        .claim("TooMuch")
+        .occurrence()
+        .expect("the claim has an occurrence");
+    let undefined_path = |enums: &[EnumBinding]| {
+        probabilistic_undefined_wire(
+            &undefined,
+            claim,
+            &bound,
+            "probability",
+            scope.types(),
+            scope.variant_types(),
+            enums,
+            &state_key,
+            &scheduler,
+        )
+    };
+    let written = undefined_path(scope.enums()).expect("the source enum values are spelled");
+    assert_eq!(
+        written["evidence"]["path"][0]["random"],
+        json!([color("red")])
+    );
+    assert_eq!(
+        written["scheduler"]["entries"][0]["choice"]["arguments"],
+        json!([color("blue")])
+    );
+    assert_eq!(undefined_path(&[]), unspelled);
 }

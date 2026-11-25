@@ -2341,3 +2341,69 @@ fn a_provider_item_stopped_by_the_case_budget_or_cancellation_is_incomplete() {
     );
     assert!(record.value_check.is_none());
 }
+
+/// The value of `case` of the source `enum Color` that `package` declares.
+pub(crate) fn source_color(package: &CheckedPackage, case: &str) -> Value {
+    let shape = package
+        .graph()
+        .scope()
+        .enums()
+        .iter()
+        .find(|binding| binding.name == "Color")
+        .expect("the unit declares Color")
+        .shape();
+    let variant = shape
+        .variants()
+        .find(|variant| variant.case() == case)
+        .expect("a case of Color");
+    let rank = shape.rank(variant).expect("a ranked case");
+    Value::Enum(filament_exact::EnumMember::new(variant.clone(), rank))
+}
+
+/// A value-check counterexample over a source `enum` parameter writes it in
+/// FR-181's typed enum form, named by the declaration identity text.
+#[test]
+fn a_source_enum_parameter_counterexample_is_spelled() {
+    let package = package_of(
+        "enum Color { red, blue }\n\
+         function subject using v(c: Color): Boolean pure { c != Color::red }",
+    );
+    let key = key_of(
+        &package,
+        "subject",
+        &serde_json::json!({"role": "claim", "ordinal": 0}),
+    );
+    let record = run(&package, &key, "subject", None);
+    assert!(matches!(terminal(&record), TerminalValue::Refuted));
+    let found = record.value_check.as_ref().expect("a counterexample");
+    let [parameter] = found.parameters.as_slice() else {
+        panic!("one parameter: {:?}", found.parameters);
+    };
+    let expected = serde_json::json!({"type": "assignments", "values": [{
+        "parameter": fsl_foundation::node_wire::node_key_to_json(parameter)
+            .expect("a parameter node"),
+        "value": {"type": "enum", "name": r#"{"node":"Color","package":"package"}"#,
+            "member": "red"},
+    }]});
+    let item = serde_json::to_value(item_of(&record, &package))
+        .expect("the item has a wire representation");
+    assert_eq!(item["counterexample"], expected);
+
+    let scope = package.graph().scope();
+    let spell = |enums: &[fsl_semantics::check::EnumBinding]| {
+        fsl_replay::assignments_wire(
+            &found.parameters,
+            found.reproduced.assignment(),
+            scope.types(),
+            scope.variant_types(),
+            enums,
+        )
+    };
+    assert_eq!(spell(scope.enums()), Ok(expected));
+    assert_eq!(
+        spell(&[]),
+        Err(fsl_replay::CounterexampleWireError::Unspelled(
+            "assignment value"
+        ))
+    );
+}

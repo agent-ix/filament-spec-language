@@ -1048,26 +1048,18 @@ impl<'t> Typing<'t> {
     }
 }
 
-/// FR-181's typed canonical form of `value`, its records, tuples, unions and
-/// enums read from `typing`.
-pub(crate) fn value_enc(value: &Value, typing: Typing<'_>) -> Enc {
-    value_enc_with(value, typing, &|_| None)
-}
-
-/// FR-120's typed canonical form of `value`, where a record value is
+/// FR-120's typed canonical form of `value`, its records, tuples, unions and
+/// enums read from `typing`. A record value is
 /// `{"type":"record","name":…,"fields":[{name, value}…]}` with `name` the
 /// declaration identity text, one entry per declared field in
 /// declaration order and an absent field `null`; a tuple is
 /// `{"type":"tuple","name":…,"components":[…]}`; a union is
 /// `{"type":"union","name":…,"member":…,"components":[…]}`; and an enum is
-/// `{"type":"enum","name":…,"member":…}` with `name` the variant type's
-/// declaration identity text and `member` the declared case.
-pub(crate) fn typed_value_enc(
-    value: &Value,
-    types: &TypeEnvironment,
-    variants: &[VariantTypeDeclaration],
-) -> Enc {
-    value_enc(value, Typing::with_variants(types, variants))
+/// `{"type":"enum","name":…,"member":…}` with `name` the declaration identity
+/// text of the model variant type or source `enum` and `member` the declared
+/// case.
+pub(crate) fn value_enc(value: &Value, typing: Typing<'_>) -> Enc {
+    value_enc_with(value, typing, &|_| None)
 }
 
 /// A reference's replacement in a key-free encoding (FR-152): `Some` for a
@@ -1188,28 +1180,35 @@ pub fn value_json(value: &Value) -> Option<serde_json::Value> {
 }
 
 /// A value's FR-181 typed canonical form as JSON, its records, tuples,
-/// unions and enums read from `types` and `variants`.
+/// unions and enums read from `types`, `variants` and `enums`.
 ///
 /// `None` when the value is unencodable.
 pub fn typed_value_json(
     value: &Value,
     types: &TypeEnvironment,
     variants: &[VariantTypeDeclaration],
+    enums: &[EnumBinding],
 ) -> Option<serde_json::Value> {
-    canonical_json(&typed_value_enc(value, types, variants))
+    canonical_json(&value_enc(
+        value,
+        Typing::with_variants(types, variants).with_enums(enums),
+    ))
 }
 
-/// A typed value with both model variants and an authenticated enum index.
+/// A typed value with source enums, model variants and an authenticated enum index.
 /// `None` when the value has no canonical form in those declarations.
 pub fn typed_value_json_with_enum_members(
     value: &Value,
     types: &TypeEnvironment,
     variants: &[VariantTypeDeclaration],
+    enums: &[EnumBinding],
     enum_members: &filament_semantic_value::enumeration::EnumMemberIndex,
 ) -> Option<serde_json::Value> {
     canonical_json(&value_enc(
         value,
-        Typing::with_variants(types, variants).with_enum_members(Some(enum_members)),
+        Typing::with_variants(types, variants)
+            .with_enums(enums)
+            .with_enum_members(Some(enum_members)),
     ))
 }
 
@@ -1219,7 +1218,7 @@ pub fn package_value_json(
     types: &TypeEnvironment,
     enum_members: &filament_semantic_value::enumeration::EnumMemberIndex,
 ) -> Option<serde_json::Value> {
-    typed_value_json_with_enum_members(value, types, &[], enum_members)
+    typed_value_json_with_enum_members(value, types, &[], &[], enum_members)
 }
 
 /// The immutable type and identity inputs that determine a run value's bytes.
