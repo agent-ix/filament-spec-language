@@ -548,7 +548,30 @@ fn tc_921_an_accounting_stage_limit_stops_execution_without_a_value() {
     assert_eq!(limit.next_charge, Integer::from(1_i64));
     assert_eq!(
         limit.charge_point,
-        filament_exact::ChargePoint::FunctionCall
+        filament_exact::ChargePoint::OrderingOperands
+    );
+
+    let wire: serde_json::Value = serde_json::from_str(
+        &result
+            .to_function_json()
+            .expect("the incomplete result serializes"),
+    )
+    .expect("the result is JSON");
+    assert_eq!(wire["arm"], "input");
+    assert_eq!(wire["category"], "incomplete");
+    assert_eq!(wire["value"], serde_json::Value::Null);
+    assert_eq!(
+        wire["limit"],
+        serde_json::json!({
+            "kind": "work_units",
+            "bound": "1",
+            "counter": "2",
+            "field": "work_units",
+            "setting": "accounting.work_units",
+            "consumed": "1",
+            "next_charge": "1",
+            "charge_point": "ordering_operands"
+        })
     );
 }
 
