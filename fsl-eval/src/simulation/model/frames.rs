@@ -1041,6 +1041,16 @@ struct Delta {
     deleted: Vec<(DeclarationKey, String)>,
 }
 
+struct CompletionContext<'a> {
+    candidate: (ModelState, Vec<WrittenSlots>),
+    delta: &'a Delta,
+    post_references: &'a [ObjectReference],
+    budget: &'a mut Budget,
+    contract: &'a mut Vec<ContractFinding>,
+    successors: &'a mut Vec<Applied>,
+    result_independent: bool,
+}
+
 impl Run<'_, '_, '_> {
     fn effect(&self) -> &OperationEffect {
         self.application.declaration.effect()
@@ -1467,13 +1477,15 @@ impl Run<'_, '_, '_> {
                 return Err(stop(BROKEN));
             };
             self.complete(
-                self.collection_writes(candidate, &delta)?,
-                &delta,
-                &post_references,
-                budget,
-                contract,
-                successors,
-                plan.result_independent,
+                CompletionContext {
+                    candidate: self.collection_writes(candidate, &delta)?,
+                    delta: &delta,
+                    post_references: &post_references,
+                    budget,
+                    contract,
+                    successors,
+                    result_independent: plan.result_independent,
+                },
             )?;
             if plan.stop_after_first && successors.len() > initial {
                 return Ok(true);
@@ -2135,16 +2147,16 @@ impl Run<'_, '_, '_> {
     /// Pair `candidate` with each result and keep it as a successor when some
     /// pair's effective postcondition is true, its effect naming the
     /// collections `written`.
-    fn complete(
-        &self,
-        (candidate, written): (ModelState, Vec<WrittenSlots>),
-        delta: &Delta,
-        post_references: &[ObjectReference],
-        budget: &mut Budget,
-        contract: &mut Vec<ContractFinding>,
-        successors: &mut Vec<Applied>,
-        result_independent: bool,
-    ) -> Result<(), ExpansionStop> {
+    fn complete(&self, context: CompletionContext<'_>) -> Result<(), ExpansionStop> {
+        let CompletionContext {
+            candidate: (candidate, written),
+            delta,
+            post_references,
+            budget,
+            contract,
+            successors,
+            result_independent,
+        } = context;
         let mut effect = self.effect_of(&candidate, delta)?;
         effect.written = written;
         let plain = if self.walk.candidate_visitor.is_some() {

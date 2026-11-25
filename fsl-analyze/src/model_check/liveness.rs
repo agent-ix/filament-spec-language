@@ -589,6 +589,8 @@ trait LiveSubject: SubjectSystem<TransitionId: Ord> + Sized {
 type BoundedExpansion<Transition, State> = Result<Bounded<Transition, State>, ExpansionStop>;
 type PrefetchedExpansions<State, Transition> =
     RefCell<BTreeMap<RawExpansionKey, BoundedExpansion<Transition, State>>>;
+type ProductIdentity = (StateKey, PropertyKey, u64);
+type ProductKeyCache = RefCell<ByteCache<ProductIdentity, Arc<[u8]>>>;
 
 /// The retained product of `product` under `group` and `ample`.
 fn retained<'l, S: LiveSubject>(
@@ -1324,7 +1326,7 @@ struct LassoSystem<'r, S: LiveSubject> {
     prefetched: PrefetchedExpansions<S::State, Tr<S>>,
     /// Complete product keys reused for repeated model/property pairs in this
     /// pass. The exact bytes remain the FR-101 identity.
-    product_keys: RefCell<ByteCache<(StateKey, PropertyKey, u64), Arc<[u8]>>>,
+    product_keys: ProductKeyCache,
     /// Exact successor keys reused within this product pass. Expansion values
     /// are not retained because their generic payloads have no deep-size API.
     successor_keys: RefCell<ByteCache<StateKey, Vec<StateKey>>>,
@@ -1467,7 +1469,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
     fn expand_model_only(
         &self,
         state: &S::State,
-        prefetched: Option<Result<Bounded<Tr<S>, S::State>, ExpansionStop>>,
+        prefetched: Option<BoundedExpansion<Tr<S>, S::State>>,
     ) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
         self.poll()?;
         let expansion = prefetched

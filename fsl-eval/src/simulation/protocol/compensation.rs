@@ -543,7 +543,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     applied.state.clone(),
                 ) {
                     let (model, memory) = match chosen.written {
-                        Written::Applied(model, memory) => (model, memory),
+                        Written::Applied(model, memory) => (*model, memory),
                         Written::Disabled => continue,
                         Written::Cut => {
                             gathered.cut.steps.push(identity.clone());
