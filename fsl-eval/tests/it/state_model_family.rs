@@ -798,12 +798,13 @@ fn source_state_clause_retains_false_selected_precondition_as_model_undefined() 
     }
 }
 
-/// FR-107-AC-19/-20: an undefined precondition remains in the returned
-/// results while later preconditions are evaluated; postconditions are
-/// skipped unless every precondition completes true.
+/// FR-107-AC-19/-20: the first precondition that is not `Completed(true)`,
+/// an undefined one included, ends the preconditions, so a later one has no
+/// entry; postconditions are skipped unless every precondition completes
+/// true.
 #[trace("TC-1039", "FR-107-AC-19", "FR-107-AC-20")]
 #[test]
-fn clause_sets_report_undecided_preconditions_and_skip_postconditions() {
+fn clause_sets_stop_at_a_non_true_precondition_and_skip_postconditions() {
     use fsl_eval::value::ClauseSetOutcome;
     use fsl_semantics::model::observation::{
         document_reference, ClauseSelectionInput, SelectedObject,
@@ -905,23 +906,19 @@ fn clause_sets_report_undecided_preconditions_and_skip_postconditions() {
             &[(g_name.clone(), &g), (f_name.clone(), &f)],
             fsl_semantics::check::SCALAR_LIMITS_UNLIMITED,
         )
-        .expect("the two admitted preconditions evaluate");
+        .expect("the two admitted preconditions are accepted");
     assert_eq!(
         together
             .results
             .iter()
             .map(|entry| entry.name.to_string())
             .collect::<Vec<_>>(),
-        ["F", "G"]
+        ["F"]
     );
     assert!(matches!(
         &together.results[0].evaluation.evaluation.outcome,
         FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause))
             if cause.undefined_record().reason.as_str() == "precondition-false"
-    ));
-    assert!(matches!(
-        &together.results[1].evaluation.evaluation.outcome,
-        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
     ));
     assert_eq!(together.outcome, ClauseSetOutcome::Undecided);
 
