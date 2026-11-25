@@ -4,6 +4,7 @@ use fsl_bench::prop::{self, value};
 use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::{self, DependencyInput, FrontEndFailure, ParseRequest, SpineLimits};
 use proptest::prelude::TestCaseError;
+use ix_trace_rs::trace;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn check(source: &str) -> Result<(), FrontEndFailure> {
@@ -49,14 +50,16 @@ fn value_generator_output_parses_and_checks() {
 
 /// Provenance: QSL-2054. Coverage is measured from the parsed CST, never labels.
 #[test]
+#[trace("NFR-141-AC-10")]
 fn grammar_unit_generator_covers_every_production() {
     let start = std::time::Instant::now();
     let cases = fsl_cst::grammar::generate::covering_derivations();
     let generated = cases.len();
     let mut covered = BTreeSet::new();
     let mut refused = Vec::new();
+    let parser = fsl_bench::parse::ParseSession::new();
     for case in cases {
-        let parsed = fsl_bench::parse::parse(&case.source).unwrap();
+        let parsed = fsl_bench::parse::parse(&parser, &case.source).unwrap();
         if !parsed.is_admissible() {
             refused.push(format!(
                 "{:?}: {:?}\n{}",
