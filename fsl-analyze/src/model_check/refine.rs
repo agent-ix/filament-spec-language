@@ -1988,7 +1988,7 @@ impl Run<'_, '_> {
         for (key, index, state) in initial {
             let verdict = match self.abstract_protocol {
                 Some(protocol) => {
-                    check_protocol_initial_with_transition_limit(
+                    let checked = check_protocol_initial_with_transition_limit(
                         self.refinement,
                         self.concrete,
                         self.abstract_system,
@@ -1998,8 +1998,17 @@ impl Run<'_, '_> {
                         widen(self.limits.limits.max_transitions),
                         widen(self.transitions),
                     )
-                    .map_err(ModelCheckRefusal::Protocol)?
-                    .verdict
+                    .map_err(ModelCheckRefusal::Protocol)?;
+                    self.transitions = self.transitions.saturating_add(
+                        usize::try_from(checked.abstract_successors).unwrap_or(usize::MAX),
+                    );
+                    if self.transitions > self.limits.limits.max_transitions {
+                        return Err(Self::stopped(
+                            ModelCheckLimit::MaxTransitions,
+                            widen(self.limits.limits.max_transitions),
+                        ));
+                    }
+                    checked.verdict
                 }
                 None => check_initial(
                     self.refinement,
