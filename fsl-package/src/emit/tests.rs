@@ -43,6 +43,7 @@ mod admission_corpus;
 mod bare_world;
 mod bytes_operations;
 mod carried_quantity_paths;
+mod class_c;
 mod check_mode;
 mod checked_views;
 mod child_composite;
