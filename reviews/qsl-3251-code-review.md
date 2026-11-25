@@ -40,3 +40,23 @@ Reviewed PR #3861 at `40059b6f92bbd0de433a9def225cc34b22dd2ca7` for the FR-282 A
 ### FND-002 — AC-7 test bypasses the production mapping
 
 `a_rejection_serializes_its_locus_and_verdict` constructs a `FailedStep::NoAbstractMatch` value with a synthetic transition and verifies its JSON shape. It does not call the simulation certificate checker. The new production branch in `Run` that converts `StepVerdict::Fails(RefinementFailure::NoAbstractMatch)` into this `FailedStep` is therefore not exercised by the only test bound to FR-282-AC-7. A production regression that emits the old failure shape would leave this test green.
+
+## New findings (disposition pass 2)
+
+Re-reviewed the whole diff `origin/main...83d70d88e5e1da26b88a170866a09f3fb6497631`.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | high | FR-282-AC-7's stimulus (the certificate of a holding refinement with one relation pair removed) still rejects `PostDiffers` at the source edge, not a cause naming the unmatched concrete step; the only AC-7 binder substitutes a different stimulus (step rows rewritten to `any` over the lost-update variant, a refinement that does not hold), so the tag claims an AC the production checker does not satisfy. | fsl-analyze/tests/it/refinement_certificate.rs:225-249; fsl-analyze/tests/it/refinement_certificate.rs:1103-1163 |
+
+### FND-003 — AC-7 binder does not exercise the AC's stimulus
+
+FR-282-AC-7 reads: the simulation-relation certificate of a refinement that holds is accepted; "the same certificate with one pair removed from the relation is rejected with a cause naming the concrete step left without a matching abstract step." The pre-existing, unchanged test `a_removed_relation_pair_reports_only_the_concrete_source_edge` (tagged only `TC-556`) performs exactly that mutation (`certificate.positions[target].abstract_states.remove(0)` on the `safety_only()` certificate) and asserts the rejection is `PostDiffers` at the source edge, with doc text stating the checker "reports only the PostDiffers source edge and not the missing abstract match". The PR does not touch that path. The new AC-7 binder `an_unmatched_concrete_step_names_its_transition_in_the_checker_diagnostic` instead rewrites the commit step rows to `any` over `Variant::LOST_UPDATE` and lists the engine's certificate, so the refinement does not hold and no pair is removed. The production `FailedStep::NoAbstractMatch` mapping is now correctly exercised (FND-002 fixed), but the AC's stated stimulus and outcome remain unmet and the matrix now reports AC-7 as tagged. Either the checker must name the unmatched concrete step for a removed pair, or the spec AC must be amended to the stimulus actually served.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1 (Linear comment 6142e83f): cancellation polled on every canonical-reader reservation charge. |
+| FND-002 | fixed | Round 1 (Linear comment 6142e83f): tagged integration test exercises the real checker conversion. |
+| FND-003 | still-open | Round 2 at 83d70d88e5e1da26b88a170866a09f3fb6497631: new finding; removing a relation pair still rejects `PostDiffers` at the source edge, and the AC-7 binder uses a different stimulus. |

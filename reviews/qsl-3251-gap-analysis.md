@@ -33,3 +33,12 @@ Ran a planless, repository-wide static test-matrix audit for filament-spec-langu
 - `quire coverage` completed. It reported 6,519 untracked symbols and 24,624 diagnostics; the untracked set includes FSpec-prefixed cross-repository references and parent/TestCase trace ids. The new FR-282 tags are recognized as binders; no newly added tag in this PR is unmatched.
 - Reverse-gap/stub check: all four changed behavior paths map to FR-282-AC-6/7/8/21; no new stub or untraced changed behavior was found. A full manual inventory of the repository's complete source surface was not completed in this review.
 - Semantic review: skipped; no explicit opt-in was given.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | Round 1 (Linear comment afc32fae): refreshed matrix 1,073 untagged; no broad follow-up linked. |
+| FND-002 | still-open | Round 1 (Linear comment afc32fae): refreshed matrix 24 ignored-only; no broad follow-up linked. |
+| FND-001 | deferred | Round 2 at 83d70d88e5e1da26b88a170866a09f3fb6497631: QSL-3110 (linked related) owns repository-wide untagged triage. Pre-existing baseline: origin/main 1df75ab47fc1fc64d6e87df8172903e449a78766 has 1,077 untagged, head 1,073; no criterion is untagged at head that is tagged on main; the PR only adds trace tags. FR-282-AC-6/7/8/21 are tagged by non-ignored tests at head. |
+| FND-002 | deferred | Round 2 at 83d70d88e5e1da26b88a170866a09f3fb6497631: QSL-3110 scope extended by comment 97237f01 to the 24 ignored-only criteria. Identical 24-id set on origin/main and head; the PR adds no `#[ignore]`. |
