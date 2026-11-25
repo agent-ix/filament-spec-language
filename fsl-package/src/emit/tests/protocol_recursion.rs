@@ -234,6 +234,32 @@ fn a_cyclic_predicate_join_protocol_is_grouped_and_reads_back() {
         .expect("acyclic protocol clause");
     assert!(idle["recursion_group"].is_null());
     assert!(idle["recursion_group"].is_null());
+    // The grouped and the acyclic clause both end their declaration path with
+    // the operand naming their owner.
+    let raw = raw_wire(&emission);
+    for name in ["Flow", "Idle"] {
+        let (position, clause) = wire_nodes
+            .iter()
+            .enumerate()
+            .find(|(_, node)| {
+                node["semantic_form"] == "protocol_clause"
+                    && node["declaration"]["qualified_name"] == json!([name])
+            })
+            .expect("a protocol clause");
+        let written = &nodes(&raw)[position]["node_id"]["path"];
+        let slot = written[1]["operand"]
+            .as_u64()
+            .expect("the owner operand slot");
+        assert_eq!(*written, json!([name, {"operand": slot}]));
+        let owner = wire_nodes
+            .iter()
+            .position(|node| node["node_id"] == clause["owner_model"])
+            .expect("the owner is in the graph");
+        assert_eq!(
+            raw["semantic_graph"]["operand_rows"][position][slot as usize],
+            json!(owner)
+        );
+    }
     assert_eq!(
         wire_graph
             .key_of_value(&idle["node_id"])
@@ -241,6 +267,60 @@ fn a_cyclic_predicate_join_protocol_is_grouped_and_reads_back() {
         idle_acyclic,
         "the acyclic protocol key inputs and identity are unchanged"
     );
+}
+
+/// FR-383-AC-24, AC-26: a group whose one declared member is the owned
+/// clause (its activation guard is a reference to its own protocol) keys each
+/// anonymous member on the clause's path, owner operand included, as FSpec
+/// FR-322 gives an anonymous member the sole declared member's path.
+#[trace("FR-383-AC-24", "FR-383-AC-26")]
+#[test]
+fn a_clause_that_is_its_groups_only_declaration_reads_back() {
+    let text = package_text(
+        "record Tick { ready: Boolean; }\n\
+         protocol Flow using p over (input: M::Gadget) \
+         on each (t: Tick) when (protocol Flow) {\n\
+         role R on M::Gadget;\n\
+         run sequence Main { }\n\
+         finish End as (outcome: Boolean) { true };\n\
+         }\n",
+    );
+    let (graph, model_digest) = checked(&text);
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("package emits");
+    assert_eq!(emission.omitted, []);
+    let wire = wire(&emission);
+    let members: Vec<_> = nodes(&wire)
+        .iter()
+        .filter(|node| node.get("recursion_group").is_some())
+        .collect();
+    let declared: Vec<_> = members
+        .iter()
+        .filter(|node| node.get("declaration").is_some())
+        .collect();
+    let [clause] = declared[..] else {
+        panic!("one declared member: {declared:?}");
+    };
+    assert_eq!(clause["semantic_form"], "protocol_clause");
+    assert!(members.len() > 1);
+    let wire_graph = WireGraph::of_package_value(&wire).expect("the emitted wire graph parses");
+    let path = |node: &Value| {
+        let key = wire_graph.key_of_value(&node["node_id"]).expect("a key");
+        key.path()
+    };
+    for member in &members {
+        assert_eq!(path(member), path(clause), "{member}");
+    }
+    let mut evidence = read_evidence(&emission);
+    evidence
+        .insert_domain_package_document(model_digest.as_str(), SPINE_MODEL_DOCUMENT)
+        .expect("model evidence admitted");
+    let read = read_v2(
+        emission.package.bytes(),
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence,
+    );
+    assert!(matches!(read, Read::Verified { .. }), "I2 read: {read:?}");
 }
 
 #[trace("FR-880-AC-13", "TC-2501")]

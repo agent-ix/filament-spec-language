@@ -113,7 +113,8 @@ pub(super) fn depend_on(envelope: &mut Value, position: usize, owner: &Value) {
 /// references. The edge is a local node reference, a dependency of the clause
 /// (once, in ascending order, with the body's targets), the only `owner_model`
 /// of the graph, read back unchanged by IR's typed reader, and part of the
-/// clause's structural owner edge.
+/// clause's structural identity: the clause path is `Flow` followed by one
+/// operand that resolves to the edge's target.
 #[trace("FR-383-AC-1", "FR-383-AC-26", "TC-1061")]
 #[test]
 fn a_clause_names_the_object_type_its_over_input_references() {
@@ -130,6 +131,21 @@ fn a_clause_names_the_object_type_its_over_input_references() {
     expected.sort_by_key(|id| graph.key_of_value(id).expect("a structural dependency"));
     expected.dedup();
     assert_eq!(clause["dependencies"], Value::Array(expected));
+
+    let position = clause_position(wire);
+    let written = &nodes(&lowered.raw)[position]["node_id"]["path"];
+    let slot = written[1]["operand"]
+        .as_u64()
+        .expect("the owner operand slot");
+    assert_eq!(*written, json!(["Flow", {"operand": slot}]));
+    let owner_index = nodes(wire)
+        .iter()
+        .position(|node| node["node_id"] == owner["node_id"])
+        .expect("the owner is in the graph");
+    assert_eq!(
+        lowered.raw["semantic_graph"]["operand_rows"][position][slot as usize],
+        json!(owner_index)
+    );
 
     let carriers: Vec<&Value> = nodes(wire)
         .iter()
@@ -217,8 +233,8 @@ fn selected_model_identity_rows_back_reference_projection_and_missing_rows_refus
 
 /// FR-383-AC-26: two clauses over different object types have distinct owner
 /// edges, and the edge is not reconstructed from the role models: `Flow` over
-/// `Order` and over `Person` have the same roles and differ in the edge, in
-/// the clause's semantic body.
+/// `Order` and over `Person` have the same roles and differ in the edge and in
+/// the clause key.
 #[trace("FR-383-AC-14", "FR-383-AC-26", "TC-1062")]
 #[test]
 fn clauses_over_different_object_types_have_distinct_owner_edges() {
@@ -233,6 +249,15 @@ fn clauses_over_different_object_types_have_distinct_owner_edges() {
         clause(&order)["owner_model"],
         clause(&person)["owner_model"]
     );
+    let key = |lowered: &Lowered| {
+        fsl_semantics::check::wire_id::WireGraph::of_package_value(&lowered.wire)
+            .unwrap()
+            .key_of_value(&clause(lowered)["node_id"])
+            .expect("the clause key")
+    };
+    // A declared node's key does not read its body, so the two clauses named
+    // `Flow` differ in their keys by the owner operand alone.
+    assert_ne!(key(&order), key(&person));
 }
 
 /// FR-383-AC-26, FR-464-AC-16 (TC-1063): each defect of the edge, over the
