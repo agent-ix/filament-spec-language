@@ -610,6 +610,7 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
         post QuantifierPost using v on Config::Meter::adjust { forall(step in steps: step >= Config::Meter::adjust::step) }\n\
         pre LetStep using v on Config::Meter::adjust { let step = Config::Meter::adjust::by in Config::Meter::adjust::step >= step }\n\
         pre AfterLet using v on Config::Meter::adjust { (let step = Config::Meter::adjust::by in step >= 0.00) and step >= 0.00 }\n\
+        post PostLet using v on Config::Meter::adjust { let step = Config::Meter::adjust::by in Config::Meter::adjust::step >= step }\n\
         pre Gauge using v on Config::Gauge::adjust { Config::Gauge::adjust::by >= 0.00 }\n";
     let checked = check(&bytes, &unit_text(PACKAGE, "Config", source));
     for name in [
@@ -740,6 +741,19 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
         "let-bound step node: {:?}",
         let_comparison[1].kind()
     );
+
+    // A postcondition `let` shadows the parameter too; `result` shifts `by`
+    // and `step` to slots 2 and 3, and the binder takes slot 5.
+    let post_let = checked
+        .graph
+        .state_clause("PostLet")
+        .unwrap()
+        .body()
+        .children();
+    assert!(matches!(post_let[0].kind(), NodeKind::Local(2)));
+    let post_comparison = post_let[1].children();
+    assert!(matches!(post_comparison[0].kind(), NodeKind::Local(3)));
+    assert!(matches!(post_comparison[1].kind(), NodeKind::Local(5)));
 
     let after_let = checked
         .graph
