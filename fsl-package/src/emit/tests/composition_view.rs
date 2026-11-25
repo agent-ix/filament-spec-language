@@ -6,13 +6,7 @@ use crate::{AnalysisView, BarePackage, CompositionMemberValue, CompositionViewRe
 
 /// Source read-back and independently admitted bytes preserve the declaration,
 /// canonical member attribution, authored ordering and foreign target owners.
-#[trace(
-    "FR-940-AC-1",
-    "FR-530-AC-1",
-    "FSpec-FR-491-AC-6",
-    "FSpec-FR-491-AC-7",
-    "NFR-141-AC-20"
-)]
+#[trace("FR-940-AC-1", "FR-530-AC-1", "FSpec-FR-491-AC-6", "FSpec-FR-491-AC-7")]
 #[test]
 fn composition_views_keep_member_regions_and_owner_bound_targets() {
     let world = World::new();
@@ -64,14 +58,6 @@ fn composition_views_keep_member_regions_and_owner_bound_targets() {
         panic!("the independently admitted byte artifact");
     };
     let bare = BarePackage::new(&admitted);
-    let expected_composites = bare.declared_composites();
-    let graph_builds = std::cell::Cell::new(0);
-    let measured_composites = bare.declared_composites_with_graph(|package| {
-        graph_builds.set(graph_builds.get() + 1);
-        crate::checked_v2::wire_graph(package).ok()
-    });
-    assert_eq!(graph_builds.get(), 1);
-    assert_eq!(measured_composites, expected_composites);
     let selected = read.claim_name("Sys").expect("source read-back names Sys");
     let byte_selected = bare.claim_name("Sys").expect("bytes name Sys");
     let source_view = read
@@ -373,6 +359,83 @@ fn composition_views_keep_member_regions_and_owner_bound_targets() {
         read.composition(marker),
         Err(CompositionViewRefusal::NotComposition)
     ));
+}
+
+/// NFR-141-AC-20 (QSL-2854): one graph build per call at increasing numbers
+/// of admitted composite nodes, with output equal to the pre-change projection.
+#[trace("NFR-141-AC-20", "FR-931", "FR-322")]
+#[test]
+fn declared_composites_builds_one_wire_graph_and_preserves_the_projection() {
+    use crate::bare_term::{DeclaredComposite, DeclaredShape};
+    use crate::checked_v2::{reset_wire_graph_build_count, wire_graph_build_count};
+    use crate::wire_form::{has_form, WireForm, WireTag};
+    use filament_contract_model::{CheckedBindingNameKind, CheckedSemanticNodeV2, CheckedTerm};
+
+    fn previous_projection(
+        bare: &BarePackage<'_>,
+        graph: &fsl_semantics::check::wire_id::WireGraph,
+    ) -> Vec<DeclaredComposite> {
+        let names = |node: &CheckedSemanticNodeV2| -> Vec<String> {
+            let CheckedTerm::Aggregate { members, .. } = &node.body else {
+                return Vec::new();
+            };
+            members
+                .iter()
+                .filter_map(|member| match member {
+                    CheckedTerm::Binding { name, .. } => match name.kind() {
+                        CheckedBindingNameKind::Other(name) => Some(name.to_owned()),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect()
+        };
+        bare.package()
+            .resolved_graph()
+            .nodes
+            .iter()
+            .filter_map(|node| {
+                let shape = if has_form(node, WireTag::CompositeType, WireForm::Record) {
+                    DeclaredShape::Record(names(node))
+                } else if has_form(node, WireTag::CompositeType, WireForm::Union) {
+                    DeclaredShape::Union(names(node))
+                } else if has_form(node, WireTag::CompositeType, WireForm::Tuple) {
+                    DeclaredShape::Tuple
+                } else {
+                    return None;
+                };
+                Some(DeclaredComposite {
+                    key: graph.key(&node.node_id).ok()?,
+                    shape,
+                })
+            })
+            .collect()
+    }
+
+    for count in [5_000, 10_000, 20_000] {
+        let declarations = (0..count)
+            .map(|index| format!("record R{index} {{ value: Integer; }}\n"))
+            .collect::<String>();
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n{declarations}"
+        );
+        let package = compile_with(&source, &[])
+            .unwrap_or_else(|failure| panic!("{count} records compile: {failure:?}"));
+        let emission = emit_checked_with_limits(&package, crate::EmitLimits::fixture())
+            .unwrap_or_else(|failure| panic!("{count} records emit: {failure:?}"));
+        let Read::Verified { admitted, .. } = read_back(&emission) else {
+            panic!("{count} records are admitted from the emitted bytes");
+        };
+        let bare = BarePackage::new(&admitted);
+        reset_wire_graph_build_count();
+        let actual = bare.declared_composites();
+        assert_eq!(wire_graph_build_count(), 1, "N = {count}");
+        assert_eq!(actual.len(), count, "every declared record is returned");
+        let graph = crate::checked_v2::wire_graph(&admitted).expect("the admitted graph rebuilds");
+        let expected = previous_projection(&bare, &graph);
+        assert_eq!(actual, expected, "pre-change output at N = {count}");
+    }
 }
 
 /// Attribution and owner-reference projection continue one finite native

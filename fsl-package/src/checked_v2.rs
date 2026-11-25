@@ -505,6 +505,8 @@ fn occurrence(
 /// "Operand index segments"): every id the package holds resolves its index
 /// segments against this graph.
 pub(crate) fn wire_graph(package: &CheckedPackageV2) -> Result<WireGraph, WireIdError> {
+    #[cfg(test)]
+    WIRE_GRAPH_BUILD_COUNT.with(|count| count.set(count.get() + 1));
     let graph = package.resolved_graph();
     let ids: Vec<_> = graph
         .nodes
@@ -512,6 +514,21 @@ pub(crate) fn wire_graph(package: &CheckedPackageV2) -> Result<WireGraph, WireId
         .map(|node| node.node_id.clone())
         .collect();
     WireGraph::with_operand_rows(&ids, &graph.operand_rows)
+}
+
+#[cfg(test)]
+thread_local! {
+    static WIRE_GRAPH_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_wire_graph_build_count() {
+    WIRE_GRAPH_BUILD_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn wire_graph_build_count() -> usize {
+    WIRE_GRAPH_BUILD_COUNT.with(std::cell::Cell::get)
 }
 
 /// Exact unit identity carried by one admitted compound-unit type node.
