@@ -9,7 +9,7 @@ review_set: subset
 
 ## Summary
 
-Ticket: QSL-3138. Gap analysis scoped to the PR diff: each AC the change claims, traced to the test tagged with it. Plan completion: not assessed. The criterion-to-test check was done by hand and labeled as such. `quire matrix` was not run on this branch: read-only rule, and no build. Spec text is FR-383 at the PR base (includes FSL #3913).
+Ticket: QSL-3138. Gap analysis scoped to the PR diff: each AC the change claims, traced to the test tagged with it. Plan completion: not assessed. The criterion-to-test check was done by hand and labeled as such. `quire matrix` was not run on this branch: not run for this review. Spec text is FR-383 at the PR base (includes FSL #3913).
 
 ## Examined scope
 
