@@ -6516,7 +6516,6 @@ impl PackageDeclarations {
                                 location,
                                 reference: location,
                             }),
-                        authored_operation_name: form.authored_operation.as_deref(),
                         parameters: &typed.parameters,
                         body: typed.body.root(),
                         body_slots: &typed.slot_names,
