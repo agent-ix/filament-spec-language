@@ -26,15 +26,16 @@ use fsl_analyze::model_check::{check_model, Atoms, ModelCheckRefusal, ModelCheck
 use fsl_eval::automaton::translate;
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimState, ModelSystem};
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_eval::temporal::{AtomReading, LetterStop, TemporalPosition};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
     replay_model_trace_with_temporal_selections, settle_model_check, CertificateRequest,
     CounterexampleKind, DisagreementCause, IncompleteCause, ModelCheckItem, ModelCheckLimit,
-    ModelCheckLimits, ModelCheckOutcome, ModelTraceSettlement, ModelTraceSubject, ModelTraceValue,
-    ReachedLimit, ReplayLimits, SmtEncodingLimits, TemporalCounterexample, TerminalValue,
-    UndefinedLocus,
+    ModelCheckLimits, ModelCheckOutcome, ModelStep, ModelTraceSettlement, ModelTraceSubject,
+    ModelTraceValue, ReachedLimit, ReplayLimits, SmtEncodingLimits, TemporalCounterexample,
+    TerminalValue, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
@@ -1337,8 +1338,11 @@ fn holding_counter() -> model_world::Domain {
 /// FR-315-AC-58: over the hand-built package whose guard reads `value(c.held)`
 /// where `c.value >= 2`, the one path FR-315's query admits, `inc` on `d`
 /// twice, ends where the guard of `d`, which holds no `held`, has no value.
-/// The production letters read it, FR-128 replays it as an undefined
-/// activation, and the same payload bound over `c` is not reproduced.
+/// FR-128 replays the counterexample read from that model, its condition read
+/// by the production letters, as an undefined activation, and the same payload
+/// bound over `c` is not reproduced. EN-1 searches every depth and reports the
+/// first instance in canonical order with a finding (FR-126-AC-11), `c`, whose
+/// formula a longer path violates.
 #[trace("TC-1201", "FR-315-AC-58")]
 #[test]
 fn a_hand_built_guards_undefined_activation_replays_for_its_instance() {
@@ -1393,27 +1397,64 @@ fn a_hand_built_guards_undefined_activation_replays_for_its_instance() {
         &Cancel::new(),
     )
     .expect("checked");
-    let counterexample = violated(&outcome);
-    let over = counterexample
-        .over_binding
-        .clone()
-        .expect("a clause counterexample names its instance");
-    assert_eq!(over.key, "d");
-    let CounterexampleKind::UndefinedEvaluation(claimed) = &counterexample.kind else {
-        panic!("expected an undefined evaluation: {counterexample:?}");
-    };
-    assert_eq!(claimed.site.locus, UndefinedLocus::Activation);
-    assert_eq!(claimed.site.position, 2);
+    let found = violated(&outcome);
     assert_eq!(
-        claimed.cause,
-        UndefinedCause::Kernel(filament_exact::Undefined::NoneValue)
+        found.over_binding.as_ref().map(|over| over.key.as_str()),
+        Some("c")
     );
+    assert_eq!(found.kind, CounterexampleKind::Formula);
+
+    // The counterexample read from the query's satisfiable model (FR-315 rules
+    // 4b and 4c): `inc` on `d` twice, bound over `d`.
+    let mut state = system.initial()[0].clone();
+    let mut prefix = Vec::new();
+    for raised in [1, 2] {
+        let (transition, next) = system
+            .successors(&state)
+            .expect("the state expands")
+            .successors
+            .into_iter()
+            .find(|(_, next)| built.domain.integer(next, "d", "value") == raised)
+            .expect("`inc` on `d` is enabled");
+        prefix.push(ModelStep {
+            transition,
+            post_state: system.state_key(&next).expect("the state encodes").1,
+            delay: None,
+        });
+        state = next;
+    }
+    let bound = |key: &str| ModelInstance {
+        population: built.domain.key(built.domain.population),
+        key: key.to_owned(),
+    };
+    let claimed = UndefinedEvaluation {
+        site: UndefinedSite {
+            position: 2,
+            state_key: prefix[1].post_state.clone(),
+            locus: UndefinedLocus::Activation,
+            transition: None,
+            time: None,
+        },
+        cause: UndefinedCause::Kernel(filament_exact::Undefined::NoneValue),
+    };
+    let counterexample = TemporalCounterexample {
+        initial_state: 0,
+        prefix,
+        over_binding: Some(bound("d")),
+        fairness: node.clause().fairness().to_vec(),
+        kind: CounterexampleKind::UndefinedEvaluation(claimed.clone()),
+        lasso: None,
+        blocked: Vec::new(),
+        refinement: None,
+        final_delay: None,
+        closure_stutters: Vec::new(),
+    };
     assert_eq!(
-        values(&built, &keys, counterexample, "c", "value"),
+        values(&built, &keys, &counterexample, "c", "value"),
         [0, 0, 0]
     );
     assert_eq!(
-        values(&built, &keys, counterexample, "d", "value"),
+        values(&built, &keys, &counterexample, "d", "value"),
         [0, 1, 2]
     );
 
@@ -1449,15 +1490,12 @@ fn a_hand_built_guards_undefined_activation_replays_for_its_instance() {
     assert_eq!(
         replay(counterexample.clone()),
         ModelTraceSettlement::Reproduced {
-            value: ModelTraceValue::Undefined(claimed.clone()),
-            trace_position: counterexample.trace_position(),
+            value: ModelTraceValue::Undefined(claimed),
+            trace_position: Some(2),
         }
     );
-    let mut misbound = counterexample.clone();
-    misbound.over_binding = Some(ModelInstance {
-        key: "c".to_owned(),
-        ..over
-    });
+    let mut misbound = counterexample;
+    misbound.over_binding = Some(bound("c"));
     let settled = replay(misbound);
     assert!(
         matches!(
