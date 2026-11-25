@@ -31,6 +31,8 @@ use fsl_replay::{
 };
 use ix_trace_rs::trace;
 
+use crate::certificate_rejection_support::state_locus;
+use crate::component_certificate::assert_written_rejection;
 use crate::counter::UNLIMITED;
 use crate::graph_world::{
     config_kernel_world, config_kernel_world_over, config_version, config_world, config_world_over,
@@ -1569,6 +1571,7 @@ fn each_malformed_certificate_variant_settles_before_replay() {
             &mut replays,
         );
         assert_eq!(replays, 0);
+        let (form, written) = written_locus(&locus);
         assert_eq!(
             record.value,
             TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
@@ -1580,6 +1583,7 @@ fn each_malformed_certificate_variant_settles_before_replay() {
             (record.label, record.basis),
             (ResultLabel::Inconclusive, SettlementBasis::Unsettled)
         );
+        assert_written_rejection(record.value, "malformed", form, &written);
     }
 
     let sequenced = job_world(true, false);
@@ -1607,6 +1611,24 @@ fn each_malformed_certificate_variant_settles_before_replay() {
         CertificateRule::Malformed,
         certificate.closure[count_index].clone(),
     );
+    assert_written_rejection(
+        record.value,
+        "malformed",
+        "StateLocus",
+        &state_locus(&certificate.closure[count_index]),
+    );
+}
+
+/// The FSpec FR-331 form of a state-graph rejection locus and its spelling.
+fn written_locus(locus: &CertificateLocus) -> (&'static str, serde_json::Value) {
+    match locus {
+        CertificateLocus::ModelKey(key) => ("StateLocus", state_locus(key)),
+        CertificateLocus::Entry { index } => (
+            "EntryLocus",
+            serde_json::json!({"entry": index.to_string()}),
+        ),
+        other => panic!("not a state-graph locus: {other:?}"),
+    }
 }
 
 /// FR-169-AC-15 (TC-644): each wrong-form list shape settles as malformed;
