@@ -49,7 +49,7 @@ Scope: FR-100-AC-1 to FR-100-AC-3 and FR-100-AC-25.
 
 Tag the tests `#[trace("TC-450", "FR-100-AC-1")]` (step 1),
 `#[trace("TC-450", "FR-100-AC-2")]` (steps 2 and 3) and
-`#[trace("TC-450", "FR-100-AC-3")]` (steps 4 and 6), and
+`#[trace("TC-450", "FR-100-AC-3")]` (steps 4, 5 and 6), and
 `#[trace("TC-450", "FR-100-AC-25")]` (step 5).
 
 ## Expected Results
