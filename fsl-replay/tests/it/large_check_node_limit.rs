@@ -81,6 +81,7 @@ fn a_100000_term_sum_checks_at_its_node_count_on_the_default_stack() {
     .expect("the default stack handles the 100,000-term check");
 }
 
+#[trace("TC-728", "FR-259-AC-1")]
 #[test]
 fn a_100000_term_package_and_node_keys_match_on_512kib_and_8mib_stacks() {
     let sum = (1..=TERMS)
