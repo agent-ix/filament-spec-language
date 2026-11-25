@@ -28,6 +28,8 @@ diff --git a/fsl-bench/Cargo.toml b/fsl-bench/Cargo.toml
  
  [dev-dependencies]
  # Grammar derivations are consumed only by the property-generator acceptance
+@@ -112,3 +114,8 @@
+ name = "property_generators"
  path = "tests/it/main.rs"
  required-features = ["property-generators"]
 +
