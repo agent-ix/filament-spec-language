@@ -10,54 +10,73 @@ use fsl_semantics::library::LibraryName;
 use std::hint::black_box;
 use std::time::Duration;
 
+fn selected_exact_id(axis: &str, count: usize) -> bool {
+    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    let Some(filter) = arguments.iter().find(|argument| !argument.starts_with('-')) else {
+        return true;
+    };
+    !arguments.iter().any(|argument| argument == "--exact") || filter == &format!("{axis}/{count}")
+}
+
 fn package_axes(criterion: &mut Criterion) {
     for count in package::MODEL_COUNTS {
-        let fixture = package::fixture(count).expect("timed package fixture compiles");
-        let mut emit_group = criterion.benchmark_group("package/emit");
-        emit_group.sample_size(10);
-        emit_group.measurement_time(Duration::from_secs(4));
-        emit_group.throughput(Throughput::Elements(widen(count)));
-        emit_group.bench_function(BenchmarkId::from_parameter(count), |b| {
-            b.iter(|| {
-                black_box(emit_package(
-                    fixture.checked.package(),
-                    |_| Some(fixture.region.clone()),
-                    EmitLimits::new(1 << 32),
-                ))
-            });
-        });
-        emit_group.finish();
-        let identity = LibraryName::new("package").expect("benchmark library identity");
-        let read_limits = V2ReadLimits::bounded(1 << 24);
-        let mut read_group = criterion.benchmark_group("package/read");
-        read_group.sample_size(10);
-        read_group.measurement_time(Duration::from_secs(4));
-        read_group.throughput(Throughput::Elements(widen(count)));
-        read_group.bench_function(BenchmarkId::from_parameter(count), |b| {
-            b.iter(|| {
-                let result = read_evaluation_emission(
-                    fixture.checked.package(),
-                    &fixture.emission,
-                    identity.clone(),
-                    &fixture.packages,
-                    read_limits,
-                    EmitLimits::new(1 << 32),
-                    SourceWitnessSupplier::new(&fixture.emission),
-                );
-                assert!(result.is_ok(), "checked package read succeeds");
-                black_box(result)
-            });
-        });
-        read_group.finish();
+        let emit_selected = selected_exact_id("package/emit", count);
+        let read_selected = selected_exact_id("package/read", count);
+        if emit_selected || read_selected {
+            let fixture = package::fixture(count).expect("timed package fixture compiles");
+            if emit_selected {
+                let mut emit_group = criterion.benchmark_group("package/emit");
+                emit_group.sample_size(10);
+                emit_group.measurement_time(Duration::from_secs(4));
+                emit_group.throughput(Throughput::Elements(widen(count)));
+                emit_group.bench_function(BenchmarkId::from_parameter(count), |b| {
+                    b.iter(|| {
+                        black_box(emit_package(
+                            fixture.checked.package(),
+                            |_| Some(fixture.region.clone()),
+                            EmitLimits::new(1 << 32),
+                        ))
+                    });
+                });
+                emit_group.finish();
+            }
+            if read_selected {
+                let identity = LibraryName::new("package").expect("benchmark library identity");
+                let read_limits = V2ReadLimits::bounded(1 << 24);
+                let mut read_group = criterion.benchmark_group("package/read");
+                read_group.sample_size(10);
+                read_group.measurement_time(Duration::from_secs(4));
+                read_group.throughput(Throughput::Elements(widen(count)));
+                read_group.bench_function(BenchmarkId::from_parameter(count), |b| {
+                    b.iter(|| {
+                        let result = read_evaluation_emission(
+                            fixture.checked.package(),
+                            &fixture.emission,
+                            identity.clone(),
+                            &fixture.packages,
+                            read_limits,
+                            EmitLimits::new(1 << 32),
+                            SourceWitnessSupplier::new(&fixture.emission),
+                        );
+                        assert!(result.is_ok(), "checked package read succeeds");
+                        black_box(result)
+                    });
+                });
+                read_group.finish();
+            }
+        }
     }
-    let mut replay_group = criterion.benchmark_group("replay/request");
-    replay_group.sample_size(10);
-    replay_group.measurement_time(Duration::from_secs(4));
     for count in package::MODEL_COUNTS {
+        if !selected_exact_id("replay/request", count) {
+            continue;
+        }
         let fixture = package::fixture(count).expect("timed replay fixture compiles");
         let source = package::source(count);
         let request = package::replay_request(&fixture, &source).expect("replay request builds");
         let limits = fsl_replay::ReplayLimits::default().with_input_bytes(1 << 30);
+        let mut replay_group = criterion.benchmark_group("replay/request");
+        replay_group.sample_size(10);
+        replay_group.measurement_time(Duration::from_secs(4));
         replay_group.throughput(Throughput::Elements(widen(count)));
         let result = fsl_replay::replay(request.clone(), limits);
         assert!(result.is_ok(), "replay probe request succeeds: {result:?}");
@@ -68,8 +87,8 @@ fn package_axes(criterion: &mut Criterion) {
                 BatchSize::SmallInput,
             );
         });
+        replay_group.finish();
     }
-    replay_group.finish();
 }
 
 criterion_group!(benches, package_axes);

@@ -4,7 +4,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::error::Error;
-use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -51,11 +50,56 @@ fn run(target: &Path, arguments: impl Iterator<Item = String>) -> Result<(), Box
             report_single(target, Some(&axis))
         }
         "run-ab" => {
-            let a_target = required_path(&mut arguments, "A target directory")?;
-            let b_target = required_path(&mut arguments, "B target directory")?;
+            let a_bench_target = required_path(&mut arguments, "A Criterion target directory")?;
+            let b_bench_target = required_path(&mut arguments, "B Criterion target directory")?;
+            let a_probe_target = required_path(&mut arguments, "A probe target directory")?;
+            let b_probe_target = required_path(&mut arguments, "B probe target directory")?;
             let a_result = required_path(&mut arguments, "A result file")?;
             let b_result = required_path(&mut arguments, "B result file")?;
-            run_ab(&a_target, &b_target, &a_result, &b_result).map_err(io::Error::other)?;
+            run_ab(
+                &a_bench_target,
+                &b_bench_target,
+                &a_probe_target,
+                &b_probe_target,
+                &a_result,
+                &b_result,
+            )
+            .map_err(io::Error::other)?;
+            Ok(())
+        }
+        command @ ("build-bench" | "build-probe") => {
+            let target = required_path(&mut arguments, "artifact target directory")?;
+            let (cargo_args, name, kind, filename) = if command == "build-bench" {
+                (
+                    &["--release", "-p", "fsl-bench", "--bench", "package"][..],
+                    "package",
+                    "bench",
+                    "package-bench-executable",
+                )
+            } else {
+                (
+                    &[
+                        "--release",
+                        "-p",
+                        "fsl-bench",
+                        "--features",
+                        "counters",
+                        "--bin",
+                        "fsl-bench-probe",
+                    ][..],
+                    "fsl-bench-probe",
+                    "bin",
+                    "package-probe-executable",
+                )
+            };
+            let executable =
+                build_artifact(&target, cargo_args, name, kind).map_err(io::Error::other)?;
+            fs::create_dir_all(&target)?;
+            fs::write(
+                target.join(filename),
+                executable.to_string_lossy().as_bytes(),
+            )?;
+            println!("{}", executable.display());
             Ok(())
         }
         "report-ab" => {
@@ -141,8 +185,10 @@ struct ProbeEstimate {
 }
 
 fn run_ab(
-    a_target: &Path,
-    b_target: &Path,
+    a_bench_target: &Path,
+    b_bench_target: &Path,
+    a_probe_target: &Path,
+    b_probe_target: &Path,
     a_result_path: &Path,
     b_result_path: &Path,
 ) -> Result<(), String> {
@@ -152,10 +198,10 @@ fn run_ab(
                 .to_owned(),
         );
     }
-    let a_bench = find_executable(&a_target.join("release/deps"), "package-")?;
-    let b_bench = find_executable(&b_target.join("release/deps"), "package-")?;
-    let a_probe = find_executable(&a_target.join("release"), "fsl-bench-probe")?;
-    let b_probe = find_executable(&b_target.join("release"), "fsl-bench-probe")?;
+    let a_bench = recorded_artifact(a_bench_target, "package-bench-executable")?;
+    let b_bench = recorded_artifact(b_bench_target, "package-bench-executable")?;
+    let a_probe = recorded_artifact(a_probe_target, "package-probe-executable")?;
+    let b_probe = recorded_artifact(b_probe_target, "package-probe-executable")?;
     let mut a_results = SideResults {
         side: "A".to_owned(),
         rounds: Vec::new(),
@@ -212,6 +258,20 @@ fn run_ab(
     )
 }
 
+fn recorded_artifact(target: &Path, filename: &str) -> Result<PathBuf, String> {
+    let path = target.join(filename);
+    let executable = fs::read_to_string(&path)
+        .map_err(|error| format!("read recorded Cargo artifact {}: {error}", path.display()))?;
+    let executable = PathBuf::from(executable);
+    if !executable.is_file() {
+        return Err(format!(
+            "recorded Cargo artifact does not exist: {}",
+            executable.display()
+        ));
+    }
+    Ok(executable)
+}
+
 fn run_scheduled_rounds(
     a_result_path: &Path,
     b_result_path: &Path,
@@ -246,48 +306,47 @@ fn run_side_round(
         .unwrap_or_else(|error| Measurement::failure(error, ""));
     let mut axes = BTreeMap::new();
     for &(axis, filter) in axis_filters {
-        let baseline = format!("package-{side}-round-{number}-{}", axis.replace('/', "-"));
-        let output = Command::new(bench)
-            .arg("--bench")
-            .arg(filter)
-            .arg("--save-baseline")
-            .arg(&baseline)
-            .env("CRITERION_HOME", criterion_home)
-            .output();
         let mut estimates = BTreeMap::new();
-        match output {
-            Ok(output) if output.status.success() => {
-                for &size in sizes {
-                    let result = criterion_estimate(criterion_home, axis, size, &baseline)
+        for &size in sizes {
+            let baseline = format!(
+                "package-{side}-round-{number}-{}-{size}",
+                axis.replace('/', "-")
+            );
+            let exact_filter = if filter.ends_with(&format!("/{size}")) {
+                filter.to_owned()
+            } else {
+                format!("{filter}/{size}")
+            };
+            let output = Command::new(bench)
+                .arg("--bench")
+                .arg(exact_filter)
+                .arg("--exact")
+                .arg("--save-baseline")
+                .arg(&baseline)
+                .env("CRITERION_HOME", criterion_home)
+                .output();
+            let result = match output {
+                Ok(output) if output.status.success() => {
+                    criterion_estimate(criterion_home, axis, size, &baseline)
                         .map(Measurement::success)
                         .unwrap_or_else(|error| {
                             Measurement::failure(error, String::from_utf8_lossy(&output.stdout))
-                        });
-                    estimates.insert(size, result);
+                        })
                 }
-            }
-            Ok(output) => {
-                let diagnostic = format!(
-                    "exit={} stderr={} stdout={}",
-                    output.status,
-                    String::from_utf8_lossy(&output.stderr),
-                    String::from_utf8_lossy(&output.stdout)
-                );
-                for &size in sizes {
-                    estimates.insert(
-                        size,
-                        Measurement::failure("Criterion benchmark failed", diagnostic.clone()),
-                    );
+                Ok(output) => Measurement::failure(
+                    "Criterion benchmark failed",
+                    format!(
+                        "exit={} stderr={} stdout={}",
+                        output.status,
+                        String::from_utf8_lossy(&output.stderr),
+                        String::from_utf8_lossy(&output.stdout)
+                    ),
+                ),
+                Err(error) => {
+                    Measurement::failure(format!("start Criterion benchmark: {error}"), "")
                 }
-            }
-            Err(error) => {
-                for &size in sizes {
-                    estimates.insert(
-                        size,
-                        Measurement::failure(format!("start Criterion benchmark: {error}"), ""),
-                    );
-                }
-            }
+            };
+            estimates.insert(size, result);
         }
         axes.insert((*axis).to_owned(), estimates);
     }
@@ -334,31 +393,55 @@ fn run_side_round(
     }
 }
 
-fn find_executable(directory: &Path, prefix: &str) -> Result<PathBuf, String> {
-    let entries = fs::read_dir(directory)
-        .map_err(|error| format!("read executable directory {}: {error}", directory.display()))?;
-    let candidates = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(OsStr::to_str)
-                .is_some_and(|name| name.starts_with(prefix))
-                && path.extension().is_none()
-                && path.is_file()
-        })
-        .collect::<Vec<_>>();
-    match candidates.as_slice() {
-        [path] => Ok(path.clone()),
-        [] => Err(format!(
-            "no executable beginning {prefix:?} in {}",
-            directory.display()
-        )),
-        _ => Err(format!(
-            "multiple executables beginning {prefix:?} in {}",
-            directory.display()
-        )),
+fn build_artifact(
+    target: &Path,
+    cargo_args: &[&str],
+    expected_name: &str,
+    expected_kind: &str,
+) -> Result<PathBuf, String> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| "fsl-bench manifest has no workspace parent".to_owned())?
+        .to_path_buf();
+    let output = Command::new("cargo")
+        .args([
+            "build",
+            "--locked",
+            "-j",
+            "4",
+            "--message-format=json-render-diagnostics",
+        ])
+        .args(cargo_args)
+        .current_dir(&workspace_root)
+        .env("CARGO_TARGET_DIR", target)
+        .output()
+        .map_err(|error| format!("start Cargo artifact build for {expected_name}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Cargo artifact build for {expected_name} failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
+    let mut artifact = None;
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Ok(message) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if message["reason"] == "compiler-artifact"
+            && message["target"]["name"] == expected_name
+            && message["target"]["kind"]
+                .as_array()
+                .is_some_and(|kinds| kinds.iter().any(|kind| kind == expected_kind))
+        {
+            if let Some(executable) = message["executable"].as_str() {
+                artifact = Some(PathBuf::from(executable));
+            }
+        }
+    }
+    artifact.ok_or_else(|| {
+        format!("Cargo JSON output contained no {expected_kind} artifact named {expected_name}")
+    })
 }
 
 fn criterion_estimate(
@@ -1022,29 +1105,13 @@ mod tests {
         let target_dir = std::env::var_os("CARGO_TARGET_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| workspace_root.join("target"));
-        let build = std::process::Command::new("cargo")
-            .args([
-                "build",
-                "--locked",
-                "-j",
-                "4",
-                "-p",
-                "fsl-bench",
-                "--bench",
-                "package",
-            ])
-            .current_dir(workspace_root)
-            .env("CARGO_TARGET_DIR", &target_dir)
-            .output()
-            .expect("package Criterion binary builds");
-        assert!(
-            build.status.success(),
-            "package bench build failed: stdout={} stderr={}",
-            String::from_utf8_lossy(&build.stdout),
-            String::from_utf8_lossy(&build.stderr)
-        );
-        let bench = super::find_executable(&target_dir.join("debug/deps"), "package-")
-            .expect("package Criterion executable exists");
+        let bench = super::build_artifact(
+            &target_dir,
+            &["-p", "fsl-bench", "--bench", "package"],
+            "package",
+            "bench",
+        )
+        .expect("Cargo JSON output identifies the package Criterion executable");
         let (root, result_path, _) = result_paths();
         let criterion_home = root.join("criterion");
         std::fs::create_dir_all(&criterion_home).expect("Criterion result directory creates");
@@ -1066,6 +1133,17 @@ mod tests {
         assert!(estimate.milliseconds > 0.0);
         assert!(estimate.ci_upper_milliseconds >= estimate.ci_lower_milliseconds);
         assert!(round.probes.is_empty());
+        let baseline = "package-A-round-1-package-emit-1";
+        for size in [10, 100] {
+            assert!(
+                !criterion_home
+                    .join("package_emit")
+                    .join(size.to_string())
+                    .join(baseline)
+                    .exists(),
+                "exact M=1 smoke must not execute M={size}"
+            );
+        }
         std::fs::remove_dir_all(root).expect("temporary Criterion artifacts are removed");
     }
 

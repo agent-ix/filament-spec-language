@@ -498,8 +498,10 @@ BENCH_ARGS ?=
 BENCH_AXES := parser checker cst model evaluator evaluator_kernel text_cluster mc reach key en4 package
 BENCH_GENERIC_AXES := $(filter-out evaluator_kernel package,$(BENCH_AXES))
 BENCH_PACKAGE_FILTER := $(filter package/emit package/read replay/request,$(BENCH_ARGS))
-BENCH_PACKAGE_A_TARGET ?= target/package-a
-BENCH_PACKAGE_B_TARGET ?= target/package-b
+BENCH_PACKAGE_A_BENCH_TARGET ?= target/package-a-bench
+BENCH_PACKAGE_B_BENCH_TARGET ?= target/package-b-bench
+BENCH_PACKAGE_A_PROBE_TARGET ?= target/package-a-probe
+BENCH_PACKAGE_B_PROBE_TARGET ?= target/package-b-probe
 BENCH_PACKAGE_A_RESULTS ?= target/package-a-results.json
 BENCH_PACKAGE_B_RESULTS ?= target/package-b-results.json
 ifeq ($(strip $(BENCH_PACKAGE_FILTER)),)
@@ -524,7 +526,7 @@ bench-package:
 	cargo run --locked -p fsl-bench --bin fsl-bench-package-report -- $(BENCH_PACKAGE_REPORT)
 
 bench-package-ab:
-	cargo run --locked --release -j 4 -p fsl-bench --bin fsl-bench-package-report -- run-ab "$(BENCH_PACKAGE_A_TARGET)" "$(BENCH_PACKAGE_B_TARGET)" "$(BENCH_PACKAGE_A_RESULTS)" "$(BENCH_PACKAGE_B_RESULTS)"
+	cargo run --locked -j 4 -p fsl-bench --bin fsl-bench-package-report -- run-ab "$(BENCH_PACKAGE_A_BENCH_TARGET)" "$(BENCH_PACKAGE_B_BENCH_TARGET)" "$(BENCH_PACKAGE_A_PROBE_TARGET)" "$(BENCH_PACKAGE_B_PROBE_TARGET)" "$(BENCH_PACKAGE_A_RESULTS)" "$(BENCH_PACKAGE_B_RESULTS)"
 
 bench-evaluator_kernel:
 	cargo run --locked -p fsl-bench --bin fsl-bench-kernel-report -- start
