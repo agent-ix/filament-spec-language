@@ -225,9 +225,14 @@ An `analyze` or `prove` item is built from one terminal record and, for a
 `refuted` record, its one `ItemCounterexample` (FR-281, FR-280):
 `OutcomeItem::from_analyze(record, counterexample) -> Result<OutcomeItem,
 OutcomeItemError>`. The item carries the record's label, cause and, for a
-disposition, `diagnostic` as above. A `refuted` item carries `counterexample`
-in the wire spelling of the member of FSpec FR-331's `counterexamples` entry
-that the `Counterexample` variant is:
+disposition, `diagnostic` as above. An item whose terminal record keeps
+FR-290's `cross-check-absent{tool}` warning carries it in the item member
+`warnings`, an array of FSpec FR-331 `Warning` objects such as
+`[{"code": "cross-check-absent", "tool": "z3"}]`; the `analyze` document
+writes it at `accounting.warnings` instead (FR-621).
+
+A `refuted` item carries `counterexample` in the wire spelling of the member of
+FSpec FR-331's `counterexamples` entry that the `Counterexample` variant is:
 
 | Variant | Spelling |
 | --- | --- |
@@ -829,7 +834,7 @@ every depth. The writers and the members each contributes:
 | --- | --- |
 | `OutcomeDocument` (every operation) | the root members `format`, `operation`, `last_stage`, `category`, `items`, `diagnostics`, `artifacts` and `result` of the Description; and `registry`, FR-635's registry, on an `execute` document of a call carrying `requirements`, whose `items` are FR-963's settled requirement items in FR-621's item spelling |
 | `OutcomeDiagnostic` | the "Diagnostic members" table, with `details` from "Diagnostic details" |
-| `OutcomeItem` (`prove`, `monitor`, clause runs) | `request_index`, `category`, `result`, `cause`, `diagnostic`, `basis`, `certification`, `measured`, `method`, `max_depth`, `seed` (a decimal string, "Numbers"), `witness_samples`, `limits`, `limit_reached`, `position`, `counterexample`, `decisive`, `witness`, `evidence`, `certificate_document`, `count`, `min_count`, `clause`, `axes`, and the FR-990 protocol conformance members `obligations`, `closure`, `global`, `max_messages`, `projections`, `recording` and `replay` |
+| `OutcomeItem` (`prove`, `monitor`, clause runs) | `request_index`, `category`, `result`, `cause`, `diagnostic`, `basis`, `certification`, `cross_check` (FR-290), `warnings`, `measured`, `method`, `max_depth`, `seed` (a decimal string, "Numbers"), `witness_samples`, `limits`, `limit_reached`, `position`, `counterexample`, `decisive`, `witness`, `evidence`, `certificate_document`, `count`, `min_count`, `clause`, `axes`, and the FR-990 protocol conformance members `obligations`, `closure`, `global`, `max_messages`, `projections`, `recording` and `replay` |
 | The `analyze` document (`fsl-analyze`) | the root `aggregate` (`status`, `gaps`, each gap `request_index`, `reason`, `result`) and `registry` (FR-635); each item's FR-621 members (`request_index`, `claim_name`, `request`, `category`, `record`, `certificate`, `counterexample`, `replay`, `accounting`, `exploration`, optional `diagnostics`, `axes`), `disposition` for a finite-replay item (FR-941), and `obligations`, `closure`, `global`, `projections` and `recording` (FR-990, FR-1032); the record's `settled_by`, `backend`, `non_zeno`, `memory_bound`, `trace` and `steps` |
 | A `simulation` item (FR-634, `fsl-analyze` `simulation_item`) | `request_index`, `kind` (`simulation`), `simulation` (the admitted settings: `mode`, `seed` and `samples` for `sample`, `max_steps`, `max_states`, `max_state_key_bytes`), `category`, `seed` for a `sample` run, `traces`, `coverage` (`states`, `transitions`, `choices`), `findings` (always present, an empty array when none), `frontier`, and `cause` when the run stopped at a limit or could not simulate; no `record` |
 | `check_fences` (`from_native_fences`) | FR-355's fence entries as `items` |
@@ -978,6 +983,9 @@ member goes untested against a real writer's bytes.
 | FR-286-AC-40 | For each `selection` of "Missing selections", the diagnostic its producer writes carries `selection` equal to that string, `code` `missing_import`, `cause` `missing-selection`, and `hint` equal to that row's text byte for byte; the document validates against `OUTCOME_SCHEMA_1`, which accepts exactly those nine `selection` values; the diagnostic of `UnresolvedDependency` carries no `selection` and the pair's catalog `hint`; `hint_for(Code::MissingImport, Some("missing-selection"), Some(<selection>))` returns the row's text for each of the nine, and `check_hint_catalog` returns `Ok`. | Test (TC-3203) |
 
 ## Status
+
+The item members `cross_check` and `warnings` (FR-290, QSL-3243) are
+specified here and are not yet written.
 
 The protocol-analysis amendment for QSL-2501 is a serialization contract.
 Its production fix and AC-33 to AC-37 verification remain outstanding;
