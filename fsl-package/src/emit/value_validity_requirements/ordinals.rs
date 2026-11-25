@@ -18,14 +18,15 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use filament_contract_model::{
     CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, CheckedSemanticNodeV2,
-    CheckedSourceMapEntry,
+    CheckedSourceMapEntry, CheckedTerm,
 };
 use filament_exact::NodeKey;
 use filament_semantic_value::location::ExpressionOwner;
-use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::CheckedGraph;
+use fsl_semantics::check::wire_id::StructuralIds;
+use ix_trace_rs::implements;
 
-use super::{frames, EmitRefusal, Omitted};
+use super::{EmitRefusal, Omitted, frames};
 use crate::emit::location_paths::Paths;
 
 /// What the checker located a use in: the declaration index of the function
@@ -48,9 +49,6 @@ pub(in crate::emit) type Mapping = Vec<(u64, Option<u64>)>;
 enum Slot {
     /// A source-located checker occurrence, moved to `ordinal`.
     Source { old: u64, ordinal: u64 },
-    /// A transitive visit with no checker use at this package root. Its region
-    /// is copied from the matching syntax owner's source-located occurrence.
-    Synthetic { from: u64, ordinal: u64 },
 }
 
 #[derive(Default)]
@@ -65,7 +63,7 @@ impl NodeMapping {
             .filter_map(|&(old, new)| new.map(|ordinal| Slot::Source { old, ordinal }))
             .collect();
         slots.sort_by_key(|slot| match slot {
-            Slot::Source { ordinal, .. } | Slot::Synthetic { ordinal, .. } => *ordinal,
+            Slot::Source { ordinal, .. } => *ordinal,
         });
         Self { slots }
     }
@@ -105,17 +103,6 @@ impl Renumbering {
     ) {
         let by_id = self.by_id(ids);
         relabel_term_data(&by_id, data);
-    }
-
-    /// Relabel term rows except body locations. The body-location writer keeps
-    /// the captured source-use order while recomputing its compact path deltas.
-    pub(in crate::emit) fn relabel_term_data_without_body_locations(
-        &self,
-        ids: &HashMap<NodeKey, CheckedNodeId>,
-        data: &mut filament_contract_model::CheckedTermDataV2,
-    ) {
-        let by_id = self.by_id(ids);
-        relabel_term_data_without_body_locations(&by_id, data);
     }
 
     fn by_id(&self, ids: &HashMap<NodeKey, CheckedNodeId>) -> BTreeMap<CheckedNodeId, Mapping> {
@@ -164,6 +151,7 @@ fn use_of(owner: &ExpressionOwner) -> Use {
 
 /// Renumber the expression occurrences of `nodes` and `source_map` by the
 /// package-wide owner walk.
+#[implements("FSpec-FR-322-AC-490")]
 pub(in crate::emit) fn renumber(
     ids: &StructuralIds,
     graph: &CheckedGraph,
@@ -171,10 +159,7 @@ pub(in crate::emit) fn renumber(
     source_map: &mut Vec<CheckedSourceMapEntry>,
     omitted: &Omitted,
 ) -> Result<Renumbering, EmitRefusal> {
-    // Static multi-use is not the only source of extra reads: a package-root
-    // walk may enter a nested function body transitively. Walk every expression
-    // node so those uses can be identified as well.
-    let mut needed = multiply_used(graph);
+    let needed = multiply_used(graph);
     let invariant = |_| EmitRefusal::SourceMapInvariant;
     let mut function_index = HashMap::<NodeKey, usize>::new();
     let mut omitted_functions = HashSet::<usize>::new();
@@ -191,15 +176,11 @@ pub(in crate::emit) fn renumber(
     let mut keep = Vec::with_capacity(nodes.len());
     for node in nodes.iter() {
         let key = keys.key(&node.node_id).map_err(invariant)?;
-        keep.push(
-            node.occurrences
-                .iter()
-                .any(|occurrence| occurrence.role == CheckedOccurrenceRole::Expression),
-        );
+        keep.push(needed.contains(&key));
         node_keys.push(key);
     }
-    // The visits each needed node receives, with both the package-root owner
-    // and the function whose syntax the visit is inside.
+    // The visits each multiply-used node receives, with the owner whose walk
+    // made each visit.
     let walked = frames::visits(
         nodes,
         source_map,
@@ -207,24 +188,15 @@ pub(in crate::emit) fn renumber(
         Some(frames::KeyResolver::Reader(&mut keys)),
         Some(frames::key_index(&node_keys)),
     );
-    let mut visited = HashMap::<usize, Vec<(Use, bool, usize)>>::new();
+    let mut visited = HashMap::<usize, Vec<Use>>::new();
     for visit in &walked {
-        let function = function_index.get(&node_keys[visit.syntax_owner]).copied();
+        let function = function_index.get(&node_keys[visit.owner]).copied();
         let used = match function {
-            Some(function) if visit.syntax_measure => Use::Measure(function),
+            Some(function) if visit.measure => Use::Measure(function),
             Some(function) => Use::Body(function),
             None => Use::Other,
         };
-        visited.entry(visit.node).or_default().push((
-            used,
-            visit.owner == visit.syntax_owner && visit.measure == visit.syntax_measure,
-            visit.syntax_ordinal,
-        ));
-    }
-    for (&position, uses) in &visited {
-        if uses.iter().any(|(_, root_owner, _)| !root_owner) {
-            needed.insert(node_keys[position].clone());
-        }
+        visited.entry(visit.node).or_default().push(used);
     }
     drop(walked);
     let by_key: HashSet<&NodeKey> = node_keys
@@ -280,91 +252,51 @@ pub(in crate::emit) fn renumber(
             continue;
         }
         let uses_in = visited.get(&position).map_or(&[][..], Vec::as_slice);
-        let mut visit_positions = HashMap::<Use, Vec<usize>>::new();
-        for (at, (used, root_owner, _)) in uses_in.iter().enumerate() {
-            if *root_owner {
-                visit_positions.entry(*used).or_default().push(at);
-            }
-        }
-        // The next owner-root visits that still have located source uses.
-        // Earlier transitive visits with no use in their root owner need a
-        // synthetic slot if one of these future visits will consume a use.
-        let mut future_uses = BTreeMap::<usize, Use>::new();
-        for (used, old_uses) in &kept {
-            if let Some(first) = visit_positions
-                .get(used)
-                .and_then(|positions| positions.first())
-                .filter(|_| !old_uses.is_empty())
-            {
-                future_uses.insert(*first, *used);
-            }
-        }
         let mut next = HashMap::<Use, usize>::new();
-        let mut slots = Vec::<Slot>::new();
-        for (visit_at, (used, _root_owner, syntax_ordinal)) in uses_in.iter().enumerate() {
-            if let Some(future_use) = future_uses.remove(&visit_at) {
-                let at = next.entry(future_use).or_default();
-                let old = kept[&future_use][*at];
-                *at += 1;
-                let ordinal = slots.len() as u64;
-                slots.push(Slot::Source { old, ordinal });
-                mapping.push((old, Some(ordinal)));
-                if *at < kept[&future_use].len() {
-                    if let Some(next_visit) = visit_positions[&future_use].get(*at) {
-                        future_uses.insert(*next_visit, future_use);
-                    }
-                }
-            } else if !future_uses.is_empty() {
-                let from = if let Some(syntax_uses) = kept.get(used) {
-                    syntax_uses
-                        .get(*syntax_ordinal)
-                        .or_else(|| (syntax_uses.len() == 1).then(|| &syntax_uses[0]))
-                        .copied()
-                } else if let Some((_, future_use)) = future_uses.first_key_value() {
-                    let next_source = next.get(future_use).copied().unwrap_or_default();
-                    kept.get(future_use)
-                        .and_then(|uses| uses.get(next_source))
-                        .copied()
-                } else {
-                    None
-                }
-                .ok_or(EmitRefusal::SourceMapInvariant)?;
-                let ordinal = slots.len() as u64;
-                slots.push(Slot::Synthetic { from, ordinal });
+        let mut order = Vec::new();
+        let mut exhausted = false;
+        let applies = matches!(nodes[position].body, CheckedTerm::Application { .. });
+        for used in uses_in {
+            let at = next.entry(*used).or_default();
+            let Some(old) = kept.get(used).and_then(|uses| uses.get(*at)) else {
+                exhausted = true;
+                continue;
+            };
+            if exhausted && applies {
+                return Err(EmitRefusal::SourceMapInvariant);
             }
+            *at += 1;
+            order.push(*old);
         }
-        // Source uses the reader's walk did not reach follow it in checker
-        // order; this includes `Other` clause uses after every owner walk.
+        let taken: HashSet<u64> = order.iter().copied().collect();
         let mut rest: Vec<u64> = kept
-            .iter()
-            .flat_map(|(used, uses)| {
-                let consumed = next.get(used).copied().unwrap_or_default();
-                uses.iter().skip(consumed).copied()
-            })
+            .values()
+            .flatten()
+            .copied()
+            .filter(|old| !taken.contains(old))
             .collect();
         rest.sort_unstable();
-        for old in rest {
-            let ordinal = slots.len() as u64;
-            slots.push(Slot::Source { old, ordinal });
-            mapping.push((old, Some(ordinal)));
-        }
+        order.extend(rest);
+        mapping.extend(
+            order
+                .iter()
+                .enumerate()
+                .map(|(new, old)| (*old, Some(new as u64))),
+        );
         mapping.sort_unstable();
-        let synthetic = slots
-            .iter()
-            .any(|slot| matches!(slot, Slot::Synthetic { .. }));
-        if !synthetic && mapping.iter().all(|(old, new)| Some(*old) == *new) {
+        if mapping.iter().all(|(old, new)| Some(*old) == *new) {
             continue;
         }
         renumbering.by_node.insert(key.clone(), mapping.clone());
-        changed.insert(position, NodeMapping { slots });
+        changed.insert(position, NodeMapping::source_slots(mapping));
     }
     apply(nodes, source_map, &changed)?;
     Ok(renumbering)
 }
 
 /// Write the new numbering into the occurrences of the nodes at the positions
-/// `changed` names and rebuild their source-map entries. Synthetic slots clone
-/// the regions of the syntax-owner occurrence they repeat.
+/// `changed` names and rebuild their source-map entries.
+#[implements("FSpec-FR-322-AC-490")]
 fn apply(
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut Vec<CheckedSourceMapEntry>,
@@ -416,10 +348,10 @@ fn apply(
         let entries = source_entries.get(&position);
         let mut moved = Vec::with_capacity(mapping.slots.len());
         for slot in &mapping.slots {
-            let (source_ordinal, new_ordinal) = match *slot {
-                Slot::Source { old, ordinal } => (old, ordinal),
-                Slot::Synthetic { from, ordinal } => (from, ordinal),
-            };
+            let Slot::Source {
+                old: source_ordinal,
+                ordinal: new_ordinal,
+            } = *slot;
             let mut entry = entries
                 .and_then(|entries| entries.get(&source_ordinal))
                 .cloned()
@@ -430,12 +362,7 @@ fn apply(
         replacements.insert(position, moved);
     }
     let mut inserted = HashSet::<usize>::new();
-    let synthetic_count = changed
-        .values()
-        .flat_map(|mapping| &mapping.slots)
-        .filter(|slot| matches!(slot, Slot::Synthetic { .. }))
-        .count();
-    let mut rebuilt = Vec::with_capacity(source_map.len().saturating_add(synthetic_count));
+    let mut rebuilt = Vec::with_capacity(source_map.len());
     for entry in source_map.iter() {
         if entry.role == CheckedOccurrenceRole::Expression {
             if let Some(&position) = affected.get(&entry.node_id) {
@@ -559,24 +486,10 @@ pub(in crate::emit) fn rewalk(
 
 /// Move the checked-term rows that name a renumbered expression occurrence of
 /// the nodes `by_id` holds, and drop the rows of a dropped use.
+#[implements("FSpec-FR-322-AC-490")]
 pub(in crate::emit) fn relabel_term_data(
     by_id: &BTreeMap<CheckedNodeId, Mapping>,
     data: &mut filament_contract_model::CheckedTermDataV2,
-) {
-    relabel_term_data_inner(by_id, data, true);
-}
-
-fn relabel_term_data_without_body_locations(
-    by_id: &BTreeMap<CheckedNodeId, Mapping>,
-    data: &mut filament_contract_model::CheckedTermDataV2,
-) {
-    relabel_term_data_inner(by_id, data, false);
-}
-
-fn relabel_term_data_inner(
-    by_id: &BTreeMap<CheckedNodeId, Mapping>,
-    data: &mut filament_contract_model::CheckedTermDataV2,
-    relabel_body_locations: bool,
 ) {
     if by_id.is_empty() {
         return;
@@ -641,21 +554,19 @@ fn relabel_term_data_inner(
             ))
         });
     }
-    if relabel_body_locations {
-        let mut changed = false;
-        data.body_locations.retain_mut(|row| {
-            let moved = relabel(&row.application, &mut row.occurrence);
-            changed |= moved != Some(false);
-            moved.is_some()
+    let mut changed = false;
+    data.body_locations.retain_mut(|row| {
+        let moved = relabel(&row.application, &mut row.occurrence);
+        changed |= moved != Some(false);
+        moved.is_some()
+    });
+    if changed {
+        data.body_locations.sort_by(|left, right| {
+            (&left.application, &left.occurrence, left.term_ordinal).cmp(&(
+                &right.application,
+                &right.occurrence,
+                right.term_ordinal,
+            ))
         });
-        if changed {
-            data.body_locations.sort_by(|left, right| {
-                (&left.application, &left.occurrence, left.term_ordinal).cmp(&(
-                    &right.application,
-                    &right.occurrence,
-                    right.term_ordinal,
-                ))
-            });
-        }
     }
 }
