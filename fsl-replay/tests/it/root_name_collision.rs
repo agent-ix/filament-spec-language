@@ -441,3 +441,28 @@ fn a_source_closure_importing_the_root_name_is_a_cycle() {
         }
     }
 }
+
+/// The reader checks supply first: a direct selection of the package's own name
+/// with no package supplied under it is a missing selection.
+#[trace("TC-1331", "FR-531-AC-63")]
+#[test]
+fn an_unsupplied_selection_of_the_root_name_is_a_missing_selection() {
+    let root = package("dep", 1000);
+    let mut wire: serde_json::Value =
+        serde_json::from_slice(&root.bytes).expect("the package is JSON");
+    wire["lock"]["dependency_selections"] = serde_json::json!([{"identity": "dep"}]);
+    let bytes = serde_json::to_vec(&wire).expect("the edited package serializes");
+    let refusal = fsl_package::admit_checked_package(&bytes, &Default::default(), read_limits())
+        .expect_err("an unsupplied selection refuses");
+    assert_eq!(refusal.code, Code::MissingImport, "{refusal:?}");
+    assert_eq!(
+        refusal.cause.as_deref(),
+        Some("missing-selection"),
+        "{refusal:?}"
+    );
+    assert_eq!(
+        refusal.pointer.as_deref(),
+        Some("/lock/dependency_selections/0"),
+        "{refusal:?}"
+    );
+}
