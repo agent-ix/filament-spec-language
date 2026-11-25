@@ -2231,8 +2231,8 @@ fn conforms(types: &TypeEnvironment, actual: &ValueType, required: &ValueType) -
     }
 }
 
-/// Whether `actual` supplies `required` after the object rows lift references
-/// in the required type.
+/// Whether `actual` supplies `required`, a type as the abstract side declares
+/// it, after the object rows lift its references.
 fn conforms_lifted(
     types: &TypeEnvironment,
     lifting: &BTreeMap<EffectiveId, EffectiveId>,
@@ -2256,7 +2256,7 @@ fn lifted_mismatch(
         lifting,
         paired: BTreeSet::new(),
     }
-    .mismatch(actual, required, false)
+    .mismatch(actual, required)
 }
 
 /// One walk pairing a concrete type with an abstract one.
@@ -2269,44 +2269,34 @@ struct LiftedPairing<'a> {
 }
 
 impl LiftedPairing<'_> {
-    /// [`lifted_mismatch`] at one position. `component` says the position is
-    /// inside a composite. The caller has lifted the references outside
-    /// composites in `required`; those inside are still abstract, so each
-    /// must have an object row.
-    fn mismatch(
-        &mut self,
-        actual: &ValueType,
-        required: &ValueType,
-        component: bool,
-    ) -> Option<String> {
+    /// [`lifted_mismatch`] at one position. A reference supplies an abstract
+    /// one only through the object row that maps it, even when both sides
+    /// share the object type.
+    fn mismatch(&mut self, actual: &ValueType, required: &ValueType) -> Option<String> {
         match (actual, required) {
-            (ValueType::Reference(actual), ValueType::Reference(required)) => {
-                let lifted = match self.lifting.get(required) {
-                    Some(mapped) => Some(mapped),
-                    None => (!component).then_some(required),
-                };
-                lifted
-                    .is_none_or(|lifted| !self.types.conforms(actual.clone(), lifted.clone()))
-                    .then(String::new)
-            }
+            (ValueType::Reference(actual), ValueType::Reference(required)) => (!self
+                .lifting
+                .get(required)
+                .is_some_and(|mapped| self.types.conforms(actual.clone(), mapped.clone())))
+            .then(String::new),
             (ValueType::Option(actual), ValueType::Option(required)) => {
-                self.mismatch(actual, required, component)
+                self.mismatch(actual, required)
             }
             (ValueType::Collection(actual), ValueType::Collection(required)) => {
                 if actual.kind() != required.kind() || actual.bound() != required.bound() {
                     return Some("[0]".to_owned());
                 }
-                self.mismatch(actual.element(), required.element(), component)
+                self.mismatch(actual.element(), required.element())
                     .map(|rest| component_path("[0]", &rest))
             }
             (ValueType::Map(actual), ValueType::Map(required)) => {
                 if actual.bound() != required.bound() {
                     return Some("[key]".to_owned());
                 }
-                if let Some(rest) = self.mismatch(actual.key(), required.key(), component) {
+                if let Some(rest) = self.mismatch(actual.key(), required.key()) {
                     return Some(component_path("[key]", &rest));
                 }
-                self.mismatch(actual.values(), required.values(), component)
+                self.mismatch(actual.values(), required.values())
                     .map(|rest| component_path("[value]", &rest))
             }
             (ValueType::Composite(actual), ValueType::Composite(required)) => {
@@ -2340,8 +2330,7 @@ impl LiftedPairing<'_> {
                     if paired.presence() != field.presence() {
                         return Some(field.name().to_owned());
                     }
-                    if let Some(rest) = self.mismatch(paired.value_type(), field.value_type(), true)
-                    {
+                    if let Some(rest) = self.mismatch(paired.value_type(), field.value_type()) {
                         return Some(component_path(field.name(), &rest));
                     }
                 }
@@ -2356,7 +2345,7 @@ impl LiftedPairing<'_> {
             }
             (CompositeShape::Tuple(actual), CompositeShape::Tuple(required)) => {
                 for (index, (paired, position)) in actual.iter().zip(required).enumerate() {
-                    if let Some(rest) = self.mismatch(paired, position, true) {
+                    if let Some(rest) = self.mismatch(paired, position) {
                         return Some(component_path(&format!("[{index}]"), &rest));
                     }
                 }
@@ -2376,7 +2365,7 @@ impl LiftedPairing<'_> {
                     }
                     let positions = paired.positions().iter().zip(member.positions());
                     for (index, (paired, position)) in positions.enumerate() {
-                        if let Some(rest) = self.mismatch(paired, position, true) {
+                        if let Some(rest) = self.mismatch(paired, position) {
                             return Some(component_path(&format!("variant[{index}]"), &rest));
                         }
                     }
@@ -2406,6 +2395,38 @@ fn requires_composite_pairing(value_type: &ValueType) -> bool {
             requires_composite_pairing(map.key()) || requires_composite_pairing(map.values())
         }
         _ => false,
+    }
+}
+
+/// Whether an object row maps every reference `value_type` holds outside a
+/// composite; [`lifted_mismatch`] checks those inside one.
+fn references_mapped(lifting: &BTreeMap<EffectiveId, EffectiveId>, value_type: &ValueType) -> bool {
+    match value_type {
+        ValueType::Reference(object) => lifting.contains_key(object),
+        ValueType::Option(payload) => references_mapped(lifting, payload),
+        ValueType::Collection(collection) => references_mapped(lifting, collection.element()),
+        ValueType::Map(map) => {
+            references_mapped(lifting, map.key()) && references_mapped(lifting, map.values())
+        }
+        ValueType::Boolean
+        | ValueType::Integer
+        | ValueType::Int(_)
+        | ValueType::Rational(_)
+        | ValueType::Decimal(_)
+        | ValueType::Float(_)
+        | ValueType::Quantity(_)
+        | ValueType::BoundedQuantity(_)
+        | ValueType::CarriedQuantity(_)
+        | ValueType::Text(_)
+        | ValueType::String
+        | ValueType::Uuid
+        | ValueType::Timestamp
+        | ValueType::Bytes
+        | ValueType::JsonObject
+        | ValueType::Enum(_)
+        | ValueType::Composite(_)
+        | ValueType::ClockReference
+        | ValueType::Population(_) => true,
     }
 }
 
@@ -3504,14 +3525,11 @@ impl<'c, 'a> Checker<'c, 'a> {
             }
             defined.insert(written, field.span);
             let declared = attribute.field();
-            let required = lift(
-                &self.lifting,
-                &if declared.presence() == Presence::Optional {
-                    ValueType::option(declared.value_type().clone())
-                } else {
-                    declared.value_type().clone()
-                },
-            );
+            let required = if declared.presence() == Presence::Optional {
+                ValueType::option(declared.value_type().clone())
+            } else {
+                declared.value_type().clone()
+            };
             let expression = self.check_row(
                 &field.value,
                 &required,
@@ -3575,8 +3593,9 @@ impl<'c, 'a> Checker<'c, 'a> {
         self.findings.fault(invariant);
     }
 
-    /// Types `expression` where `required` is expected, over `context`, and
-    /// records its refusal at the expression's span.
+    /// Types `expression` over `context` for a row that defines `required`, a
+    /// type as declared before reference lifting, and records its refusal at
+    /// the expression's span.
     fn check_row(
         &mut self,
         expression: &ExpressionForm,
@@ -3667,10 +3686,14 @@ impl<'c, 'a> Checker<'c, 'a> {
             // cannot see the cross-model component pairing. Infer rows that
             // carry a lifted reference without that expected type, then apply
             // the refinement's recursive lifted conformance rule below.
-            let type_context = required.filter(|required| !requires_composite_pairing(required));
+            let lifted = required.map(|required| lift(&self.lifting, required));
+            let type_context = lifted
+                .as_ref()
+                .filter(|lifted| !requires_composite_pairing(lifted));
             let body = typer.infer(&expression.expression, type_context, &location)?;
-            if let Some(required) = required {
-                if requires_composite_pairing(required) {
+            let uses = match required.zip(lifted.as_ref()) {
+                None => Vec::new(),
+                Some((required, _)) if requires_composite_pairing(required) => {
                     if let Some(component) =
                         lifted_mismatch(types, &self.lifting, body.root().value_type(), required)
                     {
@@ -3689,21 +3712,26 @@ impl<'c, 'a> Checker<'c, 'a> {
                             }))),
                         });
                     }
+                    Vec::new()
                 }
-            }
-            let uses = match required {
-                None => Vec::new(),
-                Some(required)
+                // Lifting leaves an unmapped reference as declared, so an
+                // expression over a shared object type would conform to it.
+                Some((required, _)) if !references_mapped(&self.lifting, required) => {
+                    return Err(CheckRefusal::ill_typed(
+                        &location,
+                        IllTypedCause::TypeMismatch,
+                    ));
+                }
+                Some((_, lifted))
                     if range_agnostic
-                        && relaxed_conforms(types, body.root().value_type(), required) =>
+                        && relaxed_conforms(types, body.root().value_type(), lifted) =>
                 {
                     Vec::new()
                 }
-                Some(required) => population_uses(
+                Some((_, lifted)) => population_uses(
                     types,
-                    &self.lifting,
                     &body,
-                    required,
+                    lifted,
                     (&label, &populations),
                     expression
                         .spans
@@ -4213,7 +4241,7 @@ impl<'c, 'a> Checker<'c, 'a> {
             range_agnostic: false,
         };
         let mut complete = true;
-        let receiver_type = lift(&self.lifting, &ValueType::Reference(target_type.id.clone()));
+        let receiver_type = ValueType::Reference(target_type.id.clone());
         let receiver = match &arguments[0] {
             ArgumentForm::Expression(expression) => {
                 self.check_row(expression, &receiver_type, context(&context_parameters), cx)
@@ -4230,8 +4258,7 @@ impl<'c, 'a> Checker<'c, 'a> {
                     open.push(lift(&self.lifting, declared));
                 }
                 ArgumentForm::Expression(expression) => {
-                    let required = lift(&self.lifting, declared);
-                    match self.check_row(expression, &required, context(&context_parameters), cx) {
+                    match self.check_row(expression, declared, context(&context_parameters), cx) {
                         Some(row) => checked.push(Some(row)),
                         None => complete = false,
                     }
@@ -4373,27 +4400,21 @@ fn refuse_with(location: &Location, cause: CheckCause) -> CheckRefusal {
     }
 }
 
-/// The population-size-dependent bounds of a row `body` used as `required`
-/// (FR-139): empty when the row's type already conforms. S3 checks every
-/// typing rule that does not depend on the universe size `n` and records the
-/// bound that does. `Err(None)` is a mismatch that holds whatever `n` is;
-/// `Err(Some(_))` is a row whose bound depends on `n` through a form S3 does
-/// not read yet.
+/// The population-size-dependent bounds of a row `body` used as `required`,
+/// a lifted type (FR-139): empty when the row's type already conforms. S3
+/// checks every typing rule that does not depend on the universe size `n` and
+/// records the bound that does. `Err(None)` is a mismatch that holds whatever
+/// `n` is; `Err(Some(_))` is a row whose bound depends on `n` through a form S3
+/// does not read yet.
 fn population_uses(
     types: &TypeEnvironment,
-    lifting: &BTreeMap<EffectiveId, EffectiveId>,
     body: &CheckedBody,
     required: &ValueType,
     (label, scope): (&str, &PopulationScope),
     span: Span,
 ) -> Result<Vec<PopulationUse>, Option<CheckCause>> {
     let root = body.root();
-    let conforms = if requires_composite_pairing(required) {
-        conforms_lifted(types, lifting, root.value_type(), required)
-    } else {
-        conforms(types, root.value_type(), required)
-    };
-    if conforms {
+    if conforms(types, root.value_type(), required) {
         return Ok(Vec::new());
     }
     let reads_population = root

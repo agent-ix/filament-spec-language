@@ -32,3 +32,10 @@ The computed FSL matrix and changed tests were checked for QSL-2959's composite 
 - Evidence: no run evidence
 - Untraced behaviors / stubs: no stub found in the changed lines; FND-001 in the code-review artifact identifies a conformance check bypass under an existing requirement.
 - Semantic review: skipped
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | QSL-3263 (blocks QSL-2959). The snapshot reader has no tuple carrier: `fsl-semantics/src/model/observation/tree.rs` has no `tuple` arm on origin/main d041ae422a. It also has no payload-union carrier: `admit_union_case` in document.rs admits only enum (nullary) cases. So FR-106-AC-84 needs new admission code, not only a test. The FR-106 spelling conflict is already fixed on main by #3876 (`components`). Checked at head a2d980afb9a2f31f5e3a60c43986f0a1c1d43c56. |
+| FND-002 | deferred | QSL-3263 (blocks QSL-2959). The FR-630-AC-8/9 analyzer certificates for Pair and Holder need the same snapshot tuple and payload-union carriers, which do not exist on origin/main d041ae422a. QSL-2959 stays open until then. The PR body defers these and claims neither criterion. |

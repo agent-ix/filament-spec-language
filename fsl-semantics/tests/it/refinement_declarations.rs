@@ -1444,14 +1444,46 @@ fn composite_pairing_refuses_unmapped_references_through_carriers() {
     }
 }
 
-/// FR-135-AC-6 (TC-540): a record, tuple or union declaration that both
-/// sides share still needs an object row for each reference nested in it. A
-/// shared `Reference<Queue>` that the `Queue` row maps is admitted; a shared
-/// `Reference<Ghost>` that no row maps refuses at the row's expression.
+/// FR-135-AC-6 (TC-540): both sides sharing a declaration does not map the
+/// object type it references. At top level, in an option, collection or map,
+/// and in a record, tuple or union, a shared `Reference<Queue>` that the
+/// `Queue` row maps is admitted; a shared `Reference<Ghost>` that no row maps
+/// refuses at the row's expression.
 #[trace("TC-540", "FR-135-AC-6")]
 #[test]
-fn a_shared_composite_holding_an_unmapped_reference_is_refused() {
+fn a_shared_reference_without_an_object_row_is_refused() {
     let (spec, _) = nested_models();
+    // The shared model with `head`, `link`, `chain`, the `box_map` values and
+    // the `Box`, `Pair` and `Holder` components referencing `object`.
+    let referencing = |object: &str| {
+        let mut model: Value = serde_json::from_slice(&spec).expect("a model");
+        let declarations = model["types"].as_array_mut().expect("types");
+        let target = node(NESTED_SPEC, object);
+        for declared in declarations.iter_mut() {
+            if declared["identity"] == node(NESTED_SPEC, "Queue") {
+                for member in declared["fields"].as_array_mut().expect("fields") {
+                    if matches!(member["name"].as_str(), Some("head" | "link" | "chain")) {
+                        member["typeRef"] = json!(target);
+                    }
+                }
+            } else if declared["identity"] == node(NESTED_SPEC, "BoxOption") {
+                declared["inner"] = json!(target);
+            } else if declared["identity"] == node(NESTED_SPEC, "Box") {
+                declared["fields"][0]["typeRef"] = json!(target);
+            } else if declared["identity"] == node(NESTED_SPEC, "Pair") {
+                declared["positions"][0]["typeRef"] = json!(target);
+            } else if declared["identity"] == node(NESTED_SPEC, "Holder") {
+                declared["variants"][1]["payloadType"] = json!(target);
+            }
+        }
+        declarations.push(object_type(
+            NESTED_SPEC,
+            "Ghost",
+            &[("value", INTEGER)],
+            Vec::new(),
+        ));
+        model.to_string().into_bytes()
+    };
     let shared_refinement = |row: &str| {
         format!(
             "refinement SharedRows using inf abstract Q concrete Q {{\n\
@@ -1462,48 +1494,35 @@ fn a_shared_composite_holding_an_unmapped_reference_is_refused() {
              }}"
         )
     };
+    // Each row with its expression and, inside a composite, the component
+    // path the refusal names.
+    let rows = [
+        ("head = self.head;", "self.head", None),
+        ("link = self.link;", "self.link", None),
+        ("chain = self.chain;", "self.chain", None),
+        ("box_map = self.box_map;", "self.box_map", None),
+        ("box = self.box;", "self.box", Some("box.target")),
+        ("pair = self.pair;", "self.pair", Some("[0]")),
+        (
+            "holder = self.holder;",
+            "self.holder",
+            Some("holder.variant[0]"),
+        ),
+    ];
 
-    let mapped = [("Q", NESTED_SPEC, &spec[..])];
-    for row in [
-        "box = self.box;",
-        "pair = self.pair;",
-        "holder = self.holder;",
-    ] {
-        let graph = check_with("", &mapped, &shared_refinement(row)).unwrap_or_else(|refusals| {
+    let mapped = referencing("Queue");
+    let unmapped = referencing("Ghost");
+    for (row, expression, path) in rows {
+        let models = [("Q", NESTED_SPEC, &mapped[..])];
+        let graph = check_with("", &models, &shared_refinement(row)).unwrap_or_else(|refusals| {
             panic!(
                 "{row}: {:?}",
                 refusals.iter().map(|r| &r.refusal).collect::<Vec<_>>()
             )
         });
         assert_eq!(only_refinement(&graph).objects().len(), 2, "{row}");
-    }
 
-    let mut unmapped: Value = serde_json::from_slice(&spec).expect("a model");
-    let declarations = unmapped["types"].as_array_mut().expect("types");
-    let ghost = node(NESTED_SPEC, "Ghost");
-    for declared in declarations.iter_mut() {
-        if declared["identity"] == node(NESTED_SPEC, "Box") {
-            declared["fields"][0]["typeRef"] = json!(ghost);
-        } else if declared["identity"] == node(NESTED_SPEC, "Pair") {
-            declared["positions"][0]["typeRef"] = json!(ghost);
-        } else if declared["identity"] == node(NESTED_SPEC, "Holder") {
-            declared["variants"][1]["payloadType"] = json!(ghost);
-        }
-    }
-    declarations.push(object_type(
-        NESTED_SPEC,
-        "Ghost",
-        &[("value", INTEGER)],
-        Vec::new(),
-    ));
-    let unmapped = unmapped.to_string().into_bytes();
-    let models = [("Q", NESTED_SPEC, &unmapped[..])];
-
-    for (row, expression, path) in [
-        ("box = self.box;", "self.box", "box.target"),
-        ("pair = self.pair;", "self.pair", "[0]"),
-        ("holder = self.holder;", "self.holder", "holder.variant[0]"),
-    ] {
+        let models = [("Q", NESTED_SPEC, &unmapped[..])];
         let found = refused(&models, &shared_refinement(row));
         let refusal = only(&found);
         assert_eq!(
@@ -1512,6 +1531,9 @@ fn a_shared_composite_holding_an_unmapped_reference_is_refused() {
             "{row}"
         );
         assert_eq!(refusal.at, expression, "{row}");
+        let Some(path) = path else {
+            continue;
+        };
         let CheckCause::Refinement(refinement) = refusal.refusal.cause.as_ref() else {
             panic!("the unmapped reference has a refinement refusal");
         };
