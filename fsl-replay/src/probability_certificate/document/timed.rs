@@ -1914,7 +1914,12 @@ impl Watch<'_> {
                 if root.elapsed == u64::MAX {
                     root.elapsed = 0;
                 }
-                advance_nested_deadline(&mut root, &mut nested, &truths, elapsed);
+                fsl_eval::probabilistic::advance_nested_deadline(
+                    &mut root,
+                    &mut nested,
+                    &truths,
+                    elapsed,
+                );
                 return Ok((Phase::NestedBounded(root, nested), elapsed));
             }
             Self::Elapsed(watch) => watch,
@@ -2063,36 +2068,6 @@ fn deadline_read(
         }
         _ => Phase::Pending,
     }
-}
-
-fn advance_nested_deadline(
-    root: &mut fsl_eval::probabilistic::TimedOperatorState,
-    nested: &mut fsl_eval::probabilistic::TimedOperatorState,
-    truths: &[bool],
-    elapsed: u64,
-) {
-    use fsl_eval::probabilistic::DeadlinePhase;
-
-    let lower = root.lower.saturating_add(nested.lower);
-    let upper = root.upper.saturating_add(nested.upper);
-    if root.phase == DeadlinePhase::Pending && (lower..=upper).contains(&elapsed) {
-        nested.elapsed = elapsed.saturating_sub(root.lower);
-        nested.phase = if truths.first().copied().unwrap_or(false) {
-            root.phase = DeadlinePhase::Accept;
-            DeadlinePhase::Accept
-        } else {
-            DeadlinePhase::Reject
-        };
-    } else {
-        nested.elapsed = elapsed.saturating_sub(root.lower).min(nested.upper);
-        if root.phase == DeadlinePhase::Pending {
-            nested.phase = DeadlinePhase::Pending;
-        }
-    }
-    if root.phase == DeadlinePhase::Pending && elapsed > upper {
-        root.phase = DeadlinePhase::Reject;
-    }
-    root.elapsed = elapsed;
 }
 
 fn deadline_timeout(
