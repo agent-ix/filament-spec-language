@@ -748,7 +748,7 @@ fn a_pre_cancelled_count_call_is_incomplete_at_function_call() {
         &mut meter,
     );
     let Evaluation {
-        outcome: FamilyOutcome::Incomplete(incomplete),
+        outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
         ..
     } = called.expect("the package call reports cancellation as incomplete")
     else {
@@ -775,9 +775,12 @@ fn a_pre_cancelled_count_call_is_incomplete_at_function_call() {
         &mut supplied,
         &cancel,
     );
-    assert_eq!(
-        executed,
-        Err(CallFailure::Cancelled(CancelCause::Requested))
+    assert!(
+        matches!(
+            executed,
+            Err(CallFailure::Cancelled(CancelCause::Requested))
+        ),
+        "expected execute cancellation with no value, got {executed:?}"
     );
 }
 

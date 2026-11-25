@@ -897,7 +897,7 @@ fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
         let limit = refusal.limit().expect("the refusal carries its S3 limit");
         assert_eq!(limit.setting().name(), "s3.nodes");
         assert_eq!(limit.configured_bound(), s3_nodes - 1);
-        assert_eq!(limit.actual(), s3_nodes);
+        assert_eq!(limit.actual(), u128::from(s3_nodes));
 
         let mut input = request(typed_input(parameter.clone(), list(record.clone(), TERMS)));
         input.stage_limits = limits;
