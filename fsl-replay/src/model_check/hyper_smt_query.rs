@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use filament_exact::{Meter, ValueType};
+use filament_exact::Meter;
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::smt::{
@@ -234,7 +234,7 @@ fn check_instance(
         }
         let listed = match ModelSystem::new(subject.simulation.clone()) {
             Ok(system) => system
-                .hyper_instances(&ValueType::Reference(parameter.population.object()))
+                .hyper_instances(&parameter.population)
                 .map_err(|_| binding(&parameter.name))?
                 .into_iter()
                 .map(|instance| instance.key)

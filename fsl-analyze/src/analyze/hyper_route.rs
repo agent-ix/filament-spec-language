@@ -3,7 +3,7 @@
 //! (FR-631, FR-640-AC-12): one EN-1 run of the clause, settled through the
 //! replay gate.
 
-use filament_exact::{Cancel, ValueType};
+use filament_exact::Cancel;
 use fsl_eval::hyper::{CheckedStepMatch, ParameterBinding};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{
@@ -195,9 +195,7 @@ pub(super) fn hyper_item<'a>(
                                 .and_then(|slot| owned.get(slot))
                                 .ok_or_else(|| fault("parameter-alias"))?;
                             let admitted = system
-                                .hyper_instances(&ValueType::Reference(
-                                    parameter.population.object(),
-                                ))
+                                .hyper_instances(&parameter.population)
                                 .map_err(|_| fault("parameter-universe"))?;
                             let bound = admitted
                                 .into_iter()

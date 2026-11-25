@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! HP-5 settlement with independently checked closure and replayed lassos.
 
-use filament_exact::{Cancel, ValueType};
+use filament_exact::Cancel;
 use fsl_eval::simulation::model::ModelSystem;
 
 use super::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
@@ -48,7 +48,7 @@ pub fn settle_existential(
         ([], []) => None,
         ([parameter], [(name, key)]) if name == &parameter.name => Some(
             system
-                .hyper_instances(&ValueType::Reference(parameter.population.object()))
+                .hyper_instances(&parameter.population)
                 .map_err(|_| ProductClosureRefusal::Input("HP-5-universe"))?
                 .into_iter()
                 .find(|instance| &instance.key == key)
