@@ -214,6 +214,50 @@ fn an_altered_certificate_is_rejected_at_the_rule_the_alteration_breaks() {
     );
 }
 
+/// The weakly fair finite `Counter` liveness certificate has a backward edge
+/// when its waiting and accepting components are swapped. The current core
+/// rejection locates that edge at its source state, without retaining the
+/// transition that made the edge backward.
+#[trace("TC-526")]
+#[test]
+fn swapping_counter_components_reports_the_source_of_a_backward_edge() {
+    let fixture = counter(
+        crate::counter::document(false),
+        "fair weak M::Counter::inc;",
+        "always eventually holds(c.value = 3)",
+    );
+    let (certificate, _) = fixture.certified(is_three);
+    let waiting_index = certificate
+        .components
+        .iter()
+        .position(|component| component.witness == MISSING)
+        .expect("the proof has a waiting component");
+    let accepting_index = certificate.components.len() - 1;
+    assert_ne!(waiting_index, accepting_index);
+
+    let mut swapped = certificate;
+    swapped.components.swap(waiting_index, accepting_index);
+    let letters = fixture.letters(is_three);
+    let verdict = check_components(
+        &fixture.certificate_request(&letters, UNLIMITED),
+        &swapped,
+        &ModelCheckLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("the request is checked");
+    let TemporalCertificateCheck::Rejected(CertificateRejection {
+        rule: CertificateRule::BackwardEdge,
+        at: CertificateLocus::ProductState(at),
+    }) = verdict
+    else {
+        panic!("the swapped order has a backward edge: {verdict:?}");
+    };
+    assert!(
+        swapped.components[accepting_index].states.contains(&at),
+        "the current cause names the backward edge's source state"
+    );
+}
+
 /// FR-126-AC-13 (TC-1085): the weak `each` claim, whose second phase finds no
 /// fair accepting cycle, is `Holds` with a component certificate the
 /// checker accepts, and the settlement of that outcome is `proved`,
