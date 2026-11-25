@@ -19,8 +19,8 @@ use fsl_replay::{
 use fsl_route::request::ExtentClassification;
 use fsl_semantics::check::Capability;
 
-use super::super::super::{AnalyzeItem, ClaimItem, ItemOptions, schedule_item};
-use super::super::{ItemSelection, ResolvedClaim, candidate_list, invalid_kind, unknown_option};
+use super::super::super::{schedule_item, AnalyzeItem, ClaimItem, ItemOptions};
+use super::super::{candidate_list, invalid_kind, unknown_option, ItemSelection, ResolvedClaim};
 use super::{ClaimReads, PackageRunError, Resolution};
 
 /// What a package's rows hold for one schedulability claim.
@@ -67,7 +67,7 @@ fn identifier(name: &str) -> Result<Identifier, Unread> {
 /// The closed-form subject of the claim at `declaration` and `ordinal`, with
 /// the claim's occurrence and the task set's time unit.
 type ScheduleSubjectRead = Result<(ScheduleSubject, String), TaskSetRefusal>;
-type ScheduleSubjectResult = Result<(OccurrenceKey, ScheduleSubjectRead), Unread>;
+type ScheduleSubjectResult = Result<(OccurrenceKey, bool, ScheduleSubjectRead), Unread>;
 
 fn read(
     package: &BarePackage<'_>,
@@ -84,6 +84,7 @@ fn read(
         })
         .ok_or(Unread::Absent)?;
     let claim = root.claim();
+    let release_backed = claim.release_bindings().next().is_some();
     let mut unit = String::new();
     let mut tasks = Vec::new();
     for task in claim.tasks() {
@@ -145,7 +146,7 @@ fn read(
     let subject = TaskSet::new(name, tasks)
         .and_then(|set| ScheduleSubject::new(set, schedule))
         .map(|subject| (subject, unit));
-    Ok((root.occurrence().clone(), subject))
+    Ok((root.occurrence().clone(), release_backed, subject))
 }
 
 /// The unit's name as the source route spells it: the declaration of the
@@ -173,7 +174,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ordinal: u64,
         selection: &ItemSelection,
     ) -> Result<Resolution<ScheduleRoute>, PackageRunError> {
-        let (claim, read) = match read(self.package, declaration, ordinal) {
+        let (claim, release_backed, read) = match read(self.package, declaration, ordinal) {
             Ok(found) => found,
             Err(Unread::Absent | Unread::Malformed) => {
                 return Err(super::pending_declaration(index, declaration));
@@ -201,9 +202,11 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ) {
             return Ok(Resolution::Settled(refused));
         }
-        let candidates = self
-            .registry
-            .candidates(Capability::Schedulability, named.as_ref());
+        let candidates = self.registry.restrict_to_task_product(
+            self.registry
+                .candidates(Capability::Schedulability, named.as_ref()),
+            release_backed,
+        );
         let candidates = if named.is_some() {
             candidates
         } else {
