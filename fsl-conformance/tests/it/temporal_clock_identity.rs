@@ -21,6 +21,7 @@ const MODEL_SOURCE: &[u8] = br#"language "ix:native" edition "1-draft";
 domain "acme/rpc";
 dimension Time;
 unit s : Time = rational(1, 1);
+event Tick { timestamp: Timestamp; occurs timestamp; }
 object Counter identity (id) { id: Int[0,3]; }
 population counters: Counter;
 "#;
@@ -29,8 +30,7 @@ const SOURCE: &[u8] = br#"language "ix:native" edition "1-draft";
 profile v = "filament.model.complete/v1";
 profile t = "filament.temporal.timestamped-event.finite-window/v1";
 model M = "acme/rpc";
-record Reading { serial: Integer; }
-temporal Window using t over (r: Reading) clock "plant-ms" on origin {
+temporal Window using t over (e: M::Tick) clock "plant-ms" on origin {
   always[0,1] holds(true)
 }
 possible CounterClaim using v over (c: M::Counter) { true }
@@ -113,6 +113,16 @@ fn checked_with_clocks(
     (parsed, models, packages, checked)
 }
 
+/// The one node of the emitted semantic graph whose `node_id` is `id`.
+fn wire_node<'w>(wire: &'w serde_json::Value, id: &serde_json::Value) -> &'w serde_json::Value {
+    wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("the emitted semantic graph has nodes")
+        .iter()
+        .find(|node| &node["node_id"] == id)
+        .unwrap_or_else(|| panic!("the semantic graph holds node {id}"))
+}
+
 fn timestamped_clock() -> ClockConfiguration {
     ClockConfiguration::TimestampedEvent {
         timestamp_unit: "ix://acme/rpc/unit/ms".into(),
@@ -167,18 +177,7 @@ fn timestamped_role_readback_identity_and_selection_refusals_are_exact() {
         V2ReadLimits::bounded(0),
         EmitLimits::new(1 << 32),
     );
-    let target = &wire["semantic_graph"]["nodes"][7]["semantic_type"];
-    let target_nodes: Vec<_> = wire["semantic_graph"]["nodes"]
-        .as_array()
-        .expect("the emitted semantic graph has nodes")
-        .iter()
-        .filter(|node| &node["node_id"] == target)
-        .collect();
-    assert!(
-        readback.is_ok(),
-        "whole-package I2 readback: {readback:?}; relevant node: {}; type target: {target}; matching nodes: {target_nodes:?}",
-        wire["semantic_graph"]["nodes"][7],
-    );
+    assert!(readback.is_ok(), "whole-package I2 readback: {readback:?}");
     let read = admitted
         .package(&library)
         .expect("the read closure retains the admitted package");
@@ -188,6 +187,18 @@ fn timestamped_role_readback_identity_and_selection_refusals_are_exact() {
     .expect("the temporal name row identifies its clause");
     let subject = fsl_package::checked_views::temporal_subject(&read, &clause_id)
         .expect("the temporal formula reader resolves the clause");
+    let clause = wire_node(&wire, &wire["temporal_clause_names"][0]["declaration"]);
+    let over = wire_node(&wire, &clause["body"]["arguments"][0]["target"]);
+    assert_eq!(over["semantic_form"], "parameter");
+    let over_id = serde_json::from_value::<CheckedNodeId>(over["node_id"].clone())
+        .expect("the over parameter has a node id");
+    assert_eq!(subject.over(), &over_id);
+    let event = wire_node(&wire, &over["semantic_type"]);
+    assert_eq!(event["node_tag"], "model");
+    assert_eq!(event["semantic_form"], "event_type");
+    assert_eq!(event["owner"]["kind"], "model");
+    assert_eq!(event["owner"]["identity"], "acme/rpc");
+    assert_eq!(event["owner"]["node"], "ix://acme/rpc/Tick");
     let binding = subject
         .clock()
         .expect("the formula view has its binding row");
