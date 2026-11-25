@@ -10,8 +10,8 @@ use filament_contract_model::{
 use fsl_semantics::check::wire_id::WireGraph;
 use ix_trace_rs::trace;
 
+use crate::emit::{emit_checked, Emission};
 use crate::CheckedPackage;
-use crate::emit::{Emission, emit_checked};
 
 const GUARDED: &str = "function Guarded using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x * 2 }";
 
@@ -192,19 +192,15 @@ fn both_guard_holds_outcomes_survive_native_admission() {
 fn unguarded_record_keeps_an_empty_path_condition() {
     let (package, _, admitted, records) =
         emitted_records("function Plain using v(x: Int[0, 9]): Integer pure { x + 1 }");
-    assert!(
-        package
-            .graph()
-            .requirements()
-            .values()
-            .all(|source| source.path_condition().is_empty())
-    );
-    assert!(
-        records
-            .iter()
-            .all(|record| record.path_condition_frame.is_none()
-                && admitted.path_condition(record).is_empty())
-    );
+    assert!(package
+        .graph()
+        .requirements()
+        .values()
+        .all(|source| source.path_condition().is_empty()));
+    assert!(records
+        .iter()
+        .all(|record| record.path_condition_frame.is_none()
+            && admitted.path_condition(record).is_empty()));
     assert!(admitted.path_condition_frames().is_empty());
 }
 
