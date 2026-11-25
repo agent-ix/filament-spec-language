@@ -1627,9 +1627,8 @@ impl CompileStop {
 
     fn of_stage(failure: FrontEndFailure) -> Self {
         match failure {
-            StageFailure::Refused(refusal) | StageFailure::RefusedWithPayload(refusal, _) => {
-                Self::of_code(refusal.code())
-            }
+            StageFailure::Refused(refusal) => Self::of_code(refusal.code()),
+            StageFailure::RefusedWithPayload(refusal, _) => Self::of_code(refusal.code()),
             StageFailure::Limit(_)
             | StageFailure::LimitWithPayload(..)
             | StageFailure::Cancelled(_) => Self::Refused,
@@ -1884,11 +1883,11 @@ fn corpus_input_value(
     }
 }
 
-/// Bind the admitted population `name` as the argument of a parameter that
-/// holds at most `maximum` members.
+/// Bind the admitted population `name` as the argument of a parameter with
+/// the member bound `maximum`.
 fn admit_population(
     name: &str,
-    maximum: u64,
+    maximum: Option<u64>,
     compiled: &CompiledSources,
     observations: &[Vec<u8>],
     environment: &mut ObjectEnvironment,
@@ -2283,7 +2282,7 @@ mod generator_tests {
             let (source, functions) = ProgramGenerator::new(DEFAULT_PARITY_SEED).unit(index);
             let checked =
                 compile_unit(&source, &format!("generator-probe-{index}"), &Cancel::new())
-                    .unwrap_or_else(|()| {
+                    .unwrap_or_else(|_| {
                         panic!(
                             "generated unit {index} must be admitted: {}",
                             String::from_utf8_lossy(&source)

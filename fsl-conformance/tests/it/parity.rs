@@ -1882,7 +1882,13 @@ fn an_expected_refusal_excuses_only_what_fsl_refuses() {
             &UnbuildableCause::DuplicateFile,
         ]
     );
-    assert_eq!(report.backends[0].total_findings, 2);
+    // Nothing was built here, so each backend also has `empty-comparison`.
+    let found = report.backends[0]
+        .findings
+        .iter()
+        .filter(|finding| matches!(finding.kind, FindingKind::UnbuildableCase(_)))
+        .count();
+    assert_eq!(found, 2);
 
     // A vector that expects a refusal and builds is compared.
     let wrong = WrongValueBackend;
