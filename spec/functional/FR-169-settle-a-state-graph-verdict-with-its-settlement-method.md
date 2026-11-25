@@ -181,7 +181,7 @@ certificate checks to those FSpec values.
 | V-6 | `Witnessed` or `Holds` whose certificate the checker rejects | `inconclusive` | `unsettled` | `Inconclusive(CertificateRejected{rule, at})` (ADR-018 PC-2) | inconclusive |
 | V-5 | `NoDecision` with `end` `Completed`, open causes only `MaxDepth`, and no partial-order reduction | `inconclusive` | `unsettled` | `Inconclusive(BoundReached{depth: max_depth})` | inconclusive |
 | V-6 | `WitnessedUnchecked` whose witnesses each replay to `reproduced-with-evaluated-witness` | `inconclusive` | `unsettled` | `Inconclusive(WellDefinednessUnchecked{sources})` | inconclusive |
-| V-6 | `NoDecision` with `end` `Completed` and an `UndecidedSuccessor` open cause (`UndecidedSuccessor`), else a `ConstraintBoundary` one (`ConstraintReached`); `NoInitialState`; `NoInstance` (FR-125); `ReductionNotPreserving` (FR-167); evidence whose replay settles `inconclusive` (`ReplayParity`, wire cause `replay-parity`) or refuses with a `ReplayRefusal` (`ReplayRefused`), including a `HoldsReduced` Possible path (FR-170) | `inconclusive` | `unsettled` | `Inconclusive(cause)` | inconclusive |
+| V-6 | `NoDecision` with `end` `Completed` and an `UndecidedSuccessor` open cause (`UndecidedSuccessor`), else a `ConstraintBoundary` one (`ConstraintReached`, with the number of boundary states); `NoInitialState`; `NoInstance` (FR-125); `ReductionNotPreserving` (FR-167); evidence whose replay settles `inconclusive` (`ReplayParity`, wire cause `replay-parity`) or refuses with a `ReplayRefusal` (`ReplayRefused`), including a `HoldsReduced` Possible path (FR-170) | `inconclusive` | `unsettled` | `Inconclusive(cause)` | inconclusive |
 | V-7 | `NoDecision` with `end` `Stopped(cause, limit)`; `NoDecision` with `end` `Completed` and open causes only `MaxDepth` under partial-order reduction (ADR-021 RV-5); `Stopped(ResourceExhausted, WitnessSamples)` (FR-166); a certificate check a limit stopped; a trap replay or `HoldsReduced` Possible path replay a limit stopped (FR-170) | `failed`, execution `resource-incomplete` | `unavailable` | `Incomplete(LimitReached{limit, value, setting})` (ADR-018 V-7, FR-127) | incomplete |
 | V-8 | No candidate discharges the form | `unsupported` | `unavailable` | `Unsupported(cause)` | unsupported |
 
@@ -230,7 +230,9 @@ certificate checks to those FSpec values.
   - `BadState`, when the expansion of a reached `closure` state records
     `ContractUndetermined` (FR-120): a contract conjunction of the state is
     undefined or refused, so its successors are not known, as FR-338's
-    `BadState` states;
+    `BadState` states; or when a reached `closure` state has no successor and
+    FR-124 classifies it undefined or undecided, a `terminal when`
+    declaration being undefined or refused there and none intending it;
   - `PredicateUndefined`, when a claim predicate evaluates undefined at a
     reached `closure` state;
   - for `possible`: `RankMissing`, when an initial state has no rank;
@@ -247,8 +249,9 @@ certificate checks to those FSpec values.
   expanded and so never decides `BadState`.
 - An accepted certificate establishes the claim over every reachable
   state, well-definedness included: the closure holds every reachable
-  state, no predicate is undefined there, and the ranks or counts give the
-  claim's truth (ADR-022 GM-4, GM-5).
+  state, no claim predicate or contract is undefined there, no state without
+  a successor is classified undefined or undecided (FR-124), and the ranks
+  or counts give the claim's truth (ADR-022 GM-4, GM-5).
 - The checker SHALL count states against `max_states` and successors
   against `max_transitions`, with checked arithmetic, and return
   `Stopped` naming the reached limit and its value, which settles V-7,
@@ -307,6 +310,8 @@ certificate checks to those FSpec values.
 | FR-169-AC-15 | A certificate holding the other form's list is rejected `Malformed` before any successor is recomputed and settles `inconclusive`, `CertificateRejected{Malformed, at}`, never `proved`: AC-9's `ReachesTwo` certificate with the `counts` entry `(0, 1, 0)` added, at the `ModelState` of closure state 0; the sequenced `InOneWay` certificate of AC-9 with the `ranks` entry `(0, 0)` added, at the `ModelState` of closure state 0; `ReachesTwo`'s certificate with the `counts` entry `(9, 1, 0)` added, its index naming no state of the 9-state closure, at `Entry { index: 9 }`. AC-9's `ReachesTwo` and sequenced `InOneWay` certificates as the engine returns them, with an empty list of the other form, are accepted. | Test (TC-644) |
 | FR-169-AC-16 | A state-graph claim with no instances under FR-125 produces one item-level `NoInstance` marker (not a per-instance outcome), contributes no predicate labels, and settles directly as one terminal record `inconclusive`, `Inconclusive(NoInstance)`, never `proved`, without certificate checking or replay; when it is the only requested work, no state is explored. A claim with one or more instances proceeds through the state-graph outcome map. | Test (TC-594) |
 | FR-169-AC-17 | The engine-produced `StateGraphOutcome::HoldsReduced` from FR-168-AC-14 for `always possible` under symmetry settles as `proved`, `closed-scope`, `Proved{basis: Reduced{[Symmetry{config_history, declared: [[a, b, c]], stabilizer: [[a], [b, c]]}]}, certification: Uncertified}`, success, without calling `check_state_graph` or replay. The same claim's unreduced `Holds` is checked and settles `Proved{basis: Exhaustive, certification: Certified}`. `ReachesTwo` under POR returns `StateGraphOutcome::HoldsReduced{witnesses: Some(paths)}`; every concrete path replays to `reproduced-with-evaluated-witness`, then the result settles `Proved{basis: Reduced{[PartialOrder{BreadthFirstRevisit}]}, certification: Uncertified}`, success, without a certificate check. | Test (TC-594) |
+| FR-169-AC-18 | Over FR-168-AC-12's `Counter` subject, a hand-built certificate of its 4 states ranked 3, 2, 1 and 0 for `possible c.value = 3` is rejected `BadState` at `value = 3` when `terminal when` there is undefined (`6 mod (3 - self.value) = 0`, its division in a Kernel function), refused (a call of a Kernel function whose result type `Int[0, 2]` excludes 3), or refused beside an undefined declaration; with a declaration that is true there, or false there, the same certificate is accepted. | Test (TC-644) |
+| FR-169-AC-19 | A `NoDecision` with `end` `Completed` and open cause `ConstraintBoundary`, alone or with `MaxDepth`, settles `inconclusive`, `unsettled`, `ConstraintReached` with the run's boundary-state count; with `UndecidedSuccessor` too it settles `UndecidedSuccessor`; no evidence is replayed. Each of FR-167-AC-7's two runs settles `ConstraintReached` with 1 boundary state. | Test (TC-594) |
 
 ## Dependencies
 

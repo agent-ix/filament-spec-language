@@ -7,8 +7,7 @@ use filament_exact::ObjectReference;
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::simulation::model::{
-    ModelSimState, ModelSimulationRequest, ModelSystem, PredicateReading, TerminalClass,
-    TimedSystem,
+    ModelSimState, ModelSimulationRequest, ModelSystem, PredicateReading, TimedSystem,
 };
 use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_semantics::check::{
@@ -825,10 +824,10 @@ fn replay_claim_undefined(
             let terminal = loci.terminal_at(locus)?;
             if let Some(terminal) = terminal {
                 locus_resolved = true;
-                if let TerminalClass::Undefined { model, cause } = system
-                    .terminal_class(state, has_successor)
-                    .map_err(|_| fault("state-graph-undefined-terminal"))?
-                {
+                let reading = system
+                    .terminal_reading(state, has_successor)
+                    .map_err(|_| fault("state-graph-undefined-terminal"))?;
+                if let Some((model, cause)) = reading.undefined {
                     if model == terminal && cause == undefined.cause {
                         return Ok(index + 1 == positions.len());
                     }

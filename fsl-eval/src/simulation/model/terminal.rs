@@ -129,6 +129,27 @@ pub enum TerminalClass {
     },
 }
 
+/// FR-124's class of a state, with what a state-graph item reads there
+/// beyond the class (FR-168 "Undefined evaluation").
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerminalReading {
+    /// FR-124's class of the state.
+    pub class: TerminalClass,
+    /// The first undefined declaration, in row order, of a terminal state no
+    /// declaration intends, whether or not another declaration is refused.
+    pub undefined: Option<(TerminalModel, UndefinedCause)>,
+}
+
+impl TerminalReading {
+    /// The reading of a state with no undefined declaration to report.
+    fn of(class: TerminalClass) -> Self {
+        Self {
+            class,
+            undefined: None,
+        }
+    }
+}
+
 /// How one `terminal when` predicate read at one state.
 enum Reading {
     True,
@@ -163,8 +184,22 @@ impl ModelSystem<'_> {
         state: &ModelSimState,
         has_successor: bool,
     ) -> Result<TerminalClass, ExpansionStop> {
+        Ok(self.terminal_reading(state, has_successor)?.class)
+    }
+
+    /// [`Self::terminal_class`], keeping the undefined declaration of a state
+    /// that a refused declaration leaves undecided.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::terminal_class`].
+    pub fn terminal_reading(
+        &self,
+        state: &ModelSimState,
+        has_successor: bool,
+    ) -> Result<TerminalReading, ExpansionStop> {
         if has_successor {
-            return Ok(TerminalClass::NotTerminal);
+            return Ok(TerminalReading::of(TerminalClass::NotTerminal));
         }
         // FR-124-AC-12: only the declarations of the identities the subject
         // reads are consulted, every alias of each; a declaration of another
@@ -187,9 +222,11 @@ impl ModelSystem<'_> {
             .filter(|terminal| read.contains(terminal.model.identity()))
         {
             match terminal.declaration {
-                ModelTerminalDeclaration::Any => return Ok(TerminalClass::Intended),
+                ModelTerminalDeclaration::Any => {
+                    return Ok(TerminalReading::of(TerminalClass::Intended))
+                }
                 ModelTerminalDeclaration::When(predicate) => match self.read(state, predicate)? {
-                    Reading::True => return Ok(TerminalClass::Intended),
+                    Reading::True => return Ok(TerminalReading::of(TerminalClass::Intended)),
                     Reading::False => {}
                     Reading::Undefined(cause) => {
                         undefined.get_or_insert((terminal.model.clone(), cause));
@@ -200,13 +237,14 @@ impl ModelSystem<'_> {
                 },
             }
         }
-        Ok(if let Some(model) = refused {
+        let class = if let Some(model) = refused {
             TerminalClass::Undecided { model }
-        } else if let Some((model, cause)) = undefined {
+        } else if let Some((model, cause)) = undefined.clone() {
             TerminalClass::Undefined { model, cause }
         } else {
             TerminalClass::Deadlocked
-        })
+        };
+        Ok(TerminalReading { class, undefined })
     }
 
     /// `predicate` at `state`: each conforming object in ascending

@@ -164,7 +164,7 @@ pub use task_product::{
     TaskProductTask, TaskProductTrace, TaskProductTraceStep, TaskProductTransition,
     TaskTransitionAction, TaskTransitionIdentity,
 };
-pub use terminal::{TerminalClass, TerminalModel};
+pub use terminal::{TerminalClass, TerminalModel, TerminalReading};
 pub use timed::{
     BehaviourLetters, BehaviourReading, ClockPlace, ClockValuation, DEFAULT_MAX_CLOCKS,
     DelayInterval, GuardedStep, MoveRefusal, PlaceConstraint, ScheduledWindow, TaskArrivalKind,

@@ -373,9 +373,10 @@ pub enum OpenCause {
     /// expanded (FR-158).
     ConstraintBoundary,
     /// The node's expansion evaluated a contract conjunction undecided; or
-    /// the selected state constraint is undefined at the node; or, in one
-    /// instance's outcome only, a predicate of that instance read refused at
-    /// the node.
+    /// the selected state constraint is undefined at the node; or a refused
+    /// `terminal when` leaves the node, which has no successor, undecided;
+    /// or, in one instance's outcome only, a predicate of that instance read
+    /// refused at the node.
     UndecidedSuccessor,
     /// The node was discovered and not expanded when a limit or a
     /// cancellation stopped the run.

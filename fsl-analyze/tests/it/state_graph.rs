@@ -15,17 +15,18 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Cancel, CancelCause, ObjectReference};
 use fsl_analyze::model_check::{
-    GraphEdge, ModelCheckRefusal, NodeIndex, StateGraphItem, StateGraphRequest, StateGraphRun,
-    check_state_graph,
+    GraphEdge, ModelCheckRefusal, NodeIndex, SettledStateGraphRun, StateGraphItem,
+    StateGraphRequest, StateGraphRun, check_and_settle_state_graph, check_state_graph,
 };
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::StateKey;
-use fsl_eval::simulation::model::{ModelSimState, ModelSystem, PredicateReading};
+use fsl_eval::simulation::model::{ModelSimState, ModelSystem, PredicateReading, TerminalClass};
 use fsl_eval::simulation::{StopReason, TransitionSystem};
 use fsl_replay::{
     CounterexampleKind, DEFAULT_MAX_WALK_STEPS, DEFAULT_WITNESS_SAMPLES, DEFAULT_WITNESS_SEED,
-    GraphWitness, IncompleteCause, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelPath,
-    ModelStep, OpenCause, ReachedLimit, RunEnd, StateGraphOutcome, WitnessSource,
+    GraphEvidence, GraphWitness, IncompleteCause, ModelCheckLimit, ModelCheckLimits,
+    ModelCheckOutcome, ModelPath, ModelStep, OpenCause, ReachedLimit, ReplayLimits, RunEnd,
+    SettlementBasis, StateGraphOutcome, TerminalValue, WitnessSource,
 };
 use fsl_semantics::check::{PredicateRole, StateGraphForm};
 use ix_trace_rs::trace;
@@ -34,8 +35,8 @@ use crate::counter::UNLIMITED;
 use crate::graph_world::{
     CAN_STILL_WIN, DIVIDES, Field, Model, Operation, REACHES_THREE, REACHES_TWO, World,
     config_kernel_world, config_kernel_world_over, config_replayable_kernel_world, config_version,
-    config_world, config_world_over, detour_world, fork_world, game_world, job_world,
-    job_world_with_claims, ladder_world, por_reachestwo_world,
+    config_world, config_world_over, counter_kernel_world, detour_world, fork_world, game_world,
+    job_world, job_world_with_claims, ladder_world, por_reachestwo_world,
 };
 
 #[path = "state_graph/replay_contracts.rs"]
@@ -2085,33 +2086,114 @@ fn an_undefined_target_refutes_in_place_of_a_witness() {
     );
 }
 
-/// FR-168-AC-11 (TC-612): after reaching `versionNumber = 2`, evaluation of
-/// the `Guard` precondition is undefined. The result identifies the state
-/// and contract clause, rather than misreporting a target-predicate failure.
+/// The instance `c = key` of a claim over `world` with universe `keys`.
+fn bound_to(world: &World, keys: &[&str], key: &str) -> ModelInstance {
+    ModelInstance {
+        population: world.subject(keys, UNLIMITED).simulation.universes[0]
+            .population
+            .clone(),
+        key: key.to_owned(),
+    }
+}
+
+/// Check and settle `claim`'s instance bound to `over` with phase 0 off,
+/// replaying its undefined evidence through FR-170, with the deadlock-freedom
+/// item beside it.
+fn settle_undefined(
+    world: &World,
+    keys: &[&str],
+    claim: &str,
+    over: &ModelInstance,
+) -> SettledStateGraphRun {
+    let claim = world.claim(claim);
+    let mut request = world.request(
+        keys,
+        vec![StateGraphItem::for_binding(claim, over.clone())],
+        no_samples(),
+    );
+    request.deadlock_freedom = true;
+    check_and_settle_state_graph(request, &Cancel::new(), |instance| {
+        let StateGraphOutcome::Undefined { stem, undefined } = &instance.outcome else {
+            panic!("an undefined evaluation: {:?}", instance.outcome);
+        };
+        world.replay_evidence(
+            claim,
+            GraphEvidence::Undefined {
+                stem: stem.clone(),
+                undefined: undefined.clone(),
+                over: Some(over.clone()),
+            },
+            keys,
+            ReplayLimits::default(),
+        )
+    })
+    .expect("the subject is checked")
+}
+
+/// FR-168-AC-11 (TC-612): the `Guard` precondition has no value at
+/// `versionNumber = 2`. `ReachesTwo`, which has a witness there,
+/// `CanReachTwo`, and `ReachesThree`, which no node satisfies, each return
+/// that one `Undefined` evidence, not a witness or a trap, and settle
+/// `refuted` after it replays; `va = 2` is open `UndecidedSuccessor`.
 #[trace("TC-612", "FR-168-AC-11")]
 #[test]
 fn an_undefined_operation_guard_is_reported_at_its_contract_site() {
     let guard = "pre Guard using v on Config::ConfigVersion::attemptUpdate { \
         quotient(2 - self.versionNumber) >= 1 }\n";
-    let world = config_kernel_world_over(
-        guard,
-        REACHES_TWO,
-        &["a", "b"],
-        &[vec![0, 0]],
+    let claims = format!(
+        "{REACHES_TWO}{REACHES_THREE}\
+         always possible CanReachTwo using v over (c: Config::ConfigVersion) \
+         {{ c.versionNumber = 2 }}\n"
     );
-    let result = run(world.request(AB, vec![world.item("ReachesTwo")], no_samples()));
-    let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
-        panic!("an undefined guard: {:?}", result.items[0][0].outcome);
-    };
-    assert_eq!(versions(&world, stem), vec![(0, 0), (1, 0), (2, 0)]);
-    assert_eq!(undefined.state_key, stem.steps[1].post_state);
-    assert_eq!(undefined.predicate, None);
-    assert!(undefined.locus.is_some());
-    assert_eq!(undefined.transition, Some(stem.steps[1].transition.clone()));
-    assert_eq!(
-        undefined.cause,
-        fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
-    );
+    let world = config_replayable_kernel_world(guard, &claims, &["a"], &[vec![0]]);
+    let over = bound_to(&world, &["a"], "a");
+    let mut evidence = Vec::new();
+    for claim in ["ReachesTwo", "CanReachTwo", "ReachesThree"] {
+        let settled = settle_undefined(&world, &["a"], claim, &over);
+        let result = &settled.run;
+        let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
+            panic!("{claim}: {:?}", result.items[0][0].outcome);
+        };
+        assert_eq!(
+            stem.steps,
+            expected_steps(
+                &world,
+                &["a"],
+                0,
+                &[("attemptUpdate", "a"), ("attemptUpdate", "a")]
+            ),
+            "{claim}"
+        );
+        let versions: Vec<i64> = positions(&world, &["a"], stem)
+            .iter()
+            .map(|state| world.value(state, "a", "versionNumber"))
+            .collect();
+        assert_eq!(versions, vec![0, 1, 2], "{claim}");
+        assert_eq!(undefined.state_key, stem.steps[1].post_state);
+        assert_eq!(undefined.predicate, None);
+        assert_eq!(
+            undefined.locus,
+            system(&world, &["a"]).state_clause_locus("Guard")
+        );
+        assert!(undefined.locus.is_some());
+        assert_eq!(undefined.transition, Some(stem.steps[1].transition.clone()));
+        assert_eq!(
+            undefined.cause,
+            fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
+        );
+        let at = node_of(result, undefined.state_key.clone());
+        assert_eq!(
+            result.graph.open.get(&at),
+            Some(&OpenCause::UndecidedSuccessor)
+        );
+        let record = &settled.records[0][0];
+        assert_eq!(record.value, TerminalValue::Refuted, "{claim}");
+        assert_eq!(record.basis, SettlementBasis::DecisiveCounterexample);
+        assert_eq!(record.undefined.as_ref(), Some(undefined));
+        evidence.push((stem.clone(), undefined.clone()));
+    }
+    assert_eq!(evidence[0], evidence[1]);
+    assert_eq!(evidence[0], evidence[2]);
 }
 
 /// FR-168-AC-12 (TC-612): a terminal predicate has no value at `value = 3`,
@@ -2188,16 +2270,146 @@ fn an_undefined_selected_state_constraint_is_not_a_boundary() {
     assert_eq!(result.graph.open.get(&at), Some(&OpenCause::UndecidedSuccessor));
 }
 
+/// `narrow` refuses 3, outside its result type, so the predicate is refused at
+/// the dead end.
+const REFUSED_WHEN: &str = "terminal Done using v on C when { narrow(self.value) = 0 };\n";
+/// A second alias of the counter, for a second `terminal` declaration.
+const SECOND_ALIAS: &str = "model N = \"test/counter\";\n";
+/// Claims over the counter, whose one dead end is `value = 3`.
+const COUNTER_CLAIMS: &str = "possible AtThree using v over (c: C::Counter) { c.value = 3 }\n\
+     always possible CanReachThree using v over (c: C::Counter) { c.value = 3 }\n";
+
+/// FR-168-AC-16 (TC-612): a refused `terminal when` leaves its dead end open
+/// `UndecidedSuccessor`, so no item is proved; an undefined declaration
+/// beside it still refutes every item, and replays, while the
+/// deadlock-freedom item stays undecided (FR-124). A declaration that intends
+/// the state decides it, whatever the others read.
+#[trace("TC-612", "FR-168-AC-16")]
+#[test]
+fn a_refused_terminal_predicate_opens_its_node_and_hides_no_undefined_one() {
+    const UNDEFINED: &str = "terminal Stop using v on N when { remainder(3 - self.value) = 0 };\n";
+    const FALSE: &str = "terminal Stop using v on N when { false };\n";
+    const TRUE: &str = "terminal Stop using v on N when { true };\n";
+    let world_of = |terminals: String| {
+        counter_kernel_world(SECOND_ALIAS, &format!("{terminals}{COUNTER_CLAIMS}"))
+    };
+    let three = |world: &World| {
+        state_key_where(world, &["c"], |state| world.value(state, "c", "value") == 3)
+    };
+
+    // Refused, with no undefined declaration: nothing is proved.
+    let world = world_of(format!("{REFUSED_WHEN}{FALSE}"));
+    for claim in ["AtThree", "CanReachThree"] {
+        let over = bound_to(&world, &["c"], "c");
+        let mut request = world.request(
+            &["c"],
+            vec![StateGraphItem::for_binding(world.claim(claim), over)],
+            no_samples(),
+        );
+        request.deadlock_freedom = true;
+        let result = run(request);
+        let open = BTreeSet::from([OpenCause::UndecidedSuccessor]);
+        match &result.items[0][0].outcome {
+            StateGraphOutcome::WitnessedUnchecked { open: causes, .. } => {
+                assert_eq!((claim, causes), ("AtThree", &open));
+            }
+            outcome => assert_eq!(
+                (claim, outcome),
+                (
+                    "CanReachThree",
+                    &StateGraphOutcome::NoDecision {
+                        end: RunEnd::Completed,
+                        open
+                    }
+                )
+            ),
+        }
+        let at = node_of(&result, three(&world));
+        assert_eq!(
+            result.graph.open,
+            BTreeMap::from([(at, OpenCause::UndecidedSuccessor)])
+        );
+        assert!(matches!(
+            result.deadlock,
+            Some(ModelCheckOutcome::Undecided { .. })
+        ));
+    }
+
+    // Refused beside undefined: the undefined declaration refutes.
+    let world = world_of(format!("{REFUSED_WHEN}{UNDEFINED}"));
+    let over = bound_to(&world, &["c"], "c");
+    for claim in ["AtThree", "CanReachThree"] {
+        let settled = settle_undefined(&world, &["c"], claim, &over);
+        let result = &settled.run;
+        let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
+            panic!("{claim}: {:?}", result.items[0][0].outcome);
+        };
+        assert_eq!(stem.steps.len(), 3);
+        assert_eq!(undefined.state_key, three(&world));
+        assert_eq!((undefined.predicate, &undefined.transition), (None, &None));
+        assert_eq!(
+            undefined.cause,
+            fsl_eval::temporal::UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
+        );
+        let model = system(&world, &["c"]);
+        let dead_end = positions(&world, &["c"], stem)
+            .pop()
+            .expect("the stem ends at the dead end");
+        let reading = model.terminal_reading(&dead_end, false).expect("reads");
+        assert!(matches!(reading.class, TerminalClass::Undecided { .. }));
+        let (declaration, _) = reading.undefined.expect("`Stop` is undefined");
+        assert_eq!(undefined.locus, model.terminal_locus(&declaration));
+        assert!(undefined.locus.is_some());
+        let at = node_of(result, undefined.state_key.clone());
+        assert_eq!(
+            result.graph.open.get(&at),
+            Some(&OpenCause::UndecidedSuccessor)
+        );
+        assert!(matches!(
+            result.deadlock,
+            Some(ModelCheckOutcome::Undecided { .. })
+        ));
+        assert_eq!(
+            settled.records[0][0].value,
+            TerminalValue::Refuted,
+            "{claim}"
+        );
+    }
+
+    // A declaration that intends the state decides it.
+    for terminals in [
+        format!("{REFUSED_WHEN}{TRUE}"),
+        format!("terminal Done using v on C when {{ remainder(3 - self.value) = 0 }};\n{TRUE}"),
+    ] {
+        let world = world_of(terminals);
+        let result = run(world.request(
+            &["c"],
+            vec![world.item("AtThree"), world.item("CanReachThree")],
+            no_samples(),
+        ));
+        assert!(result.graph.open.is_empty());
+        assert!(matches!(
+            result.items[0][0].outcome,
+            StateGraphOutcome::Witnessed { .. }
+        ));
+        assert!(matches!(
+            result.items[1][0].outcome,
+            StateGraphOutcome::Holds { .. }
+        ));
+    }
+}
+
 /// `Low` holds only at `versionNumber = 0`.
 const LOW: &str = "invariant Bounded using v on Config::ConfigVersion at current { \
      self.versionNumber <= 3 }\n\
      constraint Low using v on Config::ConfigVersion at current { self.versionNumber <= 0 }\n";
 
-/// FR-158-AC-3 (TC-581): a state where the selected constraint is false, the
-/// initial one included, is stored, open `ConstraintBoundary` and never
-/// expanded; the item and the deadlock-freedom item settle
-/// `ConstraintReached`.
-#[trace("TC-581", "FR-158-AC-3")]
+/// FR-167-AC-7 (TC-592), FR-169-AC-19 (TC-594): a state where the selected
+/// constraint is false, the initial one included, is stored, open
+/// `ConstraintBoundary` and never expanded; the item and the
+/// deadlock-freedom item settle `ConstraintReached`.
+#[trace("TC-592", "FR-167-AC-7")]
+#[trace("TC-594", "FR-169-AC-19")]
 #[test]
 fn a_boundary_state_of_the_selected_constraint_is_open_and_never_expanded() {
     for (start, stored) in [(0, 2), (1, 1)] {
@@ -2205,11 +2417,9 @@ fn a_boundary_state_of_the_selected_constraint_is_open_and_never_expanded() {
         let mut request = world.request(&["a"], vec![world.item("ReachesTwo")], no_samples());
         request.reductions.constraint = Some("Low".to_owned());
         request.deadlock_freedom = true;
-        let settled = fsl_analyze::model_check::check_and_settle_state_graph(
-            request,
-            &Cancel::new(),
-            |instance| panic!("no evidence to replay: {:?}", instance.outcome),
-        )
+        let settled = check_and_settle_state_graph(request, &Cancel::new(), |instance| {
+            panic!("no evidence to replay: {:?}", instance.outcome)
+        })
         .expect("the subject is checked");
         let result = &settled.run;
         assert_eq!(result.graph.nodes.len(), stored);
@@ -2247,9 +2457,9 @@ fn a_boundary_state_of_the_selected_constraint_is_open_and_never_expanded() {
     }
 }
 
-/// FR-158-AC-3 (TC-581): a name that is no `constraint` clause, an invariant
+/// FR-167-AC-7 (TC-592): a name that is no `constraint` clause, an invariant
 /// or a postcondition included, is refused before any expansion.
-#[trace("TC-581", "FR-158-AC-3")]
+#[trace("TC-592", "FR-167-AC-7")]
 #[test]
 fn a_state_graph_request_naming_no_constraint_is_refused() {
     let world = config_world_over(LOW, REACHES_TWO, &["a"], &[vec![0]]);

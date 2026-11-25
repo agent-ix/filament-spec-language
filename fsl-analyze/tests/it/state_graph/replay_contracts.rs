@@ -2,11 +2,11 @@
 //! Returned state-graph evidence admitted and replayed through the public facade.
 
 use super::*;
-use fsl_analyze::model_check::check_and_settle_state_graph;
-use fsl_replay::{
-    GraphEvidence, GraphReplaySettlement, ModelTraceRefusal, ReplayLimits, ReplayRefusal,
-    WitnessPath,
-};
+use crate::terminal_two_models::handoff_package;
+use filament_semantic_value::checking::CheckingLimits;
+use fsl_eval::simulation::model::PackageModelInput;
+use fsl_replay::{GraphReplaySettlement, ModelTraceRefusal, ReplayRefusal, WitnessPath};
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
 
 fn returned(starts: &[Vec<i64>], sampled: bool) -> (World, ModelInstance, Vec<GraphWitness>) {
     let world = config_world_over("", REACHES_TWO, &["a"], starts);
@@ -285,7 +285,8 @@ fn undefined_subject_evidence_replays_from_its_expression_locus() {
         (UNDEFINED_GUARD, AB, None),
         (UNDEFINED_TERMINAL, &["a"][..], None),
     ] {
-        let world = config_replayable_kernel_world(extra, keys, &[vec![0; keys.len()]]);
+        let world =
+            config_replayable_kernel_world(extra, REACHES_TWO, keys, &[vec![0; keys.len()]]);
         let claim = world.claim("ReachesTwo");
         let over = ModelInstance {
             population: world.subject(keys, UNLIMITED).simulation.universes[0]
@@ -367,4 +368,71 @@ fn undefined_subject_evidence_replays_from_its_expression_locus() {
             disagrees(&stem, &renamed);
         }
     }
+}
+
+/// Over a checked package read from its handoff bytes, an undefined guard,
+/// `terminal when` predicate and state constraint are each reported at the
+/// locus the package holds for that expression.
+#[trace("TC-612", "FR-170-AC-7")]
+#[test]
+fn a_package_subject_reports_each_undefined_expression_at_its_locus() {
+    let mut loci = Vec::new();
+    for (extra, keys, constraint) in [
+        (HALF, &["a"][..], Some("Half")),
+        (UNDEFINED_GUARD, AB, None),
+        (UNDEFINED_TERMINAL, &["a"][..], None),
+    ] {
+        let world =
+            config_replayable_kernel_world(extra, REACHES_TWO, keys, &[vec![0; keys.len()]]);
+        let handoff = handoff_package(&world.package, world.packages());
+        let bare = handoff.bare();
+        let input =
+            PackageModelInput::of(&bare, world.packages(), ModelNormalizationLimits::default())
+                .expect("the package route reads the unit");
+        let occurrence = world
+            .claim("ReachesTwo")
+            .occurrence()
+            .expect("a checked claim has an occurrence");
+        let claim = input
+            .state_graph_claim(occurrence, CheckingLimits::default().nodes())
+            .expect("the package rebuilds the claim");
+        let subject = || {
+            let mut subject = world.subject(keys, UNLIMITED);
+            subject.simulation.input = input.input();
+            subject
+        };
+        let mut request = world.request(keys, Vec::new(), no_samples());
+        request.subject = subject();
+        request.temporal_clock_selections = Vec::new();
+        request.items = vec![StateGraphItem::for_binding(
+            &claim,
+            bound_to(&world, keys, "a"),
+        )];
+        request.reductions.constraint = constraint.map(str::to_owned);
+        let result = run(request);
+        let StateGraphOutcome::Undefined { stem, undefined } = &result.items[0][0].outcome else {
+            panic!("undefined: {:?}", result.items[0][0].outcome);
+        };
+        assert_eq!(stem.steps.len(), 2, "{extra}");
+        let system = ModelSystem::new(subject().simulation).expect("the package admits");
+        let expected = if let Some(name) = constraint {
+            system.state_clause_locus(name)
+        } else if extra == UNDEFINED_GUARD {
+            system.state_clause_locus("Guard")
+        } else {
+            let dead_end = system
+                .successors(&system.initial()[0])
+                .and_then(|first| system.successors(&first.successors[0].1))
+                .expect("expands")
+                .successors
+                .remove(0)
+                .1;
+            let reading = system.terminal_reading(&dead_end, false).expect("reads");
+            system.terminal_locus(&reading.undefined.expect("`Done` is undefined").0)
+        };
+        assert!(expected.is_some(), "{extra}");
+        assert_eq!(undefined.locus, expected, "{extra}");
+        loci.push(expected);
+    }
+    assert!(loci[0] != loci[1] && loci[1] != loci[2] && loci[0] != loci[2]);
 }

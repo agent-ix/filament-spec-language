@@ -18,8 +18,8 @@ Verify that a predicate of a state-graph claim that evaluates undefined at
 an explored node refutes the item with cause `UndefinedEvaluation`, in place
 of a witness, and that replay reproduces the undefined value at that node.
 
-Scope: FR-168-AC-5, FR-168-AC-11 to FR-168-AC-13, FR-169-AC-6, FR-170-AC-5,
-FR-170-AC-7.
+Scope: FR-168-AC-5, FR-168-AC-11 to FR-168-AC-13, FR-168-AC-16,
+FR-169-AC-6, FR-170-AC-5, FR-170-AC-7.
 
 ## Test Procedure
 
@@ -47,6 +47,9 @@ for `c = a`.
    `Half`, and replay its evidence through a request that selects `Half`
    and through one that selects no constraint; then with its stem's last
    step removed; then with its cause changed.
+8. Run FR-168-AC-16's counter with a refused `terminal when` beside a
+   false, an undefined and a true declaration, and with an undefined
+   declaration beside a true one.
 
 Tag the tests `#[trace("TC-612", "<AC id>")]`.
 
@@ -76,3 +79,7 @@ Tag the tests `#[trace("TC-612", "<AC id>")]`.
   `decisive-counterexample`, cause `UndefinedEvaluation`; both replays
   settle `reproduced-with-evaluated-witness`; `inconclusive`, `Verdicts`,
   twice.
+- Step 8: with the false declaration `WitnessedUnchecked` and
+  `NoDecision`, `value = 3` open `UndecidedSuccessor`; with the undefined
+  one `Undefined` at `value = 3`, replayed and `refuted`; with a true one
+  `Witnessed` and `Holds`, no open node.

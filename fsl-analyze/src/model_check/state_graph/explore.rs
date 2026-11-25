@@ -14,7 +14,8 @@
 //!   is not expanded (FR-158);
 //! - `UndecidedSuccessor`: its expansion evaluated a contract conjunction
 //!   undecided, the successors the expansion did return being retained and
-//!   explored; or the selected state constraint is undefined at it;
+//!   explored; the selected state constraint is undefined at it; or it has no
+//!   successor and a refused `terminal when` leaves it undecided;
 //! - `NotExpanded`: it was discovered and not expanded, or partly expanded,
 //!   when a limit or a cancellation stopped the run.
 //!
@@ -421,24 +422,30 @@ impl Exploration<'_, '_, '_> {
         let pending = self.deadlock_freedom && walk.deadlock.is_none();
         // FR-124: `terminal when` is read only where no transition is
         // enabled, which an undecided contract leaves unknown.
-        let terminal = if expansion.successors.is_empty()
-            && undefined.is_none()
-            && !undecided
-            && (pending || walk.graph.subject_undefined.is_none())
-        {
-            match self.system.terminal_class(&walk.states[at], false) {
-                Ok(class) => Some(class),
+        let terminal = if expansion.successors.is_empty() && undefined.is_none() && !undecided {
+            match self.system.terminal_reading(&walk.states[at], false) {
+                Ok(reading) => Some(reading),
                 Err(stop) => return expansion_stop(&stop, self.budgets).map(Err),
             }
         } else {
             None
         };
-        if let Some(TerminalClass::Undefined { model, cause }) = &terminal {
-            let locus = self.system.terminal_locus(model);
-            walk.subject_undefined(at, locus, None, cause.clone());
+        if let Some(reading) = &terminal {
+            // A refused reading leaves the node undecided (FR-167).
+            if matches!(reading.class, TerminalClass::Undecided { .. }) {
+                walk.graph
+                    .open
+                    .insert(NodeIndex(at), OpenCause::UndecidedSuccessor);
+            }
+            // An undefined declaration refutes, beside a refused one too.
+            if let Some((model, cause)) = &reading.undefined {
+                let locus = self.system.terminal_locus(model);
+                walk.subject_undefined(at, locus, None, cause.clone());
+            }
         }
         if pending {
-            walk.deadlock = deadlock_event(walk, at, undefined, undecided, terminal);
+            let class = terminal.map(|reading| reading.class);
+            walk.deadlock = deadlock_event(walk, at, undefined, undecided, class);
         }
         let depth = self.depth_of(walk, at)?;
         if self.horizon.is_some_and(|horizon| depth >= horizon) {
