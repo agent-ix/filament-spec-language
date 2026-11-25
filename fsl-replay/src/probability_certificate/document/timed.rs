@@ -3878,6 +3878,7 @@ type DigitalWorkloadChoices = (Vec<Vec<ProbabilityEdge>>, Vec<Vec<crate::Product
 /// different verdicts, until the standard rules between them: several free
 /// identities enabled now, and a free identity that the unit delay disables.
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-204-AC-5")]
 fn digital_workload_choices(
     run: &WorkloadRun<'_, '_>,
     current: &RegionState,
