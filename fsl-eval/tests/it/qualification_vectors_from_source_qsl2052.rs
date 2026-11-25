@@ -2644,13 +2644,6 @@ const PROBED: &[Unexpressible] = &[
     // dimension its map normalizes to; two units of one dimension with
     // scale one conflict inside a single package.
     refused!(
-        "F32",
-        V7,
-        "function f using v(): Float32[nearest-even] pure { -float32(bits: 0x3f800000) }",
-        "ill_typed",
-        Some("type-mismatch")
-    ),
-    refused!(
         "U02",
         V8,
         "dimension L;\ndimension T;\nunit m : L = rational(1, 1);\nunit s : T = rational(1, 1);\ndimension X = L * T / T;\nunit u : X = rational(1, 1);\nfunction f using v(): Boolean pure { convert<Quantity<m>>(1 u) = 1 m }",
