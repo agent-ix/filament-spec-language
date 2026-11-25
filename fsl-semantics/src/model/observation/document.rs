@@ -1670,7 +1670,7 @@ fn admit_leaf(
                 .resolve(reference, type_identity.clone())
                 .map(Value::Reference)
         }
-        // FR-106-AC-83: a raw Clock-place value is admitted only when the
+        // FR-106-AC-72/73: a raw Clock-place value is admitted only when the
         // selected route supplies the authenticated declaration table that
         // resolves its population, owner and template.
         (RawForm::Reference(reference), filament_exact::ValueType::ClockReference) => {
@@ -5395,7 +5395,7 @@ mod tests {
         })
     }
 
-    #[trace("FR-106-AC-83", "FR-106", "TC-464")]
+    #[trace("TC-464")]
     #[test]
     fn raw_clock_data_refusal_keeps_its_typed_value_locus() {
         let types = TypeEnvironment::default();
