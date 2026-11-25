@@ -85,7 +85,11 @@ key; a compound optional initializer receives its own lexical key. pre(alias)
 does not retag the captured value. pre is post-only; result is post-only and is
 resolved through the selected operation. The new model's operation parameters
 are immutable invocation inputs captured at pre; result is captured at post.
-Nested shadowing and duplicate active local names refuse.
+Nested shadowing of an active local binder and duplicate active local names
+refuse. An operation parameter is not an active local binder for this rule: in
+a `pre` or `post` body, a same-named `let` or quantifier binder shadows the
+parameter for bare reads, while the qualified `<op>::p` name continues to read
+the parameter as FR-104 specifies.
 
 The proof is a conservative symbolic abstraction over validated native inputs.
 IR owns numeric ranges and guard discharge. Native object/enum/record identity
