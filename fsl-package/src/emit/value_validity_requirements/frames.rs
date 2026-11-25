@@ -19,7 +19,7 @@ use filament_contract_model::{
 };
 use filament_exact::NodeKey;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_semantics::check::wire_id::StructuralIds;
+use fsl_semantics::check::wire_id::{StructuralIds, StructuralKeys, WireGraph};
 use fsl_semantics::check::{Capability, CheckedGraph, RequirementRecord};
 
 use super::{EmitRefusal, Omitted};
@@ -162,13 +162,53 @@ fn function_measure_root(term: &CheckedTerm) -> Option<&CheckedNodeId> {
     })
 }
 
-/// The walk of one owner's body over the emitted graph.
-struct Walk<'a> {
-    nodes: &'a [CheckedSemanticNodeV2],
-    index: &'a BTreeMap<&'a CheckedNodeId, usize>,
+pub(super) enum KeyResolver<'a> {
+    Reader(&'a mut StructuralKeys),
+    Graph(&'a WireGraph),
 }
 
-impl<'a> Walk<'a> {
+impl KeyResolver<'_> {
+    fn key(&mut self, id: &CheckedNodeId) -> Option<NodeKey> {
+        match self {
+            Self::Reader(reader) => reader.key(id).ok(),
+            Self::Graph(graph) => graph.key(id).ok(),
+        }
+    }
+}
+
+/// The walk of one owner's body over the emitted graph.
+struct Walk<'a, 'k> {
+    nodes: &'a [CheckedSemanticNodeV2],
+    index: &'a BTreeMap<&'a CheckedNodeId, usize>,
+    key_index: Option<&'k HashMap<NodeKey, usize>>,
+    resolver: Option<KeyResolver<'k>>,
+    /// Resolve each immutable reference term once. The same term is visited
+    /// from multiple package owners, and structural-ID comparison can walk a
+    /// deep path; keying the cache by the term's stable borrowed ID address
+    /// avoids repeating that comparison on every owner walk.
+    resolved: HashMap<*const CheckedNodeId, usize>,
+}
+
+impl<'a, 'k> Walk<'a, 'k> {
+    fn position(&mut self, id: &CheckedNodeId) -> Option<usize> {
+        let pointer = std::ptr::from_ref(id);
+        if let Some(&position) = self.resolved.get(&pointer) {
+            return Some(position);
+        }
+        if let (Some(resolver), Some(key_index)) = (&mut self.resolver, self.key_index) {
+            if let Some(position) = resolver
+                .key(id)
+                .and_then(|key| key_index.get(&key).copied())
+            {
+                self.resolved.insert(pointer, position);
+                return Some(position);
+            }
+        }
+        let position = *self.index.get(id)?;
+        self.resolved.insert(pointer, position);
+        Some(position)
+    }
+
     /// The `nth` expression occurrence ordinal of the node at `position`.
     fn expression_ordinal(&self, position: usize, nth: usize) -> Option<u64> {
         self.nodes[position]
@@ -180,8 +220,8 @@ impl<'a> Walk<'a> {
     }
 
     /// The Boolean literal a guard reference names, if it names one.
-    fn literal(&self, term: &CheckedTerm) -> Option<bool> {
-        let position = *self.index.get(reference(term)?)?;
+    fn literal(&mut self, term: &CheckedTerm) -> Option<bool> {
+        let position = self.position(reference(term)?)?;
         let node = &self.nodes[position];
         if node.node_tag.as_ref() != "value" {
             return None;
@@ -198,8 +238,12 @@ impl<'a> Walk<'a> {
 
     /// The guard of `term` as its node position and the expression occurrence
     /// the walk reads next at it.
-    fn guard(&self, term: &CheckedTerm, visits: &HashMap<usize, usize>) -> Option<(usize, u64)> {
-        let position = *self.index.get(reference(term)?)?;
+    fn guard(
+        &mut self,
+        term: &CheckedTerm,
+        visits: &HashMap<usize, usize>,
+    ) -> Option<(usize, u64)> {
+        let position = self.position(reference(term)?)?;
         let ordinal = self.expression_ordinal(position, *visits.get(&position).unwrap_or(&0))?;
         Some((position, ordinal))
     }
@@ -207,7 +251,7 @@ impl<'a> Walk<'a> {
     /// Walk the body rooted at `root`: the terminal frame of every
     /// application occurrence, keyed by node position and occurrence.
     fn owner(
-        &self,
+        &mut self,
         root_owner: usize,
         root: &'a CheckedNodeId,
         derive: bool,
@@ -237,7 +281,7 @@ impl<'a> Walk<'a> {
                     active.remove(&position);
                 }
                 Task::Node(id, terminal, mut syntax) => {
-                    let Some(&position) = self.index.get(id) else {
+                    let Some(position) = self.position(id) else {
                         continue;
                     };
                     if !active.insert(position) {
@@ -429,6 +473,15 @@ pub(super) struct Visit {
     pub(super) node: usize,
 }
 
+pub(super) fn key_index(node_keys: &[NodeKey]) -> HashMap<NodeKey, usize> {
+    node_keys
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(position, key)| (key, position))
+        .collect()
+}
+
 /// Every visit of the package-wide owner walk over `nodes`, in walk order: the
 /// function owners in FR-322's order, each owner's body and then its
 /// termination measure, with the guard-literal pruning of FSpec FR-825.
@@ -436,15 +489,20 @@ pub(super) fn visits(
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
     keep: &[bool],
+    resolver: Option<KeyResolver<'_>>,
+    keys: Option<HashMap<NodeKey, usize>>,
 ) -> Vec<Visit> {
     let index: BTreeMap<&CheckedNodeId, usize> = nodes
         .iter()
         .enumerate()
         .map(|(position, node)| (&node.node_id, position))
         .collect();
-    let walk = Walk {
+    let mut walk = Walk {
         nodes,
         index: &index,
+        key_index: keys.as_ref(),
+        resolver,
+        resolved: HashMap::new(),
     };
     let mut table = Table::default();
     let mut counters = HashMap::<usize, usize>::new();
@@ -584,9 +642,21 @@ pub(super) fn derive(
         .enumerate()
         .map(|(position, node)| (&node.node_id, position))
         .collect();
-    let walk = Walk {
+    let mut keys = ids.key_reader();
+    let node_keys = nodes
+        .iter()
+        .map(|node| {
+            keys.key(&node.node_id)
+                .map_err(|_| EmitRefusal::SourceMapInvariant)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let key_index = key_index(&node_keys);
+    let mut walk = Walk {
         nodes,
         index: &index,
+        key_index: Some(&key_index),
+        resolver: Some(KeyResolver::Reader(&mut keys)),
+        resolved: HashMap::new(),
     };
     // The reader walks every function owner, in FR-322's package-wide order
     // (declaration source position, then node id), with each node's
@@ -692,9 +762,15 @@ pub(super) fn rederive(
         .enumerate()
         .map(|(position, node)| (&node.node_id, position))
         .collect();
-    let walk = Walk {
+    let graph = WireGraph::new(nodes.iter().map(|node| &node.node_id))
+        .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+    let key_index = key_index(graph.keys());
+    let mut walk = Walk {
         nodes,
         index: &index,
+        key_index: Some(&key_index),
+        resolver: Some(KeyResolver::Graph(&graph)),
+        resolved: HashMap::new(),
     };
     let mut wanted = HashMap::<usize, Vec<(usize, usize, u64)>>::new();
     for (at, record) in records.iter().enumerate() {

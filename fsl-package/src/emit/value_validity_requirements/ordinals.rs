@@ -22,10 +22,10 @@ use filament_contract_model::{
 };
 use filament_exact::NodeKey;
 use filament_semantic_value::location::ExpressionOwner;
-use fsl_semantics::check::CheckedGraph;
 use fsl_semantics::check::wire_id::StructuralIds;
+use fsl_semantics::check::CheckedGraph;
 
-use super::{EmitRefusal, Omitted, frames};
+use super::{frames, EmitRefusal, Omitted};
 
 /// What the checker located a use in: the declaration index of the function
 /// whose body or measure holds it, or somewhere no walk reaches.
@@ -183,7 +183,13 @@ pub(in crate::emit) fn renumber(
     }
     // The visits each needed node receives, with both the package-root owner
     // and the function whose syntax the visit is inside.
-    let walked = frames::visits(nodes, source_map, &keep);
+    let walked = frames::visits(
+        nodes,
+        source_map,
+        &keep,
+        Some(frames::KeyResolver::Reader(&mut keys)),
+        Some(frames::key_index(&node_keys)),
+    );
     let mut visited = HashMap::<usize, Vec<(Use, bool, usize)>>::new();
     for visit in &walked {
         let function = function_index.get(&node_keys[visit.syntax_owner]).copied();
@@ -464,7 +470,7 @@ pub(in crate::emit) fn rewalk(
                   source_map: &[CheckedSourceMapEntry]|
      -> Result<HashMap<usize, Vec<(usize, bool)>>, EmitRefusal> {
         let mut owners = HashMap::<usize, Vec<(usize, bool)>>::new();
-        let walked = frames::visits(nodes, source_map, &keep);
+        let walked = frames::visits(nodes, source_map, &keep, None, None);
         for visit in walked {
             owners
                 .entry(visit.node)
