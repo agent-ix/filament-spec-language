@@ -31,9 +31,10 @@ use ix_trace_rs::trace;
 
 use crate::timed_world::{document, world, World, DENSE};
 use crate::zone_search::{
-    claim, delays, exact, lock, operations, retried_at, rpc, rpc_variant, short_of_data_claim,
-    stall, stall_resetting, ticker, time_lock_item, violated, windowed, Outcome, INFINITE, TIMED,
+    claim, delays, lock, operations, retried_at, rpc, rpc_variant, short_of_data_claim, stall,
+    stall_resetting, ticker, time_lock_item, violated, windowed, Outcome, INFINITE, TIMED,
 };
+use crate::zone_support::exact;
 
 mod replay_boundary_cases;
 
@@ -306,7 +307,7 @@ fn a_timed_request_selecting_the_flag_still_refuses_a_closure_step() {
     let request = world.request();
     for selected in [false, true] {
         let refused = fsl_replay::replay_model_trace(
-            crate::model_settle::request(
+            crate::model_settle_support::request(
                 &world.package,
                 &[],
                 &world.document,
@@ -325,7 +326,7 @@ fn a_timed_request_selecting_the_flag_still_refuses_a_closure_step() {
                 expansion: request.expansion,
                 stutter_closure: selected,
             },
-            &crate::model_settle::envelope_at(
+            &crate::model_settle_support::envelope_at(
                 counterexample.clone(),
                 node.identity(),
                 fsl_replay::OccurrenceKey::new(node.identity(), node.claim().clone()),

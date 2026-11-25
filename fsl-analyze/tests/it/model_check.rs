@@ -71,19 +71,19 @@ fn world_with(document: Vec<u8>, body: &str, starts: &[&[(&str, i64)]]) -> World
     world_in_mode(document, body, starts, CheckMode::Linked)
 }
 
-fn temporal_worker_fixture(formula: &str) -> crate::liveness::Fixture {
+fn temporal_worker_fixture(formula: &str) -> crate::liveness_support::Fixture {
     temporal_worker_fixture_with_starts(formula, &[("a", 0), ("b", 0), ("c", 0)])
 }
 
 fn temporal_worker_fixture_with_starts(
     formula: &str,
     starts: &[(&'static str, i64)],
-) -> crate::liveness::Fixture {
+) -> crate::liveness_support::Fixture {
     // The expected counter path is monotone for each object. The shared
     // counter document's type-wide `modifies value` frame also permits an
     // operation on one receiver to change every other counter, so this
     // fixture scopes the write to the receiver it invokes.
-    crate::liveness::fixture(
+    crate::liveness_support::fixture(
         crate::analyze_reach_rulings::receiver_framed_document(),
         CONTRACT,
         "",
@@ -92,7 +92,7 @@ fn temporal_worker_fixture_with_starts(
     )
 }
 
-fn large_lasso_worker_fixture(formula: &str) -> crate::liveness::Fixture {
+fn large_lasso_worker_fixture(formula: &str) -> crate::liveness_support::Fixture {
     let mut document: Value =
         serde_json::from_slice(&crate::analyze_reach_rulings::receiver_framed_document())
             .expect("receiver-framed counter document");
@@ -134,7 +134,7 @@ fn large_lasso_worker_fixture(formula: &str) -> crate::liveness::Fixture {
         .expect("receiver frame")
         .push(json!(phase_identity));
 
-    let mut fixture = crate::liveness::fixture(
+    let mut fixture = crate::liveness_support::fixture(
         document.to_string().into_bytes(),
         CONTRACT,
         "",
@@ -291,7 +291,7 @@ fn run_with_workers_and_reductions(
 }
 
 fn run_temporal_fixture_with_workers(
-    fixture: &crate::liveness::Fixture,
+    fixture: &crate::liveness_support::Fixture,
     atom: fn(i64) -> Option<bool>,
     limits: ModelCheckLimits,
     workers: usize,

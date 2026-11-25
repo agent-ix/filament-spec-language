@@ -4,6 +4,7 @@
 //! `replay_sampled_witness`, over the admitted subject and the claim's
 //! reader, and converts to the ADR-018 counterexample it is.
 
+use crate::statistical_witness_support::{replay, sampler};
 use filament_exact::{Cancel, Integer, Value};
 use filament_semantic_value::catalog::{CatalogCode, UndefinedReason};
 use fsl_analyze::statistical::{
@@ -13,21 +14,16 @@ use fsl_eval::simulation::model::{ModelSystem, TransitionId};
 use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::{sample_probabilistic, SampledDisagreement};
 use fsl_eval::temporal::UndefinedCause;
-use fsl_foundation::selection::DefinitionRef;
 use fsl_replay::statistical::{
     replay_sampled_witness, SampledParity, SampledWitness, SampledWitnessRefusal,
     SampledWitnessReplay, StatisticalLimits, StatisticalMethod, StatisticalOutcome,
-    StatisticalProvenance, StatisticalVerdict, WitnessReplay, WitnessValue,
+    StatisticalVerdict, WitnessReplay, WitnessValue,
 };
 use fsl_replay::{CounterexampleKind, UndefinedLocus};
 use fsl_semantics::check::ProbScheduler;
 use ix_trace_rs::trace;
 
 use crate::prob_world::{self, World};
-
-fn sampler() -> DefinitionRef {
-    DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1").expect("a valid DefinitionRef")
-}
 
 /// `claim` of `world` decided with `method` at seed 7.
 fn decide(
@@ -56,40 +52,6 @@ fn decide(
         StatisticalOutcome::Completed(verdict) => *verdict,
         other => panic!("expected a completed run, got {other:?}"),
     }
-}
-
-/// `witness` replayed over `world` under `provenance`, reading `claim`.
-pub(crate) fn replay(
-    world: &World,
-    claim: &str,
-    provenance: &StatisticalProvenance,
-    witness: &SampledWitness,
-) -> Result<SampledWitnessReplay, SampledWitnessRefusal> {
-    let system = ModelSystem::new(world.subject().simulation).expect("the subject admits");
-    let cancel = Cancel::new();
-    let checked = world.claim(claim);
-    let ProbScheduler::Workload(name) = &checked.scheduler else {
-        panic!("a workload claim");
-    };
-    let workload = world
-        .package
-        .graph()
-        .probabilistic_model()
-        .workload(name)
-        .expect("the workload is declared");
-    let mut reader = witness_reader(&system, &world.package, checked, &sampler(), &cancel)
-        .expect("the claim is read");
-    replay_sampled_witness(
-        &WitnessReplay {
-            system: &system,
-            timed: None,
-            workload,
-            provenance,
-            cancel: &cancel,
-        },
-        witness,
-        &mut reader,
-    )
 }
 
 fn p95(name: &str, threshold: u32) -> String {

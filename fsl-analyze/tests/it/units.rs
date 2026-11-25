@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+#![allow(
+    dead_code,
+    reason = "shared fixture support spans split integration test binaries"
+)]
 //! Units other than `Counter` for the model-check tests: ADR-018 §6's
 //! ConfigVersion example and shipped units over `examples/config-version`'s
 //! domain package, and FR-126-AC-4's `Health` unit over a domain package

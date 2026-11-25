@@ -20,7 +20,7 @@ use ix_trace_rs::trace;
 
 use crate::counter::{document, document_with_ranged_parameter, PACKAGE, UNLIMITED};
 use crate::lasso_replay::found;
-use crate::liveness::{counter, Fixture};
+use crate::liveness_support::{counter, Fixture};
 
 /// The work-unit bound a model run stops its first expansion at.
 const STOPS_AT: u64 = 1;

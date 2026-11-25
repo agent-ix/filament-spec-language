@@ -40,12 +40,12 @@ use serde_json::json;
 use crate::counter::{UNLIMITED, ZERO};
 use crate::example_units::{config, decide, reaches_two, EACH};
 use crate::hyper_world::{self, non_interference, Vault, EQUAL_INPUTS, STARTS};
-use crate::liveness::{self, counter, is_three};
+use crate::liveness_support::{self, counter, is_three};
 use crate::por_world::{
     field, integer, level, number, object_type, operation, type_ref, writes, Atom, Fixture, Obj,
     Temporal,
 };
-use crate::probability_from_source::{assert_valid, provider_definition};
+use crate::provider_schema_support::{assert_valid, provider_definition};
 use crate::units::World;
 
 const ACCEPTED: TemporalCertificateCheck = TemporalCertificateCheck::Accepted;
@@ -222,7 +222,7 @@ fn an_altered_certificate_is_rejected_at_the_rule_the_alteration_breaks() {
 
 /// FR-282-AC-6's claim, `always eventually q` under `fair weak inc`, over the
 /// finite Counter.
-fn weakly_fair_counter() -> liveness::Fixture {
+fn weakly_fair_counter() -> liveness_support::Fixture {
     counter(
         crate::counter::document(false),
         "fair weak M::Counter::inc;",

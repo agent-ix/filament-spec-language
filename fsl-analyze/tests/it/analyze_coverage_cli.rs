@@ -301,7 +301,7 @@ fn digital_clocks_agree_and_the_clock_budget_stops() {
     // FR-632-AC-3: two calls hold two live clocks, so `max_clocks` 1 stops
     // the run; `max_clocks` 0 is not a positive count and refuses the request.
     let mut snapshot: Value =
-        serde_json::from_slice(&crate::analyze_family_cli::rpc_snapshot()).expect("json");
+        serde_json::from_slice(&crate::analyze_family_support::rpc_snapshot()).expect("json");
     let mut second = snapshot["populations"][0]["objects"][0].clone();
     second["key"] = json!("d");
     snapshot["populations"][0]["objects"]
@@ -311,7 +311,7 @@ fn digital_clocks_agree_and_the_clock_budget_stops() {
     let ws = Workspace::new("cov-zone-two-calls");
     let run = analyze(&crate::analyze_cli_support::request_over(
         &ws,
-        &crate::analyze_family_cli::rpc_unit(4, claim),
+        &crate::analyze_family_support::rpc_unit(4, claim),
         &crate::zone_search::rpc_document(),
         &[snapshot.to_string().into_bytes()],
         json!({"items": [{"claim": "Bound", "temporal": {"limits": {"max_clocks": 1}}}]}),

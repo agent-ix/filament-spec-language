@@ -10434,6 +10434,29 @@ impl CheckedGraph {
         &self.temporal_clauses
     }
 
+    /// Replace, after S3, the guard `a and b` of temporal clause `clause` by
+    /// `b` alone: the guard of a hand-built package (FR-315-AC-58), whose
+    /// definedness obligation `a` discharged and no checked source guard
+    /// leaves open. Test-support only.
+    ///
+    /// # Panics
+    ///
+    /// If there is no such clause, it has no guard, or its guard is no
+    /// conjunction.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn drop_temporal_guard_left_conjunct_after_s3(&mut self, clause: usize) {
+        let (guard, _) = self.temporal_clauses[clause]
+            .guard
+            .as_mut()
+            .expect("a guarded clause");
+        let NodeKind::Connective(filament_checked::node::Connective::And, _, _, right) =
+            *guard.root().kind()
+        else {
+            panic!("the guard is a conjunction");
+        };
+        guard.cut_back_to(right);
+    }
+
     /// FR-113: the checked protocol declared `name`, or `None`.
     pub fn protocol(&self, name: &str) -> Option<&CheckedProtocol> {
         self.protocols.iter().find(|protocol| protocol.name == name)

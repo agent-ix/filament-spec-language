@@ -530,10 +530,11 @@ fn a_deadlock_is_bad_for_the_deadlock_item_alone() {
 }
 
 /// FR-338-AC-3's `ContractUndetermined` vector, over the Counter subject with
-/// `pre CanInc { 6 mod (2 - self.value) >= 0 }`: a certificate for `always holds(true)` holding values 0
-/// to 2 is rejected `BadState` at value 2, whose expansion evaluates the
-/// precondition undefined. An atom that is undefined or false at a reached
-/// state is `BadState` there under the rejecting state.
+/// `pre CanInc { odd_value(self.value) }`, `odd_value` a Kernel-checked
+/// function: a certificate for `always holds(true)` holding values 0 to 2 is
+/// rejected `BadState` at value 2, whose expansion evaluates the precondition
+/// undefined. An atom that is undefined or false at a reached state is
+/// `BadState` there under the rejecting state.
 #[trace("TC-525", "FR-338-AC-3")]
 #[test]
 fn an_undetermined_contract_or_a_failing_atom_is_a_bad_state() {
@@ -2159,10 +2160,14 @@ fn hyper_product_closure_is_checked_before_a_projected_violation() {
         check_product_closure, product_state_key, ProductClosureCertificate, ProductClosureRequest,
     };
 
-    let declaration = crate::hyper_projected::aligned(&[])
+    let declaration = crate::hyper_projected_support::aligned(&[])
         .replace("v.l", "v.h")
         .replace("v.h @ a = v.h @ b", "v.h @ a != v.h @ b");
-    let world = World::busy(Vault::Busy, &crate::hyper_projected::IDLE, &declaration);
+    let world = World::busy(
+        Vault::Busy,
+        &crate::hyper_projected_support::IDLE,
+        &declaration,
+    );
     let subject = world.subject();
     let system = ModelSystem::new(subject.simulation.clone()).expect("subject");
     let systems = vec![&system; world.clause.quantifiers().len()];
@@ -2263,8 +2268,8 @@ fn hyper_product_closure_is_checked_before_a_projected_violation() {
         *state = serde_json::json!({"key": state.take()});
     }
     assert_eq!(wire, expected);
-    crate::probability_from_source::assert_valid(
-        &crate::probability_from_source::provider_definition("HyperProductStateLocus"),
+    crate::provider_schema_support::assert_valid(
+        &crate::provider_schema_support::provider_definition("HyperProductStateLocus"),
         &wire,
         "the missing target locus",
     );

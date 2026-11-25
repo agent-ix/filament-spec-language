@@ -9,7 +9,7 @@ relationships:
 
 ## Description
 
-Exact native source intake. Type: Integration; priority P1. Traces: FR-001-AC-1, FR-001-AC-2, FR-001-AC-3, FR-001-AC-4.
+Exact native source intake. Type: Integration; priority P1. Traces: FR-001-AC-2, FR-001-AC-3, FR-001-AC-4.
 
 ## Test Procedure
 
