@@ -11,9 +11,9 @@ use fsl_foundation::RequestIndex;
 use fsl_replay::{
     probabilistic_undefined_wire, probabilistic_wire, replay_probabilistic_witness,
     CounterexampleWireError, ExactProbLimits, ExactProbabilityGraphError, IncompleteCause,
-    ModelCheckLimit, ModelCheckLimits, ProbabilisticCounterexample, ProbabilityUndefinedWitness,
-    ProbabilityWitnessError, ProbabilityWitnessReplay, TerminalValue, UndefinedEvaluation,
-    UndefinedLocus, UndefinedSite,
+    ModelCheckLimit, ModelCheckLimits, ProbabilisticCounterexample, ProbabilisticValueSchema,
+    ProbabilityUndefinedWitness, ProbabilityWitnessError, ProbabilityWitnessReplay, TerminalValue,
+    UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 use fsl_semantics::check::{Bound, EnumBinding};
 use ix_trace_rs::trace;
@@ -1025,9 +1025,7 @@ fn source_enum_draws_and_arguments_are_spelled_in_probabilistic_counterexamples(
             &witness,
             &bound,
             "probability",
-            scope.types(),
-            scope.variant_types(),
-            enums,
+            &ProbabilisticValueSchema::new(scope.types(), scope.variant_types(), enums),
             &state_key,
             &scheduler,
         )
@@ -1067,9 +1065,7 @@ fn source_enum_draws_and_arguments_are_spelled_in_probabilistic_counterexamples(
             claim,
             &bound,
             "probability",
-            scope.types(),
-            scope.variant_types(),
-            enums,
+            &ProbabilisticValueSchema::new(scope.types(), scope.variant_types(), enums),
             &state_key,
             &scheduler,
         )

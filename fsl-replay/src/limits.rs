@@ -928,8 +928,10 @@ mod tests {
         ] {
             let one = CallerLimits::from_operands([operand]).expect("worker setting is accepted");
             assert_eq!(one.workers, expected, "{operand}");
-            let mut expected_limits = CallerLimits::default();
-            expected_limits.workers = expected;
+            let expected_limits = CallerLimits {
+                workers: expected,
+                ..CallerLimits::default()
+            };
             assert_eq!(one, expected_limits, "other limits changed for {operand}");
         }
         assert_eq!(Setting::from_name("explore.workers"), None);

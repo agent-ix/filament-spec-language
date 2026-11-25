@@ -11,9 +11,7 @@ use filament_contract_model::{
     CheckedTerm,
 };
 use filament_exact::NodeKey;
-use filament_semantic_value::location::{
-    ExpressionLocation as Location, ExpressionOwner as Origin,
-};
+use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_semantics::check::CheckedGraph;
 
 use super::location_paths::Paths;
@@ -264,6 +262,7 @@ pub(super) fn checked_body_locations(
 mod tests {
     use super::*;
     use filament_contract_model::{read_checked_package, CheckedPackageDispatchResult};
+    use filament_semantic_value::location::ExpressionLocation as Location;
     use ix_trace_rs::trace;
 
     #[ix_trace_rs::trace("FSpec-FR-322-AC-510")]

@@ -1982,7 +1982,7 @@ impl Run<'_, '_> {
                         index,
                         state.state(),
                     )
-                    .map_err(|refusal| ModelCheckRefusal::Protocol(refusal))?
+                    .map_err(ModelCheckRefusal::Protocol)?
                     .verdict
                 }
                 None => check_initial(

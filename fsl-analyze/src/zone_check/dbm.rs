@@ -265,7 +265,7 @@ impl Dbm {
                     (false, true) => -amount,
                     _ => BigInt::zero(),
                 };
-                self.set(i, j, shift(&before.at(i, j), &delta));
+                self.set(i, j, shift(before.at(i, j), &delta));
             }
         }
         Ok(())
@@ -287,8 +287,8 @@ impl Dbm {
                 continue;
             }
             self.set(i, 0, Bound::Infinite);
-            for j in 0..self.dim {
-                if !selected[j] {
+            for (j, is_selected) in selected.iter().enumerate() {
+                if !is_selected {
                     self.set(i, j, Bound::Infinite);
                 }
             }

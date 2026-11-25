@@ -3052,9 +3052,9 @@ mod tests {
         slot.set(cancel.clone()).expect("the slot is set once");
         let dense = Dense::unlimited(&cancel);
         let mut matrix = dense_system(4, dense).expect("a four-row system fits");
-        for row in 0..4 {
-            matrix[row][row] = one();
-            matrix[row][4] = one();
+        for (row_index, row) in matrix.iter_mut().enumerate() {
+            row[row_index] = one();
+            row[4] = one();
         }
         assert!(matches!(
             solve_linear(matrix, dense),
