@@ -210,7 +210,7 @@ fn fairness_source_package_equality(claim: &str) {
                 .as_bytes(),
         ),
     );
-    // FR-200 fair minimum 24/25 refutes 99/100 with a replayed fair witness.
+    // Source and package both refute the item and write the same document.
     assert_eq!(source.exit, 10, "{}", source.document());
     assert_eq!(label(&source.item(0)), "refuted", "{}", source.document());
     assert_eq!(package.exit, source.exit, "{}", package.document());
@@ -226,14 +226,7 @@ fn fairness_source_package_equality(claim: &str) {
 /// witness whose evidence replays with source and package parity (FR-200,
 /// FR-413). The fair maximum is 99/100 (two `send_a` attempts), so the
 /// refuted bound is 98/100.
-#[trace(
-    "TC-2958",
-    "FR-741-AC-3",
-    "FR-203-AC-8",
-    "FR-200",
-    "FR-200-AC-4",
-    "FR-940-AC-44"
-)]
+#[trace("TC-2958", "FR-741-AC-3", "FR-203-AC-8", "FR-200", "FR-940-AC-44")]
 #[test]
 fn a_fair_every_scheduler_refutation_replays_with_source_package_parity() {
     let claim = TOO_LIKELY
