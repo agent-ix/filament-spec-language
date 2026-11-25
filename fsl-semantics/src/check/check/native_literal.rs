@@ -169,7 +169,7 @@ impl Typer<'_> {
                     return Err(mismatch(location));
                 }
                 let mut octets = Vec::with_capacity(text.len() / 2);
-                for pair in text.as_bytes().chunks_exact(2) {
+                for pair in text.as_bytes().as_chunks::<2>().0 {
                     let pair = std::str::from_utf8(pair).map_err(|_| mismatch(location))?;
                     if !pair
                         .bytes()
