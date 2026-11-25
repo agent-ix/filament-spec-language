@@ -36,7 +36,7 @@ checked under `Kernel` (FR-495-AC-3).
    event-position false-extension, `on origin`.
 3. With no `terminal` declaration, run `check_model` on
    `always holds(q(2 - c.value) >= 0)` under infinite-trace, then on
-   `always eventually holds(q(2 - c.value) = 0)`, then on
+   `always eventually holds(q(2 - c.value) = 0 and c.value = 1)`, then on
    `always (holds(c.value <= 0) and holds(q(2 - c.value) >= 0))`, then on
    `eventually[0,1] holds(q(2 - c.value) = 0 and c.value = 1)` under
    event-position false-extension, `on origin`.
@@ -53,7 +53,7 @@ Tag the tests `#[trace("TC-537", "FR-125-AC-6")]` and
 - Step 2: `true`, with only positions 0 and 1 read.
 - Step 3: `Violated`, prefix `0 -inc-> 1 -inc-> 2`, `kind:
   UndefinedEvaluation{where: position 2, cause: division-by-zero}`; the same
-  counterexample for the TP-4 claim, with no lasso;
+  counterexample for the TP-4 claim, not the terminal stutter lasso;
   `Violated`, `kind: Formula`, prefix `0 -inc-> 1`; `Holds{Exhaustive}`.
 - Step 4: `Violated`, prefix `0 -inc-> 1 -inc-> 2 -inc-> 3`, `kind:
   UndefinedEvaluation{where: position 3, cause: division-by-zero}`.
