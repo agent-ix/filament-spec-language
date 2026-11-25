@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Candidate production for the independently checked DTMC long-run profile.
 
-use super::candidate::{rational_bytes, sort, values, CandidateBudget};
+use super::candidate::{CandidateBudget, rational_bytes, sort, values};
 use super::*;
 use crate::exact_probabilistic::{
-    build_retaining_monitor, build_retaining_monitor_with_budget, decide_long_run_workload,
-    BudgetedProductError, LongRunResult, ProductKind,
+    BudgetedProductError, LongRunResult, ProductKind, build_retaining_monitor_in_scope,
+    build_retaining_monitor_with_budget_in_scope, decide_long_run_workload,
 };
 use fsl_replay::{
-    long_run_probability_certificate_document, read_long_run_probability_certificate,
-    weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
-    write_weighted_long_run_probability_certificate, LongRunProbabilityComponent,
-    ProbabilityDocumentIoLimits,
+    LongRunProbabilityComponent, ProbabilityDocumentIoLimits,
+    long_run_probability_certificate_document_with_work_scope,
+    read_long_run_probability_certificate,
+    weighted_long_run_probability_certificate_document_with_work_scope,
+    write_long_run_probability_certificate, write_weighted_long_run_probability_certificate,
 };
+use ix_trace_rs::implements;
 
+#[implements("FR-203-AC-29", "FR-203-AC-30", "FR-203-AC-31", "FR-203-AC-32")]
 pub(super) fn run(
     mut request: ProductRequest<'_>,
     cancel: &Cancel,
@@ -44,12 +47,11 @@ pub(super) fn run(
         return not_yet();
     }
     let simulation = request.subject.simulation.clone();
+    let work = filament_exact::WorkScope::new(simulation.meter);
     let Some(package) = simulation.source_package() else {
         return not_yet();
     };
-    let limits = request
-        .limits
-        .with_work_scope(WorkScope::new(request.subject.simulation.meter));
+    let limits = request.limits;
     let subject = SubjectLimits {
         expansion: simulation.expansion,
         meter: &simulation.meter,
@@ -82,15 +84,20 @@ pub(super) fn run(
         edges: limits.model.limits.max_transitions,
         scalar_bits: limits.max_rational_bits,
         accounting: simulation.meter,
-        work_scope: limits.work_scope.clone(),
     };
     let claims = package.graph().probabilistic_model().claims();
-    let mut candidate = CandidateBudget::new(document_limits, cancel);
+    let mut candidate = CandidateBudget::new(document_limits, &work, cancel);
     let product = {
         let identity = candidate.identity;
         let mut admission = candidate.admission();
         let proof_bounds = std::mem::take(&mut request.subject.proof_bounds);
-        match build_retaining_monitor_with_budget(request, identity, &mut admission, cancel) {
+        match build_retaining_monitor_with_budget_in_scope(
+            request,
+            identity,
+            &mut admission,
+            work.clone(),
+            cancel,
+        ) {
             Ok((ProbBuild::Built(product), _)) => product,
             Ok((ProbBuild::Partial { .. }, _)) => return max_states_limit(&limits, subject),
             Ok((ProbBuild::Undefined(path), monitor)) => {
@@ -103,11 +110,12 @@ pub(super) fn run(
                     cancel,
                     subject,
                     tamper_witness,
-                )
+                    &work,
+                );
             }
             Err(BudgetedProductError::Product(error)) => return build_refusal(error, subject),
             Err(BudgetedProductError::Key(error)) => {
-                return document_failure(admission.refusal(error), subject)
+                return document_failure(admission.refusal(error), subject);
             }
             Err(BudgetedProductError::Undefined(_)) => {
                 let undefined_request = ProductRequest {
@@ -118,7 +126,7 @@ pub(super) fn run(
                     claim,
                     limits,
                 };
-                match super::build_retaining_monitor_for_item(undefined_request, cancel) {
+                match build_retaining_monitor_in_scope(undefined_request, work.clone(), cancel) {
                     Ok((ProbBuild::Undefined(path), monitor)) => {
                         return undefined::run(
                             simulation.clone(),
@@ -129,10 +137,11 @@ pub(super) fn run(
                             cancel,
                             subject,
                             tamper_witness,
-                        )
+                            &work,
+                        );
                     }
                     Ok((ProbBuild::Partial { .. }, _)) => {
-                        return max_states_limit(&limits, subject)
+                        return max_states_limit(&limits, subject);
                     }
                     Ok((ProbBuild::Built(_), _)) => return broken(),
                     Err(error) => return build_refusal(error, subject),
@@ -202,7 +211,7 @@ pub(super) fn run(
                     value: limits.max_rational_bits,
                 },
                 subject,
-            )
+            );
         }
         Err(UnboundedError::MaxPolicyIterations) => {
             return settled(
@@ -211,7 +220,7 @@ pub(super) fn run(
                     value: limits.max_policy_iterations,
                 },
                 subject,
-            )
+            );
         }
         Err(UnboundedError::MaxWorkingBytes) => {
             return settled(
@@ -220,13 +229,13 @@ pub(super) fn run(
                     value: limits.document.storage_bytes,
                 },
                 subject,
-            )
+            );
         }
         Err(UnboundedError::Cancelled(cause)) => {
-            return settled(&ExactProbBuildIssue::Cancelled(cause), subject)
+            return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
         }
         Err(UnboundedError::ZeroWeightComponent) => {
-            return EngineReport::Refused(Refusal::Unsupported(ZERO_WEIGHT_COMPONENT))
+            return EngineReport::Refused(Refusal::Unsupported(ZERO_WEIGHT_COMPONENT));
         }
         // `MissingReward` included: `admit_weights` refused every non-numeric or
         // negative reward above, so a solve that still names one is a disagreement
@@ -264,7 +273,7 @@ pub(super) fn run(
             Err(error) => return document_failure(error, subject),
         };
         let subsystem = if weight.is_some() {
-            weighted_long_run_probability_certificate_document(
+            weighted_long_run_probability_certificate_document_with_work_scope(
                 &system,
                 claims,
                 &item,
@@ -272,6 +281,7 @@ pub(super) fn run(
                 components,
                 document_limits,
                 cancel,
+                Some(&work),
             )
             .and_then(|document| {
                 fsl_replay::ProbabilitySubsystemCertificate::from_weighted_long_run(
@@ -281,7 +291,7 @@ pub(super) fn run(
                 )
             })
         } else {
-            long_run_probability_certificate_document(
+            long_run_probability_certificate_document_with_work_scope(
                 &system,
                 claims,
                 &item,
@@ -289,6 +299,7 @@ pub(super) fn run(
                 components,
                 document_limits,
                 cancel,
+                Some(&work),
             )
             .and_then(|document| {
                 fsl_replay::ProbabilitySubsystemCertificate::from_long_run(
@@ -320,7 +331,7 @@ pub(super) fn run(
             tamper(&mut witness);
         }
         return finish_replay(
-            replay_witness(&system, &item, &witness, &limits, cancel),
+            replay_witness_with_work_scope(&system, &item, &witness, &limits, cancel, &work),
             claim,
             &system,
             &witness,
@@ -338,7 +349,7 @@ pub(super) fn run(
         }
     }
     let bytes = if weight.is_some() {
-        weighted_long_run_probability_certificate_document(
+        weighted_long_run_probability_certificate_document_with_work_scope(
             &system,
             claims,
             &item,
@@ -346,12 +357,13 @@ pub(super) fn run(
             components,
             document_limits,
             cancel,
+            Some(&work),
         )
         .and_then(|document| {
             write_weighted_long_run_probability_certificate(&document, document_limits, cancel)
         })
     } else {
-        long_run_probability_certificate_document(
+        long_run_probability_certificate_document_with_work_scope(
             &system,
             claims,
             &item,
@@ -359,19 +371,22 @@ pub(super) fn run(
             components,
             document_limits,
             cancel,
+            Some(&work),
         )
         .and_then(|document| {
             write_long_run_probability_certificate(&document, document_limits, cancel)
         })
     };
     let checked = bytes.and_then(|bytes| {
-        check_probability_certificate_document(
+        fsl_replay::check_probability_certificate_document_as_with_work_scope(
             &system,
             claims,
             &item,
             &bytes,
+            fsl_replay::CertificateRole::Claim,
             document_limits,
             cancel,
+            &work,
         )
     });
     checked_report(checked, certificate, binding, None, subject)
@@ -404,8 +419,8 @@ fn every_scheduler(
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
-        decide_fair_long_run_mdp, decide_long_run_mdp, deterministic_policy_is_fair, induced_chain,
-        policy_action, FairProductError, LongRunResult, ProbStateId, ProductAction,
+        FairProductError, LongRunResult, ProbStateId, ProductAction, decide_fair_long_run_mdp,
+        decide_long_run_mdp, deterministic_policy_is_fair, induced_chain, policy_action,
     };
     let EveryScheduler {
         system,
@@ -501,7 +516,7 @@ fn every_scheduler(
             Ok(components) => components,
             Err(error) => return document_failure(error, subject),
         };
-        let bytes = long_run_probability_certificate_document(
+        let bytes = long_run_probability_certificate_document_with_work_scope(
             system,
             claims,
             item,
@@ -509,18 +524,21 @@ fn every_scheduler(
             components,
             document_limits,
             cancel,
+            Some(candidate.work_scope()),
         )
         .and_then(|document| {
             write_long_run_probability_certificate(&document, document_limits, cancel)
         });
         let checked = bytes.and_then(|bytes| {
-            check_probability_certificate_document(
+            fsl_replay::check_probability_certificate_document_as_with_work_scope(
                 system,
                 claims,
                 item,
                 &bytes,
+                fsl_replay::CertificateRole::Claim,
                 document_limits,
                 cancel,
+                candidate.work_scope(),
             )
         });
         return checked_report(checked, certificate, claim_binding, None, subject);
@@ -678,7 +696,7 @@ fn every_scheduler(
         ));
     }
     scheduler.sort_by(|a, b| a.0.cmp(&b.0));
-    let subsystem = long_run_probability_certificate_document(
+    let subsystem = long_run_probability_certificate_document_with_work_scope(
         system,
         claims,
         item,
@@ -686,6 +704,7 @@ fn every_scheduler(
         components,
         document_limits,
         cancel,
+        Some(candidate.work_scope()),
     )
     .and_then(|document| {
         fsl_replay::ProbabilitySubsystemCertificate::from_long_run(
@@ -719,7 +738,14 @@ fn every_scheduler(
     if let Some(tamper) = tamper_witness {
         tamper(&mut witness);
     }
-    let replayed = replay_witness(system, item, &witness, limits, cancel);
+    let replayed = replay_witness_with_work_scope(
+        system,
+        item,
+        &witness,
+        limits,
+        cancel,
+        candidate.work_scope(),
+    );
     finish_replay(replayed, claim, system, &witness, &spelled, limits, subject)
 }
 
@@ -741,8 +767,8 @@ fn fair_randomized_refutation(
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
-        decide_long_run_workload, induced_fair_randomized_chain, policy_action, ActionChoice,
-        ProductAction as AnalyzerAction,
+        ActionChoice, ProductAction as AnalyzerAction, decide_long_run_workload,
+        induced_fair_randomized_chain, policy_action,
     };
     let chain = match induced_fair_randomized_chain(product, &fair_witness.policy) {
         Ok(chain) => chain,
@@ -766,7 +792,7 @@ fn fair_randomized_refutation(
         Ok(components) => components,
         Err(error) => return document_failure(error, subject),
     };
-    let bytes = long_run_probability_certificate_document(
+    let bytes = long_run_probability_certificate_document_with_work_scope(
         system,
         claims,
         item,
@@ -774,6 +800,7 @@ fn fair_randomized_refutation(
         components,
         document_limits,
         cancel,
+        Some(budget.work_scope()),
     )
     .and_then(|document| {
         write_long_run_probability_certificate(&document, document_limits, cancel)
@@ -900,7 +927,14 @@ fn fair_randomized_refutation(
         tamper(&mut witness);
     }
     finish_replay(
-        replay_witness(system, item, &witness, limits, cancel),
+        replay_witness_with_work_scope(
+            system,
+            item,
+            &witness,
+            limits,
+            cancel,
+            budget.work_scope(),
+        ),
         claim,
         system,
         &witness,
@@ -973,7 +1007,7 @@ fn components(
     policy: Option<(&ModelSystem<'_>, ComponentPolicy<'_>)>,
     budget: &mut CandidateBudget<'_>,
 ) -> Result<Vec<LongRunProbabilityComponent>, ProbabilityDocumentError> {
-    use crate::exact_probabilistic::{policy_action, ProductAction};
+    use crate::exact_probabilistic::{ProductAction, policy_action};
     if solution.components.len() != solution.gain_bias.len() {
         return Err(ProbabilityDocumentError::Malformed);
     }
@@ -1031,7 +1065,7 @@ fn components(
                     return Err(match budget.cancel.tripped() {
                         Some(cause) => ProbabilityDocumentError::Cancelled(cause),
                         None => ProbabilityDocumentError::Accounting(Box::new(incomplete)),
-                    })
+                    });
                 }
                 _ => return Err(ProbabilityDocumentError::Malformed),
             };

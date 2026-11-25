@@ -5,6 +5,7 @@
 //! checker", item 6) and reads nothing of them from the document.
 
 use super::*;
+use ix_trace_rs::implements;
 
 /// The checked claim's elapsed-quantile query.
 pub(super) struct Query<'a> {
@@ -228,6 +229,7 @@ fn enumerate(
 /// `<= c` is refuted when the counted mass exceeds `(1 - q)` of the decided
 /// mass (the transform's minimum is negative); `>= c` when it is positive and
 /// reaches `q` of the decided mass (the transform's maximum is not negative).
+#[implements("FR-203-AC-32")]
 pub(super) fn replay(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
@@ -235,6 +237,7 @@ pub(super) fn replay(
     witness: &super::super::super::ProbabilisticCounterexample,
     limits: &crate::ExactProbLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<
     super::super::super::ProbabilityWitnessReplay,
     super::super::super::ProbabilityWitnessError,
@@ -278,7 +281,7 @@ pub(super) fn replay(
         return Err(Error::Refused);
     }
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
-    let mut meter = document_limits.accounting_meter(cancel);
+    let mut meter = document_limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let (graph, terminals, _) = enumerate(
         system,

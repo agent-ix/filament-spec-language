@@ -3,6 +3,7 @@
 use super::super::document::measure::ordered;
 use super::super::document::measure::{measure_probability_product_key, replay_control};
 use super::*;
+use ix_trace_rs::implements;
 use filament_exact::OrderingOperator as Order;
 use fsl_eval::probabilistic::{Accumulator, MeasureError, MonitorState};
 
@@ -185,12 +186,14 @@ fn residual_choice(
     Ok(step::ActionRefusal::CheckedResidual)
 }
 
+#[implements("FR-203-AC-32")]
 pub(super) fn replay(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
     witness: &ProbabilisticCounterexample,
     limits: &ExactProbLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     let kind = match &claim.form {
         ProbForm::Probability { .. } => MeasurePayoffKind::Event,
@@ -198,7 +201,12 @@ pub(super) fn replay(
         _ => return Err(ExactProbabilityGraphError::UnsupportedClaimForm.into()),
     };
     let document_limits = limits_of(system, limits);
-    let mut meter = limits.accounting_meter(system.meter_limits());
+    let mut meter = work
+        .map_or_else(
+            || filament_exact::Meter::new(system.meter_limits()),
+            |scope| scope.meter(),
+        )
+        .with_cancel(cancel.clone());
     let mut storage = 0;
     let selected = replay_control(
         system,
@@ -580,12 +588,14 @@ fn finish_undefined(
     )))
 }
 
+#[implements("FR-203-AC-32")]
 pub(super) fn replay_undefined(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
     witness: &ProbabilityUndefinedWitness,
     limits: &ExactProbLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     let evidence = &witness.path;
     let [path] = evidence.paths.as_slice() else {
@@ -598,7 +608,12 @@ pub(super) fn replay_undefined(
         });
     }
     let document_limits = limits_of(system, limits);
-    let mut meter = limits.accounting_meter(system.meter_limits());
+    let mut meter = work
+        .map_or_else(
+            || filament_exact::Meter::new(system.meter_limits()),
+            |scope| scope.meter(),
+        )
+        .with_cancel(cancel.clone());
     let mut storage = 0;
     let kind = match &claim.form {
         ProbForm::Quantile { .. } => MeasurePayoffKind::Satisfied,
@@ -904,12 +919,14 @@ pub(super) fn replay_undefined(
     Ok(ProbabilityWitnessReplay::Parity)
 }
 
+#[implements("FR-203-AC-32")]
 pub(super) fn replay_subsystem(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
     witness: &ProbabilisticCounterexample,
     limits: &ExactProbLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     if !matches!(claim.form, ProbForm::MeanOfFraction { .. }) || !witness.paths.is_empty() {
         return Err(ProbabilityWitnessError::Refused);
@@ -919,7 +936,12 @@ pub(super) fn replay_subsystem(
         .as_ref()
         .ok_or(ProbabilityWitnessError::Refused)?;
     let document_limits = limits_of(system, limits);
-    let mut meter = limits.accounting_meter(system.meter_limits());
+    let mut meter = work
+        .map_or_else(
+            || filament_exact::Meter::new(system.meter_limits()),
+            |scope| scope.meter(),
+        )
+        .with_cancel(cancel.clone());
     let mut storage = 0;
     let binding = claim_binding(system, claim)?;
     let reference = binding.as_ref().map(|binding| &binding.reference);
@@ -987,6 +1009,7 @@ pub(super) fn replay_subsystem(
         &deterministic,
         document_limits,
         cancel,
+        work,
     )
     .map_err(|error| match error {
         ProbabilityDocumentError::MalformedMember(member)

@@ -11,9 +11,11 @@ use filament_exact::{Integer, Rational};
 use fsl_eval::simulation::model::{ClockValuation, ModelSimState, TimedState, TimedSystem};
 use num_traits::Zero;
 use serde_json::{json, Value as JsonValue};
+use ix_trace_rs::implements;
 
 mod elapsed;
 
+#[implements("FR-203-AC-30")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -22,8 +24,9 @@ pub(super) fn check(
     relation: super::super::ValueRelation,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
-    let mut meter = limits.accounting_meter(cancel);
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let mut fairness_records = Vec::new();
     let document = read_document_profile(
@@ -4616,12 +4619,14 @@ fn certificate_scale(
 /// [`ProbabilityWitnessError`] when the claim is not a timed deadline claim,
 /// the product cannot be enumerated within the limits, or the witness names a
 /// state, step or choice the checker's product does not have.
+#[implements("FR-203-AC-32")]
 pub(in crate::probability_certificate) fn replay_timed_witness(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
     witness: &super::super::ProbabilisticCounterexample,
     limits: &crate::ExactProbLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<super::super::ProbabilityWitnessReplay, super::super::ProbabilityWitnessError> {
     use super::super::{ProbabilityWitnessError as Error, ProbabilityWitnessReplay as Replay};
     let unsupported = || Error::Graph(ExactProbabilityGraphError::UnsupportedClaimForm);
@@ -4637,7 +4642,7 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         _ => unsupported(),
     };
     if let Some(query) = elapsed::query(claim) {
-        return elapsed::replay(system, claim, &query, witness, limits, cancel);
+        return elapsed::replay(system, claim, &query, witness, limits, cancel, work);
     }
     if !claim.fairness.is_empty() {
         return Err(unsupported());
@@ -4667,8 +4672,12 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         }
     };
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
-    let mut meter =
-        filament_exact::Meter::new(document_limits.accounting).with_cancel(cancel.clone());
+    let mut meter = work
+        .map_or_else(
+            || filament_exact::Meter::new(document_limits.accounting),
+            |scope| scope.meter(),
+        )
+        .with_cancel(cancel.clone());
     let mut storage = 0;
     let graph = match route {
         TimedProbabilityRoute::Digital => enumerate_digital_deadline(

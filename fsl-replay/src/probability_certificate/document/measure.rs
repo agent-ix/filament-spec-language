@@ -8,6 +8,7 @@ use fsl_eval::probabilistic::{
 };
 use fsl_eval::simulation::model::{ModelKeyBudget, ModelKeyError, PredicateReading};
 use fsl_semantics::check::{BoundedMeasure, CheckedPredicate, Event, Weighting};
+use ix_trace_rs::implements;
 use quire_canonical::{Encode, Error, Node, Sink, Writer};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -100,6 +101,7 @@ pub(super) struct CheckOptions<'a> {
     pub(super) role: super::CertificateRole,
     pub(super) limits: ProbabilityDocumentLimits,
     pub(super) cancel: &'a Cancel,
+    pub(super) work: Option<&'a filament_exact::WorkScope>,
 }
 
 pub(in crate::probability_certificate) fn ordered(
@@ -1836,8 +1838,26 @@ pub fn measure_probability_certificate_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
+    measure_probability_certificate_document_with_work_scope(
+        system, claims, item, certificate, payoff, limits, cancel, None,
+    )
+}
+
+/// Build an unchecked exact measure document under the item's shared allowance.
+#[implements("FR-203-AC-29")]
+#[allow(clippy::too_many_arguments)]
+pub fn measure_probability_certificate_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    certificate: &ExactProbabilityCertificate,
+    payoff: MeasurePayoffKind,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
     let claim = bind_claim(claims, item, cancel)?;
-    let mut meter = limits.accounting_meter(cancel);
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let plan = plan(
         system,
@@ -1887,11 +1907,26 @@ pub fn vacuous_measure_probability_certificate_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
+    vacuous_measure_probability_certificate_document_with_work_scope(
+        system, claims, item, limits, cancel, None,
+    )
+}
+
+/// Build value-free vacuous evidence under the item's shared allowance.
+#[implements("FR-203-AC-29")]
+pub fn vacuous_measure_probability_certificate_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<MeasureProbabilityDocument, ProbabilityDocumentError> {
     let claim = bind_claim(claims, item, cancel)?;
     if !matches!(claim.form, ProbForm::Quantile { .. }) {
         return Err(ProbabilityDocumentError::MalformedMember("mode"));
     }
-    let mut meter = limits.accounting_meter(cancel);
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let selected = plan(
         system,
@@ -2199,6 +2234,7 @@ fn acceptance(
     })
 }
 
+#[implements("FR-203-AC-30")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -2212,8 +2248,9 @@ pub(super) fn check(
         role,
         limits,
         cancel,
+        work,
     } = options;
-    let mut meter = limits.accounting_meter(cancel);
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let document = match decode_measure_probability_certificate(
         bytes,
@@ -2961,6 +2998,7 @@ pub(in crate::probability_certificate) enum MeanRefutationCheck {
     Rejected(ProbabilityCertificateRejection),
     PolicyParity,
 }
+#[implements("FR-203-AC-32")]
 #[allow(clippy::too_many_arguments)]
 pub(in crate::probability_certificate) fn check_mean_refutation(
     system: &ModelSystem<'_>,
@@ -2970,6 +3008,7 @@ pub(in crate::probability_certificate) fn check_mean_refutation(
     scheduler: &[(ProbabilityProductKey, crate::ProductAction)],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<MeanRefutationCheck, ProbabilityDocumentError> {
     poll(cancel)?;
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limits.bytes {
@@ -2980,9 +3019,9 @@ pub(in crate::probability_certificate) fn check_mean_refutation(
         ));
     }
     if bounds::is_bound(bytes)? {
-        return bounds::check(system, claim, item, bytes, scheduler, limits, cancel);
+        return bounds::check(system, claim, item, bytes, scheduler, limits, cancel, work);
     }
-    let mut meter = limits.accounting_meter(cancel);
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let document =
         decode_measure_probability_certificate(bytes, limits, cancel, &mut meter, &mut storage)?;
@@ -3127,7 +3166,6 @@ mod partial_lower_tests {
             edges: 100,
             scalar_bits: 128,
             accounting: crate::AccountingLimits::default().0,
-            work_scope: None,
         }
     }
 

@@ -14,17 +14,18 @@ use filament_exact::{
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::{AutomatonError, Monitor, PropertyAutomaton};
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{
-    same_rewards, Action, ModelSimState, ModelSimulationRequest, ModelSystem, NotMarkov,
-    PredicateReading, ScheduledIdentity, Unsteppable,
-};
-use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::model::{
+    Action, ModelSimState, ModelSimulationRequest, ModelSystem, NotMarkov, PredicateReading,
+    ScheduledIdentity, Unsteppable, same_rewards,
+};
+use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::ModelCheckLimit;
 use fsl_semantics::check::{CheckedPredicate, Workload};
+use ix_trace_rs::implements;
 
 use super::plan::{Plan, PlanFault, Reads};
 use super::{
@@ -64,6 +65,7 @@ pub(crate) fn build_retaining_monitor(
 
 /// [`build_retaining_monitor`] under the item's `work` allowance, so that a
 /// later reading of the same item spends only what the build left (FR-203).
+#[implements("FR-203-AC-29")]
 pub(crate) fn build_retaining_monitor_in_scope(
     request: ProductRequest<'_>,
     work: WorkScope,
@@ -110,6 +112,7 @@ pub(crate) fn build_retaining_monitor_with_budget(
 
 /// [`build_retaining_monitor_with_budget`] under the item's `work` allowance,
 /// as [`build_retaining_monitor_in_scope`] is for an unbudgeted build.
+#[implements("FR-203-AC-29")]
 pub(crate) fn build_retaining_monitor_with_budget_in_scope(
     request: ProductRequest<'_>,
     identity: IdentityLimits,
@@ -347,7 +350,7 @@ pub(crate) fn automaton_refusal(error: AutomatonError) -> ProductRefusal {
 
 #[cfg(test)]
 mod tests {
-    use super::{lower_completion, plan_refusal, OmittedEdge, PlanFault, ProductRefusal};
+    use super::{OmittedEdge, PlanFault, ProductRefusal, lower_completion, plan_refusal};
     use crate::exact_probabilistic::{
         ProbEdge, ProbKey, ProbProduct, ProbStateId, ProductAction, ProductKind,
     };

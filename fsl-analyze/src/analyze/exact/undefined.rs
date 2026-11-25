@@ -5,7 +5,7 @@ use super::*;
 use crate::exact_probabilistic::{PredicateRole, UndefinedPath, UndefinedRead};
 use fsl_eval::automaton::{Monitor, PropertyAutomaton, QualifiedBoundedMonitor};
 use fsl_eval::simulation::model::{ModelSimulationRequest, PredicateReading};
-use fsl_replay::{replay_probabilistic_undefined, ProbabilityUndefinedWitness};
+use fsl_replay::{ProbabilityUndefinedWitness, replay_probabilistic_undefined_with_work_scope};
 use ix_trace_rs::implements;
 
 #[allow(clippy::too_many_arguments)]
@@ -19,6 +19,7 @@ pub(super) fn run(
     cancel: &Cancel,
     subject: SubjectLimits<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+    work: &filament_exact::WorkScope,
 ) -> EngineReport {
     // The checked-subject undefined entry is independent of the numerical
     // threshold and covers each supported product-predicate read.
@@ -37,7 +38,7 @@ pub(super) fn run(
         Ok(system) => system,
         Err(error) => return build_refusal(ProductRefusal::Admission(error), subject),
     };
-    let built = materialize(&system, claim, &path, monitor, limits, cancel);
+    let built = materialize(&system, claim, &path, monitor, limits, cancel, work);
     let (mut witness, scheduler) = match built {
         Ok(built) => built,
         Err(ProducerFailure::Invariant) => return broken(),
@@ -49,13 +50,14 @@ pub(super) fn run(
     let Some(package) = system.source_package() else {
         return not_yet();
     };
-    match replay_probabilistic_undefined(
+    match replay_probabilistic_undefined_with_work_scope(
         package,
         &system,
         &witness.path.item,
         &witness,
         limits,
         cancel,
+        Some(work),
     ) {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
             let quantile_bound;
@@ -132,6 +134,7 @@ type SpelledScheduler = Vec<(
     fsl_eval::simulation::model::ScheduledIdentity,
 )>;
 
+#[implements("FR-203-AC-33")]
 fn materialize(
     system: &ModelSystem<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
@@ -139,10 +142,13 @@ fn materialize(
     monitor: Option<Monitor<PropertyAutomaton>>,
     limits: &crate::exact_probabilistic::ExactProbLimits,
     cancel: &Cancel,
+    work: &filament_exact::WorkScope,
 ) -> Result<(ProbabilityUndefinedWitness, SpelledScheduler), ProducerFailure> {
-    materialize_inner(system, claim, path, monitor, limits, cancel).map_err(ProducerFailure::from)
+    materialize_inner(system, claim, path, monitor, limits, cancel, work)
+        .map_err(ProducerFailure::from)
 }
 
+#[implements("FR-203-AC-33")]
 fn materialize_inner(
     system: &ModelSystem<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
@@ -150,6 +156,7 @@ fn materialize_inner(
     monitor: Option<Monitor<PropertyAutomaton>>,
     limits: &crate::exact_probabilistic::ExactProbLimits,
     cancel: &Cancel,
+    work: &filament_exact::WorkScope,
 ) -> Result<(ProbabilityUndefinedWitness, SpelledScheduler), ProbabilityWitnessError> {
     let item = fsl_replay::probabilistic_claim_identity(claim)
         .map_err(|_| ProbabilityWitnessError::Refused)?;
@@ -157,7 +164,7 @@ fn materialize_inner(
     let reference = binding.as_ref().map(|binding| &binding.reference);
     let measured = claim.bounded_measure();
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
-    let mut measure_meter = limits.accounting_meter(system.meter_limits());
+    let mut measure_meter = work.meter().with_cancel(cancel.clone());
     let mut measure_storage = 0;
     let reward = if measured {
         let kind = match claim.form {

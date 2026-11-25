@@ -2,6 +2,7 @@
 //! Independent gain–bias checking of the closed DTMC long-run profiles.
 
 use super::*;
+use ix_trace_rs::implements;
 use quire_canonical::{Encode, Error, Sink, Writer};
 use std::cell::RefCell;
 
@@ -1199,7 +1200,26 @@ pub fn long_run_probability_certificate_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<LongRunProbabilityDocument, ProbabilityDocumentError> {
+    long_run_probability_certificate_document_with_work_scope(
+        system, claims, item, values, components, limits, cancel, None,
+    )
+}
+
+/// Build long-run candidate transport under the item's shared work allowance.
+#[implements("FR-203-AC-29")]
+#[allow(clippy::too_many_arguments)]
+pub fn long_run_probability_certificate_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    values: Vec<ExactProbabilityValue>,
+    components: Vec<LongRunProbabilityComponent>,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<LongRunProbabilityDocument, ProbabilityDocumentError> {
     let mut cx = Context::new(limits, cancel);
+    cx.meter = limits.accounting_meter_in_scope(cancel, work);
     let subject = subject(system, claims, item, &mut cx)?;
     if subject.weight.is_some() {
         return Err(ProbabilityDocumentError::Unsupported);
@@ -1236,7 +1256,26 @@ pub fn weighted_long_run_probability_certificate_document(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<WeightedLongRunProbabilityDocument, ProbabilityDocumentError> {
+    weighted_long_run_probability_certificate_document_with_work_scope(
+        system, claims, item, values, components, limits, cancel, None,
+    )
+}
+
+/// Build weighted long-run candidate transport under the shared work allowance.
+#[implements("FR-203-AC-29")]
+#[allow(clippy::too_many_arguments)]
+pub fn weighted_long_run_probability_certificate_document_with_work_scope(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    values: Vec<ExactProbabilityValue>,
+    components: Vec<LongRunProbabilityComponent>,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<WeightedLongRunProbabilityDocument, ProbabilityDocumentError> {
     let mut cx = Context::new(limits, cancel);
+    cx.meter = limits.accounting_meter_in_scope(cancel, work);
     let subject = subject(system, claims, item, &mut cx)?;
     let weight = subject
         .weight
@@ -1271,6 +1310,7 @@ fn malformed(member: &'static str) -> ExactProbabilityCertificateCheck {
     })
 }
 
+#[implements("FR-203-AC-30")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -1278,8 +1318,10 @@ pub(super) fn check(
     bytes: &[u8],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let mut cx = Context::new(limits, cancel);
+    cx.meter = limits.accounting_meter_in_scope(cancel, work);
     check_with_context(system, claims, item, bytes, &mut cx)
 }
 
@@ -1290,6 +1332,7 @@ pub(super) fn check(
 /// Under `every scheduler` the chain is the one `scheduler` induces (FR-412
 /// "Long-run certificate wire shape and witnesses"); under a workload it must
 /// be empty.
+#[implements("FR-203-AC-32")]
 pub(in crate::probability_certificate) fn check_refutation(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -1298,8 +1341,10 @@ pub(in crate::probability_certificate) fn check_refutation(
     scheduler: &[(ProbabilityProductKey, LongRunPolicyChoice)],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<LongRunRefutation, ProbabilityDocumentError> {
     let mut cx = Context::new(limits, cancel);
+    cx.meter = limits.accounting_meter_in_scope(cancel, work);
     cx.refutation = true;
     check_scheduled(system, claims, item, bytes, scheduler, &mut cx)
 }

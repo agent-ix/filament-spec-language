@@ -4,6 +4,7 @@
 use super::*;
 use fsl_eval::automaton::{BoundedState, QualifiedBoundedMonitor, StateId};
 use fsl_semantics::check::Event;
+use ix_trace_rs::implements;
 
 /// Untrusted path and the exact pre-read location it claims is undefined.
 #[derive(Clone, Debug)]
@@ -28,6 +29,23 @@ pub fn replay_probabilistic_undefined(
     limits: &ExactProbLimits,
     cancel: &Cancel,
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
+    replay_probabilistic_undefined_with_work_scope(
+        package, system, item, witness, limits, cancel, None,
+    )
+}
+
+/// Replay an undefined path under the item's shared work allowance.
+#[implements("FR-203-AC-33")]
+#[allow(clippy::too_many_arguments)]
+pub fn replay_probabilistic_undefined_with_work_scope(
+    package: &CheckedPackage,
+    system: &ModelSystem<'_>,
+    item: &ObligationIdentity,
+    witness: &ProbabilityUndefinedWitness,
+    limits: &ExactProbLimits,
+    cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
+) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     poll_cancel(cancel)?;
     let evidence = &witness.path;
     if evidence.subsystem.is_some() {
@@ -42,7 +60,7 @@ pub fn replay_probabilistic_undefined(
     }
     let claim = bind_claim(package.graph().probabilistic_model().claims(), item, cancel)?;
     if claim.bounded_measure() {
-        return super::measure::replay_undefined(system, claim, witness, limits, cancel);
+        return super::measure::replay_undefined(system, claim, witness, limits, cancel, work);
     }
     if !matches!(
         TimedSystem::new(system, &claim.subject.alias),
@@ -99,7 +117,12 @@ pub fn replay_probabilistic_undefined(
     };
     let mut control: Option<StateId> = None;
     let mut storage = 0;
-    let mut meter = limits.accounting_meter(system.meter_limits());
+    let mut meter = work
+        .map_or_else(
+            || filament_exact::Meter::new(system.meter_limits()),
+            |scope| scope.meter(),
+        )
+        .with_cancel(cancel.clone());
     let deterministic = super::deterministic_scheduler_rows(&evidence.scheduler)?;
     let scheduler = step::scheduler(&deterministic, limits, &mut meter, &mut storage, cancel)?;
     let mut transition_count = 0;

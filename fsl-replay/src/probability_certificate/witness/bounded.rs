@@ -6,13 +6,16 @@ use fsl_eval::automaton::{
     AutomatonError, BoundedState, QualifiedBoundedError, QualifiedBoundedMonitor, StateId,
 };
 use fsl_semantics::check::Event;
+use ix_trace_rs::implements;
 
+#[implements("FR-203-AC-32")]
 pub(super) fn replay(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
     witness: &ProbabilisticCounterexample,
     limits: &ExactProbLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     let ProbForm::Probability {
         bound,
@@ -114,7 +117,12 @@ pub(super) fn replay(
     let mut visited_choices = BTreeSet::new();
     let mut transition_count = 0usize;
     let mut storage = 0u64;
-    let mut meter = limits.accounting_meter(system.meter_limits());
+    let mut meter = work
+        .map_or_else(
+            || filament_exact::Meter::new(system.meter_limits()),
+            |scope| scope.meter(),
+        )
+        .with_cancel(cancel.clone());
     let mut mass = rational(0);
     // A cylinder includes its semantic choice and draw, even when several
     // disjoint draws produce exactly the same model and monitor state.

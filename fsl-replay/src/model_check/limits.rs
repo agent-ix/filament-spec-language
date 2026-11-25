@@ -80,7 +80,7 @@ impl Default for ModelCheckLimits {
 
 /// The complete caller-raisable limits for one EN-5 exact probabilistic run
 /// (FR-203, ADR-028 LM-1 to LM-3).
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExactProbLimits {
     /// Certificate transport byte and working-storage ceilings (FR-201, FR-282).
     pub document: crate::ProbabilityDocumentIoLimits,
@@ -98,8 +98,6 @@ pub struct ExactProbLimits {
     pub max_policy_iterations: u64,
     /// Maximum emitted finite witness paths.
     pub max_witness_paths: u64,
-    /// Shared per-item work entitlement installed by the analyzer.
-    pub work_scope: Option<filament_exact::WorkScope>,
 }
 
 impl Default for ExactProbLimits {
@@ -113,24 +111,14 @@ impl Default for ExactProbLimits {
             max_rational_bits: DEFAULT_EXACT_PROB_MAX_RATIONAL_BITS,
             max_policy_iterations: DEFAULT_EXACT_PROB_MAX_POLICY_ITERATIONS,
             max_witness_paths: DEFAULT_EXACT_PROB_MAX_WITNESS_PATHS,
-            work_scope: None,
         }
     }
 }
 
 impl ExactProbLimits {
-    /// Attach the item-wide work allowance shared by production and replay.
-    pub fn with_work_scope(mut self, work_scope: filament_exact::WorkScope) -> Self {
-        self.work_scope = Some(work_scope);
-        self
-    }
-
-    /// Create a meter under the item's shared work allowance when present.
+    /// Create a meter under the caller's ordinary accounting ceilings.
     pub fn accounting_meter(&self, limits: filament_exact::ScalarLimits) -> filament_exact::Meter {
-        match &self.work_scope {
-            Some(scope) => scope.meter(),
-            None => filament_exact::Meter::new(limits),
-        }
+        filament_exact::Meter::new(limits)
     }
 
     /// The configured value for a limit owned by this EN-5 request. Limits

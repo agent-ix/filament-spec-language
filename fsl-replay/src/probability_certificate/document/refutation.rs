@@ -12,6 +12,7 @@
 //! qualitative set is read.
 
 use super::*;
+use ix_trace_rs::implements;
 
 type RandomizedSchedule = BTreeMap<ProbabilityProductKey, Vec<(usize, Rational)>>;
 
@@ -519,6 +520,7 @@ pub(in crate::probability_certificate) enum SubsystemRefutationCheck {
 /// counterexample-role certificate over it. `scheduler` is the
 /// counterexample's deterministic memoryless rows; it is empty under a
 /// workload.
+#[implements("FR-203-AC-32")]
 #[allow(clippy::too_many_arguments)]
 pub(in crate::probability_certificate) fn check(
     system: &ModelSystem<'_>,
@@ -528,8 +530,9 @@ pub(in crate::probability_certificate) fn check(
     scheduler: &[(ProbabilityProductKey, crate::ProductAction)],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<SubsystemRefutationCheck, ProbabilityDocumentError> {
-    let mut meter = limits.accounting_meter(cancel);
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let mut storage = 0;
     let decoded = decode(bytes, limits, cancel, &mut meter)?;
     if &decoded.identity != item {

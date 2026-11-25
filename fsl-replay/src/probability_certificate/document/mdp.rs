@@ -2,6 +2,7 @@
 //! FR-201's exact cyclic MDP values, independently checked against all actions.
 
 use super::*;
+use ix_trace_rs::implements;
 
 /// Unchecked exact document with its closed wire-profile selection retained.
 /// Existing document literals retain their original meaning and encoding.
@@ -337,6 +338,7 @@ struct Context<'a, 'control> {
     storage: u64,
     reward: bool,
     reward_control: Option<&'a super::super::reward::RewardControl<'control>>,
+    work: Option<&'a filament_exact::WorkScope>,
     identity: fsl_foundation::IdentityLimits,
     observe: Option<&'a mut dyn FnMut(CyclicMdpProbabilityPhase)>,
 }
@@ -350,6 +352,7 @@ pub(super) struct ValueBoundControl<'a, 'control> {
     pub(super) limits: ProbabilityDocumentLimits,
     pub(super) cancel: &'a Cancel,
     pub(super) reward: &'a super::super::reward::RewardControl<'control>,
+    pub(super) work: Option<&'a filament_exact::WorkScope>,
 }
 
 /// Independently reconstruct the unbounded fair eventual MDP and verify that
@@ -410,6 +413,7 @@ impl<'a, 'control> Context<'a, 'control> {
             storage: 0,
             reward: false,
             reward_control: None,
+            work: None,
             identity: fsl_foundation::IdentityLimits::default(),
             observe,
         }
@@ -1304,6 +1308,7 @@ pub(super) fn check<'a>(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-203-AC-30")]
 pub(super) fn check_with_reward_control<'a, 'control>(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -1313,12 +1318,16 @@ pub(super) fn check_with_reward_control<'a, 'control>(
     limits: ProbabilityDocumentLimits,
     cancel: &'a Cancel,
     control: &'a super::super::reward::RewardControl<'control>,
+    work: Option<&'a filament_exact::WorkScope>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let mut cx = Context::new(limits, cancel, None);
+    cx.meter = limits.accounting_meter_in_scope(cancel, work);
+    cx.work = work;
     cx.reward_control = Some(control);
     check_with_context(system, claims, item, bytes, offer, cx)
 }
 
+#[implements("FR-203-AC-30")]
 pub(super) fn check_with_value_bound_control<'a, 'control>(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
@@ -1328,6 +1337,10 @@ pub(super) fn check_with_value_bound_control<'a, 'control>(
     control: ValueBoundControl<'a, 'control>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let mut cx = Context::new(control.limits, control.cancel, None);
+    cx.meter = control
+        .limits
+        .accounting_meter_in_scope(control.cancel, control.work);
+    cx.work = control.work;
     cx.reward_control = Some(control.reward);
     cx.bound_side = offer.side;
     check_with_context(system, claims, item, bytes, offer, cx)

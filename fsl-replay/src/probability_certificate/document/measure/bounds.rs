@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Lower and upper fraction expectations in the mean-refutation role.
 use super::*;
+use ix_trace_rs::implements;
 
 pub(in crate::probability_certificate) const PROFILE: &str =
     "filament.probability-objective/value-bounds/v1";
@@ -145,6 +146,7 @@ fn policy_action(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-203-AC-32")]
 pub(super) fn check(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
@@ -153,6 +155,7 @@ pub(super) fn check(
     scheduler: &[(ProbabilityProductKey, crate::ProductAction)],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    work: Option<&filament_exact::WorkScope>,
 ) -> Result<MeanRefutationCheck, ProbabilityDocumentError> {
     let mut storage = 0;
     admit(bytes, limits, cancel, &mut storage)?;
@@ -173,7 +176,7 @@ pub(super) fn check(
         "upper" => false,
         _ => return Err(ProbabilityDocumentError::MalformedMember("kind")),
     };
-    let mut meter = limits.accounting_meter(cancel);
+    let mut meter = limits.accounting_meter_in_scope(cancel, work);
     let selected = plan(
         system,
         claim,

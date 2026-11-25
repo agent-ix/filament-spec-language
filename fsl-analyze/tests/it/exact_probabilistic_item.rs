@@ -58,6 +58,150 @@ fn settle(
     records.remove(0)
 }
 
+fn settle_with_work(
+    world: &World,
+    claim: &str,
+    work_units: u64,
+) -> fsl_analyze::analyze::AnalyzeRecord {
+    let mut request = world.request(claim, ModelCheckLimits::default());
+    request.subject.simulation.meter.work_units = work_units;
+    analyze_items(
+        &Engines::fsl().expect("the linked engines are admitted"),
+        vec![exact_probabilistic_item(RequestIndex::new(0), request)],
+        &Cancel::new(),
+    )
+    .remove(0)
+}
+
+fn first_complete_work(
+    world: &World,
+    claim: &str,
+    expected: impl Fn(&TerminalValue) -> bool,
+) -> u64 {
+    let mut high = 1u64;
+    while settle_with_work(world, claim, high)
+        .terminal()
+        .is_some_and(|terminal| !expected(terminal.value()))
+    {
+        high = high.checked_mul(2).expect("work search stays bounded");
+        assert!(
+            high <= 1 << 24,
+            "the fixture completes under a finite budget"
+        );
+    }
+    let mut low = 0u64;
+    while low + 1 < high {
+        let middle = low + (high - low) / 2;
+        if settle_with_work(world, claim, middle)
+            .terminal()
+            .is_some_and(|terminal| expected(terminal.value()))
+        {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    high
+}
+
+/// Product construction, certificate production and independent checking
+/// share the item's `accounting.work_units` allowance.
+#[trace("FR-203-AC-29", "FR-203-AC-30")]
+#[test]
+fn certificate_work_is_cumulative_across_build_production_and_checking() {
+    let world = World::new(&prob_world::link(CLAIMS));
+    let complete = first_complete_work(&world, "Likely", |value| {
+        matches!(value, TerminalValue::Proved { .. })
+    });
+    assert!(complete > 1, "the fixture exercises later certificate work");
+
+    let short = settle_with_work(&world, "Likely", complete - 1);
+    assert!(matches!(
+        short.terminal().map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert!(short.exact_probabilistic.is_none());
+    assert!(short.probabilistic_counterexample.is_none());
+
+    let complete_record = settle_with_work(&world, "Likely", complete);
+    assert!(matches!(
+        complete_record.terminal().unwrap().value(),
+        TerminalValue::Proved { .. }
+    ));
+}
+
+/// Witness construction and independent replay use the same item work prefix.
+#[trace("FR-203-AC-31", "FR-203-AC-32")]
+#[test]
+fn counterexample_work_is_cumulative_across_production_and_replay() {
+    let world = World::new(&prob_world::link(CLAIMS));
+    let complete = first_complete_work(&world, "Unlikely", |value| {
+        *value == TerminalValue::Refuted
+    });
+    assert!(
+        complete > 1,
+        "the fixture exercises witness production and replay"
+    );
+
+    let short = settle_with_work(&world, "Unlikely", complete - 1);
+    assert!(matches!(
+        short.terminal().map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert!(short.probabilistic_counterexample.is_none());
+    assert!(short.exact_probabilistic.is_none());
+
+    let complete_record = settle_with_work(&world, "Unlikely", complete);
+    assert_eq!(
+        complete_record.terminal().unwrap().value(),
+        &TerminalValue::Refuted
+    );
+    assert!(complete_record.probabilistic_counterexample.is_some());
+}
+
+/// Undefined-path re-exploration continues after product construction has
+/// spent part of the item allowance.
+#[trace("FR-203-AC-33", "FR-196-AC-5")]
+#[test]
+fn undefined_reexploration_spends_the_remaining_item_work() {
+    let claim = "probabilistic Dropped using ev on M over (c: M::Coin) under Even on origin \
+        { probability >= 0.5 [ always[0,3] holds(c.v = 0) ] }";
+    let world = World::new(&prob_world::coin(claim));
+    let complete = first_complete_work(&world, "Dropped", |value| {
+        *value == TerminalValue::Refuted
+    });
+    assert!(
+        complete > 1,
+        "the fixture performs product work and re-exploration"
+    );
+
+    let short = settle_with_work(&world, "Dropped", complete - 1);
+    assert!(matches!(
+        short.terminal().map(|terminal| terminal.value()),
+        Some(TerminalValue::Incomplete(
+            IncompleteCause::LimitReached { .. }
+        ))
+    ));
+    assert!(short.probabilistic_counterexample.is_none());
+    assert!(short.exact_probabilistic.is_none());
+
+    let complete_record = settle_with_work(&world, "Dropped", complete);
+    assert_eq!(
+        complete_record.terminal().unwrap().value(),
+        &TerminalValue::Refuted
+    );
+    let undefined = complete_record
+        .probabilistic_counterexample
+        .as_ref()
+        .and_then(|counterexample| counterexample.undefined())
+        .expect("the complete item carries replayed undefined evidence");
+    assert_eq!(undefined.evaluation.site.position, 1);
+}
+
 /// Equality at the exact reachability threshold proves with the checked
 /// EN-5 basis; increasing only that threshold refutes instead of certifying.
 #[trace("FR-290-AC-1")]

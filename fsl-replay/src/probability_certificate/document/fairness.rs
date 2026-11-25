@@ -1002,7 +1002,6 @@ mod tests {
             edges: 1024,
             scalar_bits: 128,
             accounting,
-            work_scope: None,
         }
     }
 
