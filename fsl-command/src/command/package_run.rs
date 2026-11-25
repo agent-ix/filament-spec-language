@@ -154,9 +154,9 @@ fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
             ),
         };
     }
+    let cause = refusal.reader_cause().map(str::to_owned);
     let fsl_package::PackageAdmissionRefusal {
         code,
-        cause,
         pointer,
         identity,
         ..
