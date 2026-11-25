@@ -14,7 +14,7 @@ use fsl_analyze::analyze::{
     analyze_items, contract_item, AnalyzeItem, AnalyzeRecord, Engines, Settlement,
 };
 use fsl_analyze::contract_check::{manifest, ContractRequest};
-use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::model::{ModelSimulationRequest, ModelSystem, PopulationUniverse};
 use fsl_forms::StateClauseKind;
 use fsl_foundation::RequestIndex;
 use fsl_replay::contract_check::{
@@ -26,12 +26,14 @@ use fsl_replay::{
     ReportedInconclusiveCause, TerminalValue, UnavailabilityCause,
 };
 use fsl_semantics::check::{Capability, DeclarationFamily};
+use fsl_semantics::model::observation::{document_reference, DocumentProvision};
 use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
 use crate::graph_world::{
     config_kernel_world_over, config_version, config_world_over, World, CONFIG_CONTRACT,
 };
+use crate::prob_world::source_population;
 use crate::value_validity::source_color;
 
 /// The world with `extra` declarations and one initial state `a` at
@@ -944,10 +946,10 @@ fn a_bound_step_relation_is_unsupported_with_no_implementation_engine() {
 }
 
 /// A contract counterexample whose execution holds source `enum` values as an
-/// argument and as the result writes them in FR-181's typed enum form. This
-/// proves the spelling of the contract wire only: the values are substituted
-/// into a witness over a domain package's operation, and no production path is
-/// known to carry a source `enum` there.
+/// argument and as the result writes them in FR-181's typed enum form. The
+/// values are substituted into a witness over a domain package's operation, so
+/// this pins the spelling of both members with chosen values; the source
+/// operation test below produces such values through the analyzer.
 #[test]
 fn a_source_enum_argument_and_result_are_spelled_in_a_contract_counterexample() {
     let world = world(
@@ -981,4 +983,91 @@ fn a_source_enum_argument_and_result_are_spelled_in_a_contract_counterexample() 
         serde_json::json!([{"parameter": 0, "value": color("red")}])
     );
     assert_eq!(wire["executions"][0]["result"], color("blue"));
+}
+
+/// A refuted invariant over an object of the unit's own type `Lamp` writes the
+/// source `enum` argument and result of the source operation that breaks it in
+/// FR-181's typed enum form. `paint` admits a successor only for the argument
+/// `Color::blue` and the result `Color::red`.
+#[test]
+fn a_source_enum_argument_and_result_are_spelled_in_a_source_operation_counterexample() {
+    let world = world(
+        "enum Color { red, blue }\n\
+         object Lamp { lit: Boolean; population lamps; \
+         operation paint(c: Color): Color modifies self.lit; }\n\
+         post Lit using v on Lamp::paint \
+         { self.lit and c = Color::blue and result = Color::red }\n\
+         invariant Dim using v on Lamp at current { not self.lit }\n",
+        0,
+    );
+    let claim = clause(&world, "Dim");
+    let base = world.subject(&["a"], UNLIMITED).simulation;
+    // The initial snapshot lists the lamps' population, with no lamp, and the
+    // declared pre-states range over the one lamp key.
+    let snapshots = base
+        .snapshots
+        .values()
+        .map(|bytes| {
+            let mut snapshot: serde_json::Value =
+                serde_json::from_slice(bytes).expect("a snapshot is JSON");
+            snapshot["populations"]
+                .as_array_mut()
+                .expect("a snapshot lists populations")
+                .push(serde_json::json!({"population": "lamps", "complete": true,
+                    "objects": []}));
+            let bytes = snapshot.to_string().into_bytes();
+            (
+                document_reference(&bytes).expect("a document names itself"),
+                bytes,
+            )
+        })
+        .collect::<DocumentProvision>();
+    let mut universes = base.universes.clone();
+    universes.push(PopulationUniverse {
+        population: source_population(&world.package, "lamps"),
+        keys: vec!["l".to_owned()],
+    });
+    let request = select_contract(&world.package, &claim).map(|selected| ContractRequest {
+        package: &world.package,
+        claim: selected,
+        subject: ModelSimulationRequest {
+            snapshots: &snapshots,
+            universes,
+            ..base
+        },
+        abstract_subject: None,
+        max_cases: None,
+    });
+    let record = analyze_items(
+        &Engines::fsl().expect("the linked engines register"),
+        vec![contract_item(
+            RequestIndex::new(0),
+            &world.package,
+            &claim,
+            request,
+        )],
+        &Cancel::new(),
+    )
+    .remove(0);
+    assert_eq!(
+        refuted(&record).obligation,
+        ContractObligation::Preservation
+    );
+    let wire = record
+        .contract_check
+        .as_ref()
+        .expect("a refuted item keeps its counterexample")
+        .wire
+        .clone()
+        .expect("the source enum values are spelled");
+    assert_eq!(
+        wire["executions"][0]["arguments"],
+        serde_json::json!([{"parameter": 0, "value": {"type": "enum",
+            "name": r#"{"node":"Color","package":"package"}"#, "member": "blue"}}])
+    );
+    assert_eq!(
+        wire["executions"][0]["result"],
+        serde_json::json!({"type": "enum",
+            "name": r#"{"node":"Color","package":"package"}"#, "member": "red"})
+    );
 }

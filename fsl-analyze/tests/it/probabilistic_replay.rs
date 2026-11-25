@@ -1150,3 +1150,42 @@ fn a_source_enum_argument_is_spelled_in_a_mean_counterexample() {
         color_list("red")
     );
 }
+
+/// A claim refuted by an undefined read writes the source `enum` draw on its
+/// path in FR-181's typed enum form. `paint` takes a coin by reference and its
+/// postcondition removes every coin, so the claim's read of `c.v` is undefined
+/// after that one step.
+#[test]
+fn a_source_enum_draw_is_spelled_in_an_undefined_counterexample() {
+    let mut world = World::new(&prob_world::coin(
+        "enum Color { red, blue }\n\
+         object Lamp { lit: Boolean; population lamps; \
+         operation paint(c: Color, coin: Reference<M::Coin>) modifies self.lit deletes coin; }\n\
+         pre Dark using v on Lamp::paint { not self.lit }\n\
+         post Lit using v on Lamp::paint \
+         { self.lit and count(o in M::coins where true) = 0 }\n\
+         pre Never using v on M::Coin::drop { false }\n\
+         random Lamp::paint(c) ~ { Color::blue: 1 };\n\
+         probabilistic Seen using ev on M over (c: M::Coin) under every scheduler on origin\n\
+         { probability >= 0.5 [ always[0,1] holds(c.v = 0) ] }\n",
+    ));
+    world.add_source_object("lamps", "Lamp", "l", &json!({"lit": {"boolean": false}}));
+    let record = analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request("Seen", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    )
+    .remove(0);
+    let wire = record
+        .probabilistic_counterexample
+        .as_ref()
+        .unwrap_or_else(|| panic!("a counterexample: {:?}", record.settlement))
+        .wire
+        .clone()
+        .expect("the source enum values are spelled");
+    assert_eq!(wire["evidence"]["type"], "undefined-path");
+    assert_eq!(wire["evidence"]["path"][0]["random"], color_list("blue"));
+}

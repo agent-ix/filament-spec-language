@@ -638,21 +638,7 @@ impl World {
         key: &str,
         fields: &Json,
     ) {
-        let declared = self
-            .package
-            .graph()
-            .source_packages()
-            .iter()
-            .flat_map(|source| &source.records)
-            .find_map(|record| match record {
-                fsl_semantics::model::domain_package::DomainPackageRecord::Population(found)
-                    if found.key.node.rsplit('/').next() == Some(population) =>
-                {
-                    Some(found.key.clone())
-                }
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("the unit declares the population {population}"));
+        let declared = source_population(&self.package, population);
         let row = json!({"population": population, "complete": true,
             "objects": [{"key": key, "type": object, "fields": fields}]});
         self.snapshots = std::mem::take(&mut self.snapshots)
@@ -740,6 +726,28 @@ impl World {
             },
         }
     }
+}
+
+/// The key of the population the unit's own `object` declarations name
+/// `population`.
+pub(crate) fn source_population(
+    package: &CheckedPackage,
+    population: &str,
+) -> filament_checked::key::DeclarationKey {
+    package
+        .graph()
+        .source_packages()
+        .iter()
+        .flat_map(|source| &source.records)
+        .find_map(|record| match record {
+            fsl_semantics::model::domain_package::DomainPackageRecord::Population(found)
+                if found.key.node.rsplit('/').next() == Some(population) =>
+            {
+                Some(found.key.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("the unit declares the population {population}"))
 }
 
 fn int(package: &'static str, name: &str) -> String {

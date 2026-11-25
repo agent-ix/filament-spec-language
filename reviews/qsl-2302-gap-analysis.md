@@ -49,3 +49,17 @@ four of the changed production call sites are never run with a source enum.
 - Stubs / inflation: none.
 - Semantic review: skipped (not opted in); the code-review SR-3880001 covers test intent.
 - Plan completion: not assessed
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | low | The contract route has the same source-object exposure the fix round showed for the probabilistic route, but no test reaches it. A pre/post or invariant contract over a source object's operation (`Lamp::paint(c: Color)`) would carry source enum arguments into `ContractTarget::wire`. The only contract test substitutes values into a witness over a domain-package operation, so `scope.enums()` at contract_check.rs:745 is never exercised by a real path. Reviewer confidence medium: contract selection over a source-declared operation was traced by reading select_contract, not run. | fsl-replay/src/contract_check.rs:741-747, fsl-replay/src/contract_check.rs:335-356, fsl-analyze/tests/it/operation_contract.rs:946-981 |
+
+## Dispositions
+
+Round 1, checked against fix commit d15f16ec635119bfbd0364a2263e2ad50c99d87c (head d15f16ec635119bfbd0364a2263e2ad50c99d87c).
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | still-open | Two of the four sites are now covered end to end. exact.rs:3982 (finish_replay, source route) is reached by the reachability test, and measure.rs:1046 (refute_mean) by the mean test; reviewer run 2/0. Two sites remain open. undefined.rs:89 is reachable in principle, since it runs only on the source route (`system.source_package()`) with the same scope, but it is untested and no input is yet shown whose undefined path holds a source-object step. plan_synthesis.rs:541: the unreachability argument (document.rs:347-357 universe keying, model.rs:1492-1508) covers universes only. FR-569 "Observations and evaluation" admits an initial snapshot naming a source population, and FR-120 check 3 keeps a population with no universe as `Population(None)`, so a source object with a `Color` field can enter a state without a universe. Either add tests or have the lead record accepted-no-change; both remaining arguments are one token, `scope.enums()`. |
