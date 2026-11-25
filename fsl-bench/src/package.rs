@@ -459,7 +459,7 @@ mod tests {
             .expect("system clock is after epoch")
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "fsl-bench-qsl1919-artifact-{}-{stamp}.json",
+            "fsl-bench-package-artifact-{}-{stamp}.json",
             std::process::id()
         ));
         super::write_replay_probe_artifact(&path, &request).expect("artifact writes");

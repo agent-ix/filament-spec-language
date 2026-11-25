@@ -76,27 +76,58 @@ build the checked package or emission. Its peak RSS is process-wide and
 includes artifact decoding and request reconstruction, but excludes the
 fixture-preparation process. The report requires numeric positive RSS in KiB.
 
-For the five-round A/B protocol, first build the same benchmark harness on
-both source revisions in separate target subdirectories within the ticket's
-single worktree. A is `origin/main` plus this PR's replay-counter seam patch;
-B is the candidate source. Then run the report binary's `run-ab <A-target>
-<B-target> <A-results.json> <B-results.json>` command. It alternates A then B
-for five rounds, records load average before and after each side's round,
-collects every required Criterion estimate and isolated probe at M=1, 10, 100,
-and writes generated side result files without overwriting existing files.
+For the five-round A/B protocol, build both variants in this ticket's single
+worktree. A is current `origin/main` plus only this PR's benchmark harness and
+replay-counter seam; B is the candidate commit. Start with a clean worktree
+and fetch the current main. Record each source SHA in the evidence alongside
+the generated result JSON files. The report JSON intentionally records side
+labels and measurements only; it does not infer a binary's source from the
+checkout that happens to run the report.
+
+```sh
+git fetch origin main
+git status --short
+mkdir -p target/package-a target/package-b
+git rev-parse HEAD > target/package-b/source-revision
+git diff --binary origin/main...HEAD -- Cargo.toml Cargo.lock fsl-bench fsl-replay > target/package-ab-harness.patch
+git switch --detach origin/main
+git rev-parse HEAD > target/package-a/source-revision
+git apply target/package-ab-harness.patch
+CARGO_TARGET_DIR="$PWD/target/package-a" cargo build --locked --release -j 4 --bench package
+CARGO_TARGET_DIR="$PWD/target/package-a" cargo build --locked --release -j 4 -p fsl-bench --features counters --bin fsl-bench-probe
+git reset --hard origin/main
+git switch <candidate-branch>
+CARGO_TARGET_DIR="$PWD/target/package-b" cargo build --locked --release -j 4 --bench package
+CARGO_TARGET_DIR="$PWD/target/package-b" cargo build --locked --release -j 4 -p fsl-bench --features counters --bin fsl-bench-probe
+make bench-package-ab BENCH_PACKAGE_A_TARGET=target/package-a BENCH_PACKAGE_B_TARGET=target/package-b BENCH_PACKAGE_A_RESULTS=target/package-a-results.json BENCH_PACKAGE_B_RESULTS=target/package-b-results.json
+```
+
+Proceed only when `git status --short` is empty. If the PR branch needs to be
+rebased onto the fetched main, do that on the same branch before building; if
+the harness patch does not apply cleanly to current main, stop and reconcile
+the branch before collecting any measurements.
+
+The baseline patch carries the same benchmark generator and the PR's counter
+seam on both sides. Criterion binaries are built without `counters`; probe
+binaries are built with it. The reporter alternates A then B for five rounds,
+records load average before and after each side's round, collects every
+required Criterion estimate and isolated probe at M=1, 10, 100, and writes
+generated side result files without overwriting existing files.
 `report-ab <A-results.json> <B-results.json>` prints per-round measurements,
 medians, session noise and the emit/read scaling exponents. Missing rows,
-failed runs, missing load records, or incomplete rounds invalidate the report;
-the runner preserves failed measurements and never substitutes a later run.
+failed runs, missing load records, or incomplete rounds invalidate the report.
 Criterion uses 10 samples per estimate in this harness.
-Each target directory must contain the optimized `package` Criterion binary
-built without the `counters` feature and the optimized `fsl-bench-probe`
-binary built with `--features counters`. The reporter uses non-instrumented
-Criterion estimates for AC-1 through AC-3 and the isolated counter probe for
-numeric RSS plus AC-5 counts. A probe built without `counters` has zero parse
-calls and invalidates its result row.
+
+Do not rerun a failed or invalid full session under new result filenames.
+Preserve the original raw result files and diagnostics. A retest requires
+explicit authorization for a whole new session; record the prior result paths
+and the retest authorization with the new evidence. Never replace a failed
+round with a loaded rerun or select a subset of rounds.
 
 ## Comparing a candidate with current main
+
+For package axes, the commands above are the source/build procedure. The
+general steps below define the five-round comparison and threshold only.
 
 1. Use the ticket's single worktree. Build current `origin/main` (A) with the
    identical benchmark-only harness and a target directory inside that

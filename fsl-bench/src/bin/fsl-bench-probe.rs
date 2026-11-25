@@ -376,7 +376,7 @@ fn replay_probe_worker(count: usize, path: &std::path::Path) -> ExitCode {
 }
 
 fn write_replay_probe_report(count: usize, row: &str) -> Result<(), String> {
-    let path = if let Some(path) = std::env::var_os("QSL_PACKAGE_PROBE_REPORT") {
+    let path = if let Some(path) = std::env::var_os("FSL_PACKAGE_PROBE_REPORT") {
         std::path::PathBuf::from(path)
     } else {
         std::env::var_os("CARGO_TARGET_DIR")

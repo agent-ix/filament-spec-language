@@ -79,16 +79,8 @@ fn required_path(
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct SourceIdentity {
-    revision: String,
-    main_revision: String,
-    replay_counter_patch: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 struct SideResults {
     side: String,
-    source: SourceIdentity,
     rounds: Vec<RoundResult>,
 }
 
@@ -164,60 +156,78 @@ fn run_ab(
     let b_bench = find_executable(&b_target.join("release/deps"), "package-")?;
     let a_probe = find_executable(&a_target.join("release"), "fsl-bench-probe")?;
     let b_probe = find_executable(&b_target.join("release"), "fsl-bench-probe")?;
-    let main_revision = git_text(&["rev-parse", "origin/main"])?;
-    let current_revision = git_text(&["rev-parse", "HEAD"])?;
-    let replay_counter_patch = git_text(&["rev-parse", "HEAD:fsl-replay/src/execute.rs"])?;
-    let a = SourceIdentity {
-        revision: main_revision.clone(),
-        main_revision: main_revision.clone(),
-        replay_counter_patch: replay_counter_patch.clone(),
-    };
-    let b = SourceIdentity {
-        revision: current_revision,
-        main_revision,
-        replay_counter_patch,
-    };
     let mut a_results = SideResults {
         side: "A".to_owned(),
-        source: a,
         rounds: Vec::new(),
     };
     let mut b_results = SideResults {
         side: "B".to_owned(),
-        source: b,
         rounds: Vec::new(),
     };
-    persist_results(a_result_path, &a_results)?;
-    persist_results(b_result_path, &b_results)?;
     let a_criterion_home = a_result_path.with_extension("criterion");
     let b_criterion_home = b_result_path.with_extension("criterion");
     fs::create_dir_all(&a_criterion_home)
         .map_err(|error| format!("create A Criterion directory: {error}"))?;
     fs::create_dir_all(&b_criterion_home)
         .map_err(|error| format!("create B Criterion directory: {error}"))?;
-    for round in 1..=ROUNDS {
-        let a_round = run_side_round(
-            "A",
+    let mut run_round = |side: &str, round: u8| match side {
+        "A" => run_side_round(
+            side,
             round,
             &a_bench,
             &a_probe,
             &a_criterion_home,
             a_result_path,
-        );
-        a_results.rounds.push(a_round);
-        persist_results(a_result_path, &a_results)?;
-        let b_round = run_side_round(
-            "B",
+            &[
+                ("package/emit", "package/emit"),
+                ("package/read", "package/read"),
+                ("replay/request", "replay/request"),
+            ],
+            &SIZES,
+            true,
+        ),
+        "B" => run_side_round(
+            side,
             round,
             &b_bench,
             &b_probe,
             &b_criterion_home,
             b_result_path,
-        );
-        b_results.rounds.push(b_round);
-        persist_results(b_result_path, &b_results)?;
+            &[
+                ("package/emit", "package/emit"),
+                ("package/read", "package/read"),
+                ("replay/request", "replay/request"),
+            ],
+            &SIZES,
+            true,
+        ),
+        _ => unreachable!("the scheduled sides are A and B"),
+    };
+    run_scheduled_rounds(
+        a_result_path,
+        b_result_path,
+        &mut a_results,
+        &mut b_results,
+        &mut run_round,
+    )
+}
+
+fn run_scheduled_rounds(
+    a_result_path: &Path,
+    b_result_path: &Path,
+    a_results: &mut SideResults,
+    b_results: &mut SideResults,
+    run_round: &mut impl FnMut(&str, u8) -> RoundResult,
+) -> Result<(), String> {
+    persist_results(a_result_path, a_results)?;
+    persist_results(b_result_path, b_results)?;
+    for round in 1..=ROUNDS {
+        a_results.rounds.push(run_round("A", round));
+        persist_results(a_result_path, a_results)?;
+        b_results.rounds.push(run_round("B", round));
+        persist_results(b_result_path, b_results)?;
     }
-    report_ab(&a_results, &b_results)
+    report_ab(a_results, b_results)
 }
 
 fn run_side_round(
@@ -227,15 +237,19 @@ fn run_side_round(
     probe: &Path,
     criterion_home: &Path,
     result_path: &Path,
+    axis_filters: &[(&str, &str)],
+    sizes: &[usize],
+    include_replay_probes: bool,
 ) -> RoundResult {
     let load_before = load_average()
         .map(Measurement::success)
         .unwrap_or_else(|error| Measurement::failure(error, ""));
     let mut axes = BTreeMap::new();
-    for axis in AXES {
-        let baseline = format!("qsl1919-{side}-round-{number}-{}", axis.replace('/', "-"));
+    for &(axis, filter) in axis_filters {
+        let baseline = format!("package-{side}-round-{number}-{}", axis.replace('/', "-"));
         let output = Command::new(bench)
-            .arg(axis)
+            .arg("--bench")
+            .arg(filter)
             .arg("--save-baseline")
             .arg(&baseline)
             .env("CRITERION_HOME", criterion_home)
@@ -243,7 +257,7 @@ fn run_side_round(
         let mut estimates = BTreeMap::new();
         match output {
             Ok(output) if output.status.success() => {
-                for size in SIZES {
+                for &size in sizes {
                     let result = criterion_estimate(criterion_home, axis, size, &baseline)
                         .map(Measurement::success)
                         .unwrap_or_else(|error| {
@@ -259,7 +273,7 @@ fn run_side_round(
                     String::from_utf8_lossy(&output.stderr),
                     String::from_utf8_lossy(&output.stdout)
                 );
-                for size in SIZES {
+                for &size in sizes {
                     estimates.insert(
                         size,
                         Measurement::failure("Criterion benchmark failed", diagnostic.clone()),
@@ -267,7 +281,7 @@ fn run_side_round(
                 }
             }
             Err(error) => {
-                for size in SIZES {
+                for &size in sizes {
                     estimates.insert(
                         size,
                         Measurement::failure(format!("start Criterion benchmark: {error}"), ""),
@@ -275,36 +289,38 @@ fn run_side_round(
                 }
             }
         }
-        axes.insert(axis.to_owned(), estimates);
+        axes.insert((*axis).to_owned(), estimates);
     }
     let mut probes = BTreeMap::new();
-    for size in SIZES {
-        let probe_report =
-            result_path.with_extension(format!("{side}-round-{number}-m-{size}.probe"));
-        let output = Command::new(probe)
-            .arg("package")
-            .arg("replay/request")
-            .arg(size.to_string())
-            .env("QSL_PACKAGE_PROBE_REPORT", &probe_report)
-            .output();
-        let measurement = match output {
-            Ok(output) if output.status.success() => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                parse_probe_estimate(&stdout, size)
-                    .map(Measurement::success)
-                    .unwrap_or_else(|error| Measurement::failure(error, stdout.to_string()))
-            }
-            Ok(output) => Measurement::failure(
-                format!("replay RSS probe exited {}", output.status),
-                format!(
-                    "stderr={} stdout={}",
-                    String::from_utf8_lossy(&output.stderr),
-                    String::from_utf8_lossy(&output.stdout)
+    if include_replay_probes {
+        for &size in sizes {
+            let probe_report =
+                result_path.with_extension(format!("{side}-round-{number}-m-{size}.probe"));
+            let output = Command::new(probe)
+                .arg("package")
+                .arg("replay/request")
+                .arg(size.to_string())
+                .env("FSL_PACKAGE_PROBE_REPORT", &probe_report)
+                .output();
+            let measurement = match output {
+                Ok(output) if output.status.success() => {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    parse_probe_estimate(&stdout, size)
+                        .map(Measurement::success)
+                        .unwrap_or_else(|error| Measurement::failure(error, stdout.to_string()))
+                }
+                Ok(output) => Measurement::failure(
+                    format!("replay RSS probe exited {}", output.status),
+                    format!(
+                        "stderr={} stdout={}",
+                        String::from_utf8_lossy(&output.stderr),
+                        String::from_utf8_lossy(&output.stdout)
+                    ),
                 ),
-            ),
-            Err(error) => Measurement::failure(format!("start replay RSS probe: {error}"), ""),
-        };
-        probes.insert(size, measurement);
+                Err(error) => Measurement::failure(format!("start replay RSS probe: {error}"), ""),
+            };
+            probes.insert(size, measurement);
+        }
     }
     let load_after = load_average()
         .map(Measurement::success)
@@ -455,23 +471,6 @@ fn load_average() -> Result<LoadAverage, String> {
     })
 }
 
-fn git_text(arguments: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(arguments)
-        .output()
-        .map_err(|error| format!("start git {arguments:?}: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git {arguments:?} exited {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    String::from_utf8(output.stdout)
-        .map(|text| text.trim().to_owned())
-        .map_err(|error| format!("git {arguments:?} output is not UTF-8: {error}"))
-}
-
 fn persist_results(path: &Path, result: &SideResults) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(result)
         .map_err(|error| format!("serialize {}: {error}", path.display()))?;
@@ -509,8 +508,6 @@ fn report_ab(a: &SideResults, b: &SideResults) -> Result<(), String> {
     validate_rounds(a)?;
     validate_rounds(b)?;
     let mut failures = Vec::new();
-    println!("A source: {:?}", a.source);
-    println!("B source: {:?}", b.source);
     println!("round load averages before/after (A and B; 1/5/15 minutes)");
     for index in 0..usize::from(ROUNDS) {
         let ar = &a.rounds[index];
@@ -555,7 +552,7 @@ fn report_ab(a: &SideResults, b: &SideResults) -> Result<(), String> {
                 });
                 let a_median = median(&a_ms);
                 let b_median = median(&b_ms);
-                let decision = b_median <= a_median * (1.0 + noise);
+                let decision = within_noise(a_median, b_median, noise);
                 println!(
                     "{}",
                     metric_summary_line(axis, size, a_median, b_median, noise)
@@ -595,12 +592,8 @@ fn report_ab(a: &SideResults, b: &SideResults) -> Result<(), String> {
             let b_median = median(&b_rss);
             let noise = mad(&a_rss) / a_median.max(f64::MIN_POSITIVE);
             let noise = noise.max(mad(&b_rss) / b_median.max(f64::MIN_POSITIVE));
-            let decision = b_median <= a_median * (1.0 + noise);
-            println!(
-                "replay/request M={size} A_peak_rss_median_kib={a_median:.0} B_peak_rss_median_kib={b_median:.0} noise={:.2}% {}",
-                noise * 100.0,
-                if decision { "pass" } else { "fail" }
-            );
+            let decision = within_noise(a_median, b_median, noise);
+            println!("{}", rss_summary_line(a_median, b_median, noise));
             if !decision {
                 failures.push(format!(
                     "replay/request M={size} exceeds A peak RSS plus session noise"
@@ -633,8 +626,9 @@ fn report_ab(a: &SideResults, b: &SideResults) -> Result<(), String> {
             eprintln!("A/B evidence invalid or failed: {failure}");
         }
         return Err(format!(
-            "{} A/B evidence failures; no result was replaced",
-            failures.len()
+            "{} A/B evidence failures; no result was replaced: {}",
+            failures.len(),
+            failures.join("; ")
         ));
     }
     Ok(())
@@ -751,12 +745,28 @@ fn metric_summary_line(
     b_median: f64,
     noise: f64,
 ) -> String {
-    let decision = b_median <= a_median * (1.0 + noise);
+    let decision = within_noise(a_median, b_median, noise);
     format!(
         "{axis} M={size} A_median={a_median:.6} B_median={b_median:.6} unit={} noise={:.2}% {}",
         estimate_unit(axis),
         noise * 100.0,
         if decision { "pass" } else { "fail" }
+    )
+}
+
+fn within_noise(a_median: f64, b_median: f64, noise: f64) -> bool {
+    b_median <= a_median * (1.0 + noise)
+}
+
+fn rss_summary_line(a_median_kib: f64, b_median_kib: f64, noise: f64) -> String {
+    format!(
+        "replay/request peak-rss A_median_kib={a_median_kib:.0} B_median_kib={b_median_kib:.0} noise={:.2}% {}",
+        noise * 100.0,
+        if within_noise(a_median_kib, b_median_kib, noise) {
+            "pass"
+        } else {
+            "fail"
+        }
     )
 }
 
@@ -772,12 +782,27 @@ fn report_exponents(a: &SideResults, b: &SideResults, axis: &str, failures: &mut
                 .and_then(|measurement| measurement.value.as_ref())
                 .map(|estimate| estimate.milliseconds)
         };
-        match (get(a, 1), get(a, 100), get(b, 1), get(b, 100)) {
-            (Some(a_one), Some(a_hundred), Some(b_one), Some(b_hundred))
-                if a_one > 0.0 && b_one > 0.0 && a_hundred > 0.0 && b_hundred > 0.0 =>
+        match (
+            get(a, 1),
+            get(a, 10),
+            get(a, 100),
+            get(b, 1),
+            get(b, 10),
+            get(b, 100),
+        ) {
+            (
+                Some(a_one),
+                Some(a_ten),
+                Some(a_hundred),
+                Some(b_one),
+                Some(b_ten),
+                Some(b_hundred),
+            ) if [a_one, a_ten, a_hundred, b_one, b_ten, b_hundred]
+                .into_iter()
+                .all(|estimate| estimate > 0.0) =>
             {
-                let a_exp = scaling_exponent(a_one, a_hundred);
-                let b_exp = scaling_exponent(b_one, b_hundred);
+                let a_exp = scaling_exponent([a_one, a_ten, a_hundred]);
+                let b_exp = scaling_exponent([b_one, b_ten, b_hundred]);
                 a_exponents.push(a_exp);
                 b_exponents.push(b_exp);
                 println!(
@@ -803,8 +828,22 @@ fn exponent_summary_line(axis: &str, a_exponent: f64, b_exponent: f64) -> String
     format!("{axis} scaling exponent median M=1->10->100 A={a_exponent:.6} B={b_exponent:.6}")
 }
 
-fn scaling_exponent(first_size_ms: f64, last_size_ms: f64) -> f64 {
-    (last_size_ms / first_size_ms).ln() / 100.0_f64.ln()
+fn scaling_exponent(estimates_ms: [f64; 3]) -> f64 {
+    let sizes = [1.0_f64, 10.0, 100.0];
+    let log_sizes = sizes.map(f64::ln);
+    let log_estimates = estimates_ms.map(f64::ln);
+    let mean_log_size = log_sizes.iter().sum::<f64>() / 3.0;
+    let mean_log_estimate = log_estimates.iter().sum::<f64>() / 3.0;
+    let covariance = log_sizes
+        .iter()
+        .zip(log_estimates.iter())
+        .map(|(size, estimate)| (size - mean_log_size) * (estimate - mean_log_estimate))
+        .sum::<f64>();
+    let variance = log_sizes
+        .iter()
+        .map(|size| (size - mean_log_size).powi(2))
+        .sum::<f64>();
+    covariance / variance
 }
 
 fn median(values: &[f64]) -> f64 {
@@ -929,11 +968,11 @@ mod tests {
     use super::{
         complete_probe_report, exponent_summary_line, median, metric_summary_line, report_ab_files,
         scaling_exponent, session_noise, CriterionEstimate, LoadAverage, Measurement,
-        ProbeEstimate, RoundResult, SideResults, SourceIdentity, AXES, ROUNDS, SIZES,
+        ProbeEstimate, RoundResult, SideResults, AXES, ROUNDS, SIZES,
     };
     use ix_trace_rs::trace;
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[trace("NFR-141-AC-4")]
     #[test]
@@ -949,15 +988,85 @@ mod tests {
     fn report_uses_five_round_median_and_full_m_range_exponent() {
         let estimates = [10.0, 20.0, 100.0, 200.0, 1000.0];
         assert_eq!(median(&estimates), 100.0);
-        assert!((scaling_exponent(1.0, 100.0) - 1.0).abs() < 1e-12);
-        assert!((scaling_exponent(1.0, 10_000.0) - 2.0).abs() < 1e-12);
-        let estimate = CriterionEstimate {
-            milliseconds: 1.0,
-            ci_lower_milliseconds: 0.9,
-            ci_upper_milliseconds: 1.1,
+        assert!((scaling_exponent([1.0, 10.0, 100.0]) - 1.0).abs() < 1e-12);
+        assert!((scaling_exponent([1.0, 100.0, 10_000.0]) - 2.0).abs() < 1e-12);
+        assert!((scaling_exponent([1.0, 10.0, 10_000.0]) - 2.0).abs() < 1e-12);
+
+        let a_times = [98.0, 99.0, 100.0, 101.0, 102.0];
+        let b_times = [97.0, 98.0, 99.0, 100.0, 101.0];
+        let a_ci = CriterionEstimate {
+            milliseconds: 100.0,
+            ci_lower_milliseconds: 98.0,
+            ci_upper_milliseconds: 102.0,
         };
-        let noise = session_noise(&estimates, &estimates, |_| super::max_ci_ratio(&estimate));
-        assert!(noise >= 0.1);
+        let b_ci = CriterionEstimate {
+            milliseconds: 99.0,
+            ci_lower_milliseconds: 97.02,
+            ci_upper_milliseconds: 100.98,
+        };
+        let noise = session_noise(&a_times, &b_times, |_| {
+            super::max_ci_ratio(&a_ci).max(super::max_ci_ratio(&b_ci))
+        });
+        assert!((noise - 0.02).abs() < 1e-12, "CI width determines noise");
+        assert!(!super::within_noise(100.0, 103.0, noise));
+        assert!(!super::within_noise(50_000.0, 51_500.0, noise));
+        assert!(metric_summary_line("package/emit", 1, 100.0, 103.0, noise).ends_with("fail"));
+        assert!(super::rss_summary_line(50_000.0, 51_500.0, noise).ends_with("fail"));
+    }
+
+    #[trace("NFR-141-AC-1")]
+    #[test]
+    fn run_side_round_executes_bench_mode_and_reads_the_selected_estimate() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = manifest_dir.parent().expect("FSL workspace root");
+        let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| workspace_root.join("target"));
+        let build = std::process::Command::new("cargo")
+            .args([
+                "build",
+                "--locked",
+                "-j",
+                "4",
+                "-p",
+                "fsl-bench",
+                "--bench",
+                "package",
+            ])
+            .current_dir(workspace_root)
+            .env("CARGO_TARGET_DIR", &target_dir)
+            .output()
+            .expect("package Criterion binary builds");
+        assert!(
+            build.status.success(),
+            "package bench build failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
+        );
+        let bench = super::find_executable(&target_dir.join("debug/deps"), "package-")
+            .expect("package Criterion executable exists");
+        let (root, result_path, _) = result_paths();
+        let criterion_home = root.join("criterion");
+        std::fs::create_dir_all(&criterion_home).expect("Criterion result directory creates");
+        let round = super::run_side_round(
+            "A",
+            1,
+            &bench,
+            Path::new("unused-probe"),
+            &criterion_home,
+            &result_path,
+            &[("package/emit", "package/emit/1")],
+            &[1],
+            false,
+        );
+        let estimate = round.axes["package/emit"][&1]
+            .value
+            .as_ref()
+            .expect("--bench run writes a Criterion estimate");
+        assert!(estimate.milliseconds > 0.0);
+        assert!(estimate.ci_upper_milliseconds >= estimate.ci_lower_milliseconds);
+        assert!(round.probes.is_empty());
+        std::fs::remove_dir_all(root).expect("temporary Criterion artifacts are removed");
     }
 
     #[trace(
@@ -1039,7 +1148,7 @@ mod tests {
             )
         );
         assert_eq!(
-            scaling_exponent(3.0, 300.0),
+            scaling_exponent([3.0, 30.0, 300.0]),
             1.0,
             "the 1→10→100 workload has linear scaling"
         );
@@ -1065,22 +1174,34 @@ mod tests {
     #[test]
     fn report_ab_retains_a_failed_loaded_round_and_rejects_substitution() {
         let (root, a_path, b_path) = result_paths();
-        let mut a = synthetic_side("A", 1.0);
-        let b = synthetic_side("B", 1.0);
-        a.rounds[2].load_before = Measurement::success(LoadAverage {
-            one_minute: 97.0,
-            five_minutes: 88.0,
-            fifteen_minutes: 79.0,
-        });
-        a.rounds[2].axes.get_mut("package/emit").unwrap().insert(
-            10,
-            Measurement::failure("loaded round failed", "load=97.0; preserve this failure"),
-        );
-        super::persist_results(&a_path, &a).expect("A result file writes");
-        super::persist_results(&b_path, &b).expect("B result file writes");
-
-        let error = report_ab_files(&a_path, &b_path)
-            .expect_err("the five-round report rejects the failed round");
+        let a_base = synthetic_side("A", 1.0);
+        let b_base = synthetic_side("B", 1.0);
+        let mut a = SideResults {
+            side: "A".to_owned(),
+            rounds: Vec::new(),
+        };
+        let mut b = SideResults {
+            side: "B".to_owned(),
+            rounds: Vec::new(),
+        };
+        let mut run_round = |side: &str, number: u8| {
+            let base = if side == "A" { &a_base } else { &b_base };
+            let mut round = base.rounds[usize::from(number - 1)].clone();
+            if side == "A" && number == 3 {
+                round.load_before = Measurement::success(LoadAverage {
+                    one_minute: 97.0,
+                    five_minutes: 88.0,
+                    fifteen_minutes: 79.0,
+                });
+                round.axes.get_mut("package/emit").unwrap().insert(
+                    10,
+                    Measurement::failure("loaded round failed", "load=97.0; preserve this failure"),
+                );
+            }
+            round
+        };
+        let error = super::run_scheduled_rounds(&a_path, &b_path, &mut a, &mut b, &mut run_round)
+            .expect_err("the five-round report rejects the failed round persisted by run_ab");
         assert!(error.contains("A/B evidence failures"));
         let retained = super::read_results(&a_path).expect("A results remain readable");
         assert_eq!(retained.rounds.len(), usize::from(ROUNDS));
@@ -1135,6 +1256,37 @@ mod tests {
             2
         );
         std::fs::remove_dir_all(root).expect("temporary A/B results are removed");
+    }
+
+    #[trace("NFR-141-AC-1", "NFR-141-AC-3", "NFR-141-AC-4")]
+    #[test]
+    fn report_ab_rejects_timing_and_rss_regressions_beyond_noise() {
+        let (timing_root, timing_a_path, timing_b_path) = result_paths();
+        let timing_a = synthetic_side("A", 1.0);
+        let timing_b = synthetic_side("B", 1.1);
+        super::persist_results(&timing_a_path, &timing_a).expect("timing A results write");
+        super::persist_results(&timing_b_path, &timing_b).expect("timing B results write");
+        let timing_error = report_ab_files(&timing_a_path, &timing_b_path)
+            .expect_err("timing regression exceeds relative noise");
+        assert!(timing_error.contains("package/emit M=1 exceeds A median plus session noise"));
+        assert!(!timing_error.contains("peak RSS plus session noise"));
+        std::fs::remove_dir_all(timing_root).expect("timing results are removed");
+
+        let (rss_root, rss_a_path, rss_b_path) = result_paths();
+        let rss_a = synthetic_side("A", 1.0);
+        let mut rss_b = synthetic_side("B", 0.99);
+        for round in &mut rss_b.rounds {
+            for probe in round.probes.values_mut() {
+                probe.value.as_mut().unwrap().peak_rss_kib += 10_000;
+            }
+        }
+        super::persist_results(&rss_a_path, &rss_a).expect("RSS A results write");
+        super::persist_results(&rss_b_path, &rss_b).expect("RSS B results write");
+        let rss_error = report_ab_files(&rss_a_path, &rss_b_path)
+            .expect_err("RSS regression exceeds relative noise");
+        assert!(rss_error.contains("replay/request M=1 exceeds A peak RSS plus session noise"));
+        assert!(!rss_error.contains("package/emit M=1 exceeds A median plus session noise"));
+        std::fs::remove_dir_all(rss_root).expect("RSS results are removed");
     }
 
     #[trace(
@@ -1231,11 +1383,6 @@ mod tests {
             .collect();
         SideResults {
             side: side.to_owned(),
-            source: SourceIdentity {
-                revision: format!("{side}-revision"),
-                main_revision: "main-revision".to_owned(),
-                replay_counter_patch: "counter-patch".to_owned(),
-            },
             rounds,
         }
     }
