@@ -905,7 +905,7 @@ const UNPRODUCED: &[Unproduced] = &[
         id: "temporal/deadline",
         keys: &["QSL-3049"],
         probe: Probe {
-            source: include_str!("../../../tests/corpus/protocol/staged/await.native"),
+            source: include_str!("../../../tests/corpus/protocol/await.native"),
             detect: Detect::Form("temporal/deadline"),
             expect: Expect::Refused {
                 stage: "admit",

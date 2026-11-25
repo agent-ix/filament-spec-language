@@ -1770,10 +1770,12 @@ impl AdmittedModel {
             .filter(|(_, key)| {
                 matches!(
                     self.records.get(*key),
+                    Some(DomainPackageRecord::ObjectType(object_type))
+                        if object_type.interface_features.is_none()
+                ) || matches!(
+                    self.records.get(*key),
                     Some(
-                        DomainPackageRecord::ObjectType(_)
-                            | DomainPackageRecord::Process(_)
-                            | DomainPackageRecord::StateMachine(_)
+                        DomainPackageRecord::Process(_) | DomainPackageRecord::StateMachine(_)
                     )
                 )
             })
