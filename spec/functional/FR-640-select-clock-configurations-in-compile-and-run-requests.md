@@ -92,6 +92,12 @@ computed over the package compiled with these rows.
   of the `clocks` member named by its clock name and SHALL form one
   `TemporalClockSelection` from the declaration's source, its declaration span
   and that configuration, in source order, before the emitter runs.
+- A `compensate` template or an `await` under the timed profile takes its
+  selection the same way, and the package holds no `temporal_bindings` row for
+  it, since the checked package admits none for a protocol declaration under
+  that profile (FSpec FR-322 "Temporal clock bindings"). The emitter SHALL check
+  the selection's kind and unit against the declaration, refuse a mismatch as
+  for any other selection, and write no row.
 - A declaration over a model subject takes its binding from the model
   (FR-233) and no `clocks` member serves it. The command SHALL derive its
   configuration from the binding and the declaration's profile, so a unit
@@ -255,6 +261,7 @@ computed over the package compiled with these rows.
 | FR-640-AC-12 | Through `command::compile` with two ConfigVersion models selected as `S` (`example/device-saving`) and `N` (`example/device-normal`) and no `clocks` member, the event-position hyper clause `Saves` over `forall trace s of S forall trace n of N` exits 0, and its `hyperproperty` node has two `temporal_bindings` rows at its `claim` occurrence, `trace` `s` then `n`, with `event_position` configurations whose `sequence_authority` is the `ConfigVersion` declaration identity text of `example/device-saving` and of `example/device-normal` respectively, and its body wrapper has none; the hyper clause `Same` over two traces `a`, `b` of one model has two rows with equal configurations. Analyzing `Saves` over the two models through the layer-A analyze entry (`native-analyze/1`, FR-621), which runs `fsl-analyze`'s hyper model checker, settles a verdict, never `not-yet-implemented`, and its counterexample, when refuted, one closed finite trace per trace variable with no loop (FR-173 "Event-position form"), replays through `fsl_replay::replay` with the two rows' configurations; this half is verified in `fsl-analyze`'s tests, because the hyper checker is a layer-A engine that no crate in layers K to 6 may reach (ADR-011 §6.1), so a test in `fsl-replay` or `fsl-semantics` cannot obtain a real verdict, and a test in `fsl-analyze` reaches both the engine and `fsl_replay::replay` along existing edges; a package with the `n` row removed is refused by the package reader at the `hyperproperty` node's body. | Test (TC-2243) |
 | FR-640-AC-13 | A `clocks` override handed to the command's compile entry or run entry (the object the driver reads from `--clocks`), with the request carrying no `clocks` member, gives the package bytes and the run report the same request gives with that object as its `clocks` member; an override whose member has an unknown `kind`, or that repeats a clock name, refuses `invalid-request` at stage `request`, exit 20, naming the member, as the same `clocks` member does. Stage `request` is the refusal envelope's `stage`; the emitted `filament-outcome/1` document keeps `last_stage` `null`, since `request` is not an ADR-011 stage (FR-286, FR-287-AC-11). | Test (TC-2244) |
 | FR-640-AC-14 | A request that carries `clocks` and is also handed an override refuses `invalid-request` at stage `request`, exit 20, on the compile entry and on the run entry, with a message naming `clocks` and `--clocks`, before any program is compiled; the same request without the override, and the override without the member, each proceed. Stage `request` is the refusal envelope's `stage`; the emitted `filament-outcome/1` document keeps `last_stage` `null`, since `request` is not an ADR-011 stage (FR-286, FR-287-AC-11). | Test (TC-2245) |
+| FR-640-AC-15 | A protocol under the timed profile with a `compensate` template and an `await`, emitted with a `timed` selection for each, is admitted by the strict reader and holds no `temporal_bindings` member, as is the same protocol emitted with no selection; event-position selections for them refuse as a profile mismatch. | Test (TC-1660) |
 
 ## Dependencies
 

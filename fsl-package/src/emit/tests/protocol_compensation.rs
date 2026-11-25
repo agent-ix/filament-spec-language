@@ -585,3 +585,94 @@ fn a_sum_binder_in_a_recovery_predicate_is_a_parameter_named_by_its_source() {
     let read = &capture["members"][1]["value"];
     assert_eq!(parameter(nodes, read), ("saved", "2"), "{capture}");
 }
+
+/// FR-640-AC-15 (TC-1660): under the `timed` profile a template's and an
+/// await's clock selections are checked and consumed, and the package binds no
+/// clock to either.
+#[trace("TC-1660", "FR-640-AC-15")]
+#[test]
+fn a_timed_protocol_clock_selection_is_checked_and_writes_no_row() {
+    let unit = unit_text("", "true", "false")
+        .replace(
+            "filament.temporal.event-position.false-extension/v1",
+            "filament.temporal.timed/v1",
+        )
+        .replace(
+            "effect Applied of Update as (applied: M::Money) { true };\n",
+            "effect Applied of Update as (applied: M::Money) { true };\n\
+             event Started by R as (started: Boolean) { true };\n\
+             await Wait after Started using t clock \"c\" within [0, 120] \
+               match event Seen by R as (seen: Boolean) { true }; \
+               then sequence Continued { } timeout sequence TimedOut { }\n",
+        );
+    let graph = checked_graph(&unit).expect("the timed unit checks");
+    let source = graph.source().clone();
+    let spans: Vec<_> = graph
+        .protocols()
+        .iter()
+        .flat_map(|protocol| {
+            let templates = protocol.obligations.compensations.iter();
+            let awaits = protocol.awaits.iter();
+            templates
+                .map(|template| template.span)
+                .chain(awaits.map(|awaited| awaited.span))
+        })
+        .collect();
+    assert_eq!(spans.len(), 3, "two templates and one await");
+    let package = CheckedPackage::link(graph);
+    let emit = |clock: Option<filament_contract_model::ClockConfiguration>| {
+        let selections: Vec<_> = clock
+            .iter()
+            .flat_map(|clock| {
+                spans.iter().map(|span| {
+                    crate::emit::TemporalClockSelection::new(source.clone(), *span, clock.clone())
+                })
+            })
+            .collect();
+        crate::emit::emit_checked_with_temporal_selections(
+            &package,
+            &selections,
+            crate::EmitLimits::fixture(),
+        )
+    };
+
+    let timed = filament_contract_model::ClockConfiguration::Timed { unit: "s".into() };
+    for clock in [Some(timed), None] {
+        let emission = emit(clock).expect("a timed protocol emits");
+        assert_eq!(emission.omitted, []);
+        assert_eq!(wire(&emission).get("temporal_bindings"), None);
+        let document =
+            crate::emit::tests::wire_bytes(&fixture::document()).expect("fixture serializes");
+        let mut evidence = CheckedPackageEvidence::new();
+        for feature in wire(&emission)["lock"]["required_features"]
+            .as_array()
+            .expect("features")
+        {
+            evidence.support_feature(feature.as_str().expect("a feature"));
+        }
+        evidence
+            .insert_domain_package_document(package_identity(&document), document.as_slice())
+            .expect("fresh evidence key");
+        let read = read_v2(
+            emission.package.bytes(),
+            library(),
+            V2ReadLimits::fixture(),
+            &evidence,
+        );
+        assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    }
+
+    let refusal = emit(Some(
+        filament_contract_model::ClockConfiguration::EventPosition {
+            sequence_authority: "compensation-events".into(),
+        },
+    ))
+    .expect_err("an event-position clock under the timed profile");
+    assert!(
+        matches!(
+            refusal,
+            crate::emit::EmitRefusal::TemporalClockProfileMismatch { .. }
+        ),
+        "{refusal:?}"
+    );
+}

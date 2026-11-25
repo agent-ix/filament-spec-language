@@ -10594,29 +10594,25 @@ fn temporal_binding_rows(
             let Some(profile) = awaited.profile else {
                 continue;
             };
-            if !matches!(
-                profile,
-                TemporalProfile::EventPositionFalseExtension
-                    | TemporalProfile::FixedSampleFalseExtension
-                    | TemporalProfile::TimestampedEventFiniteWindow
-            ) {
+            if profile == TemporalProfile::InfiniteTrace {
                 continue;
             }
             let span = awaited.span;
             let key = (source.clone(), span.start, span.end, None);
-            let declaration_name = format!("await {}::{}", protocol.name, awaited.name);
             let Some(selection) = selected.remove(&key) else {
-                missing.push((
-                    MissingClockKind::Await,
-                    source.clone(),
-                    span,
-                    declaration_name,
-                ));
+                if profile != TemporalProfile::Timed {
+                    let name = format!("await {}::{}", protocol.name, awaited.name);
+                    missing.push((MissingClockKind::Await, source.clone(), span, name));
+                }
                 continue;
             };
             check_selected_definition(&source, span, profile, selection)?;
             let clock = &selection.clock;
             validate_temporal_clock(&source, span, awaited.clock.as_str(), clock)?;
+            // A `timed` protocol clock is checked and takes no row.
+            if profile == TemporalProfile::Timed {
+                continue;
+            }
             let node_key = keys
                 .nodes
                 .get(&awaited.node)
@@ -10652,8 +10648,8 @@ fn temporal_binding_rows(
     // FSpec FR-322-AC-305: a `compensate` node reads a clock too, so it is
     // keyed by its own node identity, named by the template's clock text,
     // and shares the one array with the clause rows. Its profile is the one
-    // its `using` alias selects; a node of a profile that is not a
-    // clock-configured one writes no row.
+    // its `using` alias selects; a `timed` template's selection is checked and
+    // takes no row, and an infinite-trace template reads no clock.
     let compensation_nodes: HashMap<Vec<&str>, &CheckedNodeId> = nodes
         .iter()
         .filter(|node| is_compensation_node(node))
@@ -10675,12 +10671,7 @@ fn temporal_binding_rows(
             let Some(profile) = template.temporal_profile else {
                 continue;
             };
-            if !matches!(
-                profile,
-                TemporalProfile::EventPositionFalseExtension
-                    | TemporalProfile::FixedSampleFalseExtension
-                    | TemporalProfile::TimestampedEventFiniteWindow
-            ) {
+            if profile == TemporalProfile::InfiniteTrace {
                 continue;
             }
             let path = [protocol.name.as_str(), "compensate", template.name.as_str()];
@@ -10691,17 +10682,23 @@ fn temporal_binding_rows(
             let span = template.span;
             let key = (source.clone(), span.start, span.end, None);
             let Some(selection) = selected.remove(&key) else {
-                missing.push((
-                    MissingClockKind::CompensationTemplate,
-                    source.clone(),
-                    span,
-                    format!("compensate template `{}::{}`", protocol.name, template.name),
-                ));
+                if profile != TemporalProfile::Timed {
+                    missing.push((
+                        MissingClockKind::CompensationTemplate,
+                        source.clone(),
+                        span,
+                        format!("compensate template `{}::{}`", protocol.name, template.name),
+                    ));
+                }
                 continue;
             };
             check_selected_definition(&source, span, profile, selection)?;
             let clock = &selection.clock;
             validate_temporal_clock(&source, span, template.clock.as_str(), clock)?;
+            // A `timed` protocol clock is checked and takes no row.
+            if profile == TemporalProfile::Timed {
+                continue;
+            }
             let node_key = key_of_id
                 .get(&declaration)
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
