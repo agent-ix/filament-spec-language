@@ -431,10 +431,10 @@ fn an_invalid_protocol_temporal_requirement_refuses_during_s3() {
     }
 }
 
-/// TC-552: a local protocol whose role acts on the concrete
+/// FR-147-AC-16 (TC-552): a local protocol whose role acts on the concrete
 /// model cannot be selected as the abstract subject of a refinement over
 /// the other model.
-#[trace("TC-552")]
+#[trace("TC-552", "FR-147-AC-16")]
 #[test]
 fn a_protocol_over_the_concrete_model_is_not_an_abstract_subject() {
     let protocol = twice("Spec")

@@ -1924,30 +1924,24 @@ fn a_protocol_refinement_writes_its_own_requirement_record() {
     assert!(graph.temporal_clauses().is_empty());
 }
 
-/// FR-147-AC-15 (TC-552 step 15): a protocol declared in an admitted
-/// dependency is selected by its structural identity, while the alias-free
-/// internal list and emitted refinement remain owned by the importing
-/// package. In a package of the same identity, the refinement over a local
-/// `Twice` has an equal node key, and differs in its abstract side's
-/// `dependency` and in its node's `protocol` and `dependencies`.
-#[trace("TC-552", "FR-147-AC-15")]
-#[test]
-fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
-    let (local_unit, documents) = protocol_subject();
-    let dependency_unit = local_unit
-        .replace(
-            "refinement R using inf abstract A::Local concrete C {}\n",
-            "",
-        )
-        .replace("model C = \"example/refinement-concrete\";\n", "")
-        .replace(
-            "model A = \"example/refinement-abstract\";",
-            "model Spec = \"example/refinement-abstract\";",
-        )
-        .replace("protocol Local", "protocol Twice")
-        .replace("A::Widget", "Spec::Widget");
+/// The package `test/protocol-dependency`, checked from one unit over its own
+/// models, and an importing unit `test/root` assembled against it.
+struct ProtocolDependency {
+    library: fsl_semantics::library::LibraryName,
+    package: std::sync::Arc<CheckedPackage>,
+    emission: Emission,
+    view: fsl_semantics::library::ImportView,
+    importer: fsl_semantics::check::PackageDeclarations,
+}
+
+fn import_protocol_dependency(
+    dependency_unit: &str,
+    dependency_documents: &[Vec<u8>],
+    unit: &str,
+    documents: &[Vec<u8>],
+) -> ProtocolDependency {
     let dependency_models =
-        fsl_semantics::model::intake::package_input(documents[..1].iter().map(Vec::as_slice))
+        fsl_semantics::model::intake::package_input(dependency_documents.iter().map(Vec::as_slice))
             .expect("dependency model package");
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:protocol-dependency"),
@@ -1971,7 +1965,7 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
         Vec::new(),
     )
     .expect("dependency assembles");
-    let dependency = std::sync::Arc::new(CheckedPackage::link(
+    let package = std::sync::Arc::new(CheckedPackage::link(
         dependency_declarations
             .check(
                 CheckMode::Linked,
@@ -1980,18 +1974,13 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
             )
             .expect("dependency checks"),
     ));
-    let dependency_emission = emit_checked(&dependency).expect("dependency emits");
-    assert!(dependency
-        .graph()
-        .protocol_node_keys("Twice")
-        .and_then(|keys| keys.clause.as_ref())
-        .is_some());
+    let emission = emit_checked(&package).expect("dependency emits");
     let library = fsl_semantics::library::LibraryName::new("test/protocol-dependency")
         .expect("library identity");
     let mut admitted = crate::checked_v2::AdmittedPackages::default();
     let view = crate::checked_v2::read_import_view(
-        &dependency,
-        &dependency_emission,
+        &package,
+        &emission,
         library.clone(),
         &dependency_models,
         &mut admitted,
@@ -2000,6 +1989,130 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
     )
     .expect("dependency import view is admitted");
 
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:root"),
+        "program.native",
+        unit.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("unit parses");
+    assert_eq!(parsed.diagnostics(), []);
+    let raw = parsed.source().reference().clone();
+    let unit_form = fsl_forms::build_unit(&parsed).expect("unit form");
+    let root_models =
+        fsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice))
+            .expect("importing unit model package");
+    let models = fsl_semantics::model::intake::admit_unit(
+        &unit_form.selections().models,
+        &root_models,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .expect("importing unit models are admitted");
+    let importer = fsl_semantics::check::PackageDeclarations::assemble(
+        raw,
+        "test/root".to_owned(),
+        unit_form,
+        models,
+        vec![fsl_semantics::check::AdmittedImport {
+            identity: library.clone(),
+            view: view.clone(),
+            graph: package.shared_graph(),
+        }],
+    )
+    .expect("dependency name resolution assembles");
+    ProtocolDependency {
+        library,
+        package,
+        emission,
+        view,
+        importer,
+    }
+}
+
+/// FR-147-AC-16 (TC-552 step 16): a dependency package imports the models
+/// `Spec` and `Other` and declares a protocol `OnOther` whose role acts only
+/// on `Other`. `abstract Spec::OnOther` refuses
+/// `invalid_model_binding`/`malformed-declaration` at `OnOther`, and no graph
+/// holding a checked refinement is produced.
+#[trace("TC-552", "FR-147-AC-16")]
+#[test]
+fn a_dependency_protocol_over_another_model_is_not_an_abstract_subject() {
+    let (_, documents) = protocol_subject();
+    let other = state_machine_document("example/refinement-third");
+    let dependency_documents = vec![documents[0].clone(), other];
+    let dependency_unit = format!(
+        "{COMPLETE_V1_HEADER}profile p = \"filament.protocol.finite-global/v1\";\n\
+         model Spec = \"example/refinement-abstract\";\n\
+         model Other = \"example/refinement-third\";\n\
+         protocol OnOther using p over (input: Other::Widget) on origin {{\n\
+         role w on Other::Widget;\n\
+         run sequence Main {{ }}\n\
+         finish Done as (d: Boolean) {{ true }};\n\
+         }}\n"
+    );
+    let unit = format!(
+        "{COMPLETE_V1_HEADER}profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         import \"test/protocol-dependency\" as lib;\n\
+         model Spec = \"example/refinement-abstract\";\n\
+         model C = \"example/refinement-concrete\";\n\
+         refinement R using inf abstract Spec::OnOther concrete C {{}}\n"
+    );
+    let importer =
+        import_protocol_dependency(&dependency_unit, &dependency_documents, &unit, &documents)
+            .importer;
+    let regions = importer.regions();
+    let checked = importer.check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+    );
+    let Err(refusals) = checked else {
+        panic!("the protocol over another model refuses");
+    };
+    let found: Vec<_> = refusals
+        .iter()
+        .map(|refusal| {
+            let at = regions.refusal_region(refusal).map(|region| {
+                let start = usize::try_from(region.start()).expect("a start");
+                let end = usize::try_from(region.end()).expect("an end");
+                &unit[start..end]
+            });
+            (refusal.cause.code(), refusal.cause.cause(), at)
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [(
+            fsl_foundation::Code::InvalidModelBinding,
+            Some("malformed-declaration"),
+            Some("OnOther")
+        )],
+        "{refusals:?}"
+    );
+}
+
+/// FR-147-AC-15 (TC-552 step 15): a protocol declared in an admitted
+/// dependency is selected by its structural identity, while the alias-free
+/// internal list and emitted refinement remain owned by the importing
+/// package. In a package of the same identity, the refinement over a local
+/// `Twice` has an equal node key, and differs in its abstract side's
+/// `dependency` and in its node's `protocol` and `dependencies`.
+#[trace("TC-552", "FR-147-AC-15")]
+#[test]
+fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
+    let (local_unit, documents) = protocol_subject();
+    let dependency_unit = local_unit
+        .replace(
+            "refinement R using inf abstract A::Local concrete C {}\n",
+            "",
+        )
+        .replace("model C = \"example/refinement-concrete\";\n", "")
+        .replace(
+            "model A = \"example/refinement-abstract\";",
+            "model Spec = \"example/refinement-abstract\";",
+        )
+        .replace("protocol Local", "protocol Twice")
+        .replace("A::Widget", "Spec::Widget");
     let unit = format!(
         "{COMPLETE_V1_HEADER}profile inf = \"filament.temporal.infinite-trace/v1\";\n\
          profile p = \"filament.protocol.finite-global/v1\";\n\
@@ -2014,38 +2127,22 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
          refinement R using inf abstract Spec::Twice concrete C {{
          }}\n"
     );
-    let parsed = fsl_cst::parse(
-        fsl_foundation::SourceIdentity::new("agent-ix", "test:root"),
-        "program.native",
-        unit.as_bytes(),
-        fsl_cst::Limits::default(),
-    )
-    .expect("unit parses");
-    assert_eq!(parsed.diagnostics(), []);
-    let raw = parsed.source().reference().clone();
-    let unit_form = fsl_forms::build_unit(&parsed).expect("unit form");
+    let ProtocolDependency {
+        library,
+        package: dependency,
+        emission: dependency_emission,
+        view,
+        importer,
+    } = import_protocol_dependency(&dependency_unit, &documents[..1], &unit, &documents);
+    assert!(dependency
+        .graph()
+        .protocol_node_keys("Twice")
+        .and_then(|keys| keys.clause.as_ref())
+        .is_some());
     let root_models =
         fsl_semantics::model::intake::package_input(documents.iter().map(Vec::as_slice))
             .expect("concrete model package");
-    let models = fsl_semantics::model::intake::admit_unit(
-        &unit_form.selections().models,
-        &root_models,
-        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
-    )
-    .expect("concrete model is admitted");
-    let mut declarations = fsl_semantics::check::PackageDeclarations::assemble(
-        raw,
-        "test/root".to_owned(),
-        unit_form,
-        models,
-        vec![fsl_semantics::check::AdmittedImport {
-            identity: library.clone(),
-            view: view.clone(),
-            graph: dependency.shared_graph(),
-        }],
-    )
-    .expect("dependency name resolution assembles");
-    declarations = declarations
+    let declarations = importer
         .with_refinement_internals(json!([{"refinement":"R","internal":["Spec::Twice::Done"]}]));
     let root = CheckedPackage::link_with(
         declarations
@@ -2608,7 +2705,12 @@ fn the_internal_list_order_does_not_change_the_refinement_node() {
 /// a local dependency. Its catalog lists the clause's classes on the
 /// abstract side. The model subject over the same models writes no
 /// `protocol` member.
-#[trace("FSpec-FR-375-AC-11", "FSpec-FR-375-AC-25", "FSpec-FR-375-AC-23", "FSpec-TC-310")]
+#[trace(
+    "FSpec-FR-375-AC-11",
+    "FSpec-FR-375-AC-25",
+    "FSpec-FR-375-AC-23",
+    "FSpec-TC-310"
+)]
 #[test]
 fn a_row_empty_protocol_subject_names_its_clause() {
     let (unit, documents) = protocol_subject();
@@ -3315,7 +3417,12 @@ fn span_of(text: &str, needle: &str) -> (u64, u64) {
 /// the package. A model with no operation needs no step row, and with
 /// every abstract field mapped the owner is proof-eligible: one `generated`
 /// occurrence, at its declaration.
-#[trace("FSpec-FR-375-AC-21", "FSpec-FR-375-AC-24", "FSpec-FR-322-AC-88", "FSpec-TC-310")]
+#[trace(
+    "FSpec-FR-375-AC-21",
+    "FSpec-FR-375-AC-24",
+    "FSpec-FR-322-AC-88",
+    "FSpec-TC-310"
+)]
 #[test]
 fn population_and_object_rows_read_back() {
     let (emitted, _) = emit_rows(MAPS, &[]);
