@@ -759,22 +759,6 @@ fn function_types(graph: &CheckedGraph, name: &str) -> Vec<String> {
     out
 }
 
-/// The receiver type names of a dispatch table's entries.
-fn tables_receivers(table: &fsl_semantics::check::DispatchTable) -> Vec<String> {
-    table
-        .entries()
-        .iter()
-        .map(|(receiver, _)| {
-            format!("{receiver:?}")
-                .rsplit('/')
-                .next()
-                .unwrap_or_default()
-                .trim_end_matches("\" }])")
-                .to_owned()
-        })
-        .collect()
-}
-
 /// A checked expression's node kinds, package identities written `P`.
 fn shape_of(node: fsl_semantics::check::CheckedNode<'_>, out: &mut String) {
     out.push_str(
@@ -787,17 +771,38 @@ fn shape_of(node: fsl_semantics::check::CheckedNode<'_>, out: &mut String) {
     }
 }
 
-/// One dispatch entry without its receiver's package identity: the receiver
-/// type's name, body, precondition and precondition clauses.
-type CandidateShape = (String, usize, Option<usize>, Vec<usize>);
+/// A function a dispatch candidate names, as the function declares itself: its
+/// name and its body's shape, package identities written `P`.
+type Declared = (String, String);
 
-/// The dispatch tables' candidates, by receiver type name.
-fn tables(graph: &CheckedGraph) -> Vec<Vec<CandidateShape>> {
+/// One dispatch entry: the receiver type's name, then its body, effective
+/// precondition and precondition clause functions.
+type CandidateShape<F> = (String, F, Option<F>, Vec<F>);
+
+fn declared(graph: &CheckedGraph, index: usize) -> Declared {
+    let function = graph
+        .function_state(index)
+        .expect("a candidate names a checked function");
+    // S spells a function under its unit's source identity (`assemble`'s
+    // `tc-1408`), D under the domain package's.
+    let name = function
+        .name
+        .replace("ix://tc-1408/", "ix://P/")
+        .replace("ix://test/orders/", "ix://P/");
+    let mut shape = String::new();
+    shape_of(function.body, &mut shape);
+    (name, shape)
+}
+
+/// The dispatch tables' candidates, by receiver type name. No function index is
+/// kept, and entries and clauses are ordered by name, so two packages that hold
+/// their functions at different positions compare by what they declare.
+fn tables(graph: &CheckedGraph) -> Vec<Vec<CandidateShape<Declared>>> {
     graph
         .dispatch_tables()
         .iter()
         .map(|table| {
-            table
+            let mut entries: Vec<_> = table
                 .entries()
                 .iter()
                 .map(|(receiver, candidate)| {
@@ -808,11 +813,43 @@ fn tables(graph: &CheckedGraph) -> Vec<Vec<CandidateShape>> {
                         .unwrap_or_default()
                         .trim_end_matches("\" }])")
                         .to_owned();
+                    let mut clauses: Vec<_> = candidate
+                        .precondition_clauses
+                        .iter()
+                        .map(|&index| declared(graph, index))
+                        .collect();
+                    clauses.sort();
                     (
                         name,
-                        candidate.body,
-                        candidate.precondition,
-                        candidate.precondition_clauses.clone(),
+                        declared(graph, candidate.body),
+                        candidate.precondition.map(|index| declared(graph, index)),
+                        clauses,
+                    )
+                })
+                .collect();
+            entries.sort();
+            entries
+        })
+        .collect()
+}
+
+/// One part of every function `tables` names.
+fn project(
+    tables: &[Vec<CandidateShape<Declared>>],
+    part: fn(&Declared) -> &String,
+) -> Vec<Vec<CandidateShape<String>>> {
+    let part = |function: &Declared| part(function).clone();
+    tables
+        .iter()
+        .map(|table| {
+            table
+                .iter()
+                .map(|(receiver, body, precondition, clauses)| {
+                    (
+                        receiver.clone(),
+                        part(body),
+                        precondition.as_ref().map(part),
+                        clauses.iter().map(part).collect(),
                     )
                 })
                 .collect()
@@ -834,8 +871,11 @@ fn ac5_extras(qualifier: &str) -> String {
 }
 
 /// FR-569-AC-5 (S-R): a clause on `Sub::size` joins `Sub.size`'s effective
-/// precondition as `Qs2 or Qs` with the own clause first, and S and D link
-/// the same dispatch tables and check the same types.
+/// precondition as `Qs2 or Qs` with the own clause first. S and D link
+/// dispatch tables with the same candidates, bodies and contributing clauses
+/// and check the same types. `Order.size`, whose one contributing clause is
+/// `Qs`, names its own effective-precondition function in S and `Qs`'s
+/// authored function in D.
 #[trace("FR-569-AC-5", "TC-1408")]
 #[test]
 fn the_source_and_model_twins_link_equal_tables_and_check_equal_types() {
@@ -855,45 +895,67 @@ fn the_source_and_model_twins_link_equal_tables_and_check_equal_types() {
     )
     .expect("the model twin checks");
 
-    // Dispatch tables: equal, with `Sub.size` carrying its own clause first.
-    let (source_tables, model_tables) = (tables(&source), tables(&model));
-    assert_eq!(source_tables, model_tables);
-    assert!(source_tables.iter().any(|table| {
-        table
-            .iter()
-            .all(|entry| entry.0 == "Order" || entry.0 == "Sub")
-    }));
-    let precondition_of = |graph: &CheckedGraph, name: &str| -> String {
-        let table = graph
-            .dispatch_tables()
-            .iter()
-            .find(|table| tables_receivers(table).iter().any(|r| r == "Sub"))
-            .expect("the size table");
-        let (_, candidate) = table
-            .entries()
-            .iter()
-            .find(|(receiver, _)| format!("{receiver:?}").contains(&format!("/{name}\"")))
-            .unwrap_or_else(|| panic!("{name} has an entry"));
-        let function = graph
-            .function_state(candidate.precondition.expect("an effective precondition"))
-            .expect("the precondition function");
-        let mut shape = String::new();
-        shape_of(function.body, &mut shape);
-        shape
+    // Dispatch tables, by what each named function declares. The one
+    // difference between the routes is `Order.size`'s effective precondition.
+    let expected = |order_precondition: &str| {
+        vec![vec![
+            (
+                "Order".to_owned(),
+                "ix://P/Order/size".to_owned(),
+                Some(order_precondition.to_owned()),
+                vec!["ix://P/Order/size.precondition".to_owned()],
+            ),
+            (
+                "Sub".to_owned(),
+                "ix://P/Sub/size".to_owned(),
+                Some("ix://P/Sub/size.precondition.effective".to_owned()),
+                vec![
+                    "ix://P/Order/size.precondition".to_owned(),
+                    "ix://P/Sub/size.precondition".to_owned(),
+                ],
+            ),
+        ]]
     };
-    // `Sub.size`'s effective precondition is `Qs2 or Qs`, the own clause
-    // first (`>= 1` is Qs2, `>= 0` is Qs); `Order.size`'s is `Qs` alone.
-    let sub = precondition_of(&source, "Sub");
-    assert!(sub.starts_with("Connective(Or"), "{sub}");
-    assert!(
-        sub.find("Integer(1)").unwrap() < sub.find("Integer(0)").unwrap(),
-        "Qs2 first: {sub}"
-    );
-    assert!(!precondition_of(&source, "Order").contains("Connective"));
-    assert_eq!(sub, precondition_of(&model, "Sub"));
+    let (source_tables, model_tables) = (tables(&source), tables(&model));
+    let name: fn(&Declared) -> &String = |function| &function.0;
     assert_eq!(
-        precondition_of(&source, "Order"),
-        precondition_of(&model, "Order")
+        project(&source_tables, name),
+        expected("ix://P/Order/size.precondition.effective")
+    );
+    assert_eq!(
+        project(&model_tables, name),
+        expected("ix://P/Order/size.precondition")
+    );
+    // Each named function has the same body on both routes.
+    let body: fn(&Declared) -> &String = |function| &function.1;
+    assert_eq!(project(&source_tables, body), project(&model_tables, body));
+    // The bodies are `C` (1) and `B` (7). `Sub.size`'s effective precondition
+    // is `Qs2 or Qs`, the own clause first (`>= 1` is Qs2, `>= 0` is Qs);
+    // `Order.size`'s is `Qs` alone, as is its one contributing clause.
+    let bodies = project(&source_tables, body);
+    let [order, sub] = &bodies[0][..] else {
+        panic!("two candidates: {bodies:?}");
+    };
+    assert!(order.1.contains("Integer(1)"), "C: {}", order.1);
+    assert!(sub.1.contains("Integer(7)"), "B: {}", sub.1);
+    let order_precondition = order.2.as_deref().expect("Order.size has one");
+    assert!(
+        order_precondition.contains("Integer(0)"),
+        "Qs: {order_precondition}"
+    );
+    assert!(
+        !order_precondition.contains("Connective"),
+        "{order_precondition}"
+    );
+    assert_eq!(order.3, [order_precondition]);
+    let sub_precondition = sub.2.as_deref().expect("Sub.size has one");
+    assert!(
+        sub_precondition.starts_with("Connective(Or"),
+        "{sub_precondition}"
+    );
+    assert!(
+        sub_precondition.find("Integer(1)").unwrap() < sub_precondition.find("Integer(0)").unwrap(),
+        "Qs2 first: {sub_precondition}"
     );
 
     // Checked types: equal on the two routes, and the expected ones.
