@@ -1,0 +1,10 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile t = "filament.temporal.complete/v1";
+model Config = "catalog/slots";
+dimension Time;
+unit ms : Time = rational(1, 1);
+time Config dense unit ms;
+pre HasElement using v on Config::ConfigVersion::attemptUpdate { self.x >= 1 ms and forall(e in self.q: present(e)) }
+time invariant Held when { forall(e in self.q: present(e)) } { self.x <= 9 ms }
+urgent Soon when { exists(e in self.q: present(e)) };

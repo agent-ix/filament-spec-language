@@ -251,6 +251,9 @@ source_cases! {
     clock_reference => sourced!("clock-reference", &["filament.op.clock_reference.ref", "filament.op.clock_reference.eq", "filament.op.clock_reference.ne"], &[("scalar_type", "clock_reference"), ("expression", "place_reference")]),
     reference_literal_inequality => selecting!("reference-literal-inequality", "tests/corpus/models/shop.semantic-ir.json", &["filament.op.reference.ne"], &[]),
     delay_distribution => sourced!("delay-distribution", &[], &[("probabilistic", "delay_distribution")]),
+    refinement_rows => sourced!("refinement-rows", &["filament.op.collection.seq", "filament.op.refinement.history"], &[]),
+    relationship_navigation => sourced!("relationship-navigation", &["filament.op.model.navigate", "filament.op.model.reaches"], &[]),
+    presence_slots => sourced!("presence-slots", &["filament.op.option.slots"], &[]),
 }
 
 fn catalog_identities() -> BTreeSet<String> {
@@ -675,18 +678,6 @@ const UNPRODUCED: &[Unproduced] = &[
         },
     },
     Unproduced {
-        id: "filament.op.collection.seq",
-        keys: &["IR-1492"],
-        probe: Probe {
-            source: probe_source!("probe-sequence-population-call"),
-            detect: Detect::Operation("filament.op.collection.seq"),
-            expect: Expect::Refused {
-                stage: "check",
-                cause: "PopulationFormOutsideRefinement",
-            },
-        },
-    },
-    Unproduced {
         id: "filament.op.model.dispatch_call",
         keys: &["QSL-3047"],
         probe: Probe {
@@ -817,36 +808,6 @@ const UNPRODUCED: &[Unproduced] = &[
         },
     },
     Unproduced {
-        id: "filament.op.model.navigate",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: include_str!("../../cases/catalog-source/probe-object-navigation.native"),
-            detect: Detect::Operation("filament.op.model.navigate"),
-            expect: Expect::Refused {
-                stage: "admit",
-                cause: "InvalidSemanticGraph",
-            },
-        },
-    },
-    Unproduced {
-        id: "filament.op.model.reaches",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Operation("filament.op.model.reaches"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "filament.op.option.slots",
-        keys: &["QSL-3047"],
-        probe: Probe {
-            source: "",
-            detect: Detect::Operation("filament.op.option.slots"),
-            expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
         id: "filament.op.reference.upcast",
         keys: &["QSL-3047"],
         probe: Probe {
@@ -880,15 +841,6 @@ const UNPRODUCED: &[Unproduced] = &[
             source: "",
             detect: Detect::Operation("filament.op.claim.clause"),
             expect: Expect::Unprobed,
-        },
-    },
-    Unproduced {
-        id: "filament.op.refinement.history",
-        keys: &["QSL-3048"],
-        probe: Probe {
-            source: include_str!("../../../tests/corpus/refinement/refinement-constant-map.native"),
-            detect: Detect::Operation("filament.op.refinement.history"),
-            expect: Expect::Admitted,
         },
     },
     Unproduced {
@@ -1843,7 +1795,6 @@ fn the_named_unproduced_owners_are_listed_with_their_keys() {
             .keys
     };
     assert_eq!(keyed("filament.op.collection.index"), ["IR-1491"]);
-    assert_eq!(keyed("filament.op.collection.seq"), ["IR-1492"]);
     assert_eq!(keyed("source-declared-object-navigation"), ["QSL-3047"]);
 }
 
