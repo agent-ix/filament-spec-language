@@ -1733,8 +1733,15 @@ fn raw_clock_data_admits_declared_and_refuses_undeclared_identities() {
 #[test]
 fn source_generates_clock_references_from_ordinary_admitted_owners() {
     let body = format!("{}
+        protocol Places using p over (call: C::Call) on each (opened: Boolean) when (opened) {{
+            capture chosen: Reference<Clock> = ref(call.x);
+            role Observer on C::Call;
+            run sequence Main {{ check Ready using v {{ true }}; }}
+            finish End as (outcome: Boolean) {{ true }};
+        }}
         invariant Stored using m on C::Call at current {{ ref(self.x) = ref(self.x) }}
         function same_clock(left: Reference<Clock>, right: Reference<Clock>): Boolean pure {{ left = right }}
+        function differ(left: Reference<Clock>, right: Reference<Clock>): Boolean pure {{ left != right }}
         ",
         clock_refinement("used = count(c in C::calls where true); busy = false;"));
     let checked = ring_queue::check_models_with_profiles(
@@ -1815,16 +1822,50 @@ fn source_generates_clock_references_from_ordinary_admitted_owners() {
         compare(clock("c1", "x"), clock("c2", "x")),
         Value::Boolean(false)
     ));
-    let foreign = Value::ClockReference(
-        filament_exact::ClockPlaceReference::new(
-            crate::support::ids::universe_id(b"foreign-clock-reference-test"),
-            &expected_place("c1", "x"),
+    // FR-829-AC-8: across universes `=` and `!=` never refuse; references
+    // are equal exactly when their place id texts are.
+    let foreign_universe = crate::support::ids::universe_id(b"foreign-clock-reference-test");
+    let foreign = |owner: &str, field: &str| {
+        Value::ClockReference(
+            filament_exact::ClockPlaceReference::new(
+                foreign_universe.clone(),
+                &expected_place(owner, field),
+            )
+            .expect("place reference in another universe"),
         )
-        .expect("same place text in another universe"),
-    );
+    };
     assert!(matches!(
-        compare(clock("c1", "x"), foreign),
+        compare(clock("c1", "x"), foreign("c1", "x")),
+        Value::Boolean(true)
+    ));
+    assert!(matches!(
+        compare(clock("c1", "x"), foreign("c2", "x")),
         Value::Boolean(false)
+    ));
+    assert!(matches!(
+        compare(clock("c1", "x"), foreign("c1", "y")),
+        Value::Boolean(false)
+    ));
+    let differ = QualifiedName::unqualified("differ").expect("function name");
+    let compare_ne = |left: Value, right: Value| {
+        completed(
+            package
+                .call(
+                    &differ,
+                    vec![left, right],
+                    &observation.environment,
+                    &mut Meter::new(LIMITS),
+                )
+                .expect("typed ClockReference inequality completes"),
+        )
+    };
+    assert!(matches!(
+        compare_ne(clock("c1", "x"), foreign("c1", "x")),
+        Value::Boolean(false)
+    ));
+    assert!(matches!(
+        compare_ne(clock("c1", "x"), foreign("c2", "x")),
+        Value::Boolean(true)
     ));
     let mut generated = Vec::new();
     for owner in ["c1", "c2"] {
@@ -1960,6 +2001,13 @@ fn clock_reference_set_aggregators_use_the_canonical_member_order() {
             panic!("the generated field is a typed Set");
         };
         let refs = set.elements();
+        let place_ids = refs.iter().map(|value| {
+            let Value::ClockReference(reference) = value else {
+                panic!("a Set member is a clock reference");
+            };
+            reference.text().as_bytes()
+        });
+        assert!(place_ids.is_sorted());
         let count = row_value(state, "set_count");
         assert!(
             matches!(

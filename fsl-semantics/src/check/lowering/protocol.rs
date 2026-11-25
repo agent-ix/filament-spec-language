@@ -14,15 +14,12 @@
 //! and the control names from the root down, FR-466; see `controls`) and the
 //! `finish` obligation (declared at `P`, `finish` and its name, FR-465).
 //!
-//! What this writes is what FSL can prove IR admits. A protocol that names a
-//! construct whose node is not written yet (a role, a channel, a
-//! predicate-joined `parallel`, a post-test `repeat`, a `terminal` member, a
-//! protocol reference written directly in a capture, guard, terminal, control
-//! or `finish` body) is refused with that construct named
-//! ([`ProtocolConstruct`]) rather than written without it: its package would
-//! lack part of the graph its `package_id` stands for. A reference binds the
-//! clause node's key and is itself a `{term: "reference", target}` leaf keyed
-//! by `filament.structural-node/v1`.
+//! What this writes is the whole graph of a checked protocol (FR-383): a
+//! protocol is never written without a part of the graph its `package_id`
+//! stands for, and a construct with no node to write is refused by name
+//! ([`ProtocolConstruct`]). A reference binds the clause node's key and is
+//! itself a `{term: "reference", target}` leaf keyed by
+//! `filament.structural-node/v1`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -887,6 +884,23 @@ impl Lowering<'_> {
         let finish_node = protocol.checked.finish.as_ref().ok_or_else(unchecked)?.0;
         let mut nodes = run.nodes;
         nodes.insert(finish_node, finish.clone());
+        // FR-375: a refinement's classes of a compensation template name the
+        // template's node by its declaration.
+        for (index, key) in &compensation_keys {
+            let declaration = protocol
+                .checked
+                .obligations
+                .compensations
+                .get(*index)
+                .and_then(|template| {
+                    protocol.form.declarations.iter().position(|declaration| {
+                        declaration.kind == ProtocolNodeKind::CompensateTemplate
+                            && declaration.name.name == template.name
+                    })
+                })
+                .ok_or_else(unchecked)?;
+            nodes.insert(ProtocolNodeId(declaration), NodeRef::Admitted(key.clone()));
+        }
         let run = run.root;
 
         let activation = match &trigger {
@@ -2272,9 +2286,8 @@ fn catalog_fault(location: &Location, invariant: &'static str) -> CheckRefusal {
 /// The keys of one keyed protocol clause's members that own a step class
 /// (FR-432): the clause itself (`activate`), its channels and roles by name,
 /// and its step nodes by declaration index: every control the `run` tree
-/// writes and the `finish` node. A clause holding a control that is not
-/// written yet (a predicate-joined `parallel`, a post-test `repeat`) has no
-/// node, so a refinement over it stays not emitted.
+/// writes and the `finish` node. A refinement over a clause that has no node
+/// stays not emitted.
 #[derive(Clone, Debug)]
 pub(crate) struct ProtocolMembers {
     pub(crate) clause: NodeRef,

@@ -2919,6 +2919,11 @@ impl<'a> Lowering<'a> {
     /// A text literal typed at the builtin text scalar node (T3).
     fn text_literal(&mut self, value: &str, location: &Location) -> Result<LeafTerm, CheckRefusal> {
         let text = self.scalar("text", location)?;
+        // Generated type metadata can be the only use of the builtin Text
+        // scalar in an expression-only unit; root it at that source use.
+        if !self.occurrences.has(text.clone()) {
+            self.record(text.clone(), OccurrenceRole::Generated, location.clone());
+        }
         Ok(LeafTerm::literal(
             text,
             LiteralValue::Text(value.to_owned()),
@@ -2970,7 +2975,15 @@ impl<'a> Lowering<'a> {
                 self.composites_open.remove(&declaration);
             }
         }
-        built
+        let node = built?;
+        if matches!(value_type, ValueType::Float(_)) {
+            if let Some(key) = node.admitted() {
+                if !self.occurrences.has(key.clone()) {
+                    self.record(key.clone(), OccurrenceRole::Generated, location.clone());
+                }
+            }
+        }
+        Ok(node)
     }
 
     /// [`Self::type_node`] for a type that names no pending handle: the
@@ -7493,14 +7506,7 @@ impl<'a> Lowering<'a> {
             Value::String(value) if scalar == Some("text") => LiteralValue::Text(value.clone()),
             Value::String(value) => LiteralValue::String(value.clone()),
         };
-        let float_scalar = match value {
-            Value::Float(value) => Some(match value.width() {
-                filament_exact::IeeeWidth::Binary32 => "float32",
-                filament_exact::IeeeWidth::Binary64 => "float64",
-            }),
-            _ => None,
-        };
-        let semantic_type = match scalar.or(float_scalar) {
+        let semantic_type = match scalar {
             Some(form) => NodeRef::from(self.scalar(form, location)?),
             None => self.type_ref(declared, location)?,
         };

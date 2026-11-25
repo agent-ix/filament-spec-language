@@ -46,19 +46,17 @@ fn conditional_model() -> World {
             ("dead", prob_world::BOOLEAN.to_owned()),
         ],
         operations,
-        body: format!(
-            "pre AReady using v on M::T::a {{ not self.activated and not self.dead }}\n\
-             post AResult using v on M::T::a {{ self.activated = success and self.holds and self.dead = not success }}\n\
-             pre BReady using v on M::T::b {{ not self.activated and not self.dead }}\n\
-             post BResult using v on M::T::b {{ self.activated and self.holds = success and not self.dead }}\n\
-             random T::a(success) ~ {{ true: 1, false: 3 }};\n\
-             random T::b(success) ~ {{ true: 1, false: 1 }};\n\
-             terminal Done using v on M when {{ self.activated or self.dead }};\n\
-             workload Even on M {{ weight T::a = 1; weight T::b = 1; }}\n\
+        body: "pre AReady using v on M::T::a { not self.activated and not self.dead }\n\
+             post AResult using v on M::T::a { self.activated = success and self.holds and self.dead = not success }\n\
+             pre BReady using v on M::T::b { not self.activated and not self.dead }\n\
+             post BResult using v on M::T::b { self.activated and self.holds = success and not self.dead }\n\
+             random T::a(success) ~ { true: 1, false: 3 };\n\
+             random T::b(success) ~ { true: 1, false: 1 };\n\
+             terminal Done using v on M when { self.activated or self.dead };\n\
+             workload Even on M { weight T::a = 1; weight T::b = 1; }\n\
              probabilistic Workload using inf on M under Even on each (x: M::T) \
-         when (x.activated) {{ probability >= rational(3, 5) \
-             [ eventually holds(x.holds) ] }}\n"
-        ),
+         when (x.activated) { probability >= rational(3, 5) \
+             [ eventually holds(x.holds) ] }\n".to_owned(),
         initial: json!({
             "activated": {"boolean": false},
             "holds": {"boolean": false},

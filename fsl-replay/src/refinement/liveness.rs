@@ -17,6 +17,7 @@ use fsl_eval::fairness::{
     analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
 };
 use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::protocol::ProtocolTransition;
 
 use crate::refinement::failure::Taken;
 
@@ -315,18 +316,19 @@ impl AbstractClass {
                 .iter()
                 .filter_map(|step| step.transition.as_ref())
                 .any(|transition| self.covers(transition)),
-            Taken::Protocol(transitions) => transitions
+            Taken::Protocol(transitions) => self.is_taken_along(transitions),
+            Taken::ProtocolTraces(traces) => traces
                 .iter()
-                .filter_map(fsl_eval::simulation::protocol::ProtocolTransition::application)
-                .any(|transition| self.covers(transition)),
-            Taken::ProtocolTraces(traces) => traces.iter().any(|trace| {
-                trace
-                    .transitions
-                    .iter()
-                    .filter_map(fsl_eval::simulation::protocol::ProtocolTransition::application)
-                    .any(|transition| self.covers(transition))
-            }),
+                .any(|trace| self.is_taken_along(&trace.transitions)),
         }
+    }
+
+    /// Whether a protocol path takes the class: whether one of its steps
+    /// applies a transition of it.
+    pub fn is_taken_along(&self, path: &[ProtocolTransition]) -> bool {
+        path.iter()
+            .filter_map(ProtocolTransition::applied_application)
+            .any(|transition| self.covers(transition))
     }
 }
 

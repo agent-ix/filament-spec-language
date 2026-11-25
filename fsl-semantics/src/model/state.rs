@@ -10,8 +10,8 @@
 //! between two states is [`crate::model::population::decide_frame`], called
 //! directly over the model's [`StateModel::population_index`].
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, OnceLock};
 
 use filament_contract_model::{
     NativeJoinBudget, NativeJoinChargeKind, NativeJoinDeniedCharge, NativeJoinLocus,
@@ -28,9 +28,9 @@ use crate::model::index::ModelIndex;
 use crate::model::intake::{NormalizedModel, PackageInput};
 use crate::model::normalize::EffectiveView;
 use crate::model::observation::{
-    admit_initial_state, model_views, observe_state, state_fields, state_reference,
-    AdmissionFailure, DocumentRef, ModelSelections, ModelView, Observation, ObservationLimits,
-    PathStep, SelectedAnchor,
+    admit_initial_state, model_views, observation_facts, observe_state, state_fields,
+    state_reference, AdmissionFailure, DocumentRef, ModelFacts, ModelSelections, ModelView,
+    Observation, ObservationLimits, PathStep, SelectedAnchor,
 };
 use filament_checked::key::DeclarationKey;
 
@@ -330,6 +330,7 @@ pub struct StateModel {
     pub(crate) views: Vec<ModelView>,
     pub(crate) types: StateTypes,
     pub(crate) limits: ModelNormalizationLimits,
+    observation_facts: OnceLock<Result<ModelFacts, AdmissionFailure>>,
 }
 
 #[derive(Debug)]
@@ -453,6 +454,7 @@ impl StateModel {
                 crate::check::dense_model_data_environment(&view.view, source.span, &types, units)?;
         }
         self.types = StateTypes::Owned(Box::new(types));
+        self.observation_facts.take();
         Ok(&self.types)
     }
 
@@ -677,6 +679,7 @@ impl StateModel {
             views,
             types,
             limits: limits.map_or_else(ModelNormalizationLimits::default, |(_, limits)| limits),
+            observation_facts: OnceLock::new(),
         })
     }
 
@@ -759,6 +762,33 @@ impl StateModel {
         crate::check::state_clause::populations_overlapping(&models, object, &self.types)
     }
 
+    /// The declaration key of the one population a checked clause's `domain`
+    /// records: the population at that ordinal of its domain package whose
+    /// canonical member type is the domain's. `None` when no population of
+    /// this model, or more than one, is that one.
+    pub fn resolved_population(
+        &self,
+        domain: &crate::check::PopulationDomain,
+    ) -> Option<DeclarationKey> {
+        let mut found = BTreeSet::new();
+        for view in &self.views {
+            let model = crate::check::lowering::AdmittedModel::from_view(&view.view);
+            found.extend(
+                model
+                    .population_domains()
+                    .filter(|(ordinal, _, canonical)| {
+                        *ordinal == domain.ordinal && *canonical == domain.object
+                    })
+                    .map(|(_, population, _)| population.key.clone()),
+            );
+        }
+        let mut found = found.into_iter();
+        match (found.next(), found.next()) {
+            (Some(key), None) => Some(key),
+            _ => None,
+        }
+    }
+
     /// Re-admit and re-normalize the domain packages `model_selections` name
     /// against `packages`, as FR-106 admission does.
     ///
@@ -776,6 +806,7 @@ impl StateModel {
             views: model_views(model_selections, packages, limits)?,
             types: StateTypes::Owned(Box::new(types.clone())),
             limits,
+            observation_facts: OnceLock::new(),
         })
     }
 
@@ -791,6 +822,7 @@ impl StateModel {
             views: views.into_iter().map(ModelView::new).collect(),
             types: StateTypes::Owned(Box::new(types.clone())),
             limits,
+            observation_facts: OnceLock::new(),
         }
     }
 
@@ -978,7 +1010,16 @@ impl StateModel {
         state: &ModelState,
         identity: DocumentRef,
     ) -> Result<Observation, AdmissionFailure> {
-        observe_state(&self.views, &self.types, state, identity)
+        let facts = self
+            .observation_facts
+            .get_or_init(|| observation_facts(&self.views, &self.types));
+        observe_state(
+            &self.views,
+            &self.types,
+            state,
+            identity,
+            Some(facts.as_ref().map_err(Clone::clone)?),
+        )
     }
 
     /// Observe the complete simulated state with the population authority

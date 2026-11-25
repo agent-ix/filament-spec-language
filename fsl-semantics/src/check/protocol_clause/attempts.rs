@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-114 attempt binding: each `attempt`'s `contracts` list resolved
 //! against the unit's state clauses and its already-resolved operation.
 

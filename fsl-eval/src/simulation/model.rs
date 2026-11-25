@@ -77,7 +77,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
     ClockPlaceReference, EffectiveId, Incomplete, Integer, IntegerInterval, Meter, NodeKey,
-    ObjectReference, Refusal, ScalarLimits, Undefined, ValueType,
+    ObjectReference, Refusal, ScalarLimits, Undefined, UniverseId, ValueType,
 };
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::declaration::TypeEnvironment;
@@ -86,7 +86,7 @@ use fsl_foundation::IdentityLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::OperationKey;
+use fsl_semantics::check::{OperationKey, PopulationDomain};
 use fsl_semantics::family::ClassifyFailure;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::clause_observation::Observation;
@@ -259,10 +259,20 @@ pub enum ModelStateProvenance {
 }
 
 /// A model state and its explicit provenance. Provenance is not part of its key.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ModelSimState {
     state: ModelState,
     provenance: ModelStateProvenance,
+    canonical_key: std::sync::Arc<std::sync::OnceLock<std::sync::Arc<crate::simulation::StateKey>>>,
+}
+
+impl std::fmt::Debug for ModelSimState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModelSimState")
+            .field("state", &self.state)
+            .field("provenance", &self.provenance)
+            .finish()
+    }
 }
 
 impl ModelSimState {
@@ -273,6 +283,7 @@ impl ModelSimState {
                 anchor,
                 effect: None,
             },
+            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
         }
     }
 
@@ -286,7 +297,11 @@ impl ModelSimState {
                 effect: Some(effect),
             },
         };
-        Self { state, provenance }
+        Self {
+            state,
+            provenance,
+            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
+        }
     }
 
     fn without_effect(&self, state: ModelState) -> Self {
@@ -299,7 +314,11 @@ impl ModelSimState {
                 ModelStateProvenance::RestoredFromKey { effect: None }
             }
         };
-        Self { state, provenance }
+        Self {
+            state,
+            provenance,
+            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
+        }
     }
 
     /// The closed population state.
@@ -1561,19 +1580,25 @@ impl<'a> ModelSystem<'a> {
             initial.push(ModelSimState::anchored(state, anchor));
         }
 
-        // FR-125 gives an object key one type across the subject's initial
-        // states and every population that admits the bounded universe. Do
-        // this before reference bindings or any instance is formed: otherwise
-        // the same key could denote different objects depending on which
-        // population or initial snapshot supplied the row.
-        let mut admitted_types = BTreeMap::<String, DeclarationKey>::new();
+        // FR-125 gives an object universe's key one type across the subject's
+        // initial states and every bounded population. Do this before
+        // reference bindings or any instance is formed: otherwise one
+        // reference could denote different objects depending on which
+        // population or initial snapshot supplied the row. Equal keys in two
+        // object universes (unrelated type hierarchies) name two objects.
+        let mut admitted_types = BTreeMap::<(UniverseId, String), DeclarationKey>::new();
         for state in &initial {
             for (population, objects) in &state.state.populations {
                 if !universes.contains_key(population) {
                     continue;
                 }
                 for (key, object) in objects {
-                    match admitted_types.get(key) {
+                    let universe = model
+                        .object_reference(&object.type_identity, key)?
+                        .universe()
+                        .clone();
+                    let identity = (universe, key.clone());
+                    match admitted_types.get(&identity) {
                         Some(first_type) if first_type != &object.type_identity => {
                             return Err(refused(
                                 Code::InvalidRuntimeInput,
@@ -1587,7 +1612,7 @@ impl<'a> ModelSystem<'a> {
                         }
                         Some(_) => {}
                         None => {
-                            admitted_types.insert(key.clone(), object.type_identity.clone());
+                            admitted_types.insert(identity, object.type_identity.clone());
                         }
                     }
                 }
@@ -1824,11 +1849,8 @@ impl<'a> ModelSystem<'a> {
         &self,
         state: &ModelSimState,
     ) -> Result<(Vec<u8>, crate::simulation::StateKey), crate::simulation::EncodingRefusal> {
-        crate::simulation::key::state_key_of(
-            &self.canonical,
-            &encode::model_key(&self.model, &state.state, self.typing()).0,
-            identity_limits(),
-        )
+        let key = self.canonical_state_key_ref(state)?;
+        Ok((key.as_bytes().to_vec(), key.clone()))
     }
 
     /// Canonical raw model identity bytes under cumulative caller admission.
@@ -1862,11 +1884,25 @@ impl<'a> ModelSystem<'a> {
         &self,
         state: &ModelSimState,
     ) -> Result<crate::simulation::StateKey, crate::simulation::EncodingRefusal> {
-        crate::simulation::key::canonical_state_key_of(
+        self.canonical_state_key_ref(state).cloned()
+    }
+
+    pub(crate) fn canonical_state_key_ref<'s>(
+        &self,
+        state: &'s ModelSimState,
+    ) -> Result<&'s crate::simulation::StateKey, crate::simulation::EncodingRefusal> {
+        if let Some(key) = state.canonical_key.get() {
+            return Ok(key.as_ref());
+        }
+        let key = crate::simulation::key::canonical_state_key_of(
             &self.canonical,
             &encode::model_key(&self.model, &state.state, self.typing()).0,
             identity_limits(),
-        )
+        )?;
+        Ok(state
+            .canonical_key
+            .get_or_init(|| std::sync::Arc::new(key))
+            .as_ref())
     }
 
     /// The canonical writer of this system's keys.
@@ -2493,10 +2529,9 @@ impl<'a> ModelSystem<'a> {
     /// type `over` under this subject's universes, in the canonical order.
     ///
     /// A population admits `T` when one of its member types is `T`, a
-    /// subtype or a supertype of `T`; each key of each admitting
-    /// population's universe is one instance, however many of its member
-    /// types are comparable with `T`. Admitting populations are ordered by
-    /// declaration identity text, and the keys of each by its universe list.
+    /// subtype or a supertype of `T`. Each key held by at least one initial
+    /// state is one instance. A key held in multiple admitting populations
+    /// is listed at its first occurrence in canonical population and key order.
     /// A type no population admits, and a type that is not an object
     /// reference, has no instance.
     ///
@@ -2510,9 +2545,80 @@ impl<'a> ModelSystem<'a> {
         let ValueType::Reference(parameter) = over else {
             return Ok(Vec::new());
         };
+        let mut seen_instance_keys = BTreeSet::new();
+        let mut instances = Vec::new();
+        for (population, key) in self.universe_members(parameter)? {
+            // Generated stages change field values only. The base states
+            // supply every initial object's type identity and population.
+            let admitted = self.initial_base.iter().any(|state| {
+                state
+                    .state
+                    .populations
+                    .get(population)
+                    .is_some_and(|objects| objects.contains_key(key))
+            });
+            if admitted && seen_instance_keys.insert(key) {
+                instances.push(ModelInstance {
+                    population: population.clone(),
+                    key: key.to_owned(),
+                });
+            }
+        }
+        Ok(instances)
+    }
+
+    /// FR-172 Object parameters: the instances of a hyper clause parameter,
+    /// one per key of the universe of the one population `domain` it resolves
+    /// to, in universe order, whether or not an initial state holds the key.
+    /// `self` is the system of the parameter's alias. No other population
+    /// contributes a key, whatever its member types.
+    ///
+    /// # Errors
+    ///
+    /// [`NotSimulated::RequiresBound`] when that population has no universe;
+    /// [`NotSimulated::Extent`] when this system's model has no one population
+    /// that is `domain`, and as [`Self::instances`].
+    pub fn hyper_instances(
+        &self,
+        domain: &PopulationDomain,
+    ) -> Result<Vec<ModelInstance>, NotSimulated> {
+        let resolved = self.model.resolved_population(domain).ok_or_else(|| {
+            NotSimulated::Extent(ClassifyFailure::Fault(InternalFault::new(
+                "model-simulation",
+                "parameter-population",
+            )))
+        })?;
+        let mut seen = BTreeSet::new();
+        let instances = self
+            .universe_members_where(&|population| population.key == resolved)?
+            .filter(|(_, key)| seen.insert(*key))
+            .map(|(population, key)| ModelInstance {
+                population: population.clone(),
+                key: key.to_owned(),
+            })
+            .collect();
+        Ok(instances)
+    }
+
+    /// [`Self::universe_members_where`] the populations that overlap the
+    /// object type `parameter`.
+    fn universe_members<'s>(
+        &'s self,
+        parameter: &EffectiveId,
+    ) -> Result<impl Iterator<Item = (&'s DeclarationKey, &'s str)> + 's, NotSimulated> {
+        self.universe_members_where(&|population| self.overlaps(population, parameter.clone()))
+    }
+
+    /// Every declared key in each population `admits` selects, including keys
+    /// no initial state holds. Populations follow declaration identity text
+    /// order and their keys keep the order of each universe list.
+    fn universe_members_where<'s>(
+        &'s self,
+        admits: &dyn Fn(&fsl_semantics::model::state::StatePopulation) -> bool,
+    ) -> Result<impl Iterator<Item = (&'s DeclarationKey, &'s str)> + 's, NotSimulated> {
         let mut admitting = Vec::new();
         for population in &self.populations {
-            if self.overlaps(population, parameter.clone()) {
+            if admits(population) {
                 let text = declaration_text(&population.key, CanonicalLimits::new(u64::MAX))
                     .map_err(|_| {
                         NotSimulated::Extent(ClassifyFailure::Fault(InternalFault::new(
@@ -2542,28 +2648,13 @@ impl<'a> ModelSystem<'a> {
             .collect();
         crate::simulation::not_simulated::check_requires_bound(&roots, self.types, u64::MAX)?;
         admitting.sort_by(|left, right| left.0.cmp(&right.0));
-        let mut seen_instance_keys = BTreeSet::new();
-        let mut instances = Vec::new();
-        for (_, population) in admitting {
-            for key in self.universes.get(population).into_iter().flatten() {
-                // Generated stages change field values only; they preserve
-                // every base object's type identity and population holder.
-                let admitted = self.initial_base.iter().any(|state| {
-                    state
-                        .state
-                        .populations
-                        .get(population)
-                        .is_some_and(|objects| objects.contains_key(key))
-                });
-                if admitted && seen_instance_keys.insert(key.clone()) {
-                    instances.push(ModelInstance {
-                        population: population.clone(),
-                        key: key.clone(),
-                    });
-                }
-            }
-        }
-        Ok(instances)
+        Ok(admitting.into_iter().flat_map(move |(_, population)| {
+            self.universes
+                .get(population)
+                .into_iter()
+                .flatten()
+                .map(move |key| (population, key.as_str()))
+        }))
     }
 
     /// The universe keys that do not have an admitted initial member for an

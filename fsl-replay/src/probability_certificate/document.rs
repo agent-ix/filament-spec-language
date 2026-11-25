@@ -72,7 +72,7 @@ const CYCLIC_MDP_STATE_PROFILE: &str =
 const CYCLIC_MDP_REWARD_PROFILE: &str =
     "filament.probability-objective/cyclic-mdp-expected-reward/v1";
 const BOUNDED_FAIR_PROFILE: &str = "filament.probability-objective/bounded-fair-eventual/v1";
-const FAIR_MDP_PROFILE: &str = "filament.probability-objective/fair-mdp-eventual/v1";
+const FAIR_MDP_PROFILE: &str = "filament.probability-objective/cyclic-mdp-fair-eventual/v1";
 const TIMED_PROFILE: &str = "filament.probability-objective/timed-product/v1";
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
 
@@ -899,6 +899,31 @@ fn read_document(
     read_document_profile(bytes, limits, cancel, meter, false, None, &mut 0)
 }
 
+/// Cancellation-aware working-byte budget for the canonical reader.
+struct CancellableReadReservation<'a> {
+    cancel: &'a Cancel,
+    bound: u64,
+    charged: u64,
+    refused: Option<u64>,
+}
+
+impl quire_canonical::Reservation for CancellableReadReservation<'_> {
+    fn reserve(&mut self, bytes: usize) -> Result<(), quire_canonical::ReservationDenied> {
+        if self.cancel.poll() {
+            return Err(quire_canonical::ReservationDenied);
+        }
+        let required = self
+            .charged
+            .saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
+        if required > self.bound {
+            self.refused = Some(required);
+            return Err(quire_canonical::ReservationDenied);
+        }
+        self.charged = required;
+        Ok(())
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 #[ix_trace_rs::string_edge]
 fn read_document_profile(
@@ -919,16 +944,30 @@ fn read_document_profile(
             u64::try_from(bytes.len()).unwrap_or(u64::MAX),
         ));
     }
-    let parsed = quire_canonical::read_bounded(bytes, limits.bytes, limits.storage_bytes).map_err(
-        |error| match error {
-            quire_canonical::ReadError::Limit(limit) => exceeded(
+    let mut reservation = CancellableReadReservation {
+        cancel,
+        bound: limits.storage_bytes,
+        charged: 0,
+        refused: None,
+    };
+    let parsed = match quire_canonical::read_with_reservation(bytes, limits.bytes, &mut reservation)
+    {
+        Ok(parsed) => parsed,
+        Err(quire_canonical::ReadError::ReservationDenied { .. }) => {
+            if let Some(cause) = cancel.cause() {
+                return Err(ProbabilityDocumentError::Cancelled(cause));
+            }
+            return Err(exceeded(
                 ProbabilityDocumentLimit::StorageBytes,
-                limit.bound,
-                limit.required,
-            ),
-            _ => ProbabilityDocumentError::Malformed,
-        },
-    )?;
+                limits.storage_bytes,
+                reservation.refused.unwrap_or(u64::MAX),
+            ));
+        }
+        Err(_) => return Err(ProbabilityDocumentError::Malformed),
+    };
+    // Catch cancellation requested after the reader's final growth charge
+    // and before any decoded document member can be accepted or exposed.
+    poll(cancel)?;
     let root = parsed.root();
     let objective = root.get("objective");
     let timed_fair_profile = allow_fair
@@ -2165,7 +2204,17 @@ fn check_document_bytes(
     match dispatch {
         ProfileDispatch::Measure => {
             return measure::check(
-                system, claims, item, bytes, false, bound_side, offer.role, limits, cancel,
+                system,
+                claims,
+                item,
+                bytes,
+                measure::CheckOptions {
+                    partial_lower: false,
+                    bound_side,
+                    role: offer.role,
+                    limits,
+                    cancel,
+                },
             );
         }
         ProfileDispatch::Timed => {
@@ -2192,9 +2241,18 @@ fn check_document_bytes(
             );
         }
         ProfileDispatch::FairMdp => {
-            if let Some(side) = bound_side {
+            if bound_side.is_some() {
                 return mdp::check_with_value_bound_control(
-                    system, claims, item, bytes, offer, side, limits, cancel, control,
+                    system,
+                    claims,
+                    item,
+                    bytes,
+                    offer,
+                    mdp::ValueBoundControl {
+                        limits,
+                        cancel,
+                        reward: control,
+                    },
                 );
             }
             return mdp::check_with_reward_control(
@@ -2729,6 +2787,37 @@ pub(super) fn certificate_identity(
 mod tests {
     use super::*;
     use ix_trace_rs::trace;
+
+    #[trace("TC-636", "FR-282-AC-21")]
+    #[test]
+    fn cancellation_at_a_certificate_reader_charge_stops_parsing() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, OnceLock,
+        };
+
+        let slot = Arc::new(OnceLock::<Cancel>::new());
+        let weak = Arc::downgrade(&slot);
+        let polls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&polls);
+        let cancel = Cancel::observing(move || {
+            if observed.fetch_add(1, Ordering::Relaxed) + 1 == 3 {
+                weak.upgrade()
+                    .expect("the slot remains owned during the read")
+                    .get()
+                    .expect("the cancellation handle is initialized")
+                    .cancel(CancelCause::Requested);
+            }
+        });
+        slot.set(cancel.clone())
+            .expect("the cancellation handle is initialized once");
+
+        assert_eq!(
+            read_probability_certificate(&bytes(), limits(), &cancel),
+            Err(ProbabilityDocumentError::Cancelled(CancelCause::Requested))
+        );
+        assert_eq!(polls.load(Ordering::Relaxed), 3);
+    }
 
     #[trace("TC-636", "FR-201-AC-25", "FR-282-AC-19")]
     #[test]

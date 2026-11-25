@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Same-identity collisions of one owner (field, operation, parameter) refuse
 //! `conflicting-binding`, like a clause, state, transition or step (FSpec
 //! FR-154's "two nodes share one identity", FR-154-AC-13; cited by id). Typed code, cause,
@@ -19,12 +20,7 @@ fn parameter(operation: &str, node_name: &str, name: &str) -> Value {
 
 /// The one refusal of `document`, as `(shared identity key, member path)`.
 fn collision(document: &Value) -> (DeclarationKey, Option<MemberPath>) {
-    let package = read_k2(document).expect("intake retains the typed refusal for normalization");
-    let (outcome, _meter) = normalize_with_meter(&package, ModelNormalizationLimits::default());
-    let NormalizeOutcome::Refused(refusals) = outcome else {
-        panic!("the shared identity must be refused, got {outcome:?}");
-    };
-    let refusals: Vec<ModelRefusal> = refusals.iter().cloned().collect();
+    let refusals = intake_refusals(document);
     assert_eq!(refusals.len(), 1, "one refusal: {refusals:?}");
     assert_eq!(refusals[0].code, Code::InvalidModelBinding);
     assert_eq!(refusals[0].cause.as_str(), "conflicting-binding");
@@ -100,10 +96,11 @@ fn two_parameters_sharing_an_identity_are_conflicting_binding() {
     assert_eq!(at, Some(member("TypeDefinition.operations[0].params[1]")));
 }
 
-/// Normalizes `document`; it must be admitted, with no intake refusal kept on
-/// the package and no normalization refusal.
+/// `document` must be admitted, with no intake refusal and no normalization
+/// refusal.
 fn assert_admitted(document: &Value) {
-    let package = read_k2(document).expect("intake retains typed refusals for normalization");
+    let package = read_k2(document)
+        .unwrap_or_else(|refusals| panic!("distinct identities are admitted, got {refusals:?}"));
     let (outcome, _meter) = normalize_with_meter(&package, ModelNormalizationLimits::default());
     assert!(
         matches!(outcome, NormalizeOutcome::Completed(_)),

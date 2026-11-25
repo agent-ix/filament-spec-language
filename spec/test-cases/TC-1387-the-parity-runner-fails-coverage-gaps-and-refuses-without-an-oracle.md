@@ -10,11 +10,14 @@ relationships:
 
 ## Description
 
-Verify the failure policy: coverage gaps, prepare failures and empty
-comparisons fail; a faulting reference, an empty scope and an unreadable
-corpus refuse; and no setting excuses a finding.
+Verify the failure policy: coverage gaps, prepare failures, empty
+comparisons, a faulting or limit-reaching reference, generator exhaustion and
+unbuildable corpus cases fail; a prefix call is compared; an empty scope, an
+unreadable corpus and a cancelled build give no report; and no setting excuses
+a finding.
 
-Scope: FR-563-AC-4, FR-563-AC-5, FR-563-AC-6 and FR-563-AC-8.
+Scope: FR-563-AC-4, FR-563-AC-5, FR-563-AC-6, FR-563-AC-8 and FR-563-AC-10
+to FR-563-AC-16.
 
 ## Test Procedure
 
@@ -31,7 +34,30 @@ Scope: FR-563-AC-4, FR-563-AC-5, FR-563-AC-6 and FR-563-AC-8.
    for a member that allows, skips, retries or tolerates a finding or selects
    a reference; build the `compile_fail` doctest naming
    `run_parity_with_reference` without the feature and its control with it;
-   run `cargo xtask parity --no-such-option`.
+   run `cargo xtask parity --no-such-option` and
+   `cargo xtask parity --max-discarded 1`; inspect both commands for an option
+   or environment variable that sets a `ParityLimits` member.
+5. Run it over the FR-563-AC-10 valid corpus and over each of its six
+   document-level defects, counting backend `prepare` calls.
+6. Run it, with two delegating backends and count 3, over the FR-563-AC-11
+   corpus.
+7. Repeat step 6 with the sixteen defective vectors expecting a refusal, then
+   with only the five whose cause an expected refusal excuses; run the two
+   class-against-disposition unbuildable vectors, the two vectors with two
+   defects, and a refusal-expecting vector that builds, with a delegating and
+   with an altering backend; inspect that every internal fault of a build step
+   gives `Fault`.
+8. Run one seed and count with `max_discarded` at `u64::MAX`, then at the
+   discard count N and at N − 1, with two delegating backends; read the
+   default `max_discarded`.
+9. Under `test-support`, with two delegating backends, run a reference whose
+   `prepare` returns `PrepareFailure::Limit` for the first of two corpus
+   units, then for one generated unit of two or more entries, and a reference
+   whose `prepare` returns `Fault` for the first corpus unit.
+10. Run the FR-563-AC-15 prefix-call vector with a delegating backend and with
+    one that returns a completed value for it.
+11. Run the FR-563-AC-16 one-vector corpus with count 0 and an observing
+    cancel handle cancelled at its first charge.
 
 Tag the tests `#[trace("TC-1387", "<AC id>")]`.
 
@@ -44,5 +70,30 @@ Tag the tests `#[trace("TC-1387", "<AC id>")]`.
   `empty-scope` before any unit and the corpus refusal, each with no verdict
   and exit 2.
 - Step 4: no such member exists; the doctest fails to compile without the
-  feature and the control compiles with it; the unknown option refuses,
-  exit 2, naming it.
+  feature and the control compiles with it; each unknown option refuses,
+  exit 2, naming it; nothing sets a `ParityLimits` member.
+- Step 5: a report for the valid corpus; each defect refuses the corpus as
+  unreadable, exit 2, with no `prepare` call.
+- Step 6: sixteen vectors listed by id and cause and counted, none of them
+  counted not selected; sixteen `unbuildable-case` findings per backend and no
+  other, each with no arguments or result and with source bytes and entry only
+  as far as read; `inc` and the generated units compared; exit 1.
+- Step 7: the sixteen listed and counted, with eleven findings per backend for
+  the causes no expected refusal excuses, exit 1; then the five listed and
+  counted, no finding, exit 0; the class `refusal` vector expecting a value is
+  a finding and the class `positive` vector expecting a refusal is not; the
+  two-defect vectors are `UndecodableArgument` and `DuplicateFile` findings;
+  the built refusal vector passes with the delegating backend and is a
+  `difference` with the altering one.
+- Step 8: no finding at N; at N − 1 one `generator-exhausted` finding per
+  backend naming the N-th refused draw, with no entry, arguments or result,
+  fewer units than a full run, exit 1; the default is 10,000.
+- Step 9: one `reference-prepare-limit` finding per entry per backend, naming
+  the limit's setting, with the other unit compared and exit 1; then one
+  `reference-fault` per entry per backend with the second unit compared. Each
+  `reference-prepare-limit` finding carries its entry's first argument tuple
+  and no result. No run refuses.
+- Step 10: the vector is not unbuildable; the delegating backend passes with
+  the arity refusal compared; the other backend has one `difference` naming
+  `Ok` against `Err` with the one-value tuple.
+- Step 11: the cancellation refusal, no report and no `prepare` call.

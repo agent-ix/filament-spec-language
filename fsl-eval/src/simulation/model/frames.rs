@@ -375,6 +375,7 @@ fn apply_argument(
         operation_postconditions: &clauses.operation_postconditions,
         footprint: footprint.as_ref(),
         references: reference_arguments(&args),
+        result_order_cache: RefCell::new(None),
         frames,
     };
 
@@ -805,6 +806,8 @@ struct Run<'w, 's, 'a> {
     /// The argument vector's reference-valued arguments, by parameter name:
     /// the only arguments the frame decision reads.
     references: References,
+    /// Canonical result order for the current post-state object universe.
+    result_order_cache: RefCell<Option<(Vec<ObjectReference>, Vec<u128>)>>,
     /// What the frame decision found for the application's argument
     /// vectors.
     frames: &'w ArgumentFrames,
@@ -848,6 +851,9 @@ struct Plan<'p> {
     slots: &'p [Slot],
     writable: &'p WritableFields,
     stop_after_first: bool,
+    /// Whether the checked postcondition targets prove that result values do
+    /// not affect either set of operation postconditions.
+    result_independent: bool,
     /// What the postconditions say about the receiver's fields, when the
     /// application is solved and narrowed rather than enumerated.
     narrowing: Option<&'p Narrowing>,
@@ -929,6 +935,9 @@ impl Allowed {
                             })
                         })
                         .collect(),
+                    (None, Value::Integer(_)) if matches!(domain, Domain::SizeInteger { .. }) => {
+                        domain.index_of(equal).into_iter().collect()
+                    }
                     (None, _) => (0..domain.len())
                         .filter(|index| {
                             domain
@@ -1043,6 +1052,16 @@ type WritableFields = BTreeSet<(DeclarationKey, String, DeclarationKey)>;
 struct Delta {
     created: Vec<(DeclarationKey, String)>,
     deleted: Vec<(DeclarationKey, String)>,
+}
+
+struct CompletionContext<'a> {
+    candidate: (ModelState, Vec<WrittenSlots>),
+    delta: &'a Delta,
+    post_references: &'a [ObjectReference],
+    budget: &'a mut Budget,
+    contract: &'a mut Vec<ContractFinding>,
+    successors: &'a mut Vec<Applied>,
+    result_independent: bool,
 }
 
 impl Run<'_, '_, '_> {
@@ -1298,10 +1317,12 @@ impl Run<'_, '_, '_> {
         let slots = self.slots();
         let writable = self.writable()?;
         let narrowing = self.narrowing()?;
+        let result_independent = narrowing.is_some() && self.operation_postconditions.is_empty();
         let plan = Plan {
             slots: &slots,
             writable: &writable,
             stop_after_first,
+            result_independent,
             narrowing: narrowing.as_ref(),
         };
         let mut deletions = Odometer::new(vec![2; deletable.len()]);
@@ -1479,14 +1500,15 @@ impl Run<'_, '_, '_> {
                 // a broken internal invariant.
                 return Err(stop(BROKEN));
             };
-            self.complete(
-                self.collection_writes(candidate, &delta)?,
-                &delta,
-                &post_references,
+            self.complete(CompletionContext {
+                candidate: self.collection_writes(candidate, &delta)?,
+                delta: &delta,
+                post_references: &post_references,
                 budget,
                 contract,
                 successors,
-            )?;
+                result_independent: plan.result_independent,
+            })?;
             if plan.stop_after_first && successors.len() > initial {
                 return Ok(true);
             }
@@ -1894,21 +1916,33 @@ impl Run<'_, '_, '_> {
         if domain.len() > RESULT_ORDER_LIMIT {
             return Err(stop(EXHAUSTED));
         }
-        let mut keyed = Vec::new();
-        for index in 0..domain.len() {
-            let value = domain.nth(index).ok_or_else(|| stop(BROKEN))?;
-            let bytes = quire_canonical::to_vec(
-                &value_enc(&value, self.walk.system.typing()),
-                text_limits(),
-            )
-            .map_err(|_| stop(BROKEN))?;
-            keyed.push((bytes, index));
-        }
-        keyed.sort();
-        Ok(Some((
-            domain,
-            keyed.into_iter().map(|(_, index)| index).collect(),
-        )))
+        let known = self
+            .result_order_cache
+            .borrow()
+            .as_ref()
+            .filter(|(references, _)| references == post_references)
+            .map(|(_, order)| order.clone());
+        let order = match known {
+            Some(order) => order,
+            None => {
+                let mut keyed = Vec::new();
+                for index in 0..domain.len() {
+                    let value = domain.nth(index).ok_or_else(|| stop(BROKEN))?;
+                    let bytes = quire_canonical::to_vec(
+                        &value_enc(&value, self.walk.system.typing()),
+                        text_limits(),
+                    )
+                    .map_err(|_| stop(BROKEN))?;
+                    keyed.push((bytes, index));
+                }
+                keyed.sort();
+                let order: Vec<u128> = keyed.into_iter().map(|(_, index)| index).collect();
+                *self.result_order_cache.borrow_mut() =
+                    Some((post_references.to_vec(), order.clone()));
+                order
+            }
+        };
+        Ok(Some((domain, order)))
     }
 
     /// The conjunction of this application's postconditions over `candidate`
@@ -2140,15 +2174,16 @@ impl Run<'_, '_, '_> {
     /// Pair `candidate` with each result and keep it as a successor when some
     /// pair's effective postcondition is true, its effect naming the
     /// collections `written`.
-    fn complete(
-        &self,
-        (candidate, written): (ModelState, Vec<WrittenSlots>),
-        delta: &Delta,
-        post_references: &[ObjectReference],
-        budget: &mut Budget,
-        contract: &mut Vec<ContractFinding>,
-        successors: &mut Vec<Applied>,
-    ) -> Result<(), ExpansionStop> {
+    fn complete(&self, context: CompletionContext<'_>) -> Result<(), ExpansionStop> {
+        let CompletionContext {
+            candidate: (candidate, written),
+            delta,
+            post_references,
+            budget,
+            contract,
+            successors,
+            result_independent,
+        } = context;
         let mut effect = self.effect_of(&candidate, delta)?;
         effect.written = written;
         let plain = if self.walk.candidate_visitor.is_some() {
@@ -2175,6 +2210,7 @@ impl Run<'_, '_, '_> {
             .or_else(|| ordered.as_ref().map(|(_, order)| order.len() as u128))
             .unwrap_or(1);
         let mut evidence: Option<Evidence> = None;
+        let mut independent_verdict: Option<Conjunction> = None;
         for pick in 0..count {
             let result = match (&plain, &ordered) {
                 (Some(domain), None) => Some(domain.nth(pick).ok_or_else(|| stop(BROKEN))?),
@@ -2193,8 +2229,17 @@ impl Run<'_, '_, '_> {
             if self.application.declaration.result().is_some() {
                 budget.charge()?;
             }
-            let verdict =
-                self.post_conjunction(&mut evidence, &candidate, &effect, result.as_ref())?;
+            let verdict = match (&independent_verdict, result_independent) {
+                (Some(verdict), true) => verdict.clone(),
+                _ => {
+                    let verdict =
+                        self.post_conjunction(&mut evidence, &candidate, &effect, result.as_ref())?;
+                    if result_independent {
+                        independent_verdict = Some(verdict.clone());
+                    }
+                    verdict
+                }
+            };
             match verdict {
                 Conjunction::True => {
                     effect.result = result

@@ -2,6 +2,7 @@
 //! FR-186-AC-7: the admitted bounded timed Eventually form.
 
 use super::*;
+use fsl_analyze::exact_probabilistic::{DeadlineKind, DeadlinePhase, MonitorState};
 
 #[trace("FR-186-AC-7")]
 #[test]
@@ -49,7 +50,7 @@ fn timed_eventually_with_closed_horizon_settles_at_ninety_nine_percent() {
     ));
 }
 
-#[trace("FR-186-AC-3")]
+#[trace("FR-204-AC-21")]
 #[test]
 fn nested_punctual_always_consumes_the_initial_position() {
     let claims = "\
@@ -58,31 +59,29 @@ fn nested_punctual_always_consumes_the_initial_position() {
     let body = format!(
         "{}\
          pre Step using v on M::Call::step {{ true }}\n\
-         post Stepped using v on M::Call::step {{ self.late = false and self.x = 0 ms }}\n\
-         delay M::Call::step ~ discrete {{ 0 ms: 1 }};\n\
-         time invariant ZeroClock when {{ true }} {{ self.x <= 0 ms }}\n\
+         post Stepped using v on M::Call::step {{ self.late = true and self.x = 0 ms }}\n\
+         delay M::Call::step ~ discrete {{ 1 ms: 1 }};\n\
+         time invariant ClockWindow when {{ true }} {{ self.x <= 4 ms }}\n\
          {claims}",
         timed_world::DENSE,
     );
-    let world = timed_world::world_holding(
-        &package_document,
-        super::PROFILES,
-        &body,
-        &json!({ "late": { "boolean": true } }),
-    );
+    let world = timed_world::world(&package_document, super::PROFILES, &body);
     let record = settle(&world, "InitialNested");
     assert_eq!(proved_value(&record), ratio(1, 1));
     assert!(accepted(&world, "InitialNested", &document(&record)));
 }
 
-#[trace("FR-186-AC-3")]
+#[trace("FR-204-AC-21")]
 #[test]
-fn nested_punctual_always_keeps_a_true_zero_delay_hop_before_a_false_hop() {
+fn nested_punctual_always_rejects_a_true_hop_before_a_false_same_time_hop() {
     let claims = "\
-        probabilistic HopNested using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ eventually[0 ms, 1 ms] always[0 ms, 0 ms] holds(c.late) ] }\n";
+        probabilistic HopNested using ev on M over (c: M::Call) under every scheduler on origin { probability <= 0.01 [ eventually[0 ms, 1 ms] always[0 ms, 0 ms] holds(c.late) ] }\n";
     let package_document = timed_world::document(
         &["x"],
-        &[("first", &["phase", "late", "x"]), ("second", &["phase", "late", "x"])],
+        &[
+            ("first", &["phase", "late", "x"]),
+            ("second", &["phase", "late", "x"]),
+        ],
     );
     let body = format!(
         "{}\
@@ -98,7 +97,7 @@ fn nested_punctual_always_keeps_a_true_zero_delay_hop_before_a_false_hop() {
     );
     let world = timed_world::world(&package_document, super::PROFILES, &body);
     let record = settle(&world, "HopNested");
-    assert_eq!(proved_value(&record), ratio(1, 1));
+    assert_eq!(proved_value(&record), ratio(0, 1));
     assert!(accepted(&world, "HopNested", &document(&record)));
 }
 
@@ -141,10 +140,20 @@ fn timed_eventually_zero_delay_cycle_has_a_finite_repeated_key() {
         Ok(fsl_analyze::exact_probabilistic::ProbBuild::Built(product)) => product,
         other => panic!("the zero-delay timed product closes its finite key cycle: {other:?}"),
     };
-    let repeated_history = vec![fsl_analyze::exact_probabilistic::TimedObservation {
-        time: 0,
-        values: vec![false],
-    }];
+    // FR-196's deadline monitor, which stays pending while the target is false.
+    let pending = Some(MonitorState::Deadline {
+        kind: DeadlineKind::Eventually,
+        phase: DeadlinePhase::Pending,
+    });
+    let pending_at_zero = |state: &fsl_analyze::exact_probabilistic::ProbKey| {
+        let bytes = state
+            .certificate_state
+            .as_ref()
+            .expect("a timed state has a ProductKey")
+            .as_bytes();
+        let key: Value = serde_json::from_slice(bytes).expect("canonical ProductKey");
+        state.monitor == pending && key[4][1][5] == json!(["deadline", "4", "0"])
+    };
     assert!(
         product.states.len() < 128,
         "the product closes below its state bound"
@@ -162,13 +171,11 @@ fn timed_eventually_zero_delay_cycle_has_a_finite_repeated_key() {
     let repeated_keys = product
         .ids()
         .zip(&product.states)
-        .filter_map(|(id, state)| {
-            (state.timed_history.as_ref() == Some(&repeated_history)).then_some(id)
-        })
+        .filter_map(|(id, state)| pending_at_zero(state).then_some(id))
         .collect::<Vec<_>>();
     assert!(
         repeated_keys.len() >= 2,
-        "the retry toggle visits distinct states under the same same-time Eventually summary"
+        "the retry toggle visits distinct states under the same pending monitor at time zero"
     );
     let reaches_zero_time =
         |start: fsl_analyze::exact_probabilistic::ProbStateId,
@@ -196,23 +203,24 @@ fn timed_eventually_zero_delay_cycle_has_a_finite_repeated_key() {
     assert!(
         product.edges.iter().any(|edge| {
             edge.elapsed == zero
-                && product.states[edge.from.index()].timed_history.as_ref()
-                    == Some(&repeated_history)
-                && product.states[edge.to.index()].timed_history.as_ref() == Some(&repeated_history)
+                && pending_at_zero(&product.states[edge.from.index()])
+                && pending_at_zero(&product.states[edge.to.index()])
                 && reaches_zero_time(edge.to, edge.from)
         }),
-        "the zero-delay cycle returns to a repeated canonical TimedTrace product key"
+        "the zero-delay cycle returns to a repeated canonical product key"
     );
 
     assert!(
         product.states.iter().all(|state| {
-            state.timed_history.as_ref().is_some_and(|history| {
-                history
-                    .iter()
-                    .all(|observation| observation.values == [false])
-            })
+            matches!(
+                state.monitor,
+                Some(MonitorState::Deadline {
+                    kind: DeadlineKind::Eventually,
+                    phase: DeadlinePhase::Pending | DeadlinePhase::Reject,
+                })
+            )
         }),
-        "the literal target is false at every reconstructed observation"
+        "the literal target is false at every observation, so no state accepts"
     );
     let exact = fsl_analyze::exact_probabilistic::decide_bounded_event(
         &product,
@@ -264,6 +272,184 @@ fn forged_always_value_cannot_merge_false_and_true_same_time_reads() {
         ),
         "replay preserves the initial false Always read despite a same-time true successor"
     );
+}
+
+#[trace("FR-204-AC-21")]
+#[test]
+fn bounded_always_does_not_accept_its_true_initial_observation() {
+    let claims = "\
+        probabilistic AlwaysAfterChange using ev on M over (c: M::Call) under every scheduler on origin { probability <= 0.01 [ always[0 ms, 4 ms] holds(c.late) ] }\n";
+    let package_document = timed_world::document(&["x"], &[("toggle", &["late", "x"])]);
+    let body = format!(
+        "{}\
+         pre Toggle using v on M::Call::toggle {{ self.x <= 1 ms }}\n\
+         post Toggled using v on M::Call::toggle {{ self.late = false and self.x = 0 ms }}\n\
+         delay M::Call::toggle ~ discrete {{ 1 ms: 1 }};\n\
+         time invariant ClockWindow when {{ true }} {{ self.x <= 4 ms }}\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    let world = timed_world::world_holding(
+        &package_document,
+        super::PROFILES,
+        &body,
+        &json!({ "late": { "boolean": true } }),
+    );
+    let record = settle(&world, "AlwaysAfterChange");
+    assert_eq!(proved_value(&record), ratio(0, 1), "{record:#?}");
+}
+
+#[trace("FR-204-AC-21")]
+#[test]
+fn nested_always_does_not_use_a_transient_true_atom_as_its_witness() {
+    let claims = "\
+        probabilistic NestedAfterChange using ev on M over (c: M::Call) under every scheduler on origin { probability <= 0.01 [ eventually[0 ms, 4 ms] always[0 ms, 0 ms] holds(c.late) ] }\n\
+        probabilistic NestedRefuted using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ eventually[0 ms, 4 ms] always[0 ms, 0 ms] holds(c.late) ] }\n";
+    let package_document = timed_world::document(
+        &["x"],
+        &[
+            ("rise", &["phase", "late", "x"]),
+            ("fall", &["phase", "late", "x"]),
+        ],
+    );
+    let body = format!(
+        "{}\
+         pre Rise using v on M::Call::rise {{ self.phase = 0 }}\n\
+         post Risen using v on M::Call::rise {{ self.phase = 1 and self.late = true }}\n\
+         pre Fall using v on M::Call::fall {{ self.phase = 1 }}\n\
+         post Fallen using v on M::Call::fall {{ self.phase = 2 and self.late = false }}\n\
+         delay M::Call::rise ~ discrete {{ 0 ms: 1 }};\n\
+         delay M::Call::fall ~ discrete {{ 0 ms: 1 }};\n\
+         time invariant ClockWindow when {{ true }} {{ self.x <= 4 ms }}\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    let world = timed_world::world(&package_document, super::PROFILES, &body);
+    let record = settle(&world, "NestedAfterChange");
+    assert_eq!(proved_value(&record), ratio(0, 1), "{record:#?}");
+    assert!(accepted(&world, "NestedAfterChange", &document(&record)));
+    let refuted = settle(&world, "NestedRefuted");
+    assert!(is_refuted(&refuted), "{refuted:#?}");
+}
+
+#[trace("FR-204-AC-21")]
+#[test]
+fn nested_positive_offset_always_checks_all_same_time_target_observations() {
+    let claims = "\
+        probabilistic NestedPositiveOffset using ev on M over (c: M::Call) under every scheduler on origin { probability <= 0.01 [ eventually[0 ms, 4 ms] always[1 ms, 1 ms] holds(c.late) ] }\n";
+    let package_document = timed_world::document(
+        &["x"],
+        &[
+            ("rise", &["phase", "late", "x"]),
+            ("fall", &["phase", "late", "x"]),
+        ],
+    );
+    let body = format!(
+        "{}\
+         pre Rise using v on M::Call::rise {{ self.phase = 0 }}\n\
+         post Risen using v on M::Call::rise {{ self.phase = 1 and self.late = true and self.x = 0 ms }}\n\
+         pre Fall using v on M::Call::fall {{ self.phase = 1 }}\n\
+         post Fallen using v on M::Call::fall {{ self.phase = 2 and self.late = false and self.x = 0 ms }}\n\
+         delay M::Call::rise ~ discrete {{ 1 ms: 1 }};\n\
+         delay M::Call::fall ~ discrete {{ 0 ms: 1 }};\n\
+         time invariant ClockWindow when {{ true }} {{ self.x <= 4 ms }}\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    let world = timed_world::world_holding(
+        &package_document,
+        super::PROFILES,
+        &body,
+        &json!({ "late": { "boolean": true } }),
+    );
+    let record = settle(&world, "NestedPositiveOffset");
+    assert_eq!(proved_value(&record), ratio(0, 1), "{record:#?}");
+    assert!(accepted(&world, "NestedPositiveOffset", &document(&record)));
+}
+
+/// A dual nested window needs one true observation at each target time: a
+/// later false hop at that time does not retract it, and every target time of
+/// the outer window is checked.
+#[trace("FR-204-AC-21")]
+#[test]
+fn nested_eventually_inside_always_checks_every_target_time() {
+    let claims = "\
+        probabilistic FirstTarget using ev on M over (c: M::Call) under every scheduler on origin { probability >= 0.99 [ always[0 ms, 0 ms] eventually[1 ms, 1 ms] holds(c.late) ] }\n\
+        probabilistic SecondTarget using ev on M over (c: M::Call) under every scheduler on origin { probability <= 0.01 [ always[0 ms, 1 ms] eventually[1 ms, 1 ms] holds(c.late) ] }\n";
+    let world = rise_and_fall(1, claims);
+    for (claim, value) in [("FirstTarget", ratio(1, 1)), ("SecondTarget", ratio(0, 1))] {
+        let record = settle(&world, claim);
+        assert_eq!(proved_value(&record), value, "{record:#?}");
+        assert!(accepted(&world, claim, &document(&record)));
+    }
+}
+
+/// At zero offset the last position at a timestamp can witness only itself,
+/// so an earlier true hop does not satisfy a dual nested window.
+#[trace("FR-204-AC-21")]
+#[test]
+fn nested_zero_offset_eventually_is_decided_by_the_last_same_time_hop() {
+    let claims = "\
+        probabilistic LastHop using ev on M over (c: M::Call) under every scheduler on origin { probability <= 0.01 [ always[0 ms, 0 ms] eventually[0 ms, 0 ms] holds(c.late) ] }\n";
+    let world = rise_and_fall(0, claims);
+    let record = settle(&world, "LastHop");
+    assert_eq!(proved_value(&record), ratio(0, 1), "{record:#?}");
+    assert!(accepted(&world, "LastHop", &document(&record)));
+}
+
+/// `late` is false, rises after `rise_ms` and falls again at that timestamp.
+fn rise_and_fall(rise_ms: u64, claims: &str) -> World {
+    let package_document = timed_world::document(
+        &["x"],
+        &[
+            ("rise", &["phase", "late", "x"]),
+            ("fall", &["phase", "late", "x"]),
+        ],
+    );
+    let body = format!(
+        "{}\
+         pre Rise using v on M::Call::rise {{ self.phase = 0 }}\n\
+         post Risen using v on M::Call::rise {{ self.phase = 1 and self.late = true and self.x = 0 ms }}\n\
+         pre Fall using v on M::Call::fall {{ self.phase = 1 }}\n\
+         post Fallen using v on M::Call::fall {{ self.phase = 2 and self.late = false and self.x = 0 ms }}\n\
+         delay M::Call::rise ~ discrete {{ {rise_ms} ms: 1 }};\n\
+         delay M::Call::fall ~ discrete {{ 0 ms: 1 }};\n\
+         time invariant ClockWindow when {{ true }} {{ self.x <= 4 ms }}\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    timed_world::world(&package_document, super::PROFILES, &body)
+}
+
+#[trace("FR-204-AC-21")]
+#[test]
+fn until_preserves_a_false_left_observation_before_same_time_right_target() {
+    let claims = "\
+        probabilistic OrderedUntil using ev on M over (c: M::Call) under every scheduler on origin { probability <= 0.01 [ holds(c.late) until[1 ms, 4 ms] holds(c.inflight) ] }\n";
+    let package_document = timed_world::document(
+        &["x"],
+        &[("drop", &["late", "x"]), ("deliver", &["inflight", "x"])],
+    );
+    let body = format!(
+        "{}\
+         pre Drop using v on M::Call::drop {{ self.x <= 1 ms }}\
+         post Dropped using v on M::Call::drop {{ self.late = false and self.x = 0 ms }}\
+         pre Deliver using v on M::Call::deliver {{ not self.late }}\
+         post Delivered using v on M::Call::deliver {{ self.inflight = true }}\
+         delay M::Call::drop ~ discrete {{ 1 ms: 1 }};\
+         delay M::Call::deliver ~ discrete {{ 0 ms: 1 }};\
+         time invariant ClockWindow when {{ true }} {{ self.x <= 4 ms }}\
+         {claims}",
+        timed_world::DENSE,
+    );
+    let world = timed_world::world_holding(
+        &package_document,
+        super::PROFILES,
+        &body,
+        &json!({ "late": { "boolean": true }, "inflight": { "boolean": false } }),
+    );
+    let record = settle(&world, "OrderedUntil");
+    assert_eq!(proved_value(&record), ratio(0, 1));
 }
 
 #[trace("FR-186-AC-7")]

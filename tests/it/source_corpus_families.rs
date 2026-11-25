@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Per-family accept and reject coverage, and the pinned `flips_with` keys,
-//! of the collections, operations and protocol corpora (QSL-2040,
-//! QSL-2041, QSL-2043).
+//! Per-family accept and reject coverage of the collections, operations and
+//! protocol corpora, and the pinned `flips_with` keys of the last two.
 
 use super::{corpus_root, Expectation};
 
@@ -102,12 +101,13 @@ pub(super) const COLLECTION_FAMILIES: &[Family] = &[
     },
     Family {
         name: "quantifier",
-        accepting: &["quant-forall-ok", "quant-nested", "quant-range-fact"],
-        rejecting: &[
-            "quant-nonbool-bad",
+        accepting: &[
+            "quant-forall-ok",
+            "quant-nested",
+            "quant-range-fact",
             "quant-binder-shadow",
-            "quant-unbounded-int",
         ],
+        rejecting: &["quant-nonbool-bad", "quant-unbounded-int"],
     },
     Family {
         name: "function call",
@@ -119,11 +119,6 @@ pub(super) const COLLECTION_FAMILIES: &[Family] = &[
         accepting: &["fn-recursion-ok", "r-recursion"],
         rejecting: &["fn-recursion-nodecrease-bad", "fn-recursion-nomeasure-bad"],
     },
-];
-
-pub(super) const COLLECTION_FLIPS: &[(&str, &str)] = &[
-    ("agg-count-narrow-2003", "QSL-2003"),
-    ("r-count-narrow", "QSL-2003"),
 ];
 
 pub(super) const OPERATION_FAMILIES: &[Family] = &[

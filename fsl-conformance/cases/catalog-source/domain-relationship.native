@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+model M = "acme/orders";
+function keep using v(g: M::Widget): M::Widget pure { g }

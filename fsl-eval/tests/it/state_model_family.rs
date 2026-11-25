@@ -6,7 +6,9 @@ use filament_semantic_value::checking::CheckMode;
 use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
-use filament_eval::{FamilyOutcome, FamilyResult};
+use filament_eval::{
+    CallFailure, ExecutionBackendChoice, FamilyOutcome, FamilyResult, SessionLimits,
+};
 use filament_exact::{
     CollectionKind, EffectiveId, FieldValue, IllTypedCause, Meter, ObjectId, ObjectReference,
     Outcome, Value, ValueType,
@@ -15,6 +17,7 @@ use filament_semantic_value::catalog::Category;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::FieldRef;
 use filament_semantic_value::object_closure::ObjectClosure;
+use fsl_eval::execution::{ExecuteLimits, ExecuteRequest, ExecuteSelection, SuppliedBackends};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_foundation::diagnostic::category_of;
 use fsl_package::CheckedPackage;
@@ -600,6 +603,87 @@ pub(crate) fn objects(
     let objects =
         ObjectEnvironment::new(ObjectClosure::new(graph.scope().types(), world, &[]).unwrap());
     (objects, present, absent)
+}
+
+/// TC-1121 FR-403-AC-11: raise an absent-key state-model result through the
+/// explicit no_std entry so the aggregate can inspect its catalog prefix and
+/// identity fields.
+pub(super) fn no_std_absent_state_model_lookup() -> Result<(), CallFailure> {
+    let (graph, view) = graph(
+        "function F using v(p: Population<M::A>[3], r: M::A): M::A pure { lookup<M::A>(p,r) absent undefined }",
+        true,
+    );
+    let (objects, _present, absent) = objects(&graph, &view);
+    let document = PopulationDocument {
+        model_identity: view.model_selection().identity.clone(),
+        members: vec![PopulationMember {
+            object: "present".to_owned(),
+            type_identity: key(A),
+            field_values: Vec::new(),
+        }],
+    };
+    let binding = match admit_binding(
+        &view,
+        &document,
+        &key(POPULATION),
+        GeneralizationClosure::Closed,
+        Some(3),
+        &mut AdmissionMeter::new(PopulationAdmissionLimits::UNLIMITED),
+    ) {
+        AdmissionOutcome::Admitted(binding) => binding,
+        other => panic!("population admission: {other:?}"),
+    };
+    let objects = objects.with_population(binding.clone()).unwrap();
+    let package = CheckedPackage::link(graph);
+    let request = ExecuteRequest {
+        selection: ExecuteSelection::Function {
+            name: QualifiedName::unqualified("F").expect("function name"),
+            arguments: vec![
+                Value::Population(binding.population_id()),
+                Value::Reference(absent),
+            ],
+            environment: objects,
+        },
+        backend: ExecutionBackendChoice::Interpreter,
+    };
+    let limits = ExecuteLimits {
+        accounting: fsl_semantics::check::SCALAR_LIMITS_UNLIMITED,
+        prepare: fsl_eval::execution::PrepareLimits::default(),
+        session: SessionLimits::default(),
+    };
+    let mut run = filament_semantic_value::supplied_stop::SuppliedRun::new(
+        filament_semantic_value::supplied_stop::SuppliedLimits::default(),
+        filament_exact::Cancel::new(),
+    )
+    .expect("supplied run initializes");
+    let evaluation = fsl_eval::execution::execute(
+        &package,
+        &request,
+        &SuppliedBackends::default(),
+        &limits,
+        &mut run,
+        &filament_exact::Cancel::new(),
+    )?;
+    let FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause)) = evaluation.outcome else {
+        panic!(
+            "expected state-model Undefined, got {:?}",
+            evaluation.outcome
+        );
+    };
+    let record = cause.undefined_record();
+    assert_eq!(record.reason.as_str(), "absent-key");
+    assert_eq!(record.fields.get("key").map(String::as_str), Some("absent"));
+    let binding_identity = binding.population_id().node().to_string();
+    assert_eq!(
+        record.fields.get("binding").map(String::as_str),
+        Some(binding_identity.as_str())
+    );
+    assert_eq!(cause.catalog_prefix(), Some("state-model"));
+    assert_eq!(
+        fsl_semantics::family::FamilyKind::StateModel.catalog_code_prefix(),
+        "state-model"
+    );
+    Ok(())
 }
 
 #[trace("TC-792", "FR-301-AC-1")]

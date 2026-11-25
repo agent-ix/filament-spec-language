@@ -1142,7 +1142,7 @@ fn empty_collection_queries_return_their_defined_identity_on_the_spine() {
 /// TC-1308 row 15: a nested filter that expands a predicate charges work and
 /// retained output on the checked package, and a fresh meter reproduces the
 /// completed immutable result.
-#[trace("TC-1308", "FR-046-AC-7", "FR-513-AC-6")]
+#[trace("TC-1308", "FR-046-AC-7", "FR-513-AC-6", "NFR-009-M-2", "NFR-009-M-3")]
 #[test]
 fn nested_predicate_query_stops_at_work_and_result_boundaries_on_the_spine() {
     use filament_exact::{

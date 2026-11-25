@@ -2,12 +2,12 @@
 //! Shared-control finite-horizon induction and independently accepted proofs.
 use super::*;
 use crate::exact_probabilistic::{
-    Dyadic, FhObjective, QualifiedFhError, backward_induction, decide_measure_exact,
+    backward_induction, decide_measure_exact, Dyadic, FhObjective, QualifiedFhError,
 };
 use fsl_replay::{
-    MeasurePayoffKind, conditional_measure_probability_certificate,
-    measure_probability_certificate_document, measure_probability_objective,
-    measure_probability_product_key, write_measure_probability_certificate,
+    conditional_measure_probability_certificate, measure_probability_certificate_document,
+    measure_probability_objective, measure_probability_product_key,
+    write_measure_probability_certificate, MeasurePayoffKind,
 };
 
 pub(super) fn run(
@@ -84,7 +84,7 @@ pub(super) fn run(
             if matches!(claim.form, ProbForm::MeanOfFraction { .. })
                 && matches!(claim.scheduler, ProbScheduler::Workload(_))
             {
-                return not_yet();
+                return max_states_limit(&limits, subject);
             }
             (product, Some(lower_product))
         }
@@ -378,7 +378,7 @@ pub(super) fn run(
             claim.form,
             ProbForm::Quantile { .. } | ProbForm::MeanOfFraction { .. }
         ) {
-            return not_yet();
+            return max_states_limit(&limits, subject);
         }
         let checked = (|| {
             let document = measure_probability_certificate_document(
@@ -542,15 +542,17 @@ pub(super) fn run(
             &system,
             claim,
             &product,
-            &policy,
-            initial,
-            reference,
-            &limits,
-            cancel,
-            subject,
-            tamper_witness,
-            meter,
-            storage,
+            RefutationContext {
+                policy: &policy,
+                initial,
+                binding: reference,
+                limits: &limits,
+                cancel,
+                subject,
+                tamper: tamper_witness,
+                meter,
+                storage,
+            },
         );
     }
     let extremum = match optimization {
@@ -624,7 +626,7 @@ fn finish_measure_interval(
             interval_limits,
             cancel,
         )?;
-        let result = fsl_replay::check_probability_certificate_document_as(
+        fsl_replay::check_probability_certificate_document_as(
             system,
             claims,
             item,
@@ -632,8 +634,7 @@ fn finish_measure_interval(
             role,
             interval_limits,
             cancel,
-        );
-        result
+        )
     };
     let checked = (
         check(
@@ -653,6 +654,19 @@ fn finish_measure_interval(
             return document_failure(error, subject);
         }
     };
+    if matches!(
+        &lower_check,
+        fsl_replay::ExactProbabilityCertificateCheck::Rejected(rejection)
+            if rejection.rule == ProbabilityCertificateRule::ThresholdMissed
+    ) {
+        return settled(
+            &ExactProbBuildIssue::Limit {
+                limit: ModelCheckLimit::ExactProbMaxRationalBits,
+                value: exact_limits.max_rational_bits,
+            },
+            subject,
+        );
+    }
     let (
         fsl_replay::ExactProbabilityCertificateCheck::Accepted(accepted),
         fsl_replay::ExactProbabilityCertificateCheck::Accepted(_),
@@ -694,22 +708,37 @@ fn finish_measure_interval(
     }))
 }
 
+struct RefutationContext<'a> {
+    policy: &'a [Option<usize>],
+    initial: crate::exact_probabilistic::ProbStateId,
+    binding: Option<&'a ObjectReference>,
+    limits: &'a crate::exact_probabilistic::ExactProbLimits,
+    cancel: &'a Cancel,
+    subject: SubjectLimits<'a>,
+    tamper: Option<&'a dyn Fn(&mut ProbabilisticCounterexample)>,
+    meter: filament_exact::Meter,
+    storage: u64,
+}
+
 fn refute(
     system: &ModelSystem<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
     product: &ProbProduct,
-    policy: &[Option<usize>],
-    initial: crate::exact_probabilistic::ProbStateId,
-    binding: Option<&ObjectReference>,
-    limits: &crate::exact_probabilistic::ExactProbLimits,
-    cancel: &Cancel,
-    subject: SubjectLimits<'_>,
-    tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
-    mut meter: filament_exact::Meter,
-    mut storage: u64,
+    context: RefutationContext<'_>,
 ) -> EngineReport {
+    let RefutationContext {
+        policy,
+        initial,
+        binding,
+        limits,
+        cancel,
+        subject,
+        tamper,
+        mut meter,
+        mut storage,
+    } = context;
     use crate::exact_probabilistic::{
-        WitnessError, WitnessScope, WitnessWork, produce_quantile_witness, produce_witness,
+        produce_quantile_witness, produce_witness, WitnessError, WitnessScope, WitnessWork,
     };
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
     let kind = if matches!(claim.form, ProbForm::Quantile { .. }) {
@@ -1041,8 +1070,11 @@ fn refute_mean(
                 token.evidence(),
                 bound,
                 claim_type,
-                scope.types(),
-                scope.variant_types(),
+                &fsl_replay::ProbabilisticValueSchema::new(
+                    scope.types(),
+                    scope.variant_types(),
+                    scope.enums(),
+                ),
                 &|state| system.state_key(state).ok().map(|(_, key)| key),
                 &spelled,
             );

@@ -4,10 +4,12 @@
 //! its members over protocol transition identities.
 //!
 //! A member is `{kind, target, granularity, origin}`. Its target is an
-//! operation, whose `whole` class is every `attempt` that applies it and
-//! whose `each` classes are one per FR-120 application, or a thread target
-//! (a `parallel` branch, or the root), whose `whole` class is every step its
-//! threads own and whose `each` classes are one per thread. A thread owns
+//! operation, whose `whole` class is every `attempt` and `cattempt` that
+//! applies it and whose `each` classes are one per FR-120 application; a
+//! compensation template, whose class is the `cattempt` and `cend` steps of
+//! its threads; or a thread target (a `parallel` branch, or the root), whose
+//! `whole` class is every step its threads own and whose `each` classes are
+//! one per thread. A thread owns
 //! the steps that carry its path: its event steps, its fences, the forks it
 //! performs and the joins it waits at. Channel and memory steps carry no
 //! thread and are in no class. A branch target covers the threads whose
@@ -34,7 +36,7 @@ use fsl_foundation::MemoryModelName;
 use fsl_semantics::check::{CheckedProtocol, CheckedScheduling, ControlStep, ProtocolNodeId};
 use quire_canonical::{Encode, Error, Sink, Writer};
 
-use super::identity::{ProtocolTransition, ThreadPath};
+use super::identity::{ProtocolTransition, StepKind, ThreadPath};
 use super::memory::MemoryBranch;
 use crate::fairness::{visibility_constraints, Constraint, Identity, Strength, VisibilityPair};
 use crate::simulation::model::encode::Enc;
@@ -66,7 +68,7 @@ pub enum ProtocolTarget {
         /// The node's static declaration path.
         node: String,
     },
-    /// The steps belonging to one compensation template.
+    /// The `cattempt` and `cend` steps of one compensation template.
     CompensationTemplate {
         /// The template's checked name.
         template: String,
@@ -275,7 +277,7 @@ impl ProtocolFairness {
         let each = self.granularity == FairnessGranularity::Each;
         match &self.target {
             ProtocolTarget::Operation { name } => {
-                let application = transition.application()?;
+                let application = transition.applied_application()?;
                 (application.operation() == name).then(|| {
                     if each {
                         ProtocolClass::Application(application.clone())
@@ -319,6 +321,9 @@ impl ProtocolFairness {
                     }
                 }),
             ProtocolTarget::CompensationTemplate { template } => {
+                if !matches!(transition.kind(), StepKind::CAttempt | StepKind::CEnd) {
+                    return None;
+                }
                 let thread = transition.thread()?;
                 let owns =
                     thread.steps.last().and_then(|step| step.template()) == Some(template.as_str());

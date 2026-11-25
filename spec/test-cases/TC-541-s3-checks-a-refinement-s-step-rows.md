@@ -14,7 +14,7 @@ Verify that every concrete operation, and over a protocol subject every
 concrete step class, needs exactly one written-out step row, and that
 receivers, arguments and results are typed against the abstract operation.
 
-Scope: FR-136-AC-1 to FR-136-AC-13.
+Scope: FR-136-AC-1 to FR-136-AC-14.
 
 ## Test Procedure
 
@@ -54,6 +54,9 @@ protocol subject over a model with operations `incA` and `incB`.
 13. Emit two checked step rows declared as `commitB` then `commitA`, and emit
     the same refinement with those declarations reversed. Read each emitted
     `steps` array and compare its entries with the declared row order.
+14. Over a protocol with a compensation template `Refund`, `on origin` and
+    `on each`, check complete step rows; then remove in turn only the
+    `cfail`, only the `ctimeout` and only the `cexpire` row.
 
 Tag the tests `#[trace("TC-541", "FR-136-AC-n")]`.
 
@@ -101,3 +104,6 @@ Tag the tests `#[trace("TC-541", "FR-136-AC-n")]`.
   canonical order and no missing-subject or ambiguous-subject refusal.
 - Step 13: each emitted `steps` array follows declaration order and retains
   the checked classes and targets; no digest ordering is applied.
+- Step 14: one `cend`, `cfail`, `ctimeout` and `cexpire` template class each;
+  each removal refuses `missing_declaration`/`missing-name` once, naming that
+  keyword and `Refund`.

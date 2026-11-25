@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Published qualification vectors executed through authored FSL source or
-//! their specified value-admission boundary. Rows without an applicable
-//! adapter remain explicit; they are not successful qualifications.
+//! their specified value-admission boundary. Every published vector has one
+//! status: run here, run by a named test elsewhere, or explicitly short of its
+//! row. A row that is short is not a successful qualification.
 
 use filament_eval::FamilyOutcome;
 use filament_exact::{
@@ -14,7 +15,7 @@ use filament_semantic_value::loss::ValueLoss;
 use filament_specification::{QualificationVector, TestCase, QUALIFICATION_VECTORS};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{AssemblyCause, CheckedGraph, PackageDeclarations, TopologyRetained};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
 use ix_trace_rs::trace;
@@ -32,7 +33,7 @@ const UNLIMITED: ScalarLimits = ScalarLimits {
     result_units: u64::MAX,
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 enum Expected {
     Boolean(bool),
     Integer(Integer),
@@ -58,10 +59,24 @@ enum Expected {
         denominator: Integer,
         unit_domain: UnitDomain,
     },
+    /// A quantity held as a Decimal, with the rounding that produced it.
+    RoundedQuantity {
+        numerator: Integer,
+        denominator: Integer,
+        unit_domain: UnitDomain,
+        losses: Vec<DecimalLoss>,
+    },
+    /// The retained, profile-normalized scalars of a text.
+    Text(String),
     Refused {
         code: String,
         cause: Option<String>,
     },
+    /// A refusal for which the standard names a code and no cause.
+    RefusedCode(String),
+    /// A refusal for which the standard names no code. A syntax refusal does
+    /// not satisfy it.
+    RefusedAny,
     Incomplete {
         limit_kind: LimitKind,
         limit: u64,
@@ -73,7 +88,17 @@ enum Expected {
     Admitted,
 }
 
-#[derive(Debug, PartialEq)]
+/// Whether `actual` satisfies `expected`, comparing of a refusal only what the
+/// standard names.
+fn agrees(expected: &Expected, actual: &Expected) -> bool {
+    match (expected, actual) {
+        (Expected::RefusedCode(code), Expected::Refused { code: actual, .. }) => code == actual,
+        (Expected::RefusedAny, Expected::Refused { code, .. }) => code != "invalid_syntax",
+        _ => expected == actual,
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct DecimalLoss {
     numerator: Integer,
     denominator: Integer,
@@ -82,7 +107,7 @@ struct DecimalLoss {
     mode: String,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct SourceCase {
     declarations: String,
     expected: Expected,
@@ -97,9 +122,10 @@ struct SourceCase {
     check_mode: CheckMode,
 }
 
-fn function(result: &str, body: &str, expected: Expected) -> SourceCase {
+/// A whole source unit, checked in `Linked` mode with no budget.
+fn program(declarations: String, expected: Expected) -> SourceCase {
     SourceCase {
-        declarations: format!("function f using v(): {result} pure {{ {body} }}"),
+        declarations,
         expected,
         arguments: Vec::new(),
         quantity_parameter_arguments: Vec::new(),
@@ -107,6 +133,20 @@ fn function(result: &str, body: &str, expected: Expected) -> SourceCase {
         expected_charges: None,
         check_mode: CheckMode::Linked,
     }
+}
+
+/// `case` checked in `Kernel` mode, so that evaluation decides the outcome the
+/// checker would otherwise require a proof about.
+fn kernel(mut case: SourceCase) -> SourceCase {
+    case.check_mode = CheckMode::Kernel;
+    case
+}
+
+fn function(result: &str, body: &str, expected: Expected) -> SourceCase {
+    program(
+        format!("function f using v(): {result} pure {{ {body} }}"),
+        expected,
+    )
 }
 
 fn limited_function(
@@ -219,6 +259,42 @@ fn refusal_expected(text: &str) -> Expected {
         code: field("code:").expect("authored refusal code"),
         cause: field("cause:"),
     }
+}
+
+/// The authored refusal, comparing the cause only where the cell names one.
+fn authored_refusal(text: &str) -> Expected {
+    match refusal_expected(text) {
+        Expected::Refused { code, cause: None } => Expected::RefusedCode(code),
+        refusal => refusal,
+    }
+}
+
+/// The strict `exact` refusal with the would-be flags the row states.
+fn ieee_not_exact(flags: &[&str]) -> Expected {
+    Expected::IeeeRefused {
+        code: "ieee_not_exact".to_owned(),
+        cause: Some("rounding-required".to_owned()),
+        flags: flags.iter().map(|flag| (*flag).to_owned()).collect(),
+    }
+}
+
+/// An authored IEEE refusal with the flags the cell lists as `flags`.
+fn ieee_refusal_expected(text: &str) -> Expected {
+    let Expected::Refused { code, cause } = refusal_expected(text) else {
+        panic!("an authored refusal: {text}");
+    };
+    let mut flags: Vec<String> = text
+        .split_once("(`flags` `")
+        .expect("authored would-be flags")
+        .1
+        .split('`')
+        .next()
+        .expect("flag list")
+        .split(',')
+        .map(|flag| flag.trim().to_owned())
+        .collect();
+    flags.sort();
+    Expected::IeeeRefused { code, cause, flags }
 }
 
 fn hexes(text: &str) -> Vec<u64> {
@@ -424,6 +500,446 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
         _ => return None,
     };
     Some(result)
+}
+
+/// The plain spelling of `(coefficient, scale)`, as D11's outcome writes the
+/// values it refuses.
+fn decimal_text(operand: &(Integer, u32)) -> String {
+    let mut digits = operand.0.to_string();
+    let negative = digits.starts_with('-');
+    if negative {
+        digits.remove(0);
+    }
+    let scale = operand.1 as usize;
+    if scale > 0 {
+        while digits.len() <= scale {
+            digits.insert(0, '0');
+        }
+        digits.insert(digits.len() - scale, '.');
+        while digits.ends_with('0') {
+            digits.pop();
+        }
+        if digits.ends_with('.') {
+            digits.pop();
+        }
+    }
+    format!("{}{digits}", if negative { "-" } else { "" })
+}
+
+/// The backtick-quoted `Decimal[..]` types of an authored cell, in order.
+fn decimal_types(text: &str) -> Vec<&str> {
+    quoted(text)
+        .into_iter()
+        .filter(|token| token.starts_with("Decimal["))
+        .collect()
+}
+
+/// Decimal rounding, domain admission and syntax rows.
+fn decimal_admission_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
+    let operands = pairs(vector.inputs);
+    let converted = |value: String, value_type: &str, target: String, expected: Expected| {
+        program(
+            format!(
+                "function p using v(): {value_type} pure {{ {value} }}\n\
+                 function f using v(): {target} pure {{ convert<{target}>(p()) }}"
+            ),
+            expected,
+        )
+    };
+    Some(match vector.id {
+        "D03" => {
+            let field = |name: &str| {
+                vector
+                    .expected
+                    .split_once(name)
+                    .expect("authored loss field")
+                    .1
+                    .split(',')
+                    .next()
+                    .expect("field value")
+                    .trim()
+            };
+            let numerators: Vec<Integer> = field("exact_numerator:")
+                .split('|')
+                .map(|numerator| numerator.parse().expect("authored numerator"))
+                .collect();
+            let denominator: Integer = field("exact_denominator:")
+                .parse()
+                .expect("authored denominator");
+            assert_eq!((operands.len(), numerators.len()), (2, 2));
+            let mut cases = Vec::new();
+            for row in vector.expected.split(';') {
+                let tokens = quoted(row);
+                let Some(mode) = tokens
+                    .first()
+                    .filter(|name| **name == "exact" || DIRECTIONS.contains(name))
+                else {
+                    continue;
+                };
+                for (index, operand) in operands.iter().enumerate() {
+                    let expected = if *mode == "exact" {
+                        refusal_expected(row)
+                    } else {
+                        let coefficient: Integer = tokens[1]
+                            .split(',')
+                            .nth(index)
+                            .expect("tabled coefficient")
+                            .trim()
+                            .parse()
+                            .expect("authored coefficient");
+                        Expected::Decimal {
+                            value: DecimalRepresentation::new(coefficient.clone(), 0).normalized(),
+                            losses: vec![DecimalLoss {
+                                numerator: numerators[index].clone(),
+                                denominator: denominator.clone(),
+                                coefficient,
+                                scale: 0,
+                                mode: (*mode).to_owned(),
+                            }],
+                        }
+                    };
+                    cases.push(converted(
+                        decimal(operand),
+                        "Decimal[-100,100;1,1;exact]",
+                        format!("Decimal[-100,100;0,0;{mode}]"),
+                        expected,
+                    ));
+                }
+            }
+            // `exact` and the five directions, over both operands.
+            assert_eq!(cases.len(), 12);
+            cases
+        }
+        "D06" => {
+            // D15 names the operands and the result type of a zero divisor.
+            let zero = self::vector("D15");
+            let operands = pairs(zero.inputs);
+            assert!(vector.expected.starts_with("undefined"));
+            vec![kernel(function(
+                decimal_types(zero.inputs)[0],
+                &format!("{} / {}", decimal(&operands[0]), decimal(&operands[1])),
+                Expected::Undefined,
+            ))]
+        }
+        "D07" => {
+            let tokens = quoted(vector.inputs);
+            let (mode, domain) = (tokens[1], tokens[2].trim_matches(['[', ']']));
+            vec![converted(
+                decimal(&operands[0]),
+                "Decimal[-100,100;1,1;exact]",
+                format!("Decimal[{domain};0,0;{mode}]"),
+                refusal_expected(vector.expected),
+            )]
+        }
+        "D08" => {
+            let tokens = quoted(vector.inputs);
+            let domain = tokens[4].trim_matches(['[', ']']);
+            tokens[..4]
+                .iter()
+                .enumerate()
+                .map(|(index, coefficient)| {
+                    // The first two coefficients are the endpoints.
+                    let expected = if index < 2 {
+                        Expected::Decimal {
+                            value: DecimalRepresentation::new(
+                                coefficient.parse().expect("authored coefficient"),
+                                0,
+                            )
+                            .normalized(),
+                            losses: Vec::new(),
+                        }
+                    } else {
+                        refusal_expected(vector.expected)
+                    };
+                    kernel(converted(
+                        format!("decimal({coefficient}, 0)"),
+                        "Decimal[-9,9;0,0;exact]",
+                        format!("Decimal[{domain};0,0;exact]"),
+                        expected,
+                    ))
+                })
+                .collect()
+        }
+        "D11" => {
+            let types = decimal_types(vector.inputs);
+            // One group of operands ends at each quoted type; the types
+            // themselves contain `;`.
+            let groups: Vec<Vec<(Integer, u32)>> =
+                vector.inputs.split_terminator("]`").map(pairs).collect();
+            assert_eq!((types.len(), groups.len()), (3, 3));
+            let mut cases = Vec::new();
+            let mut refused = 0;
+            for (group, ty) in groups.iter().zip(types) {
+                for operand in group {
+                    let says_refuses = vector
+                        .expected
+                        .contains(&format!("`{}` refuses", decimal_text(operand)));
+                    let expected = if says_refuses {
+                        refused += 1;
+                        Expected::RefusedAny
+                    } else {
+                        Expected::Decimal {
+                            value: DecimalRepresentation::new(operand.0.clone(), operand.1)
+                                .normalized(),
+                            losses: Vec::new(),
+                        }
+                    };
+                    cases.push(function(ty, &decimal(operand), expected));
+                }
+            }
+            assert_eq!((cases.len(), refused), (7, 2));
+            cases
+        }
+        "D12" => {
+            let types = decimal_types(vector.inputs);
+            let (first, _) = vector.expected.split_once(';').expect("two outcomes");
+            let (coefficient, scale) = pairs(first).into_iter().next().expect("first result");
+            let (numerator, denominator) = quoted(first)[1]
+                .split_once('/')
+                .expect("authored loss ratio");
+            let quotient = format!("{} / {}", decimal(&operands[0]), decimal(&operands[1]));
+            vec![
+                function(
+                    types[0],
+                    &quotient,
+                    Expected::Decimal {
+                        value: DecimalRepresentation::new(coefficient.clone(), scale).normalized(),
+                        losses: vec![DecimalLoss {
+                            numerator: numerator.parse().expect("authored numerator"),
+                            denominator: denominator.parse().expect("authored denominator"),
+                            coefficient,
+                            scale,
+                            mode: "nearest-even".to_owned(),
+                        }],
+                    },
+                ),
+                // A refusal on the coefficient, with the code D07 gives for a
+                // coefficient outside its domain.
+                function(
+                    types[1],
+                    &quotient,
+                    refusal_expected(self::vector("D07").expected),
+                ),
+            ]
+        }
+        "D29" => {
+            assert!(vector
+                .expected
+                .starts_with("the first three are each a syntax refusal at parse"));
+            assert!(vector.expected.contains("the `exact` forms are admitted"));
+            let tokens = quoted(vector.inputs);
+            assert_eq!(tokens[4], "; exact");
+            let exact = |text: &str| text.replacen(']', "; exact]", 1);
+            let programs = |declaration: &str, conversion: &str, quantity: &str| {
+                [
+                    format!("{declaration}\nfunction f using v(): Boolean pure {{ true }}"),
+                    format!(
+                        "function f using v({}): Decimal[0,100;2,2;exact] pure {{ {conversion} }}",
+                        tokens[2]
+                    ),
+                    format!(
+                        "dimension L;\nunit m : L = rational(1, 1);\ntype Q = {quantity};\n\
+                         function f using v(): Boolean pure {{ true }}"
+                    ),
+                ]
+            };
+            let refused = programs(tokens[0], tokens[1], tokens[3]);
+            let admitted = programs(&exact(tokens[0]), &exact(tokens[1]), &exact(tokens[3]));
+            refused
+                .into_iter()
+                .map(|source| program(source, Expected::RefusedCode("invalid_syntax".to_owned())))
+                .chain(
+                    admitted
+                        .into_iter()
+                        .map(|source| program(source, Expected::Admitted)),
+                )
+                .collect()
+        }
+        _ => return None,
+    })
+}
+
+/// Quantity conversion, arithmetic and carried-Decimal rows.
+fn quantity_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
+    // The units of TC-187's table that these rows name.
+    const UNITS: &str = "dimension L;\n\
+        unit m : L = rational(1, 1);\n\
+        unit cm : L = rational(1, 100) * m;\n\
+        unit inch : L = rational(127, 5000) * m;\n\
+        dimension T;\n\
+        unit s : T = rational(1, 1);\n\
+        dimension Temp;\n\
+        unit K : Temp = rational(1, 1);\n\
+        unit degC : Temp = rational(1, 1) * K + rational(5463, 20);\n\
+        unit degF : Temp = rational(5, 9) * K + rational(45967, 180);\n";
+    let in_units = |result: &str, body: &str, expected: Expected| {
+        program(
+            format!("{UNITS}function f using v(): {result} pure {{ {body} }}"),
+            expected,
+        )
+    };
+    let tokens = quoted(vector.inputs);
+    let ratio = |text: &str| -> (i64, i64) {
+        let amount = text.split(' ').next().expect("authored amount");
+        let (numerator, denominator) = amount.split_once('/').unwrap_or((amount, "1"));
+        (
+            numerator.parse().expect("authored numerator"),
+            denominator.parse().expect("authored denominator"),
+        )
+    };
+    let declared = |text: &str| {
+        let (numerator, denominator) = ratio(text);
+        quantity_expected(numerator, denominator, UnitDomain::Declared)
+    };
+    Some(match vector.id {
+        "U01" => {
+            let results = quoted(vector.expected);
+            let conversion = format!("convert<Quantity<{}>>({})", tokens[1], tokens[0]);
+            vec![
+                in_units("Quantity<m>", &conversion, declared(results[0])),
+                in_units(
+                    "Quantity<m>",
+                    &format!("{conversion} + {}", tokens[2]),
+                    declared(results[1]),
+                ),
+            ]
+        }
+        "U03" => vec![in_units(
+            "Boolean",
+            &format!("{} + {} = {}", tokens[0], tokens[1], tokens[0]),
+            authored_refusal(vector.expected),
+        )],
+        "U04" => {
+            let result = quoted(vector.expected)[0];
+            tokens[..2]
+                .iter()
+                .map(|quantity| {
+                    in_units(
+                        "Quantity<K>",
+                        &format!("convert<Quantity<K>>({quantity})"),
+                        declared(result),
+                    )
+                })
+                .collect()
+        }
+        "U05" => ["degC", "degF"]
+            .into_iter()
+            .flat_map(|unit| {
+                [
+                    format!("1 {unit} + 1 {unit}"),
+                    format!("1 {unit} - 1 {unit}"),
+                    format!("2 {unit} * 2 {unit}"),
+                    format!("2 {unit} / 2 {unit}"),
+                    format!("2 {unit} ^ 2"),
+                ]
+            })
+            .map(|body| {
+                in_units(
+                    "Boolean",
+                    &format!("{body} = {body}"),
+                    authored_refusal(vector.expected),
+                )
+            })
+            .collect(),
+        "U07" => {
+            let Expected::Decimal { value, losses } = decimal_expected(
+                vector
+                    .expected
+                    .split_once("`nearest-even`:")
+                    .expect("rounded row")
+                    .1,
+            ) else {
+                panic!("U07: an authored decimal result");
+            };
+            assert_eq!(tokens[0], "1 in");
+            // `in` is a reserved word of the source language.
+            let case = |mode: &str, expected| {
+                let target = format!("Quantity<m, Decimal[-100,100;2,2;{mode}]>");
+                in_units(&target, &format!("convert<{target}>(1 inch)"), expected)
+            };
+            let rounded = Rational::new(
+                value.coefficient().clone(),
+                Integer::from(10_i64.pow(value.scale())),
+            )
+            .expect("nonzero denominator");
+            vec![
+                case("exact", Expected::RefusedAny),
+                case(
+                    "nearest-even",
+                    Expected::RoundedQuantity {
+                        numerator: rounded.numerator().clone(),
+                        denominator: rounded.denominator().clone(),
+                        unit_domain: UnitDomain::Declared,
+                        losses,
+                    },
+                ),
+            ]
+        }
+        "U08" => {
+            let target = format!(
+                "Quantity<m, Decimal[{};0,0;exact]>",
+                tokens[4].trim_matches(['[', ']'])
+            );
+            tokens[..4]
+                .iter()
+                .enumerate()
+                .map(|(index, quantity)| {
+                    // The first two magnitudes are the endpoints.
+                    let expected = if index < 2 {
+                        declared(quantity)
+                    } else {
+                        Expected::RefusedAny
+                    };
+                    in_units(&target, &format!("convert<{target}>({quantity})"), expected)
+                })
+                .collect()
+        }
+        "U09b" => {
+            assert!(vector.expected.starts_with(
+                "conversion succeeds exactly while source and target unit identities"
+            ));
+            let units = format!("{UNITS}unit m_distinct : L = rational(1, 1) * m;\n");
+            vec![
+                program(
+                    format!(
+                        "{units}function f using v(): Quantity<m> pure \
+                         {{ convert<Quantity<m>>(1 m_distinct) }}"
+                    ),
+                    declared("1 m"),
+                ),
+                // The two units remain distinct types.
+                program(
+                    format!(
+                        "{units}function g using v(d: Quantity<m>): Boolean pure {{ true }}\n\
+                         function f using v(): Boolean pure {{ g(1 m_distinct) }}"
+                    ),
+                    Expected::RefusedCode("ill_typed".to_owned()),
+                ),
+            ]
+        }
+        "U12" => {
+            assert!(vector.inputs.starts_with("Multiply `2 m * 3 s`"));
+            let results = quoted(vector.expected);
+            [
+                ("m*s", "2 m * 3 s"),
+                ("m*s^-1", "6 m / 2 s"),
+                ("m^2", "2 m ^ 2"),
+                ("m*m^-1", "5 m / 5 m"),
+            ]
+            .into_iter()
+            .zip(results)
+            .map(|((unit, body), result)| {
+                let (numerator, denominator) = ratio(result);
+                in_units(
+                    &format!("Quantity<{unit}>"),
+                    body,
+                    quantity_expected(numerator, denominator, UnitDomain::Compound),
+                )
+            })
+            .collect()
+        }
+        _ => return None,
+    })
 }
 
 fn decimal_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
@@ -843,10 +1359,25 @@ fn text_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 )]
             } else {
                 assert!(vector.expected.starts_with("equal under each profile;"));
-                quoted(vector.inputs)
-                    .into_iter()
-                    .map(|profile| text_comparison(profile, &left, &right, "=", true))
-                    .collect()
+                let profiles = quoted(vector.inputs);
+                assert_eq!(profiles, ["nfc", "nfd"]);
+                // The retained sequences, in profile order: one scalar under
+                // `nfc`, then the decomposed pair under `nfd`.
+                let retained = unicode_scalars(vector.expected);
+                assert_eq!(retained.len(), 3);
+                let (composed, decomposed) = retained.split_at(1);
+                let mut cases = Vec::new();
+                for (profile, sequence) in profiles.into_iter().zip([composed, decomposed]) {
+                    cases.push(text_comparison(profile, &left, &right, "=", true));
+                    for literal in [&left, &right] {
+                        cases.push(function(
+                            &format!("Text[0,8;{profile}]"),
+                            &format!("Text({literal})"),
+                            Expected::Text(sequence.iter().collect()),
+                        ));
+                    }
+                }
+                cases
             }
         }
         "T03" => {
@@ -1045,6 +1576,182 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
     })
 }
 
+const DIRECTIONS: [&str; 5] = [
+    "nearest-even",
+    "toward-zero",
+    "toward-positive",
+    "toward-negative",
+    "nearest-away",
+];
+
+/// The (direction, result bits) pairs of an authored rounding table written as
+/// `direction/direction: bits; ...`.
+fn direction_rows(expected: &str) -> Vec<(&str, u64)> {
+    expected
+        .split(';')
+        .filter_map(|row| {
+            let (names, tail) = row.split_once(':')?;
+            let bits = *hexes(tail).first()?;
+            Some(names.split('/').map(move |name| (name.trim(), bits)))
+        })
+        .flatten()
+        .filter(|(name, _)| DIRECTIONS.contains(name))
+        .collect()
+}
+
+/// Binary32 rows whose outcome is a type refusal, a strict-mode refusal, or one
+/// result under every rounding direction and strict `exact`.
+fn float_exceptional_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
+    let operands = hexes(vector.inputs);
+    let bits32 = |bits: u64| format!("float32(bits: {bits:#010x})");
+    let add = |left, right| format!("{} + {}", bits32(left), bits32(right));
+    let modes = || DIRECTIONS.into_iter().chain(["exact"]);
+    let float =
+        |mode: &str, body: &str, expected| function(&format!("Float32[{mode}]"), body, expected);
+    Some(match vector.id {
+        "F02" => {
+            let [first, second] = operands[..] else {
+                panic!("two quiet NaNs: {operands:?}");
+            };
+            let call = |name: &str, left, right, holds| {
+                function(
+                    "Boolean",
+                    &format!(
+                        "filament::value::ieee::{name}({}, {})",
+                        bits32(left),
+                        bits32(right)
+                    ),
+                    Expected::Boolean(holds),
+                )
+            };
+            [first, second]
+                .into_iter()
+                .flat_map(|nan| {
+                    [
+                        call("numericEqual", nan, nan, false),
+                        call("bitIdentical", nan, nan, true),
+                    ]
+                })
+                .chain([
+                    call("totalOrder", first, second, true),
+                    call("totalOrder", second, first, false),
+                ])
+                .collect()
+        }
+        "F32" => {
+            let results = hexes(vector.expected);
+            assert_eq!((operands.len(), results.len()), (7, 7));
+            ["nearest-even", "toward-zero", "exact"]
+                .into_iter()
+                .flat_map(|mode| {
+                    operands.iter().zip(&results).enumerate().flat_map(
+                        move |(index, (operand, negated))| {
+                            // The first six patterns are binary32, the last binary64.
+                            let (ty, value) = if index < 6 {
+                                let bits = u32::try_from(*operand).expect("a binary32 pattern");
+                                (format!("Float32[{mode}]"), IeeeValue::binary32(bits))
+                            } else {
+                                (format!("Float64[{mode}]"), IeeeValue::binary64(*operand))
+                            };
+                            [("-a", *negated), ("-(-a)", *operand)].map(|(body, bits)| {
+                                let mut case = limited_function_with(
+                                    &ty,
+                                    &format!("a: {ty}"),
+                                    body,
+                                    vec![Value::Float(value)],
+                                    UNLIMITED,
+                                    Expected::Float {
+                                        bits,
+                                        flags: Vec::new(),
+                                    },
+                                    &[],
+                                );
+                                case.expected_charges = None;
+                                case
+                            })
+                        },
+                    )
+                })
+                .collect()
+        }
+        "F06" => {
+            assert!(vector.expected.starts_with("ill-typed"));
+            vec![function(
+                "Boolean",
+                &format!(
+                    "{} = float64(bits: {:#018x})",
+                    bits32(operands[0]),
+                    operands[1]
+                ),
+                Expected::RefusedCode("ill_typed".to_owned()),
+            )]
+        }
+        "F09" => {
+            // The first operation is F07's, the second the authored exact sum.
+            let first = hexes(self::vector("F07").inputs);
+            let (refused, admitted) = vector
+                .expected
+                .split_once("second")
+                .expect("both operations");
+            vec![
+                float(
+                    "exact",
+                    &add(first[0], first[1]),
+                    ieee_refusal_expected(refused),
+                ),
+                float(
+                    "exact",
+                    &add(operands[0], operands[1]),
+                    float_expected(admitted),
+                ),
+            ]
+        }
+        "F12" => [
+            format!("{} * {}", bits32(operands[0]), bits32(operands[1])),
+            format!("filament::value::ieee::sqrt({})", bits32(operands[2])),
+        ]
+        .iter()
+        .flat_map(|body| {
+            modes().map(move |mode| float(mode, body, float_expected(vector.expected)))
+        })
+        .collect(),
+        "F13" => {
+            let results = hexes(vector.expected);
+            assert_eq!(results.len(), 4);
+            let Expected::Float { flags, .. } = float_expected(vector.expected) else {
+                panic!("F13: an authored float result");
+            };
+            // The authored order: +1/+0, -1/+0, +1/-0, -1/-0.
+            [
+                (0x3f80_0000, 0),
+                (0xbf80_0000, 0),
+                (0x3f80_0000, 0x8000_0000),
+                (0xbf80_0000, 0x8000_0000),
+            ]
+            .into_iter()
+            .zip(results)
+            .flat_map(|((numerator, zero), bits)| {
+                let body = format!("{} / {}", bits32(numerator), bits32(zero));
+                let flags = flags.clone();
+                modes().map(move |mode| {
+                    let flags = flags.clone();
+                    float(mode, &body, Expected::Float { bits, flags })
+                })
+            })
+            .collect()
+        }
+        "F14" => {
+            let (rounded, refused) = vector.expected.split_once(';').expect("two outcomes");
+            let body = add(operands[0], operands[1]);
+            vec![
+                float("nearest-even", &body, float_expected(rounded)),
+                float("exact", &body, ieee_refusal_expected(refused)),
+            ]
+        }
+        _ => return None,
+    })
+}
+
 fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
     let operands = hexes(vector.inputs);
     let (width, expression, expected) = match vector.id {
@@ -1058,14 +1765,26 @@ fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
         ),
         "F07" | "F08" | "F10" => {
             let width = if vector.id == "F10" { 64 } else { 32 };
-            (
-                width,
-                format!(
-                    "float{width}(bits: {:#x}) + float{width}(bits: {:#x})",
-                    operands[0], operands[1]
-                ),
-                float_expected(vector.expected),
-            )
+            let expression = format!(
+                "float{width}(bits: {:#x}) + float{width}(bits: {:#x})",
+                operands[0], operands[1]
+            );
+            let rows = direction_rows(vector.expected);
+            assert_eq!(rows.len(), DIRECTIONS.len(), "{}: {rows:?}", vector.id);
+            return Some(
+                rows.into_iter()
+                    .map(|(mode, bits)| {
+                        let Expected::Float { flags, .. } = float_expected(vector.expected) else {
+                            panic!("{}: an authored float result", vector.id);
+                        };
+                        function(
+                            &format!("Float{width}[{mode}]"),
+                            &expression,
+                            Expected::Float { bits, flags },
+                        )
+                    })
+                    .collect(),
+            );
         }
         "F11" => (
             32,
@@ -1268,10 +1987,7 @@ fn float_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase
                 "Float32[exact]",
                 body,
                 limits(32, 2, 3, 1),
-                Expected::Refused {
-                    code: "ieee_not_exact".to_owned(),
-                    cause: Some("rounding-required".to_owned()),
-                },
+                ieee_not_exact(&["inexact"]),
                 &ieee[..3],
             );
             let nearest = limited_function(
@@ -1437,10 +2153,7 @@ fn float_extended_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>>
         .chain(std::iter::once(function(
             "Float32[exact]",
             "float32(bits: 0x7f7fffff) + float32(bits: 0x73000000)",
-                Expected::Refused {
-                    code: "ieee_not_exact".to_owned(),
-                    cause: Some("rounding-required".to_owned()),
-                },
+                ieee_not_exact(&["inexact", "overflow"]),
         )))
         .collect(),
         "F24" => vec![
@@ -1541,15 +2254,15 @@ fn float_extended_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>>
         ],
         "F29" => vec![
             function("Float32[nearest-even]", "float32(bits: 0x7f7fffff) + float32(bits: 0x72800000)", float(0x7f7fffff, &["inexact"])),
-            function("Float32[exact]", "float32(bits: 0x7f7fffff) + float32(bits: 0x72800000)", Expected::Refused { code: "ieee_not_exact".to_owned(), cause: Some("rounding-required".to_owned()) }),
+            function("Float32[exact]", "float32(bits: 0x7f7fffff) + float32(bits: 0x72800000)", ieee_not_exact(&["inexact"])),
             function("Float32[nearest-even]", "float32(bits: 0x007fffff) * float32(bits: 0x3f800001)", float(0x00800000, &["inexact"])),
-            function("Float32[exact]", "float32(bits: 0x007fffff) * float32(bits: 0x3f800001)", Expected::Refused { code: "ieee_not_exact".to_owned(), cause: Some("rounding-required".to_owned()) }),
+            function("Float32[exact]", "float32(bits: 0x007fffff) * float32(bits: 0x3f800001)", ieee_not_exact(&["inexact"])),
         ],
         "F31" => vec![
             limited_function("Float32[nearest-even]", "convert<Float32[nearest-even]>(float64(bits: 0xfff0000000000000))", limits(64, 1, 2, 1), float(0xff800000, &[]), &[ChargePoint::IeeeOperands, ChargePoint::IeeeResultRetain]),
             limited_function("Float32[nearest-even]", "convert<Float32[nearest-even]>(float64(bits: 0xfff0000000000000))", limits(64, 1, 1, 1), Expected::Incomplete { limit_kind: LimitKind::WorkUnits, limit: 1, consumed: 1, next_charge: Integer::from(1_i64), charge_point: ChargePoint::IeeeResultRetain }, &[ChargePoint::IeeeOperands]),
             limited_function("Float32[nearest-even]", "convert<Float32[nearest-even]>(float64(bits: 0x3fb999999999999a))", limits(64, 1, 4, 1), float(0x3dcccccd, &["inexact"]), &ieee),
-            limited_function("Float32[exact]", "convert<Float32[exact]>(float64(bits: 0x3fb999999999999a))", limits(64, 1, 3, 1), Expected::Refused { code: "ieee_not_exact".to_owned(), cause: Some("rounding-required".to_owned()) }, &ieee[..3]),
+            limited_function("Float32[exact]", "convert<Float32[exact]>(float64(bits: 0x3fb999999999999a))", limits(64, 1, 3, 1), ieee_not_exact(&["inexact"]), &ieee[..3]),
             limited_function("Float32[exact]", "convert<Float32[exact]>(float64(bits: 0x3fb999999999999a))", limits(64, 1, 2, 1), Expected::Incomplete { limit_kind: LimitKind::WorkUnits, limit: 2, consumed: 2, next_charge: Integer::from(1_i64), charge_point: ChargePoint::IeeeRound }, &ieee[..2]),
             limited_function("Float32[nearest-even]", "convert<Float32[nearest-even]>(float64(bits: 0x47efffffe0000000))", limits(64, 1, 4, 1), float(0x7f7fffff, &[]), &ieee),
             limited_function("Float32[nearest-even]", "convert<Float32[nearest-even]>(float64(bits: 0x47effffff0000000))", limits(64, 1, 4, 1), float(0x7f800000, &["inexact", "overflow"]), &ieee),
@@ -1605,6 +2318,134 @@ fn division_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
         }
         _ => None,
     }
+}
+
+const DIVISION_LAWS: [&str; 3] = ["truncating", "floor", "euclidean"];
+
+/// `case` in a unit that selects the integer-division law `law`.
+fn under_law(law: &str, mut case: SourceCase) -> SourceCase {
+    case.declarations.insert_str(
+        0,
+        &format!("profile d = \"filament.value.integer-division.{law}/v1\";\n"),
+    );
+    case
+}
+
+/// Consumer result domains, and the complete-value leg of DIV-17, each under
+/// every division law.
+fn division_domain_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
+    const SIGNED_64: &str = "Int[-9223372036854775808, 9223372036854775807]";
+    let integer = |text: &str| -> Integer { text.parse().expect("authored integer") };
+    let cases: Vec<SourceCase> = match vector.id {
+        "DIV-05" => {
+            let (refused, remainder) = vector.expected.split_once(';').expect("two outcomes");
+            let result = quoted(remainder)
+                .into_iter()
+                .find_map(|token| token.parse::<Integer>().ok())
+                .expect("authored remainder");
+            vec![
+                kernel(function(
+                    SIGNED_64,
+                    "(-9223372036854775808) div (-1)",
+                    authored_refusal(refused),
+                )),
+                kernel(function(
+                    SIGNED_64,
+                    "(-9223372036854775808) rem (-1)",
+                    Expected::Integer(result),
+                )),
+            ]
+        }
+        "DIV-06" => {
+            assert!(vector.expected.starts_with("endpoints succeed;"));
+            [
+                (
+                    "(-9223372036854775808) div 1",
+                    Expected::Integer(integer("-9223372036854775808")),
+                ),
+                (
+                    "9223372036854775807 div 1",
+                    Expected::Integer(integer("9223372036854775807")),
+                ),
+                (
+                    "(-9223372036854775808) div (-1)",
+                    authored_refusal(vector.expected),
+                ),
+            ]
+            .into_iter()
+            .map(|(body, expected)| kernel(function(SIGNED_64, body, expected)))
+            .collect()
+        }
+        "DIV-15" => {
+            assert!(vector.expected.starts_with("`10 div 3` returns `3`"));
+            assert!(vector.expected.contains("`10 rem 7` returns `3`"));
+            assert!(vector
+                .expected
+                .contains("no `integer-division.result-retain` charge"));
+            let domain = "Int[1, 10]";
+            let mut refused = kernel(function(
+                domain,
+                "10 rem 5",
+                authored_refusal(vector.expected),
+            ));
+            refused.expected_charges = Some(vec![
+                ChargePoint::IntegerDivisionOperands,
+                ChargePoint::IntegerDivisionArithmetic,
+                ChargePoint::IntegerDivisionDomain,
+            ]);
+            vec![
+                kernel(function(
+                    domain,
+                    "10 div 3",
+                    Expected::Integer(integer("3")),
+                )),
+                kernel(function(
+                    domain,
+                    "10 rem 7",
+                    Expected::Integer(integer("3")),
+                )),
+                refused,
+            ]
+        }
+        "DIV-16" => {
+            assert!(vector.expected.starts_with("`10 div y` returns `2`"));
+            assert!(vector.expected.contains("`x rem -1` returns `0`"));
+            [
+                ("y", "Int[1, 10]", "10 div y", 5_i64, "2"),
+                ("x", "Int[-10, 5]", "x rem -1", -10_i64, "0"),
+            ]
+            .into_iter()
+            .map(|(name, domain, body, argument, result)| {
+                let mut case = kernel(program(
+                    format!("function f using v({name}: Integer): {domain} pure {{ {body} }}"),
+                    Expected::Integer(integer(result)),
+                ));
+                case.arguments = vec![Value::Integer(Integer::from(argument))];
+                case
+            })
+            .collect()
+        }
+        "DIV-17" => {
+            assert!(vector.expected.contains("`mod` returns Euclidean `2`"));
+            // The first result is fixed by product precedence over a quotient
+            // every law agrees on for positive operands.
+            [
+                ("1 + 7 div 3 * 2", "5"),
+                ("7 rem 3", "1"),
+                ("-7 mod 3", "2"),
+            ]
+            .into_iter()
+            .map(|(body, result)| function("Integer", body, Expected::Integer(integer(result))))
+            .collect()
+        }
+        _ => return None,
+    };
+    Some(
+        DIVISION_LAWS
+            .into_iter()
+            .flat_map(|law| cases.iter().map(move |case| under_law(law, case.clone())))
+            .collect(),
+    )
 }
 
 fn division_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
@@ -1744,7 +2585,7 @@ fn division_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceC
             limited_function_with(
                 "Int[0, 1]",
                 "a: Integer, b: Integer",
-                "convert<Int[0, 1]>(a mod b)",
+                "a mod b",
                 vec![
                     Value::Integer(Integer::from(-7_i64)),
                     Value::Integer(Integer::from(3_i64)),
@@ -1759,7 +2600,7 @@ fn division_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceC
             limited_function_with(
                 "Int[0, 1]",
                 "a: Integer, b: Integer",
-                "convert<Int[0, 1]>(a mod b)",
+                "a mod b",
                 vec![
                     Value::Integer(Integer::from(-7_i64)),
                     Value::Integer(Integer::from(3_i64)),
@@ -1807,10 +2648,20 @@ fn division_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceC
 
 fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
     let snippets = quoted(vector.inputs);
+    let units: Vec<&str> = snippets
+        .iter()
+        .copied()
+        .filter(|snippet| snippet.starts_with("unit "))
+        .collect();
     let source = match vector.id {
         "U11a" => format!("dimension L; {} {}", snippets[1], snippets[0]),
         "U11b" => format!("dimension L; {} {}", snippets[0], snippets[1]),
         "U11c" | "U11f" | "U11h" => format!("dimension L; unit m : L = 1; {}", snippets[0]),
+        "U06" | "U11i" => format!("dimension L; unit m : L = 1; {}", units.join(" ")),
+        "U11d" => format!(
+            "dimension L; dimension T; unit m : L = 1; unit s : T = 1; {}",
+            units.join(" ")
+        ),
         "U11g1" | "U11g2" | "U11g3" | "U11g4" | "U11n" | "U11o" | "U11w" => snippets.join("\n"),
         _ => return None,
     };
@@ -2619,13 +3470,20 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
 
 fn source_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
     match vector.test_case {
-        TestCase::Tc185 => decimal_accounting_cases(vector).or_else(|| decimal_cases(vector)),
+        TestCase::Tc185 => decimal_accounting_cases(vector)
+            .or_else(|| decimal_cases(vector))
+            .or_else(|| decimal_admission_cases(vector)),
         TestCase::Tc186 => text_accounting_cases(vector).or_else(|| text_cases(vector)),
-        TestCase::Tc187 => unit_accounting_cases(vector).or_else(|| unit_cases(vector)),
-        TestCase::Tc192 => division_accounting_cases(vector).or_else(|| division_cases(vector)),
+        TestCase::Tc187 => unit_accounting_cases(vector)
+            .or_else(|| unit_cases(vector))
+            .or_else(|| quantity_cases(vector)),
+        TestCase::Tc192 => division_accounting_cases(vector)
+            .or_else(|| division_cases(vector))
+            .or_else(|| division_domain_cases(vector)),
         TestCase::Tc193 => float_accounting_cases(vector)
             .or_else(|| float_extended_cases(vector))
-            .or_else(|| float_cases(vector)),
+            .or_else(|| float_cases(vector))
+            .or_else(|| float_exceptional_cases(vector)),
     }
 }
 
@@ -2689,13 +3547,6 @@ fn structural_function_call_charges(graph: &CheckedGraph, entry_index: usize) ->
     }
 
     called_function_charges(graph, entry_index, &mut Vec::new())
-}
-
-/// The cross-package source adapter for DIV-17/18 lives in
-/// `tests/it/checked_package_state_core.rs`, where the front-end exposes the
-/// operator's source region for state-clause refusals.
-fn has_state_clause_adapter(vector: &QualificationVector) -> bool {
-    vector.test_case == TestCase::Tc192 && matches!(vector.id, "DIV-17" | "DIV-18")
 }
 
 /// T04, T05 and T13 take runtime payloads through value admission. They are
@@ -2802,6 +3653,19 @@ fn compare_text_admission(vector: &QualificationVector) -> Result<usize, String>
         }
     }
     Ok(rows.len())
+}
+
+fn decimal_loss(loss: &ValueLoss) -> DecimalLoss {
+    let ValueLoss::Decimal(loss) = loss else {
+        panic!("decimal loss, got {loss:?}");
+    };
+    DecimalLoss {
+        numerator: loss.exact_numerator().clone(),
+        denominator: loss.exact_denominator(),
+        coefficient: loss.rounded_coefficient().clone(),
+        scale: loss.rounded_scale(),
+        mode: loss.mode().as_str().to_owned(),
+    }
 }
 
 fn observed(case: &SourceCase) -> Observation {
@@ -2938,28 +3802,15 @@ fn observed(case: &SourceCase) -> Observation {
     let result = match outcome {
         Outcome::Completed(Value::Boolean(value)) => Expected::Boolean(value),
         Outcome::Completed(Value::Integer(value)) => Expected::Integer(value),
-        Outcome::Completed(Value::Decimal(value)) => {
-            let losses = evaluation
+        Outcome::Completed(Value::Decimal(value)) => Expected::Decimal {
+            value: value.normalized().clone(),
+            losses: evaluation
                 .losses
                 .iter()
-                .map(|loss| {
-                    let ValueLoss::Decimal(loss) = &loss.loss else {
-                        panic!("decimal loss, got {:?}", loss.loss);
-                    };
-                    DecimalLoss {
-                        numerator: loss.exact_numerator().clone(),
-                        denominator: loss.exact_denominator(),
-                        coefficient: loss.rounded_coefficient().clone(),
-                        scale: loss.rounded_scale(),
-                        mode: loss.mode().as_str().to_owned(),
-                    }
-                })
-                .collect();
-            Expected::Decimal {
-                value: value.normalized().clone(),
-                losses,
-            }
-        }
+                .map(|loss| decimal_loss(&loss.loss))
+                .collect(),
+        },
+        Outcome::Completed(Value::Text(text)) => Expected::Text(text.retained().to_owned()),
         Outcome::Completed(Value::Rational(value)) => Expected::Rational {
             numerator: value.numerator().clone(),
             denominator: value.denominator().clone(),
@@ -2981,47 +3832,46 @@ fn observed(case: &SourceCase) -> Observation {
                 flags,
             }
         }
-        Outcome::Completed(Value::Quantity(value)) => Expected::Quantity {
-            numerator: value.magnitude().numerator().clone(),
-            denominator: value.magnitude().denominator().clone(),
-            unit_domain: value.unit().domain(),
-        },
-        Outcome::Refused(refusal) => {
-            let mut flags: Vec<String> = evaluation
-                .losses
-                .iter()
-                .flat_map(|loss| match &loss.loss {
-                    ValueLoss::IeeeFlags(flags) => {
-                        flags.iter().map(|flag| flag.as_str().to_owned()).collect()
-                    }
-                    _ => Vec::new(),
-                })
-                .collect();
-            flags.sort();
-            assert!(
-                flags.is_empty()
-                    || evaluation
-                        .losses
-                        .iter()
-                        .all(|loss| matches!(&loss.loss, ValueLoss::IeeeFlags(_))),
-                "IEEE refusal exposes only its would-be flags: {:?}",
-                evaluation.losses
-            );
-            if flags.is_empty() {
-                assert!(
-                    evaluation.losses.is_empty(),
-                    "refusal exposes no other losses"
-                );
-                Expected::Refused {
-                    code: refusal.code().expect("refusal code").to_owned(),
-                    cause: refusal.cause().map(str::to_owned),
+        Outcome::Completed(Value::Quantity(value)) => {
+            let numerator = value.magnitude().numerator().clone();
+            let denominator = value.magnitude().denominator().clone();
+            let unit_domain = value.unit().domain();
+            if evaluation.losses.is_empty() {
+                Expected::Quantity {
+                    numerator,
+                    denominator,
+                    unit_domain,
                 }
             } else {
-                Expected::IeeeRefused {
-                    code: refusal.code().expect("refusal code").to_owned(),
-                    cause: refusal.cause().map(str::to_owned),
-                    flags,
+                Expected::RoundedQuantity {
+                    numerator,
+                    denominator,
+                    unit_domain,
+                    losses: evaluation
+                        .losses
+                        .iter()
+                        .map(|loss| decimal_loss(&loss.loss))
+                        .collect(),
                 }
+            }
+        }
+        Outcome::Refused(refusal) => {
+            assert!(
+                evaluation.losses.is_empty(),
+                "a refusal exposes no losses: {:?}",
+                evaluation.losses
+            );
+            let code = refusal.code().expect("refusal code").to_owned();
+            let cause = refusal.cause().map(str::to_owned);
+            if let Refusal::IeeeNotExact { would_be, .. } = &refusal {
+                let mut flags: Vec<String> = would_be
+                    .iter()
+                    .map(|flag| flag.as_str().to_owned())
+                    .collect();
+                flags.sort();
+                Expected::IeeeRefused { code, cause, flags }
+            } else {
+                Expected::Refused { code, cause }
             }
         }
         Outcome::Incomplete(mut incomplete) => {
@@ -3093,7 +3943,7 @@ fn compare(vector: &QualificationVector) -> Result<usize, String> {
     let mut failures = Vec::new();
     for (index, case) in cases.iter().enumerate() {
         let actual = observed(case);
-        let matches = case.expected == actual.result;
+        let matches = agrees(&case.expected, &actual.result);
         let charges_match = case
             .expected_charges
             .as_ref()
@@ -3644,6 +4494,88 @@ fn t16_direct_text_type_admission_covers_each_profile_boundary() {
             row.profile
         );
     }
+
+    // The row's own tuples: each profile refuses the length bound under the
+    // tuple, then stops at the named counter once that counter is one short.
+    let tuple = |text_input_bytes, text_scalars, normalized_scalars, work_units| ScalarLimits {
+        integer_bits: 0,
+        decimal_digits: 0,
+        scale_expansion: 0,
+        text_input_bytes,
+        text_scalars,
+        normalized_scalars,
+        unit_edges: 0,
+        value_occurrences: 1,
+        work_units,
+        result_units: 1,
+    };
+    let stop = |limit_kind, consumed, charge_point| Incomplete {
+        limit_kind,
+        limit: 1,
+        consumed,
+        next_charge: Integer::from(2_u64),
+        charge_point,
+    };
+    let legs: [(_, _, _, &[ChargePoint], _, _); 3] = [
+        (
+            Nfd,
+            "e\u{301}",
+            tuple(3, 2, 2, 5),
+            &[
+                TextInputBytes,
+                TextDecodeScalars,
+                TextNormalizeInput,
+                TextNormalizeOutput,
+                TextNormalizeOutput,
+            ],
+            tuple(3, 2, 1, 5),
+            stop(NormalizedScalars, 1, TextNormalizeOutput),
+        ),
+        (
+            UnicodeScalars,
+            "e\u{301}",
+            tuple(3, 2, 0, 2),
+            &[TextInputBytes, TextDecodeScalars],
+            tuple(3, 1, 0, 2),
+            stop(TextScalars, 0, TextDecodeScalars),
+        ),
+        (
+            BinaryUtf8,
+            "\u{e9}",
+            tuple(2, 0, 0, 1),
+            &[TextInputBytes],
+            tuple(1, 0, 0, 1),
+            stop(InputBytes, 0, TextInputBytes),
+        ),
+    ];
+    for (profile, input, limits, charges, short, incomplete) in legs {
+        let payload = TextPayload::from_utf8(input.as_bytes()).expect("valid UTF-8 vector");
+        let ty = TextType::new(1, 1, profile).expect("valid bounded Text type");
+        let mut meter = Meter::new(limits);
+        assert!(
+            matches!(
+                admit_text(&payload, &ty, &mut meter),
+                Outcome::Refused(Refusal::TextLengthOutOfDomain { .. })
+            ),
+            "{profile:?}"
+        );
+        assert_eq!(
+            meter
+                .admitted_charges()
+                .iter()
+                .map(|charge| charge.point)
+                .collect::<Vec<_>>(),
+            charges,
+            "{profile:?}"
+        );
+        assert!(
+            matches!(
+                admit_text(&payload, &ty, &mut Meter::new(short)),
+                Outcome::Incomplete(actual) if actual == incomplete
+            ),
+            "{profile:?}"
+        );
+    }
 }
 
 accounting_source_vectors!("FSpec-FR-140-AC-6", "FSpec-TC-185"; d09_source_accounting=>"D09", d14_source_accounting=>"D14", d15_source_accounting=>"D15", d16_source_accounting=>"D16", d17_source_accounting=>"D17", d20_source_accounting=>"D20", d21_source_accounting=>"D21", d22_source_accounting=>"D22", d23_source_accounting=>"D23");
@@ -3671,8 +4603,6 @@ fn member_qualification_status(id: &str) -> MemberQualificationStatus {
 }
 accounting_source_vectors!("FSpec-FR-141-AC-6", "FSpec-TC-186"; t11_source_accounting=>"T11", t14_source_accounting=>"T14");
 accounting_source_vectors!("FSpec-FR-141-AC-5", "FSpec-TC-186"; t15_source_accounting=>"T15");
-// DIV-12's `modulo_out_of_domain` mismatch is owned by QSL-3058 / FR-147-AC-9,
-// outside QSL-3060's owner map; do not qualify it under this ticket.
 accounting_source_vectors!("FSpec-FR-147-AC-6", "FSpec-TC-192"; div08_source_accounting=>"DIV-08", div10_source_accounting=>"DIV-10", div11_source_accounting=>"DIV-11", div13_source_accounting=>"DIV-13");
 accounting_source_vectors!("FR-397-AC-28", "FSpec-TC-193"; f17_source_accounting=>"F17");
 accounting_source_vectors!("FSpec-FR-148-AC-6", "FSpec-TC-193"; f18_source_accounting=>"F18", f19_source_accounting=>"F19", f22_source_accounting=>"F22", f30_source_accounting=>"F30");
@@ -3740,6 +4670,69 @@ fn qsl3060_members_have_explicit_source_qualification_status() {
                 }
             }
         }
+    }
+}
+
+/// TC-187 U06, U11a, U11c, U11d and U11i: each row's refusal retains the
+/// declarations the row names, in its adapted source.
+#[test]
+fn unit_graph_rows_retain_the_names_the_standard_states() {
+    use TopologyRetained::{Scale, TargetName};
+    let dimension = |name: &str| TopologyRetained::Dimension {
+        name: name.to_owned(),
+        key: None,
+    };
+    let unit = |name: &str| TopologyRetained::Unit {
+        name: name.to_owned(),
+        key: None,
+    };
+    let zero = Rational::from_integer(Integer::zero());
+    for (id, expected) in [
+        ("U06", vec![unit("zero"), Scale(zero)]),
+        ("U11a", vec![dimension("L"), unit("m"), unit("m_alt")]),
+        ("U11c", vec![unit("x"), TargetName("nothing".to_owned())]),
+        (
+            "U11d",
+            vec![
+                unit("cm"),
+                TargetName("s".to_owned()),
+                dimension("L"),
+                dimension("T"),
+            ],
+        ),
+        ("U11i", vec![unit("a"), TargetName("nothing".to_owned())]),
+    ] {
+        let cases = unit_cases(vector(id)).expect("the row has a unit adapter");
+        let [case] = cases.as_slice() else {
+            panic!("{id}: one unit graph");
+        };
+        let source = format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n{}",
+            case.declarations
+        );
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("qualification", "unit-names"),
+            "vector.native",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("source intake");
+        assert!(parsed.is_admissible(), "{id}: {:?}", parsed.diagnostics());
+        let refusal = PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "qualification-source".to_owned(),
+            fsl_forms::build_unit(&parsed).expect("forms of admitted source"),
+            Vec::new(),
+            Vec::new(),
+        )
+        .map(|_| ())
+        .expect_err("the row's unit graph refuses");
+        let first = refusal.errors.first().expect("an assembly refusal");
+        let AssemblyCause::UnitGraphTopology { retained, .. } = &first.cause else {
+            panic!("{id}: a unit-graph refusal, not {:?}", first.cause);
+        };
+        assert_eq!(retained, &expected, "{id}");
     }
 }
 
@@ -3831,60 +4824,867 @@ fn an_altered_standard_expectation_reports_the_vector_identity() {
     assert!(mismatch.contains("999"), "{mismatch}");
 }
 
+/// The number of vectors the pinned standard publishes.
+const PUBLISHED_VECTORS: usize = 171;
+
+/// Tests in one source file that run all or part of a published row.
+struct Evidence {
+    source: &'static str,
+    tests: &'static [&'static str],
+}
+
+/// [`Evidence`] naming tests of the file at a repository-relative path.
+macro_rules! evidence {
+    ($path:literal: $($test:ident),+) => {
+        Evidence {
+            source: include_str!(concat!("../../../", $path)),
+            tests: &[$(stringify!($test)),+],
+        }
+    };
+}
+
+/// The status of a published vector that this harness's adapter does not by
+/// itself complete. A vector with an adapter and no status here is complete.
+enum Status {
+    /// Named tests complete the row, alone or beside an adapter here.
+    Elsewhere(&'static [Evidence]),
+    /// The row runs, here or in the named tests, except for `remainder`.
+    Partial {
+        evidence: &'static [Evidence],
+        remainder: &'static str,
+        owner: &'static str,
+    },
+    /// The compiler disagrees with the row: `source` is refused with `code`
+    /// and `cause` today.
+    Deviation {
+        source: &'static str,
+        code: &'static str,
+        cause: &'static str,
+        owner: &'static str,
+    },
+    /// No test runs the row.
+    NotRun {
+        reason: &'static str,
+        owner: &'static str,
+    },
+}
+
+const PACKAGE_UNIT_ROWS: &[Evidence] = &[evidence!(
+    "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
+    imported_unit_rows_match_the_published_u11r_through_u11u_outcomes
+)];
+const PACKAGE_TURN_ROWS: &[Evidence] = &[evidence!(
+    "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
+    imported_dimension_turns_match_u11y_and_u11z1_u11z2
+)];
+const WIRE_CLOSURE_ROWS: &[Evidence] = &[evidence!(
+    "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
+    integer_division_wire_closure_rows_match_div03_and_div09
+)];
+const UNIT_CYCLE_ROWS: &[Evidence] = &[evidence!(
+    "fsl-eval/tests/it/unit_diagnostic_vectors.rs":
+    u11b_f_l_adapt_cycle_vectors_to_the_authored_diagnostics
+)];
+const NAMED_UNIT_ROWS: &[Evidence] = &[evidence!(
+    "fsl-eval/tests/it/qualification_vectors_from_source.rs":
+    unit_graph_rows_retain_the_names_the_standard_states
+)];
+const FIRST_DEFECT_ROWS: &[Evidence] = &[evidence!(
+    "fsl-semantics/src/check/assemble/tests.rs":
+    the_first_defect_is_the_earliest_row_unit_and_node
+)];
+const DIMENSION_TERM_ROWS: &[Evidence] = &[evidence!(
+    "fsl-semantics/src/check/assemble/tests.rs":
+    step_minus_one_checks_a_dimensions_own_terms_before_its_units
+)];
+const REACHED_DEFECT_ROWS: &[Evidence] = &[evidence!(
+    "fsl-semantics/src/check/assemble/tests.rs":
+    a_dimension_reaching_a_defect_runs_its_own_unit_rows_first
+)];
+const CROSS_DECLARATION_ROWS: &[Evidence] = &[evidence!(
+    "fsl-eval/tests/it/qualification_enum_rows.rs":
+    t07_t09_cross_declaration_members_are_ill_typed
+)];
+const ZERO_AND_NAN_ROWS: &[Evidence] = &[evidence!(
+    "fsl-eval/tests/it/float_callables.rs":
+    f01_f02_f02b_zeros_and_nans_separate_equality_order_and_identity
+)];
+
+const FUNCTION_LOCUS: &str = "a function declaration under `filament.state.core/v1` is \
+    refused at the declaration, not at the operator";
+const RETAINED_NAMES: &str = "the retained dimension and unit names are not asserted";
+
+const STATUSES: &[(TestCase, &str, Status)] = &[
+    (
+        TestCase::Tc185,
+        "D01",
+        Status::Partial {
+            evidence: &[],
+            remainder: "that provenance retains both source pairs is not asserted",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc185,
+        "D19",
+        Status::NotRun {
+            reason: "no source form binds the boundary value: its literal is refused at type \
+                checking and a passed value is refused as the wrong value kind",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc185,
+        "D24",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/decimal_source_forms.rs":
+            d24_a_rational_converts_to_a_decimal_as_the_division_at_the_target_scale,
+            d24_has_no_literal_division_form_into_the_target_type
+        )]),
+    ),
+    (
+        TestCase::Tc185,
+        "D25",
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-eval/tests/it/decimal_source_forms.rs":
+                the_six_d25_expressions_check_or_refuse_as_the_criterion_states
+            )],
+            remainder: "that the admitted literals are typed `P` is not asserted",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc185,
+        "D26",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/decimal_source_forms.rs":
+            d26_a_member_literal_multiplies_at_its_retained_representation
+        )]),
+    ),
+    (
+        TestCase::Tc185,
+        "D27",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/decimal_source_forms.rs":
+            d27_a_member_literal_divides_with_the_divisor_side_expansion
+        )]),
+    ),
+    (
+        TestCase::Tc186,
+        "T06",
+        Status::Elsewhere(&[evidence!(
+            "tests/it/text_enum_identity.rs":
+            t06_t06b_utf8_reader_refuses_invalid_bytes_and_payloads_keep_provenance
+        )]),
+    ),
+    (
+        TestCase::Tc186,
+        "T06b",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/native_literals.rs":
+            text_literals_keep_their_source_spelling_as_provenance,
+            raw_escaped_and_runtime_text_compare_equal
+        )]),
+    ),
+    (
+        TestCase::Tc186,
+        "T07",
+        Status::Elsewhere(CROSS_DECLARATION_ROWS),
+    ),
+    (
+        TestCase::Tc186,
+        "T08",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/qualification_enum_rows.rs":
+            t08_ordering_uses_only_an_ordered_enum
+        )]),
+    ),
+    (
+        TestCase::Tc186,
+        "T09",
+        Status::Partial {
+            evidence: CROSS_DECLARATION_ROWS,
+            remainder: "a change of enum owner is not run",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc186,
+        "T10",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/qualification_enum_rows.rs":
+            t10_text_profiles_remain_distinct_types
+        )]),
+    ),
+    (
+        TestCase::Tc186,
+        "T16",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/qualification_vectors_from_source.rs":
+            t16_direct_text_type_admission_covers_each_profile_boundary
+        )]),
+    ),
+    (
+        TestCase::Tc187,
+        "U02",
+        Status::Deviation {
+            source: "dimension L;\n\
+                dimension T;\n\
+                unit m : L = rational(1, 1);\n\
+                unit s : T = rational(1, 1);\n\
+                dimension X = L * T / T;\n\
+                unit u : X = rational(1, 1);\n\
+                function f using v(): Boolean pure { convert<Quantity<m>>(1 u) = 1 m }",
+            code: "ill_typed",
+            cause: "type-mismatch",
+            owner: "QSL-3084",
+        },
+    ),
+    (TestCase::Tc187, "U06", Status::Elsewhere(NAMED_UNIT_ROWS)),
+    (
+        TestCase::Tc187,
+        "U09",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
+            values_from_distinct_package_dimensions_match_u36
+        )]),
+    ),
+    (TestCase::Tc187, "U11a", Status::Elsewhere(NAMED_UNIT_ROWS)),
+    (TestCase::Tc187, "U11b", Status::Elsewhere(UNIT_CYCLE_ROWS)),
+    (TestCase::Tc187, "U11c", Status::Elsewhere(NAMED_UNIT_ROWS)),
+    (TestCase::Tc187, "U11d", Status::Elsewhere(NAMED_UNIT_ROWS)),
+    (
+        TestCase::Tc187,
+        "U11e",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/unit_diagnostic_vectors.rs":
+            u11e_both_vector_scales_adapt_to_the_same_exact_source_diagnostic
+        )]),
+    ),
+    (TestCase::Tc187, "U11f", Status::Elsewhere(UNIT_CYCLE_ROWS)),
+    (
+        TestCase::Tc187,
+        "U11h",
+        Status::Elsewhere(FIRST_DEFECT_ROWS),
+    ),
+    (TestCase::Tc187, "U11i", Status::Elsewhere(NAMED_UNIT_ROWS)),
+    (
+        TestCase::Tc187,
+        "U11j",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/unit_diagnostic_vectors.rs":
+            u11j_adapts_both_roots_and_preserves_the_first_defect
+        )]),
+    ),
+    (
+        TestCase::Tc187,
+        "U11k",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/unit_diagnostic_vectors.rs":
+            u11k_adapts_the_earlier_cycle_before_the_later_zero_scale
+        )]),
+    ),
+    (
+        TestCase::Tc187,
+        "U11g1",
+        Status::Elsewhere(&[evidence!(
+            "fsl-semantics/src/check/assemble/tests.rs":
+            the_base_dimension_rule_refuses_an_unanchored_base_dimension
+        )]),
+    ),
+    (
+        TestCase::Tc187,
+        "U11g2",
+        Status::Partial {
+            evidence: &[],
+            remainder: RETAINED_NAMES,
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U11g4",
+        Status::Partial {
+            evidence: &[],
+            remainder: RETAINED_NAMES,
+            owner: "QSL-3306",
+        },
+    ),
+    (TestCase::Tc187, "U11l", Status::Elsewhere(UNIT_CYCLE_ROWS)),
+    (
+        TestCase::Tc187,
+        "U11m",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/unit_diagnostic_vectors.rs":
+            u11m_adapts_both_dimension_orders_and_their_diagnostic_payloads
+        )]),
+    ),
+    (
+        TestCase::Tc187,
+        "U11n",
+        Status::Elsewhere(DIMENSION_TERM_ROWS),
+    ),
+    (
+        TestCase::Tc187,
+        "U11o",
+        Status::Elsewhere(DIMENSION_TERM_ROWS),
+    ),
+    (
+        TestCase::Tc187,
+        "U11p",
+        Status::Elsewhere(DIMENSION_TERM_ROWS),
+    ),
+    (
+        TestCase::Tc187,
+        "U11q",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/unit_diagnostic_vectors.rs":
+            u11q_adapts_each_document_order_and_reports_its_first_defect
+        )]),
+    ),
+    (
+        TestCase::Tc187,
+        "U11r",
+        Status::Elsewhere(PACKAGE_UNIT_ROWS),
+    ),
+    (
+        TestCase::Tc187,
+        "U11s",
+        Status::Partial {
+            evidence: PACKAGE_UNIT_ROWS,
+            remainder: "the node `L`, the retained edges and that the imported `m` is not re-checked are not asserted",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U11t",
+        Status::Partial {
+            evidence: PACKAGE_UNIT_ROWS,
+            remainder: "the retained roots `m` and `m2` are not asserted",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U11u",
+        Status::Partial {
+            evidence: PACKAGE_UNIT_ROWS,
+            remainder: "that the refusal is at `z` is not asserted",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U11w",
+        Status::Elsewhere(DIMENSION_TERM_ROWS),
+    ),
+    (
+        TestCase::Tc187,
+        "U11x",
+        Status::Elsewhere(REACHED_DEFECT_ROWS),
+    ),
+    (
+        TestCase::Tc187,
+        "U11y",
+        Status::Partial {
+            evidence: PACKAGE_TURN_ROWS,
+            remainder: "the retained `L` and `m2` are not asserted",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U11z1",
+        Status::Partial {
+            evidence: PACKAGE_TURN_ROWS,
+            remainder: "the retained `P.L` and `m2` are not asserted",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U11z2",
+        Status::Partial {
+            evidence: PACKAGE_TURN_ROWS,
+            remainder: "the retained `P.L` and `x` are not asserted",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U11z3",
+        Status::Elsewhere(REACHED_DEFECT_ROWS),
+    ),
+    (
+        TestCase::Tc187,
+        "U30",
+        Status::Partial {
+            evidence: &[
+                evidence!(
+                    "fsl-semantics/src/check/assemble/tests.rs":
+                    a_quantity_type_form_resolves_to_its_unit_and_refuses_a_non_unit_name,
+                    a_quantity_argument_of_another_unit_is_a_type_mismatch,
+                    a_unit_name_is_not_a_type
+                ),
+                evidence!(
+                    "fsl-package/src/emit/tests/admission_corpus.rs":
+                    quantity_literals_lower_to_shared_quantity_literal_nodes_the_strict_reader_admits
+                ),
+            ],
+            remainder: "the bare `d: ms` refusal code and location, and that no check charges, are not asserted",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U31",
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-semantics/src/check/assemble/tests.rs":
+                a_quantity_result_checks_and_a_converted_result_of_another_unit_is_a_mismatch
+            )],
+            remainder: "that the node of `ms` types both `d` and the result is not asserted",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U32",
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-semantics/src/check/assemble/tests.rs":
+                a_unit_and_a_record_share_a_name_and_two_units_do_not,
+                a_declaration_named_quantity_is_invalid_syntax
+            )],
+            remainder: "two units of one name are refused at both declarations; a refusal at \
+                `Quantity<ms>` is not run",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U33",
+        Status::Partial {
+            evidence: &[
+                evidence!(
+                    "fsl-package/src/emit/tests/admission_corpus.rs":
+                    quantity_literals_lower_to_shared_quantity_literal_nodes_the_strict_reader_admits
+                ),
+                evidence!(
+                    "fsl-semantics/tests/it/unit_typed_members.rs":
+                    quantity_types_check_in_every_position_over_the_one_unit_node
+                ),
+            ],
+            remainder: "the domain-package operation parameter is compared as a checked type, not as a lowered member type",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U34",
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
+                same_spelled_package_units_keep_their_identity_in_u34
+            )],
+            remainder: "the unit node keys, `node_id.path`, owner and refusal locations are not asserted",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U35",
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
+                imported_dimensions_from_two_packages_match_u35
+            )],
+            remainder: "the `conflicting-binding` intake leg is not run; the three distinct dimensions and the refusal locations are not asserted",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U36",
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
+                values_from_distinct_package_dimensions_match_u36
+            )],
+            remainder: "only one argument, the sum, comparison and conversion refusals run: the admitted call, the `3 s` argument, the quotients, products, both `dsec` legs and the absence of charges do not",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U37",
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
+                dimension_equivalence_declarations_match_u37
+            )],
+            remainder: "the `incompatible-definition`, composed-offset, derived-dimension, speed, three-cycle and reordering legs do not run, and retained names are not asserted",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U38",
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
+                conversions_over_equivalent_dimensions_match_u38
+            )],
+            remainder: "only one conversion check, the sum and the unrelated-dimension refusal run: converted values, edge charges and the other legs are not asserted",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U39",
+        Status::Partial {
+            evidence: &[
+                evidence!(
+                    "fsl-eval/tests/it/quantity_negation.rs":
+                    a_quantity_negation_evaluates_to_the_exact_negation_in_its_own_unit,
+                    a_negation_of_an_affine_or_non_quantity_operand_refuses_without_a_node
+                ),
+                evidence!(
+                    "tests/it/quantity_negation_v2.rs":
+                    each_quantity_negation_package_reads_back_with_unary_negate_nodes,
+                    a_compound_negation_is_typed_by_the_quotients_compound_unit_node
+                ),
+            ],
+            remainder: "that a negation traverses no unit edge is not asserted",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc187,
+        "U40",
+        Status::Partial {
+            evidence: &[evidence!(
+                "fsl-eval/tests/it/qualification_vectors_from_packages.rs":
+                root_ratios_across_three_packages_match_u40
+            )],
+            remainder: "only the three spellings and a conflicting cycle run: converted values, edge charges, the quotient, product and sum legs, the admitted `F`-`G` declaration and the retained declarations are not asserted",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc192,
+        "DIV-01",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/source_call.rs":
+            integer_division_zero_and_signed_minimum_remain_exact
+        )]),
+    ),
+    (
+        TestCase::Tc192,
+        "DIV-03",
+        Status::Elsewhere(WIRE_CLOSURE_ROWS),
+    ),
+    (
+        TestCase::Tc192,
+        "DIV-07",
+        Status::Partial {
+            evidence: &[evidence!(
+                "tests/it/request_builder.rs":
+                requires_bound_division_items_route_to_no_target_in_both_runs
+            )],
+            remainder: "only the request and route half runs: the `requires-bound` \
+                disposition is supplied by the test",
+            owner: "QSL-3306",
+        },
+    ),
+    (
+        TestCase::Tc192,
+        "DIV-09",
+        Status::Elsewhere(WIRE_CLOSURE_ROWS),
+    ),
+    (
+        TestCase::Tc192,
+        "DIV-14",
+        Status::NotRun {
+            reason: "needs a real cvc5 solver, which no lane host provides",
+            owner: "QSL-3125",
+        },
+    ),
+    (
+        TestCase::Tc192,
+        "DIV-17",
+        Status::Partial {
+            evidence: &[evidence!(
+                "tests/it/checked_package_state_core.rs":
+                state_core_refuses_each_division_as_one_function_declaration,
+                state_core_locates_live_and_dead_division_in_each_state_clause
+            )],
+            remainder: FUNCTION_LOCUS,
+            owner: "QSL-3089",
+        },
+    ),
+    (
+        TestCase::Tc192,
+        "DIV-18",
+        Status::Partial {
+            evidence: &[
+                evidence!(
+                    "tests/it/checked_package_state_core.rs":
+                    state_core_refuses_each_division_as_one_function_declaration,
+                    state_core_locates_live_and_dead_division_in_each_state_clause
+                ),
+                evidence!(
+                    "fsl-eval/tests/it/source_call.rs":
+                    integer_slash_needs_complete_value_and_a_rational_result_type,
+                    complete_value_slash_promotes_integers_only_with_a_rational_context,
+                    state_only_and_complete_clause_slash_keep_the_rational_context_explicit
+                ),
+            ],
+            remainder: FUNCTION_LOCUS,
+            owner: "QSL-3089",
+        },
+    ),
+    (TestCase::Tc193, "F01", Status::Elsewhere(ZERO_AND_NAN_ROWS)),
+    (
+        TestCase::Tc193,
+        "F02b",
+        Status::Elsewhere(ZERO_AND_NAN_ROWS),
+    ),
+    (
+        TestCase::Tc193,
+        "F04b",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/float_callables.rs":
+            f04b_leftmost_nan_payload_is_kept_and_a_signaling_nan_raises_invalid
+        )]),
+    ),
+    (
+        TestCase::Tc193,
+        "F05",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/float_callables.rs":
+            f05_infinities_and_finite_extrema_follow_value_order
+        )]),
+    ),
+    (
+        TestCase::Tc193,
+        "F11",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/float_callables.rs":
+            f11_fused_multiply_add_rounds_once_unlike_multiply_then_add
+        )]),
+    ),
+    (
+        TestCase::Tc193,
+        "F34",
+        Status::Elsewhere(&[evidence!(
+            "fsl-eval/tests/it/float_callables.rs":
+            ordering_and_equality_vectors_hold_at_both_widths
+        )]),
+    ),
+];
+
+/// Whether this harness has an adapter for `vector`.
+fn adapted(vector: &QualificationVector) -> bool {
+    source_cases(vector).is_some()
+        || (vector.test_case == TestCase::Tc186 && matches!(vector.id, "T04" | "T05" | "T13"))
+}
+
+/// Whether `source` defines `name` as a test the test harness runs: a function
+/// carrying `#[test]` that is neither ignored nor conditionally compiled.
+fn is_running_test(source: &str, name: &str) -> bool {
+    let signature = format!("fn {name}(");
+    let mut attributes: Vec<String> = Vec::new();
+    // Brackets an attribute spanning lines has yet to close.
+    let mut open = 0;
+    for line in source.lines().map(str::trim) {
+        if open == 0 && (line.is_empty() || line.starts_with("//")) {
+            continue;
+        }
+        if open > 0 || line.starts_with("#[") {
+            if open == 0 {
+                attributes.push(String::new());
+            }
+            if let Some(attribute) = attributes.last_mut() {
+                attribute.push_str(line);
+            }
+            open = (open + line.matches('[').count()).saturating_sub(line.matches(']').count());
+            continue;
+        }
+        if line.starts_with(&signature) {
+            return attributes.iter().any(|attribute| attribute == "#[test]")
+                && !attributes.iter().any(|attribute| {
+                    attribute.starts_with("#[ignore") || attribute.starts_with("#[cfg")
+                });
+        }
+        attributes.clear();
+    }
+    false
+}
+
+/// Each named test that its file does not define as a running test.
+fn missing_evidence(identity: &str, evidence: &[Evidence]) -> Vec<String> {
+    evidence
+        .iter()
+        .flat_map(|file| {
+            file.tests
+                .iter()
+                .filter(|test| !is_running_test(file.source, test))
+        })
+        .map(|test| format!("{identity}: the named test {test} is not a running test"))
+        .collect()
+}
+
+const CREDIT_CONTROL: &str = r#"
+#[allow(
+    unused
+)]
+/// A test.
+#[test]
+fn runs() {}
+
+#[test]
+#[ignore = "not run"]
+fn ignored() {}
+
+#[allow(unused)]
+fn helper() {}
+
+// #[test]
+fn commented_out() {}
+
+#[cfg(any())]
+#[test]
+fn compiled_out() {}
+"#;
+
+/// A credited name counts only when it is a running test: an ignored,
+/// conditionally compiled, helper or absent function is reported.
+#[test]
+fn a_credit_that_names_no_running_test_is_reported() {
+    let evidence = [Evidence {
+        source: CREDIT_CONTROL,
+        tests: &[
+            "runs",
+            "ignored",
+            "helper",
+            "commented_out",
+            "compiled_out",
+            "absent",
+        ],
+    }];
+    let reported = |test| format!("row: the named test {test} is not a running test");
+    assert_eq!(
+        missing_evidence("row", &evidence),
+        [
+            "ignored",
+            "helper",
+            "commented_out",
+            "compiled_out",
+            "absent"
+        ]
+        .map(reported)
+    );
+}
+
+/// Runs every adapter, and holds every published vector to exactly one status.
 #[test]
 fn every_published_vector_has_an_explicit_source_qualification_status() {
-    let mut sampled = Vec::new();
-    let mut unqualified = Vec::new();
-    let mut partial_samples = Vec::new();
+    assert_eq!(
+        QUALIFICATION_VECTORS.len(),
+        PUBLISHED_VECTORS,
+        "the pinned standard publishes a different set of vectors"
+    );
+    for (index, (test_case, id, _)) in STATUSES.iter().enumerate() {
+        let published = QUALIFICATION_VECTORS
+            .iter()
+            .filter(|vector| vector.test_case == *test_case && vector.id == *id)
+            .count();
+        assert_eq!(published, 1, "{id} is not one published vector");
+        assert!(
+            STATUSES[..index]
+                .iter()
+                .all(|(other_case, other, _)| other_case != test_case || other != id),
+            "{id} has two statuses"
+        );
+    }
+
+    let mut failures = Vec::new();
+    let mut complete = 0;
+    let mut short = Vec::new();
     for vector in QUALIFICATION_VECTORS {
         let identity = format!("{}:{}", vector.test_case.id(), vector.id);
-        if source_cases(vector).is_some()
-            || has_state_clause_adapter(vector)
-            || (vector.test_case == TestCase::Tc186 && matches!(vector.id, "T04" | "T05" | "T13"))
-        {
-            if vector.test_case == TestCase::Tc187
-                || matches!(
-                    vector.id,
-                    "D01" | "D26" | "D27" | "T02" | "T06b" | "F07" | "F08" | "F10" | "F11"
-                )
-            {
-                partial_samples.push(identity.clone());
+        let runs_here = adapted(vector);
+        if runs_here {
+            match compare(vector) {
+                Ok(0) => failures.push(format!("{identity}: the adapter yields no case")),
+                Ok(_) => {}
+                Err(failure) => failures.push(failure),
             }
-            sampled.push(identity);
-        } else {
-            let reason = match (vector.test_case, vector.id) {
-                (TestCase::Tc186, "T06") => {
-                    "invalid UTF-8 reader-boundary input, not a source value"
+        }
+        let status = STATUSES
+            .iter()
+            .find(|(test_case, id, _)| *test_case == vector.test_case && *id == vector.id)
+            .map(|(_, _, status)| status);
+        match status {
+            None if runs_here => complete += 1,
+            None => failures.push(format!("{identity} has no qualification status")),
+            Some(Status::Elsewhere(evidence)) => {
+                failures.extend(missing_evidence(&identity, evidence));
+                complete += 1;
+            }
+            Some(Status::Partial {
+                evidence,
+                remainder,
+                owner,
+            }) => {
+                assert!(
+                    runs_here || !evidence.is_empty(),
+                    "{identity}: nothing runs this partial row"
+                );
+                failures.extend(missing_evidence(&identity, evidence));
+                short.push(format!("{identity} partial [{owner}]: {remainder}"));
+            }
+            Some(Status::Deviation {
+                source,
+                code,
+                cause,
+                owner,
+            }) => {
+                assert!(!runs_here, "{identity}: a deviating row has an adapter");
+                let recorded = Expected::Refused {
+                    code: (*code).to_owned(),
+                    cause: Some((*cause).to_owned()),
+                };
+                let probe = program((*source).to_owned(), recorded);
+                let actual = observed(&probe).result;
+                if actual != probe.expected {
+                    failures.push(format!(
+                        "{identity}: the recorded deviation no longer occurs: {actual:?}"
+                    ));
                 }
-                (TestCase::Tc192, "DIV-03" | "DIV-09") => {
-                    "mutation of an already checked wire definition closure"
-                }
-                (TestCase::Tc192, "DIV-07" | "DIV-14") => {
-                    "backend negotiation rather than source evaluation"
-                }
-                _ => "remaining source/accounting adapter not implemented",
-            };
-            unqualified.push(format!("{identity}: {reason}"));
+                short.push(format!("{identity} deviates [{owner}]"));
+            }
+            Some(Status::NotRun { reason, owner }) => {
+                assert!(!runs_here, "{identity}: a row not run has an adapter");
+                short.push(format!("{identity} not run [{owner}]: {reason}"));
+            }
         }
     }
-    assert!(!sampled.is_empty(), "zero source samples cannot pass");
-    assert_eq!(
-        sampled.len() + unqualified.len(),
-        QUALIFICATION_VECTORS.len()
-    );
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    assert_eq!(complete + short.len(), PUBLISHED_VECTORS);
     eprintln!(
-        "source samples: {} rows, {} without an adapter; partially sampled rows: {}; unqualified ids/reasons: {}",
-        sampled.len(),
-        unqualified.len(),
-        partial_samples.join(", "),
-        unqualified.join(", ")
+        "{PUBLISHED_VECTORS} published vectors: {complete} complete, {} short\n{}",
+        short.len(),
+        short.join("\n")
     );
     if std::env::var_os("FSL_FULL_SOURCE_QUALIFICATION").is_some() {
         assert!(
-            unqualified.is_empty() && partial_samples.is_empty(),
-            "full source qualification is incomplete; partial samples: {}; no adapter: {}",
-            partial_samples.join(", "),
-            unqualified.join(", ")
+            short.is_empty(),
+            "full source qualification is incomplete:\n{}",
+            short.join("\n")
         );
     }
 }

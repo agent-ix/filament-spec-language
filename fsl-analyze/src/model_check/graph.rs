@@ -208,6 +208,30 @@ pub(super) struct RetainConfig {
     pub(super) max_depth: Option<usize>,
 }
 
+pub(super) struct RetainHooks<S, Prefetch, Poll, Key>
+where
+    S: TransitionSystem,
+{
+    prefetch: Prefetch,
+    poll: Poll,
+    key: Key,
+    _system: std::marker::PhantomData<fn(&S)>,
+}
+
+impl<S, Prefetch, Poll, Key> RetainHooks<S, Prefetch, Poll, Key>
+where
+    S: TransitionSystem,
+{
+    pub(super) fn new(prefetch: Prefetch, poll: Poll, key: Key) -> Self {
+        Self {
+            prefetch,
+            poll,
+            key,
+            _system: std::marker::PhantomData,
+        }
+    }
+}
+
 fn encode(
     value: &impl Encode,
     identity: IdentityLimits,
@@ -291,6 +315,11 @@ pub fn retain_reduced<S: TransitionSystem>(
 where
     S::State: Clone,
 {
+    let hooks = RetainHooks::<S, _, _, _>::new(
+        |_: &S, _: &[S::State], _: usize| {},
+        poll,
+        |state: &S::State| encode(&system.key(state), identity),
+    );
     retain_reduced_with_key(
         system,
         group,
@@ -301,27 +330,33 @@ where
             max_depth,
         },
         1,
-        |_, _, _| {},
-        poll,
-        |state| encode(&system.key(state), identity),
+        hooks,
     )
 }
 
 /// `retain_reduced` with an internal canonical-key provider. The bytes it
 /// returns must be the exact FR-101 encoding of the system's typed key.
-pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
+pub(super) fn retain_reduced_with_key<S, Prefetch, Poll, Key>(
     system: &S,
     group: &SymmetryGroup,
     ample: Option<&dyn Ample<S>>,
     config: RetainConfig,
     workers: usize,
-    mut prefetch: impl FnMut(&S, &[S::State], usize),
-    mut poll: impl FnMut() -> bool,
-    key: impl Fn(&S::State) -> Result<Vec<u8>, quire_canonical::Error>,
+    hooks: RetainHooks<S, Prefetch, Poll, Key>,
 ) -> RetainResult<S>
 where
+    S: TransitionSystem,
     S::State: Clone,
+    Prefetch: for<'a, 'b> FnMut(&'a S, &'b [S::State], usize),
+    Poll: FnMut() -> bool,
+    Key: for<'a> Fn(&'a S::State) -> Result<Vec<u8>, quire_canonical::Error>,
 {
+    let RetainHooks {
+        mut prefetch,
+        mut poll,
+        key,
+        ..
+    } = hooks;
     let RetainConfig {
         limits,
         identity,
@@ -414,7 +449,7 @@ where
                     stats: graph.stats(transitions),
                     frontier: graph.frontier(source, &queue),
                     cause: stop.cause,
-                }
+                };
             }
         };
         let mut successors = Vec::with_capacity(expansion.successors.len());
@@ -426,7 +461,7 @@ where
                         stats: graph.stats(transitions),
                         frontier: graph.frontier(source, &queue),
                         cause,
-                    }
+                    };
                 }
             };
             let order = encode(&transition, identity)?;
@@ -454,7 +489,7 @@ where
                         stats: graph.stats(transitions),
                         frontier: graph.frontier(source, &queue),
                         cause: stop.cause,
-                    }
+                    };
                 }
             }
         }
@@ -551,9 +586,11 @@ mod worker_capacity_tests {
                 max_depth: None,
             },
             usize::MAX,
-            |_, _, _| {},
-            || false,
-            |state| encode(state, IdentityLimits::default()),
+            RetainHooks::<OneState, _, _, _>::new(
+                |_: &OneState, _: &[u8], _: usize| {},
+                || false,
+                |state: &u8| encode(state, IdentityLimits::default()),
+            ),
         )
         .expect("the one-state graph has encodable identities");
 

@@ -22,13 +22,16 @@ use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
+use fsl_foundation::BackendId;
 use fsl_replay::{
-    check_closure, check_components, settle_model_check, CertificateLocus, CertificateRejection,
-    CertificateRequest, CertificateRule, Certification, ClosureCertificate, ClosureRefusal,
-    Component, ComponentCertificate, ComponentWitness, Execution, IncompleteCause, ModelCheckItem,
-    ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ProductStateRef, ProofBasis,
-    ProofCertificate, ResultLabel, RunStats, SettlementBasis, SmtEncodingLimits,
-    TemporalCertificateCheck, TerminalValue,
+    check_closure, check_components, settle_hyper_check, settle_model_check, CertificateLocus,
+    CertificateRejection, CertificateRequest, CertificateRule, Certification, ClosureCertificate,
+    ClosureRefusal, Component, ComponentCertificate, ComponentWitness, Execution, HyperOutcome,
+    IncompleteCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
+    Operation, OutcomeDocument, OutcomeItem, OutcomeStage, ProductClosureClause,
+    ProductClosureRequest, ProductStateRef, ProofBasis, ProofCertificate, RequestIndex,
+    ResultLabel, RunStats, SettlementBasis, SmtEncodingLimits, TemporalCertificateCheck,
+    TerminalRecord, TerminalValue,
 };
 use fsl_semantics::check::{FormulaNodeId, TemporalClauseNode};
 use ix_trace_rs::trace;
@@ -36,11 +39,13 @@ use serde_json::json;
 
 use crate::counter::{UNLIMITED, ZERO};
 use crate::example_units::{config, decide, reaches_two, EACH};
-use crate::liveness::{counter, is_three};
+use crate::hyper_world::{self, non_interference, Vault, EQUAL_INPUTS, STARTS};
+use crate::liveness::{self, counter, is_three};
 use crate::por_world::{
     field, integer, level, number, object_type, operation, type_ref, writes, Atom, Fixture, Obj,
     Temporal,
 };
+use crate::probability_from_source::{assert_valid, provider_definition};
 use crate::units::World;
 
 const ACCEPTED: TemporalCertificateCheck = TemporalCertificateCheck::Accepted;
@@ -152,11 +157,12 @@ fn the_weak_each_proof_is_a_certificate_the_checker_accepts() {
 /// object's constraint on the first accepting component is
 /// `WitnessFails` at its first state, since edges inside the component take
 /// it; the two accepting components listed before the waiting component
-/// that reaches them is `BackwardEdge` at a waiting state; a state in two
+/// that reaches them is `BackwardEdge` at the source state of the backward
+/// edge, a waiting state; a state in two
 /// components is `NotPartition` at it; and a `Trivial` witness over the
 /// terminal stutter state of the Counter, whose one state has a self-edge,
 /// is `WitnessFails`.
-#[trace("TC-526", "FR-339-AC-2")]
+#[trace("TC-526", "FR-339-AC-2", "FR-282-AC-6")]
 #[test]
 fn an_altered_certificate_is_rejected_at_the_rule_the_alteration_breaks() {
     let (world, certificate, _) = weak_each_proof();
@@ -212,6 +218,211 @@ fn an_altered_certificate_is_rejected_at_the_rule_the_alteration_breaks() {
             &terminal.components[last].states[0]
         )
     );
+}
+
+/// FR-282-AC-6's claim, `always eventually q` under `fair weak inc`, over the
+/// finite Counter.
+fn weakly_fair_counter() -> liveness::Fixture {
+    counter(
+        crate::counter::document(false),
+        "fair weak M::Counter::inc;",
+        "always eventually holds(c.value = 3)",
+    )
+}
+
+/// The Counter value a product state holds.
+fn counter_value(state: &ProductStateRef) -> String {
+    let model: serde_json::Value =
+        serde_json::from_slice(state.model_state.as_bytes()).expect("a canonical state key");
+    let object = &model["semantic"]["entries"][0]["value"]["entries"][0]["value"];
+    object["fields"][0]["value"]["value"]
+        .as_str()
+        .expect("the counter's value")
+        .to_owned()
+}
+
+/// `certificate`, whose last component is the one state holding the terminal
+/// value 3, with that component transposed with a component holding 2 so that
+/// `request`'s checker rejects it `BackwardEdge`. Only one state holding 2
+/// steps to 3, so it is the source of the one edge that then runs backward.
+/// Returns the altered certificate, that source and the state the rejection
+/// names.
+fn swap_with_terminal_predecessor(
+    request: &CertificateRequest<'_>,
+    certificate: &ComponentCertificate,
+) -> (ComponentCertificate, ProductStateRef, ProductStateRef) {
+    assert!(certificate
+        .components
+        .iter()
+        .all(|component| component.states.len() == 1));
+    let terminal = certificate.components.len() - 1;
+    let value = |position: usize| counter_value(&certificate.components[position].states[0]);
+    assert_eq!(value(terminal), "3");
+    let mut rejected: Vec<_> = (0..terminal)
+        .filter(|&position| value(position) == "2")
+        .filter_map(|position| {
+            let mut swapped = certificate.clone();
+            swapped.components.swap(position, terminal);
+            let checked = check(
+                request,
+                &swapped,
+                &ModelCheckLimits::default(),
+                &Cancel::new(),
+            );
+            match checked {
+                TemporalCertificateCheck::Accepted => None,
+                TemporalCertificateCheck::Rejected(CertificateRejection {
+                    rule: CertificateRule::BackwardEdge,
+                    at: CertificateLocus::ProductState(at),
+                }) => {
+                    let source = certificate.components[position].states[0].clone();
+                    Some((swapped, source, at))
+                }
+                other => panic!("neither accepted nor a backward edge: {other:?}"),
+            }
+        })
+        .collect();
+    assert_eq!(rejected.len(), 1, "one state steps to the terminal value");
+    rejected.remove(0)
+}
+
+/// A transposition of two components in the weakly fair finite `Counter`
+/// liveness certificate creates a backward edge. The rejection names the source
+/// product state of that edge.
+#[trace("TC-526", "FR-282-AC-6")]
+#[test]
+fn swapping_counter_components_reports_the_source_of_a_backward_edge() {
+    let fixture = weakly_fair_counter();
+    let (certificate, _) = fixture.certified(is_three);
+    let letters = fixture.letters(is_three);
+    let request = fixture.certificate_request(&letters, UNLIMITED);
+    let (_, source, at) = swap_with_terminal_predecessor(&request, &certificate);
+    assert_eq!(
+        at, source,
+        "the cause names the source state of the backward edge"
+    );
+}
+
+/// The `cause` the outcome writer writes for an item settled `value`, under
+/// FR-331's member name `type` for the writer's `kind`.
+fn written_cause(value: TerminalValue) -> serde_json::Value {
+    let TerminalValue::Inconclusive(cause) = value else {
+        panic!("a rejected certificate settles inconclusive: {value:?}");
+    };
+    let item = OutcomeItem::from_terminal(&TerminalRecord::inconclusive(
+        RequestIndex::new(0),
+        BackendId::new("en-1"),
+        cause,
+    ));
+    let bytes = OutcomeDocument::settled(Operation::Analyze, Some(OutcomeStage::S6c), vec![item])
+        .to_bytes()
+        .expect("the outcome encodes");
+    let document: serde_json::Value = serde_json::from_slice(&bytes).expect("the outcome is JSON");
+    let mut cause = document["items"][0]["cause"].clone();
+    let kind = cause
+        .as_object_mut()
+        .and_then(|members| members.remove("kind"))
+        .expect("the cause names its kind");
+    cause["type"] = kind;
+    cause
+}
+
+/// `value` is written as a `backward-edge` rejection at `source`, in FSpec
+/// FR-331's `locus` form; the same cause at a `{source, target}` pair is not a
+/// cause FR-331 admits.
+fn assert_backward_edge_at(value: TerminalValue, locus: &str, source: serde_json::Value) {
+    let cause = written_cause(value);
+    assert_eq!(
+        cause,
+        json!({"type": "certificate-rejected", "rule": "backward-edge", "at": source})
+    );
+    let rejected = provider_definition("CertificateRejected");
+    assert_valid(&rejected, &cause, "the backward-edge cause");
+    assert_valid(
+        &provider_definition(locus),
+        &cause["at"],
+        "the backward-edge locus",
+    );
+    let mut edge = cause.clone();
+    edge["at"] = json!({"source": source, "target": source});
+    assert!(!rejected.is_valid(&edge), "{edge}");
+}
+
+/// A backward edge in a component certificate and one in a hyper product
+/// certificate are each written at the edge's source state, in the locus form
+/// FSpec FR-331 pairs with `backward-edge` for that checker.
+#[trace("TC-526", "FR-282-AC-6")]
+#[trace("TC-646", "FR-163-AC-2")]
+#[test]
+fn a_backward_edge_rejection_is_written_in_the_fspec_locus_form() {
+    let fixture = weakly_fair_counter();
+    let (certificate, stats) = fixture.certified(is_three);
+    let letters = fixture.letters(is_three);
+    let request = fixture.certificate_request(&letters, UNLIMITED);
+    let (swapped, source, _) = swap_with_terminal_predecessor(&request, &certificate);
+    let record = settle_model_check(
+        &ModelCheckOutcome::Holds {
+            certificate: ProofCertificate::Component(swapped),
+            stats,
+        },
+        &ModelCheckLimits::default(),
+        &request,
+        &Cancel::new(),
+        |_| panic!("a proof replays nothing"),
+    );
+    let mut at = serde_json::to_value(&source).expect("the source state serializes");
+    at["model_state"] = json!({"key": at["model_state"].take()});
+    assert_backward_edge_at(record.value, "ProductStateLocus", at);
+
+    let world = hyper_world::World::new(
+        Vault::Secure,
+        false,
+        &STARTS,
+        &non_interference(EQUAL_INPUTS),
+    );
+    let cancel = Cancel::new();
+    let limits = ModelCheckLimits::default();
+    let mut forged = world.run(limits, &cancel).expect("proof");
+    let HyperOutcome::HoldsReduced { certificates, .. } = &mut forged else {
+        panic!("a copy-swap proof: {forged:?}");
+    };
+    let components = certificates[0]
+        .components
+        .as_mut()
+        .expect("a universal partition");
+    // The two states of one strongly connected component, listed as two
+    // components: only the edge from the second back to the first runs
+    // backward, so the second is its source.
+    let index = components
+        .iter()
+        .position(|component| component.states.len() == 2)
+        .expect("a two-state component");
+    let cycle = components.remove(index).states;
+    for (offset, state) in cycle.iter().enumerate() {
+        components.insert(
+            index + offset,
+            Component {
+                states: vec![state.clone()],
+                witness: ComponentWitness::Trivial,
+            },
+        );
+    }
+    let subjects = [world.subject()];
+    let request = ProductClosureRequest {
+        package: &world.package,
+        clause: ProductClosureClause::Hyper(&world.clause),
+        subjects: &subjects,
+        meter: UNLIMITED,
+    };
+    let record = settle_hyper_check(&forged, &limits, &[], Some(&request), &cancel, |_| {
+        panic!("a holding outcome has no counterexample to replay")
+    })
+    .expect("a settled core check");
+    let mut at = serde_json::to_value(&cycle[1]).expect("the source key serializes");
+    for state in at["states"].as_array_mut().expect("component keys") {
+        *state = json!({"key": state.take()});
+    }
+    assert_backward_edge_at(record.value, "HyperProductStateLocus", at);
 }
 
 /// FR-126-AC-13 (TC-1085): the weak `each` claim, whose second phase finds no

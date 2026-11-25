@@ -26,7 +26,7 @@ fn is_wrappable_base(profile: &str) -> bool {
             | CYCLIC_REWARD_PROFILE
             | CYCLIC_MDP_REWARD_PROFILE
             | measure::PROFILE
-            | "filament.probability-objective/fair-mdp-eventual/v1"
+            | "filament.probability-objective/cyclic-mdp-fair-eventual/v1"
     )
 }
 
@@ -73,7 +73,7 @@ fn policy_hints(bytes: &[u8]) -> Result<Vec<PolicyHint>, ProbabilityDocumentErro
         .collect())
 }
 fn is_fair_base(profile: &str) -> bool {
-    profile == "filament.probability-objective/fair-mdp-eventual/v1"
+    profile == "filament.probability-objective/cyclic-mdp-fair-eventual/v1"
 }
 
 /// Fair-MDP intervals carry a progressing policy on the existential side:
@@ -209,13 +209,11 @@ pub(super) fn unwrap(
             if root.remove("policy").is_some() {
                 policy = Some(policy_hints(bytes)?);
             }
-            if fair {
-                if !existential.expect("fair objective has a role") {
-                    if root.contains_key("ranking") || policy.is_some() {
-                        return Err(ProbabilityDocumentError::MalformedMember("ranking"));
-                    }
-                    root.insert("ranking".into(), json!([]));
+            if fair && !existential.expect("fair objective has a role") {
+                if root.contains_key("ranking") || policy.is_some() {
+                    return Err(ProbabilityDocumentError::MalformedMember("ranking"));
                 }
+                root.insert("ranking".into(), json!([]));
             }
             match side {
                 SubsystemBoundKind::Upper => {

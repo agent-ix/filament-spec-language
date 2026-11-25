@@ -756,6 +756,7 @@ dependencies = [
  "filament-semantic-value",
  "filament-specification-qualification",
  "fsl-analyze",
+ "fsl-bench",
  "fsl-command",
  "fsl-cst",
  "fsl-eval",
@@ -786,7 +787,7 @@ dependencies = [
 [[package]]
 name = "filament-specification-qualification"
 version = "0.1.1"
-source = "git+https://github.com/agent-ix/filament-specification?rev=3200a4ed7f18fbbf5d934c22d3c3fa467914ddca#3200a4ed7f18fbbf5d934c22d3c3fa467914ddca"
+source = "git+https://github.com/agent-ix/filament-specification?rev=691ac5a6748edc324f014e26ca8370eb15b127d5#691ac5a6748edc324f014e26ca8370eb15b127d5"
 
 [[package]]
 name = "filament-verification-contracts"
@@ -970,6 +971,7 @@ name = "fsl-conformance"
 version = "0.1.0"
 dependencies = [
  "filament-checked",
+ "filament-contract-model",
  "filament-eval",
  "filament-exact",
  "filament-semantic-value",

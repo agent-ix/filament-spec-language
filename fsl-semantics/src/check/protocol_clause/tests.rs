@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Tests for the `ProtocolClause` S3 check, split by what they exercise.
 //! The helpers below are shared by every submodule.
 

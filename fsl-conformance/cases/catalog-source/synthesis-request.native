@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type Digit = Int[0, 9];
+synthesis Pick using v grammar Digit domain Digit satisfies { Pick * Pick = 49 };

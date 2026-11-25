@@ -18,4 +18,4 @@ Construct valid acyclic nested records, an optional record, a bounded collection
 
 ## Expected Results
 
-Occurrences identify their exact formal owner or native binding-name span. Shadowing selects the nearest binding without leaking. Every missing or unresolvable field/name refuses atomically; successful linkage makes no typing/definedness judgment.
+Occurrences identify their exact formal owner or native binding-name span. Shadowing selects the nearest binding without leaking. Every missing or unresolvable field/name refuses atomically; successful linkage makes no typing/definedness judgment. A qualified member reference whose qualifier names no type, alias or declaration refuses `missing_declaration`; one whose qualifier names a declared enum that lacks the case refuses `ill_typed` (FR-317-AC-6).

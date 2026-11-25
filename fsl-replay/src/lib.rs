@@ -422,6 +422,7 @@ pub use refinement_query::{
 };
 
 pub use refinement::{
+    check_step_for_model,
     abstract_classes, candidate_edge_target_ordinal, candidate_stutter_target_ordinal,
     candidate_lasso_has_fair_run,
     candidate_lasso_has_fair_run_with_recurring_edge, check_initial, check_protocol_initial,
@@ -457,10 +458,10 @@ pub use outcome::verdict_bound_wire;
 pub use outcome::{
     assignments_wire, assignments_wire_with_enum_members, certificate_identity_wire,
     claim_locus_wire, graph_evidence_wire, hyper_counterexample_wire, omitted_witnesses,
-    probabilistic_undefined_wire, probabilistic_wire, probabilistic_wire_with_enum_members,
-    protocol_temporal_wire, read_outcome_diagnostics, read_task_temporal_counterexample,
-    read_task_temporal_document, read_temporal_counterexample, replay_model_trace_document,
-    replay_task_product_trace, sampled_witness_wire, state_key_wire, task_product_transition_wire,
+    probabilistic_undefined_wire, probabilistic_wire, protocol_temporal_wire,
+    read_outcome_diagnostics, read_task_temporal_counterexample, read_task_temporal_document,
+    read_temporal_counterexample, replay_model_trace_document, replay_task_product_trace,
+    sampled_witness_wire, state_key_wire, task_product_transition_wire,
     task_source_transition_wire, task_temporal_wire, task_temporal_wire_with_queue_growth,
     task_transition_wire, temporal_wire, ClauseRunNotAnItem, ConformanceClosureOutput,
     ConformanceGlobalOutput, ConformanceMessageBoundOutput, ConformanceObligationOutput,
@@ -468,8 +469,8 @@ pub use outcome::{
     ConformanceReplayOutput, CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel,
     OmittedWitness, Operation, OutcomeDiagnostic, OutcomeDiagnosticRead, OutcomeDocument,
     OutcomeItem, OutcomeItemError, OutcomeLocus, OutcomeStage, OutcomeWriteError, ParityReason,
-    ProtocolConformanceOutput, ProtocolWire, ReadCounterexample, ResultLimit, ResultValue,
-    TaskProductCounterexampleDocument, TaskProductTraceReplayRefusal,
+    ProbabilisticValueSchema, ProtocolConformanceOutput, ProtocolWire, ReadCounterexample,
+    ResultLimit, ResultValue, TaskProductCounterexampleDocument, TaskProductTraceReplayRefusal,
     TemporalCounterexampleReadRefusal, TraceAlphabet, WitnessOmission, OUTCOME_FORMAT,
 };
 pub use planner::{
