@@ -1711,10 +1711,7 @@ fn run(
         };
         let result = result.and_then(|solved| {
             let scalar_too_wide = solved.values.iter().any(|value| match value {
-                ExtRational::Finite(value) => crate::exact_probabilistic::exceeds_rational_budget(
-                    value,
-                    limits.max_rational_bits,
-                ),
+                ExtRational::Finite(value) => value.max_part_bits() > limits.max_rational_bits,
                 ExtRational::PlusInfinity => false,
             });
             if scalar_too_wide {

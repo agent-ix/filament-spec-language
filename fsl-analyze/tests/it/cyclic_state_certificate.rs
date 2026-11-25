@@ -14,7 +14,7 @@ use fsl_foundation::RequestIndex;
 use fsl_replay::{
     check_cyclic_mdp_probability_certificate_observing, check_probability_certificate_document,
     probabilistic_claim_identity, read_probability_proof_document,
-    write_probability_proof_document, CyclicMdpProbabilityPhase as P,
+    write_probability_proof_document, BoundsMethod, CyclicMdpProbabilityPhase as P, ExactBound,
     ExactProbabilityCertificateCheck as Check, IncompleteCause, ModelCheckLimit, ModelCheckLimits,
     ProbabilityBoundSide, ProbabilityCertificateLocus as Locus, ProbabilityCertificateRule as Rule,
     ProbabilityDocumentError, ProbabilityDocumentLimit, ProbabilityObjective,
@@ -615,13 +615,12 @@ fn cancelling_the_cyclic_subject_check_past_the_rational_budget_keeps_its_cause(
     }
 }
 
-/// `Link` is acyclic, so the cyclic-subject check does not stop it. Its least
-/// value 24/25 is wider than 8 bits as one scalar, which stops the first
-/// solve, while each part fits; the threshold solve then runs, its 4-bit
-/// interval cannot decide, and its exact answer settles the claim.
+/// The budget bounds each part of a rational separately: both parts of
+/// `Link`'s least value 24/25 take five bits, so 8 bits keeps the exact
+/// answer although numerator and denominator together are longer.
 #[trace("TC-3187", "FR-201")]
 #[test]
-fn an_acyclic_subject_past_the_rational_budget_goes_on_to_the_threshold_solve() {
+fn an_acyclic_value_whose_parts_fit_the_rational_budget_is_exact() {
     let world = World::new(&crate::prob_world::link(
         "probabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin \
          { probability >= 0.95 [ holds(m.attempts <= 2) until holds(m.delivered) ] }\n",
@@ -642,11 +641,11 @@ fn an_acyclic_subject_past_the_rational_budget_goes_on_to_the_threshold_solve() 
 }
 
 /// `Link`'s `always holds(m.attempts <= 1 or m.delivered)` fails only by
-/// losing both sends, so its least value is `1 - 1/25 = 24/25`. Past the
-/// rational budget the threshold solve runs on that complement. At 8 bits it
-/// reaches an exact answer and at 4 bits, which the elimination does not fit,
-/// it stops on its interval: both report the claim's own value.
-#[trace("TC-3187", "FR-201", "FR-198")]
+/// losing both sends, so its least value is `1 - 1/25 = 24/25`. At 8 bits
+/// both parts fit and the first solve is exact. At 4 bits 25 does not fit: the
+/// threshold solve runs on the complement and stops on its interval, which is
+/// reported as the claim's own.
+#[trace("TC-633", "FR-198-AC-9")]
 #[test]
 fn an_always_claim_past_the_rational_budget_settles_on_its_own_value() {
     let world = World::new(&crate::prob_world::link(
@@ -656,6 +655,7 @@ fn an_always_claim_past_the_rational_budget_settles_on_its_own_value() {
     let run = |max_rational_bits| {
         settle(&world, "Likely", ModelCheckLimits::default(), |request| {
             request.limits.max_rational_bits = max_rational_bits;
+            request.limits.max_iterations = 100;
             request.limits.precision_bits = 4;
             request.limits.max_precision_bits = 4;
         })
@@ -680,6 +680,123 @@ fn an_always_claim_past_the_rational_budget_settles_on_its_own_value() {
         lower.value() <= &ratio(24, 25) && &ratio(24, 25) <= upper.value(),
         "{lower:?} {upper:?}"
     );
+    let terminal = record.terminal().unwrap();
+    assert!(terminal.exact_certificate_document().is_none());
+    assert!(terminal.exact_counterpart_document().is_none());
+}
+
+/// Each threshold is the value itself, so no interval decides it; 24 and 25
+/// take five bits each, within a budget of 8.
+#[trace("TC-633", "FR-198-AC-7")]
+#[test]
+fn link_values_whose_parts_fit_the_rational_budget_prove_at_equality() {
+    for event in [
+        "holds(m.attempts <= 2) until holds(m.delivered)",
+        "always holds(m.attempts <= 1 or m.delivered)",
+    ] {
+        let world = World::new(&crate::prob_world::link(&format!(
+            "probabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin \
+             {{ probability >= rational(24,25) [ {event} ] }}\n"
+        )));
+        let record = settle(&world, "Likely", ModelCheckLimits::default(), |request| {
+            request.limits.max_rational_bits = 8;
+            request.limits.max_iterations = 3;
+        });
+        let terminal = record.terminal().unwrap();
+        let TerminalValue::Proved {
+            basis: ProofBasis::ExactValue { value, .. },
+            ..
+        } = terminal.value()
+        else {
+            panic!("{event}: {record:#?}");
+        };
+        assert_eq!(value.value(), &ratio(24, 25), "{event}");
+        assert!(terminal.exact_counterpart_document().is_none(), "{event}");
+    }
+}
+
+/// `Loop`'s value 1/2 has a two-bit denominator, past a budget of one bit, so
+/// only interval iteration can settle the item: at precision 8 it separates
+/// 12/25, and held at precision 4 it cannot.
+#[trace("TC-633", "FR-198-AC-8")]
+#[test]
+fn an_item_past_the_rational_budget_settles_from_interval_iteration() {
+    let world = World::new(&chain(
+        &[act("go", 0, &[(0, 1), (1, 1), (2, 1)])],
+        2,
+        &claim(
+            "Likely",
+            ">= rational(12,25)",
+            "eventually holds(x.phase = 1)",
+        ),
+    ));
+    let run = |max_precision_bits| {
+        settle(&world, "Likely", ModelCheckLimits::default(), |request| {
+            request.limits.max_rational_bits = 1;
+            request.limits.max_iterations = 100;
+            request.limits.precision_bits = 4;
+            request.limits.max_precision_bits = max_precision_bits;
+        })
+    };
+    let record = run(16);
+    let TerminalValue::Proved {
+        basis:
+            ProofBasis::ValueBounds {
+                lower,
+                upper: ExactBound::Finite(upper),
+                method,
+                ..
+            },
+        ..
+    } = record.terminal().unwrap().value()
+    else {
+        panic!("{record:#?}");
+    };
+    assert_eq!(
+        method,
+        &BoundsMethod::IntervalIteration {
+            precision_bits: 8,
+            sweeps: 103,
+        }
+    );
+    assert!(&ratio(12, 25) < lower.value(), "{lower:?}");
+    assert!(lower.value() <= &ratio(1, 2), "{lower:?}");
+    assert!(&ratio(1, 2) <= upper.value(), "{upper:?}");
+    assert!(lower.value() < upper.value(), "{lower:?} {upper:?}");
+
+    let record = run(4);
+    let terminal = record.terminal().unwrap();
+    let TerminalValue::Incomplete(IncompleteCause::PrecisionBudget { lower, upper }) =
+        terminal.value()
+    else {
+        panic!("{record:#?}");
+    };
+    assert!(
+        lower.value() <= &ratio(12, 25) && &ratio(12, 25) <= upper.value(),
+        "{lower:?} {upper:?}"
+    );
+    assert!(terminal.exact_certificate_document().is_none());
+    assert!(terminal.exact_counterpart_document().is_none());
+}
+
+/// FR-201-AC-59's violated quantity 3/4 has parts of two and three bits, so a
+/// budget of 3 keeps its exact proof although the two together are longer.
+#[trace("TC-3187", "FR-201-AC-65")]
+#[test]
+fn a_cyclic_violated_quantity_whose_parts_fit_the_rational_budget_is_proved() {
+    let event = format!("{} until {}", at(&[0, 3, 4]), at(&[1]));
+    let world = World::new(&until_chain(&claim("Ge", ">= rational(1,4)", &event)));
+    let record = settle(&world, "Ge", ModelCheckLimits::default(), |request| {
+        request.limits.max_rational_bits = 3;
+    });
+    let TerminalValue::Proved {
+        basis: ProofBasis::ExactValue { value, .. },
+        ..
+    } = record.terminal().unwrap().value()
+    else {
+        panic!("{record:#?}");
+    };
+    assert_eq!(value.value(), &ratio(1, 4));
 }
 
 #[trace("TC-3185", "FR-201-AC-63")]

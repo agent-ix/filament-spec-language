@@ -609,61 +609,7 @@ fn reachability_threshold(
             }
         }
         match reachability(product, target, blocked, objective, limits, cancel) {
-            Ok(result) => {
-                // FR-198, ADR-028 UR-4: policy iteration's value is exact, so it
-                // decides the threshold, equality included. Only a value too long
-                // to report under `max_rational_bits` is given as its
-                // outward-rounded interval (FR-1042). An `always` claim reports
-                // the complement of this value, so either length counts.
-                let too_long = result.values.iter().any(|value| match value {
-                    ExtRational::Finite(value) => {
-                        exceeds_rational_budget(value, limits.max_rational_bits)
-                            || exceeds_rational_budget(&one().sub(value), limits.max_rational_bits)
-                    }
-                    ExtRational::PlusInfinity => false,
-                });
-                if !too_long {
-                    return Ok(UnboundedOutcome::Exact(result));
-                }
-                let lower = result
-                    .values
-                    .iter()
-                    .map(|value| match value {
-                        ExtRational::Finite(value) => round_dyadic(value, precision, false),
-                        ExtRational::PlusInfinity => round_dyadic(&one(), precision, false),
-                    })
-                    .collect::<Vec<_>>();
-                let upper = result
-                    .values
-                    .iter()
-                    .map(|value| match value {
-                        ExtRational::Finite(value) => round_dyadic(value, precision, true),
-                        ExtRational::PlusInfinity => round_dyadic(&one(), precision, true),
-                    })
-                    .collect::<Vec<_>>();
-                let initial = product
-                    .initial
-                    .first()
-                    .map(|(_, _, state)| state.index())
-                    .unwrap_or(0);
-                let separates =
-                    lower
-                        .get(initial)
-                        .zip(upper.get(initial))
-                        .is_some_and(|(lower, upper)| {
-                            lower.rational() >= *threshold || upper.rational() <= *threshold
-                        });
-                if separates {
-                    return Ok(UnboundedOutcome::Bounds {
-                        lower,
-                        upper,
-                        precision_bits: precision,
-                        sweeps,
-                        policy: result.policy,
-                    });
-                }
-                return Ok(UnboundedOutcome::Exact(result));
-            }
+            Ok(result) => return Ok(UnboundedOutcome::Exact(result)),
             Err(UnboundedError::MaxPolicyIterations) => {
                 return Ok(UnboundedOutcome::Stopped(
                     fsl_replay::ExactProbLimit::MaxPolicyIterations,
@@ -687,17 +633,6 @@ fn reachability_threshold(
             Err(error) => return Err(error),
         }
     }
-}
-
-/// Whether `value`, numerator, denominator and sign together, is longer than a
-/// result may report under `max_rational_bits`.
-pub(crate) fn exceeds_rational_budget(value: &Rational, max_rational_bits: u64) -> bool {
-    value
-        .numerator()
-        .magnitude_bits()
-        .saturating_add(value.denominator().magnitude_bits())
-        .saturating_add(1)
-        > max_rational_bits
 }
 
 /// Decide an expected reward to the first target visit.
@@ -3481,12 +3416,10 @@ mod tests {
         assert_eq!(exact.values[0], ExtRational::Finite(ratio(1, 2)));
     }
 
-    /// FR-1042: at equality, a value one bit past the report budget comes back
-    /// as its interval; the same value inside the budget comes back exact.
-    #[test]
-    fn equal_threshold_gives_an_interval_only_for_a_value_past_the_rational_budget() {
-        let product = graph(
-            ProductKind::Dtmc,
+    /// `Loop`: the live state steps to itself, to the goal and to failure.
+    fn loop_product() -> ProbProduct {
+        graph(
+            ProductKind::Mdp,
             vec![
                 edge(0, 0, ratio(1, 3)),
                 edge(0, 1, ratio(1, 3)),
@@ -3494,33 +3427,77 @@ mod tests {
                 edge(1, 1, one()),
                 edge(2, 2, one()),
             ],
-        );
-        let decide = |max_rational_bits| {
+        )
+    }
+
+    /// The budget bounds the numerator and the denominator separately: `1/2`
+    /// takes one bit and two.
+    #[trace("TC-633", "FR-198-AC-7")]
+    #[test]
+    fn a_value_whose_parts_fit_the_rational_budget_is_exact() {
+        let outcome = decide_reachability_threshold(
+            &loop_product(),
+            &[false, true, false],
+            UnboundedObjective::Max,
+            &ratio(1, 2),
+            &ExactProbLimits {
+                max_iterations: 3,
+                max_rational_bits: 2,
+                ..ExactProbLimits::default()
+            },
+            &Cancel::new(),
+        )
+        .expect("policy iteration solves within the budget");
+        let UnboundedOutcome::Exact(exact) = outcome else {
+            panic!("both parts of 1/2 fit two bits: {outcome:?}");
+        };
+        assert_eq!(exact.values[0], ExtRational::Finite(ratio(1, 2)));
+    }
+
+    /// A solve past the budget keeps no value: interval iteration reruns at
+    /// doubled precision, and its sweeps are counted over every precision.
+    #[trace("TC-633", "FR-198-AC-8")]
+    #[test]
+    fn a_solve_past_the_rational_budget_decides_from_interval_iteration_only() {
+        let threshold = ratio(12, 25);
+        let decide = |max_precision_bits| {
             decide_reachability_threshold(
-                &product,
+                &loop_product(),
                 &[false, true, false],
-                UnboundedObjective::Max,
-                &ratio(1, 2),
+                UnboundedObjective::Min,
+                &threshold,
                 &ExactProbLimits {
-                    max_iterations: 3,
-                    max_rational_bits,
+                    max_iterations: 100,
+                    max_rational_bits: 1,
+                    precision_bits: 4,
+                    max_precision_bits,
                     ..ExactProbLimits::default()
                 },
                 &Cancel::new(),
             )
-            .expect("policy iteration solves within the budget")
+            .expect("a solve past the budget is not an error")
         };
-        let past = decide(3);
-        let UnboundedOutcome::Bounds { lower, upper, .. } = past else {
-            panic!("1/2 takes four bits: {past:?}");
+        let raised = decide(16);
+        let UnboundedOutcome::Bounds {
+            lower,
+            upper,
+            precision_bits,
+            sweeps,
+            ..
+        } = raised
+        else {
+            panic!("precision 8 separates the threshold: {raised:?}");
         };
-        assert_eq!(lower[0].rational(), ratio(1, 2));
-        assert_eq!(upper[0].rational(), ratio(1, 2));
-        let within = decide(4);
-        let UnboundedOutcome::Exact(exact) = within else {
-            panic!("1/2 fits four bits: {within:?}");
+        assert_eq!((precision_bits, sweeps), (8, 103));
+        assert!(threshold < lower[0].rational());
+        assert!(lower[0].rational() <= ratio(1, 2));
+        assert!(ratio(1, 2) <= upper[0].rational());
+        assert!(lower[0].rational() < upper[0].rational());
+        let capped = decide(4);
+        let UnboundedOutcome::PrecisionBudget { lower, upper } = capped else {
+            panic!("precision 4 cannot separate the threshold: {capped:?}");
         };
-        assert_eq!(exact.values[0], ExtRational::Finite(ratio(1, 2)));
+        assert!(lower.rational() <= threshold && threshold <= upper.rational());
     }
 
     /// Trace: FR-198-AC-4.

@@ -134,7 +134,6 @@ pub use fsl_replay::FreeDelayRow;
 pub use reward_interval::{decide_expected_reward_threshold, ExpectedRewardOutcome};
 pub use rows::free_delays_choice;
 pub use settle::settle_product_refusal;
-pub(crate) use unbounded::exceeds_rational_budget;
 #[cfg(feature = "test-support")]
 pub use unbounded::polling_dense_elimination;
 pub use unbounded::{
