@@ -1196,3 +1196,75 @@ fn extraneous_models_keep_the_run_request_pointer_and_analyze_mapping() {
         "{outcome}"
     );
 }
+
+#[test]
+#[trace("FR-850-AC-13", "TC-2410")]
+fn an_artifact_under_the_root_name_is_refused_unselected_and_selected() {
+    use fsl_command::{checked_handoff, emit_checked_v2};
+    let directory = tempfile::tempdir().unwrap();
+    prepare(directory.path(), false);
+    let handoff = directory.path().join("handoff");
+
+    // Another content under the root's package name, with its own witnesses.
+    let other_source = directory.path().join("other.native");
+    std::fs::write(
+        &other_source,
+        format!("{HEADER}function answer using v(): Integer pure {{ 7 }}"),
+    )
+    .unwrap();
+    let other = directory.path().join("other");
+    checked_handoff::write(
+        &checked_handoff::CheckedHandoffRequest {
+            emit: emit_checked_v2::Request {
+                source: other_source,
+                package_name: "dependency-root".to_owned(),
+                models: vec![],
+                libraries: vec![],
+                execution_points: None,
+                temporal_selections: vec![],
+                out: None,
+            },
+            corpus: checked_handoff::Corpus::None,
+            native_join: fsl_package::NativeJoinLimits::new(1 << 40, 1 << 28),
+        },
+        &other,
+    )
+    .unwrap();
+
+    // The manifest stays ordered by identity, so the new row is row 0.
+    let dependencies = handoff.join("dependencies");
+    std::fs::rename(dependencies.join("1"), dependencies.join("2")).unwrap();
+    std::fs::rename(dependencies.join("0"), dependencies.join("1")).unwrap();
+    let extra = dependencies.join("0");
+    std::fs::create_dir(&extra).unwrap();
+    for name in ["checked-package.json", "identities.json", "equality.json"] {
+        std::fs::copy(other.join(name), extra.join(name)).unwrap();
+    }
+    let manifest_file = handoff.join("dependencies.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(&manifest_file).unwrap()).unwrap();
+    manifest["dependencies"] = json!([
+        {"identity": "dependency-root", "directory": "dependencies/0"},
+        {"identity": "test/a", "directory": "dependencies/1"},
+        {"identity": "test/z", "directory": "dependencies/2"},
+    ]);
+    std::fs::write(&manifest_file, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let (exit, outcome) = run(directory.path(), json!({"directory": "handoff"}));
+    assert_eq!(exit, 20, "{outcome}");
+    assert_eq!(outcome["code"], "invalid_package", "{outcome}");
+    assert_eq!(outcome["cause"], "invalid-value", "{outcome}");
+    assert_eq!(
+        outcome["details"]["path"], "/dependencies/0/identity",
+        "{outcome}"
+    );
+
+    // A library that selects the root's name closes a cycle back to the root.
+    let library = dependencies.join("1/checked-package.json");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&library).unwrap()).unwrap();
+    value["lock"]["dependency_selections"] = json!([{"identity": "dependency-root"}]);
+    std::fs::write(&library, serde_json::to_vec(&value).unwrap()).unwrap();
+    let (exit, outcome) = run(directory.path(), json!({"directory": "handoff"}));
+    assert_eq!(exit, 20, "{outcome}");
+    assert_eq!(outcome["code"], "invalid_package", "{outcome}");
+    assert_eq!(outcome["cause"], "definition-cycle", "{outcome}");
+}

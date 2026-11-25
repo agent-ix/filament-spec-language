@@ -35,6 +35,8 @@ mod model_tuple;
 mod model_union;
 mod observation;
 mod source_enum;
+#[cfg(test)]
+mod world_agreement_tests;
 use crate::equality_file::OriginalValueType;
 use carried::{SourceRecordJson, SourceTupleJson, SourceUnionJson};
 use filament_exact::Presence;
