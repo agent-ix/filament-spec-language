@@ -52,7 +52,7 @@ FR-1038-AC-2, FR-120-AC-37, FR-752-AC-12 and FR-753-AC-6.
   or other population is present. With `cells.complete` false, the direct
   FR-752 call returns refusal `member: subject`, `code: requires_bound`,
   `cause: requires-bound`, `details.domains` containing the ordered FR-120
-  root `{key: DomainKey::Population {member_type: <Cell node key>, ordinal: 1},
+  root `{key: DomainKey::Population {member_type: {package:"test/no-initial",path:["model","record_value_type","ix://test/no-initial/Cell"],ordinal:0}, ordinal: 1},
   kind: Population(None)}`; the plan step is `declined` with the same
   code/cause/member/root detail, exit 20, and no case runs. Invalid field
   encoding retains FR-106's refusal code/cause at
