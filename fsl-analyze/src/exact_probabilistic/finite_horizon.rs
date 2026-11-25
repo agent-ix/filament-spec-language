@@ -11,6 +11,7 @@ use num_traits::Zero as _;
 use super::rows::Evaluation;
 use super::unbounded::{
     maximal_end_components_from, policy_iteration, Dense, Graph, PolicyBudget, UnboundedError,
+    Choice,
     UnboundedObjective,
 };
 use super::{
@@ -290,6 +291,27 @@ fn collapse_zero_time_components(
         product,
         choices: zero_choices,
     };
+    let zero_edge_graph = Graph {
+        product,
+        choices: graph
+            .choices
+            .iter()
+            .map(|choices| {
+                choices
+                    .iter()
+                    .filter_map(|choice| {
+                        let edges = choice
+                            .edges
+                            .iter()
+                            .copied()
+                            .filter(|edge| edge.elapsed.is_zero() && !edge.probability.is_zero())
+                            .collect::<Vec<_>>();
+                        (!edges.is_empty()).then_some(Choice { edges })
+                    })
+                    .collect()
+            })
+            .collect(),
+    };
     let all_states = (0..product.states.len()).collect::<BTreeSet<_>>();
     let mut found: Vec<Vec<usize>> = maximal_end_components_from(&zero_graph, all_states.clone())
         .map_err(|_| FhError::InvalidState)?;
@@ -334,7 +356,11 @@ fn collapse_zero_time_components(
     }
     components.sort_by_key(|component| component.iter().min().copied().unwrap_or(usize::MAX));
     if components.is_empty() {
-        if !has_cycle(&zero_graph)? {
+        // A choice can mix a zero-time outcome with a positive-delay exit.
+        // Such a choice is absent from `zero_graph` as a whole, but its
+        // positive-probability zero-time edges can still form a transient
+        // cycle that policy iteration solves on the full action distribution.
+        if !has_cycle(&zero_edge_graph)? {
             return Ok(None);
         }
         // This branch is the production path for a product with a zero-delay
@@ -1546,6 +1572,7 @@ mod tests {
             binding: None,
             model: vec![model],
             monitor: None,
+            timed_history: None,
             accumulator: None,
             pending: None,
             certificate_state: None,
@@ -1588,6 +1615,7 @@ mod tests {
             binding: None,
             model: vec![model],
             monitor: None,
+            timed_history: None,
             accumulator: None,
             pending: None,
             certificate_state: None,
@@ -1633,6 +1661,7 @@ mod tests {
             binding: None,
             model: vec![model],
             monitor: None,
+            timed_history: None,
             accumulator: None,
             pending: None,
             certificate_state: None,
@@ -1714,6 +1743,7 @@ mod tests {
             binding: None,
             model: vec![model],
             monitor: None,
+            timed_history: None,
             accumulator: None,
             pending: None,
             certificate_state: None,
@@ -1927,6 +1957,7 @@ mod tests {
             binding: None,
             model: vec![model],
             monitor: None,
+            timed_history: None,
             accumulator: None,
             pending: None,
             certificate_state: None,
