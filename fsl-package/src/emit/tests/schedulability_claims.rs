@@ -97,7 +97,7 @@ fn schedulability_claim_rows_emit_selected_release_and_mode_switch_bindings() {
             "task_name": "h",
             "selected_model_identity": fixture::PACKAGE,
             "operation_declaring_identity": counter["node_id"],
-            "operation_member": fixture::id("Counter/noop"),
+            "operation_member": "noop",
         }])
     );
     assert_eq!(
@@ -105,7 +105,7 @@ fn schedulability_claim_rows_emit_selected_release_and_mode_switch_bindings() {
         json!([{
             "selected_model_identity": fixture::PACKAGE,
             "operation_declaring_identity": counter["node_id"],
-            "operation_member": fixture::id("Counter/bump"),
+            "operation_member": "bump",
         }])
     );
 }

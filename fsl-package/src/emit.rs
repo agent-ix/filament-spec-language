@@ -29,11 +29,11 @@ use filament_contract_model::{
     CheckedOperationAnchorBody, CheckedOriginalDeclarationId, CheckedPackageEvidence,
     CheckedPackageLockV2, CheckedPackageNodeRef, CheckedPackageSidecarsRef,
     CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedRational,
-    CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection,
-    CheckedSelectionRole, CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry,
-    CheckedSourceRef, CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody,
-    OperationBody, OperationBodyRow, ProtocolCorrelationProvenance, ProtocolCorrelationRow,
-    ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
+    CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection, CheckedSelectionRole,
+    CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef,
+    CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody, OperationBody,
+    OperationBodyRow, ProtocolCorrelationProvenance, ProtocolCorrelationRow, ProtocolForm,
+    ScalarTypeForm, StateForm, ValueForm,
 };
 use serde::Deserialize;
 
@@ -6779,7 +6779,10 @@ fn append_model_roots<'a>(
     ids: &StructuralIds,
     roots: impl Iterator<
         Item = (
-            (&'a fsl_semantics::model::domain_package::DomainPackageRef, NodeKey),
+            (
+                &'a fsl_semantics::model::domain_package::DomainPackageRef,
+                NodeKey,
+            ),
             Option<SourceRegion>,
         ),
     >,
@@ -8091,9 +8094,12 @@ fn emit_package_nodes(
     }
     append_model_roots(
         ids,
-        graph
-            .model_roots()
-            .zip(graph.model_root_locations().iter().map(|location| regions(location))),
+        graph.model_roots().zip(
+            graph
+                .model_root_locations()
+                .iter()
+                .map(|location| regions(location)),
+        ),
         &mut nodes,
         &mut source_map,
     )?;
