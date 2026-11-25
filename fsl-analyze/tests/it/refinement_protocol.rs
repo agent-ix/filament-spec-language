@@ -948,7 +948,9 @@ fn required_weak_whole_fairness_does_not_imply_concrete_strong_each() {
             ..
         })
     ));
-    assert_eq!(incomplete.basis, SettlementBasis::Unsettled);
+    // FR-127 V-7: a limit stop settles `resource-incomplete` with basis
+    // `unavailable`; only an inconclusive verdict is `unsettled`.
+    assert_eq!(incomplete.basis, SettlementBasis::Unavailable);
 }
 
 /// FR-148-AC-14 (TC-553): a satisfied refinement `ensure` remains a

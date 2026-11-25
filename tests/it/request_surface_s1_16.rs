@@ -1518,6 +1518,29 @@ fn unit_both_routes(unit: &str, package: Value) -> (String, String) {
     unit_both_routes_with(unit, package, |_| {})
 }
 
+/// FR-931-AC-19 (TC-2601): a printed atom with a let binder shadowing the
+/// temporal parameter reparses with the same two binding sites.
+#[test]
+#[trace("TC-2601", "FR-931-AC-19")]
+fn a_tl_lowering_shadowed_parameter_atom_reparses_to_same_bindings() {
+    let leaf = "holds(let c = c.versionNumber in c = 2)";
+    let unit = low(EVENT_POSITION, &format!("always [0, 3] {leaf}"));
+    let (from_source, from_package) = unit_both_routes(&unit, json!({"directory": "handoff"}));
+
+    assert_eq!(
+        from_source, "holds(let c = c.versionNumber in c = 2)",
+        "the printer preserves the shadowed binder's declared name"
+    );
+    assert_eq!(from_package, from_source, "both routes print the same atom");
+
+    let reparsed_unit = low(EVENT_POSITION, &format!("always [0, 3] {from_source}"));
+    let (reparsed_source, reparsed_package) =
+        unit_both_routes(&reparsed_unit, json!({"directory": "handoff"}));
+
+    assert_eq!(reparsed_source, from_source, "source route round trip");
+    assert_eq!(reparsed_package, from_source, "package route round trip");
+}
+
 /// [`unit_both_routes`] with `edit` run over the compiled directory before the
 /// package route reads it.
 fn unit_both_routes_with(unit: &str, package: Value, edit: impl FnOnce(&Path)) -> (String, String) {
