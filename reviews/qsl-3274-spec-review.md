@@ -41,3 +41,35 @@ Code at the head (`run_shape` returns `RUN_SELECTED` for a selected source with 
 ## Verdict
 
 The core reconciliation is consistent. A selected source with only the `call`/`clause`/`items` group missing keeps `details.missing` (FR-1047) and carries the FR-100-AC-25 message, refused before any named file, the program included. FR-100, FR-1047, TC-450 and TC-3170 agree with each other on this. Both named tests, and the FR-1039-AC-13 and FR-312-AC-2 tests, pass under the amended text with no assertion change. Behaviour consequence, justified by FR-1047's "before any file the request names is read": a no-call request over a `0-draft`/`7-draft` program now refuses no-call, not `unknown_edition`, with a message that says "a 1-draft program". FR-100's edition bullet and AC-2 are scoped to match. FND-001 and FND-002 are text-precision gaps on edge orderings outside the two tests. They do not affect the decided case.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | medium | Reviewed at head 9bac7ba7e8446c47984dbc614a811674e3a21dd2. The `program` row of the new FR-1047 precedence table lists "a model in a format other than `semantic-ir/2.0.0` and `native-model-unit/1` (FR-100)" as a refusal that comes before the no-call refusal with no named file read, and FR-1047-AC-14 tests it in an empty directory (`native-rule-model/1` -> `invalid-request`). Neither the current code nor a stated requirement supports this. The code checks model format only in `prepare_complete_run` (fsl-command/src/command.rs:4988-4994), after it reads the program (`intake.source`) and checks the header (`require_native_header`). Today that request refuses `io-error` at stage `file` for `p.fsl`. FR-100 gates the refusal on the program's edition: the table row is "A `1-draft` function-run request carrying ... a model in a format other than ...", and the bullet is "If the program declares `1-draft`, ... refuse a request carrying a member the refusal table names". The new text already places the no-call refusal before the edition read. It also conflicts with FR-1047-AC-16, which gives AC-10 for the same model at `read_clause_run_request` and over a package. Fix: move the model-format check to the "Every other check comes after" bullet and make AC-14's last case an AC-16 case that refuses as AC-10 states. | spec/functional/FR-1047-name-every-request-defect-and-return-a-request-example.md:242 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+
+Round 1 notes (head 9bac7ba7e8446c47984dbc614a811674e3a21dd2):
+
+- FND-001 is fixed. Each listed member now has a table row tied to a criterion (AC-11 to AC-15), and an explicit "every other check comes after" bullet with AC-16. I checked every row against the code at this head:
+  - The size limit runs in `with_request_limits` before `admit`.
+  - Decode defects, `requirements` without `verification_plan` and `sources` (`wire::Request::validate`, `runtime_sources::validate_provisions`) are checked in `request()` at all three entries.
+  - The clocks override is refused in `request_with_overrides` (`ClocksGivenTwice`).
+  - The package members are checked in `package_run::validate_request` before NoCall.
+  - On the program path, `refinement_internals` without `package` (4512), `read_integer_division`, `validate_extension_entries`, the file ceiling (`intake_with_bytes`, FILES=64) and the `formal_revision` bind (`wire::SourceFile::bind`, before the file read) all run before NoCall.
+  - `extraction-clause-count` is checked in `read_clause_run_request_bytes` before the missing-clause check, and not in `prepare_run`.
+  - `read_clause_run_request` performs none of the program-row checks before its missing-clause refusal.
+  - The one exception is model format (FND-004).
+  - The package rows and AC-10 change `read_clause_run_request`, which today refuses every package request naming `program`. That follows from FR-1039 and AC-10 and is for the code item.
+  - The `export_evidence` case is justified by FR-1047 Definitions: run-reader entries read the run reading.
+- FND-002 is fixed. The FR-100 table rows are split, and FR-1039 is qualified. "Both" names `program` only when nothing FR-1047 lists is missing, which matches `admit` and `validate_request`.
+- FND-003 is fixed. The clause was dropped from FR-1047-AC-7.
+- FR-1047-AC-11 to AC-16 are each concrete and testable in process. AC-15 and the extraction cases of AC-16 need `quire-extraction`, which is fsl-command's default build.
+- FR-961 note: FR-961 says to prepare the request before building the registry, but `run_configured` builds the registry first. That gap predates this PR, which does not touch it, and the new FR-1047 text explicitly neither states nor changes that order. No test in this PR's scope registers a conflicting provider. It is a separate ticket (FR-961 versus `run_configured`), not a finding here.

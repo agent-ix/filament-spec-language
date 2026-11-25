@@ -55,8 +55,9 @@ test asserts what its criterion states, the exact `message` string and
 10. Make each call of FR-1047-AC-14 in an empty directory, changing the
     program request one way at a time.
 11. In a build with `quire-extraction`, make each call of FR-1047-AC-15.
-12. Make each call of FR-1047-AC-16, those over AC-15's request in a build
-    with `quire-extraction`.
+12. Make each call of FR-1047-AC-16, the `native-rule-model/1` model cases
+    among them, and those over AC-15's request in a build with
+    `quire-extraction`.
 
 ## Expected Results
 
