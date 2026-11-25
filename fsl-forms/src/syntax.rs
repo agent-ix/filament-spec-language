@@ -18,6 +18,7 @@ use std::ops::ControlFlow;
 use filament_exact::{CollectionKind, Integer};
 pub(super) use filament_semantic_value::absence::AbsenceMode;
 use fsl_foundation::{Span, Spanned};
+use ix_trace_rs::implements;
 
 use super::protocol_control::{
     AwaitForm, ChannelForm, ParallelForm, ProtocolMemberForm, RepeatForm,
@@ -1670,6 +1671,7 @@ impl Expression {
     }
 
     /// `read @ trace`.
+    #[implements("FR-171-AC-1")]
     pub fn indexed(read: Self, trace: impl Into<String>) -> Self {
         let trace = trace.into();
         Self::compose([read], |[read]| ExprNode::Indexed { read, trace })
@@ -1681,6 +1683,7 @@ impl Expression {
     }
 
     /// `trace.step.<label>`.
+    #[implements("FR-171-AC-1")]
     pub fn step_label(trace: impl Into<String>, label: StepLabelForm) -> Self {
         Self::single(ExprNode::StepLabel {
             trace: trace.into(),

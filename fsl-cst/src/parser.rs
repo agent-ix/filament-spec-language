@@ -135,6 +135,7 @@ fn format_expected(
     format!("expected {}", alternatives.join(" or "))
 }
 
+#[implements("FR-762-AC-7")]
 pub(super) fn parse(
     source: Source,
     limits: Limits,
@@ -432,6 +433,16 @@ type DeclarationRecovery = (
     Vec<Recovery>,
 );
 
+#[implements(
+    "FR-762-AC-1",
+    "FR-762-AC-2",
+    "FR-762-AC-3",
+    "FR-762-AC-4",
+    "FR-762-AC-6",
+    "FR-762-AC-8",
+    "FR-762-AC-9",
+    "FR-762-AC-10"
+)]
 fn parse_with_declaration_recovery(
     source: &Source,
     grammar: &Grammar,
