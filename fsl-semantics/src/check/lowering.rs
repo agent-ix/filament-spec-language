@@ -1254,6 +1254,34 @@ pub(crate) fn require_admitted(
     }
 }
 
+/// A declared node's structural key (FSpec FR-322 "Structural node
+/// identity"): the declaration's segments and, for a node with an
+/// `owner_model` (a `protocol_clause` alone), one final operand naming that
+/// node (FSpec FR-322 "Protocol clause owner identity").
+fn declaration_key(
+    package_name: &str,
+    names: &[Identifier],
+    owner_model: Option<&NodeKey>,
+    ordinal: u64,
+) -> Result<NodeKey, filament_exact::InvalidNodeKey> {
+    use filament_exact::PathSegment;
+    let len = names
+        .len()
+        .saturating_add(usize::from(owner_model.is_some()));
+    let mut path = Vec::new();
+    path.try_reserve_exact(len)
+        .map_err(|_| filament_exact::InvalidNodeKey::Allocation {
+            requested: len.saturating_mul(std::mem::size_of::<PathSegment>()),
+        })?;
+    path.extend(
+        names
+            .iter()
+            .map(|name| PathSegment::Text(name.as_str().to_owned())),
+    );
+    path.extend(owner_model.cloned().map(PathSegment::Node));
+    super::structural_node_key(package_name, path, ordinal)
+}
+
 /// The declared structural key of a step-relation node, which is built
 /// outside a [`Lowering`]: its one declared name under the package, at
 /// ordinal 0 (a unit declares one step relation per name).
@@ -2750,8 +2778,9 @@ impl<'a> Lowering<'a> {
     }
 
     /// The structural key of an unpended `content`: equal content is one
-    /// node; a declared node is keyed by its declaration's path, any other
-    /// by its closed tag and semantic form alone. Repeats of one path take
+    /// node; a declared node is keyed by its declaration's path (and its
+    /// `owner_model`, [`declaration_key`]), any other by its closed tag and
+    /// semantic form alone. Repeats of one path take
     /// the next unused ordinal, so a key's size never depends on how deep
     /// its operands nest (QSL-381: no depth cap, and a key that nested its
     /// operands' keys would cost memory quadratic in a chain's depth).
@@ -2771,11 +2800,7 @@ impl<'a> Lowering<'a> {
         };
         let operands = derived_operands(content);
         let key = self.mint_key(location, |ordinal| match &content.declaration {
-            Some(names) => super::declared_node_key(
-                package.clone(),
-                names.iter().map(|name| name.as_str().to_owned()).collect(),
-                ordinal,
-            ),
+            Some(names) => declaration_key(&package, names, content.owner_model.as_ref(), ordinal),
             None => super::derived_node_key(
                 &package,
                 content.node_tag,
@@ -2817,9 +2842,10 @@ impl<'a> Lowering<'a> {
     }
 
     /// The admitted keys of one recursion group's members, in member order.
-    /// A declared member is keyed by its declaration's path; any other
-    /// member by the anchor's (least declared member's) path with no
-    /// operand, the producer's ordinal telling the members apart. A group
+    /// A declared member is keyed by its [`declaration_key`]; any other
+    /// member takes the sole declared member's path, or, among several, the
+    /// anchor's (least declared member's) declaration segments with no
+    /// operand; the producer's ordinal tells the members apart. A group
     /// with no declared member has no anchor, which is an internal fault.
     fn admitted_group_keys(
         &mut self,
@@ -2831,11 +2857,7 @@ impl<'a> Lowering<'a> {
         for draft in members {
             keys.push(match &draft.content.declaration {
                 Some(names) => Some(self.mint_key(&draft.location, |ordinal| {
-                    super::declared_node_key(
-                        package.clone(),
-                        names.iter().map(|name| name.as_str().to_owned()).collect(),
-                        ordinal,
-                    )
+                    declaration_key(&package, names, draft.content.owner_model.as_ref(), ordinal)
                 })?),
                 None => None,
             });
@@ -2844,26 +2866,24 @@ impl<'a> Lowering<'a> {
         // not depend on the order the members are declared in. The pinned
         // reader (filament-contract-model `validate_recursion`) requires every
         // undeclared member's path to equal the sole declared member's path.
-        let anchor_path: Vec<String> = keys
+        let anchor = keys
             .iter()
-            .flatten()
-            .min()
-            .ok_or_else(|| fault(location, KeyFault::InvalidGroup))?
-            .view()
-            .path()
-            .map(|segment| match segment {
-                filament_exact::PathSegmentView::Text(text) => Ok(text.to_owned()),
-                filament_exact::PathSegmentView::Node(_) => {
-                    Err(fault(location, KeyFault::InvalidGroup))
-                }
+            .zip(members)
+            .filter_map(|(key, draft)| {
+                Some((key.as_ref()?, draft.content.declaration.as_deref()?, draft))
             })
-            .collect::<Result<_, _>>()?;
+            .min_by(|left, right| left.0.cmp(right.0));
+        let (_, anchor_names, anchor) =
+            anchor.ok_or_else(|| fault(location, KeyFault::InvalidGroup))?;
+        let anchor_owner = (keys.iter().flatten().count() == 1)
+            .then_some(anchor.content.owner_model.as_ref())
+            .flatten();
         let mut admitted = Vec::with_capacity(members.len());
-        for (draft, key) in members.iter().zip(keys) {
+        for (draft, key) in members.iter().zip(&keys) {
             admitted.push(match key {
-                Some(key) => key,
+                Some(key) => key.clone(),
                 None => self.mint_key(&draft.location, |ordinal| {
-                    super::declared_node_key(package.clone(), anchor_path.clone(), ordinal)
+                    declaration_key(&package, anchor_names, anchor_owner, ordinal)
                 })?,
             });
         }

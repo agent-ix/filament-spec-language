@@ -179,6 +179,22 @@ fn refusal_path(refusal: &filament_contract_model::CheckedPackageRefusal) -> Opt
         .map(|path| path.as_str())
 }
 
+/// Asserts the clause's path is `Flow` followed by one operand segment
+/// `{"operand": k}` whose operand-row entry is the graph index of `target`.
+fn assert_owner_operand_names(wire: &Value, target: &str) {
+    let nodes = wire["semantic_graph"]["nodes"].as_array().expect("nodes");
+    let clause = nodes
+        .iter()
+        .position(|node| node["semantic_form"] == "protocol_clause")
+        .expect("protocol clause position");
+    let path = &nodes[clause]["node_id"]["path"];
+    let slot = path[1]["operand"].as_u64().expect("an operand slot");
+    assert_eq!(path, &json!(["Flow", {"operand": slot}]));
+    let entry = &wire["semantic_graph"]["operand_rows"][clause][slot as usize];
+    let index = entry.as_u64().expect("a graph index row entry") as usize;
+    assert_eq!(&nodes[index], owner_model_node(wire, target));
+}
+
 fn protocol_owner_wire(over: &str, domain: &[u8]) -> Value {
     let package = checked(&owner_model_source(over), Some(domain));
     let emission = emit_checked(&package, EmitLimits::new(64 * 1024 * 1024))
@@ -186,10 +202,10 @@ fn protocol_owner_wire(over: &str, domain: &[u8]) -> Value {
     serde_json::from_slice(emission.package().bytes()).expect("the emitted JSON parses")
 }
 
-fn protocol_owner_refusal(
+fn protocol_owner_read(
     wire: &Value,
     domain: &[u8],
-) -> filament_contract_model::CheckedPackageRefusal {
+) -> filament_contract_model::CheckedPackageDispatchResult {
     let mut evidence = filament_contract_model::CheckedPackageEvidence::new();
     for feature in wire["lock"]["required_features"]
         .as_array()
@@ -201,16 +217,24 @@ fn protocol_owner_refusal(
         .insert_domain_package_document("test/orders", domain.to_vec())
         .expect("fixture model evidence is unique");
     let bytes = serde_json::to_vec(wire).expect("the mutated package serializes");
-    match filament_contract_model::read_checked_package(
+    filament_contract_model::read_checked_package(
         &bytes,
         filament_contract_model::CheckedPackageReadLimits::bounded(),
         &evidence,
-    ) {
+    )
+}
+
+fn protocol_owner_refusal(
+    wire: &Value,
+    domain: &[u8],
+) -> filament_contract_model::CheckedPackageRefusal {
+    match protocol_owner_read(wire, domain) {
         filament_contract_model::CheckedPackageDispatchResult::Refused(refusal) => refusal,
         other => panic!("the mutated package is refused: {other:?}"),
     }
 }
 
+#[trace("TC-1063", "FR-383-AC-27")]
 #[test]
 fn protocol_owner_edges_follow_object_types_reached_through_subjects() {
     let domain = choice_domain();
@@ -220,14 +244,21 @@ fn protocol_owner_edges_follow_object_types_reached_through_subjects() {
             owner_model_clause(&emitted).get("owner_model").is_none(),
             "non-object subject {over} has no owner edge"
         );
+        assert_eq!(
+            owner_model_clause(&emitted)["node_id"]["path"],
+            json!(["Flow"])
+        );
     }
     for over in ["Option<M::Node>", "Sequence<M::Node>", "M::Node"] {
         let emitted = protocol_owner_wire(over, &domain);
+        let owner = &owner_model_node(&emitted, "Node")["node_id"];
+        let clause = owner_model_clause(&emitted);
         assert_eq!(
-            owner_model_clause(&emitted)["owner_model"],
-            owner_model_node(&emitted, "Node")["node_id"],
+            &clause["owner_model"], owner,
             "the owner edge follows {over} to Node"
         );
+        assert!(clause["dependencies"].as_array().unwrap().contains(owner));
+        assert_owner_operand_names(&emitted, "Node");
     }
 
     let mut emitted = protocol_owner_wire("M::Node", &domain);
@@ -351,9 +382,31 @@ fn protocol_owner_edges_follow_object_types_reached_through_subjects() {
         refusal_path(&refusal),
         Some(format!("{clause_path}/owner_model").as_str())
     );
+    let locus = refusal
+        .locus
+        .expect("the stale owner refusal has a node locus");
+    assert_eq!(
+        graph
+            .key_of_value(&serde_json::to_value(&locus).unwrap())
+            .expect("the locus names a graph node"),
+        graph
+            .key_of_value(&emitted["semantic_graph"]["nodes"][clause_position]["node_id"])
+            .unwrap(),
+    );
+    assert_owner_operand_names(&emitted, "Node");
+
+    // The edge, dependency and final path operand all name the new target.
+    let retargeted = protocol_owner_wire("M::Other", &domain);
+    let other = &owner_model_node(&retargeted, "Other")["node_id"];
+    assert_eq!(&owner_model_clause(&retargeted)["owner_model"], other);
+    assert_owner_operand_names(&retargeted, "Other");
+    let read = protocol_owner_read(&retargeted, &domain);
     assert!(
-        refusal.locus.is_some(),
-        "the stale owner refusal has a node locus"
+        matches!(
+            read,
+            filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(_)
+        ),
+        "{read:?}"
     );
 }
 
