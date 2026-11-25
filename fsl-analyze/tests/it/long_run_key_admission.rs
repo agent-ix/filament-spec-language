@@ -136,7 +136,11 @@ fn producer_bounds_larger_candidate_keys_after_a_small_initial_key() {
     for world in [growth(), World::new(&reward_model(growth_model()))] {
         let system = ModelSystem::new(world.subject().simulation).unwrap();
         let initial = system.initial().pop().unwrap();
-        let initial_bytes = system.state_key(&initial).unwrap().0.len() as u64;
+        let initial_bytes = system
+            .state_key(&initial, fsl_foundation::IdentityLimits::default())
+            .unwrap()
+            .0
+            .len() as u64;
         let cancel = Cancel::new();
         let mut meter = Meter::new(limits().accounting).with_cancel(cancel.clone());
         let mut storage = 0;
@@ -401,7 +405,10 @@ fn full_product_parse_staging_and_output_share_the_raw_key_storage_scope() {
     let mut measured = 0;
     let key = encode(limits().storage_bytes, &mut measured).unwrap();
     assert!(measured > 0);
-    let raw = system.state_key(&initial).unwrap().0;
+    let raw = system
+        .state_key(&initial, fsl_foundation::IdentityLimits::default())
+        .unwrap()
+        .0;
     let expected = fsl_replay::ProbabilityProductKey::for_model_state(reference, &raw).unwrap();
     assert_eq!(key, expected);
     let mut exact = 0;
@@ -458,7 +465,10 @@ fn full_product_reservation_phase_polls_actual_requested_and_deadline_causes() {
     let world = availability();
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let initial = system.initial().pop().unwrap();
-    let raw = system.state_key(&initial).unwrap().0;
+    let raw = system
+        .state_key(&initial, fsl_foundation::IdentityLimits::default())
+        .unwrap()
+        .0;
     let binding = fsl_replay::claim_binding(&system, world.claim("Lower")).unwrap();
     let reference = binding.as_ref().map(|b| &b.reference);
     let expected = fsl_replay::ProbabilityProductKey::for_model_state(reference, &raw).unwrap();

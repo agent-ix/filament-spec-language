@@ -926,7 +926,10 @@ fn a_closure_lasso_replays_alike_on_the_source_and_the_package_routes() {
     .expect("the subject admits");
     let initial = system.initial()[0].clone();
     let entry = fsl_eval::simulation::StateKey::from_canonical_bytes(
-        system.state_key(&initial).expect("the state encodes").0,
+        system
+            .state_key(&initial, fsl_foundation::IdentityLimits::default())
+            .expect("the state encodes")
+            .0,
     );
     let payload = fsl_replay::TemporalCounterexample {
         initial_state: 0,

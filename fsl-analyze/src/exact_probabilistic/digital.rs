@@ -40,6 +40,7 @@ use fsl_semantics::check::{
     ClockOp, ConvexPart, DelayDistribution, Event, FormulaNode, ProbForm, ProbScheduler,
     UnaryTemporal, Workload,
 };
+use ix_trace_rs::implements;
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive, Zero};
@@ -61,6 +62,7 @@ pub(crate) const ELAPSED_REWARD: &str = "qsl_elapsed_time";
 /// [`ProductRefusal`]: the admission causes of FR-204, a model that is not a
 /// Markov decision process or chain at some digital state, a budget or the
 /// cancellation.
+#[implements("FR-204-AC-1")]
 pub(super) fn build<'s, 'a>(
     system: &'s ModelSystem<'a>,
     timed: TimedSystem<'s, 'a>,
@@ -978,7 +980,7 @@ impl<'c> Builder<'_, '_, 'c> {
     fn local(&mut self, model: &ModelSimState) -> Step<Rc<Local>> {
         let (key, _) = self
             .system
-            .state_key(model)
+            .state_key(model, fsl_foundation::IdentityLimits::default())
             .map_err(|_| fault("state-key-encodes"))?;
         if let Some(known) = self.locals.get(&key) {
             return Ok(Rc::clone(known));
@@ -1078,7 +1080,7 @@ impl<'c> Builder<'_, '_, 'c> {
             if let Some(blocked) = draws.iter().find(|draw| draw.posts.is_empty()) {
                 let (_, state) = self
                     .system
-                    .state_key(model)
+                    .state_key(model, fsl_foundation::IdentityLimits::default())
                     .map_err(|_| fault("state-key-encodes"))?;
                 return Err(ProductRefusal::NotMarkov(Box::new(NotMarkov {
                     state,
@@ -1106,7 +1108,7 @@ impl<'c> Builder<'_, '_, 'c> {
             self.poll()?;
             let (_, key) = self
                 .system
-                .state_key(model)
+                .state_key(model, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| fault("state-key-encodes"))?;
             if keys.last().is_some_and(|previous| previous >= &key) {
                 return Err(fault("filtered-post-model-keys-are-distinct-and-ordered").into());
@@ -1148,7 +1150,7 @@ impl<'c> Builder<'_, '_, 'c> {
         }
         let (discrete, _) = self
             .system
-            .state_key(&state.model)
+            .state_key(&state.model, fsl_foundation::IdentityLimits::default())
             .map_err(|_| fault("certificate-discrete-state-key-encodes"))?;
         let discrete: JsonValue = serde_json::from_slice(&discrete)
             .map_err(|_| fault("certificate-discrete-state-key-is-json"))?;
@@ -1374,7 +1376,7 @@ impl<'c> Builder<'_, '_, 'c> {
     fn truths(&mut self, state: &ModelSimState, binding: usize) -> Step<Result<Vec<bool>, Hit>> {
         let (model, state_key) = self
             .system
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| fault("state-key-encodes"))?;
         if let Some(known) = self.readings.get(&(binding, model.clone())) {
             return Ok(Ok(known.clone()));
@@ -2816,7 +2818,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     let [(model, clocks)] = draw.posts.as_slice() else {
                         let (_, state) = self
                             .system
-                            .state_key(&current.model)
+                            .state_key(&current.model, fsl_foundation::IdentityLimits::default())
                             .map_err(|_| fault("state-key-encodes"))?;
                         return Err(ProductRefusal::NotMarkov(Box::new(NotMarkov {
                             state,

@@ -93,7 +93,7 @@ pub(super) fn replay(
         .map_err(monitor_error)?;
     let key_of = |state: &ModelSimState, control: StateId, monitor: &QualifiedBoundedMonitor| {
         let (bytes, _) = system
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
         let monitor_key = monitor.key(control).map_err(monitor_error)?;
         ProbabilityProductKey::for_formula_state(

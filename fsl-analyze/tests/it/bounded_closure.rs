@@ -227,7 +227,9 @@ impl Bounded {
                 .1;
         }
         {
-            let (bytes, _) = system.state_key(&state).expect("encodes");
+            let (bytes, _) = system
+                .state_key(&state, fsl_foundation::IdentityLimits::default())
+                .expect("encodes");
             fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
         }
     }

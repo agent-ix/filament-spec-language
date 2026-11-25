@@ -1534,7 +1534,7 @@ fn key_of(
     cancel: &Cancel,
 ) -> Result<ProbabilityProductKey, ProbabilityWitnessError> {
     let (bytes, _) = system
-        .state_key(state)
+        .state_key(state, fsl_foundation::IdentityLimits::default())
         .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
     ProbabilityProductKey::for_model_state_with_limits(binding, &bytes, limits.document, cancel)
         .map_err(bounded::document_error)

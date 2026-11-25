@@ -442,7 +442,7 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
     fn discrete_key(&self, state: &ModelSimState) -> Result<Vec<u8>, Halt> {
         self.timed()
             .system()
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .map(|(bytes, _)| bytes)
             .map_err(|_| DigitalRefusal::Fault("state-key").into())
     }
@@ -1203,7 +1203,10 @@ impl<'q, 'r, 's, 'a, L: ModelLetters> Digital<'q, 'r, 's, 'a, L> {
         let (discrete_key, _) = self
             .timed()
             .system()
-            .state_key(reached.discrete())
+            .state_key(
+                reached.discrete(),
+                fsl_foundation::IdentityLimits::default(),
+            )
             .map_err(|_| DigitalRefusal::Fault("state-key"))?;
         let clocks: Vec<Rational> = self
             .timed()

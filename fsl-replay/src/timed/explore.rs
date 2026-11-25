@@ -180,7 +180,7 @@ pub(crate) fn widen(value: usize) -> u64 {
 fn key_of(timed: &TimedSystem<'_, '_>, state: &ModelSimState) -> Result<Vec<u8>, ExploreStop> {
     timed
         .system()
-        .state_key(state)
+        .state_key(state, fsl_foundation::IdentityLimits::default())
         .map(|(bytes, _)| bytes)
         .map_err(|_| ExploreStop::StateKey)
 }

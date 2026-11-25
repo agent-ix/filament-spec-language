@@ -201,7 +201,9 @@ pub fn closed_executions(
             }
             let mut keyed = Vec::with_capacity(successors.len());
             for (transition, next) in successors {
-                let (key, post_state) = system.state_key(&next).map_err(ClosedStop::Encoding)?;
+                let (key, post_state) = system
+                    .state_key(&next, fsl_foundation::IdentityLimits::default())
+                    .map_err(ClosedStop::Encoding)?;
                 let order = system
                     .transition_key(&transition)
                     .map_err(ClosedStop::Encoding)?;
