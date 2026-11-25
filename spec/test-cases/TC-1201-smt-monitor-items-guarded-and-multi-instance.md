@@ -21,7 +21,8 @@ instance, with one monitor per instance, the false-extension end letter,
 the past-the-end distinctness form and the reading of satisfiable models
 by rules 4, 4b and 4c.
 
-Scope: FR-315-AC-33 to FR-315-AC-39, FR-314-AC-8 and FR-127-AC-15.
+Scope: FR-315-AC-33 to FR-315-AC-39, FR-315-AC-58, FR-314-AC-8 and
+FR-127-AC-15.
 
 S4 emits an `on each` clause, guarded or not (FR-337-AC-6). The test
 still builds the checked package of each `on each` and guarded item itself,
@@ -56,9 +57,10 @@ printed script.
    `always holds(c.value <= 1)` `on each` `when c.value >= 3` under
    infinite-trace, and `Unrolling{depth: 2}` for
    `eventually[0,3] holds(c.value = 3)` `on each`
-   `when c.value + 2 = c.value` under event-position false-extension.
+   `when c.value < 2 and c.value + 2 = c.value` under event-position
+   false-extension.
 5. With a solver, check `Unrolling{depth: 3}` for the guarded TP-1 item of
-   step 4, then, with the condition `c.value = 7`, `InductionStep{depth: 2}`,
+   step 4, then, with the condition `c.value > 3`, `InductionStep{depth: 2}`,
    `InductionBase{depth: 3}` and `InductionStep{depth: 3}`; then check step
    4's false-extension query. Read each satisfiable `Unrolling` model and
    replay its prefix.
@@ -73,6 +75,16 @@ printed script.
    TP-1 item, with and without a certificate, and FR-314-AC-1's accepted
    bounded certificate; settle FR-127-AC-15's results, with and without a
    certificate.
+9. Compile FR-315-AC-58's unit from source and, after S3, replace the
+   clause's guard `a and b` by `b`. Encode `Unrolling{depth: 2}` over
+   `{c, d}`, check each disjunct of the negated property alone with a
+   solver, and check that no model of the satisfiable one leaves the
+   criterion's values. Then replay the counterexample that model holds
+   (`inc` on `d` twice, `over_binding` `d`, `UndefinedEvaluation` at
+   position 2, `none-value`, its site naming the activation) against the
+   source unit's request, its condition read by the hand-built package's
+   production letters, once as read and once with `over_binding` `c`. Run
+   EN-1 over the same package with those letters.
 
 Tag the tests `#[trace("TC-1201", "FR-315-AC-n")]`.
 
@@ -99,15 +111,13 @@ Tag the tests `#[trace("TC-1201", "FR-315-AC-n")]`.
 - Step 4: `m0.0`, `m1.0` and no `h<i>`; letter 2's term
   `(and (not C<i>) A<i>)`; the stutter disjunct in each step assertion. The
   false-extension query's condition failures `(and (not h<p>) F)` at
-  positions 0 to 2, after each position's violation and before `inc`'s
-  postcondition failure, and no atom-failure disjunct.
+  positions 0 to 2, `F` negating the implication from `s<p>.c.value < 2` to
+  `s<p>.c.value + 2` in `[0, 3]`, after each position's violation and
+  before `inc`'s postcondition failure, and no atom-failure disjunct.
 - Step 5: depth 3 satisfiable, read as the prefix `0, 1, 2, 3` and
-  replayed to `refuted`; with `c.value = 7`, the step at depth 2
+  replayed to `refuted`; with `c.value > 3`, the step at depth 2
   satisfiable and base and step at depth 3 unsatisfiable,
-  `Inductive{depth: 3}`; the false-extension query satisfiable by the
-  condition failure at position 2 only, read as the prefix `0, 1, 2` and
-  replayed to `refuted`, `UndefinedEvaluation` at position 2, its site
-  naming the activation.
+  `Inductive{depth: 3}`; the false-extension query unsatisfiable.
 - Step 6: the per-position order `s<i>.c.value`, `s<i>.d.value`, `m<i>.0`,
   `m<i>.1`; instance 0's implications before instance 1's at each position,
   over `c` and `d` respectively; `(= m<p>.0 r)` before `(= m<p>.1 r)`; the
@@ -123,3 +133,9 @@ Tag the tests `#[trace("TC-1201", "FR-315-AC-n")]`.
   FR-127-AC-15's results settle `CertificateRejected{ShapeMismatch, ..}`
   with no check run and unchanged meters, except the horizon-3 result,
   which settles `Proved{BoundedComplete{depth: 3}, Uncertified}`.
+- Step 9: of the negated property's disjuncts only `d`'s condition failure
+  at position 2 is satisfiable, every model of it holding `c.value` 0, 0, 0
+  and `d.value` 0, 1, 2; replay reproduces that counterexample, and with
+  `over_binding` `c` settles `inconclusive`, `ReplayParity`. EN-1, which
+  searches every depth, reports a formula violation with `over_binding` `c`,
+  the first instance in canonical order with a finding (FR-126-AC-11).

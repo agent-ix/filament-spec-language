@@ -342,17 +342,20 @@ fn each_needs_every_transition_of_the_operation_and_whole_needs_one() {
     }
 }
 
-/// FR-125-AC-6's TP-4 half and FR-126-AC-9's TP-4 claim: when the letter is
-/// undefined at position 2 (`6 mod (2 - c.value)` at value 2), `always
-/// eventually holds(...)` returns the undefined-evaluation counterexample,
-/// the prefix `0 -inc-> 1 -inc-> 2` with no lasso, not the terminal stutter
-/// lasso. The same holds for an undefined precondition guard (ADR-018 UE-6):
-/// the item is refuted at the expanded state, naming the guarded transition.
+/// FR-125-AC-6's TP-4 half and FR-126-AC-9's TP-4 claim. `always eventually
+/// holds(q(2 - c.value) = 0 and c.value = 1)`, with `q` the function
+/// `6 mod x`, has a letter that is false at value 0, true at 1, undefined at
+/// 2 and false at 3. It returns the undefined-evaluation counterexample, the
+/// prefix `0 -inc-> 1 -inc-> 2` with no lasso. With the letter at 2 read as
+/// false instead, the same claim is refuted by the terminal stutter lasso at
+/// value 3, so the undefined position is what withholds that lasso. The same
+/// holds for an undefined precondition guard (ADR-018 UE-6): the item is
+/// refuted at the expanded state, naming the guarded transition.
 #[trace("TC-537", "FR-126-AC-9")]
 #[test]
 fn an_undefined_letter_refutes_a_liveness_claim_before_any_lasso() {
     let helper = "function undefined_remainder using v(x: Integer): Integer pure { 6 mod x }\n";
-    let formula = "always eventually holds(undefined_remainder(2 - c.value) = 0)";
+    let formula = "always eventually holds(undefined_remainder(2 - c.value) = 0 and c.value = 1)";
     let fixture = fixture_in_mode(
         document(false),
         &format!("{CONTRACT}{helper}"),
@@ -362,7 +365,7 @@ fn an_undefined_letter_refutes_a_liveness_claim_before_any_lasso() {
         filament_semantic_value::checking::CheckMode::Kernel,
     );
     let outcome = fixture
-        .decide(|v| (v != 2).then(|| 6 % (2 - v) == 0))
+        .decide(|v| (v != 2).then(|| 6 % (2 - v) == 0 && v == 1))
         .expect("checked");
     let counterexample = violated(&outcome);
     assert_eq!(fixture.values(counterexample, "c"), [0, 1, 2]);
@@ -377,6 +380,19 @@ fn an_undefined_letter_refutes_a_liveness_claim_before_any_lasso() {
         UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero)
     );
     assert_eq!(counterexample.trace_position(), Some(2));
+
+    let outcome = fixture.decide(|v| Some(v == 1)).expect("checked");
+    let counterexample = violated(&outcome);
+    assert_eq!(counterexample.kind, CounterexampleKind::Formula);
+    assert_eq!(fixture.values(counterexample, "c"), [0, 1, 2, 3]);
+    assert_eq!(
+        counterexample.lasso,
+        Some(Lasso {
+            entry: 3,
+            terminal_stutter: true,
+            terminal_stutter_delay: None,
+        })
+    );
 
     let guarded =
         "pre CanInc using v on M::Counter::inc { undefined_remainder(2 - self.value) >= 0 }\n\

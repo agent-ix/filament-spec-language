@@ -530,10 +530,11 @@ fn a_deadlock_is_bad_for_the_deadlock_item_alone() {
 }
 
 /// FR-338-AC-3's `ContractUndetermined` vector, over the Counter subject with
-/// `pre CanInc { 6 mod (2 - self.value) >= 0 }`: a certificate for `always holds(true)` holding values 0
-/// to 2 is rejected `BadState` at value 2, whose expansion evaluates the
-/// precondition undefined. An atom that is undefined or false at a reached
-/// state is `BadState` there under the rejecting state.
+/// `pre CanInc { odd_value(self.value) }`, `odd_value` a Kernel-checked
+/// function: a certificate for `always holds(true)` holding values 0 to 2 is
+/// rejected `BadState` at value 2, whose expansion evaluates the precondition
+/// undefined. An atom that is undefined or false at a reached state is
+/// `BadState` there under the rejecting state.
 #[trace("TC-525", "FR-338-AC-3")]
 #[test]
 fn an_undetermined_contract_or_a_failing_atom_is_a_bad_state() {

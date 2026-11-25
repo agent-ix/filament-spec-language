@@ -13,6 +13,11 @@ use fsl_replay::{HyperCounterexample, HyperOutcome, HyperStep};
 
 use crate::counter::ZERO;
 use crate::hyper_world::{high, low, World};
+
+/// A Kernel-checked remainder function callable from a Linked match body.
+pub(crate) const KERNEL_MOD_FUNCTION: &str =
+    "function q using v(x: Integer): Integer pure { 1 mod x }\n";
+
 /// The counterexample of a violated run.
 pub(crate) fn refuted(outcome: HyperOutcome) -> HyperCounterexample {
     match outcome {

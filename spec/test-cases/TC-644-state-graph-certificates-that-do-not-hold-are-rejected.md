@@ -20,7 +20,7 @@ Scope: FR-169-AC-10, FR-169-AC-11, FR-169-AC-15.
 ## Test Procedure
 
 Fixtures: TC-643's `ReachesTwo` and sequenced `InOneWay` certificates;
-FR-168-AC-5's item; §7.3's unsequenced job; TC-592's guarded subject (FR-167-AC-2).
+FR-168-AC-5's item; §7.3's unsequenced job; FR-169-AC-11's guarded subject.
 
 1. Check `ReachesTwo`'s certificate with `(2, 2)` removed, with the rank of
    `(1, 0)` set to 2, and with `(0, 0)` unranked.
@@ -29,7 +29,7 @@ FR-168-AC-5's item; §7.3's unsequenced job; TC-592's guarded subject (FR-167-AC
 3. Check an `InOneWay` certificate over the unsequenced job with every
    count 1, and the sequenced certificate with its order reversed.
 4. Check `ReachesTwo`'s certificate with `max_states` 2.
-5. Check a hand-built certificate of TC-592's guarded subject's 3 states, ranked 2, 1
+5. Check a hand-built certificate of FR-169-AC-11's guarded subject's 3 states, ranked 2, 1
    and 0 for `ReachesTwo`, over the guarded subject, and over the same
    subject without the guard.
 6. Settle each step's result.

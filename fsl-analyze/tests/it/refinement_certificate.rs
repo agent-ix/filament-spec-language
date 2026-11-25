@@ -819,12 +819,12 @@ fn a_horizon_at_a_terminal_state_gives_an_accepted_certificate() {
     );
 }
 
-/// FR-149 Behavior "Successors" (TC-556): a position whose expansion leaves
-/// a contract undetermined has unknown successors, so it is rejected
-/// `BadState`. Here `peek`'s precondition is undefined at `value` 2, and
-/// `successors()` drops the transition, so only `BadState` stops a
-/// certificate that leaves it out.
-#[trace("TC-556")]
+/// FR-149 Behavior "Successors" and FR-149-AC-7's `BadState` fixture
+/// (TC-556): a position whose expansion leaves a contract undetermined has
+/// unknown successors, so it is rejected `BadState`. Here `peek`'s
+/// precondition is undefined at `value` 2, and `successors()` drops the
+/// transition, so only `BadState` stops a certificate that leaves it out.
+#[trace("TC-556", "FR-149-AC-7")]
 #[test]
 fn an_undetermined_contract_is_a_bad_state() {
     let (certificate, _) = certificate(&safety_only());
