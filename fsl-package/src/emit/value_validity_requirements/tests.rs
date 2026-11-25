@@ -636,3 +636,21 @@ fn records_of_a_shared_application_follow_the_owner_walk() {
         .collect();
     assert_eq!(expressions, [0, 1]);
 }
+
+/// FSpec FR-322 "Expression occurrence ordinals", FR-825-AC-11: mutual
+/// recursive functions reuse the same bounded decrement and guard shape.
+/// Their guarded range records must still emit and pass strict admission.
+#[trace("FR-825-AC-11", "FR-322", "FR-062-AC-17")]
+#[test]
+fn bounded_mutual_recursion_emits_guarded_range_records() {
+    let (_, _, admitted, records) = emitted_records(
+        "function a using v(n: Int[0, 9]): Integer pure decreases(n) { if n > 0 then b(n - 1) else 0 }\n\
+         function b using v(n: Int[0, 9]): Integer pure decreases(n) { if n > 0 then a(n - 1) else 0 }\n",
+    );
+    assert!(
+        records
+            .iter()
+            .any(|record| !admitted.path_condition(record).is_empty()),
+        "the bounded decrement requirement retains its positive-guard frame"
+    );
+}
