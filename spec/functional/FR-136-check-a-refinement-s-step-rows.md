@@ -51,7 +51,7 @@ pub struct StepRow { pub class: StepClass, pub target: StepTarget }
 pub enum StepClass {
     Operation(DeclarationKey),
     AttemptNode(NodeKey),            // takes precedence over its operation's row
-    CompensationTemplate(NodeKey),   // `cattempt` and `cend`
+    CompensationTemplate(NodeKey),   // `cattempt`, `cend`, `cfail`, `ctimeout`, `cexpire`
     ProtocolNode { kind: ProtocolStepKind, node: NodeKey }, // recommend, event, send, receive, fork, join, timeout, finish
     Channel { kind: ChannelStepKind, channel: NodeKey },    // duplicate, lose
     Role { kind: RoleStepKind, role: NodeKey },             // spawn, retire
@@ -108,10 +108,11 @@ pub enum StepTarget {
 
 - The concrete alias `<C>` of the header (FR-135) names the concrete model
   and never a protocol. The step rows select the protocol: a row whose left
-  side is `<C>::<protocol>::<name>`, `fork`, `join`, `cend`, `duplicate`,
-  `lose`, `spawn` or `retire` followed by that form, or `activate
-  <C>::<protocol>` (FSpec FR-432), names the protocol clause `<protocol>`,
-  a protocol clause of the declaring package whose roles act on `<C>`.
+  side is `<C>::<protocol>::<name>`, `fork`, `join`, `cend`, `cfail`,
+  `ctimeout`, `cexpire`, `duplicate`, `lose`, `spawn` or `retire` followed
+  by that form, or `activate <C>::<protocol>` (FSpec FR-432), names the
+  protocol clause `<protocol>`, a protocol clause of the declaring package
+  whose roles act on `<C>`.
 - S3 SHALL classify a row's source by resolving the segment after `<C>::`
   among the concrete model's object types and the protocol clauses of the
   declaring package (FR-310 builds the source unclassified): a type makes it
@@ -213,13 +214,15 @@ subject until the checked clause is available meets the same rule.
 
 - When the rows select a concrete protocol (above), the checker SHALL
   require one row for every concrete step class of that protocol
-  (ADR-027 ST-1 to ST-15):
+  (ADR-027 ST-1 to ST-18):
   - an `attempt` step SHALL be covered by its operation's row or by a row
     naming its attempt node, and the node row SHALL take precedence for that
     node;
   - a `cattempt` step SHALL be covered by its operation's row or by a row
-    naming its compensation template, and a `cend` step by the template's
-    row;
+    naming its compensation template;
+  - each compensation template SHALL have a template row of its own for each
+    of `cend`, `cfail`, `ctimeout` and `cexpire`: these steps apply no
+    operation (FSpec FR-432, FR-736);
   - each `recommend` node SHALL have its own node row: a row of the
     recommended operation does not cover it, because a `recommend` step
     applies no operation and changes no state (FSpec FR-432, FR-822);
@@ -301,7 +304,7 @@ subject until the checked clause is available meets the same rule.
 
 ## Dependencies
 
-- ADR-020 §1 RM-5 and §11 RU-1; ADR-027 §2 ST-1 to ST-15, PR-1 and RU-5.
+- ADR-020 §1 RM-5 and §11 RU-1; ADR-027 §2 ST-1 to ST-18, PR-1 and RU-5.
 - [FR-135](FR-135-check-a-refinement-declaration-s-subjects-and-state-mapping.md),
   [FR-103](FR-103-admit-model-operations-and-frames-on-the-spine.md).
 - ADR-027 SE-4 (the resolved memory model of an outermost `parallel`).

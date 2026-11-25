@@ -959,9 +959,11 @@ fn impl_parallel_protocol() -> String {
 }
 
 /// FR-147-AC-8 (TC-552 step 8; the `timeout`, `cattempt`, `cend` and
-/// `activate` classes are `the_timeout_cattempt_cend_and_activate_classes_resolve`):
-/// each class spells and resolves over `Full` and makes exactly its own class
-/// internal, in the byte order of the alias-free spellings.
+/// `activate` classes are `the_timeout_cattempt_cend_and_activate_classes_resolve`,
+/// and the `cfail`, `ctimeout` and `cexpire` classes
+/// `the_cfail_ctimeout_and_cexpire_classes_resolve`): each class spells and
+/// resolves over `Full` and makes exactly its own class internal, in the byte
+/// order of the alias-free spellings.
 #[trace("TC-552", "FR-147-AC-8")]
 #[test]
 fn each_class_spells_and_resolves_over_a_protocol_that_has_it() {
@@ -1102,10 +1104,10 @@ fn the_timeout_cattempt_cend_and_activate_classes_resolve() {
     assert_eq!(only(&found).code_and_cause(), MISSING);
 }
 
-/// FSpec FR-432-AC-8: the `cfail`, `ctimeout` and `cexpire` entries of a
-/// compensation template spell and resolve, each to its own class, and name a
-/// template only.
-#[trace("FSpec-TC-386", "FSpec-FR-432-AC-8")]
+/// FR-147-AC-8 (TC-552 step 8) and FSpec FR-432-AC-8: the `cfail`, `ctimeout`
+/// and `cexpire` entries of a compensation template spell and resolve, each to
+/// its own class, and name a template only.
+#[trace("TC-552", "FR-147-AC-8", "FSpec-TC-386", "FSpec-FR-432-AC-8")]
 #[test]
 fn the_cfail_ctimeout_and_cexpire_classes_resolve() {
     let unit = format!("{}{}", rich(), refinement("Spec", "Rich"));

@@ -1006,8 +1006,15 @@ fn a_template_a_trigger_and_event_nodes_need_their_own_rows() {
     let graph = checks(&unit(REFUNDS, REFUND_ROWS));
     let refinement = only_refinement(&graph);
     let classes: Vec<&StepClass> = refinement.steps().iter().map(|row| &row.class).collect();
-    assert!(classes.contains(&&StepClass::CompensationEnd("Refund".to_owned())));
-    assert!(classes.contains(&&StepClass::Trigger));
+    for class in [
+        StepClass::CompensationEnd("Refund".to_owned()),
+        StepClass::CompensationFail("Refund".to_owned()),
+        StepClass::CompensationTimeout("Refund".to_owned()),
+        StepClass::CompensationExpire("Refund".to_owned()),
+        StepClass::Trigger,
+    ] {
+        assert!(classes.contains(&&class), "{class:?} in {classes:?}");
+    }
     assert_eq!(
         classes
             .iter()
@@ -1027,6 +1034,21 @@ fn a_template_a_trigger_and_event_nodes_need_their_own_rows() {
             "step cend M::Refunds::Refund -> stutter;",
             RowClass::Template,
             "cend M::Refunds::Refund",
+        ),
+        (
+            "step cfail M::Refunds::Refund -> stutter;",
+            RowClass::Template,
+            "cfail M::Refunds::Refund",
+        ),
+        (
+            "step ctimeout M::Refunds::Refund -> stutter;",
+            RowClass::Template,
+            "ctimeout M::Refunds::Refund",
+        ),
+        (
+            "step cexpire M::Refunds::Refund -> stutter;",
+            RowClass::Template,
+            "cexpire M::Refunds::Refund",
         ),
         (
             "step activate M::Refunds -> stutter;",
