@@ -8,7 +8,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use filament_exact::{
     CollectionKind, FieldValue, Integer, ObjectId, ObjectReference, UniverseId, Value, ValueType,
-    compare_keys,
 };
 
 use fsl_foundation::diagnostic::Code;
@@ -3572,6 +3571,33 @@ fn snapshot_field_path(population: usize, object: usize, field: &str) -> String 
     )
 }
 
+#[ix_trace_rs::implements("FR-106")]
+fn object_field_values_match(
+    types: &TypeEnvironment,
+    record_keys: &BTreeMap<String, filament_exact::NodeKey>,
+    effective_type: &filament_exact::EffectiveId,
+    left: &RawObject,
+    right: &RawObject,
+) -> bool {
+    let Some(attributes) = types.attributes(effective_type.clone()) else {
+        return false;
+    };
+    attributes.into_iter().all(|attribute| {
+        let name = attribute.field().name();
+        let (Some(left), Some(right)) = (
+            raw_field(&left.fields, name),
+            raw_field(&right.fields, name),
+        ) else {
+            return false;
+        };
+        left.equals_by(
+            right,
+            Some(attribute.field().value_type()),
+            &|identity, field| record_field_type(types, record_keys, identity, field),
+        )
+    })
+}
+
 /// Whether an admitted value type contains a Clock reference, including a
 /// reference nested in a composite, option, collection, or map value.
 fn value_type_contains_clock(value_type: &ValueType, types: &TypeEnvironment) -> bool {
@@ -3693,8 +3719,9 @@ pub(super) fn admit_population_values<'t>(
     let mut listed = super::relationships::Listed::new();
     let mut completeness = BTreeMap::new();
     let mut keys_by_population: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut object_owners: BTreeMap<(filament_exact::EffectiveId, String), (String, usize)> =
+    let mut object_owners: BTreeMap<(filament_exact::EffectiveId, String), (String, usize, usize)> =
         BTreeMap::new();
+    let record_keys = record_keys(views);
     let mut references = References::over(views, types, populations)?;
     references.document = Some(document.identity.clone());
     let mut out_of_range: Vec<OutOfRange> = Vec::new();
@@ -3819,7 +3846,9 @@ pub(super) fn admit_population_values<'t>(
             let mut duplicate_owner = None;
             if ObjectId::new(&object.key).is_ok() {
                 let owner_identity = (effective_type.clone(), object.key.clone());
-                if let Some((other_population, owner_index)) = object_owners.get(&owner_identity) {
+                if let Some((other_population, owner_population_index, owner_object_index)) =
+                    object_owners.get(&owner_identity)
+                {
                     if other_population != &entry.population {
                         if object_type_owns_clock(views, types, &effective_type) {
                             return Err(population_qualified_identity_refusal(
@@ -3829,10 +3858,13 @@ pub(super) fn admit_population_values<'t>(
                                 population_index,
                             ));
                         }
-                        duplicate_owner = Some(*owner_index);
+                        duplicate_owner = Some((*owner_population_index, *owner_object_index));
                     }
                 } else {
-                    object_owners.insert(owner_identity, (entry.population.clone(), objects.len()));
+                    object_owners.insert(
+                        owner_identity,
+                        (entry.population.clone(), population_index, object_index),
+                    );
                 }
             }
             // 6.4: a declared field missing (`missing-member`), then an
@@ -4009,12 +4041,21 @@ pub(super) fn admit_population_values<'t>(
                 attributes.push((name, field_value));
             }
 
-            if let Some(owner_index) = duplicate_owner {
-                let Some((_, owner_attributes)) = objects.get(owner_index) else {
+            if let Some((owner_population_index, owner_object_index)) = duplicate_owner {
+                let Some(owner_object) = populations
+                    .get(owner_population_index)
+                    .and_then(|population| population.objects.get(owner_object_index))
+                else {
                     return Err(fault("population-identity-owner-already-admitted"));
                 };
-                if !field_values_match(owner_attributes, &attributes) {
-                    let Some((other_population, _)) =
+                if !object_field_values_match(
+                    types,
+                    &record_keys,
+                    &effective_type,
+                    owner_object,
+                    object,
+                ) {
+                    let Some((other_population, _, _)) =
                         object_owners.get(&(effective_type.clone(), object.key.clone()))
                     else {
                         return Err(fault("population-identity-owner-retained"));
@@ -4086,24 +4127,6 @@ pub(super) fn admit_population_values<'t>(
         out_of_range,
         read_contexts,
     })
-}
-
-fn field_values_match(left: &[(&str, FieldValue)], right: &[(&str, FieldValue)]) -> bool {
-    left.len() == right.len()
-        && left
-            .iter()
-            .zip(right)
-            .all(|((left_name, left_value), (right_name, right_value))| {
-                left_name == right_name
-                    && match (left_value, right_value) {
-                        (FieldValue::Present(left), FieldValue::Present(right)) => {
-                            compare_keys(left, right) == Some(std::cmp::Ordering::Equal)
-                        }
-                        (FieldValue::Absent, FieldValue::Absent)
-                        | (FieldValue::Null, FieldValue::Null) => true,
-                        _ => false,
-                    }
-            })
 }
 
 /// Whether the declaration `key` of `view` is a state machine (FR-208).

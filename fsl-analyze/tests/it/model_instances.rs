@@ -74,12 +74,21 @@ fn object_type(name: &str, supertypes: &[&str]) -> Json {
     let identity = ident(name);
     let fields: Vec<Json> = if name == "Animal" {
         let age = ident("Animal/age");
-        vec![json!({
-            "identity": age, "name": "age", "typeRef": ident("Level"),
-            "presence": "required", "nullable": false, "defaultKind": "none",
-            "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
-            "origin": origin(&age),
-        })]
+        let weight = ident("Animal/weight");
+        vec![
+            json!({
+                "identity": age, "name": "age", "typeRef": ident("Level"),
+                "presence": "required", "nullable": false, "defaultKind": "none",
+                "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+                "origin": origin(&age),
+            }),
+            json!({
+                "identity": weight, "name": "weight", "typeRef": "ix://filament/native/Float64",
+                "presence": "required", "nullable": false, "defaultKind": "none",
+                "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+                "origin": origin(&weight),
+            }),
+        ]
     } else {
         Vec::new()
     };
@@ -192,7 +201,10 @@ fn world(populations: &[(&str, &[&str])], held: &[Held<'_>]) -> World {
                 .iter()
                 .map(|(key, type_name)| {
                     let fields = if matches!(*type_name, "Animal" | "Dog" | "Cat") {
-                        json!({"age": {"integer": "5"}})
+                        json!({
+                            "age": {"integer": "5"},
+                            "weight": {"kind": "float64", "bits": "3ff0000000000000"}
+                        })
                     } else {
                         json!({})
                     };
@@ -1027,6 +1039,50 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
             }) if stats.product_states == 0
         ),
         "{no_key_result:?}"
+    );
+}
+
+#[trace("TC-520", "FR-125-AC-13")]
+#[test]
+fn model_instancing_compares_shared_float_fields_by_wire_bits() {
+    let populations = &[P1, P2];
+    let held = &[
+        ("P1", &[("c", "Animal")][..]),
+        ("P2", &[("c", "Animal")][..]),
+    ];
+    let bounded_universes = || universes(&[("P1", &["c"]), ("P2", &["c"])]);
+
+    let agreeing = world(populations, held);
+    let (package, _) = agreeing.clause("Animal");
+    assert!(ModelSystem::new(agreeing.subject(&package, bounded_universes()).simulation).is_ok());
+
+    let mut differing = world(populations, held);
+    let identity = differing.initial[0].clone();
+    let mut snapshot: Json = serde_json::from_slice(
+        differing
+            .snapshots
+            .get(&identity)
+            .expect("initial snapshot"),
+    )
+    .expect("snapshot JSON");
+    snapshot["populations"][1]["objects"][0]["fields"]["weight"]["bits"] =
+        json!("3ff0000000000001");
+    differing.snapshots.insert(
+        identity,
+        serde_json::to_vec(&snapshot).expect("snapshot JSON"),
+    );
+    let (package, _) = differing.clause("Animal");
+    let refusal = ModelSystem::new(differing.subject(&package, bounded_universes()).simulation)
+        .err()
+        .expect("different Float64 bit patterns are not identical records");
+    let AdmissionFailure::Refused(record) = refusal else {
+        panic!("different Float64 records retain the typed refusal: {refusal:?}");
+    };
+    assert_eq!(record.catalog.code(), "unknown_required_feature");
+    assert_eq!(record.catalog.cause(), "unsupported-feature");
+    assert_eq!(
+        record.fields.get("reason").map(String::as_str),
+        Some("population-qualified-object-identity")
     );
 }
 
