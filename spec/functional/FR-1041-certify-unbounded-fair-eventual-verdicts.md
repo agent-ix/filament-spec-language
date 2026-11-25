@@ -78,7 +78,8 @@ action `go`, and rejects a document that states 0 there.
   `fairness`, with FR-201's reachability meanings for `targets` and
   `optimization`. The document SHALL have exactly `identity`, `objective`,
   `kind` (`"exact"`), `values` and `ranking`, with FR-201's strict canonical
-  JSON, `Rational` and `Count` encodings, complete eight-member product keys
+  JSON, `Rational` and `Count` encodings, complete FR-196 product keys in
+  this no-reset profile (the original eight-member representation)
   (monitor, accumulator and pending null), canonical row order and exact
   coverage of the stopped graph (targets absorbing).
 - The document SHALL carry no policy, component list, fair end component or
