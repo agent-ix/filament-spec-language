@@ -26,11 +26,9 @@ use filament_semantic_value::loss::LocatedLoss;
 use filament_semantic_value::stop::Stop;
 use fsl_semantics::check::CheckedGraph;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_eval::value::collections::Iteration;
 
-use crate::kernel::{self, Halt as KernelHalt};
+use crate::kernel::{self, Halt as KernelHalt, KernelState};
 use crate::translate::Op;
-use filament_semantic_value::declaration::TypeEnvironment;
 
 /// Why the backend stopped a run.
 pub(crate) enum Halt {
@@ -65,20 +63,8 @@ pub(crate) struct EntryFrame<'a> {
     failed: u64,
     arguments: *const i64,
     result: i64,
-    values: Vec<filament_exact::Value>,
-    builders: Vec<Vec<filament_exact::Value>>,
-    call_arguments: Vec<Vec<filament_exact::Value>>,
-    call_frames: Vec<(usize, u64)>,
-    frame_depth: u32,
-    live_occurrences: u64,
-    peak_live_occurrences: u64,
-    iterations: Vec<Option<Iteration>>,
-    losses: Vec<LocatedLoss>,
-    meter: &'a mut Meter,
+    state: KernelState<'a>,
     ops: &'a [Op],
-    types: &'a TypeEnvironment,
-    graph: &'a CheckedGraph,
-    environment: Option<&'a ObjectEnvironment>,
     halt: Option<Halt>,
 }
 
@@ -103,20 +89,8 @@ impl<'a> EntryFrame<'a> {
             failed: 0,
             arguments: std::ptr::null(),
             result: 0,
-            values: Vec::new(),
-            builders: Vec::new(),
-            call_arguments: Vec::new(),
-            call_frames: Vec::new(),
-            frame_depth: 0,
-            live_occurrences: initial_live_occurrences,
-            peak_live_occurrences: initial_live_occurrences,
-            iterations: Vec::new(),
-            losses: Vec::new(),
-            meter,
+            state: KernelState::new(meter, graph, environment, initial_live_occurrences),
             ops,
-            types: graph.scope().types(),
-            graph,
-            environment,
             halt: None,
         }
     }
@@ -127,11 +101,11 @@ impl<'a> EntryFrame<'a> {
     }
 
     pub(crate) fn peak_live_occurrences(&self) -> u64 {
-        self.peak_live_occurrences
+        self.state.peak_live_occurrences
     }
 
     pub(crate) fn frame_depth(&self) -> u32 {
-        self.frame_depth
+        self.state.frame_depth
     }
 
     /// The value the entry returned.
@@ -144,8 +118,9 @@ impl<'a> EntryFrame<'a> {
         &mut self,
         value: filament_exact::Value,
     ) -> Result<i64, &'static str> {
-        let index = i64::try_from(self.values.len()).map_err(|_| "jit-value-handle-overflow")?;
-        self.values.push(value);
+        let index =
+            i64::try_from(self.state.values.len()).map_err(|_| "jit-value-handle-overflow")?;
+        self.state.values.push(value);
         Ok(index)
     }
 
@@ -153,7 +128,7 @@ impl<'a> EntryFrame<'a> {
     pub(crate) fn value(&self, handle: i64) -> Option<&filament_exact::Value> {
         usize::try_from(handle)
             .ok()
-            .and_then(|index| self.values.get(index))
+            .and_then(|index| self.state.values.get(index))
     }
 
     /// Clone the exact value returned in the result register.
@@ -163,7 +138,7 @@ impl<'a> EntryFrame<'a> {
 
     /// The loss records produced by completed kernel operations.
     pub(crate) fn losses(&self) -> &[LocatedLoss] {
-        &self.losses
+        &self.state.losses
     }
 }
 
@@ -190,26 +165,7 @@ unsafe extern "C" fn shim(frame: *mut c_void, node: i64, a: i64, b: i64) -> i64 
         frame.failed = 1;
         return 0;
     };
-    let EntryFrame {
-        meter,
-        types,
-        graph,
-        environment,
-        values,
-        builders,
-        call_arguments,
-        call_frames,
-        frame_depth,
-        live_occurrences,
-        peak_live_occurrences,
-        iterations,
-        losses,
-        ..
-    } = frame;
-    match kernel::run(
-        op, a, b, meter, types, graph, *environment, values, builders, call_arguments,
-        call_frames, frame_depth, live_occurrences, peak_live_occurrences, iterations, losses,
-    ) {
+    match kernel::run(op, a, b, &mut frame.state) {
         Ok(value) => value,
         Err(KernelHalt::Stop(stop)) => {
             frame.halt = Some(Halt::Stop(stop, op.location.clone()));
