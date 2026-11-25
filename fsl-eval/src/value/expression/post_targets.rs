@@ -105,6 +105,15 @@ pub(super) fn targets<'a, N: NodeSource<'a>>(
                     None => None,
                 }
             }
+            NodeKind::IeeeNumericEquality(left, right) => {
+                match oriented(conjunct.at(*left), conjunct.at(*right)) {
+                    Some((field, e)) => Some(PostTarget::Equation {
+                        field,
+                        value: completed(e)?,
+                    }),
+                    None => None,
+                }
+            }
             NodeKind::Order(operator, _, left, right) => {
                 let (left, right) = (conjunct.at(*left), conjunct.at(*right));
                 if let (Some(field), true) = (self_field(left), pre_only(right)) {

@@ -14,13 +14,15 @@ use std::convert::Infallible;
 use std::rc::Rc;
 
 use filament_checked::key::DeclarationKey;
-use filament_exact::{Integer, ObjectReference, OrderingOperator, Value, ValueType};
+use filament_exact::{
+    IeeeValue, IeeeWidth, Integer, ObjectReference, OrderingOperator, Value, ValueType,
+};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::model::domain_package::OperationEffect;
 use fsl_semantics::model::observation::{
     AdmissionUsage, AdmittedObservations, Observation, SelfKind,
 };
-use fsl_semantics::model::population::{decide_frame, FrameDecision, FrameObject, FrameStop};
+use fsl_semantics::model::population::{FrameDecision, FrameObject, FrameStop, decide_frame};
 use fsl_semantics::model::state::{ModelState, StateField, StateObject};
 use quire_canonical::Limits as CanonicalLimits;
 
@@ -28,14 +30,14 @@ pub(super) mod judge;
 #[cfg(test)]
 mod narrowing_tests;
 
-use super::contracts::{conjunction, operation_conjunction, Conjunction};
+use super::contracts::{Conjunction, conjunction, operation_conjunction};
 use super::domain::{Domain, Odometer};
-use super::encode::{self, value_enc, values_equal, Typing};
+use super::encode::{self, Typing, value_enc, values_equal};
 use super::footprints::ReadCheck;
-use super::walk::{stop, Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk};
+use super::walk::{Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk, stop};
 use super::{
-    handler_anchor, identity_limits, state_document, Application, ClauseInfo, ClauseOutcome,
-    FieldChange, ModelFinding, ModelSystem, StepEffect, WrittenSlots, BROKEN, EXHAUSTED,
+    Application, BROKEN, ClauseInfo, ClauseOutcome, EXHAUSTED, FieldChange, ModelFinding,
+    ModelSystem, StepEffect, WrittenSlots, handler_anchor, identity_limits, state_document,
 };
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::Footprint;
@@ -916,6 +918,17 @@ impl Allowed {
                         .into_iter()
                         .collect(),
                     (Some(_), _) => Vec::new(),
+                    (None, Value::Float(target)) => (0..domain.len())
+                        .filter(|index| {
+                            domain.nth(*index).is_some_and(|candidate| {
+                                matches!(candidate, Value::Float(value)
+                                    if value.width() == target.width()
+                                        && (value.bits() == target.bits()
+                                            || (value.bits() & float_magnitude_mask(value.width()) == 0
+                                                && target.bits() & float_magnitude_mask(target.width()) == 0)))
+                            })
+                        })
+                        .collect(),
                     (None, _) => (0..domain.len())
                         .filter(|index| {
                             domain
@@ -1396,6 +1409,17 @@ impl Run<'_, '_, '_> {
                 let domain = self
                     .walk
                     .field_domain(&member.type_key, field, &post_references)
+                    .or_else(|| {
+                        let targets = plan.narrowing?.get(&field.name)?;
+                        let [Some(Value::Float(target))] = targets.equations.as_slice() else {
+                            return None;
+                        };
+                        let ValueType::Float(float_type) = &field.value_type else {
+                            return None;
+                        };
+                        (target.width() == float_type.width())
+                            .then(|| Domain::Listed(solved_float_values(*target)))
+                    })
                     .ok_or_else(|| stop(BROKEN))?;
                 // `None` marks a field whose targets send the whole
                 // application back to enumeration.
@@ -1711,18 +1735,23 @@ impl Run<'_, '_, '_> {
                     .get(&row.population)
                     .and_then(|objects| objects.get(&row.key))
                     .and_then(|object| object.fields.get(&field.key));
-                // A field with no finite domain (an `Integer`, a string, an
-                // unbounded collection) is bounded by no frame that grants it,
-                // so it cannot be written here.
-                let Some(domain) = self.walk.value_domain(&field.value_type, &references) else {
-                    continue;
-                };
+                // A field with no finite domain is writable only when the
+                // frame accepts a direct float probe; solved candidates still
+                // come from the postcondition, not from this probe.
+                let domain = self.walk.value_domain(&field.value_type, &references);
                 let mut different: Option<Option<Value>> = None;
                 if field.optional && current.is_some() {
                     different = Some(None);
-                } else {
+                } else if let Some(domain) = domain {
                     for index in 0..domain.len().min(8) {
                         let value = domain.nth(index).ok_or_else(|| stop(BROKEN))?;
+                        if current.is_none_or(|held| !values_equal(held, &value)) {
+                            different = Some(Some(value));
+                            break;
+                        }
+                    }
+                } else {
+                    for value in float_probe_values(&field.value_type, current) {
                         if current.is_none_or(|held| !values_equal(held, &value)) {
                             different = Some(Some(value));
                             break;
@@ -2254,6 +2283,53 @@ impl Run<'_, '_, '_> {
         }
         Ok(())
     }
+}
+
+/// Finite, directly solved values for a float assignment. Numeric equality
+/// admits both signed zero encodings, while nonzero values retain their exact
+/// IEEE representation.
+fn solved_float_values(value: filament_exact::IeeeValue) -> Vec<Value> {
+    if value.bits() & float_magnitude_mask(value.width()) != 0 {
+        return vec![Value::Float(value)];
+    }
+    match value.width() {
+        IeeeWidth::Binary32 => vec![
+            Value::Float(IeeeValue::binary32(0)),
+            Value::Float(IeeeValue::binary32(1 << 31)),
+        ],
+        IeeeWidth::Binary64 => vec![
+            Value::Float(IeeeValue::binary64(0)),
+            Value::Float(IeeeValue::binary64(1 << 63)),
+        ],
+    }
+}
+
+fn float_magnitude_mask(width: IeeeWidth) -> u64 {
+    match width {
+        IeeeWidth::Binary32 => 0x7fff_ffff,
+        IeeeWidth::Binary64 => 0x7fff_ffff_ffff_ffff,
+    }
+}
+
+/// Probe values used only to ask the frame decision whether a float field can
+/// change. Candidate values still come from the postcondition's solved value.
+fn float_probe_values(value_type: &ValueType, current: Option<&Value>) -> Vec<Value> {
+    let ValueType::Float(float_type) = value_type else {
+        return Vec::new();
+    };
+    let zero = match float_type.width() {
+        IeeeWidth::Binary32 => IeeeValue::binary32(0),
+        IeeeWidth::Binary64 => IeeeValue::binary64(0),
+    };
+    let one = match float_type.width() {
+        IeeeWidth::Binary32 => IeeeValue::binary32(0x3f80_0000),
+        IeeeWidth::Binary64 => IeeeValue::binary64(0x3ff0_0000_0000_0000),
+    };
+    let values = [Value::Float(zero), Value::Float(one)];
+    values
+        .into_iter()
+        .filter(|value| current.is_none_or(|held| !values_equal(held, value)))
+        .collect()
 }
 
 /// Bound the retained outcome collection before allocating another entry.
