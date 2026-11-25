@@ -443,6 +443,27 @@ impl Certification {
     }
 }
 
+/// Verdict reported by the independent SMT cross-check (FSpec FR-349).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CrossCheckVerdict {
+    /// The query is valid.
+    Proved,
+    /// A counterexample exists.
+    Refuted,
+    /// The solver did not decide.
+    Inconclusive,
+}
+
+/// The result of an independent solver run on the same SMT query.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, serde::Deserialize)]
+pub struct CrossCheck {
+    /// The cross-checking tool, for example `z3`.
+    pub tool: String,
+    /// The tool's verdict.
+    pub verdict: CrossCheckVerdict,
+}
+
 /// FSpec FR-243's settlement basis: the closed vocabulary every truth
 /// result carries exactly one of (ADR-031 SW-3, SW-10). Compared by its
 /// exact label.
@@ -896,6 +917,15 @@ impl UnavailabilityCause {
 /// (ADR-013 C-09) and a second spelling of it must be unrepresentable.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InconclusiveCause {
+    /// The primary SMT solver and its independent cross-check disagree.
+    CrossCheckDisagreement {
+        /// The cross-checking tool.
+        tool: String,
+        /// The primary solver's verdict.
+        primary: CrossCheckVerdict,
+        /// The independent solver's verdict.
+        cross_check: CrossCheckVerdict,
+    },
     /// FR-059's recording assessment found an undecided obligation or an
     /// open/contradicted closure premise without a run limit.
     OpenHistory,
@@ -1253,6 +1283,7 @@ impl InconclusiveCause {
     /// The cause's FR-331 wire spelling.
     pub const fn as_str(&self) -> &'static str {
         match self {
+            Self::CrossCheckDisagreement { .. } => "cross-check-disagreement",
             Self::OpenHistory => "open-history",
             Self::KaniVacuousProof => KANI_VACUOUS_PROOF_KIND,
             Self::BoundReached { .. } => "bound-reached",
@@ -1298,6 +1329,7 @@ impl InconclusiveCause {
     /// the nested witness records and failure of a parity disagreement.
     fn measured_bytes(&self) -> usize {
         match self {
+            Self::CrossCheckDisagreement { tool, .. } => tool.len(),
             Self::KaniVacuousProof
             | Self::OpenHistory
             | Self::BoundReached { .. }
@@ -1608,6 +1640,8 @@ pub struct TerminalRecord {
     /// and are completed with the envelope's manifest identity on read.
     backend: Option<BackendId>,
     value: TerminalValue,
+    /// FR-331's independent solver result, defined only for `proved`.
+    cross_check: Option<CrossCheck>,
     replay: Option<ReplayResult>,
     protocol_analysis_key: Option<crate::protocol_analysis::ProtocolAnalysisKey>,
     protocol_analysis_root: Option<crate::RuntimeValuePath>,
