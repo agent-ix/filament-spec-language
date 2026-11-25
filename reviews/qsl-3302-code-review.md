@@ -67,3 +67,9 @@ with the production change (QSL-3302-analyze-filters-2.log) and without it
 - Methods: code-review, rust-review lane (same file). Spec review not run: no spec file changed.
 - Examined: FR-158 Inputs; FR-183 "Undefined evaluation"; FR-176-AC-5; FR-169 V-7 row, FR-169-AC-13; FR-172 "Object parameters"; FR-125 "Instancing"; FR-173 request-writer bullet, FR-173-AC-2/3/4/5; FR-124-AC-11/12; FR-182 V-8 row; FR-281 unsupported disposition; FR-183-AC-8; FR-181-AC-7.
 - Gates seen: workspace check exit 0 on 2f5031cd8f (coder log); 24 named tests pass (coder log); reviewer run QSL-3302-review-analyze-hyper-2f5031cd8f.log, 427 passed, 2 pre-existing failures.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1 (739841f338): `hyper_instances` takes the parameter's `PopulationDomain` and lists only the universe keys of the one population `StateModel::resolved_population` finds at that ordinal and canonical member (the same `population_domains` enumeration S3's `populations_overlapping` and the package form use); every hyper path (S3 `model_check::hyper`, `hyper_route`, `package_hyper`, SMT `encode_hyper_script`, certificate `product.rs`, `graph_hyper`, `hyper_smt_query`, `existential_settle`, `hyper_settle`, `check_match_witness`) passes `&parameter.population`. |

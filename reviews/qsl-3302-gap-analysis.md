@@ -36,3 +36,9 @@ untagged on the head (pre-existing, not removed by this PR).
 - Stubs: none in the diff.
 - Semantic review: done in the code-review lane for the touched criteria only.
 - Plan completion: not assessed
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Round 1 (739841f338): `hyper_parameters::the_adr_clauses_check_with_their_aliases_instances_and_match_conjuncts` carries `#[trace("TC-597", "FR-172-AC-1")]` and asserts each AC-1 clause; `hyper_replay::a_match_witness_is_checked_without_the_body_against_its_instance_and_match` carries `#[trace("TC-608", "FR-183-AC-8")]` and failed on the pre-fix code for the intended reason (the outside-universe witness was re-executed, `InitialState { index: 7, count: 2 }`). |
