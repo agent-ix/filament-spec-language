@@ -26,7 +26,7 @@ use crate::certificate::zone_certificate::CertificateCheckLimits;
 use crate::model_check::limits::{ExactProbLimits, ModelCheckLimits};
 use crate::spine::{default_accounting, SpineLimits, DEFAULT_WORK_UNITS};
 use crate::statistical::{StatisticalLimits, TimedSampling};
-use crate::{SmtEncodingLimits, SmtRunLimits};
+use crate::SmtEncodingLimits;
 
 /// The call's accounting limits (`filament.value.accounting/v1`): each of the
 /// ten counters is an [`AccountingSetting`] named `accounting.<counter>` (FR-255's
@@ -161,6 +161,42 @@ impl SettingLimits for RenderLimits {
             return false;
         }
         self.output_bytes = usize::try_from(bound).unwrap_or(usize::MAX);
+        true
+    }
+}
+
+/// Caller-selected bounds on one SMT solver run (FR-315).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SmtRunLimits {
+    /// Maximum solver steps, in work units.
+    pub max_solver_steps: u64,
+    /// Maximum solver wall-clock time, in whole seconds.
+    pub max_solver_time: u64,
+}
+
+impl Default for SmtRunLimits {
+    fn default() -> Self {
+        Self {
+            max_solver_steps: 100_000_000,
+            max_solver_time: 60,
+        }
+    }
+}
+
+impl SettingLimits for SmtRunLimits {
+    fn bounds(&self) -> Vec<(Setting, u64)> {
+        vec![
+            (Setting::SmtMaxSolverSteps, self.max_solver_steps),
+            (Setting::SmtMaxSolverTime, self.max_solver_time),
+        ]
+    }
+
+    fn set_bound(&mut self, setting: Setting, bound: u64) -> bool {
+        match setting {
+            Setting::SmtMaxSolverSteps => self.max_solver_steps = bound,
+            Setting::SmtMaxSolverTime => self.max_solver_time = bound,
+            _ => return false,
+        }
         true
     }
 }
