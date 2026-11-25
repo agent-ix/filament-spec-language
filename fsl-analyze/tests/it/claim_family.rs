@@ -811,6 +811,12 @@ fn handoff_refusals_are_settled_after_claim_family_is_checked() {
                 "inapplicable-kind",
             ))
         );
+        assert_eq!(
+            record
+                .disposition_detail()
+                .expect("state-clause refusal includes its family detail")["family"],
+            "state-model"
+        );
         assert_eq!(record.backend(), None);
     }
     let temporal_expectations = [
