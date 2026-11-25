@@ -19,23 +19,26 @@ relationships:
 Verify that the run request's `verification_plan` member selects one plan,
 supplies `universe_snapshot`, `initial` and `seed`, and writes the plan run outcome, and that bad
 selections and members refuse at their pointers. Scope: FR-1038-AC-1 and
-FR-1038-AC-2, FR-120-AC-37, FR-752-AC-12 and FR-753-AC-6.
+FR-1038-AC-2, FR-120-AC-37 to FR-120-AC-38, FR-752-AC-12 and FR-753-AC-6.
 
 ## Test Procedure
 
 1. Execute `Release` with `initial`, `seed` 7 and `max_trace_length` 8; then emit it without
    executing.
 2. Send `{"max_trace_length": 8}` with one plan and with two; name `Nope` and `Never`; send `seed` `"7"`.
-3. For the one-plan `Release`, use `test/no-initial`, whose `NoInitial` model declares populations `cells` and `unbounded_cells`, both of `Cell`, and `Cell.value: Int[0, 1]`. The request has no `initial` and is `{"plan":"Release","max_trace_length":8,"universe_snapshot":"universe.json","seed":7}`. The `universe.json` bytes are:
+3. For the successful one-plan `Release`, use `test/no-initial`, whose `NoInitial` model declares only population `cells` of `Cell`, and `Cell.value: Int[0, 1]`. The request has no `initial` and is `{"plan":"Release","max_trace_length":8,"universe_snapshot":"universe.json","seed":7}`. The `universe.json` bytes are:
 
    ```json
-   {"format":"filament.state.snapshot/v1","identity":{"authority":"agent-ix","identity":"ix://test/no-initial/universe"},"observation":"current","anchor":{"kind":"initialization","name":"NoInitial"},"model":{"identity":"test/no-initial"},"populations":[{"population":"ix://test/no-initial/cells","complete":true,"objects":[{"key":"c1","type":"ix://test/no-initial/Cell","fields":{"value":{"integer":"0"}}},{"key":"c2","type":"ix://test/no-initial/Cell","fields":{"value":{"integer":"1"}}}]},{"population":"ix://test/no-initial/unbounded_cells","complete":false,"objects":[]}]}
+   {"format":"filament.state.snapshot/v1","identity":{"authority":"agent-ix","identity":"ix://test/no-initial/universe"},"observation":"current","anchor":{"kind":"initialization","name":"NoInitial"},"model":{"identity":"test/no-initial"},"populations":[{"population":"ix://test/no-initial/cells","complete":true,"objects":[{"key":"c1","type":"ix://test/no-initial/Cell","fields":{"value":{"integer":"0"}}},{"key":"c2","type":"ix://test/no-initial/Cell","fields":{"value":{"integer":"1"}}}]}]}
    ```
 
    Inspect the FR-752 record, its generated cases and reachability domain;
-   repeat the request. Repeat with `cells.complete` false, with an invalid
-   `Cell.value` encoding, with numeric `universe_snapshot`, a missing file,
-   and with a plan that has no state-subject `model_based_test` step.
+   repeat the request. Repeat with an invalid `Cell.value` encoding, with
+   numeric `universe_snapshot`, a missing file, and with a plan that has no
+   state-subject `model_based_test` step. Separately, use a refusal model
+   declaring `cells` followed by `unbounded_cells`, both of `Cell`, with a
+   snapshot containing complete `cells` as above and
+   `{"population":"ix://test/no-initial/unbounded_cells","complete":false,"objects":[]}`.
 
 ## Expected Results
 
@@ -49,7 +52,9 @@ FR-1038-AC-2, FR-120-AC-37, FR-752-AC-12 and FR-753-AC-6.
   `{((c1,0),(c2,0)), ((c1,0),(c2,1)), ((c1,1),(c2,0)), ((c1,1),(c2,1))}`.
   The first seeded initial state is the FR-190 uniform draw at `step` 0,
   `choice` 0; the repeat has a byte-equal record. No key outside `{c1,c2}`
-  or other population is present. With `cells.complete` false, the direct
+  or other population is present. In the separate refusal model, FR-120
+  reports `NotSimulated::RequiresBound` for `unbounded_cells` before state
+  expansion. The direct
   FR-752 call returns refusal `member: subject`, `code: requires_bound`,
   `cause: requires-bound`, `details.domains` containing the ordered FR-120
   root `{key: DomainKey::Population {member_type: {package:"test/no-initial",path:["model","record_value_type","ix://test/no-initial/Cell"],ordinal:0}, ordinal: 1},
