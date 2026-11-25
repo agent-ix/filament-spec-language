@@ -1571,13 +1571,26 @@ fn a_float_ordering_ends_the_path(clause: &str, truth: bool) {
             Some(true),
             "the authored `and` records its true left operand and evaluates the right"
         );
-        assert!(
-            matches!(
-                body.at(*right).kind(),
-                NodeKind::Connective(_, ConnectiveOrigin::Synthesized, _, _)
-            ),
-            "the right operand begins at the Float ordering's synthesized connective"
-        );
+        // The float ordering binds each nontrivial operand before reaching
+        // its synthesized connective, so follow those checked `let` bodies.
+        let mut cursor = *right;
+        loop {
+            let node = body.at(cursor);
+            match node.kind() {
+                NodeKind::Let { body: inner, .. } => cursor = *inner,
+                NodeKind::Connective(Connective::And, ConnectiveOrigin::Synthesized, _, _) => {
+                    assert_eq!(
+                        evaluation.decision(node.location()),
+                        None,
+                        "the walked Float connective is synthesized and records no decision"
+                    );
+                    break;
+                }
+                kind => panic!(
+                    "expected Float's operand binding or synthesized connective, got {kind:?}"
+                ),
+            }
+        }
     }
     assert_eq!(
         derive(&unit, clause, Snapshot::High, "mid"),

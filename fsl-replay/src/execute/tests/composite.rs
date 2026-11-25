@@ -512,6 +512,43 @@ fn tc_921_a_stage_limits_counter_entry_sets_the_budget() {
     assert_eq!(raised.charges(), unlimited.charges());
 }
 
+/// FR-263-AC-5 (TC-921): after the one input node is admitted, the same
+/// accounting entry denies the function's next evaluation charge as an
+/// incomplete no-value result with the literal work-unit limit.
+#[trace("TC-921", "FR-263-AC-5")]
+#[test]
+fn tc_921_an_accounting_stage_limit_stops_execution_without_a_value() {
+    let fixture = fixture(
+        "function p using v(x: Int[0, 9]): Boolean pure { \
+         x < 5 and x >= 0 and x != 8 }",
+    );
+    let mut wire = fixture.input("p", int(3));
+    wire.accounting_limits.work_units = 1;
+    wire.stage_limits
+        .insert("accounting.work_units".to_owned(), 1);
+    let request = ReplayRequest::decode(wire.clone(), ReplayLimits::default()).expect("decodes");
+    assert_eq!(request.accounting_limits().work_units, 1);
+    let result = replay(wire, ReplayLimits::default()).expect("the request is admitted");
+
+    assert!(
+        result.pre_call_limit().is_none(),
+        "the integer argument is admitted"
+    );
+    assert_eq!(result.category(), Category::Incomplete);
+    assert!(matches!(
+        result.disagreement(),
+        Some(crate::result::DisagreementCause::NoValue { .. })
+    ));
+    let limit = result
+        .limit()
+        .expect("evaluation records its denied charge");
+    assert_eq!(limit.limit_kind, filament_exact::LimitKind::WorkUnits);
+    assert_eq!(limit.limit_kind.field(), "work_units");
+    assert_eq!(limit.limit, 1);
+    assert_eq!(limit.consumed, 1);
+    assert_eq!(limit.next_charge, Integer::from(1_i64));
+}
+
 const LEAVES: &str = "enum Color { BLUE, GREEN, RED }\n\
      enum Shade { DARK, LIGHT }\n\
      function ec using v(c: Color): Boolean pure { false }\n\

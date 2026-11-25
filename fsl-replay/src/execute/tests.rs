@@ -1019,7 +1019,7 @@ fn tc_444_arguments_follow_declared_parameter_order() {
 /// refuses before the recompile; one below the source's size stops the
 /// recompile at S1 with `stage_limit_exceeded`; so does an `s3.work_units`
 /// entry of 0 at S3.
-#[trace("TC-444", "FR-098-AC-4")]
+#[trace("TC-444", "FR-098-AC-4", "FR-263-AC-5")]
 #[test]
 fn tc_444_stage_limits_bound_the_recompile() {
     let reader = crate::bounds::DEFAULT_REPLAY_INPUT_BYTES;
@@ -1061,6 +1061,12 @@ fn tc_444_stage_limits_bound_the_recompile() {
     };
     assert_eq!(refusal.stage(), SpineStage::Check);
     assert_eq!(refusal.code(), Code::StageLimitExceeded);
+    let limit = refusal
+        .limit()
+        .expect("the stage refusal retains its limit");
+    assert_eq!(limit.setting().name(), "s3.work_units");
+    assert_eq!(limit.configured_bound(), 0);
+    assert_eq!(limit.actual(), 1);
     assert_eq!(refused.code(), Code::StageLimitExceeded);
 }
 

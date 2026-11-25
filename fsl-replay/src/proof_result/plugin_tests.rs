@@ -827,7 +827,7 @@ fn settle(
 
 /// FR-290-AC-12 and the QSL-977 correctness fix: a value-validity item is not
 /// replayed as the owning function's predicate but as its application claim.
-#[trace("TC-774", "FR-290-AC-12")]
+#[trace("TC-774", "FR-290-AC-2", "FR-290-AC-12")]
 #[test]
 fn tc_774_function_contract_and_application_items_replay() {
     let fixture = fixture();
@@ -892,6 +892,13 @@ fn tc_774_function_contract_and_application_items_replay() {
     assert!(matches!(
         parity.value(),
         TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(_))
+    ));
+
+    let (_, q_x) = declaration(&fixture, "q");
+    let missing_parameter = settle(&context, &p, &bounds, input(q_x, 0));
+    assert!(matches!(
+        missing_parameter.value(),
+        TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(_))
     ));
 
     // The item's identity is the process-provider preimage of its bounds.
