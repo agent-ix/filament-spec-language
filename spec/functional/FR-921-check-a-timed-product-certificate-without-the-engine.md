@@ -54,7 +54,9 @@ share:
 
 1. the route, digital exactly when every clock constraint of every guard and
    time invariant, every timed interval of the claim and every elapsed
-   comparison is non-strict, the transform's `M < c` counting as strict;
+   comparison is non-strict, the transform's `M < c` counting as strict, and
+   the claim's form is one FR-204 Admission "Route" gives the digital MDP;
+   region for every other bounded-window formula, closed or not;
 2. the unit, the scale (FR-196's least common denominator) and each clock's
    cap;
 3. the digital moves, or each region's time successor and each guard's
@@ -70,9 +72,11 @@ share:
 7. the claim monitor of every other bounded-window formula, nested interval
    operators included: its readings at positions only and the pending target
    times it keeps, giving FSpec FR-416's pointwise value (FR-204 "Form
-   shapes" and "Positions"), by code of its own that neither EN-5 nor any
-   crate EN-5 links provides, so a defect in the producer's monitor is not
-   certified;
+   shapes" and "Positions") and FR-196's `["window",residual]` key member,
+   by code EN-5 does not call, sharing no monitor, progression or
+   deadline-advance function with EN-5 (such as fsl-eval's
+   `advance_nested_timed_deadline`), so a defect in the producer's monitor
+   is not certified;
 8. FR-201's targets, decided states, `Prob0`, `Prob1` and tight actions.
 
 ### Not trusted

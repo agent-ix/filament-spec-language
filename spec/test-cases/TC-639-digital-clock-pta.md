@@ -18,7 +18,7 @@ relationships:
 
 Verify the digital MDP for §15.5, its deadline and expected-time results, the workload-resolved DTMC with discrete delays, and every unsupported cause of the route.
 
-Scope: FR-204-AC-1 to FR-204-AC-4 and FR-204-AC-21 to FR-204-AC-25; FR-201-AC-81 to FR-201-AC-84; FR-1042-AC-11.
+Scope: FR-204-AC-1 to FR-204-AC-4 and FR-204-AC-21 to FR-204-AC-26; FR-201-AC-81 to FR-201-AC-84; FR-1042-AC-11.
 
 ## Test Procedure
 
@@ -53,6 +53,7 @@ settlement checks with `FR-204-AC-22` and `FR-204-AC-23`. Tag step 6 with
 - Step 2: `ExactValue{20/9 ms}`; with the strict guard, the region-MDP maximum `20/9 ms` and infimum `10/9 ms`, never `unsupported`.
 - Step 3: `ExactValue{159129/160000}`; under every scheduler the distribution applied, minimum and maximum `159129/160000`; with `exponential` and exact evidence `DelayDistribution` naming `send`.
 - Step 4: the zero-delay variant decided with minimum and maximum `1`; the `always` window decided as a complement with minimum `1/10000` and maximum `1/100`, settling `refuted`.
-- FR-204-AC-21's bounded-window forms: the values and verdicts that criterion states, each derived by hand in FR-204 "Worked example: pointwise values"; predicates are read at positions only, never at a delay move.
+- FR-204-AC-21's bounded-window forms: the values and verdicts that criterion states, each derived by hand in FR-204 "Worked example: pointwise values"; predicates are read at positions only, never at a delay move; the `Step` document with its initial value changed to `1` is rejected `InequalityFails` at the initial product key.
+- FR-204-AC-26: `Gap`'s `always[1 ms, 2 ms] holds(false)` refuted on the dense maximum `1` and minimum `0` with `route: "region"`, and `Retx`'s `always[0 ms, 4 ms] always[2 ms, 2 ms] holds(false)` refuted at `<= 0.95` on the maximum `1`; each test is first shown red on the digital route (maximum `0` and `9/10`).
 - Step 5: the lower document's initial value is 5 ms and its properness ranking is accepted; missing ranking is `Malformed` at `ranking`, and broken progress is `RankBroken` at the first failing product key. The oracle's maximum elapsed value is `+infinity`; the `<= 3 ms` item settles `refuted` only with the replayed finite lower certificate, carries the witness, and carries no infinite `ExactValue`. Without that certificate the infinite engine value alone does not settle `refuted`.
 - Step 6: the lower claims settle `proved` for `One` and every scheduler without an infinite `ExactValue`; partial exploration emits `ValueBounds` with `exploration: Partial`, a finite lower certificate, and `upper: "infinity"`; replay settles the `<= 3 ms` item `refuted` only after accepting that finite lower certificate.
