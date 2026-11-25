@@ -1778,19 +1778,19 @@ fn protocol_package_is_independently_admitted_and_identity_mutations_refuse() {
 
     // Changing the selected source identity makes the existing source-map
     // region refer to a source absent from the lock. Contract IR checks this
-    // region/lock agreement before declaration joins, so the reader reports
-    // invalid-package/invalid-value at the region's source field.
+    // region/lock agreement before declaration joins and reports
+    // invalid-source-map at the region's source field.
     let mut lock = serde_json::from_slice::<Value>(bytes).unwrap();
     lock["lock"]["sources"][0]["identity"] = serde_json::json!("source:foreign");
     let lock_refusal = refusal(lock);
     assert_eq!(
         lock_refusal.code,
-        CheckedPackageRefusalCode::InvalidPackage,
+        CheckedPackageRefusalCode::InvalidSourceMap,
         "the source-map region no longer names a selected lock source: {lock_refusal:?}"
     );
     assert_eq!(
         lock_refusal.cause,
-        Some(CheckedPackageRefusalCause::InvalidValue),
+        None,
         "{lock_refusal:?}"
     );
     assert_eq!(
