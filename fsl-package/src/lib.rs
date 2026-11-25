@@ -437,4 +437,4 @@ pub use package_admission::{
 #[cfg(feature = "std")]
 mod native_join_failure;
 #[cfg(feature = "std")]
-pub use native_join_failure::NativeJoinFailure;
+pub use native_join_failure::{DependencyJoinRefusal, NativeJoinFailure};
