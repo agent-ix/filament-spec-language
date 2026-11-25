@@ -515,7 +515,7 @@ fn fixture_type_key(name: &str) -> NodeKey {
 
 /// FSL's full I2 read of `emission` with the emitted lock's required
 /// features as evidence.
-fn read_back(emission: &Emission) -> Read {
+pub(super) fn read_back(emission: &Emission) -> Read {
     read_with(emission, &read_evidence(emission))
 }
 
@@ -3433,27 +3433,51 @@ const RECURSIVE_DEREF: &str = "function walk using v(g: M::Gadget, n: Int[0, 9])
 
 /// FSpec FR-322-AC-274: a recursion-group member is keyed under its group's
 /// declaration path. A `deref` in a group still gets its body-location row, and
-/// FSL's I2 read returns Verified.
-#[trace("FSpec-FR-146-AC-1", "FSpec-FR-322-AC-274", "FSpec-FR-322-AC-510")]
+/// both FSL's I2 read and the strict reader admit the package.
+#[trace("FSpec-FR-146-AC-1", "FSpec-FR-322-AC-274")]
 #[test]
 fn a_recursion_group_deref_keeps_its_body_location_row() {
     let unit = spine_model_without(&[FIELD_ACCESS, CONFORMING_EQUALITY]) + RECURSIVE_DEREF;
-    let (_emission, wire, read) = emit_model_unit(&unit, None);
+    let (emission, wire, read) = emit_model_unit(&unit, None);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
     let derefs: Vec<&Value> = nodes(&wire)
         .iter()
         .filter(|node| node["body"]["operator"] == "deref")
         .collect();
-    assert_eq!(derefs.len(), 1, "one deref application");
-    let rows = wire["checked_term_data"]["body_locations"]
-        .as_array()
-        .expect("the function has body-location rows");
+    let [deref] = derefs.as_slice() else {
+        panic!("one deref application: {derefs:?}");
+    };
+    assert!(
+        deref.get("recursion_group").is_some(),
+        "the deref is a group member: {deref}"
+    );
+    assert_eq!(deref["node_id"]["path"], json!(["walk"]));
+
+    let mut evidence = emission.evidence().clone();
+    evidence
+        .insert_domain_package_document(
+            package_identity(SPINE_MODEL_DOCUMENT),
+            SPINE_MODEL_DOCUMENT,
+        )
+        .expect("a fresh evidence key");
+    let admitted = match filament_contract_model::read_checked_package(
+        emission.package.bytes(),
+        V2ReadLimits::fixture().for_ir(),
+        &evidence,
+    ) {
+        filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(package) => package,
+        other => panic!("the strict reader admits the package: {other:?}"),
+    };
+    let rows = &admitted
+        .checked_term_data()
+        .expect("the function has body-location rows")
+        .body_locations;
     assert!(
         rows.iter()
-            .any(|row| row["application"] == derefs[0]["node_id"]),
+            .any(|row| serde_json::to_value(&row.application).unwrap() == deref["node_id"]),
         "no body-location row for {}",
-        derefs[0]["body"]
+        deref["body"]
     );
-    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
 }
 
 /// FR-027-AC-9, FR-056-AC-9 (TC-442 step 1): `g = w` over a `Gadget` and the

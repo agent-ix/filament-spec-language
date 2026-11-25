@@ -1026,8 +1026,8 @@ fn unbounded_forall_run_result_uses_the_tagged_boolean_envelope() {
 }
 
 /// FSpec FR-146-AC-1 and AC-4: recursion whose calls sit in a query or a
-/// collection literal, and whose every call edge decreases the measure, is
-/// admitted by `check` and evaluates its declared result.
+/// collection literal is admitted by `check`, and evaluates its declared
+/// result, only when every call edge decreases the measure.
 #[trace("FSpec-TC-191", "FSpec-FR-146-AC-1", "FSpec-FR-146-AC-4")]
 #[test]
 fn recursion_through_queries_and_collections_checks_and_runs() {
@@ -1090,6 +1090,41 @@ fn recursion_through_queries_and_collections_checks_and_runs() {
             stem,
             &format!("{HEADER}{declarations}"),
             &expectation("check", 0),
+        );
+    }
+    // In each mutual pair the edge from b back to a passes `n` unchanged.
+    let refused = [
+        (
+            "quantifier-edge-bad",
+            format!(
+                "{a} {{ if n > 0 then forall(x in s: b(n - 1, s)) else true }}\n\
+                 {b} {{ if n > 0 then exists(x in s: a(n, s)) else false }}\n"
+            ),
+        ),
+        (
+            "collection-literal-edge-bad",
+            "function len using v(s: Sequence<Integer>[0, 4]): Integer pure { 0 }\n\
+             function a using v(n: Int[0, 9]): Integer pure decreases(n) \
+             { if n > 0 then len(sequence[b(n - 1)]) else 0 }\n\
+             function b using v(n: Int[0, 9]): Integer pure decreases(n) \
+             { if n > 0 then len(sequence[a(n)]) else 0 }\n"
+                .to_owned(),
+        ),
+    ];
+    for (stem, declarations) in &refused {
+        write_case(
+            scratch.path(),
+            stem,
+            &format!("{HEADER}{declarations}"),
+            &json!({
+                "verb":"check",
+                "exit_code":20,
+                "category":"refusal",
+                "last_stage":"S3",
+                "code":"undefined_expression",
+                "cause":"unproved-decrease"
+            })
+            .to_string(),
         );
     }
     // b(1) holds because a(0) is true, so a(2) over one element is true.
