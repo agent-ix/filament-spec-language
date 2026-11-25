@@ -33,15 +33,16 @@ production review policy or identity namespace.
 For this example, receipt and acknowledgement are separate event facts. A
 receipt alone does not satisfy the acknowledgement predicate. An acknowledgement
 qualifies only when it is accepted, its reviewer differs from its author, its
-reviewed revision equals the active revision, and a reassigned review has an
-accepted assignment. A qualifying acknowledgement must occur within the
+reviewed source-revision identity equals the active source-revision identity,
+and a reassigned review has an accepted assignment. A qualifying
+acknowledgement must occur within the
 fixture's finite time window. These example rules define the test oracle; they
 do not establish any external acceptance or live workflow state.
 
 ## Inputs
 
-- A Markdown document with one owned `ix:native` fence declaring the example
-  record and temporal clause.
+- A Markdown document with one owned `ix:native` fence declaring the checked
+  review protocol, example record and temporal clause.
 - A `native-run/1` request selecting that clause through `program.extraction`
   and `program.clauses`, and a timestamped trace containing the event records
   and progress assertions described by an acceptance criterion.
@@ -72,11 +73,11 @@ The example uses only synthetic identity values. Let its owned clause be
 `review_acceptance`, its original identity be `synthetic:review-process`, its
 body identity be `synthetic:review-process#review_acceptance`, its clause
 binding name the same clause, and its temporal window be ticks 0 through 5.
-Each event carries process, repository, case, source-revision, attempt,
-author, reviewer and assignment values. A qualifying event also has
-`acknowledged`, `accepted`, `revision_is_current`, and
-`assignment_accepted` facts set true, except that `assignment_accepted` is
-required only when `reassigned` is true.
+Each event carries process, repository, case, source authority, active and
+reviewed source-revision, attempt, event, author, reviewer, assignment and
+provider-event identity values. A qualifying event has `acknowledged` and
+`accepted` set true, equal active and reviewed source-revision identities, and
+an accepted assignment when it is reassigned.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
