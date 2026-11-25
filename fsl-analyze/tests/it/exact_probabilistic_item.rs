@@ -1661,6 +1661,11 @@ fn fair_cyclic_rejects_a_flipped_lower_bellman_direction() {
         &system, claims, &item, &certificate, doc_limits, &cancel,
     )
     .expect("the unchecked fair cyclic document can be written");
+    assert!(document.is_fair_cyclic_mdp());
+    assert_eq!(
+        document.document().optimization,
+        fsl_replay::ProbabilityObjective::Minimum
+    );
     let exact = fsl_replay::write_probability_proof_document(&document, doc_limits, &cancel)
         .expect("the fair cyclic exact profile is writable");
     let wire: serde_json::Value = serde_json::from_slice(&exact).expect("the profile is JSON");
