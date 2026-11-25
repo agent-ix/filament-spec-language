@@ -79,11 +79,43 @@ fn qualify_runs_fspec_formatter_fixture_and_reports_a_qualified_scope() {
 #[test]
 #[trace("TC-881", "FR-353-AC-3")]
 fn qualify_scoped_passing_capability_keeps_all_gate_parts() {
-    let (_fspec, fixture) = fixture_dir();
+    let temp = tempfile::tempdir().unwrap();
+    let corpus = copy_fixture(&temp);
+    let corpus_file = corpus.join("complete-v1.json");
+    let mut value: Value = serde_json::from_slice(&fs::read(&corpus_file).unwrap()).unwrap();
+
+    // TC-880 step 2's control corpus: retain the real passing formatter vector,
+    // and add a second capability whose real formatter result disagrees with
+    // its deliberately changed expected value. First prove that capability
+    // fails in the default scope, then select only the passing capability.
+    let mut failing_coverage = value["coverage"]["primary"][0].clone();
+    failing_coverage["capability_id"] = Value::String("V1-TOOL-005".into());
+    value["coverage"]["primary"]
+        .as_array_mut()
+        .unwrap()
+        .push(failing_coverage);
+    let mut failing_rollup = value["coverage"]["consumer_rollups"][0].clone();
+    failing_rollup["capability_ids"] = serde_json::json!(["V1-TOOL-004", "V1-TOOL-005"]);
+    value["coverage"]["consumer_rollups"] = serde_json::json!([failing_rollup]);
+    let mut failing_vector = value["vectors"][0].clone();
+    failing_vector["id"] = Value::String("V1-TOOL-005-failing-format".into());
+    failing_vector["capability_id"] = Value::String("V1-TOOL-005".into());
+    failing_vector["expected"]["value"] =
+        Value::String("deliberately incorrect expected formatter output\n".into());
+    value["vectors"].as_array_mut().unwrap().push(failing_vector);
+    write_canonical(&corpus_file, &value);
+
+    let control = run(&["qualify", "--corpus", corpus.to_str().unwrap()]);
+    assert_eq!(control.status.code(), Some(1), "{}", utf8(&control.stderr));
+    let control_report: Value = serde_json::from_slice(&control.stdout).expect("JSON report");
+    assert_eq!(control_report["verdict"], "not-qualified");
+    assert_eq!(control_report["scope"], serde_json::json!(["V1-TOOL-004", "V1-TOOL-005"]));
+    assert_eq!(control_report["capabilities"][1]["outcome"], "failed");
+
     let output = run(&[
         "qualify",
         "--corpus",
-        fixture.to_str().unwrap(),
+        corpus.to_str().unwrap(),
         "--capability",
         "V1-TOOL-004",
     ]);
