@@ -99,7 +99,8 @@ request echo carrying `package` where a source request carries `program`.
   request carrying neither `program` nor `package` (`invalid-request` naming
   `program`), both (naming `program`), or `package` beside `libraries`,
   `refinement_internals` or `integer_division` (naming that member), each at
-  stage `request`, exit 20.
+  stage `request`, exit 20. Where such a request also lacks a member FR-1047
+  lists, FR-1047 states which refusal the entry gives.
 - FSL SHALL take the edition, profiles, dependency selections and laws from
   the admitted package's `lock`, so a call evaluates `div` and `rem` under
   the law the package recorded (FR-767), and SHALL resolve every name a
