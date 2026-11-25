@@ -368,7 +368,6 @@ fn composition_views_keep_member_regions_and_owner_bound_targets() {
 #[test]
 fn declared_composites_builds_one_wire_graph_and_preserves_declared_records() {
     use crate::checked_v2::{reset_wire_graph_build_count, wire_graph_build_count};
-    use filament_exact::PathSegment;
 
     for count in [250, 500, 1_000] {
         let declarations = (0..count)
@@ -403,11 +402,9 @@ fn declared_composites_builds_one_wire_graph_and_preserves_declared_records() {
                 "key package at index {index}"
             );
             assert!(
-                composite
-                    .key
-                    .path()
-                    .contains(&PathSegment::Text(name.clone())),
-                "structural key names {name} at N = {count}, index = {index}"
+                composite.key.to_string().contains(&name),
+                "structural key {key} identifies {name} at N = {count}, index = {index}",
+                key = composite.key
             );
             if let Some(previous) = index.checked_sub(1).and_then(|i| actual.get(i)) {
                 assert_ne!(
