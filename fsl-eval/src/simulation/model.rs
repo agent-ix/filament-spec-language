@@ -2567,6 +2567,30 @@ impl<'a> ModelSystem<'a> {
         Ok(instances)
     }
 
+    /// FR-172 Object parameters: the instances of a hyper clause's parameter
+    /// of type `over`, one per key of the universe of each population that
+    /// admits it, whether or not an initial state holds the key. A key listed
+    /// by several such populations is one instance, at its first occurrence in
+    /// canonical population and key order.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::instances`].
+    pub fn hyper_instances(&self, over: &ValueType) -> Result<Vec<ModelInstance>, NotSimulated> {
+        let ValueType::Reference(parameter) = over else {
+            return Ok(Vec::new());
+        };
+        let mut seen = BTreeSet::new();
+        Ok(self
+            .universe_members(parameter)?
+            .filter(|(_, key)| seen.insert(*key))
+            .map(|(population, key)| ModelInstance {
+                population: population.clone(),
+                key: key.to_owned(),
+            })
+            .collect())
+    }
+
     /// Every declared key in each admitting population, including keys no
     /// initial state holds. Populations follow declaration identity text
     /// order and their keys keep the order of each universe list.

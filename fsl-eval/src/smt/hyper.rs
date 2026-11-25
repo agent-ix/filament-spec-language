@@ -244,7 +244,7 @@ pub fn encode_hyper_script(
         let listed = systems
             .get(slot)
             .ok_or_else(|| fault("a system for each alias"))?
-            .instances(&ValueType::Reference(parameter.population.object()))
+            .hyper_instances(&ValueType::Reference(parameter.population.object()))
             .map_err(|_| fault("an instance the identity checks list"))?;
         let bound = listed
             .into_iter()

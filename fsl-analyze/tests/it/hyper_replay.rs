@@ -296,7 +296,7 @@ fn undefined_body_at_the_first_tuple_precedes_the_undefined_guard() {
     assert_ne!(undefined.locus, HyperLocus::Contract("G".to_owned()));
     assert_eq!(
         undefined.variables,
-        [("a".to_owned(), "v".to_owned()), ("b".to_owned(), "v".to_owned())]
+        [("a".to_owned(), "V".to_owned()), ("b".to_owned(), "V".to_owned())]
     );
     assert_eq!(undefined.cause, UndefinedCause::Kernel(Undefined::DivisionByZero));
     assert_eq!(counterexample.traces.len(), 2);
@@ -333,17 +333,22 @@ fn undefined_body_at_the_first_tuple_precedes_the_undefined_guard() {
     assert_eq!(guarded.trace_position, 0);
     assert_eq!(guard_undefined.position, 0);
     assert_eq!(guard_undefined.locus, HyperLocus::Contract("G".to_owned()));
-    assert_eq!(guard_undefined.variables, [("b".to_owned(), "v".to_owned())]);
+    assert_eq!(guard_undefined.variables, [("b".to_owned(), "V".to_owned())]);
     assert_eq!(guard_undefined.state_keys.len(), 1);
     let Some(transition) = &guard_undefined.transition else {
         panic!("the undefined guard names its step transition");
     };
     assert!(transition.operation().contains("/Vault/step\""));
-    assert_eq!(guarded.traces.len(), 1);
-    assert_eq!(guarded.traces[0].variable, "b");
-    assert_eq!(guarded.traces[0].initial, 1);
-    assert!(guarded.traces[0].steps.is_empty());
-    assert_eq!(positions(&defined_world, &guarded, 0), [(1, 0)]);
+    // The locus names `b` alone; FR-183 "Undefined evaluation" still gives
+    // one path per trace variable.
+    assert_eq!(guarded.traces.len(), 2);
+    assert_eq!(guarded.traces[0].variable, "a");
+    assert_eq!(guarded.traces[0].initial, 0);
+    assert_eq!(guarded.traces[1].variable, "b");
+    assert_eq!(guarded.traces[1].initial, 1);
+    assert!(guarded.traces.iter().all(|trace| trace.steps.is_empty()));
+    assert_eq!(positions(&defined_world, &guarded, 0), [(0, 0)]);
+    assert_eq!(positions(&defined_world, &guarded, 1), [(1, 0)]);
 }
 
 /// ADR-023 section 8.2's `Opaque` over `vault`.

@@ -195,7 +195,9 @@ pub(super) fn hyper_item<'a>(
                                 .and_then(|slot| owned.get(slot))
                                 .ok_or_else(|| fault("parameter-alias"))?;
                             let admitted = system
-                                .instances(&ValueType::Reference(parameter.population.object()))
+                                .hyper_instances(&ValueType::Reference(
+                                    parameter.population.object(),
+                                ))
                                 .map_err(|_| fault("parameter-universe"))?;
                             let bound = admitted
                                 .into_iter()

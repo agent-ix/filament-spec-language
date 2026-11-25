@@ -234,7 +234,7 @@ fn check_instance(
         }
         let listed = match ModelSystem::new(subject.simulation.clone()) {
             Ok(system) => system
-                .instances(&ValueType::Reference(parameter.population.object()))
+                .hyper_instances(&ValueType::Reference(parameter.population.object()))
                 .map_err(|_| binding(&parameter.name))?
                 .into_iter()
                 .map(|instance| instance.key)

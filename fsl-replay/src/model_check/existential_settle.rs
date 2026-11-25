@@ -48,7 +48,7 @@ pub fn settle_existential(
         ([], []) => None,
         ([parameter], [(name, key)]) if name == &parameter.name => Some(
             system
-                .instances(&ValueType::Reference(parameter.population.object()))
+                .hyper_instances(&ValueType::Reference(parameter.population.object()))
                 .map_err(|_| ProductClosureRefusal::Input("HP-5-universe"))?
                 .into_iter()
                 .find(|instance| &instance.key == key)

@@ -449,7 +449,7 @@ fn instances(
             .get(slot_of(parameter.alias.as_str())?)
             .ok_or_else(|| fault("a-parameter-names-an-alias-of-the-clause"))?;
         let keys = system
-            .instances(&ValueType::Reference(parameter.population.object()))
+            .hyper_instances(&ValueType::Reference(parameter.population.object()))
             .map_err(not_simulated)?;
         lists.push(
             keys.into_iter()
