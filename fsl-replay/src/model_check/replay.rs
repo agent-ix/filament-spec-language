@@ -69,6 +69,7 @@ use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId, TerminalKeys, TerminalMismatch};
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::observation::DocumentRef;
+use ix_trace_rs::implements;
 
 mod timed;
 #[cfg(test)]
@@ -914,6 +915,7 @@ impl HandoffSupply<'_> {
         )
     }
 
+    #[implements("FR-531-AC-59", "FR-531-AC-60")]
     fn admit_package_with_reader(
         self,
         bytes: &[u8],

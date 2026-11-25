@@ -23,6 +23,7 @@ use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, FieldDeclaration, TypeEnvironment, UnionMemberDeclaration,
 };
 use filament_semantic_value::enumeration::EnumMemberIndex;
+use ix_trace_rs::implements;
 
 use crate::bare::BarePackage;
 use crate::bare_slot::BareSelectionFailure;
@@ -228,6 +229,7 @@ impl BarePackage<'_> {
         self.world_of(true, true)
     }
 
+    #[implements("FR-531-AC-62")]
     fn world_of(
         &self,
         source_objects: bool,

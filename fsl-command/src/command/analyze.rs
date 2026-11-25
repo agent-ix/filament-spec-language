@@ -17,6 +17,7 @@ use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, Sourc
 use fsl_analyze::provider::ProviderOptions;
 use fsl_eval::simulation::protocol::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
 use fsl_semantics::model::observation::DocumentProvision;
+use ix_trace_rs::implements;
 
 use super::limits::CommandLimits;
 use super::settle::Settle;
@@ -393,6 +394,7 @@ fn native_join_cause(failure: fsl_package::NativeJoinFailure) -> RunCause {
 /// FR-531 "Dependency artifact names": a refused artifact name is
 /// `invalid_package` with no cause, never a stage limit. A native join
 /// refusal is [`native_join_cause`]'s.
+#[implements("FR-531-AC-61")]
 pub(super) fn dependency_join_cause(refusal: fsl_package::DependencyJoinRefusal) -> RunCause {
     match refusal {
         fsl_package::DependencyJoinRefusal::Native(failure) => native_join_cause(failure),

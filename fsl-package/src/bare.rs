@@ -25,6 +25,7 @@ use filament_exact::{
     EffectiveId, MemberId, MemberOwner, NodeKey, Origin, OriginalDeclarationKey, Role, UnitId,
 };
 use fsl_foundation::{source::provenance::OccurrenceKey, RequestIndex};
+use ix_trace_rs::implements;
 use serde::{Deserialize, Serialize};
 
 use crate::checked_v2::wire_graph;
@@ -146,6 +147,7 @@ impl<'p> BarePackage<'p> {
     /// is this package's or an attached library's, before anything is joined;
     /// otherwise the original native join denial, without a partially joined
     /// view.
+    #[implements("FR-531-AC-61")]
     pub fn with_dependency_artifacts(
         mut self,
         artifacts: &'p [crate::DependencyArtifact],

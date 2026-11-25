@@ -2,6 +2,7 @@
 //! Original owner refusals from the shared native admission pass.
 
 use fsl_foundation::Code;
+use ix_trace_rs::implements;
 
 /// The owner operation that refused native admission. The original typed cause
 /// is retained; equality exhaustion is never relabelled as a projection error.
@@ -65,6 +66,7 @@ impl DependencyJoinRefusal {
     /// `invalid_package` for a refused name; `None` for a native join
     /// refusal, which carries its own stage diagnostic.
     #[must_use]
+    #[implements("FR-531-AC-61")]
     pub fn code(&self) -> Option<Code> {
         match self {
             Self::Name { .. } => Some(Code::InvalidPackage),

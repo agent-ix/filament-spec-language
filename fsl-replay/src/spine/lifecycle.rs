@@ -110,6 +110,7 @@ use fsl_semantics::model::intake::{
     admit_unit_with_cancel, admit_units_with_cancel, SelectedModel, SelectedModels, UnitIntakeCause,
 };
 use fsl_semantics::value::identity_limit;
+use ix_trace_rs::implements;
 
 use super::subject::StaticSubjectInput;
 use super::{
@@ -4633,6 +4634,7 @@ impl<'a> Resolution<'a> {
 
     /// ADR-015 D-1's steps for one `import` of the unit `raw` names, in the
     /// closure of the unit named `unit_name`: cycle, reuse, selection.
+    #[implements("FR-099-AC-10")]
     fn select_import(
         &mut self,
         raw: &RawSourceRef,

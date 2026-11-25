@@ -17,6 +17,7 @@ use filament_semantic_value::quantity::UnitTable;
 use fsl_semantics::value::{
     admit_unit_graph, DimensionPreimage, NodeOwner, OwnerSelection, OwnerSubject, UnitPreimage,
 };
+use ix_trace_rs::implements;
 
 use crate::checked_v2::wire_graph;
 
@@ -314,6 +315,7 @@ pub(crate) fn read_unit_table(
 ///
 /// [`UnitDefinitionRefusal::Disagreement`] when two views hold unequal
 /// definitions under one node key: neither replaces the other.
+#[implements("FR-531-AC-62")]
 pub(crate) fn world_units(
     package: &crate::bare::BarePackage<'_>,
 ) -> Result<UnitTable, UnitDefinitionRefusal> {
