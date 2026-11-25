@@ -14,8 +14,8 @@
 //! result by hand); its settlement from a replay result that reproduces the
 //! undefined value is.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use filament_exact::{Cancel, CancelCause, Undefined};
 use filament_semantic_value::catalog::Category;
