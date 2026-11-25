@@ -141,6 +141,29 @@ fn fixture_s_m_emits_the_selected_and_source_object_routes() {
     let wire = wire(&emission);
     source_object_node(&wire, "Order");
     source_object_node(&wire, "Sub");
+    // One correspondence node, for the selected model: the source model is no
+    // model selection and contributes none.
+    let correspondence: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "model_correspondence")
+        .collect();
+    let [selected] = correspondence.as_slice() else {
+        panic!("one model correspondence node: {correspondence:?}");
+    };
+    let declarations: Vec<&str> = selected["body"]["members"]
+        .as_array()
+        .expect("the correspondence body is an aggregate")
+        .iter()
+        .filter_map(|member| member["value"].as_str())
+        .filter(|value| value.starts_with("ix://"))
+        .collect();
+    assert!(declarations.contains(&"ix://test/orders/Order"));
+    assert!(
+        declarations
+            .iter()
+            .all(|declaration| declaration.starts_with("ix://test/orders/")),
+        "only the selected model's declarations: {declarations:?}"
+    );
 }
 
 fn correspondence_fixture(diamond: bool) -> (Emission, Vec<u8>) {
