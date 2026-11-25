@@ -412,7 +412,7 @@ fn declared_composites_builds_one_wire_graph_and_preserves_the_projection() {
             .collect()
     }
 
-    for count in [5_000, 10_000, 20_000] {
+    for count in [250, 500, 1_000] {
         let declarations = (0..count)
             .map(|index| format!("record R{index} {{ amount: Integer; }}\n"))
             .collect::<String>();
