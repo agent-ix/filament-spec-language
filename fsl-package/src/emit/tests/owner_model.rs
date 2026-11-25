@@ -133,19 +133,17 @@ fn a_clause_names_the_object_type_its_over_input_references() {
     assert_eq!(clause["dependencies"], Value::Array(expected));
 
     let position = clause_position(wire);
-    let slot = clause["node_id"]["path"][1]["operand"]
+    let written = &nodes(&lowered.raw)[position]["node_id"]["path"];
+    let slot = written[1]["operand"]
         .as_u64()
         .expect("the owner operand slot");
-    assert_eq!(
-        clause["node_id"]["path"],
-        json!(["Flow", {"operand": slot}])
-    );
+    assert_eq!(*written, json!(["Flow", {"operand": slot}]));
     let owner_index = nodes(wire)
         .iter()
         .position(|node| node["node_id"] == owner["node_id"])
         .expect("the owner is in the graph");
     assert_eq!(
-        wire["semantic_graph"]["operand_rows"][position][slot as usize],
+        lowered.raw["semantic_graph"]["operand_rows"][position][slot as usize],
         json!(owner_index)
     );
 

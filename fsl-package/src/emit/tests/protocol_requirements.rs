@@ -333,11 +333,11 @@ fn requirement_order_does_not_change_the_emitted_set() {
     assert!(rows
         .windows(2)
         .all(|pair| pair[0].required_temporal < pair[1].required_temporal));
+    // A row names the clause by its structural id; the wire writes the owner
+    // operand in the clause path as a graph index.
+    let clause_id = checked_node_id_of(&graph.key_of_value(&clause["node_id"]).unwrap());
     for row in rows {
-        assert_eq!(
-            serde_json::to_value(&row.clause).unwrap(),
-            clause["node_id"]
-        );
+        assert_eq!(row.clause, clause_id);
         assert_eq!(
             row.activation,
             filament_contract_model::CheckedProtocolActivation::Origin

@@ -236,6 +236,7 @@ fn a_cyclic_predicate_join_protocol_is_grouped_and_reads_back() {
     assert!(idle["recursion_group"].is_null());
     // The grouped and the acyclic clause both end their declaration path with
     // the operand naming their owner.
+    let raw = raw_wire(&emission);
     for name in ["Flow", "Idle"] {
         let (position, clause) = wire_nodes
             .iter()
@@ -245,16 +246,17 @@ fn a_cyclic_predicate_join_protocol_is_grouped_and_reads_back() {
                     && node["declaration"]["qualified_name"] == json!([name])
             })
             .expect("a protocol clause");
-        let slot = clause["node_id"]["path"][1]["operand"]
+        let written = &nodes(&raw)[position]["node_id"]["path"];
+        let slot = written[1]["operand"]
             .as_u64()
             .expect("the owner operand slot");
-        assert_eq!(clause["node_id"]["path"], json!([name, {"operand": slot}]));
+        assert_eq!(*written, json!([name, {"operand": slot}]));
         let owner = wire_nodes
             .iter()
             .position(|node| node["node_id"] == clause["owner_model"])
             .expect("the owner is in the graph");
         assert_eq!(
-            wire["semantic_graph"]["operand_rows"][position][slot as usize],
+            raw["semantic_graph"]["operand_rows"][position][slot as usize],
             json!(owner)
         );
     }
