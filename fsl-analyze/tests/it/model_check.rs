@@ -32,7 +32,7 @@ use fsl_replay::{
 use fsl_route::reductions::Reductions;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::counter::{
     document, document_with_ranged_parameter, instance, package_with_clauses,
@@ -90,6 +90,69 @@ fn temporal_worker_fixture_with_starts(
         formula,
         starts,
     )
+}
+
+fn large_lasso_worker_fixture(formula: &str) -> crate::liveness::Fixture {
+    let mut document: Value =
+        serde_json::from_slice(&crate::analyze_reach_rulings::receiver_framed_document())
+            .expect("receiver-framed counter document");
+    let types = document["types"].as_array_mut().expect("model types");
+    let level = types
+        .iter_mut()
+        .find(|model_type| model_type["identity"] == "ix://test/counter/Level")
+        .expect("counter value type");
+    let upper = level["constraints"]
+        .as_array_mut()
+        .expect("level constraints")
+        .iter_mut()
+        .find(|constraint| constraint["keyword"] == "max")
+        .expect("upper level bound");
+    upper["operands"]["value"] = json!("16");
+
+    let counter = types
+        .iter_mut()
+        .find(|model_type| model_type["identity"] == "ix://test/counter/Counter")
+        .expect("counter object type");
+    let mut phase = counter["fields"][0].clone();
+    let phase_identity = "ix://test/counter/Counter/phase";
+    phase["identity"] = json!(phase_identity);
+    phase["name"] = json!("phase");
+    phase["origin"]["generated"]["generatorIdentity"] = json!(phase_identity);
+    phase["origin"]["generated"]["inputIdentities"] = json!([phase_identity]);
+    counter["fields"]
+        .as_array_mut()
+        .expect("counter fields")
+        .push(phase);
+    let inc = counter["operations"]
+        .as_array_mut()
+        .expect("counter operations")
+        .iter_mut()
+        .find(|operation| operation["name"] == "inc")
+        .expect("counter increment");
+    inc["frame"]["modifies_receiver"]
+        .as_array_mut()
+        .expect("receiver frame")
+        .push(json!(phase_identity));
+
+    let mut fixture = crate::liveness::fixture(
+        document.to_string().into_bytes(),
+        CONTRACT,
+        "",
+        formula,
+        &[("a", 0)],
+    );
+    for snapshot in fixture.documents.snapshots.values_mut() {
+        let mut snapshot_document: Value =
+            serde_json::from_slice(snapshot).expect("counter initialization snapshot");
+        for object in snapshot_document["populations"][0]["objects"]
+            .as_array_mut()
+            .expect("counter snapshot objects")
+        {
+            object["fields"]["phase"] = json!({"integer": "0"});
+        }
+        *snapshot = snapshot_document.to_string().into_bytes();
+    }
+    fixture
 }
 
 /// [`world_with`] checked under `mode`: a unit whose divisor may be zero is
@@ -290,10 +353,9 @@ fn certificate_bytes(outcome: &ModelCheckOutcome) -> Vec<u8> {
 #[trace("TC-1417", "FR-126-AC-20")]
 #[test]
 fn workers_preserve_counter_lassos_certificates_and_state_limit() {
-    // Keep this exact lasso oracle to one receiver: with multiple receivers,
-    // other objects continue to terminal states after `a` reaches 3.
-    let violated_fixture =
-        temporal_worker_fixture_with_starts("always eventually holds(c.value = 0)", &[("a", 0)]);
+    // The phase field gives this single-receiver lasso a large reachable
+    // product while preserving its exact value path and terminal entry.
+    let violated_fixture = large_lasso_worker_fixture("always eventually holds(c.value = 0)");
     let mut violation = None;
     for workers in [1, 2, 4, 64] {
         let outcome = run_temporal_fixture_with_workers(
@@ -324,6 +386,7 @@ fn workers_preserve_counter_lassos_certificates_and_state_limit() {
             assert_eq!(&counterexample, expected, "workers={workers}");
             assert_eq!(stats, *expected_stats, "workers={workers}");
         } else {
+            assert!(stats.product_states >= 50);
             violation = Some((counterexample, stats));
         }
     }
