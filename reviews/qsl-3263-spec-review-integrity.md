@@ -28,3 +28,17 @@ Spelling is consistent across FR-106, AC-84, TC-464 step 11 and FR-650; the code
 - FR-650 tuple/union rows and cause table: context_only.
 - FR-360 item 9: context_only.
 - FR-321 Behavior: context_only.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | low | The fix says clock entries have no entry in tuple and union `components` (FR-106:687-693), but the record paragraph still requires "exactly one entry for every exposed effective field" with nothing about clock fields, and FR-650's tuple and union rows say nothing about clocks either. For FR-531-AC-34's `record W { c: Clock; n: Integer }`, a `fields` object holding only `n` could be admitted or refused `missing-member` naming `c`, depending on the reader | spec/functional/FR-106-admit-snapshots-and-invocations.md:661-663, spec/functional/FR-106-admit-snapshots-and-invocations.md:687-693, spec/functional/FR-650-carry-every-argument-and-result-kind-of-a-run-in-the-native-value-grammar.md:163-174 |
+
+## Dispositions
+
+Round 1, fix head b0345aee9f5ba7a25271c61478596a3f8620e313.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-106:657-659 now gives missing-member and unknown-member for record payload members; AC-84 and TC-464 step 11 include the record's extra-member control with unknown-member |

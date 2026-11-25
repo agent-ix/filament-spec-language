@@ -28,3 +28,18 @@ AC-84's controls are all single-defect values, so neither finding blocks its tes
 - FR-106 union paragraph: examined.
 - FR-106-AC-84: examined.
 - FR-360 item 9 order; FR-230-AC-63: context_only.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | low | The new eight-step defect order has no place for a payload member with the wrong JSON kind: a non-string `type` or `case`, a `fields` that is not an object, or a `components` that is not an array. For example, `{"tuple":{"type":"<Pair>","components":{}}}` could be refused wrong-value-kind or invalid-value (step 7). The collection rule (FR-106:618) and today's reader both give wrong-value-kind | spec/functional/FR-106-admit-snapshots-and-invocations.md:717-735 |
+
+## Dispositions
+
+Round 1, fix head b0345aee9f5ba7a25271c61478596a3f8620e313.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-106:717-735 adds an eight-step first-defect order for record, tuple and union that extends FR-360 item 9 |
+| FND-002 | fixed | FR-106:687-693 excludes clock entries from `components` and arity; FR-106:703-705 makes an all-clock member such as Armed use the nullary form |

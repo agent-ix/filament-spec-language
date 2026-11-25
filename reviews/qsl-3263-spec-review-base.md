@@ -28,3 +28,11 @@ Base checklist passes apart from FND-001. FR-106-AC-84 is testable as written: e
 - FR-106 union paragraph (FR-106:685-704): examined.
 - FR-106-AC-84 (FR-106:1596): examined.
 - TC-464 step 11 and expected result (TC-464:113-130, 197-205): examined.
+
+## Dispositions
+
+Round 1, fix head b0345aee9f5ba7a25271c61478596a3f8620e313.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | TC-464:126-128 now names `"components":[]` and the expected result (TC-464:201-203) requires invalid-value for it |
