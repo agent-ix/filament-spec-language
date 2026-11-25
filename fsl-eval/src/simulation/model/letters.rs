@@ -581,11 +581,13 @@ impl ClauseLetters<'_, '_> {
             .map_err(|_| fault("instance-key-names-a-reference"))
     }
 
-    /// The reference the clause's `over` parameter reads as under
-    /// `instance`'s key (FSpec FR-364's `over_binding`), or `None` when the
-    /// model refuses a reference under the key.
+    /// The written binding of the clause's `over` parameter to `instance`
+    /// (FSpec FR-364's `over_binding`; [`ModelSystem::written_reference`]), or
+    /// `None` when the model refuses a reference under the key.
     pub fn instance_reference(&self, instance: &ModelInstance) -> Option<ObjectReference> {
-        self.key_reference(instance).ok()
+        self.system
+            .written_reference(self.parameter.clone(), instance)
+            .ok()
     }
 
     /// FR-330 "The decisive atom" over a model state: the observation the

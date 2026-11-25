@@ -200,7 +200,7 @@ pub(super) fn run_model_item(
     )
 }
 
-/// The reference `clause`'s `over` parameter reads as under `instance`
+/// The written binding of `clause`'s `over` parameter to `instance`
 /// (FSpec FR-364's `over_binding`), over `system`.
 fn bound_over(
     system: &ModelSystem<'_>,
@@ -210,7 +210,7 @@ fn bound_over(
     let ValueType::Reference(object_type) = &clause.over().1 else {
         return None;
     };
-    system.bound_reference(object_type.clone(), instance).ok()
+    system.written_reference(object_type.clone(), instance).ok()
 }
 
 /// The EN-1 run of `item` and its layer-6 settlement (FR-127).
