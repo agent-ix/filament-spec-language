@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Same-identity collisions of one owner (field, operation, parameter) refuse
 //! `conflicting-binding`, like a clause, state, transition or step (FSpec
 //! FR-154's "two nodes share one identity", FR-154-AC-13; cited by id). Typed code, cause,

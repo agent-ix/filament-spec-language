@@ -1,4 +1,5 @@
-.PHONY: check-no-committed-binaries seam-probe seam-probe-capability string-edge route-lint checked-input canonical-types refinement-versioning refinement-layering qualify parity cargo-deny-bans fuzz-deep-input test-deep-format ci ci-default-features ci-all-features ci-clean-build ci-docs conformance pre-push build-no-std
+# SPDX-License-Identifier: AGPL-3.0-or-later
+.PHONY: check-no-committed-binaries seam-probe seam-probe-capability string-edge route-lint checked-input canonical-types refinement-versioning refinement-layering qualify parity cargo-deny-bans fuzz-deep-input test-deep-format test-deep-measurements ci ci-default-features ci-all-features ci-clean-build ci-docs conformance pre-push build-no-std
 
 # Fail when a tracked file is executable/binary content or exceeds
 # the size ceiling. See the script's own header for the detection method and
@@ -291,6 +292,28 @@ test-deep-format:
 		formatter_identity::replay_large_source_generator_keeps_format_identity \
 		formatter_identity::dependency_chain_and_order_variants_keep_format_identity
 
+# The full-scale front-end measurements and the minimal-feature build run one
+# at a time, so no other test competes with a timing or memory-heavy case.
+# They run in the default lane's artifact directory, like test-deep-format.
+# Each name must still select exactly one ignored test.
+test-deep-measurements:
+	@set -eu; \
+	for test in \
+		scale_and_runtime_measurements::parser_and_forms_per_declaration_time_stays_bounded_at_200k \
+		scale_and_runtime_measurements::deep_input_generator_returns_outcomes_for_ten_thousand_inputs \
+		the_native_build_requires_no_optional_feature; do \
+		listing=$$(CARGO_TARGET_DIR="$${CI_DEFAULT_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/ci-default-features}" cargo test --locked --workspace --tests -- --ignored --exact "$$test" --list); \
+		count=$$(printf '%s\n' "$$listing" | awk -v expected="$$test: test" '$$0 == expected { count++ } END { print count+0 }'); \
+		if [ "$$count" -ne 1 ]; then \
+			echo "test-deep-measurements: expected exactly one ignored test for $$test, found $$count" >&2; \
+			exit 1; \
+		fi; \
+	done; \
+	CARGO_TARGET_DIR="$${CI_DEFAULT_TARGET_DIR:-$${CARGO_TARGET_DIR:-target}/ci-default-features}" cargo test --locked --workspace --tests -- --ignored --exact --test-threads=1 --nocapture \
+		scale_and_runtime_measurements::parser_and_forms_per_declaration_time_stays_bounded_at_200k \
+		scale_and_runtime_measurements::deep_input_generator_returns_outcomes_for_ten_thousand_inputs \
+		the_native_build_requires_no_optional_feature
+
 # The no-default-features checks: a from-clean build (its own target-dir, so
 # it never reuses this build's cached artifacts) and the parse example.
 #
@@ -346,7 +369,7 @@ fuzz-deep-input:
 # Each aggregate prerequisite depends on validation, rather than racing it as
 # a sibling under -j (or continuing past it under -k). Standalone lane commands
 # retain their existing behavior; this ordering belongs to the aggregate gate.
-CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning facade-tests refinement-layering cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core build-no-std examples-check termination-scaling parser-nesting-probes string-edge-install
+CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format test-deep-measurements ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning facade-tests refinement-layering cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core build-no-std examples-check termination-scaling parser-nesting-probes string-edge-install
 CI_TARGETS := $(CI_CHECKS)
 # The public aggregate validates the native documents before the xtask wrapper
 # runs the focused conformance lanes.
