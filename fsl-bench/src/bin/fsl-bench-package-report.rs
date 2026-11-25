@@ -557,10 +557,8 @@ fn report_ab(a: &SideResults, b: &SideResults) -> Result<(), String> {
                 let b_median = median(&b_ms);
                 let decision = b_median <= a_median * (1.0 + noise);
                 println!(
-                    "{axis} M={size} A_median={a_median:.6} B_median={b_median:.6} unit={} noise={:.2}% {}",
-                    estimate_unit(axis),
-                    noise * 100.0,
-                    if decision { "pass" } else { "fail" }
+                    "{}",
+                    metric_summary_line(axis, size, a_median, b_median, noise)
                 );
                 if !decision {
                     failures.push(format!(
@@ -746,6 +744,22 @@ fn estimate_unit(axis: &str) -> &'static str {
     }
 }
 
+fn metric_summary_line(
+    axis: &str,
+    size: usize,
+    a_median: f64,
+    b_median: f64,
+    noise: f64,
+) -> String {
+    let decision = b_median <= a_median * (1.0 + noise);
+    format!(
+        "{axis} M={size} A_median={a_median:.6} B_median={b_median:.6} unit={} noise={:.2}% {}",
+        estimate_unit(axis),
+        noise * 100.0,
+        if decision { "pass" } else { "fail" }
+    )
+}
+
 fn report_exponents(a: &SideResults, b: &SideResults, axis: &str, failures: &mut Vec<String>) {
     let mut a_exponents = Vec::new();
     let mut b_exponents = Vec::new();
@@ -779,11 +793,14 @@ fn report_exponents(a: &SideResults, b: &SideResults, axis: &str, failures: &mut
     }
     if a_exponents.len() == usize::from(ROUNDS) && b_exponents.len() == usize::from(ROUNDS) {
         println!(
-            "{axis} scaling exponent median M=1->10->100 A={:.6} B={:.6}",
-            median(&a_exponents),
-            median(&b_exponents)
+            "{}",
+            exponent_summary_line(axis, median(&a_exponents), median(&b_exponents))
         );
     }
+}
+
+fn exponent_summary_line(axis: &str, a_exponent: f64, b_exponent: f64) -> String {
+    format!("{axis} scaling exponent median M=1->10->100 A={a_exponent:.6} B={b_exponent:.6}")
 }
 
 fn scaling_exponent(first_size_ms: f64, last_size_ms: f64) -> f64 {
@@ -910,9 +927,13 @@ fn single_estimate(
 #[cfg(test)]
 mod tests {
     use super::{
-        complete_probe_report, median, scaling_exponent, session_noise, CriterionEstimate,
+        complete_probe_report, exponent_summary_line, median, metric_summary_line, report_ab_files,
+        scaling_exponent, session_noise, CriterionEstimate, LoadAverage, Measurement,
+        ProbeEstimate, RoundResult, SideResults, SourceIdentity, AXES, ROUNDS, SIZES,
     };
     use ix_trace_rs::trace;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
 
     #[trace("NFR-141-AC-4")]
     #[test]
@@ -937,6 +958,299 @@ mod tests {
         };
         let noise = session_noise(&estimates, &estimates, |_| super::max_ci_ratio(&estimate));
         assert!(noise >= 0.1);
+    }
+
+    #[trace(
+        "NFR-141-AC-1",
+        "NFR-141-AC-2",
+        "NFR-141-AC-3",
+        "NFR-141-AC-4",
+        "NFR-141-AC-5"
+    )]
+    #[test]
+    fn report_ab_reads_complete_five_round_matrices_and_summarizes_them() {
+        let (root, a_path, b_path) = result_paths();
+        let a = synthetic_side("A", 1.0);
+        let b = synthetic_side("B", 0.99);
+        super::persist_results(&a_path, &a).expect("A result file writes");
+        super::persist_results(&b_path, &b).expect("B result file writes");
+
+        assert_eq!(a.rounds.len(), usize::from(ROUNDS));
+        assert_eq!(b.rounds.len(), usize::from(ROUNDS));
+        for round in a.rounds.iter().chain(&b.rounds) {
+            assert!(round.load_before.value.is_some());
+            assert!(round.load_after.value.is_some());
+            assert_eq!(round.axes.len(), AXES.len());
+            for axis in AXES {
+                assert_eq!(round.axes[axis].len(), SIZES.len());
+            }
+            assert_eq!(round.probes.len(), SIZES.len());
+        }
+        report_ab_files(&a_path, &b_path).expect("complete A/B results report successfully");
+
+        let a_emit_m10 = a
+            .rounds
+            .iter()
+            .map(|round| {
+                round.axes["package/emit"][&10]
+                    .value
+                    .as_ref()
+                    .unwrap()
+                    .milliseconds
+            })
+            .collect::<Vec<_>>();
+        let b_emit_m10 = b
+            .rounds
+            .iter()
+            .map(|round| {
+                round.axes["package/emit"][&10]
+                    .value
+                    .as_ref()
+                    .unwrap()
+                    .milliseconds
+            })
+            .collect::<Vec<_>>();
+        let a_estimates = a
+            .rounds
+            .iter()
+            .map(|round| round.axes["package/emit"][&10].value.as_ref().unwrap())
+            .collect::<Vec<_>>();
+        let b_estimates = b
+            .rounds
+            .iter()
+            .map(|round| round.axes["package/emit"][&10].value.as_ref().unwrap())
+            .collect::<Vec<_>>();
+        let expected_noise = session_noise(&a_emit_m10, &b_emit_m10, |index| {
+            super::max_ci_ratio(a_estimates[index]).max(super::max_ci_ratio(b_estimates[index]))
+        });
+        assert_eq!(median(&a_emit_m10), 10.0);
+        assert_eq!(median(&b_emit_m10), 9.9);
+        assert_eq!(
+            metric_summary_line(
+                "package/emit",
+                10,
+                median(&a_emit_m10),
+                median(&b_emit_m10),
+                expected_noise,
+            ),
+            format!(
+                "package/emit M=10 A_median=10.000000 B_median=9.900000 unit=ms/package noise={:.2}% pass",
+                expected_noise * 100.0
+            )
+        );
+        assert_eq!(
+            scaling_exponent(3.0, 300.0),
+            1.0,
+            "the 1→10→100 workload has linear scaling"
+        );
+        assert_eq!(
+            exponent_summary_line("package/emit", 1.0, 1.0),
+            "package/emit scaling exponent median M=1->10->100 A=1.000000 B=1.000000"
+        );
+
+        let loaded_round: RoundResult = super::read_results(&a_path).unwrap().rounds[2].clone();
+        assert_eq!(loaded_round.number, 3);
+        assert_eq!(
+            loaded_round.load_before.value.as_ref().unwrap().one_minute,
+            3.0
+        );
+        assert_eq!(
+            loaded_round.load_after.value.as_ref().unwrap().one_minute,
+            3.5
+        );
+        std::fs::remove_dir_all(root).expect("temporary A/B results are removed");
+    }
+
+    #[trace("NFR-141-AC-1", "NFR-141-AC-4")]
+    #[test]
+    fn report_ab_retains_a_failed_loaded_round_and_rejects_substitution() {
+        let (root, a_path, b_path) = result_paths();
+        let mut a = synthetic_side("A", 1.0);
+        let b = synthetic_side("B", 1.0);
+        a.rounds[2].load_before = Measurement::success(LoadAverage {
+            one_minute: 97.0,
+            five_minutes: 88.0,
+            fifteen_minutes: 79.0,
+        });
+        a.rounds[2].axes.get_mut("package/emit").unwrap().insert(
+            10,
+            Measurement::failure("loaded round failed", "load=97.0; preserve this failure"),
+        );
+        super::persist_results(&a_path, &a).expect("A result file writes");
+        super::persist_results(&b_path, &b).expect("B result file writes");
+
+        let error = report_ab_files(&a_path, &b_path)
+            .expect_err("the five-round report rejects the failed round");
+        assert!(error.contains("A/B evidence failures"));
+        let retained = super::read_results(&a_path).expect("A results remain readable");
+        assert_eq!(retained.rounds.len(), usize::from(ROUNDS));
+        assert_eq!(
+            retained.rounds[2]
+                .load_before
+                .value
+                .as_ref()
+                .unwrap()
+                .one_minute,
+            97.0
+        );
+        let failed = &retained.rounds[2].axes["package/emit"][&10];
+        assert_eq!(failed.error.as_deref(), Some("loaded round failed"));
+        assert_eq!(
+            failed.output.as_deref(),
+            Some("load=97.0; preserve this failure")
+        );
+        assert!(
+            failed.value.is_none(),
+            "no later value replaced the failure"
+        );
+        std::fs::remove_dir_all(root).expect("temporary A/B results are removed");
+    }
+
+    #[trace("NFR-141-AC-5")]
+    #[test]
+    fn report_ab_rejects_a_parse_call_regression() {
+        let (root, a_path, b_path) = result_paths();
+        let a = synthetic_side("A", 1.0);
+        let mut b = synthetic_side("B", 1.0);
+        b.rounds[0]
+            .probes
+            .get_mut(&10)
+            .unwrap()
+            .value
+            .as_mut()
+            .unwrap()
+            .parse_calls_per_source_document = 2;
+        super::persist_results(&a_path, &a).expect("A result file writes");
+        super::persist_results(&b_path, &b).expect("B result file writes");
+
+        let error = report_ab_files(&a_path, &b_path)
+            .expect_err("the parse-call acceptance gate rejects a regression");
+        assert!(error.contains("A/B evidence failures"));
+        assert_eq!(
+            super::read_results(&b_path).unwrap().rounds[0].probes[&10]
+                .value
+                .as_ref()
+                .unwrap()
+                .parse_calls_per_source_document,
+            2
+        );
+        std::fs::remove_dir_all(root).expect("temporary A/B results are removed");
+    }
+
+    #[trace(
+        "NFR-141-AC-1",
+        "NFR-141-AC-2",
+        "NFR-141-AC-3",
+        "NFR-141-AC-4",
+        "NFR-141-AC-5"
+    )]
+    #[test]
+    fn report_ab_rejects_missing_rows_and_incomplete_rounds() {
+        let (root, a_path, b_path) = result_paths();
+        let a = synthetic_side("A", 1.0);
+        let mut missing = synthetic_side("B", 1.0);
+        missing.rounds[3]
+            .axes
+            .get_mut("package/read")
+            .unwrap()
+            .remove(&10);
+        missing.rounds[3].probes.remove(&100);
+        super::persist_results(&a_path, &a).expect("A result file writes");
+        super::persist_results(&b_path, &missing).expect("B result file writes");
+        assert!(report_ab_files(&a_path, &b_path).is_err());
+
+        missing.rounds.pop();
+        super::persist_results(&b_path, &missing).expect("truncated B result file writes");
+        let error =
+            report_ab_files(&a_path, &b_path).expect_err("incomplete sessions are not accepted");
+        assert!(error.contains("expected 5"));
+        std::fs::remove_dir_all(root).expect("temporary A/B results are removed");
+    }
+
+    fn synthetic_side(side: &str, multiplier: f64) -> SideResults {
+        let rounds = (1..=ROUNDS)
+            .map(|number| {
+                let round_factor = 1.0 + (f64::from(number) - 3.0) * 0.01;
+                let axes = AXES
+                    .into_iter()
+                    .map(|axis| {
+                        let axis_factor = match axis {
+                            "package/emit" => 1.0,
+                            "package/read" => 0.5,
+                            "replay/request" => 2.0,
+                            _ => unreachable!(),
+                        };
+                        let estimates = SIZES
+                            .into_iter()
+                            .map(|size| {
+                                let milliseconds =
+                                    size as f64 * axis_factor * round_factor * multiplier;
+                                (
+                                    size,
+                                    Measurement::success(CriterionEstimate {
+                                        milliseconds,
+                                        ci_lower_milliseconds: milliseconds * 0.99,
+                                        ci_upper_milliseconds: milliseconds * 1.01,
+                                    }),
+                                )
+                            })
+                            .collect::<BTreeMap<_, _>>();
+                        (axis.to_owned(), estimates)
+                    })
+                    .collect::<BTreeMap<_, _>>();
+                let probes = SIZES
+                    .into_iter()
+                    .map(|size| {
+                        (
+                            size,
+                            Measurement::success(ProbeEstimate {
+                                milliseconds: size as f64 * round_factor * multiplier,
+                                peak_rss_kib: 50_000 + u64::from(number),
+                                parse_calls_per_source_document: 1,
+                                source_documents: 1,
+                            }),
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>();
+                RoundResult {
+                    number,
+                    load_before: Measurement::success(LoadAverage {
+                        one_minute: f64::from(number),
+                        five_minutes: 2.0 * f64::from(number),
+                        fifteen_minutes: 3.0 * f64::from(number),
+                    }),
+                    load_after: Measurement::success(LoadAverage {
+                        one_minute: f64::from(number) + 0.5,
+                        five_minutes: 2.0 * f64::from(number) + 0.5,
+                        fifteen_minutes: 3.0 * f64::from(number) + 0.5,
+                    }),
+                    axes,
+                    probes,
+                }
+            })
+            .collect();
+        SideResults {
+            side: side.to_owned(),
+            source: SourceIdentity {
+                revision: format!("{side}-revision"),
+                main_revision: "main-revision".to_owned(),
+                replay_counter_patch: "counter-patch".to_owned(),
+            },
+            rounds,
+        }
+    }
+
+    fn result_paths() -> (PathBuf, PathBuf, PathBuf) {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "fsl-bench-package-report-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("temporary result directory creates");
+        (root.clone(), root.join("a.json"), root.join("b.json"))
     }
 }
 
