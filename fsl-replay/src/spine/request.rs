@@ -14,6 +14,7 @@ use fsl_semantics::model::observation::{
     ObservationLimits, PostStateRange, RawNativeKind, SelectedAnchor, SelectedObject,
     SnapshotValue, collection_kind_of_tag,
 };
+use ix_trace_rs::implements;
 use quire_canonical::{Node, NodeRef};
 use serde_json::value::RawValue;
 
@@ -979,6 +980,7 @@ fn canonical_text(raw: &RawValue, member: &str) -> Result<String, ClauseRequestR
 /// The identity text of the operation member `raw`, by FR-120's reader rule:
 /// a string holding an identity text is that text, any other string is a name,
 /// and an object is its canonical text.
+#[implements("FR-120-AC-39")]
 fn operation_text(raw: &RawValue, member: &str) -> Result<String, ClauseRequestReadError> {
     let text = canonical_text(raw, member)?;
     match text.bytes().next() {

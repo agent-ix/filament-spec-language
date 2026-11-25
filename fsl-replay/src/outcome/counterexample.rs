@@ -15,6 +15,7 @@ use fsl_eval::simulation::protocol::{
 use fsl_eval::simulation::SubjectTransition;
 use fsl_foundation::node_wire::node_key_to_json;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use ix_trace_rs::implements;
 use serde_json::{json, Value as Json};
 use std::any::{Any, TypeId};
 
@@ -433,6 +434,7 @@ fn read_document(
         Rational::new(integer("numerator")?, integer("denominator")?)
             .map_err(|_| malformed("invalid-value", pointer))
     }
+    #[implements("FR-120-AC-39")]
     fn source_transition(
         value: &Json,
         pointer: &str,

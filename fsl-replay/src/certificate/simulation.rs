@@ -277,7 +277,7 @@ impl FailedStep {
     /// concrete `transition`, `None` for the stutter step. No verdict is a
     /// rejection for `Passes`, `Stopped` or `Fault`, nor for an unmatched step
     /// that names no transition.
-    #[implements("FR-149-AC-8")]
+    #[implements("FR-149-AC-3", "FR-245-AC-8")]
     pub(crate) fn of(verdict: StepVerdict, transition: Option<&ModelTransition>) -> Option<Self> {
         Some(match verdict {
             StepVerdict::Fails(failure) => match *failure {

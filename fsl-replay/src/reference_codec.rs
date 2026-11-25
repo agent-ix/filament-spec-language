@@ -11,6 +11,7 @@ use fsl_package::{CheckedPackage, CheckedPackageV2, ReferenceCatalog, ReferenceD
 use fsl_semantics::model::intake::SelectedModels;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::population::PopulationBinding;
+use ix_trace_rs::implements;
 use serde_json::{Map, Value};
 use std::cell::RefCell;
 mod json;
@@ -1366,6 +1367,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
         self.restore_transition_in(value, &mut scope, limits)
     }
 
+    #[implements("FR-120-AC-39")]
     fn restore_transition_in(
         &self,
         value: &Value,

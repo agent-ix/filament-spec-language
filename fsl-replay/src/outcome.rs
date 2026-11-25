@@ -49,6 +49,7 @@ use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef};
 use fsl_foundation::source::{SourceLabel, SourceReadCause};
 use fsl_foundation::{LocatedSpan, RequestIndex};
 use fsl_semantics::model::observation::AdmissionFailure;
+use ix_trace_rs::implements;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
@@ -616,6 +617,7 @@ pub(super) struct TaskSourceTransitionWire {
 
 /// Whether a written `operation` string is itself an identity text (FR-120):
 /// the JSON text of an object or of a string. Any other string is a name.
+#[implements("FR-120-AC-39")]
 pub(crate) fn is_identity_text(wire: &str) -> bool {
     matches!(wire.trim_start().bytes().next(), Some(b'{' | b'"'))
         && serde_json::from_str::<serde::de::IgnoredAny>(wire).is_ok()
