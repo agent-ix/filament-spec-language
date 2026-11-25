@@ -181,20 +181,46 @@ fn advance_nested_deadline(
 ) {
     use fsl_eval::probabilistic::DeadlinePhase;
 
+    // A punctual timed Always reads every ordered observation at its target
+    // timestamp. Keep a possible witness provisional until that timestamp
+    // closes, so a later false observation can still refute it.
+    if elapsed > root.elapsed {
+        if root.phase == DeadlinePhase::Pending && nested.phase == DeadlinePhase::Accept {
+            root.phase = DeadlinePhase::Accept;
+        }
+        if root.phase == DeadlinePhase::Pending {
+            nested.phase = DeadlinePhase::Pending;
+        }
+    }
     let lower = root.lower.saturating_add(nested.lower);
     let upper = root.upper.saturating_add(nested.upper);
     if root.phase == DeadlinePhase::Pending && (lower..=upper).contains(&elapsed) {
         nested.elapsed = elapsed.saturating_sub(root.lower);
-        nested.phase = if truths.first().copied().unwrap_or(false) {
-            root.phase = DeadlinePhase::Accept;
+        let holds = truths.first().copied().unwrap_or(false);
+        nested.phase = if nested.lower == 0 {
+            // At zero delay a later position at this timestamp can itself be
+            // the Eventually witness, so only the suffix after the last
+            // observation determines whether one remains possible.
+            if holds {
+                DeadlinePhase::Accept
+            } else {
+                DeadlinePhase::Reject
+            }
+        } else if !holds {
+            // At positive delay all positions at the target timestamp belong
+            // to the same Always window; one false observation invalidates it.
+            DeadlinePhase::Reject
+        } else if nested.phase == DeadlinePhase::Pending {
             DeadlinePhase::Accept
         } else {
-            DeadlinePhase::Reject
+            nested.phase
         };
     } else {
         nested.elapsed = elapsed.saturating_sub(root.lower).min(nested.upper);
         if root.phase == DeadlinePhase::Pending {
-            nested.phase = DeadlinePhase::Pending;
+            if elapsed > upper {
+                nested.phase = DeadlinePhase::Pending;
+            }
         }
     }
     if root.phase == DeadlinePhase::Pending && elapsed > upper {

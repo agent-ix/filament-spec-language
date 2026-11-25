@@ -1732,6 +1732,10 @@ impl Watch<'_> {
         cancel: &Cancel,
     ) -> Result<(Phase, u64), ProbabilityDocumentError> {
         let watch = match self {
+            Self::Deadline(predicate) => {
+                let phase = phase_at(system, predicate, binding, state, elapsed, deadline, cancel)?;
+                return Ok((phase, elapsed));
+            }
             Self::TimedTrace {
                 formula,
                 predicates,
@@ -1821,10 +1825,6 @@ impl Watch<'_> {
                     },
                     elapsed,
                 ));
-            }
-            Self::Deadline(predicate) => {
-                let phase = phase_at(system, predicate, binding, state, elapsed, deadline, cancel)?;
-                return Ok((phase, elapsed));
             }
             Self::Bounded {
                 root, predicates, ..
@@ -2022,20 +2022,46 @@ fn advance_nested_deadline(
 ) {
     use fsl_eval::probabilistic::DeadlinePhase;
 
+    // A punctual timed Always reads every ordered observation at its target
+    // timestamp. Keep a possible witness provisional until that timestamp
+    // closes, so a later false observation can still refute it.
+    if elapsed > root.elapsed {
+        if root.phase == DeadlinePhase::Pending && nested.phase == DeadlinePhase::Accept {
+            root.phase = DeadlinePhase::Accept;
+        }
+        if root.phase == DeadlinePhase::Pending {
+            nested.phase = DeadlinePhase::Pending;
+        }
+    }
     let lower = root.lower.saturating_add(nested.lower);
     let upper = root.upper.saturating_add(nested.upper);
     if root.phase == DeadlinePhase::Pending && (lower..=upper).contains(&elapsed) {
         nested.elapsed = elapsed.saturating_sub(root.lower);
-        nested.phase = if truths.first().copied().unwrap_or(false) {
-            root.phase = DeadlinePhase::Accept;
+        let holds = truths.first().copied().unwrap_or(false);
+        nested.phase = if nested.lower == 0 {
+            // At zero delay a later position at this timestamp can itself be
+            // the Eventually witness, so only the suffix after the last
+            // observation determines whether one remains possible.
+            if holds {
+                DeadlinePhase::Accept
+            } else {
+                DeadlinePhase::Reject
+            }
+        } else if !holds {
+            // At positive delay all positions at the target timestamp belong
+            // to the same Always window; one false observation invalidates it.
+            DeadlinePhase::Reject
+        } else if nested.phase == DeadlinePhase::Pending {
             DeadlinePhase::Accept
         } else {
-            DeadlinePhase::Reject
+            nested.phase
         };
     } else {
         nested.elapsed = elapsed.saturating_sub(root.lower).min(nested.upper);
         if root.phase == DeadlinePhase::Pending {
-            nested.phase = DeadlinePhase::Pending;
+            if elapsed > upper {
+                nested.phase = DeadlinePhase::Pending;
+            }
         }
     }
     if root.phase == DeadlinePhase::Pending && elapsed > upper {
@@ -2265,12 +2291,10 @@ fn enumerate_digital_deadline(
             .map_err(|_| ProbabilityDocumentError::Unsupported)?;
         admit_workload(system, claim, &actions)?;
         let enabled = digital_enabled_actions(system, timed, &current.timed, claim, cancel)?;
-        if matches!(watch, Watch::Deadline(_))
-            && matches!(
-                claim.scheduler,
-                fsl_semantics::check::ProbScheduler::Workload(_)
-            )
-        {
+        if matches!(
+            claim.scheduler,
+            fsl_semantics::check::ProbScheduler::Workload(_)
+        ) {
             let run = WorkloadRun {
                 system,
                 timed,
@@ -2847,6 +2871,34 @@ fn region_scale_parts(
     Ok((base, subdivisions))
 }
 
+fn phase_at(
+    system: &ModelSystem<'_>,
+    predicate: &fsl_semantics::check::CheckedPredicate,
+    binding: Option<&filament_exact::ObjectReference>,
+    state: &ModelSimState,
+    elapsed: u64,
+    deadline: u64,
+    cancel: &Cancel,
+) -> Result<Phase, ProbabilityDocumentError> {
+    if elapsed > deadline {
+        return Ok(Phase::Rejected);
+    }
+    let readings = system
+        .state_predicates_with_cancel(state, &[(predicate, binding)], cancel)
+        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
+    let [reading] = readings.as_slice() else {
+        return Err(ProbabilityDocumentError::Unsupported);
+    };
+    match reading {
+        fsl_eval::simulation::model::PredicateReading::True => Ok(Phase::Accepted),
+        fsl_eval::simulation::model::PredicateReading::False => Ok(Phase::Pending),
+        fsl_eval::simulation::model::PredicateReading::Undefined { .. }
+        | fsl_eval::simulation::model::PredicateReading::Refused(_) => {
+            Err(ProbabilityDocumentError::Unsupported)
+        }
+    }
+}
+
 fn time_bound(
     claim: &CheckedProbabilisticClaim,
     scale: u64,
@@ -2905,34 +2957,6 @@ fn quantized_clocks(
             rational_units(value, scale)
         })
         .collect()
-}
-
-fn phase_at(
-    system: &ModelSystem<'_>,
-    predicate: &fsl_semantics::check::CheckedPredicate,
-    binding: Option<&filament_exact::ObjectReference>,
-    state: &ModelSimState,
-    elapsed: u64,
-    deadline: u64,
-    cancel: &Cancel,
-) -> Result<Phase, ProbabilityDocumentError> {
-    if elapsed > deadline {
-        return Ok(Phase::Rejected);
-    }
-    let readings = system
-        .state_predicates_with_cancel(state, &[(predicate, binding)], cancel)
-        .map_err(|_| ProbabilityDocumentError::Unsupported)?;
-    let [reading] = readings.as_slice() else {
-        return Err(ProbabilityDocumentError::Unsupported);
-    };
-    match reading {
-        fsl_eval::simulation::model::PredicateReading::True => Ok(Phase::Accepted),
-        fsl_eval::simulation::model::PredicateReading::False => Ok(Phase::Pending),
-        fsl_eval::simulation::model::PredicateReading::Undefined { .. }
-        | fsl_eval::simulation::model::PredicateReading::Refused(_) => {
-            Err(ProbabilityDocumentError::Unsupported)
-        }
-    }
 }
 
 #[allow(
@@ -4892,9 +4916,6 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
     if let Some(query) = elapsed::query(claim) {
         return elapsed::replay(system, claim, &query, witness, limits, cancel);
     }
-    let Some((bound, predicate)) = deadline_event(claim) else {
-        return Err(unsupported());
-    };
     if !claim.fairness.is_empty() {
         return Err(unsupported());
     }
@@ -4905,6 +4926,12 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         TimedProbabilityRoute::Digital
     };
     let scale = certificate_scale(system, &timed, claim, route).map_err(from_document)?;
+    let timed_watch = deadline_event(claim)
+        .map(|(bound, predicate)| (bound, Watch::Deadline(predicate)))
+        .or_else(|| bounded_event(claim, scale));
+    let Some((bound, watch)) = timed_watch else {
+        return Err(unsupported());
+    };
     let binding = claim_binding(system, claim)
         .map_err(|_| unsupported())?
         .map(|binding| binding.reference);
@@ -4918,7 +4945,7 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
             &timed,
             claim,
             binding.as_ref(),
-            &Watch::Deadline(predicate),
+            &watch,
             time_bound(claim, scale).map_err(from_document)?,
             scale,
             document_limits,
@@ -4932,7 +4959,7 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
             &timed,
             claim,
             binding.as_ref(),
-            &Watch::Deadline(predicate),
+            &watch,
             time_bound(claim, scale).map_err(from_document)?,
             scale,
             scale,
@@ -5404,15 +5431,29 @@ fn price_paths(
     Ok(Some((kept, mass)))
 }
 
-/// Whether `claim` is a timed form this module replays a witness of: FR-204's
-/// deadline form, or FR-877's elapsed quantile over a timed subject.
+/// Whether `claim` is a timed form this module replays a witness of: an
+/// independently recognized FR-204 bounded monitor or FR-877 elapsed quantile.
 pub(in crate::probability_certificate) fn is_timed_witness_claim(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
 ) -> bool {
-    deadline_event(claim).is_some()
-        || (elapsed::query(claim).is_some()
-            && TimedSystem::new(system, &claim.subject.alias).is_ok())
+    if elapsed::query(claim).is_some() {
+        return TimedSystem::new(system, &claim.subject.alias).is_ok();
+    }
+    TimedSystem::new(system, &claim.subject.alias)
+        .ok()
+        .is_some_and(|timed| {
+            let route = if region_route(&timed, claim) {
+                TimedProbabilityRoute::Region
+            } else {
+                TimedProbabilityRoute::Digital
+            };
+            certificate_scale(system, &timed, claim, route)
+                .ok()
+                .is_some_and(|scale| {
+                    deadline_event(claim).is_some() || bounded_event(claim, scale).is_some()
+                })
+        })
 }
 
 /// The clock valuation a digital timed product key names, in
