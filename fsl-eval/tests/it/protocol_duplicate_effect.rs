@@ -59,6 +59,32 @@ protocol Purchase using P over (view: M::Node) on origin {
 }
 "#;
 
+const REVIEW_SOURCE: &str = r#"
+language "ix:native" edition "1-draft";
+profile P = "filament.protocol.finite-global/v1";
+model M = "test/orders";
+protocol Review using P over (view: M::Node) on origin {
+  role Requester on M::Node;
+  role Reviewer on M::Node;
+  channel Acknowledgement from Reviewer to Requester carries M::Flag
+      ordering fifo by (message: M::Flag) { message.count }
+      delivery at-least-once capacity 2 overflow block;
+  run sequence Main {
+    send Acknowledged via Acknowledgement as (sent: M::Flag) { true };
+    receive FirstDelivery via Acknowledgement of Main::Acknowledged
+        as (originalCopy: M::Flag) { true };
+    receive Redelivered via Acknowledgement of Main::Acknowledged
+        as (repeatedCopy: M::Flag) { true };
+    attempt RecordAcceptance by Requester on M::Node::step contracts []
+        as (tried: M::Flag) { true };
+    effect Accepted of Main::RecordAcceptance as (accepted: M::Flag) {
+      accepted.ready = repeatedCopy.ready and accepted.count = repeatedCopy.count
+    };
+  }
+  finish Closed as (closed: M::Receipt) { true };
+}
+"#;
+
 fn fixture(
     source: &str,
     include_second: bool,
@@ -179,6 +205,22 @@ fn reachable_with_nodes(
     include_second: bool,
     related: bool,
 ) -> fsl_eval::simulation::protocol::Reachable<Sc> {
+    reachable_for_protocol(
+        source,
+        "Purchase",
+        ["Buyer", "Seller"],
+        include_second,
+        related,
+    )
+}
+
+fn reachable_for_protocol(
+    source: &str,
+    protocol_name: &str,
+    role_names: [&str; 2],
+    include_second: bool,
+    related: bool,
+) -> fsl_eval::simulation::protocol::Reachable<Sc> {
     let (package, packages, snapshots, initial) = fixture(source, include_second, related);
     let population = filament_checked::key::DeclarationKey {
         package: tc1070::model::PACKAGE.to_owned(),
@@ -208,19 +250,19 @@ fn reachable_with_nodes(
     let model = ModelSystem::new(request.clone()).expect("model subject built");
     let checked = package
         .graph()
-        .protocol("Purchase")
+        .protocol(protocol_name)
         .expect("protocol checked");
     let subject = ProtocolSubject {
         model: ModelSubject {
             simulation: request,
             proof_bounds: Vec::new(),
         },
-        protocol: "Purchase".to_owned(),
+        protocol: protocol_name.to_owned(),
         over: ModelInstance {
             population,
             key: "node-1".to_owned(),
         },
-        roles: ["Buyer", "Seller"]
+        roles: role_names
             .into_iter()
             .map(|role| RoleBinding {
                 role: role.to_owned(),
@@ -240,27 +282,95 @@ fn reachable_with_nodes(
         .expect("finite protocol reachability")
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct FlagPayload {
+    ready: bool,
+    count: String,
+}
+
+fn flag_payload(value: Option<&filament_exact::Value>) -> Option<FlagPayload> {
+    let value = value?;
+    let filament_exact::Value::Composite(record) = value else {
+        return None;
+    };
+    let [filament_exact::FieldValue::Present(filament_exact::Value::Integer(count)), filament_exact::FieldValue::Present(filament_exact::Value::Boolean(ready))] =
+        record.slots()
+    else {
+        return None;
+    };
+    Some(FlagPayload {
+        ready: *ready,
+        count: count.to_string(),
+    })
+}
+
+#[test]
+#[trace("TC-2528", "FR-894-AC-1")]
+fn flag_payload_requires_a_present_complete_record() {
+    let wrong_shape = filament_exact::Value::Boolean(true);
+
+    assert_eq!(flag_payload(None), None, "an absent binder has no payload");
+    assert_eq!(
+        flag_payload(Some(&wrong_shape)),
+        None,
+        "a binder with the wrong shape has no Flag payload"
+    );
+}
+
+struct DuplicateEffectPath {
+    copies: Vec<DeliveryIdentity>,
+    receives: Vec<DeliveryIdentity>,
+    effects: Vec<u64>,
+    receive_threads: Vec<fsl_eval::simulation::protocol::ThreadPath>,
+    redelivery_payload: Option<FlagPayload>,
+    attempt: Option<(String, fsl_eval::simulation::protocol::ThreadPath)>,
+    effect: Option<(
+        fsl_eval::simulation::protocol::BusinessEffectOccurrence,
+        String,
+        fsl_eval::simulation::protocol::ThreadPath,
+        Option<FlagPayload>,
+    )>,
+}
+
 /// Find one path that sends, duplicates, receives both delivery copies and
-/// establishes the single effect occurrence.
+/// establishes the single effect occurrence, retaining occurrence and binding
+/// evidence from that same path.
 fn duplicate_then_effect(
     graph: &fsl_eval::simulation::protocol::Reachable<Sc>,
-) -> Option<(Vec<DeliveryIdentity>, Vec<DeliveryIdentity>, Vec<u64>)> {
+) -> Option<DuplicateEffectPath> {
     let mut queue = VecDeque::from([(
         0_usize,
         None::<fsl_eval::simulation::protocol::MessageOccurrence>,
         Vec::<DeliveryIdentity>::new(),
         Vec::<DeliveryIdentity>::new(),
         Vec::<u64>::new(),
+        Vec::<fsl_eval::simulation::protocol::ThreadPath>::new(),
+        None::<FlagPayload>,
+        None::<(String, fsl_eval::simulation::protocol::ThreadPath)>,
         false,
     )]);
     let mut seen = std::collections::BTreeSet::new();
-    while let Some((state, message, copies, receives, effects, duplicated)) = queue.pop_front() {
+    while let Some((
+        state,
+        message,
+        copies,
+        receives,
+        effects,
+        receive_threads,
+        redelivery_payload,
+        attempt,
+        duplicated,
+    )) = queue.pop_front()
+    {
         let signature = (
             state,
             message.clone(),
             copies.clone(),
             receives.clone(),
             effects.clone(),
+            receive_threads.clone(),
+            redelivery_payload.clone(),
+            attempt.clone(),
             duplicated,
         );
         if !seen.insert(signature) {
@@ -271,6 +381,9 @@ fn duplicate_then_effect(
             let mut copies = copies.clone();
             let mut receives = receives.clone();
             let mut effects = effects.clone();
+            let mut receive_threads = receive_threads.clone();
+            let mut redelivery_payload = redelivery_payload.clone();
+            let mut attempt = attempt.clone();
             let mut duplicated = duplicated;
             match transition.kind() {
                 StepKind::Send => message = transition.message().cloned(),
@@ -287,20 +400,52 @@ fn duplicate_then_effect(
                     if Some(delivery.message()) != message.as_ref() {
                         continue;
                     }
+                    receive_threads.push(transition.thread()?.clone());
+                    if delivery.index() == 1 {
+                        redelivery_payload = flag_payload(transition.binder_record());
+                    }
                     receives.push(delivery);
                 }
+                StepKind::Attempt => {
+                    attempt = Some((transition.node()?.to_owned(), transition.thread()?.clone()));
+                }
                 StepKind::Event if transition.business_effect().is_some() => {
-                    effects.push(transition.business_effect()?.ordinal());
+                    let business_effect = transition.business_effect()?.clone();
+                    effects.push(business_effect.ordinal());
                     if duplicated
                         && receives.iter().any(|delivery| delivery.index() == 0)
                         && receives.iter().any(|delivery| delivery.index() == 1)
                     {
-                        return Some((copies, receives, effects));
+                        let effect_payload = flag_payload(transition.binder_record());
+                        return Some(DuplicateEffectPath {
+                            copies,
+                            receives,
+                            effects,
+                            receive_threads,
+                            redelivery_payload,
+                            attempt,
+                            effect: Some((
+                                business_effect,
+                                transition.node()?.to_owned(),
+                                transition.thread()?.clone(),
+                                effect_payload,
+                            )),
+                        });
                     }
                 }
                 _ => {}
             }
-            queue.push_back((*next, message, copies, receives, effects, duplicated));
+            queue.push_back((
+                *next,
+                message,
+                copies,
+                receives,
+                effects,
+                receive_threads,
+                redelivery_payload,
+                attempt,
+                duplicated,
+            ));
         }
     }
     None
@@ -439,8 +584,11 @@ fn a_related_by_clause_limits_protocol_effect_bindings_to_its_relationship_insta
 #[trace("TC-2528", "FR-894-AC-1")]
 fn a_duplicate_delivery_applies_its_effect_once() {
     let graph = reachable(SOURCE);
-    let (copies, receives, effects) = duplicate_then_effect(&graph)
+    let path = duplicate_then_effect(&graph)
         .expect("the channel can duplicate one send before both receives");
+    let copies = path.copies;
+    let receives = path.receives;
+    let effects = path.effects;
     assert_eq!(copies.len(), 1, "one duplicated copy");
     assert_eq!(copies[0].index(), 1);
     assert_eq!(receives.len(), 2, "both copies were received once");
@@ -474,4 +622,90 @@ fn a_duplicate_delivery_applies_its_effect_once() {
             }
         }
     }
+}
+
+#[test]
+#[trace("TC-2528", "FR-894-AC-1")]
+fn a_redelivered_review_acknowledgement_establishes_one_effect_identity() {
+    let graph = reachable_for_protocol(
+        REVIEW_SOURCE,
+        "Review",
+        ["Requester", "Reviewer"],
+        false,
+        false,
+    );
+    let path = duplicate_then_effect(&graph)
+        .expect("the acknowledgement can be redelivered before one acceptance effect");
+    let copies = path.copies;
+    let receives = path.receives;
+    let effects = path.effects;
+
+    assert_eq!(copies.len(), 1, "one redelivered copy");
+    assert_eq!(copies[0].index(), 1);
+    assert_eq!(receives.len(), 2, "both delivery copies are received");
+    assert_eq!(
+        receives
+            .iter()
+            .map(DeliveryIdentity::index)
+            .collect::<Vec<_>>(),
+        [0, 1],
+    );
+    assert_eq!(
+        copies
+            .iter()
+            .chain(&receives)
+            .map(|delivery| delivery.message().clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        1,
+        "both deliveries retain the one acknowledgement message identity"
+    );
+    assert_eq!(
+        effects,
+        [0],
+        "one business-effect occurrence is established"
+    );
+    assert_eq!(path.receive_threads.len(), 2);
+    let acknowledgement_message = receives[0].message();
+    assert_eq!(receives[1].message(), acknowledgement_message);
+    let redelivery_thread = &path.receive_threads[1];
+    let redelivery_payload = path
+        .redelivery_payload
+        .expect("the redelivered acknowledgement has a complete Flag payload");
+    let (effect, effect_node, effect_thread, acceptance_effect) = path
+        .effect
+        .expect("the Accepted effect transition is present");
+    let acceptance_effect =
+        acceptance_effect.expect("the Accepted effect has a complete Flag payload");
+    assert!(effect_node.contains("Accepted"), "the effect is Accepted");
+    assert_eq!(effect.instance(), acknowledgement_message.instance());
+    assert_eq!(effect.path(), redelivery_thread);
+    assert_eq!(effect_thread, *redelivery_thread);
+    let (attempt_node, attempt_thread) = path
+        .attempt
+        .expect("RecordAcceptance attempt precedes its effect");
+    assert!(attempt_node.contains("RecordAcceptance"));
+    assert_eq!(attempt_thread, *effect.path());
+    assert_eq!(
+        redelivery_payload, acceptance_effect,
+        "the acceptance binder carries the received acknowledgement payload"
+    );
+
+    let mut effect_identity = None;
+    for reached in &graph.states {
+        for (transition, _) in &reached.steps {
+            if let Some(effect) = transition.business_effect() {
+                assert_eq!(effect.ordinal(), 0);
+                let identity = fsl_eval::simulation::protocol::transition_json(transition)
+                    .expect("effect identity serializes");
+                let current_identity = identity["business_effect"].clone();
+                if let Some(effect_identity) = &effect_identity {
+                    assert_eq!(effect_identity, &current_identity);
+                } else {
+                    effect_identity = Some(current_identity);
+                }
+            }
+        }
+    }
+    assert!(effect_identity.is_some(), "the effect has an identity");
 }
