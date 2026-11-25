@@ -14,7 +14,8 @@ relationships:
 
 When the FSL benchmark gate evaluates a change for QSL-1919, QSL-1921,
 QSL-1922, QSL-1923, QSL-1924, QSL-1925, QSL-1926, QSL-1927, QSL-1930, or
-the region-mapping, declared-composites and refinement-field cost groups in QSL-2854,
+the region-mapping, declared-composites, refinement-field and hybrid replay
+cost groups in QSL-2854,
 the FSL benchmark gate SHALL run the applicable named axis, check its
 acceptance criterion below, and compare candidate B with current
 `origin/main` A using live measurements from the same session as specified in
@@ -23,7 +24,9 @@ acceptance criterion below, and compare candidate B with current
 ## Scope
 
 This requirement defines the benchmark inputs and acceptance criteria for the
-named QSL performance-program tickets and QSL-2854's cost groups. A baseline-relative comparison is
+named QSL performance-program tickets and QSL-2854's region-mapping,
+declared-composites, refinement-field and hybrid replay cost groups. A
+baseline-relative comparison is
 used where a ticket gives no fixed numeric target; no historical measurement
 is a threshold.
 
@@ -49,15 +52,21 @@ not thresholds.
 
 Each AC below is evaluated independently. A live A/B result records all five
 alternating rounds, load average before and after each round, per-round
-estimates, both medians, the computed noise, and the pass/fail comparison.
+estimates, both medians, the computed noise, and the pass/fail comparison. For
+QSL-1919 sessions produced by the `qsl-bench` harness, each measurement
+session is immutable. Its report SHALL preserve and report every raw result
+file from that session, including failed, loaded, or invalid results. A rerun
+SHALL be a complete new session covering every axis and size in the affected
+ACs. Its report SHALL include raw results from every earlier session for the
+change; no axis result SHALL be selectively replaced.
 
 | Metric | Target | Threshold | Method |
 | --- | --- | --- | --- |
 | NFR-141-AC-1, package emission | Milliseconds per emitted package at 1, 10 and 100 timed models | B median <= A median × (1 + noise) at each size | Five-round live A/B |
 | NFR-141-AC-2, package read | Milliseconds per package read at 1, 10 and 100 timed models | B median <= A median × (1 + noise) at each size | Five-round live A/B |
 | NFR-141-AC-3, replay wall time | Milliseconds per replay request at 1, 10 and 100 timed models | B median <= A median × (1 + noise) at each size | Five-round live A/B |
-| NFR-141-AC-4, replay peak RSS | Peak RSS at 1, 10 and 100 timed models | B <= A × (1 + noise) at each size | Isolated live A/B probes |
-| NFR-141-AC-5, parse calls | Calls per source document and shared counter availability | B calls per document <= A at each size | Live A/B counter report |
+| NFR-141-AC-4, replay peak RSS | Peak RSS at 1, 10 and 100 timed models | B <= A × (1 + noise) at each size | Isolated live A/B probes using identical counter harness and seam files |
+| NFR-141-AC-5, parse calls | Calls per source document and shared counter availability | B calls per document <= A at each size | Isolated live A/B counter probe using identical counter harness and seam files |
 | NFR-141-AC-6, child traversal correctness | Zero child-traversal allocations; identical outcomes and charges across all callers | Exactly zero allocations and identical results | Allocation probe and correctness checks |
 | NFR-141-AC-7, evaluator cost | Wall time, child-traversal allocation count and allocation share at specified sizes | B median <= A median × (1 + noise); count and share remain zero | Five-round live A/B and profile |
 | NFR-141-AC-8, parser bookkeeping correctness | IDs recorded; descriptions formatted only on diagnostic; corpus output unchanged | Exact tree, diagnostic and expected-set-order equality | Parser-corpus comparison |
@@ -72,9 +81,14 @@ estimates, both medians, the computed noise, and the pass/fail comparison.
 | NFR-141-AC-17, workspace structure | One `it` binary each and duplicate major versions removed | Exactly one each; zero duplicate `syn`/`jsonschema` majors | Build graph and binary inventory |
 | NFR-141-AC-18, build time | Cold/incremental build and test no-run wall time | Each B median <= A median × (1 + noise), and one < A median × (1 − noise) | Five-round live A/B build measurements |
 | NFR-141-AC-19, region lookup work | Source-map segment-group index build visits and lookup probes for nested prefix spans at 5,000, 10,000 and 20,000 segments | At most N index visits and N × (2 × ceil(log2 N) + 4) query probes at each size; exact mapped-region results equal the existing multi-region mapping filtered to exactly one region | Deterministic operation-count test and exact output comparison |
-| NFR-141-AC-20, declared-composites graph work | WireGraph build count and exact declared-composite output for 5,000, 10,000 and 20,000 composite nodes | Exactly one WireGraph build per `declared_composites()` call, with identical node keys, shapes, member names and node order | Deterministic build counter and exact output comparison |
-| NFR-141-AC-21, refinement hidden-field membership | Ordered-index key comparisons for 512, 1,024 and 2,048 declared fields with half mapped in reverse order | At most 8 × (N + F) × ceil(log2(F + 1)) comparisons, with hidden keys exactly equal to the prior scan in declaration order; prior comparison count exceeds N × F / 2 | Deterministic comparison counter and exact output comparison |
-| NFR-141-AC-22, hybrid replay class walk | Visited nodes, named children and path operations on left-nested `HybridTerm` and `Exp` chains at 5,000, 10,000 and 20,000 nodes; behavior at depth 100,000 on a 512 KiB stack | The shared `filament-walk` toolkit enters/exits each node once; each node names at most three children; term-path storage is linear without per-child prefix cloning; identical first unsupported construct, preorder, form and `TermLocus`; both walkers complete depth 100,000 without depth refusal | Deterministic visit/child/path-operation counters, bounded recursive-oracle comparisons of branching, conditional and call behavior including locus, and isolated 100,000-depth small-stack test |
+| NFR-141-AC-20, baseline provenance | Production source revision used for A | `origin/main` at session start | Live A/B provenance report |
+| NFR-141-AC-21, candidate provenance | Production source revision used for B | Candidate production sources | Live A/B provenance report |
+| NFR-141-AC-22, no-op counter type boundary | Zero-sized type, empty inline record method, typed public entry points, and no normal-build seam API | Exact compile-time assertion and type-check test; bench entry is feature-gated | Compile-time assertion and test |
+| NFR-141-AC-23, isolated instrumentation | Shared isolated A/B probe builds for AC-4 peak RSS and AC-5 parse calls | Identical counter-harness and replay-counter-seam files applied unchanged to A and B | Isolated probes and build inspection |
+| NFR-141-AC-24, seam provenance | Replay-counter seam revision used by isolated probes | Seam revision recorded separately from both production source revisions | Isolated probe provenance report |
+| NFR-141-AC-25, declared-composites graph work | WireGraph build count and exact declared-composite output for 5,000, 10,000 and 20,000 composite nodes | Exactly one WireGraph build per `declared_composites()` call, with identical node keys, shapes, member names and node order | Deterministic build counter and exact output comparison |
+| NFR-141-AC-26, refinement hidden-field membership | Ordered-index key comparisons for 512, 1,024 and 2,048 declared fields with half mapped in reverse order | At most 8 × (N + F) × ceil(log2(F + 1)) comparisons, with hidden keys exactly equal to the prior scan in declaration order; prior comparison count exceeds N × F / 2 | Deterministic comparison counter and exact output comparison |
+| NFR-141-AC-27, hybrid replay class walk | Visited nodes, named children and path operations on left-nested `HybridTerm` and `Exp` chains at 5,000, 10,000 and 20,000 nodes; behavior at depth 100,000 on a 512 KiB stack | The shared `filament-walk` toolkit enters/exits each node once; each node names at most three children; term-path storage is linear without per-child prefix cloning; identical first unsupported construct, preorder, form and `TermLocus`; both walkers complete depth 100,000 without depth refusal | Deterministic visit/child/path-operation counters, bounded recursive-oracle comparisons of branching, conditional and call behavior including locus, and isolated 100,000-depth small-stack test |
 
 ## Acceptance Criteria
 
@@ -83,8 +97,8 @@ estimates, both medians, the computed noise, and the pass/fail comparison.
 | NFR-141-AC-1 | For QSL-1919, `package/emit` is selectable by name and listed in `fsl-bench/BENCHMARKING.md`; it emits checked fixtures with M timed models at M = 1, 10 and 100 (one object type, one clock, one operation, one timed transition and one claim per model), and reports wall time in milliseconds per emitted package and the exponent across M. Candidate B's median wall time is no greater than A's median multiplied by `1 + noise` at each M. | Live five-round A/B benchmark and generated-package comparison |
 | NFR-141-AC-2 | For QSL-1919, `package/read` is separately selectable and listed in the guide; it reads the same checked package fixtures at M = 1, 10 and 100, reports wall time in milliseconds per package and the exponent across M, and B's median at each M is no greater than A's median multiplied by `1 + noise`. | Live five-round A/B benchmark and checked-package comparison |
 | NFR-141-AC-3 | For QSL-1919, `replay/request` is separately selectable and listed in the guide; it executes one end-to-end replay request over a source package containing 1, 10 or 100 timed models, reports wall time in milliseconds per request, and B's median at each size is no greater than A's median multiplied by `1 + noise`. | Live five-round A/B benchmark and replay outcome comparison |
-| NFR-141-AC-4 | For QSL-1919, the same `replay/request` input sizes (1, 10 and 100 timed models) each have an isolated peak-RSS probe; B's peak RSS is no greater than A's peak RSS multiplied by `1 + noise` at each size. | Isolated live A/B peak-RSS probe |
-| NFR-141-AC-5 | For QSL-1919, `replay/request` reports parse calls per source document using the parse-call counter feature shared with the model-check counters; the counter is selectable in the benchmark output and B's calls per document do not exceed A's for any of the three package sizes. | Live A/B counter report and counter-unit check |
+| NFR-141-AC-4 | For QSL-1919, the same `replay/request` input sizes (1, 10 and 100 timed models) each have an isolated peak-RSS probe built with the identical counter harness and seam files on A and B; B's peak RSS is no greater than A's peak RSS multiplied by `1 + noise` at each size. | Isolated live A/B peak-RSS probe |
+| NFR-141-AC-5 | For QSL-1919, an isolated `replay/request` counter probe built with the identical counter harness and seam files on A and B reports parse calls per source document using the parse-call counter feature shared with the model-check counters; the counter is selectable in the benchmark output and B's calls per document do not exceed A's for any of the three package sizes. | Isolated live A/B counter report and counter-unit check |
 | NFR-141-AC-6 | For QSL-1921, visiting `CheckedNode::children` by the evaluator and every other caller allocates zero bytes within the child-traversal operation; evaluator results and charges remain identical. The benchmark/profile covers `evaluator/kernel` using `KernelCase` sizes 5 and 10 and `evaluator/call_chain` using `linked_chain` sizes 1, 10, 100 and 1,000 with one call to `f0(5)`. | Allocation-count probe, evaluator correctness checks, and live A/B measurements |
 | NFR-141-AC-7 | For QSL-1921, `evaluator/kernel` and `evaluator/call_chain` report wall time, child-traversal allocation count and allocation share at every AC-6 size; B's median wall time is no greater than A's median multiplied by `1 + noise`, and both the child-traversal allocation count and share remain zero. | Live five-round A/B benchmark and allocation profile |
 | NFR-141-AC-8 | For QSL-1922, parser failure bookkeeping records expected-terminal identifiers; terminal descriptions are formatted only when a diagnostic is produced. Trees, diagnostic text and expected-set order remain identical on the parser corpus. `parser/volume` uses 1,000 one-line functions; `cst/parse` uses `nested_source` depths 0, 1, 2, 3 and 4 and `volume_source(1,000)`. | Parser-corpus comparison and live A/B benchmark |
@@ -99,9 +113,14 @@ estimates, both medians, the computed noise, and the pass/fail comparison.
 | NFR-141-AC-17 | For QSL-1930, qsl-replay and qsl-package each build exactly one `it` test binary; duplicate `syn` and `jsonschema` major versions are removed from the resolved workspace dependency graph. | Cargo build graph and test-binary inventory |
 | NFR-141-AC-18 | For QSL-1930, cold and incremental `cargo build --timings` and `cargo test --no-run` wall time are measured before and after; each candidate median is no greater than its baseline median plus session noise, and at least one is lower by more than session noise. | Live five-round A/B build measurements |
 | NFR-141-AC-19 | For the region-mapping cost group in QSL-2854, construct a `SourceMap` with N = 5,000, 10,000 and 20,000 ordered one-line body segments separated by an allowed two-byte indentation deletion in the original source, then query each of the N nonempty body prefixes `[0, 2k)` for `1 <= k <= N`. Building the contiguous original-region group index visits at most N input segments. Across the N queries at each size, binary-search and examined-group probes total at most `N × (2 × ceil(log2 N) + 4)`. In this fixture, the exact result is the original first-line region for k = 1 and `None` for k > 1; a boundary differential test compares the specialized result with `map_regions` for every span of a 12-segment fixture. The old scan-per-query implementation fails this bound: at N = 5,000, the deterministic probe recorded 12,577,499 segment steps against a bound of 150,000. | Focused deterministic operation-count unit test at all three sizes and exact boundary comparison against `map_regions` |
-| NFR-141-AC-20 | For the declared-composites cost group in QSL-2854, construct an admitted checked package with N = 5,000, 10,000 and 20,000 composite declaration nodes and call `BarePackage::declared_composites()` once per size. The call builds exactly one `WireGraph`, independent of N and the number of returned declarations. Its ordered output must exactly equal the pre-change projection, including every structural `NodeKey`, declaration shape and member name. The prior implementation rebuilds a `WireGraph` once for each composite and therefore records N builds (and O(N²) graph-node visits when the package has Θ(N) nodes). | Focused deterministic graph-build counter at all three sizes and exact output comparison against the prior projection |
-| NFR-141-AC-21 | For QSL-2854's package-refinement hidden-field cost group, derive hidden fields for N = 512, 1,024 and 2,048 declared abstract fields with F = N / 2 mapped fields arranged in reverse declaration order. Build one ordered membership index over the mapped field keys, then query each declared key. Count every actual `Ord::cmp` key comparison made by index construction and lookup; the total is at most `8 × (N + F) × ceil(log2(F + 1))` at each size. Hidden keys must exactly equal the prior scan's result, in declaration order. The prior nested scan's actual key comparisons exceed N × F / 2 at each size. | Focused deterministic comparison-count test at all three sizes and exact comparison with the prior hidden-key projection |
-| NFR-141-AC-22 | For QSL-2854's hybrid replay class cost group, walk left-nested `HybridTerm` and `Exp` chains at 5,000, 10,000 and 20,000 nodes. The shared `filament-walk` toolkit enters and exits each node once, and each node names at most three children; term-path storage is linear in depth and does not clone a path prefix per child. The first unsupported construct, preorder, `form`, and `TermLocus` equal the prior recursive oracle on bounded branch, conditional and call fixtures. On a 512 KiB stack, both walkers complete at depth 100,000 without a refusal caused by depth; the prior recursive implementation's stack failure at that depth is isolated in a child process. | Focused deterministic visit/child/path-operation counters, recursive-oracle comparisons of branching and locus behavior, and isolated 100,000-depth small-stack test |
+| NFR-141-AC-20 | For each QSL-1919 live A/B session, baseline A uses the FSL production sources at `origin/main` when the session begins; the report records A's production source revision. | Live A/B provenance report |
+| NFR-141-AC-21 | For each QSL-1919 live A/B session, candidate B uses the FSL candidate production sources; the report records B's production source revision. | Live A/B provenance report |
+| NFR-141-AC-22 | For QSL-1919, production `NoopParseCallCounter` is a zero-sized type with an empty `#[inline(always)]` `record` method, and the source contains exactly `const _: () = assert!(size_of::<NoopParseCallCounter>() == 0)`. A test type-checks the public non-counter replay entry points instantiated with `NoopParseCallCounter`. Normal builds expose no production-visible seam API; the bench-counter entry is available only behind `cfg(feature = "bench-counters")`. AC-1 through AC-3 compare candidate B-with-seam against real-main A using their existing overall non-regression bounds; those measurements do not prove zero seam cost. | Compile-time assertion and test |
+| NFR-141-AC-23 | For QSL-1919, the AC-4 peak-RSS and AC-5 parse-counter results use the same pair of isolated A/B probe builds; identical counter-harness and replay-counter-seam files are applied unchanged to A and B. | Isolated probes and build inspection |
+| NFR-141-AC-24 | For QSL-1919 AC-4 and AC-5, the report records the replay-counter seam revision separately from both production source revisions. | Isolated probe provenance report |
+| NFR-141-AC-25 | For the declared-composites cost group in QSL-2854, construct an admitted checked package with N = 5,000, 10,000 and 20,000 composite declaration nodes and call `BarePackage::declared_composites()` once per size. The call builds exactly one `WireGraph`, independent of N and the number of returned declarations. Its ordered output must exactly equal the pre-change projection, including every structural `NodeKey`, declaration shape and member name. The prior implementation rebuilds a `WireGraph` once for each composite and therefore records N builds (and O(N²) graph-node visits when the package has Θ(N) nodes). | Focused deterministic graph-build counter at all three sizes and exact output comparison against the prior projection |
+| NFR-141-AC-26 | For QSL-2854's package-refinement hidden-field cost group, derive hidden fields for N = 512, 1,024 and 2,048 declared abstract fields with F = N / 2 mapped fields arranged in reverse declaration order. Build one ordered membership index over the mapped field keys, then query each declared key. Count every actual `Ord::cmp` key comparison made by index construction and lookup; the total is at most `8 × (N + F) × ceil(log2(F + 1))` at each size. Hidden keys must exactly equal the prior scan's result, in declaration order. The prior nested scan's actual key comparisons exceed N × F / 2 at each size. | Focused deterministic comparison-count test at all three sizes and exact comparison with the prior hidden-key projection |
+| NFR-141-AC-27 | For QSL-2854's hybrid replay class cost group, walk left-nested `HybridTerm` and `Exp` chains at 5,000, 10,000 and 20,000 nodes. The shared `filament-walk` toolkit enters and exits each node once, and each node names at most three children; term-path storage is linear in depth and does not clone a path prefix per child. The first unsupported construct, preorder, `form`, and `TermLocus` equal the prior recursive oracle on bounded branch, conditional and call fixtures. On a 512 KiB stack, both walkers complete at depth 100,000 without a refusal caused by depth; the prior recursive implementation's stack failure at that depth is isolated in a child process. | Focused deterministic visit/child/path-operation counters, recursive-oracle comparisons of branching and locus behavior, and isolated 100,000-depth small-stack test |
 
 ## Verification
 
@@ -109,3 +128,16 @@ The named generators and sizes above are part of the benchmark contract. The
 benchmark gate records each AC's correctness result and the live A/B evidence
 required by `fsl-bench/BENCHMARKING.md`; a missing axis, size, metric, restored
 scope condition, or failed threshold fails that AC.
+
+For QSL-1919, build baseline A from the `origin/main` production sources with
+only the `fsl-bench`-only patch; do not change `fsl-replay` for A's AC-1 through
+AC-3 timing runs. Build candidate B from the candidate production sources,
+with `ParseCallCounter` and `NoopParseCallCounter` compiled in every build.
+Run AC-1 through AC-3 as ordinary timing builds. For AC-4 and AC-5, build one
+isolated probe for A and one for B, with identical counter-harness and
+replay-counter-seam files applied unchanged to both production source trees;
+both results use that same pair of probe builds. Report the production source
+revision for A and B and the seam revision separately.
+Verify AC-22 with its exact compile-time size assertion and a type-check test;
+AC-1 through AC-3's overall non-regression results are not evidence that the
+no-op seam itself has zero cost.
