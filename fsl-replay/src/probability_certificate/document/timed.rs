@@ -1637,8 +1637,66 @@ impl Watch<'_> {
         }
     }
 
-    /// The phase and the clock after reading `state`, `previous` being the
-    /// phase before the move and `elapsed` the clock after it.
+    /// The phase and the clock after a delay that reaches `state` with the
+    /// clock at `elapsed`. A delay is not a predicate position (ADR-026
+    /// TS-3), so a single operator's event reads nothing and only closes once
+    /// the clock is past its window. The nested monitor reads each instant a
+    /// delay reaches, and an elapsed measure's reading cannot change while no
+    /// discrete step happens.
+    #[allow(clippy::too_many_arguments)]
+    fn delay(
+        &self,
+        system: &ModelSystem<'_>,
+        binding: Option<&filament_exact::ObjectReference>,
+        state: &ModelSimState,
+        previous: Phase,
+        elapsed: u64,
+        deadline: u64,
+        cancel: &Cancel,
+    ) -> Result<(Phase, u64), ProbabilityDocumentError> {
+        match self {
+            Self::Deadline(_) => {
+                let phase = match previous {
+                    Phase::Pending if elapsed > deadline => Phase::Rejected,
+                    other => other,
+                };
+                Ok((phase, elapsed))
+            }
+            Self::Bounded { root, .. } => Ok((
+                Phase::Bounded(bounded_at(previous, *root, elapsed)),
+                elapsed,
+            )),
+            Self::Nested { .. } | Self::Elapsed(_) => {
+                self.observe(system, binding, state, previous, elapsed, deadline, cancel)
+            }
+        }
+    }
+
+    /// The phase and the clock at the idle observation of `state`, a
+    /// predicate position reached with no discrete step. The nested monitor
+    /// has already read this instant on the delay that reached it.
+    #[allow(clippy::too_many_arguments)]
+    fn idle_observation(
+        &self,
+        system: &ModelSystem<'_>,
+        binding: Option<&filament_exact::ObjectReference>,
+        state: &ModelSimState,
+        previous: Phase,
+        elapsed: u64,
+        deadline: u64,
+        cancel: &Cancel,
+    ) -> Result<(Phase, u64), ProbabilityDocumentError> {
+        match self {
+            Self::Nested { .. } => Ok((previous, elapsed)),
+            Self::Deadline(_) | Self::Bounded { .. } | Self::Elapsed(_) => {
+                self.observe(system, binding, state, previous, elapsed, deadline, cancel)
+            }
+        }
+    }
+
+    /// The phase and the clock after reading the predicate position `state`,
+    /// `previous` being the phase before the move and `elapsed` the clock
+    /// after it. A decided event stays decided.
     #[allow(clippy::too_many_arguments)]
     fn observe(
         &self,
@@ -1652,16 +1710,16 @@ impl Watch<'_> {
     ) -> Result<(Phase, u64), ProbabilityDocumentError> {
         let watch = match self {
             Self::Deadline(predicate) => {
-                let phase = phase_at(system, predicate, binding, state, elapsed, deadline, cancel)?;
+                let phase = match previous {
+                    Phase::Accepted | Phase::Rejected => previous,
+                    _ => phase_at(system, predicate, binding, state, elapsed, deadline, cancel)?,
+                };
                 return Ok((phase, elapsed));
             }
             Self::Bounded {
                 root, predicates, ..
             } => {
-                let mut operator = match previous {
-                    Phase::Bounded(operator) => operator,
-                    _ => *root,
-                };
+                let mut operator = bounded_at(previous, *root, elapsed);
                 if operator.phase == fsl_eval::probabilistic::DeadlinePhase::Pending {
                     let truths = read_truths(system, predicates, binding, state, cancel)?;
                     operator.phase = deadline_read(
@@ -1671,11 +1729,7 @@ impl Watch<'_> {
                         elapsed,
                         operator.lower,
                     );
-                    if elapsed > operator.upper {
-                        operator.phase = deadline_timeout(operator.kind);
-                    }
                 }
-                operator.elapsed = elapsed.min(operator.upper);
                 return Ok((Phase::Bounded(operator), elapsed));
             }
             Self::Nested {
@@ -1750,6 +1804,26 @@ impl Watch<'_> {
         let hit = if within { one() } else { zero() };
         Some((hit.sub(&watch.q), within))
     }
+}
+
+/// A bounded operator `previous` holds, or `root` before its first position,
+/// with its clock at `elapsed`: a pending one is decided once the clock is
+/// past its window.
+fn bounded_at(
+    previous: Phase,
+    root: fsl_eval::probabilistic::TimedOperatorState,
+    elapsed: u64,
+) -> fsl_eval::probabilistic::TimedOperatorState {
+    let mut operator = match previous {
+        Phase::Bounded(operator) => operator,
+        _ => root,
+    };
+    if operator.phase == fsl_eval::probabilistic::DeadlinePhase::Pending && elapsed > operator.upper
+    {
+        operator.phase = deadline_timeout(operator.kind);
+    }
+    operator.elapsed = elapsed.min(operator.upper);
+    operator
 }
 
 fn read_truths(
@@ -1990,6 +2064,15 @@ fn enumerate_digital_deadline(
             if current.tail == DigitalTail::IdleDelayed {
                 let mut observed = current.clone();
                 observed.tail = DigitalTail::IdleReady;
+                (observed.phase, observed.elapsed) = watch.idle_observation(
+                    system,
+                    binding,
+                    observed.timed.discrete(),
+                    current.phase.clone(),
+                    current.elapsed,
+                    deadline,
+                    cancel,
+                )?;
                 let target = digital_key(
                     system, timed, binding, &observed, &caps, key_scale, deadline,
                 )?;
@@ -3015,7 +3098,7 @@ fn next_digital_delay(
             .min(deadline.saturating_add(1));
         let clocks = quantized_clocks(&delayed, caps, scale)?;
         let delayed = TimedState::new(delayed.discrete().clone(), ClockValuation::new(clocks));
-        let (phase, elapsed) = watch.observe(
+        let (phase, elapsed) = watch.delay(
             system,
             binding,
             delayed.discrete(),
@@ -3070,7 +3153,7 @@ fn digital_idle_delay(
         delayed.discrete().clone(),
         ClockValuation::new(quantized_clocks(&delayed, caps, scale)?),
     );
-    let (phase, elapsed) = watch.observe(
+    let (phase, elapsed) = watch.delay(
         system,
         binding,
         delayed.discrete(),
@@ -4297,7 +4380,7 @@ fn digital_state_after_delay(
             delayed.discrete().clone(),
             ClockValuation::new(quantized_clocks(&delayed, caps, scale)?),
         );
-        let (phase, elapsed) = watch.observe(
+        let (phase, elapsed) = watch.delay(
             system,
             binding,
             delayed.discrete(),
@@ -4371,7 +4454,7 @@ fn next_region_delay(
             .min(deadline.saturating_add(1));
         let clocks = quantized_clocks(&delayed, caps, scale)?;
         let delayed = TimedState::new(delayed.discrete().clone(), ClockValuation::new(clocks));
-        let (phase, elapsed) = watch.observe(
+        let (phase, elapsed) = watch.delay(
             system,
             binding,
             delayed.discrete(),
@@ -5476,10 +5559,7 @@ mod witness_pricing_tests {
             ("F", Some(true), vec![]),
         ]);
 
-        assert_eq!(
-            price(&graph, part(1, 4), &[path(&["X", "I", "F"])]),
-            None
-        );
+        assert_eq!(price(&graph, part(1, 4), &[path(&["X", "I", "F"])]), None);
     }
 
     /// A path whose first step is no outcome of the chosen choice is dropped

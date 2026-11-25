@@ -508,3 +508,202 @@ fn timed_eventually_latches_in_window_hit_before_time_lock() {
     assert_eq!(value.value(), &ratio(1, 1));
     assert!(accepted(&world, "TimedHit", &document(&record)));
 }
+
+/// One `step` from phase 0 sets `late`, with the invariant `x <= 3 ms` until
+/// it has. `guard` and `delay` fix when it happens.
+fn one_step(guard: &str, delay: &str, claims: &str) -> World {
+    let package_document = timed_world::document(&["x"], &[("step", &["phase", "late", "x"])]);
+    let body = format!(
+        "{}\
+         pre Step using v on M::Call::step {{ self.phase = 0{guard} }}\n\
+         post Stepped using v on M::Call::step {{ self.phase = 1 and self.late = true }}\n\
+         {delay}\
+         time invariant Wait when {{ self.phase = 0 }} {{ self.x <= 3 ms }}\n\
+         workload One on M {{ weight Call::step = 1; }}\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    timed_world::world(&package_document, super::PROFILES, &body)
+}
+
+fn claim_under(name: &str, scheduler: &str, bound: &str, formula: &str) -> String {
+    format!(
+        "probabilistic {name} using ev on M over (c: M::Call) {scheduler} on origin \
+         {{ probability {bound} [ {formula} ] }}\n"
+    )
+}
+
+/// Claims over [`one_step`] whose `step` fires after 2 ms and no later than
+/// 3 ms, each with its value. The positions are the initial state at 0 ms,
+/// the post-state of `step` and idle observations after it, so none has a
+/// time in [1 ms, 2 ms]: an `eventually` or `until` there is false and an
+/// `always` there is true, whatever the state holds during the delay.
+const EMPTY_WINDOW: [(&str, &str, bool); 4] = [
+    (
+        "EventuallyNot",
+        "eventually[1 ms, 2 ms] holds(not c.late)",
+        false,
+    ),
+    (
+        "UntilNot",
+        "holds(not c.late) until[1 ms, 2 ms] holds(not c.late)",
+        false,
+    ),
+    ("AlwaysLate", "always[1 ms, 2 ms] holds(c.late)", true),
+    ("AlwaysNever", "always[1 ms, 2 ms] holds(c.retried)", true),
+];
+
+/// The claims of [`EMPTY_WINDOW`] under `scheduler` over [`one_step`]: for
+/// each, a lower bound `Low` and an upper bound `High`.
+fn empty_window_world(scheduler: &str, guard: &str, delay: &str) -> World {
+    let claims = EMPTY_WINDOW
+        .iter()
+        .map(|(name, formula, _)| {
+            claim_under(&format!("{name}Low"), scheduler, ">= 0.99", formula)
+                + &claim_under(&format!("{name}High"), scheduler, "<= 0.01", formula)
+        })
+        .collect::<String>();
+    one_step(guard, delay, &claims)
+}
+
+/// The bound each value of [`EMPTY_WINDOW`] meets is proved with that value
+/// and an accepted certificate.
+fn assert_window_proofs(world: &World) {
+    for (name, _, holds) in EMPTY_WINDOW {
+        let claim = format!("{name}{}", if holds { "Low" } else { "High" });
+        let record = settle(world, &claim);
+        assert_eq!(
+            proved_value(&record),
+            ratio(i64::from(holds), 1),
+            "{claim}: {record:#?}"
+        );
+        assert!(accepted(world, &claim, &document(&record)), "{claim}");
+    }
+}
+
+/// The bound each value of [`EMPTY_WINDOW`] misses is refuted.
+fn assert_window_refutations(world: &World) {
+    for (name, _, holds) in EMPTY_WINDOW {
+        let claim = format!("{name}{}", if holds { "High" } else { "Low" });
+        let record = settle(world, &claim);
+        assert!(is_refuted(&record), "{claim}: {record:#?}");
+    }
+}
+
+/// A delay the scheduler chooses unit by unit passes through 1 ms and 2 ms
+/// without a position there.
+#[trace("FR-204-AC-21")]
+#[test]
+fn a_free_delay_instant_is_not_a_predicate_position() {
+    for scheduler in ["under every scheduler", "under One"] {
+        let world = empty_window_world(scheduler, " and self.x >= 3 ms", "");
+        assert_window_proofs(&world);
+        assert_window_refutations(&world);
+    }
+}
+
+/// A drawn delay of 3 ms passes the window in one race edge, under every
+/// scheduler and under a workload.
+#[trace("FR-204-AC-21")]
+#[test]
+fn a_drawn_delay_instant_is_not_a_predicate_position() {
+    let delay = "delay M::Call::step ~ discrete { 3 ms: 1 };\n";
+    for scheduler in ["under every scheduler", "under One"] {
+        assert_window_proofs(&empty_window_world(scheduler, "", delay));
+    }
+}
+
+/// A strict guard takes the region route, where `step` fires after 2 ms.
+#[trace("FR-204-AC-21")]
+#[test]
+fn a_region_delay_instant_is_not_a_predicate_position() {
+    let world = empty_window_world("under every scheduler", " and self.x > 2 ms", "");
+    assert_window_proofs(&world);
+    assert_window_refutations(&world);
+}
+
+/// A step at exactly a window's closed end is a position inside it.
+#[trace("FR-204-AC-21")]
+#[test]
+fn a_step_at_a_closed_window_end_is_read() {
+    let claims = claim_under(
+        "AtLower",
+        "under every scheduler",
+        ">= 0.99",
+        "eventually[3 ms, 4 ms] holds(c.late)",
+    ) + &claim_under(
+        "AtUpper",
+        "under every scheduler",
+        ">= 0.99",
+        "eventually[1 ms, 3 ms] holds(c.late)",
+    );
+    let world = one_step(" and self.x >= 3 ms", "", &claims);
+    for claim in ["AtLower", "AtUpper"] {
+        let record = settle(&world, claim);
+        assert_eq!(proved_value(&record), ratio(1, 1), "{claim}: {record:#?}");
+        assert!(accepted(&world, claim, &document(&record)));
+    }
+}
+
+/// A quiescent state with `late` true has one behaviour per choice of idle
+/// observation times: one that observes inside [1 ms, 2 ms] satisfies the
+/// event and one that first observes later does not, so the minimum is 0 and
+/// the maximum 1, and each bound is refuted.
+#[trace("FR-204-AC-21")]
+#[test]
+fn an_idle_observation_is_a_position_and_the_delay_before_it_is_not() {
+    let formula = "eventually[1 ms, 2 ms] holds(c.late)";
+    let claims = claim_under("Minimum", "under every scheduler", ">= 0.01", formula)
+        + &claim_under("Maximum", "under every scheduler", "<= 0.99", formula);
+    let package_document = timed_world::document(&["x"], &[("step", &["late", "x"])]);
+    let body = format!(
+        "{}\
+         pre Step using v on M::Call::step {{ false }}\n\
+         post Stepped using v on M::Call::step {{ self.late = false }}\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    let world = timed_world::world_holding(
+        &package_document,
+        super::PROFILES,
+        &body,
+        &json!({ "late": { "boolean": true } }),
+    );
+    for claim in ["Minimum", "Maximum"] {
+        let record = settle(&world, claim);
+        assert!(is_refuted(&record), "{claim}: {record:#?}");
+    }
+}
+
+/// `set` and `clear` tie at 1 ms and fire at that instant in either order, so
+/// one of the positions at 1 ms has `late` true whatever follows it: the
+/// probability is 1, both in the certificate and in the replayed paths that
+/// refute the upper bound.
+#[trace("FR-204-AC-21")]
+#[test]
+fn a_tied_step_does_not_retract_an_event_already_met() {
+    let formula = "eventually[0 ms, 1 ms] holds(c.late)";
+    let claims = claim_under("Met", "under Both", ">= 0.99", formula)
+        + &claim_under("Missed", "under Both", "<= 0.99", formula);
+    let package_document =
+        timed_world::document(&["x"], &[("set", &["phase", "late"]), ("clear", &["late"])]);
+    let body = format!(
+        "{}\
+         pre CanSet using v on M::Call::set {{ self.phase = 0 }}\n\
+         post DidSet using v on M::Call::set {{ self.phase = 1 and self.late = true }}\n\
+         pre CanClear using v on M::Call::clear {{ true }}\n\
+         post DidClear using v on M::Call::clear {{ self.late = false }}\n\
+         delay M::Call::set ~ discrete {{ 1 ms: 1 }};\n\
+         delay M::Call::clear ~ discrete {{ 1 ms: 1 }};\n\
+         workload Both on M {{ weight Call::set = 1; weight Call::clear = 1; }}\n\
+         time invariant ClockWindow when {{ true }} {{ self.x <= 2 ms }}\n\
+         {claims}",
+        timed_world::DENSE,
+    );
+    let world = timed_world::world(&package_document, super::PROFILES, &body);
+    let record = settle(&world, "Met");
+    assert_eq!(proved_value(&record), ratio(1, 1), "{record:#?}");
+    assert!(accepted(&world, "Met", &document(&record)));
+    let record = settle(&world, "Missed");
+    assert!(is_refuted(&record), "{record:#?}");
+}

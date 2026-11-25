@@ -1516,8 +1516,22 @@ impl<'c> Builder<'_, '_, 'c> {
         }
     }
 
-    /// The control after the source's delay and the letters of `posts` (the
-    /// discrete steps that follow the delay, none for a pure delay).
+    /// The letters a pure delay adds to a move that took no discrete step.
+    /// A delay is not a predicate position (ADR-026 TS-3), so a single
+    /// operator's event reads none and only its deadline clock moves. The
+    /// nested monitor reads `truths` once at each instant a delay reaches.
+    fn delay_letters(&self, truths: &[bool]) -> Vec<Vec<bool>> {
+        match self.form {
+            Form::NestedDeadline(_) => vec![truths.to_vec()],
+            Form::Deadline { .. }
+            | Form::Elapsed { .. }
+            | Form::MeanTime { .. }
+            | Form::Labels(_) => Vec::new(),
+        }
+    }
+
+    /// The control after the source's delay and then `letters`: the
+    /// predicate positions that follow the delay.
     fn control_after(
         &mut self,
         source: Option<MonitorState>,
@@ -1828,7 +1842,7 @@ impl<'c> Builder<'_, '_, 'c> {
             },
         };
         if letters.is_empty() {
-            letters.push(truths.clone());
+            letters = self.delay_letters(&truths);
         }
         let source = self.nodes[at].key.monitor;
         let monitor = self.control_after(source, &mut reached, &letters)?;
@@ -2206,12 +2220,8 @@ impl<'c> Builder<'_, '_, 'c> {
             // Inspect the monitor before allocating a terminal target. A
             // nonterminal delay is only the start of the tied chain.
             let mut probe = start.clone();
-            let source_truths = self.nodes[at].truths.clone();
-            let monitor = self.control_after(
-                self.nodes[at].key.monitor,
-                &mut probe,
-                std::slice::from_ref(&source_truths),
-            )?;
+            let letters = self.delay_letters(&self.nodes[at].truths);
+            let monitor = self.control_after(self.nodes[at].key.monitor, &mut probe, &letters)?;
             if matches!(
                 monitor,
                 Some(
