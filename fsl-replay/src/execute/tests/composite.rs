@@ -868,12 +868,12 @@ fn tc_736_a_100000_term_source_is_refused_at_the_default_stage_limits() {
     });
 }
 
-/// TC-736 steps 1 and 2: on a thread with a 512 KiB stack, a request whose
-/// source holds a function with a 100,000-term sum over a recursive list
-/// parameter, whose assignment (and witness entry) carries a 100,000-long
-/// recursive list, whose `stage_limits` carries raised `s1.*`, `s3.*` and
-/// `emit.output_bytes` settings, and whose `replay.input_bytes` is raised to
-/// fit, replays to the proving run's verdict.
+/// TC-736, the raised-settings replay: on a thread with a 512 KiB stack, a
+/// request whose source holds a function with a 100,000-term sum over a
+/// recursive list parameter, whose assignment (and witness entry) carries a
+/// 100,000-long recursive list, whose `stage_limits` carries raised `s1.*`,
+/// `s3.*` and `emit.output_bytes` settings, and whose `replay.input_bytes` is
+/// raised to fit, replays to the proving run's verdict.
 #[test]
 #[ignore = "QSL-3253: deep replay recompilation reaches the fixed emit.output_bytes bound before the raised S1 and S3 settings admit the source"]
 fn tc_736_a_100000_term_source_and_list_replay_to_the_proving_verdict() {
