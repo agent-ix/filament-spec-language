@@ -26,6 +26,12 @@ use std::collections::BTreeMap;
 
 const OPERATIONS: &[&str] = &["noop"];
 
+/// The helper whose `mod` divides by zero where `n` is 2, appended to a unit
+/// that calls it and compiled under `Kernel`: S3 refuses that `mod` written in
+/// a declared clause (FR-337-AC-7).
+const TEMPORAL_MOD_UNDEFINED: &str =
+    "\nfunction temporal_mod_undefined using v(n: Integer): Boolean pure { 3 mod (2 - n) >= 0 }\n";
+
 /// The clauses `D0` to `D24` of the differential tests, over `clock`: the
 /// atoms `U` (undefined where `c.value` is 2), `R` (refused where it is 1 or
 /// more) and `F` (false where it is not 0), in conjunctions, scans, `on each`
@@ -39,13 +45,13 @@ macro_rules! differential_clauses {
             "temporal D0 using t over (c: Counters::Counter) clock ",
             $clock,
             " on origin \
-             { always[0,2] (holds(3 mod (2 - c.value) >= 0) and \
+             { always[0,2] (holds(temporal_mod_undefined(c.value)) and \
              holds(refusingCount(c.value) = 0)) }\n",
             "temporal D1 using t over (c: Counters::Counter) clock ",
             $clock,
             " on origin \
              { always[0,2] (holds(refusingCount(c.value) = 0) and \
-             holds(3 mod (2 - c.value) >= 0)) }\n",
+             holds(temporal_mod_undefined(c.value))) }\n",
             "temporal D2 using t over (c: Counters::Counter) clock ",
             $clock,
             " on origin \
@@ -63,7 +69,7 @@ macro_rules! differential_clauses {
             "temporal D5 using t over (c: Counters::Counter) clock ",
             $clock,
             " on origin \
-             { eventually[0,2] (holds(3 mod (2 - c.value) >= 0) and \
+             { eventually[0,2] (holds(temporal_mod_undefined(c.value)) and \
              holds(refusingCount(c.value) = 0)) }\n",
             "temporal D6 using t over (c: Counters::Counter) clock ",
             $clock,
@@ -73,7 +79,7 @@ macro_rules! differential_clauses {
             $clock,
             " \
              on each (q: Counters::Counter) \
-             { always[0,0] (holds(3 mod (2 - c.value) >= 0) and \
+             { always[0,0] (holds(temporal_mod_undefined(c.value)) and \
              holds(refusingCount(c.value) = 0)) }\n",
             "temporal D8 using t over (c: Counters::Counter) clock ",
             $clock,
@@ -85,7 +91,7 @@ macro_rules! differential_clauses {
             $clock,
             " \
              on each (q: Counters::Counter) \
-             { once[0,2] (holds(3 mod (2 - c.value) >= 0) and \
+             { once[0,2] (holds(temporal_mod_undefined(c.value)) and \
              holds(refusingCount(c.value) = 0)) }\n",
             "temporal D10 using t over (c: Counters::Counter) clock ",
             $clock,
@@ -102,45 +108,45 @@ macro_rules! differential_clauses {
             "temporal D12 using t over (c: Counters::Counter) clock ",
             $clock,
             " on origin \
-             { always[0,2] (holds(c.value = 0) and holds(3 mod (2 - c.value) >= 0)) }\n",
+             { always[0,2] (holds(c.value = 0) and holds(temporal_mod_undefined(c.value))) }\n",
             "temporal D14 using t over (c: Counters::Counter) clock ",
             $clock,
             " on origin \
-             { eventually[0,2] (holds(3 mod (2 - c.value) >= 0) or \
+             { eventually[0,2] (holds(temporal_mod_undefined(c.value)) or \
              holds(refusingCount(c.value) = 0)) }\n",
             "temporal D15 using t over (c: Counters::Counter) clock ",
             $clock,
             " on origin \
              { eventually[0,2] (holds(refusingCount(c.value) = 0) or \
-             holds(3 mod (2 - c.value) >= 0)) }\n",
+             holds(temporal_mod_undefined(c.value))) }\n",
             "temporal D16 using t over (c: Counters::Counter) clock ",
             $clock,
             " \
              on each (q: Counters::Counter) \
              { always[0,0] (holds(refusingCount(c.value) = 0) and \
-             holds(3 mod (2 - c.value) >= 0)) }\n",
+             holds(temporal_mod_undefined(c.value))) }\n",
             "temporal D17 using t over (c: Counters::Counter) clock ", $clock, " \
-             on each (q: Counters::Counter) when (refusingCount(q.value) = 0) { holds(3 mod (2 - c.value) >= 0) and eventually[0,2] holds(c.value >= 0) }\n",
+             on each (q: Counters::Counter) when (refusingCount(q.value) = 0) { holds(temporal_mod_undefined(c.value)) and eventually[0,2] holds(c.value >= 0) }\n",
             "temporal D18 using t over (c: Counters::Counter) clock ", $clock, " \
-             on each (q: Counters::Counter) when (refusingCount(q.value) = 0) { eventually[0,2] holds(c.value >= 0) and holds(3 mod (2 - c.value) >= 0) }\n",
+             on each (q: Counters::Counter) when (refusingCount(q.value) = 0) { eventually[0,2] holds(c.value >= 0) and holds(temporal_mod_undefined(c.value)) }\n",
             "temporal D19 using t over (c: Counters::Counter) clock ", $clock, " \
-             on each (q: Counters::Counter) when (refusingCount(q.value) = 0) { holds(3 mod (2 - c.value) >= 0) and not eventually[0,2] holds(c.value < 0) }\n",
+             on each (q: Counters::Counter) when (refusingCount(q.value) = 0) { holds(temporal_mod_undefined(c.value)) and not eventually[0,2] holds(c.value < 0) }\n",
             "temporal D20 using t over (c: Counters::Counter) clock ", $clock, " \
-             on each (q: Counters::Counter) when (refusingCount(q.value) = 0) { holds(3 mod (2 - c.value) >= 0) and once[0,2] holds(c.value >= 0) }\n",
+             on each (q: Counters::Counter) when (refusingCount(q.value) = 0) { holds(temporal_mod_undefined(c.value)) and once[0,2] holds(c.value >= 0) }\n",
             "temporal D21 using t over (c: Counters::Counter) clock ", $clock, " \
-             on each (q: Counters::Counter) { capture z: Zero = refusingCount(q.value); holds(3 mod (2 - c.value) >= 0) and eventually[0,2] holds(c.value >= 0) }\n",
+             on each (q: Counters::Counter) { capture z: Zero = refusingCount(q.value); holds(temporal_mod_undefined(c.value)) and eventually[0,2] holds(c.value >= 0) }\n",
             "temporal D22 using t over (c: Counters::Counter) clock ", $clock, " \
-             on each (q: Counters::Counter) { capture z: Zero = refusingCount(q.value); eventually[0,2] holds(c.value >= 0) and holds(3 mod (2 - c.value) >= 0) }\n",
+             on each (q: Counters::Counter) { capture z: Zero = refusingCount(q.value); eventually[0,2] holds(c.value >= 0) and holds(temporal_mod_undefined(c.value)) }\n",
             "temporal D23 using t over (c: Counters::Counter) clock ", $clock, " \
-             on each (q: Counters::Counter) { capture z: Zero = refusingCount(q.value); holds(3 mod (2 - c.value) >= 0) and not eventually[0,2] holds(c.value < 0) }\n",
+             on each (q: Counters::Counter) { capture z: Zero = refusingCount(q.value); holds(temporal_mod_undefined(c.value)) and not eventually[0,2] holds(c.value < 0) }\n",
             "temporal D24 using t over (c: Counters::Counter) clock ", $clock, " \
-             on each (q: Counters::Counter) { capture z: Zero = refusingCount(q.value); holds(3 mod (2 - c.value) >= 0) and once[0,2] holds(c.value >= 0) }\n",
+             on each (q: Counters::Counter) { capture z: Zero = refusingCount(q.value); holds(temporal_mod_undefined(c.value)) and once[0,2] holds(c.value >= 0) }\n",
             "temporal D13 using t over (c: Counters::Counter) clock ",
             $clock,
             " \
              on each (q: Counters::Counter) \
              { once[0,2] (holds(refusingCount(c.value) = 0) and \
-             holds(3 mod (2 - c.value) >= 0)) }\n",
+             holds(temporal_mod_undefined(c.value))) }\n",
         )
     };
 }
@@ -316,7 +322,7 @@ impl Unit {
             }
             Self::Undefined => {
                 "temporal Undefined using t over (c: Counters::Counter) clock \"model-steps\" \
-                 on origin { always[0,2] holds(3 mod (2 - c.value) >= 0) }\n"
+                 on origin { always[0,2] holds(temporal_mod_undefined(c.value)) }\n"
             }
             Self::AggregateModel => {
                 "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
@@ -330,7 +336,7 @@ impl Unit {
             }
             Self::GuardUndefined => {
                 "temporal GuardUndefined using t over (c: Counters::Counter) clock \"model-steps\" \
-                 on each (q: Counters::Counter) when (3 mod (2 - q.value) >= 0) \
+                 on each (q: Counters::Counter) when (temporal_mod_undefined(q.value)) \
                  { always[0,0] holds(c.value = c.value) }\n"
             }
             Self::Timestamped => {
@@ -360,7 +366,7 @@ impl Unit {
                 "function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] \
                  pure { xs }\n",
                 "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
-                 on origin { always[0,10] holds(3 mod (2 - c.value) >= 0 and \
+                 on origin { always[0,10] holds(temporal_mod_undefined(c.value) and \
                  refusingCount(c.value mod 2) = 0) }\n",
             ),
             Self::TimestampedRefusing => concat!(
@@ -458,11 +464,11 @@ impl Unit {
                  refusingCount(c.value) = 0) }\n",
                 "temporal UndefinedThenRefused using t over (c: Counters::Counter) \
                  clock \"model-steps\" on origin \
-                 { always[0,2] holds(3 mod (2 - c.value) >= 0 and \
+                 { always[0,2] holds(temporal_mod_undefined(c.value) and \
                  refusingCount(c.value mod 2) = 0) }\n",
                 "temporal UndefinedBesideRefused using t over (c: Counters::Counter) \
                  clock \"model-steps\" on origin \
-                 { always[0,2] (holds(3 mod (2 - c.value) >= 0) and \
+                 { always[0,2] (holds(temporal_mod_undefined(c.value)) and \
                  holds(refusingCount(c.value) = 0)) }\n",
             ),
             Self::RefusingInfinite => concat!(
@@ -619,6 +625,9 @@ fn request(
     if text.contains("refusingCount(") {
         text.push_str("function refusingCount using v(n: Integer): Zero pure { count<Zero>(m in ints(sequence[n]): m > 0) }\n");
     }
+    if text.contains("temporal_mod_undefined(") {
+        text.push_str(TEMPORAL_MOD_UNDEFINED);
+    }
     let documents: Vec<(DocumentRef, Vec<u8>)> = values
         .iter()
         .enumerate()
@@ -703,7 +712,7 @@ pub(in crate::spine::clause::tests) fn lasso(
     )
 }
 
-pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> ClauseRunReport {
+pub(in crate::spine::clause::tests) fn report(request: ClauseRunRequest) -> ClauseRunReport {
     let temporal_selections = match &request.source {
         ClauseRunSource::Program {
             identity,
@@ -716,63 +725,23 @@ pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> 
             temporal_clock_selections(body.identity(), body.path(), body.text().as_bytes())
         }
     };
-    let has_kernel_count = request
-        .source
-        .unit()
-        .bytes
-        .windows(b"refusingCount(".len())
-        .any(|part| part == b"refusingCount(");
-    let has_kernel_mod = match &mut request.source {
-        ClauseRunSource::Program { bytes, .. } => {
-            let source = String::from_utf8(bytes.clone()).expect("test source is UTF-8");
-            let has_kernel_mod = source.contains("3 mod (2 - c.value) >= 0")
-                || source.contains("3 mod (2 - q.value) >= 0");
-            if has_kernel_mod {
-                let source = source
-                    .replace(
-                        "3 mod (2 - c.value) >= 0",
-                        "temporal_mod_undefined(c.value)",
-                    )
-                    .replace(
-                        "3 mod (2 - q.value) >= 0",
-                        "temporal_mod_undefined(q.value)",
-                    );
-                let mut modified = source.into_bytes();
-                modified.extend_from_slice(
-                    b"\nfunction temporal_mod_undefined using v(n: Integer): Boolean pure { 3 mod (2 - n) >= 0 }\n",
-                );
-                *bytes = modified;
-            }
-            has_kernel_mod
+    let mut modes = BTreeMap::new();
+    for name in ["temporal_mod_undefined", "refusingCount"] {
+        let call = format!("{name}(");
+        if request
+            .source
+            .unit()
+            .bytes
+            .windows(call.len())
+            .any(|part| part == call.as_bytes())
+        {
+            modes.insert(
+                name.to_owned(),
+                filament_semantic_value::checking::CheckMode::Kernel,
+            );
         }
-        #[cfg(feature = "quire-extraction")]
-        ClauseRunSource::Extracted(_) => false,
-    };
-    if has_kernel_mod || has_kernel_count {
-        let mut modes = BTreeMap::new();
-        for (needed, name) in [
-            (has_kernel_mod, "temporal_mod_undefined"),
-            (has_kernel_count, "refusingCount"),
-        ] {
-            if needed {
-                modes.insert(
-                    name.to_owned(),
-                    filament_semantic_value::checking::CheckMode::Kernel,
-                );
-            }
-        }
-        let temporal_selections = match &request.source {
-            ClauseRunSource::Program {
-                identity,
-                path,
-                bytes,
-            } => temporal_clock_selections(identity, path, bytes),
-            #[cfg(feature = "quire-extraction")]
-            ClauseRunSource::Extracted(extracted) => {
-                let body = extracted.map().body();
-                temporal_clock_selections(body.identity(), body.path(), body.text().as_bytes())
-            }
-        };
+    }
+    if !modes.is_empty() {
         return super::super::run_clause_with_function_modes(request, &temporal_selections, &modes)
             .expect("a well-formed request always reports");
     }
@@ -1408,19 +1377,8 @@ fn observed_replay_request(
     let mut text = base.replacen(header, &format!("{header}{}", unit.profile()), 1);
     text.push_str(unit.clauses());
     let mut function_modes = BTreeMap::new();
-    if text.contains("3 mod (2 - c.value) >= 0") || text.contains("3 mod (2 - q.value) >= 0") {
-        text = text
-            .replace(
-                "3 mod (2 - c.value) >= 0",
-                "temporal_mod_undefined(c.value)",
-            )
-            .replace(
-                "3 mod (2 - q.value) >= 0",
-                "temporal_mod_undefined(q.value)",
-            );
-        text.push_str(
-            "\nfunction temporal_mod_undefined using v(n: Integer): Boolean pure { 3 mod (2 - n) >= 0 }\n",
-        );
+    if text.contains("temporal_mod_undefined(") {
+        text.push_str(TEMPORAL_MOD_UNDEFINED);
         function_modes.insert(
             "temporal_mod_undefined".to_owned(),
             filament_semantic_value::checking::CheckMode::Kernel,
@@ -4885,8 +4843,14 @@ fn a_temporal_violation_carries_its_decisive_information() {
     else {
         panic!("the observed trace counterexample");
     };
+    // A finite trace reads back as its documents in `prefix` and an empty
+    // `loop` (FR-330 Outputs).
+    let documents = [
+        ("test", "counter-0"),
+        ("test", "counter-1"),
+        ("test", "counter-2"),
+    ];
     assert_eq!(
-        counterexample.loop_documents().collect::<Vec<_>>(),
         expected
             .prefix
             .iter()
@@ -4894,7 +4858,15 @@ fn a_temporal_violation_carries_its_decisive_information() {
                 step.document.authority.as_str(),
                 step.document.identity.as_str()
             ))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>(),
+        documents
+    );
+    assert_eq!(expected.loop_start, None);
+    assert_eq!(counterexample.prefix().collect::<Vec<_>>(), documents);
+    assert_eq!(counterexample.loop_documents().count(), 0);
+    assert_eq!(
+        value["disposition"]["temporal"]["counterexample"]["loop"],
+        serde_json::json!([])
     );
     assert_eq!(record.basis(), "closed-scope");
 

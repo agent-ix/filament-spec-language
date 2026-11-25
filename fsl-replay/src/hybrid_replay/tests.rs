@@ -127,6 +127,10 @@ fn check(declarations: &str) -> Unit {
     Unit { graph, claims }
 }
 
+pub(super) fn graph_for_class_walk() -> CheckedGraph {
+    check(&braking(FLOW, "v >= 0")).graph
+}
+
 fn braking_unit(flow: &str, guard: &str) -> Unit {
     check(&format!("{}{CLAIMS}", braking(flow, guard)))
 }
