@@ -52,7 +52,7 @@ fn header() -> String {
 pub enum Level {
     /// `( ... )`.
     Bracket,
-    /// `x + ...`.
+    /// `x + ...`, with an inner `if` or `let` in brackets.
     Sum,
     /// `if true then x else ...`.
     ElseIf,
@@ -67,9 +67,16 @@ impl Level {
         Self::ALL[usize::from(byte) % Self::ALL.len()]
     }
 
-    /// The text that opens level `index`. Each `let` binds its own name,
-    /// so the chain nests rather than redeclaring one name.
-    fn open(self, index: usize, source: &mut String) {
+    /// Whether this level brackets the level it encloses: the right operand
+    /// of `+` cannot start with `if` or `let`.
+    fn brackets(self, inner: Option<Self>) -> bool {
+        self == Self::Sum && matches!(inner, Some(Self::ElseIf | Self::Let))
+    }
+
+    /// The text that opens level `index`, which encloses `inner`. Each `let`
+    /// binds its own name, so the chain nests rather than redeclaring one
+    /// name.
+    fn open(self, index: usize, inner: Option<Self>, source: &mut String) {
         match self {
             Self::Bracket => source.push('('),
             Self::Sum => source.push_str("x + "),
@@ -78,12 +85,17 @@ impl Level {
                 let _ = write!(source, "let v{index} = x in ");
             }
         }
+        if self.brackets(inner) {
+            source.push('(');
+        }
     }
 
-    fn suffix(self) -> &'static str {
-        match self {
-            Self::Bracket => ")",
-            Self::Sum | Self::ElseIf | Self::Let => "",
+    /// The text that closes this level, which encloses `inner`.
+    fn suffix(self, inner: Option<Self>) -> &'static str {
+        if self == Self::Bracket || self.brackets(inner) {
+            ")"
+        } else {
+            ""
         }
     }
 }
@@ -152,11 +164,11 @@ impl DeepInput {
             Shape::Expression(levels) => {
                 source.push_str("function f using v(x: Integer): Integer pure { ");
                 for (index, level) in levels.iter().enumerate() {
-                    level.open(index, &mut source);
+                    level.open(index, levels.get(index + 1).copied(), &mut source);
                 }
                 source.push('x');
-                for level in levels.iter().rev() {
-                    source.push_str(level.suffix());
+                for (index, level) in levels.iter().enumerate().rev() {
+                    source.push_str(level.suffix(levels.get(index + 1).copied()));
                 }
                 source.push_str(" }\n");
             }
@@ -248,6 +260,37 @@ mod tests {
         let input = DeepInput::new(Shape::OptionType(3));
         if let Err(refusal) = input.compile() {
             panic!("Option: {refusal:?}\n{}", input.source);
+        }
+    }
+
+    /// A sum renders an inner `else if` or `let` in brackets, and every
+    /// nesting of three level kinds compiles.
+    #[test]
+    fn every_mix_of_level_kinds_compiles() {
+        let body = |levels: &[Level]| {
+            let source = DeepInput::new(Shape::Expression(levels.to_vec())).source;
+            let (_, body) = source
+                .split_once("pure { ")
+                .expect("a generated function body");
+            body.to_owned()
+        };
+        assert_eq!(
+            body(&[Level::Sum, Level::ElseIf]),
+            "x + (if true then x else x) }\n"
+        );
+        assert_eq!(
+            body(&[Level::Sum, Level::Let, Level::Sum]),
+            "x + (let v1 = x in x + x) }\n"
+        );
+        for outer in Level::ALL {
+            for middle in Level::ALL {
+                for inner in Level::ALL {
+                    let input = DeepInput::new(Shape::Expression(vec![outer, middle, inner]));
+                    if let Err(refusal) = input.compile() {
+                        panic!("{refusal:?}\n{}", input.source);
+                    }
+                }
+            }
         }
     }
 
