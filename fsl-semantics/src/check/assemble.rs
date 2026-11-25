@@ -69,6 +69,7 @@ use super::type_form::{
 };
 use super::type_invariant::{TypeInvariantDeclaration, TypeSlot};
 use crate::library::{ImportView, LibraryName};
+use ix_trace_rs::implements;
 use std::sync::Arc;
 
 mod equivalence;
@@ -3699,6 +3700,7 @@ fn resolve_source_object_members(
 }
 
 /// A source member separates exactly one outer collection into multiplicity.
+#[implements("FR-569-AC-15")]
 pub(super) fn source_member_type(value_type: &ValueType) -> (ValueTypeRef, Multiplicity) {
     let (element, multiplicity) = match value_type {
         ValueType::Collection(collection) => {

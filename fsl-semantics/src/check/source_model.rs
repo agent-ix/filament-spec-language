@@ -21,6 +21,7 @@ use fsl_forms::{
     ObjectOperationForm, TypeForm, TypeFormHead,
 };
 use fsl_foundation::Span;
+use ix_trace_rs::implements;
 
 use super::assemble::{AssemblyCause, AssemblyError, SourceObjectFault, source_member_type};
 use super::lowering::strongly_connected;
@@ -926,6 +927,7 @@ impl SourceRowParameter {
     /// member: one outer collection is the multiplicity, and a reference
     /// element names its object type.
     #[must_use]
+    #[implements("FR-740-AC-6")]
     pub fn declared(name: String, optional: bool, declared: &filament_exact::ValueType) -> Self {
         let (value_type, multiplicity) = source_member_type(declared);
         Self {
@@ -972,6 +974,7 @@ pub struct SourceRowObject {
 /// package's `probabilistic` nodes name join to it as they join to S3's.
 /// It holds no field, population, effect frame or result.
 #[must_use]
+#[implements("FR-740-AC-6")]
 pub fn package_of_source_rows(identity: &str, objects: &[SourceRowObject]) -> DomainPackage {
     let mut records = Vec::new();
     for object in objects {

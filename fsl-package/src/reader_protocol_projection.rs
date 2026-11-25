@@ -34,6 +34,7 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_semantics::check::wire_id::WireGraph;
+use ix_trace_rs::implements;
 
 use crate::equality_file::{EqualityWitnessRefusal, ReadEqualityRows};
 use crate::introduced_binders::is_sum_identity;
@@ -4410,6 +4411,7 @@ fn clock_reference_carrier_type(
 /// node by its semantic type; read that way, a bounded type node would give its
 /// unbounded base, so the bounds are read from the node itself. A bounded form
 /// this does not read is unsupported, never widened to its base.
+#[implements("FR-740-AC-6")]
 pub(crate) fn declared_value_type(
     index: &TypeReader<'_>,
     id: &CheckedNodeId,

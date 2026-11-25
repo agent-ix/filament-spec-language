@@ -27,6 +27,7 @@ use fsl_semantics::check::{
     SourceRowObject, SourceRowOperation, SourceRowParameter,
 };
 use fsl_semantics::model::domain_package::{DomainPackage, ValueTypeRef};
+use ix_trace_rs::implements;
 
 use crate::checked_v2::wire_graph;
 use crate::reader_protocol_projection::{declared_value_type, TypeError, TypeReader};
@@ -260,6 +261,7 @@ impl BarePackage<'_> {
     /// # Errors
     ///
     /// A [`SourceModelFault`] when the rows do not describe such packages.
+    #[implements("FR-740-AC-6")]
     pub fn source_model(&self) -> Result<SourceModel, SourceModelFault> {
         let units = self.source_units()?;
         let Ok((supply, identities)) = self.witness() else {
@@ -357,6 +359,7 @@ impl BarePackage<'_> {
 /// # Errors
 ///
 /// A named fault when the type node breaks an invariant admission established.
+#[implements("FR-740-AC-6")]
 fn row_parameter(
     types: &TypeReader<'_>,
     parameter: &SelectedSourceObjectMember,
