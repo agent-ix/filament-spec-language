@@ -37,3 +37,23 @@ Bindings, all read in source:
 ## Verdict
 
 Every FR-563 AC has at least one tagged test that asserts its main path. Two gaps remain: AC-1's corpus half is untested (FND-001) and one test is tagged to the wrong AC (FND-002). Matrix computation and the repo-wide reverse-gap audit were not run.
+
+## Dispositions
+
+Disposition pass 1 at head 1b8c75ead1c345bb748e947497934a0a52b2c218 (static only). The merged FSL #3887 adds FR-563-AC-10 to AC-16 and FR-567-AC-7 and AC-8. Each has a tagged test, read in source:
+- FR-563-AC-10: `a_document_level_defect_refuses_before_any_unit_runs`
+- FR-563-AC-11: `unbuildable_vectors_are_listed_and_found_while_the_rest_run`
+- FR-563-AC-12: `an_expected_refusal_excuses_only_what_fsl_refuses`
+- FR-563-AC-13: `refused_draws_beyond_the_bound_fail_the_gate`
+- FR-563-AC-14: `reference_preparation_failures_are_findings`
+- FR-563-AC-15: `a_prefix_call_is_compared`
+- FR-563-AC-16: `cancellation_while_a_case_is_built_gives_no_report`
+- FR-567-AC-7: `a_replacement_unit_count_sets_the_generated_units_and_has_no_option`
+- FR-567-AC-8: `an_unbuildable_vector_fails_parity_and_a_duplicate_id_refuses`
+
+FR-563-AC-8's new `--max-discarded 1` half is in `unknown_option_is_a_named_refusal`. No new gap was found.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | 100405e1b2 added `interpreter_backend_passes_a_selected_corpus_vector`: a delegating backend compares the selected `inc` vector with no finding and exit 0. |
+| FND-002 | fixed | The mis-tagged bytes test was retagged in 100405e1b2 and removed in f6da35c396 (`bytes` is no FR-336 `InputValue` tag), so the wrong binding no longer exists. |

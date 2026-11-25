@@ -51,3 +51,26 @@ Not run (cargo forbidden by the lead's orders), exact commands:
 - `cargo test -p fsl-package --lib bytes_operations_emit_and_pass_strict_checked_package_v2_admission` and `cargo test -p fsl-semantics --test it bytes_length_and_concat_lower_to_native_operations` (FND-002)
 - `cargo test --test it supplied_actual_refinement_internal_list_replays_a_value` on head and on origin/main (TC-444)
 - `cargo test -p fsl-conformance --features test-support --test it parity` and `cargo test -p fsl-conformance --doc`
+
+## New findings (disposition pass 1)
+
+Disposition pass 1 at head 1b8c75ead1c345bb748e947497934a0a52b2c218. It covers fix commits 100405e1b2, 01add34f2d, 300441d212, 0fbbb31f00, f6da35c396 and 395c55cb2d, plus the conflict resolution in merges 73110764e8, 7fe4af53eb and 1b8c75ead1. It also reviews as new code the JIT wide-integer and division-interval changes, corpus argument decoding, and the merged FSL #3887 behaviour (FR-563 AC-8 and AC-10 to AC-16, FR-567 AC-7 and AC-8). Static only: no cargo command was run.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-009 | low | A JIT entry that reads an `Int` wider than 64 bits, or whose intermediate interval leaves 64 bits, is listed with an `Untranslatable` cause. The JIT's published coverage lists `Integer` for every width, because `coverage_type` maps every `Int(_)` to `Integer`. So `entry_within_coverage` holds and the gate records `coverage-gap` for each such entry. This is the outcome FR-563 asks for when a backend overclaims, but the overclaim is the JIT's own: `make parity` turns red as soon as the corpus or the generator carries such a type. No test pins the parity outcome for these entries. Either narrow the declared coverage, or record that the gap is intended and tracked. | fsl-jit/src/translate.rs:262-283; fsl-jit/src/translate.rs:767-780; fsl-eval/src/execution/coverage.rs:226-229; fsl-jit/src/coverage.rs:15-80 |
+| FND-010 | low | The generator loop treats every `compile_unit` error as a refused draw (`Err(_)`), so a `CompileStop::Fault`, an internal fault of FSL's own checker on a generated unit, is silently counted as a discard. FR-563 bounds only draws that checking refuses. An oracle-side fault on generated input therefore never surfaces unless it repeats past 10,000 draws. | fsl-conformance/src/parity.rs:546-553; fsl-conformance/src/parity.rs:1612-1637 |
+| FND-011 | low | The `# Errors` doc of `run_parity` still says the run refuses when preparing the reference reaches a limit. Per FR-563 and the code, a reference prepare limit is now a `reference-prepare-limit` finding, never a refusal. | fsl-conformance/src/parity.rs:383-388 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | 100405e1b2: the untagged default-run test now asserts parity `passed` with a corrected doc, the duplicate version test is dropped, and the remaining `no-backend` assertions in qualification_cli.rs were restated to `passed`. |
+| FND-002 | fixed | 100405e1b2: `BytesLength` is back in the false arm. `git diff origin/main HEAD -- fsl-semantics` is empty. |
+| FND-003 | fixed | 300441d212: re-pinned to codegen 76cd0cea, the merge commit of #905 and the head of codegen main. A further contract-ir/codegen pin move (IR-1614) is pending and not reviewed here. |
+| FND-004 | fixed | 100405e1b2: `ParityLimits.max_discarded` (default 10,000) ends generation with `generator-exhausted` on every backend. AC-13 is tested. |
+| FND-005 | fixed | 100405e1b2: coverage-gap is decided by `entry_within_coverage`, over every construct of the entry and its transitive callees, whatever construct the backend names. |
+| FND-006 | fixed | 100405e1b2: `interpreter_backend_passes_a_selected_corpus_vector` compares a selected corpus vector with no finding and exit 0. |
+| FND-007 | fixed | 100405e1b2 retagged the bytes adapter test, and f6da35c396 removed it: `bytes` is not one of FR-336 `InputValue`'s four tags, so the mis-bound test no longer exists. |
+| FND-008 | fixed | 100405e1b2 and f6da35c396: a reference prepare limit or fault is a finding, comparison is unmetered, and a defective selected vector is an unbuildable case. `ParityRefusal` keeps only empty-scope, an unreadable corpus and cancellation, as FR-563 now states. |

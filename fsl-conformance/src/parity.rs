@@ -163,7 +163,8 @@ pub enum FindingKind {
     /// The backend compared no entry.
     EmptyComparison,
     /// The interpreter returned an internal `Fault`, from a call or from
-    /// preparing a unit.
+    /// preparing a unit, or FSL's checking or packaging of a generated unit
+    /// did. The last has no entry: its unit and source are the drawn one's.
     ReferenceFault,
     /// Checking refused more generated draws than
     /// [`ParityLimits::max_discarded`], so the generated units were not all
@@ -383,9 +384,10 @@ pub type BackendEntry<'a> = (
 /// Run every backend against the interpreter over corpus and generated cases.
 ///
 /// # Errors
-/// Returns [`ParityRefusal`] when the backend set is empty, the corpus cannot
-/// be read, preparing the reference reaches a limit, or `cancel` requests
-/// cancellation before completion.
+/// Returns [`ParityRefusal`] when the backend set is empty, the corpus
+/// document is refused as [`ParityRefusal::UnreadableCorpus`] describes, or
+/// `cancel` requests cancellation before completion. A unit or vector that
+/// cannot be built or prepared never refuses the run.
 pub fn run_parity(
     backends: &[BackendEntry<'_>],
     inputs: &ParityInputs,
@@ -545,30 +547,36 @@ fn run_with_reference(
         let (source, mut functions) = generator.unit(index);
         let checked = match compile_unit(&source, &format!("generated-{index}"), cancel) {
             Ok(checked) => checked,
-            Err(_) => {
+            // The checker is part of the oracle, so its fault is no refused
+            // draw. The draw takes one of the requested places, which ends a
+            // run whose every draw faults.
+            Err(CompileStop::Fault) => {
+                check_cancel(cancel)?;
+                record_draw_finding(
+                    &mut reports,
+                    limits.max_reported,
+                    &FindingKind::ReferenceFault,
+                    inputs.seed,
+                    index,
+                    &source,
+                );
+                admitted = admitted.saturating_add(1);
+                continue;
+            }
+            Err(CompileStop::Refused) => {
                 check_cancel(cancel)?;
                 discarded = discarded.saturating_add(1);
                 if discarded <= limits.max_discarded {
                     continue;
                 }
-                for report in &mut reports {
-                    record_finding(
-                        report,
-                        limits.max_reported,
-                        make_finding(
-                            FindingKind::GeneratorExhausted,
-                            report.backend,
-                            inputs.seed,
-                            index.to_string(),
-                            source.clone(),
-                            vec![generated_source_file(index, &source)],
-                            String::new(),
-                            Vec::new(),
-                            None,
-                            None,
-                        ),
-                    );
-                }
+                record_draw_finding(
+                    &mut reports,
+                    limits.max_reported,
+                    &FindingKind::GeneratorExhausted,
+                    inputs.seed,
+                    index,
+                    &source,
+                );
                 break;
             }
         };
@@ -637,6 +645,36 @@ fn generated_source_file(index: u64, source: &[u8]) -> SourceFile {
     SourceFile {
         path: format!("generated-{index}.native"),
         bytes: source.to_vec(),
+    }
+}
+
+/// A finding on every backend about a generated draw that gave no unit, so it
+/// names no entry.
+fn record_draw_finding(
+    reports: &mut [BackendReport],
+    max_reported: usize,
+    kind: &FindingKind,
+    seed: u64,
+    index: u64,
+    source: &[u8],
+) {
+    for report in reports {
+        record_finding(
+            report,
+            max_reported,
+            make_finding(
+                kind.clone(),
+                report.backend,
+                seed,
+                index.to_string(),
+                source.to_vec(),
+                vec![generated_source_file(index, source)],
+                String::new(),
+                Vec::new(),
+                None,
+                None,
+            ),
+        );
     }
 }
 
