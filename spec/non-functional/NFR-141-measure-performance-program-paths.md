@@ -23,7 +23,7 @@ acceptance criterion below, and compare candidate B with current
 ## Scope
 
 This requirement defines the benchmark inputs and acceptance criteria for the
-the named QSL performance-program tickets and the region-mapping cost group
+named QSL performance-program tickets and the region-mapping cost group
 in QSL-2854. A baseline-relative comparison is
 used where a ticket gives no fixed numeric target; no historical measurement
 is a threshold.
@@ -50,15 +50,21 @@ not thresholds.
 
 Each AC below is evaluated independently. A live A/B result records all five
 alternating rounds, load average before and after each round, per-round
-estimates, both medians, the computed noise, and the pass/fail comparison.
+estimates, both medians, the computed noise, and the pass/fail comparison. For
+QSL-1919 sessions produced by the `qsl-bench` harness, each measurement
+session is immutable. Its report SHALL preserve and report every raw result
+file from that session, including failed, loaded, or invalid results. A rerun
+SHALL be a complete new session covering every axis and size in the affected
+ACs. Its report SHALL include raw results from every earlier session for the
+change; no axis result SHALL be selectively replaced.
 
 | Metric | Target | Threshold | Method |
 | --- | --- | --- | --- |
 | NFR-141-AC-1, package emission | Milliseconds per emitted package at 1, 10 and 100 timed models | B median <= A median × (1 + noise) at each size | Five-round live A/B |
 | NFR-141-AC-2, package read | Milliseconds per package read at 1, 10 and 100 timed models | B median <= A median × (1 + noise) at each size | Five-round live A/B |
 | NFR-141-AC-3, replay wall time | Milliseconds per replay request at 1, 10 and 100 timed models | B median <= A median × (1 + noise) at each size | Five-round live A/B |
-| NFR-141-AC-4, replay peak RSS | Peak RSS at 1, 10 and 100 timed models | B <= A × (1 + noise) at each size | Isolated live A/B probes |
-| NFR-141-AC-5, parse calls | Calls per source document and shared counter availability | B calls per document <= A at each size | Live A/B counter report |
+| NFR-141-AC-4, replay peak RSS | Peak RSS at 1, 10 and 100 timed models | B <= A × (1 + noise) at each size | Isolated live A/B probes using identical counter harness and seam files |
+| NFR-141-AC-5, parse calls | Calls per source document and shared counter availability | B calls per document <= A at each size | Isolated live A/B counter probe using identical counter harness and seam files |
 | NFR-141-AC-6, child traversal correctness | Zero child-traversal allocations; identical outcomes and charges across all callers | Exactly zero allocations and identical results | Allocation probe and correctness checks |
 | NFR-141-AC-7, evaluator cost | Wall time, child-traversal allocation count and allocation share at specified sizes | B median <= A median × (1 + noise); count and share remain zero | Five-round live A/B and profile |
 | NFR-141-AC-8, parser bookkeeping correctness | IDs recorded; descriptions formatted only on diagnostic; corpus output unchanged | Exact tree, diagnostic and expected-set-order equality | Parser-corpus comparison |
@@ -73,6 +79,11 @@ estimates, both medians, the computed noise, and the pass/fail comparison.
 | NFR-141-AC-17, workspace structure | One `it` binary each and duplicate major versions removed | Exactly one each; zero duplicate `syn`/`jsonschema` majors | Build graph and binary inventory |
 | NFR-141-AC-18, build time | Cold/incremental build and test no-run wall time | Each B median <= A median × (1 + noise), and one < A median × (1 − noise) | Five-round live A/B build measurements |
 | NFR-141-AC-19, region lookup work | Source-map segment-group index build visits and lookup probes for nested prefix spans at 5,000, 10,000 and 20,000 segments | At most N index visits and N × (2 × ceil(log2 N) + 4) query probes at each size; exact mapped-region results equal the existing multi-region mapping filtered to exactly one region | Deterministic operation-count test and exact output comparison |
+| NFR-141-AC-20, baseline provenance | Production source revision used for A | `origin/main` at session start | Live A/B provenance report |
+| NFR-141-AC-21, candidate provenance | Production source revision used for B | Candidate production sources | Live A/B provenance report |
+| NFR-141-AC-22, no-op counter type boundary | Zero-sized type, empty inline record method, typed public entry points, and no normal-build seam API | Exact compile-time assertion and type-check test; bench entry is feature-gated | Compile-time assertion and test |
+| NFR-141-AC-23, isolated instrumentation | Shared isolated A/B probe builds for AC-4 peak RSS and AC-5 parse calls | Identical counter-harness and replay-counter-seam files applied unchanged to A and B | Isolated probes and build inspection |
+| NFR-141-AC-24, seam provenance | Replay-counter seam revision used by isolated probes | Seam revision recorded separately from both production source revisions | Isolated probe provenance report |
 
 ## Acceptance Criteria
 
@@ -81,8 +92,8 @@ estimates, both medians, the computed noise, and the pass/fail comparison.
 | NFR-141-AC-1 | For QSL-1919, `package/emit` is selectable by name and listed in `fsl-bench/BENCHMARKING.md`; it emits checked fixtures with M timed models at M = 1, 10 and 100 (one object type, one clock, one operation, one timed transition and one claim per model), and reports wall time in milliseconds per emitted package and the exponent across M. Candidate B's median wall time is no greater than A's median multiplied by `1 + noise` at each M. | Live five-round A/B benchmark and generated-package comparison |
 | NFR-141-AC-2 | For QSL-1919, `package/read` is separately selectable and listed in the guide; it reads the same checked package fixtures at M = 1, 10 and 100, reports wall time in milliseconds per package and the exponent across M, and B's median at each M is no greater than A's median multiplied by `1 + noise`. | Live five-round A/B benchmark and checked-package comparison |
 | NFR-141-AC-3 | For QSL-1919, `replay/request` is separately selectable and listed in the guide; it executes one end-to-end replay request over a source package containing 1, 10 or 100 timed models, reports wall time in milliseconds per request, and B's median at each size is no greater than A's median multiplied by `1 + noise`. | Live five-round A/B benchmark and replay outcome comparison |
-| NFR-141-AC-4 | For QSL-1919, the same `replay/request` input sizes (1, 10 and 100 timed models) each have an isolated peak-RSS probe; B's peak RSS is no greater than A's peak RSS multiplied by `1 + noise` at each size. | Isolated live A/B peak-RSS probe |
-| NFR-141-AC-5 | For QSL-1919, `replay/request` reports parse calls per source document using the parse-call counter feature shared with the model-check counters; the counter is selectable in the benchmark output and B's calls per document do not exceed A's for any of the three package sizes. | Live A/B counter report and counter-unit check |
+| NFR-141-AC-4 | For QSL-1919, the same `replay/request` input sizes (1, 10 and 100 timed models) each have an isolated peak-RSS probe built with the identical counter harness and seam files on A and B; B's peak RSS is no greater than A's peak RSS multiplied by `1 + noise` at each size. | Isolated live A/B peak-RSS probe |
+| NFR-141-AC-5 | For QSL-1919, an isolated `replay/request` counter probe built with the identical counter harness and seam files on A and B reports parse calls per source document using the parse-call counter feature shared with the model-check counters; the counter is selectable in the benchmark output and B's calls per document do not exceed A's for any of the three package sizes. | Isolated live A/B counter report and counter-unit check |
 | NFR-141-AC-6 | For QSL-1921, visiting `CheckedNode::children` by the evaluator and every other caller allocates zero bytes within the child-traversal operation; evaluator results and charges remain identical. The benchmark/profile covers `evaluator/kernel` using `KernelCase` sizes 5 and 10 and `evaluator/call_chain` using `linked_chain` sizes 1, 10, 100 and 1,000 with one call to `f0(5)`. | Allocation-count probe, evaluator correctness checks, and live A/B measurements |
 | NFR-141-AC-7 | For QSL-1921, `evaluator/kernel` and `evaluator/call_chain` report wall time, child-traversal allocation count and allocation share at every AC-6 size; B's median wall time is no greater than A's median multiplied by `1 + noise`, and both the child-traversal allocation count and share remain zero. | Live five-round A/B benchmark and allocation profile |
 | NFR-141-AC-8 | For QSL-1922, parser failure bookkeeping records expected-terminal identifiers; terminal descriptions are formatted only when a diagnostic is produced. Trees, diagnostic text and expected-set order remain identical on the parser corpus. `parser/volume` uses 1,000 one-line functions; `cst/parse` uses `nested_source` depths 0, 1, 2, 3 and 4 and `volume_source(1,000)`. | Parser-corpus comparison and live A/B benchmark |
@@ -97,6 +108,11 @@ estimates, both medians, the computed noise, and the pass/fail comparison.
 | NFR-141-AC-17 | For QSL-1930, qsl-replay and qsl-package each build exactly one `it` test binary; duplicate `syn` and `jsonschema` major versions are removed from the resolved workspace dependency graph. | Cargo build graph and test-binary inventory |
 | NFR-141-AC-18 | For QSL-1930, cold and incremental `cargo build --timings` and `cargo test --no-run` wall time are measured before and after; each candidate median is no greater than its baseline median plus session noise, and at least one is lower by more than session noise. | Live five-round A/B build measurements |
 | NFR-141-AC-19 | For the region-mapping cost group in QSL-2854, construct a `SourceMap` with N = 5,000, 10,000 and 20,000 ordered one-line body segments separated by an allowed two-byte indentation deletion in the original source, then query each of the N nonempty body prefixes `[0, 2k)` for `1 <= k <= N`. Building the contiguous original-region group index visits at most N input segments. Across the N queries at each size, binary-search and examined-group probes total at most `N × (2 × ceil(log2 N) + 4)`. In this fixture, the exact result is the original first-line region for k = 1 and `None` for k > 1; a boundary differential test compares the specialized result with `map_regions` for every span of a 12-segment fixture. The old scan-per-query implementation fails this bound: at N = 5,000, the deterministic probe recorded 12,577,499 segment steps against a bound of 150,000. | Focused deterministic operation-count unit test at all three sizes and exact boundary comparison against `map_regions` |
+| NFR-141-AC-20 | For each QSL-1919 live A/B session, baseline A uses the FSL production sources at `origin/main` when the session begins; the report records A's production source revision. | Live A/B provenance report |
+| NFR-141-AC-21 | For each QSL-1919 live A/B session, candidate B uses the FSL candidate production sources; the report records B's production source revision. | Live A/B provenance report |
+| NFR-141-AC-22 | For QSL-1919, production `NoopParseCallCounter` is a zero-sized type with an empty `#[inline(always)]` `record` method, and the source contains exactly `const _: () = assert!(size_of::<NoopParseCallCounter>() == 0)`. A test type-checks the public non-counter replay entry points instantiated with `NoopParseCallCounter`. Normal builds expose no production-visible seam API; the bench-counter entry is available only behind `cfg(feature = "bench-counters")`. AC-1 through AC-3 compare candidate B-with-seam against real-main A using their existing overall non-regression bounds; those measurements do not prove zero seam cost. | Compile-time assertion and test |
+| NFR-141-AC-23 | For QSL-1919, the AC-4 peak-RSS and AC-5 parse-counter results use the same pair of isolated A/B probe builds; identical counter-harness and replay-counter-seam files are applied unchanged to A and B. | Isolated probes and build inspection |
+| NFR-141-AC-24 | For QSL-1919 AC-4 and AC-5, the report records the replay-counter seam revision separately from both production source revisions. | Isolated probe provenance report |
 
 ## Verification
 
@@ -104,3 +120,16 @@ The named generators and sizes above are part of the benchmark contract. The
 benchmark gate records each AC's correctness result and the live A/B evidence
 required by `fsl-bench/BENCHMARKING.md`; a missing axis, size, metric, restored
 scope condition, or failed threshold fails that AC.
+
+For QSL-1919, build baseline A from the `origin/main` production sources with
+only the `fsl-bench`-only patch; do not change `fsl-replay` for A's AC-1 through
+AC-3 timing runs. Build candidate B from the candidate production sources,
+with `ParseCallCounter` and `NoopParseCallCounter` compiled in every build.
+Run AC-1 through AC-3 as ordinary timing builds. For AC-4 and AC-5, build one
+isolated probe for A and one for B, with identical counter-harness and
+replay-counter-seam files applied unchanged to both production source trees;
+both results use that same pair of probe builds. Report the production source
+revision for A and B and the seam revision separately.
+Verify AC-22 with its exact compile-time size assertion and a type-check test;
+AC-1 through AC-3's overall non-regression results are not evidence that the
+no-op seam itself has zero cost.
