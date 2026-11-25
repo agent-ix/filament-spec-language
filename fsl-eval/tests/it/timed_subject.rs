@@ -1532,7 +1532,7 @@ fn source_clock_reference_admission_retains_values_per_owner() {
             "type": ident("Call"),
             "fields": initial_fields(json!({
                 "r": place(key, "x"),
-                "maybe": place(key, "y"),
+                "maybe": {"present": place(key, "y")},
                 "refs": {"sequence": [place(key, "x"), place(key, "y")]}
             }))
         })
