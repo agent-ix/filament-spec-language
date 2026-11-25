@@ -742,6 +742,7 @@ impl<'s, 'a> ContractTarget<'s, 'a> {
                 value,
                 scope.types(),
                 scope.variant_types(),
+                scope.enums(),
             )
             .ok_or(Unspelled("contract value"))
         };
