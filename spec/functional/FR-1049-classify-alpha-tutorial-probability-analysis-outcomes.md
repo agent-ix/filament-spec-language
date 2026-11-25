@@ -1,6 +1,6 @@
 ---
 id: FR-1049
-title: "Classify alpha tutorial probability-analysis outcomes"
+title: "Classify alpha probability tutorial analysis outcomes"
 type: FR
 relationships:
   - target: ix://agent-ix/filament-spec-language/US-029
@@ -8,66 +8,67 @@ relationships:
   - target: ix://agent-ix/filament-spec-language/FR-286
     type: references
 ---
-# FR-1049: Classify alpha tutorial probability-analysis outcomes
+# FR-1049: Classify alpha probability tutorial analysis outcomes
 
 ## Description
 
-When `fsl analyze` or `fsl compile` runs a documented alpha tutorial probability
-example, the command SHALL return the documented settled category and exit
-status, including the distinction between an unsupported form and an
-refuted claim.
-
-This requirement covers the explicit unsupported and refuted examples and
-variations in the alpha probability tutorial, including cases whose candidate
-result conflicts with the tutorial's documented expected outcome.
+When `fsl analyze` or `fsl compile` runs an input identified by the alpha
+probability tutorial, the command SHALL emit the outcome category, exit status,
+diagnostics, evidence and terminal stage specified by the applicable
+acceptance criterion.
 
 ## Inputs
 
-- The literal FSL source and native request files identified in the acceptance
-  criteria, run by `fsl analyze` or `fsl compile`.
+- The FSL source, native request and initial data files named in each
+  acceptance criterion, including the stated source or request variations.
 
 ## Outputs
 
-- The command exit status and `filament-outcome/1` document produced by FSL.
+- The command exit status and `filament-outcome/1` result document.
 
 ## Behavior
 
-- For each example, `fsl` SHALL emit the specified outcome category,
-  exit status, result shape, and diagnostic code/cause specified below.
-- For an unsupported example, `fsl` SHALL emit an `unsupported` outcome and
-  any diagnostic code and cause named by the tutorial or its expected result.
-- For a refuted example, `fsl` SHALL emit a `refuted` outcome with exit status
-  10.
+- `fsl` SHALL report an exact proof as category `success` with result `proved`.
+- `fsl` SHALL report a counterexample as category `violation` with result
+  `refuted` and replay evidence.
+- `fsl` SHALL report an unsupported input as category `unsupported` with its
+  specified code and cause location.
+- `fsl` SHALL report a model-check work-limit stop as category `incomplete` with
+  its specified item cause.
+- `fsl` SHALL report a refused probability model as category `refusal` with its
+  specified diagnostic code and cause.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-1049-AC-1 | Given the tutorial's bounded-profile source form `probabilistic StaysUp using ev on Arch over (s: Arch::Service) under every scheduler on origin { probability >= 0.9 [ always holds(s.up) ] }` from `examples/architecture/rules/probability/claims/claims-unbounded-event.fsl`, compiled by the `native-compile/1` request in `examples/architecture/requests/probability/claims/claims-unbounded-event.json`, the command exits 21 and emits an outcome with `category: "unsupported"`, `last_stage: "S3"`, `result: null`, a first diagnostic with `code: "unsupported_construct"` and `cause: "expression-form"`, and `items: []`. | Test |
-| FR-1049-AC-2 | Given `examples/architecture/rules/probability/claims/claims-unbounded-event.fsl` changed to profile `inf` and the unwindowed claim `probability >= 0.9 [ holds(s.up) until holds(not s.up) ]`, plus `examples/architecture/requests/probability/claims/claims-unbounded-event.json` changed to `native-analyze/1` with an exact-evidence item for `StaysUp` and `examples/architecture/data/start-service-up.json`, the claim that holds exits 21 as `unsupported`. | Test |
-| FR-1049-AC-3 | Given the same source and request paths as AC-2, with the request document set to `examples/architecture/data/start-service-down.json`, the failing unwindowed until claim exits 10 as `refuted` at S8. | Test |
-| FR-1049-AC-4 | Given `examples/architecture/rules/probability/claims/claims-every-scheduler-without-random.fsl` changed to profile `inf` and the unwindowed claim `probability >= 0.99 [ eventually holds(s.up) ]`, plus `examples/architecture/requests/probability/claims/claims-every-scheduler-without-random.json` with an exact-evidence item for `NoRandomUp` and document `examples/architecture/data/start-service-down.json`, the command exits 21 as `unsupported`. | Test |
-| FR-1049-AC-5 | Given the same source and request paths as AC-4 with the request document set to `examples/architecture/data/start-service-up.json`, the unwindowed every-scheduler/no-random eventually claim exits 21 as `unsupported`. | Test |
-| FR-1049-AC-6 | Given `examples/architecture/rules/probability/claims/claims-unbounded-event.fsl` with `StaysUp` changed to use profile `inf` and `probability <= 0.5 [ always holds(s.up) ]`, plus `examples/architecture/requests/probability/claims/claims-unbounded-event.json` changed to `native-analyze/1` with an exact-evidence item for `StaysUp` and document `examples/architecture/data/start-service-up.json`, the unwindowed always claim exits 21 as `unsupported` when satisfied. | Test |
-| FR-1049-AC-7 | Given the same source and request paths as AC-6 with the request document set to `examples/architecture/data/start-service-down.json`, the unwindowed always claim exits 21 as `unsupported` when satisfied. | Test |
-| FR-1049-AC-8 | Given the same profile and analyze request path as AC-6, with claim `probability >= 0.9 [ always holds(s.up) ]` and request document `examples/architecture/data/start-service-up.json`, the failing unwindowed always claim exits 10 as `refuted` at S8. | Test |
-| FR-1049-AC-9 | Given the same input and request as AC-8 with the request document set to `examples/architecture/data/start-service-down.json`, the failing unwindowed always claim exits 10 as `refuted` at S8. | Test |
-| FR-1049-AC-10 | Given `examples/engines/rules/coin.fsl` and `examples/engines/requests/probability-atom-now.json`, `HeadsNow` with `probability >= 0.5 [ holds(c.heads) ]` and `examples/engines/data/coin-tails.json`, the unwindowed atom exits 21 as `unsupported`. | Test |
-| FR-1049-AC-11 | Given `examples/engines/rules/coin.fsl` and `examples/engines/requests/probability-atom-now-at-most.json`, `HeadsNowAtMost` with `probability <= 0.5 [ holds(c.heads) ]` and `examples/engines/data/coin-tails.json`, the unwindowed atom exits 21 as `unsupported`. | Test |
-| FR-1049-AC-12 | Given `examples/rover/rules/staged-vote-probability-missed.fsl`, `examples/rover/requests/staged-vote-probability-missed.json`, and the request's `examples/rover/data/start-driving.json` document, `fsl analyze` exits 21 with an unsupported item on backend `en-5` and cause kind `not-markov`, `post_state_count: 8004`, and a `post_states` array containing 8004 states. | Test |
-| FR-1049-AC-13 | Given `examples/architecture/rules/probability/schedulers/schedulers-fair-weak.fsl` and `examples/architecture/requests/probability/schedulers/schedulers-fair-weak.json`, the `FairlyUp` claim with `fair weak Arch::Service::call` under every scheduler exits 21 with category and item result `unsupported`. | Test |
-
-The alpha journey gate's recorded projection contains `category`,
-`last_stage`, `result`, `first_diagnostic` code/cause, and `items`, and omits
-`diagnostics[].message`. This is verification context only; the requirement
-specifies CLI outcomes and adds no gate behavior. Where the tutorial does not
-name a cause, the criteria do not add one.
+| FR-1049-AC-1 | Given `examples/architecture/rules/probability/claims/claims-unbounded-event.fsl` with `StaysUp` using bounded profile `ev` and `probability >= 0.9 [ always holds(s.up) ]`, and compile request `examples/architecture/requests/probability/claims/claims-unbounded-event.json`, `fsl compile` exits 21 with category `unsupported`, `last_stage: S3`, `result: null`, `items: []`, and one `diagnostics[]` entry with `code: unsupported_construct` and `cause: expression-form`; the code/cause are in `diagnostics[]`, no `record.cause` is present, and the result has no certificate or counterexample/replay. | Test (TC-621) |
+| FR-1049-AC-2 | Given `examples/architecture/rules/probability/claims/claims-mean-of-fraction.fsl` and analyze request `examples/architecture/requests/probability/claims/claims-mean-of-fraction.json`, with `UpMostly` over `[0, 10]`, `under every scheduler`, exact evidence and data `examples/architecture/data/start-service-up.json`, `fsl analyze` exits 0 with category `success`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one item with result `proved` and an accepted certificate; there is no code/cause in `diagnostics[]` or `record.cause`, and the output has no counterexample/replay. | Test (TC-624) |
+| FR-1049-AC-3 | Given `examples/architecture/rules/probability/claims/claims-unbounded-event.fsl`, **variation:** use profile `inf` and claim `probability >= 0.9 [ holds(s.up) until holds(s.up) ]`; use analyze request `examples/architecture/requests/probability/claims/claims-unbounded-event.json`, selecting `StaysUp` with exact evidence and data `examples/architecture/data/start-service-down.json`. Since the RHS is false at the initial state, the until claim is refuted: `fsl analyze` exits 10 with category `violation`, `last_stage: S8`, top-level `result: null`, `diagnostics: []`, and one item with result `refuted`, a counterexample and reproduced replay; there is no code/cause in `diagnostics[]` or `record.cause`, and there is no certificate. | Test (TC-633) |
+| FR-1049-AC-4 | Given `examples/architecture/rules/probability/claims/claims-unbounded-event.fsl`, **variation:** use profile `inf` and claim `probability >= 0.9 [ holds(s.up) until holds(not s.up) ]`; use analyze request `examples/architecture/requests/probability/claims/claims-unbounded-event.json`, selecting `StaysUp` with exact evidence and data `examples/architecture/data/start-service-up.json`. `fsl analyze` exits 0 with category `success`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one item with result `proved` and accepted certificate evidence; there is no code/cause in `diagnostics[]` or `record.cause`, and there is no counterexample/replay. | Test (TC-633) |
+| FR-1049-AC-5 | Given `examples/architecture/rules/probability/claims/claims-every-scheduler-without-random.fsl`, **variation:** use profile `inf` and claim `probability >= 0.99 [ eventually holds(s.up) ]`; use analyze request `examples/architecture/requests/probability/claims/claims-every-scheduler-without-random.json`, selecting `NoRandomUp` with exact evidence and data `examples/architecture/data/start-service-down.json`. `fsl analyze` exits 10 with category `violation`, `last_stage: S8`, top-level `result: null`, `diagnostics: []`, and one item with result `refuted`, a counterexample and reproduced replay; there is no code/cause in `diagnostics[]` or `record.cause`, and there is no certificate. | Test (TC-2488) |
+| FR-1049-AC-6 | Given the same source and request paths as AC-5, **variation:** select initial data `examples/architecture/data/start-service-up.json` in the request. `fsl analyze` exits 0 with category `success`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one item with result `proved` and accepted certificate evidence; there is no code/cause in `diagnostics[]` or `record.cause`, and there is no counterexample/replay. | Test (TC-2488) |
+| FR-1049-AC-7 | Given `examples/architecture/rules/probability/claims/claims-unbounded-event.fsl`, **variation:** use profile `inf` and claim `probability <= 0.5 [ always holds(s.up) ]`; use analyze request `examples/architecture/requests/probability/claims/claims-unbounded-event.json`, selecting `StaysUp` with exact evidence and data `examples/architecture/data/start-service-up.json`. `fsl analyze` exits 0 with category `success`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one item with result `proved` and accepted certificate evidence; there is no code/cause in `diagnostics[]` or `record.cause`, and there is no counterexample/replay. | Test (TC-633) |
+| FR-1049-AC-8 | Given `examples/architecture/rules/probability/claims/claims-unbounded-event.fsl`, **variation:** use profile `inf` and claim `probability >= 0.9 [ always holds(s.up) ]`; use analyze request `examples/architecture/requests/probability/claims/claims-unbounded-event.json`, selecting `StaysUp` with exact evidence and data `examples/architecture/data/start-service-up.json`. `fsl analyze` exits 10 with category `violation`, `last_stage: S8`, top-level `result: null`, `diagnostics: []`, and one item with result `refuted`, a counterexample and reproduced replay; there is no code/cause in `diagnostics[]` or `record.cause`, and there is no certificate. | Test (TC-633) |
+| FR-1049-AC-9 | Given the same source and request paths as AC-8, **variation:** select initial data `examples/architecture/data/start-service-down.json` in the request. `fsl analyze` exits 10 with category `violation`, `last_stage: S8`, top-level `result: null`, `diagnostics: []`, and one item with result `refuted`, a counterexample and reproduced replay; there is no code/cause in `diagnostics[]` or `record.cause`, and there is no certificate. | Test (TC-633) |
+| FR-1049-AC-10 | Given `examples/architecture/rules/probability/claims/claims-unbounded-event.fsl`, **variation:** use profile `inf` and claim `probability <= 0.5 [ always holds(s.up) ]`; use analyze request `examples/architecture/requests/probability/claims/claims-unbounded-event.json`, selecting `StaysUp` with exact evidence and data `examples/architecture/data/start-service-down.json`. `fsl analyze` exits 0 with category `success`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one item with result `proved` and accepted certificate evidence; there is no code/cause in `diagnostics[]` or `record.cause`, and there is no counterexample/replay. | Test (TC-633) |
+| FR-1049-AC-11 | Given `examples/architecture/rules/probability/claims/claims-mean-of-fraction.fsl` and analyze request `examples/architecture/requests/probability/claims/claims-mean-of-fraction.json`, with exact evidence and data `examples/architecture/data/start-service-up.json`, **variation:** add `workload Traffic on Arch { weight Arch::Service::call = 1; }` and change `UpMostly` from `under every scheduler` to `under Traffic`. `fsl analyze` exits 0 with category `success`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one item with result `proved` and accepted certificate evidence; there is no code/cause in `diagnostics[]` or `record.cause`, and there is no counterexample/replay. | Test (TC-624) |
+| FR-1049-AC-12 | Given `examples/rover/rules/staged-vote-probability-missed.fsl` and analyze request `examples/rover/requests/staged-vote-probability-missed.json` with `examples/rover/data/start-driving.json`, `fsl analyze` exits 21 with category `unsupported`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one unsupported item whose `record.cause` is `kind: not-markov`, `post_state_count: 8004`, and `post_states` containing 8004 states; the cause is in `record.cause`, no code/cause is in `diagnostics[]`, and no certificate or counterexample/replay is emitted. | Test (TC-2066) |
+| FR-1049-AC-13 | Given `examples/architecture/rules/probability/claims/claims-long-run-fraction.fsl` and analyze request `examples/architecture/requests/probability/claims/claims-long-run-fraction.json`, with `Availability` using `long_run_fraction holds(s.up) >= 0.99` under every scheduler, exact evidence and data `examples/architecture/data/start-service-up.json`, `fsl analyze` exits 0 with category `success`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one item with result `proved` and an accepted certificate; there is no code/cause in `diagnostics[]` or `record.cause`, and there is no counterexample/replay. | Test (TC-636) |
+| FR-1049-AC-14 | Given `examples/architecture/rules/availability-long-run.fsl` and analyze request `examples/architecture/requests/availability-long-run.json`, with `Availability` using `long_run_fraction holds(s.up) >= 0.99` under workload `Traffic`, exact evidence and data `examples/architecture/data/start-service-up.json`, `fsl analyze` exits 0 with category `success`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one item with result `proved` and an accepted certificate; there is no code/cause in `diagnostics[]` or `record.cause`, and there is no counterexample/replay. | Test (TC-636) |
+| FR-1049-AC-15 | Given `examples/engines/rules/coin.fsl` using bounded profile `ev` and analyze request `examples/engines/requests/probability-atom-now.json`, selecting `HeadsNow` with exact evidence and `examples/engines/data/coin-tails.json`, `fsl analyze` exits 10 with category `violation`, `last_stage: S8`, top-level `result: null`, `diagnostics: []`, and one item with result `refuted`, a counterexample and reproduced replay; there is no code/cause in `diagnostics[]` or `record.cause`, and there is no certificate. | Test (TC-2066) |
+| FR-1049-AC-16 | Given `examples/engines/rules/coin.fsl` using bounded profile `ev` and analyze request `examples/engines/requests/probability-atom-now-at-most.json`, selecting `HeadsNowAtMost` with exact evidence and `examples/engines/data/coin-tails.json`, `fsl analyze` exits 0 with category `success`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one item with result `proved` and accepted certificate evidence; there is no code/cause in `diagnostics[]` or `record.cause`, and there is no counterexample/replay. | Test (TC-2066) |
+| FR-1049-AC-17 | Given `examples/engines/rules/coin.fsl`, **variation:** declare `profile inf = "filament.temporal.infinite-trace/v1"` and change `HeadsNow` from `using ev` to `using inf` while retaining the no-window formula `probability >= 0.5 [ holds(c.heads) ]`; use analyze request `examples/engines/requests/probability-atom-now.json` with exact evidence and `examples/engines/data/coin-tails.json`. `fsl analyze` exits 20 with category `refusal`, `last_stage: S3`, `result: null`, `items: []`, and one `diagnostics[]` entry with `code: invalid_probabilistic_model` and `cause: unbounded-event`; the code/cause are in `diagnostics[]`, no `record.cause` is present, and there is no certificate or counterexample/replay. | Test (TC-621) |
+| FR-1049-AC-18 | Given `examples/architecture/rules/probability/schedulers/schedulers-fair-weak.fsl` and analyze request `examples/architecture/requests/probability/schedulers/schedulers-fair-weak.json`, with `FairlyUp` using `fair weak Arch::Service::call` under every scheduler, `fsl analyze` exits 22 with category `incomplete`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one item with result `incomplete` and `record.cause` `{kind: limit-reached, limit: work_units, setting: accounting.work_units, value: 1000000}`; the cause is in `record.cause`, no code/cause is in `diagnostics[]`, and no certificate or counterexample/replay is emitted. | Test (TC-635) |
+| FR-1049-AC-19 | Given the same source and request paths as AC-18, **variation:** replace `fair weak Arch::Service::call` with `fair strong Arch::Service::call`; `fsl analyze` exits 22 with category `incomplete`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one item with result `incomplete` and `record.cause` `{kind: limit-reached, limit: work_units, setting: accounting.work_units, value: 1000000}`; the cause is in `record.cause`, no code/cause is in `diagnostics[]`, and no evidence is emitted. | Test (TC-635) |
+| FR-1049-AC-20 | Given the same source and request paths as AC-18, **variation:** replace the fairness clause with `fair weak each Arch::Service::call`; `fsl analyze` exits 22 with category `incomplete`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one item with result `incomplete` and `record.cause` `{kind: limit-reached, limit: work_units, setting: accounting.work_units, value: 1000000}`; the cause is in `record.cause`, no code/cause is in `diagnostics[]`, and no evidence is emitted. | Test (TC-635) |
+| FR-1049-AC-21 | Given the same source and request paths as AC-18, **variation:** replace the fairness clause with `fair strong each Arch::Service::call`; `fsl analyze` exits 22 with category `incomplete`, `last_stage: S6c`, top-level `result: null`, `diagnostics: []`, and one item with result `incomplete` and `record.cause` `{kind: limit-reached, limit: work_units, setting: accounting.work_units, value: 1000000}`; the cause is in `record.cause`, no code/cause is in `diagnostics[]`, and no evidence is emitted. | Test (TC-635) |
 
 ## References
 
-- [FR-286](./FR-286-serialize-every-outcome-as-one-json-outcome-document.md) defines the `filament-outcome/1` document that carries the command result.
+- [FR-286](./FR-286-serialize-every-outcome-as-one-json-outcome-document.md) defines the `filament-outcome/1` document structure.
 
 ## Dependencies
 
-- The alpha tutorial probability page and the probability example sources and requests named in AC-1 through AC-13 define the literal inputs and documented outcomes.
-- [FR-286](./FR-286-serialize-every-outcome-as-one-json-outcome-document.md) defines the command outcome document fields.
+- The alpha probability tutorial and the named architecture, engine and rover example sources, requests, and initial data define the inputs and intended outputs in AC-1 through AC-21.
+- [FR-286](./FR-286-serialize-every-outcome-as-one-json-outcome-document.md) defines the outcome document fields used by these criteria.
