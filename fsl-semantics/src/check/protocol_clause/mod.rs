@@ -17,25 +17,15 @@
 //! FR-113's binder no-shadowing rule (a record binder, a capture, a
 //! compensation trigger or a retry or recovery parameter shadowing a
 //! model/profile alias, a native declaration of the package or another
-//! visible binder) is checked here too, over the `BinderForm`s
-//! the S2 extension (`fsl_forms::protocol_clause::BinderForm`)
-//! now builds for every binder position. FSpec `shared-grammar.md` makes
-//! every binder "unique in their enclosing declaration": that declaration
-//! is the checked protocol as a whole, so every binder name in it shares
-//! one flat namespace, independent of the lexical scope it is written in
-//! (SR-765 FND-001) -- a `finish` binder can shadow a `run`-tree binder,
-//! two different `compensate` declarations' binders of one name collide,
-//! and so do sibling `case`/`branch` binders of one name, matching the
-//! composed lane's own `DuplicateBinder` checker
-//! (`src/linking/composed/scopes.rs`). Only a *different* protocol
-//! declaration is a separate enclosing declaration ("Two separate
-//! protocols may reuse a binder name"), which this function's own
-//! per-protocol call already gives for free. Binders are still checked
-//! against a package-level alias or native declaration the same way (by
-//! name alone, package-wide). Only one refusal is raised, at the shadowing
-//! binder, naming what it shadows -- unlike a duplicate declaration,
-//! shadowing is directional, so the shadowed declaration is not itself
-//! refused.
+//! active local binder) is checked here too, over the `BinderForm`s the S2
+//! extension builds for every binder position. Binder reuse is refused only
+//! when the earlier binder's scope remains active at the later declaration;
+//! a completed child scope or disjoint sibling scope does not collide. The
+//! finish and compensation-template record binders are associated with
+//! their owning declaration because their local extent is not a named
+//! control scope. Package aliases and native declarations remain
+//! package-wide. Only the shadowing binder refuses, naming the active
+//! binder or package declaration it conflicts with.
 
 mod anchors;
 mod attempts;
