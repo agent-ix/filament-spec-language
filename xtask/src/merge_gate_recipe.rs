@@ -1282,7 +1282,15 @@ fn plan_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Result<(
         return Ok(());
     }
     if is_integration_root_path(workspace_root, path) {
-        if let Some(rule) = matching_rule(path) {
+        // A root is not a module, so a directory's changed-module rule cannot
+        // select it: such a root runs every module.
+        let rule = matching_rule(path).filter(|rule| {
+            !rule
+                .it_filters
+                .iter()
+                .any(|filter| matches!(filter.rule, ItRule::ChangedModule))
+        });
+        if let Some(rule) = rule {
             apply_rule(workspace_root, path, rule, recipe)?;
         } else {
             add_all_it_modules(workspace_root, test_package(path), recipe)?;
@@ -2605,7 +2613,7 @@ mod tests {
                 top_level_integration_modules(workspace_root(), package).expect("module list");
             assert!(!modules.is_empty());
             for (target, module) in modules {
-                let path = if package == "filament-specification" {
+                let path = if package == "filament-spec-language" {
                     format!("tests/it/{module}.rs")
                 } else {
                     format!("{package}/tests/it/{module}.rs")
@@ -2615,12 +2623,11 @@ mod tests {
                     "unrouted module path {path}"
                 );
                 let recipe = plan(workspace_root(), &[&path]);
-                let filter = format!("{module}::");
                 assert!(
                     recipe.selectors.iter().any(|selector| {
                         selector.package == package
                             && selector.target == TestTarget::Integration(target.clone())
-                            && selector.filter.as_deref() == Some(filter.as_str())
+                            && selector.filter.as_deref() == Some(module.as_str())
                     }),
                     "{path} must route to {package} --test {target}"
                 );
@@ -2851,7 +2858,11 @@ mod tests {
                 .iter()
                 .any(|item| item.filter.as_deref() == Some(filter)));
         }
-        assert_eq!(recipe.selectors.len(), 5);
+        // Two libraries, two root-package filters, and one `timed_` selector
+        // per analyzer binary holding such a test; the repeated path adds none.
+        let timed = integration_targets_for_filter(workspace_root(), "fsl-analyze", "timed_")
+            .expect("timed targets");
+        assert_eq!(recipe.selectors.len(), 4 + timed.len());
     }
 
     #[test]
