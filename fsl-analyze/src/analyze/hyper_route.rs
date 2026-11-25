@@ -17,6 +17,7 @@ use fsl_replay::{
 };
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, DeclarationFamily};
+use ix_trace_rs::implements;
 
 use super::items::{BROKEN, admission, model_refusal};
 use super::{AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SubjectBinding, TemporalItem};
@@ -239,6 +240,7 @@ struct SingleControl<'a> {
     cancel: &'a Cancel,
 }
 
+#[implements("FR-125-AC-13")]
 fn single(
     package: &fsl_package::CheckedPackage,
     clause: &fsl_semantics::check::CheckedHyperClause,
@@ -276,6 +278,14 @@ fn single(
         Ok(run) => run,
         Err(refusal) => return EngineReport::Refused(model_refusal(&refusal)),
     };
+    if run.instances.is_empty() {
+        let cause = if simulation.initial.is_empty() {
+            fsl_replay::InconclusiveCause::NoInitialState
+        } else {
+            fsl_replay::InconclusiveCause::NoInstance
+        };
+        return super::state_graph_item::no_graph_decision(form, cause);
+    }
     let subjects = [ModelSubject {
         simulation,
         proof_bounds: form.proof_bounds.clone(),

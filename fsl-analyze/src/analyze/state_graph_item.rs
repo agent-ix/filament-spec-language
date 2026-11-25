@@ -34,6 +34,7 @@ use fsl_route::StateGraphFormKind;
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
 use fsl_semantics::check::{Capability, CheckedStateGraphClaim, DeclarationFamily, StateGraphForm};
+use ix_trace_rs::implements;
 
 use super::items::{INVALID_VALUE, model_refusal};
 use super::timed_item::subject_refusal;
@@ -293,10 +294,10 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     };
     // FR-125 Instancing: no initial state settles before no instance.
     if timed.initial().is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInitialState);
+        return no_graph_decision(read.form, fsl_replay::InconclusiveCause::NoInitialState);
     }
     if instances.is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
+        return no_graph_decision(read.form, fsl_replay::InconclusiveCause::NoInstance);
     }
     let graph = match fsl_replay::explore_digital_state_graph(
         &timed,
@@ -990,8 +991,9 @@ fn digital_closed_refusal(timed: &TimedSystem<'_, '_>) -> Option<Refusal> {
     ))
 }
 
-fn no_timed_graph_decision(
-    read: &Run<'_, '_>,
+#[implements("FR-125-AC-13")]
+pub(super) fn no_graph_decision(
+    form: &TemporalItem,
     cause: fsl_replay::InconclusiveCause,
 ) -> EngineReport {
     let record = StateGraphRecord {
@@ -1001,14 +1003,11 @@ fn no_timed_graph_decision(
         execution: fsl_replay::Execution::Completed,
         truth: fsl_replay::Truth::Pending,
         method: fsl_replay::EXPLICIT_STATE,
-        max_depth: read
-            .form
-            .max_depth
-            .and_then(|depth| u64::try_from(depth).ok()),
-        limits: read.form.limits.used(),
+        max_depth: form.max_depth.and_then(|depth| u64::try_from(depth).ok()),
+        limits: form.limits.used(),
         limit_reached: None,
-        seed: read.form.seed.unwrap_or_default(),
-        witness_samples: read.form.witness_samples.unwrap_or(1),
+        seed: form.seed.unwrap_or_default(),
+        witness_samples: form.witness_samples.unwrap_or(1),
         walks_stopped: 0,
         end: None,
         undefined: None,
@@ -1056,10 +1055,10 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     };
     // FR-125 Instancing: no initial state settles before no instance.
     if timed.initial().is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInitialState);
+        return no_graph_decision(read.form, fsl_replay::InconclusiveCause::NoInitialState);
     }
     if instances.is_empty() {
-        return no_timed_graph_decision(read, fsl_replay::InconclusiveCause::NoInstance);
+        return no_graph_decision(read.form, fsl_replay::InconclusiveCause::NoInstance);
     }
     let graph = match explore_timed_state_graph(
         &timed,

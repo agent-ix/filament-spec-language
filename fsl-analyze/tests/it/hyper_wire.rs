@@ -4,10 +4,70 @@
 use ix_trace_rs::trace;
 use serde_json::json;
 
-use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
+use crate::analyze_cli_support::{Workspace, analyze, label, request_over};
 use crate::hyper_world::{
-    non_interference, opaque, request_files_over_starts, Vault, EQUAL_INPUTS, STARTS,
+    EQUAL_INPUTS, STARTS, Vault, non_interference, opaque, request_files_over_starts,
 };
+
+/// FR-125-AC-13: a single-existential hyper claim with bounded but empty
+/// universes reports `NoInstance` rather than refusing the analysis.
+#[trace("TC-520", "FR-125-AC-13", "FR-181-AC-7")]
+#[test]
+fn qsl_3366_single_existential_over_an_empty_universe_reports_no_instance() {
+    let clause = "hyper Possible using inf over behaviours (v: V::Vault) exists trace b of V { eventually always holds(v.l @ b = 1) }";
+    let (unit, model, _) = request_files_over_starts(Vault::Secure, false, &STARTS, clause);
+    let mut provision = fsl_semantics::model::observation::DocumentProvision::new();
+    crate::hyper_world::snapshot(&mut provision, "s0", &[], None, None);
+    let bytes = provision.into_values().next().expect("one snapshot");
+    let ws = Workspace::new("hyper-wire-single-empty-universe");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &model,
+        &[bytes],
+        json!({"items": [{"claim": "Possible", "temporal": {"witness_samples": 0}}]}),
+    ));
+    let item = run.item(0);
+    assert_eq!(
+        item["record"]["cause"]["kind"],
+        "no-instance",
+        "{}",
+        run.document()
+    );
+}
+
+/// FR-125-AC-13: no initial state takes precedence over an empty universe.
+#[trace("TC-520", "FR-125-AC-13", "FR-181-AC-7")]
+#[test]
+fn qsl_3366_single_existential_without_initial_state_reports_no_initial_state() {
+    let clause = "hyper Possible using inf over behaviours (v: V::Vault) exists trace b of V { eventually always holds(v.l @ b = 1) }";
+    let (unit, model, _) = request_files_over_starts(Vault::Secure, false, &STARTS, clause);
+    let mut provision = fsl_semantics::model::observation::DocumentProvision::new();
+    crate::hyper_world::snapshot(&mut provision, "s0", &[], None, None);
+    let bytes = provision.into_values().next().expect("one snapshot");
+    let ws = Workspace::new("hyper-wire-single-no-initial-state");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &model,
+        &[bytes],
+        json!({
+            "items": [{"claim": "Possible", "temporal": {"witness_samples": 0}}],
+            "subject": {
+                "initial_states": [],
+                "universes": [{"authority": "test", "identity": "s0"}],
+                "proof_bounds": []
+            }
+        }),
+    ));
+    let item = run.item(0);
+    assert_eq!(
+        item["record"]["cause"]["kind"],
+        "no-initial-state",
+        "{}",
+        run.document()
+    );
+}
 
 #[trace("TC-1591", "FR-631-AC-1", "FR-181-AC-1", "FR-163-AC-1")]
 #[test]
@@ -16,7 +76,9 @@ fn analyze_hyper_single_existential_holds_and_refutes() {
         ("eventually always holds(v.l @ b = 1)", "proved", 0),
         ("eventually holds(v.l @ b != v.l @ b)", "refuted", 10),
     ] {
-        let clause = format!("hyper Possible using inf over behaviours (v: V::Vault) exists trace b of V {{ {body} }}");
+        let clause = format!(
+            "hyper Possible using inf over behaviours (v: V::Vault) exists trace b of V {{ {body} }}"
+        );
         let (unit, model, snapshots) =
             request_files_over_starts(Vault::Secure, false, &STARTS, &clause);
         let ws = Workspace::new(&format!("hyper-wire-single-{expected}"));
@@ -50,7 +112,9 @@ const COUNTER_DONE: &str = "terminal Done using v on M when { self.value = 3 };\
 #[trace("TC-2957", "FR-1000-AC-8")]
 #[test]
 fn analyze_hyper_hf_binds_a_fixed_reference_across_copies() {
-    let body = format!("{COUNTER_DONE}hyper HF using t0 over behaviours (c: M::Counter) forall trace a of M forall trace b of M {{ always holds(c.value @ a <= 3 or c.value @ b <= 3 or c = M::Counter#\"a\") }}");
+    let body = format!(
+        "{COUNTER_DONE}hyper HF using t0 over behaviours (c: M::Counter) forall trace a of M forall trace b of M {{ always holds(c.value @ a <= 3 or c.value @ b <= 3 or c = M::Counter#\"a\") }}"
+    );
     let ws = Workspace::new("hyper-wire-fixed-reference");
     let run = analyze(&crate::analyze_cli_support::counter_request(
         &ws,
@@ -92,10 +156,12 @@ fn analyze_hyper_holds_with_a_checked_product_certificate() {
 #[test]
 fn a_package_hyper_item_does_not_fall_back_to_source() {
     use crate::analyze_cli_support::{
-        counter_request, package_selection, request_members, HANDOFF,
+        HANDOFF, counter_request, package_selection, request_members,
     };
-    let body = format!("{COUNTER_DONE}hyper Equal using t0 over behaviours (c: M::Counter) \
-        forall trace a of M forall trace b of M {{ always holds(c.value @ a <= 3 and c.value @ b <= 3) }}");
+    let body = format!(
+        "{COUNTER_DONE}hyper Equal using t0 over behaviours (c: M::Counter) \
+        forall trace a of M forall trace b of M {{ always holds(c.value @ a <= 3 and c.value @ b <= 3) }}"
+    );
     let ws = Workspace::new("hyper-wire-package-source-free");
     let items = json!([{"claim": "Equal"}]);
     let source = analyze(&counter_request(&ws, &body, items.clone()));
