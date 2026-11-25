@@ -264,9 +264,9 @@ mod tests {
     }
 
     /// A sum renders an inner `else if` or `let` in brackets, and every
-    /// nesting of three level kinds is text S1 admits.
+    /// nesting of three level kinds compiles.
     #[test]
-    fn every_mix_of_level_kinds_renders_admissible_syntax() {
+    fn every_mix_of_level_kinds_compiles() {
         let body = |levels: &[Level]| {
             let source = DeepInput::new(Shape::Expression(levels.to_vec())).source;
             let (_, body) = source
@@ -286,14 +286,9 @@ mod tests {
             for middle in Level::ALL {
                 for inner in Level::ALL {
                     let input = DeepInput::new(Shape::Expression(vec![outer, middle, inner]));
-                    let parsed = fsl_cst::parse(
-                        SourceIdentity::new("agent-ix", "fsl-bench"),
-                        "deep-input.native",
-                        input.source.as_bytes(),
-                        input.limits().source,
-                    )
-                    .expect("S1 reads the generated unit");
-                    assert!(parsed.is_admissible(), "{}", input.source);
+                    if let Err(refusal) = input.compile() {
+                        panic!("{refusal:?}\n{}", input.source);
+                    }
                 }
             }
         }
