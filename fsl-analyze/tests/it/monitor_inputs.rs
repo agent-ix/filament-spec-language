@@ -135,10 +135,11 @@ fn compile(documents: &Documents, text: String) -> Compiled {
 }
 
 fn compile_with(documents: &Documents, text: String, dependencies: &DependencyInput) -> Compiled {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let identity = identity();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &identity,
             path: PATH,
@@ -149,10 +150,10 @@ fn compile_with(documents: &Documents, text: String, dependencies: &DependencyIn
     )
     .expect("the unit parses")
     .into_value();
-    let models = spine::select(&parsed, &documents.packages, limits.model, &cancel)
+    let models = spine::select(&qsl3309_parser_context, &parsed, &documents.packages, limits.model, &cancel)
         .expect("the model selects")
         .into_value();
-    let cst = fsl_cst::parse(identity, PATH, text.as_bytes(), fsl_cst::Limits::default())
+    let cst = fsl_cst::parse(&qsl3309_parser_context, identity, PATH, text.as_bytes(), fsl_cst::Limits::default())
         .expect("the unit parses");
     let selections = selections(&cst);
     let checked = spine::check_with_execution_points_and_source_inputs(

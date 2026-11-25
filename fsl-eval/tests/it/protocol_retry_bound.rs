@@ -64,6 +64,7 @@ fn fixture_with_recovery_predicate(bound: u64, recovery_predicate: Option<&str>)
 }
 
 fn fixture_for_template(bound: u64, recovery_predicate: Option<&str>, template: &str) -> Fixture {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let recovery_view = recovery_predicate.is_some();
     let mut domain = tc1070::document();
     let total = domain["types"]
@@ -240,7 +241,7 @@ fn fixture_for_template(bound: u64, recovery_predicate: Option<&str>, template: 
         "Partial" => source.replace_range(refund..partial, ""),
         _ => panic!("unknown fixture template {template}"),
     }
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("qsl-1757", "unit.native"),
         "unit.native",
         source.as_bytes(),

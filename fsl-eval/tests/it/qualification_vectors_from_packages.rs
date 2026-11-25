@@ -226,6 +226,7 @@ fn backend_division_rows_match_div07_and_div14() {
 /// Runs a unit against the authored package inputs and returns its first
 /// assembly refusal as the stable code/cause pair, or `None` when it checks.
 fn refusal(packages: PackageInput, unit_body: &str) -> Option<(String, String)> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let unit_source = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
@@ -234,7 +235,7 @@ fn refusal(packages: PackageInput, unit_body: &str) -> Option<(String, String)> 
          model G = \"acme/g\";\n\
          {unit_body}"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("qualification", "package-vector"),
         "package-vector.native",
         unit_source.as_bytes(),

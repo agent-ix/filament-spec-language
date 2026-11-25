@@ -24,10 +24,10 @@ use fsl_package::CheckedPackage;
 use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{
-    admit_unit, meaning, package_input, PackageInput, SelectedModels,
+    PackageInput, SelectedModels, admit_unit, meaning, package_input,
 };
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef, ObservationLimits};
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 /// The native Boolean type reference.
 pub const BOOLEAN: &str = "ix://filament/native/Boolean";
@@ -428,7 +428,7 @@ impl World {
             )
             .map_err(|e| refused("model selection", e))?
             .with_parsed_operation_clauses(|text| {
-                fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+                fsl_forms::parse_clause_text(parser, text, fsl_cst::Limits::default())
             })
             .map_err(|e| refused("operation clauses", e))?;
             if let Some(cache) = cache {

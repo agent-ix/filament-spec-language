@@ -671,8 +671,9 @@ fn protocol_check_stage_with_packages(
     checking: CheckingLimits,
     packages: &fsl_semantics::model::intake::PackageInput,
 ) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let cancel = Cancel::new();
-    let parsed = super::parse_for_continuation(&request(bytes), SourceLimits::default(), &cancel)
+    let parsed = super::parse_for_continuation(&qsl3309_parser_context, &request(bytes), SourceLimits::default(), &cancel)
         .unwrap_or_else(|failure| panic!("protocol source parses: {failure:?}"))
         .into_value();
     let models = select(
@@ -2303,6 +2304,7 @@ fn syntax_refusal_does_not_suppress_clean_protocol_emission() {
 #[trace("FR-510-AC-5", "TC-1305")]
 #[test]
 fn a_continued_protocol_refusal_has_no_subject_or_partial_reference_rows() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let unit = format!(
         "{HEADER}model M = \"acme/orders\";\n\
          function base using v(x: Int[0, 9]): Int[0, 10] pure {{ x + 1 }}\n\
@@ -2314,7 +2316,7 @@ fn a_continued_protocol_refusal_has_no_subject_or_partial_reference_rows() {
     );
     let cancel = Cancel::new();
     let parsed =
-        super::parse_for_continuation(&request(unit.as_bytes()), SourceLimits::default(), &cancel)
+        super::parse_for_continuation(&qsl3309_parser_context, &request(unit.as_bytes()), SourceLimits::default(), &cancel)
             .expect("the attributed protocol refusal is continuable")
             .into_value();
     let packages = fsl_semantics::model::intake::package_input([MODEL_DOCUMENT])
@@ -2358,6 +2360,7 @@ fn a_continued_protocol_refusal_has_no_subject_or_partial_reference_rows() {
 #[trace("FR-098-AC-1")]
 #[test]
 fn check_units_continues_past_a_protocol_refusal_only_when_asked() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let unit = format!(
         "{HEADER}model M = \"acme/orders\";\n{}\n{}",
         protocol_source("W", true),
@@ -2368,7 +2371,7 @@ fn check_units_continues_past_a_protocol_refusal_only_when_asked() {
     let packages = fsl_semantics::model::intake::package_input([MODEL_DOCUMENT])
         .expect("the fixture model package input");
     let run = |continue_protocol_refusals| {
-        let parsed = super::parse_for_continuation(
+        let parsed = super::parse_for_continuation(&qsl3309_parser_context,
             &request(unit.as_bytes()),
             SourceLimits::default(),
             &cancel,
@@ -2377,7 +2380,7 @@ fn check_units_continues_past_a_protocol_refusal_only_when_asked() {
         .into_value();
         let admitted =
             admit_parsed_unit_list(vec![parsed], &dependencies).expect("the unit is admitted");
-        let models = super::select_units(
+        let models = super::select_units(&qsl3309_parser_context,
             &admitted,
             &packages,
             ModelNormalizationLimits::default(),
@@ -4849,13 +4852,14 @@ fn type_report_resolves_a_deep_body_without_rewalking_each_ancestry() {
 #[trace("TC-1784", "FR-098-AC-34")]
 #[test]
 fn the_recompile_checks_under_the_given_check_mode() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use filament_semantic_value::checking::CheckMode;
     let unit = format!("{HEADER}function r using v(x: Int[0, 9]): Integer pure {{ 10 mod x }}\n");
     let cancel = Cancel::new();
     let dependencies = DependencyInput::default();
     let packages = fsl_semantics::model::intake::package_input([]).expect("no model packages");
     let run = |check_mode| {
-        let parsed = super::parse_for_continuation(
+        let parsed = super::parse_for_continuation(&qsl3309_parser_context,
             &request(unit.as_bytes()),
             SourceLimits::default(),
             &cancel,
@@ -4864,7 +4868,7 @@ fn the_recompile_checks_under_the_given_check_mode() {
         .into_value();
         let admitted =
             admit_parsed_unit_list(vec![parsed], &dependencies).expect("the unit is admitted");
-        let models = super::select_units(
+        let models = super::select_units(&qsl3309_parser_context,
             &admitted,
             &packages,
             ModelNormalizationLimits::default(),
@@ -4907,6 +4911,7 @@ fn the_recompile_checks_under_the_given_check_mode() {
 /// raised, and the importing unit is never compiled.
 #[test]
 fn library_packages_are_charged_as_each_is_emitted() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let shapes = SuppliedLibrary {
         identity: "test/shapes".to_owned(),
         source: SourceIdentity::new("a", "shapes"),
@@ -4925,7 +4930,7 @@ fn library_packages_are_charged_as_each_is_emitted() {
     let cancel = Cancel::new();
     let packages = fsl_semantics::model::intake::package_input([]).expect("no model packages");
     let run = |external_package_bytes| {
-        let parsed = super::parse_for_continuation(
+        let parsed = super::parse_for_continuation(&qsl3309_parser_context,
             &request(unit.as_bytes()),
             SourceLimits::default(),
             &cancel,
@@ -4934,7 +4939,7 @@ fn library_packages_are_charged_as_each_is_emitted() {
         .into_value();
         let admitted =
             admit_parsed_unit_list(vec![parsed], &dependencies).expect("the unit is admitted");
-        let models = super::select_units(
+        let models = super::select_units(&qsl3309_parser_context,
             &admitted,
             &packages,
             ModelNormalizationLimits::default(),

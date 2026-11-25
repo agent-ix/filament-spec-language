@@ -39,8 +39,9 @@ enum Verdict {
 }
 
 fn check(declarations: &str) -> Verdict {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declarations}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "interval-soundness"),
         "interval.native",
         text.as_bytes(),

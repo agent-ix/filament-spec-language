@@ -762,6 +762,7 @@ fn equal_package_contents_do_not_share_classification_authority() {
 #[trace("FR-527-AC-18", "TC-1322")]
 #[test]
 fn a_profile_outside_the_admitted_identities_is_refused_at_check() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use fsl_semantics::check::{resolve_profiles, ProfileCause};
     for identity in [
         "filament.temporal.unknown/v1",
@@ -772,7 +773,7 @@ fn a_profile_outside_the_admitted_identities_is_refused_at_check() {
             identity,
             &declared("Due", "always holds(c.versionNumber = 1)"),
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "test:profile"),
             "program.native",
             source.as_bytes(),
@@ -793,7 +794,7 @@ fn a_profile_outside_the_admitted_identities_is_refused_at_check() {
             identity,
             &declared("Due", "always holds(c.versionNumber = 1)"),
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "test:profile"),
             "program.native",
             source.as_bytes(),

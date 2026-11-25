@@ -157,12 +157,13 @@ fn the_checked_package_debug_output_grows_linearly_with_depth() {
 
 /// A real source-backed package, including spans for its later emission.
 fn source_package_for_debug(body: &str) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          function f using v(a: Boolean, x: Integer): Integer pure {{ {body} }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         source.as_bytes(),

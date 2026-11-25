@@ -19,6 +19,7 @@ fn hyper_fixture(
     body: &str,
     operations: Vec<serde_json::Value>,
 ) -> (World, fsl_semantics::check::CheckedHyperClause) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let clause = format!(
         "hyper H using inf over behaviours (c: M::Counter) \
          forall trace a of M forall trace b of M {{ {body} }}"
@@ -32,7 +33,7 @@ fn hyper_fixture(
          model M = \"{PACKAGE}\";\n\
          function Noop using v(): Boolean pure {{ true }}\n{clause}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "fr-120"),
         "fr-120.native",
         text.as_bytes(),

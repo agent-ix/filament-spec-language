@@ -278,8 +278,9 @@ impl Documents {
 }
 
 fn checked_package() -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let models = package_input([document().as_slice()]).expect("model package input");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("agent-ix", "test:tso-certificate"),
         "unit.native",
         UNIT.as_bytes(),

@@ -30,10 +30,11 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::package_input;
+use ix_trace_rs::implements;
 
 use crate::execute::{
-    callable_parameter_keys, declaration_occurrence, value_parity_obligation,
-    value_parity_preimage, ValueParityPreimage,
+    ValueParityPreimage, callable_parameter_keys, declaration_occurrence, value_parity_obligation,
+    value_parity_preimage,
 };
 use crate::identity::QualifiedName;
 use crate::spine::{self, CompileRefusal, DependencyInput, DependencyInputRefusal, OperationName};
@@ -413,9 +414,7 @@ pub enum CallSiteRefusal {
     /// `selection` names no function of the compiled `package`. Never a
     /// bare `QualifiedName` (FR-088-AC-6, TC-258): paired with the package
     /// it was looked up in, mirroring `ReplayRefusal::UnknownFunction`.
-    #[error(
-        "missing_declaration/missing-name: package {package} declares no function {selection}"
-    )]
+    #[error("missing_declaration/missing-name: package {package} declares no function {selection}")]
     UnknownFunction {
         /// The name `call_site` was given.
         selection: QualifiedName,
@@ -514,9 +513,7 @@ pub enum CallSiteRefusal {
     },
     /// `selection`'s library declares no function of that name. Paired with
     /// the library's package name.
-    #[error(
-        "missing_declaration/missing-name: package {package} declares no function {selection}"
-    )]
+    #[error("missing_declaration/missing-name: package {package} declares no function {selection}")]
     UnknownImportedFunction {
         /// The imported function `call_site` was given.
         selection: ImportedFunctionName,
@@ -638,7 +635,9 @@ impl CallSiteRefusal {
 /// #     profile v = \"filament.value.complete/v1\";\n\
 /// #     function f using v(x: Int[0, 9]): Integer pure { x + 5 }\n";
 /// let f = QualifiedName::new(vec![Identifier::new("f").unwrap()]).unwrap();
+/// let parser = fsl_cst::ParserContext::new();
 /// let site = call_site(
+///     &parser,
 ///     SourceIdentity::new("a", "u"),
 ///     CallSiteUnit::new("fixture", "u", unit.as_bytes()),
 ///     [],
@@ -659,7 +658,9 @@ impl CallSiteRefusal {
 /// #     profile v = \"filament.value.complete/v1\";\n\
 /// #     function f using v(x: Int[0, 9]): Integer pure { x + 5 }\n";
 /// let f = QualifiedName::new(vec![Identifier::new("f").unwrap()]).unwrap();
+/// let parser = fsl_cst::ParserContext::new();
 /// let site = call_site(
+///     &parser,
 ///     SourceIdentity::new("a", "u"),
 ///     CallSiteUnit::new("fixture", "u", unit.as_bytes()),
 ///     [],
@@ -670,7 +671,9 @@ impl CallSiteRefusal {
 /// .unwrap();
 /// assert_eq!(site.site.parameters[0].0.as_str(), "x");
 /// ```
+#[implements("NFR-141-AC-10")]
 pub fn call_site<'a, S: CallSiteSelection>(
+    parser: &fsl_cst::ParserContext,
     source: SourceIdentity,
     unit: CallSiteUnit<'_>,
     packages: impl IntoIterator<Item = &'a [u8]>,
@@ -702,6 +705,7 @@ pub fn call_site<'a, S: CallSiteSelection>(
         )))
     })?;
     let parsed = spine::parse(
+        parser,
         &spine::ParseRequest {
             source: &source,
             path,
@@ -712,7 +716,7 @@ pub fn call_site<'a, S: CallSiteSelection>(
     )
     .map_err(refusal)?
     .into_value();
-    let models = spine::select(&parsed, &packages, limits.model, &cancel)
+    let models = spine::select(parser, &parsed, &packages, limits.model, &cancel)
         .map_err(refusal)?
         .into_value();
     // FR-640: a library clause on a clock compiles under the `clocks` the
@@ -1149,7 +1153,7 @@ mod tests {
     use fsl_foundation::SourceIdentity;
     use ix_trace_rs::trace;
 
-    use super::{call_site, CallSite, CallSiteRefusal, FunctionSite};
+    use super::{CallSite, CallSiteRefusal, FunctionSite, call_site};
     use crate::identity::QualifiedName;
     use crate::request::{ReplayRequestWire, StateEnvironment};
     use crate::spine::DependencyInput;

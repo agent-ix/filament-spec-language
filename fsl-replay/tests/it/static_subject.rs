@@ -31,9 +31,10 @@ fn checked(
     limits: SpineLimits,
     libraries: Vec<SuppliedLibrary>,
 ) -> spine::CheckedUnit {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let identity = SourceIdentity::new("test", "unit");
     let cancel = Cancel::new();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &identity,
             path: "unit.native",
@@ -47,7 +48,7 @@ fn checked(
     let input = [("acme/orders".to_owned(), model.to_vec())]
         .into_iter()
         .collect();
-    let admitted = spine::select(&parsed, &input, limits.model, &cancel)
+    let admitted = spine::select(&qsl3309_parser_context, &parsed, &input, limits.model, &cancel)
         .expect("select")
         .into_value();
     let dependencies = DependencyInput::new(libraries).expect("dependency input");
@@ -295,6 +296,7 @@ fn imported_predicate_reference_retains_the_exact_library_target() {
 #[trace("FR-510-AC-3", "TC-1305")]
 #[test]
 fn aggregate_units_keep_sibling_imports_and_references_out_of_each_subject() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source_a = SourceIdentity::new("test", "unit-a");
     let source_b = SourceIdentity::new("test", "unit-b");
     let unit_a = SOURCE
@@ -323,7 +325,7 @@ fn aggregate_units_keep_sibling_imports_and_references_out_of_each_subject() {
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let parse_unit = |source: &SourceIdentity, bytes: &str| {
-        spine::parse(
+        spine::parse(&qsl3309_parser_context,
             &ParseRequest {
                 source,
                 path: "unit.native",
@@ -359,7 +361,7 @@ fn aggregate_units_keep_sibling_imports_and_references_out_of_each_subject() {
     ]
     .into_iter()
     .collect();
-    let models = spine::select_units(
+    let models = spine::select_units(&qsl3309_parser_context,
         &admitted,
         &model_input,
         limits.model,
@@ -596,13 +598,14 @@ fn protocol(name: &str, role: &str) -> String {
 #[trace("FR-510-AC-5", "TC-1305")]
 #[test]
 fn a_refused_check_produces_no_static_subject() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let bad_source = SOURCE
         .replace("function answer", "function broken")
         .replace("{ 1 }", "{ unknown }");
     let identity = SourceIdentity::new("test", "bad");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &identity,
             path: "bad.native",
@@ -616,7 +619,7 @@ fn a_refused_check_produces_no_static_subject() {
     let input = [("acme/orders".to_owned(), MODEL.to_vec())]
         .into_iter()
         .collect();
-    let admitted = spine::select(&parsed, &input, limits.model, &cancel)
+    let admitted = spine::select(&qsl3309_parser_context, &parsed, &input, limits.model, &cancel)
         .expect("select")
         .into_value();
     let refusal = spine::check(

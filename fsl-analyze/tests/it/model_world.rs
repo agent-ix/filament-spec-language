@@ -333,6 +333,7 @@ impl World {
         clauses: &[Clause<'_>],
         start: &[(&str, Json)],
     ) -> Self {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let packages = package_input([domain.document.as_slice()]).unwrap();
         let text = format!(
             "language \"ix:native\" edition \"1-draft\";\n\
@@ -351,7 +352,7 @@ impl World {
                 )
             });
         let declarations = |text: &str| {
-            let parsed = fsl_cst::parse(
+            let parsed = fsl_cst::parse(&qsl3309_parser_context,
                 SourceIdentity::new("agent-ix", "safety"),
                 "safety.native",
                 text.as_bytes(),
@@ -367,7 +368,7 @@ impl World {
             )
             .expect("the model selection admits")
             .with_parsed_operation_clauses(|text| {
-                fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+                fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
             })
             .expect("the operation clauses parse");
             PackageDeclarations::assemble(

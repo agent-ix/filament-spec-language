@@ -84,8 +84,9 @@ mod code_generation {
 
     #[test]
     fn fr_913_01_format_emit_graph_and_reader_verdict_agree() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let source = fsl_foundation::SourceIdentity::new("consumer", "format-readback");
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             source.clone(),
             "unit.native",
             UNIT.as_bytes(),
@@ -529,6 +530,7 @@ schedulable CtlFp on Ctl under fixed_priority;\n";
     #[test]
     #[trace("TC-2575", "FR-911-AC-2")]
     fn cf_ir_02_01_import_view_exposes_checked_exports() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
         use filament_semantic_value::checking::{CheckMode, CheckingLimits};
         use fsl_semantics::check::PackageDeclarations;
 
@@ -536,7 +538,7 @@ schedulable CtlFp on Ctl under fixed_priority;\n";
 profile v = \"filament.value.complete/v1\";\n\
 function increment using v(x: Integer): Integer pure { x + 1 }\n";
         let source = fsl_foundation::SourceIdentity::new("consumer", "exported-library");
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             source,
             "library.native",
             source_text.as_bytes(),

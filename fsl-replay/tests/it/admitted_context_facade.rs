@@ -93,10 +93,11 @@ fn admit_ok(text: &str) -> AdmittedCompilation {
 /// The spine's own checked graph: every enum declaration key with its case
 /// names and member keys, from the nominal nodes the checker built.
 fn spine_enums(text: &str) -> Vec<(NodeKey, Vec<(String, NodeKey)>)> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = unit_identity();
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &source,
             path: "unit.native",
@@ -107,7 +108,7 @@ fn spine_enums(text: &str) -> Vec<(NodeKey, Vec<(String, NodeKey)>)> {
     )
     .expect("parses")
     .into_value();
-    let models = spine::select(&parsed, &Default::default(), limits.model, &cancel)
+    let models = spine::select(&qsl3309_parser_context, &parsed, &Default::default(), limits.model, &cancel)
         .expect("selects")
         .into_value();
     let checked = spine::check(

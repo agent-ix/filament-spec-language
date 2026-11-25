@@ -139,6 +139,7 @@ fn channel_connection_model() -> fsl_semantics::model::intake::SelectedModel {
 #[ix_trace_rs::trace("FR-897-AC-1", "TC-2533")]
 #[test]
 fn a_channel_emits_only_its_declared_connection_reference() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = "language \"ix:native\" edition \"1-draft\";\n\
         profile p = \"filament.protocol.finite-global/v1\";\n\
         model M = \"example/channel-connection\";\n\
@@ -151,7 +152,7 @@ fn a_channel_emits_only_its_declared_connection_reference() {
         run sequence Main { }\n\
         finish Closed as (closed: Boolean) { true };\n\
         }";
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:protocol-connection"),
         "protocol.native",
         text.as_bytes(),
@@ -1084,6 +1085,7 @@ fn protocol_correlation_missing_member_is_typed_unavailable_only_when_needed() {
 #[trace("FR-218-AC-15")]
 #[test]
 fn a_related_clause_carries_its_relationship_and_both_ends_into_the_package() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use filament_checked::key::DeclarationKey;
     use fsl_foundation::Span;
     use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -1146,7 +1148,7 @@ fn a_related_clause_carries_its_relationship_and_both_ends_into_the_package() {
         related by Owns (done, input) { true }; }\n\
         finish End as (outcome: Boolean) { true };\n\
         }";
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:related-by-package"),
         "protocol.native",
         source.as_bytes(),

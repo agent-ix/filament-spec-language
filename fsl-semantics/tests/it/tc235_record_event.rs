@@ -801,6 +801,7 @@ fn tc235_operation_refusals_name_the_declared_position() {
 #[trace("FSpec-TC-235")]
 #[test]
 fn tc235_m22_flags_parameter_is_assembled_as_a_record() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let document = mutate_k2(|document| {
         type_named_mut(document, "OrderLifecycle")["fields"]
             .as_array_mut()
@@ -866,7 +867,7 @@ fn tc235_m22_flags_parameter_is_assembled_as_a_record() {
         ),
         PACKAGE = PACKAGE,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "tc-235"),
         "unit.native",
         unit.as_bytes(),

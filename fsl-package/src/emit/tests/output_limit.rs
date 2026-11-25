@@ -46,13 +46,14 @@ fn nested_let_package(depth: usize) -> CheckedPackage {
 
 /// `source` read and checked with front-end ceilings raised to fit it.
 fn checked_unit(source: &str) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source_limits = fsl_cst::Limits {
         source_bytes: source.len(),
         tokens: source.len(),
         nodes: source.len().saturating_mul(16),
         ..fsl_cst::Limits::default()
     };
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "nested-not.native"),
         "nested-not.native",
         source.as_bytes(),

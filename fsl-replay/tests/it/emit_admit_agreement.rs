@@ -31,10 +31,11 @@ use ix_trace_rs::trace;
 use proptest::prelude::*;
 
 fn emit(source: &str) -> Result<EmittedUnit, FrontEndFailure> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let cancel = Cancel::new();
     let identity = SourceIdentity::new("agent-ix", "emit-admit");
     let limits = SpineLimits::default();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &identity,
             path: "generated.native",
@@ -44,7 +45,7 @@ fn emit(source: &str) -> Result<EmittedUnit, FrontEndFailure> {
         &cancel,
     )?
     .into_value();
-    let models = spine::select(&parsed, &BTreeMap::new(), limits.model, &cancel)?.into_value();
+    let models = spine::select(&qsl3309_parser_context, &parsed, &BTreeMap::new(), limits.model, &cancel)?.into_value();
     let checked = spine::check(
         &parsed,
         "emit-admit".into(),
@@ -110,11 +111,12 @@ fn reread(emitted: &EmittedUnit) -> Result<Box<CheckedPackageV2>, TestCaseError>
 #[test]
 #[trace("FR-110-AC-16", "TC-3217")]
 fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction q using v(a: Int[-7,7], b: Int[1,3]): Int[-7,7] pure { a div b }\n";
     let cancel = Cancel::new();
     let identity = SourceIdentity::new("agent-ix", "fr-110-floor-law-reader");
     let limits = SpineLimits::default();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &identity,
             path: "floor-law.native",
@@ -125,7 +127,7 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
     )
     .expect("parse unit")
     .into_value();
-    let models = spine::select(&parsed, &BTreeMap::new(), limits.model, &cancel)
+    let models = spine::select(&qsl3309_parser_context, &parsed, &BTreeMap::new(), limits.model, &cancel)
         .expect("select models")
         .into_value();
     let law = fsl_replay::admit_integer_division(

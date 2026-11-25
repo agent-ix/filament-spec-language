@@ -46,7 +46,8 @@ fn request(directory: &Path, source: &str) -> std::path::PathBuf {
 }
 
 fn assert_s2_builds(text: &str, declaration: &str, is_random: bool) {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "fr-311-ac-3"),
         "program.native",
         text.as_bytes(),

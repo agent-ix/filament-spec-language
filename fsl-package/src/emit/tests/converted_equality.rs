@@ -18,8 +18,9 @@ const RAT: &str = "Rational[-100, 100; 1, 1]";
 
 /// `declarations` through S1 to S4 and the v2 emitter, with nothing omitted.
 pub(super) fn checked_graph(declarations: &str) -> fsl_semantics::check::CheckedGraph {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declarations}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:conv-eq"),
         "program.native",
         text.as_bytes(),
@@ -1629,6 +1630,7 @@ fn a_guard_over_an_integer_conversion_bounds_the_converted_operand() {
 #[trace("FR-093-AC-32", "TC-415")]
 #[test]
 fn a_guard_over_an_integer_conversion_bounds_only_what_it_states() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     for body in [
         "if convert<Integer>(x) = 4 then x else 0",
         "if convert<Integer>(x) != 2 then x else 0",
@@ -1638,7 +1640,7 @@ fn a_guard_over_an_integer_conversion_bounds_only_what_it_states() {
     ] {
         let text =
             format!("{HEADER}function g using v(x: Int[-5,5]): Int[0,3] pure {{ {body} }}\n");
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "test:guard"),
             "program.native",
             text.as_bytes(),

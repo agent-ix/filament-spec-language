@@ -360,6 +360,7 @@ fn systems_source_compiles_to_the_same_checked_package_as_its_document() {
 #[test]
 #[trace("TC-3013", "FR-710-AC-12")]
 fn systems_source_rejects_each_invalid_endpoint_before_writing_a_document() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     for (original, changed, offending, code, cause, retained) in [
         (
             "SysPump.PumpOut",
@@ -451,7 +452,7 @@ fn systems_source_rejects_each_invalid_endpoint_before_writing_a_document() {
         ),
     ] {
         let model = SYSTEMS_MODEL.replace(original, changed);
-        let parsed = cst::parse(
+        let parsed = cst::parse(&qsl3309_parser_context,
             SourceIdentity::new("agent-ix", "test:plant.fsl"),
             "plant.fsl",
             model.as_bytes(),
@@ -510,7 +511,7 @@ fn systems_source_rejects_each_invalid_endpoint_before_writing_a_document() {
                     &format!("{declaration}\nconnection Pipe"),
                 )
                 .replace(original, changed);
-            let parsed = cst::parse(
+            let parsed = cst::parse(&qsl3309_parser_context,
                 SourceIdentity::new("agent-ix", "test:plant.fsl"),
                 "plant.fsl",
                 model.as_bytes(),
@@ -1128,6 +1129,7 @@ fn analyze_duplicate_domain_packages_keep_the_typed_conflict_refusal() {
 #[test]
 #[trace("TC-2998", "FR-710-AC-9")]
 fn a_compile_request_over_a_model_unit_writes_its_document() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let directory = tempfile::tempdir().unwrap();
     let output = json!({"package": "shop.semantic-ir.json"});
     let path = compile_request(
@@ -1138,7 +1140,7 @@ fn a_compile_request_over_a_model_unit_writes_its_document() {
         &[("output", output)],
     );
     let outcome = command::compile_outcome(&path).expect("the model unit compiles");
-    let parsed = cst::parse(
+    let parsed = cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("agent-ix", "test:shop.fsl"),
         "shop.fsl",
         SHOP.as_bytes(),

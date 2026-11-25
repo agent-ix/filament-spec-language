@@ -25,7 +25,8 @@ fn source(rest: &str) -> String {
 }
 
 fn check(text: &str) -> CheckedGraph {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

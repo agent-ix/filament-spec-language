@@ -10,10 +10,10 @@ use filament_exact::{
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::declaration::CompositeShape;
 use fsl_eval::temporal::{
-    AggregateAtom, AtomReading, CaptureReading, FirstUndefined, LetterStop, LetterTape,
-    ObservedLocus, TapeEntry, TapeLetter, TapeReading, TemporalLetters, TemporalOutcome,
-    TemporalPosition, TemporalTrace, UndefinedCause, WindowRead, WindowSource, WindowTrace,
-    DEFAULT_MAX_WINDOW_VALUES,
+    AggregateAtom, AtomReading, CaptureReading, DEFAULT_MAX_WINDOW_VALUES, FirstUndefined,
+    LetterStop, LetterTape, ObservedLocus, TapeEntry, TapeLetter, TapeReading, TemporalLetters,
+    TemporalOutcome, TemporalPosition, TemporalTrace, UndefinedCause, WindowRead, WindowSource,
+    WindowTrace,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::source_map::NativeLanguage;
@@ -24,8 +24,8 @@ use fsl_semantics::check::{
 use fsl_semantics::model::observation::{DocumentProvision, ObservationLimits, Provisions};
 
 use super::{
-    front_end, ClauseDisposition, ClauseRunRefusal, ClauseRunReport, ClauseRunSource,
-    ClauseRunUsage, CompiledRun, TemporalUndefinedCause,
+    ClauseDisposition, ClauseRunRefusal, ClauseRunReport, ClauseRunSource, ClauseRunUsage,
+    CompiledRun, TemporalUndefinedCause, front_end,
 };
 /// Inputs for the non-model trace-subject clause route.
 pub struct TraceSubjectClauseRequest {
@@ -51,10 +51,12 @@ pub struct TraceSubjectClauseRequest {
 
 /// Run one temporal clause on a closed finite event-position trace of record
 /// samples. Model-subject clauses continue to use [`super::run_clause`].
+#[ix_trace_rs::implements("NFR-141-AC-10")]
 pub fn run_trace_subject_clause(
     request: TraceSubjectClauseRequest,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
     let unit = request.source.unit();
+    let parser_context = fsl_cst::ParserContext::new();
     if unit.bytes.is_empty() {
         return Err(ClauseRunRefusal::EmptySource);
     }
@@ -83,6 +85,7 @@ pub fn run_trace_subject_clause(
     let cancel = Cancel::new();
     let compile = || -> Result<_, front_end::FrontEndFailure> {
         let parsed = front_end::parse(
+            &parser_context,
             &front_end::ParseRequest {
                 source: unit.identity,
                 path: unit.path,
@@ -96,8 +99,14 @@ pub fn run_trace_subject_clause(
             return Ok(Err(actual));
         }
         let temporal_selections = temporal_clock_selections(&parsed);
-        let models = front_end::select(&parsed, &request.packages, request.limits.model, &cancel)?
-            .into_value();
+        let models = front_end::select(
+            &parser_context,
+            &parsed,
+            &request.packages,
+            request.limits.model,
+            &cancel,
+        )?
+        .into_value();
         let checked = front_end::check_with_temporal_selections_and_execution_points(
             &parsed,
             request.package_name.clone(),
@@ -1477,11 +1486,13 @@ mod tests {
     }
 
     fn checked_types() -> (ValueType, ValueType) {
+        let parser_context = fsl_cst::ParserContext::new();
         let identity = SourceIdentity::new("agent-ix", "trace-subject-test");
         let bytes = SOURCE.as_bytes();
         let limits = super::super::super::SpineLimits::default();
         let cancel = Cancel::new();
         let parsed = front_end::parse(
+            &parser_context,
             &front_end::ParseRequest {
                 source: &identity,
                 path: "trace-subject.native",
@@ -1493,7 +1504,7 @@ mod tests {
         .expect("source parses")
         .into_value();
         let packages = PackageInput::default();
-        let models = front_end::select(&parsed, &packages, limits.model, &cancel)
+        let models = front_end::select(&parser_context, &parsed, &packages, limits.model, &cancel)
             .expect("no models selected")
             .into_value();
         let checked = front_end::check_with_temporal_selections_and_execution_points(
@@ -1522,6 +1533,7 @@ mod tests {
     }
 
     fn model_subject() -> (String, PackageInput, ValueType) {
+        let parser_context = fsl_cst::ParserContext::new();
         let document = serde_json::to_vec(&model_fixture::document(&[], &[]))
             .expect("model fixture serializes");
         let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
@@ -1539,6 +1551,7 @@ mod tests {
         let limits = super::super::super::SpineLimits::default();
         let cancel = Cancel::new();
         let parsed = front_end::parse(
+            &parser_context,
             &front_end::ParseRequest {
                 source: &identity,
                 path: "trace-subject-model.native",
@@ -1549,7 +1562,7 @@ mod tests {
         )
         .expect("model source parses")
         .into_value();
-        let models = front_end::select(&parsed, &packages, limits.model, &cancel)
+        let models = front_end::select(&parser_context, &parsed, &packages, limits.model, &cancel)
             .expect("model selected")
             .into_value();
         let checked = front_end::check_with_temporal_selections_and_execution_points(

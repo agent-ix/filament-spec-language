@@ -88,6 +88,7 @@ use super::tc235_k2 as correspondence_fixture;
 #[trace("FR-569-AC-6", "TC-1408")]
 #[test]
 fn fixture_s_m_emits_the_selected_and_source_object_routes() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "{HEADER}profile Pp = \"filament.protocol.finite-global/v1\";\n\
          model M = \"test/orders\";\n{S}\
@@ -100,7 +101,7 @@ fn fixture_s_m_emits_the_selected_and_source_object_routes() {
            finish Done as (d: Boolean) {{ true }};\n\
          }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:s-m"),
         "program.native",
         text.as_bytes(),
@@ -1199,10 +1200,11 @@ fn source_object_rows_carry_their_own_operations_and_query_flag() {
 #[trace("FR-569-AC-16", "TC-1408")]
 #[test]
 fn fixture_d_emission_has_no_source_object_operations() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "{HEADER}model M = \"test/orders\";\nfunction f using P (x: Boolean): Boolean pure {{ x }}\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:d"),
         "program.native",
         text.as_bytes(),
@@ -1306,8 +1308,9 @@ fn source_object_node_identity_tracks_only_the_object_declaration_identity() {
 #[trace("FR-569-AC-7", "TC-1408")]
 #[test]
 fn source_object_node_identity_differs_from_selected_model_node_identity() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let emit_with_model = |text: String| {
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "test:s-m-identity"),
             "program.native",
             text.as_bytes(),

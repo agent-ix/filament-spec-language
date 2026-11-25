@@ -10,7 +10,8 @@ use ix_trace_rs::trace;
 const PREDICATE: &str = "predicate P using v(x: Boolean): Boolean { x }\n";
 
 fn parse(text: &str) -> ParsedSource {
-    fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

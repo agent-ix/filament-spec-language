@@ -188,10 +188,11 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = SourceIdentity::new("a", "body-failure");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &source,
             path: "body-failure.native",
@@ -202,7 +203,7 @@ fn fixture() -> Fixture {
     )
     .expect("fixture parses")
     .into_value();
-    let models = spine::select(&parsed, &Default::default(), limits.model, &cancel)
+    let models = spine::select(&qsl3309_parser_context, &parsed, &Default::default(), limits.model, &cancel)
         .expect("fixture selects")
         .into_value();
     let checked = spine::check(

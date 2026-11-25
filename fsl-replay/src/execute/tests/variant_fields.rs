@@ -24,6 +24,7 @@ fn package_as(alias: &str) -> CheckedPackage {
 
 /// `document` linked as model `alias`.
 fn package_over(document: &serde_json::Value, alias: &str) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let bytes = serde_json::to_vec(document).expect("the fixture serializes");
     let packages = fsl_semantics::model::intake::package_input([bytes.as_slice()]).unwrap();
     assert_eq!(packages.len(), 1, "one model package");
@@ -34,7 +35,7 @@ fn package_over(document: &serde_json::Value, alias: &str) -> CheckedPackage {
          function keep using v(): Boolean pure {{ true }}\n",
         package = fixture::PACKAGE,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "variant-fields"),
         "variant-fields.native",
         source.as_bytes(),

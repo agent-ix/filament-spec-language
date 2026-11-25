@@ -179,6 +179,7 @@ fn other_source_causes_omit_label_and_preserve_the_original_region_and_detail() 
 #[test]
 #[trace("TC-770", "FR-286-AC-15")]
 fn actual_source_reads_and_parse_refusals_use_the_same_projection_bytes() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     for (authority, identity, path, bytes) in [
         ("", "document", "unit.native", b"unread".as_slice()),
         ("issuer", "\u{3000}", "unit.native", b"unread".as_slice()),
@@ -192,7 +193,7 @@ fn actual_source_reads_and_parse_refusals_use_the_same_projection_bytes() {
         let expected = OutcomeDocument::from_parse(&Err(StageFailure::Refused(Box::new(
             CompileRefusal::Source(read),
         ))));
-        let result = spine::parse(
+        let result = spine::parse(&qsl3309_parser_context,
             &ParseRequest {
                 source: &source,
                 path,

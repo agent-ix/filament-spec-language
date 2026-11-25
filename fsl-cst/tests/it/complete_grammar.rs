@@ -279,7 +279,8 @@ fn source(declarations: &str) -> String {
 }
 
 fn parse(id: &str, text: &str) -> ParsedSource {
-    fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity {
             authority: "test".into(),
             identity: format!("test:{id}"),
@@ -900,11 +901,12 @@ fn reserved_member_spellings_do_not_create_phantom_profile_selections() {
 }
 
 fn first_diagnostic(id: &str, bytes: &[u8]) -> (CompleteCode, CompleteCause) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let identity = SourceIdentity {
         authority: "test".into(),
         identity: format!("test:{id}"),
     };
-    match fsl_cst::parse(identity, format!("{id}.native"), bytes, Limits::default()) {
+    match fsl_cst::parse(&qsl3309_parser_context, identity, format!("{id}.native"), bytes, Limits::default()) {
         Ok(parsed) => {
             for diagnostic in parsed.diagnostics() {
                 assert!(diagnostic.cause.is_cause_of(diagnostic.code), "{id}");
@@ -922,6 +924,7 @@ fn first_diagnostic(id: &str, bytes: &[u8]) -> (CompleteCode, CompleteCause) {
 #[trace("FSpec-TC-047", "FSpec-FR-047-AC-3")]
 #[test]
 fn complete_source_diagnostics_carry_their_catalogued_typed_cause() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let profile = |identity: &str| {
         format!(
             "language \"ix:native\" edition \"1-draft\";\nprofile Complete = \"{identity}\";\nrecord Reading {{ datum: Integer; }}"
@@ -987,7 +990,7 @@ fn complete_source_diagnostics_carry_their_catalogued_typed_cause() {
     ];
     for (id, bytes, code, cause) in cases {
         let observed = if id == "unnamed" {
-            let refusal = fsl_cst::parse(
+            let refusal = fsl_cst::parse(&qsl3309_parser_context,
                 SourceIdentity {
                     authority: "test".into(),
                     identity: String::new(),
@@ -1185,13 +1188,14 @@ fn every_corpus_unit_formats_idempotently_with_its_tokens_and_tree() {
 #[trace("NFR-141-AC-10")]
 #[test]
 fn default_and_caller_forms_preserve_parser_outputs() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let no_forms = ExtensionForms::default();
     for (id, text) in corpus() {
         let identity = SourceIdentity {
             authority: "test".into(),
             identity: format!("test:{id}"),
         };
-        let default = fsl_cst::parse(
+        let default = fsl_cst::parse(&qsl3309_parser_context,
             identity.clone(),
             format!("{id}.native"),
             text.as_bytes(),

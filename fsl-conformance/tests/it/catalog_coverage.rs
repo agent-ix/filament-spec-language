@@ -595,6 +595,7 @@ fn try_compile_supplied(
     inputs: &PackageInput,
     supplies: Supplies,
 ) -> Result<Value, Refusal> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let identity = SourceIdentity::new("catalog-source", name);
@@ -604,9 +605,9 @@ fn try_compile_supplied(
         bytes: source.as_bytes(),
     };
     let parsed = if supplies.extensions.is_empty() {
-        spine::parse(&request, limits.source, &cancel)
+        spine::parse(&qsl3309_parser_context, &request, limits.source, &cancel)
     } else {
-        spine::parse_selecting_extensions(
+        spine::parse_selecting_extensions(&qsl3309_parser_context,
             &request,
             ProfileCatalogInput {
                 catalog: &extension_catalog(supplies.extensions),
@@ -618,7 +619,7 @@ fn try_compile_supplied(
     }
     .map_err(|error| Refusal::new("parse", error))?
     .into_value();
-    let models = spine::select(&parsed, inputs, limits.model, &cancel)
+    let models = spine::select(&qsl3309_parser_context, &parsed, inputs, limits.model, &cancel)
         .map_err(|error| Refusal::new("select", error))?
         .into_value();
     let libraries = supplies

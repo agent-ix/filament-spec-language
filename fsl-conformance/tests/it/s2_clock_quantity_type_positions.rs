@@ -27,7 +27,8 @@ record C {\n\
 }\n";
 
 fn parsed(text: &str) -> fsl_forms::ParsedUnit {
-    let input = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let input = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("agent-ix", "test:qsl-2094-fr393-ac8"),
         "unit.native",
         text.as_bytes(),

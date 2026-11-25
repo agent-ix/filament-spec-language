@@ -218,8 +218,9 @@ pub(crate) fn declarations_with_model_profile(
 }
 
 fn declarations_from_text(document: &[u8], text: String) -> PackageDeclarations {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let packages = package_input([document]).unwrap();
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("agent-ix", "counter"),
         "counter.native",
         text.as_bytes(),
@@ -235,7 +236,7 @@ fn declarations_from_text(document: &[u8], text: String) -> PackageDeclarations 
     )
     .expect("the model selection admits")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
     })
     .expect("the operation clauses parse");
     PackageDeclarations::assemble(
@@ -314,6 +315,7 @@ pub(crate) fn mixed_package_with_clauses(
     bounded: &[(&str, &str, &str)],
     infinite: &[(&str, &str, &str)],
 ) -> (CheckedPackage, fsl_foundation::Source) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let mut text = unit_text("").replace(
         "profile t0 = \"filament.temporal.infinite-trace/v1\";",
         "profile t0 = \"filament.temporal.infinite-trace/v1\";\nprofile t1 = \"filament.temporal.event-position.false-extension/v1\";",
@@ -324,7 +326,7 @@ pub(crate) fn mixed_package_with_clauses(
     for (name, fairness, formula) in bounded {
         text += &clause_text(name, fairness, formula).replace(" using t0 ", " using t1 ");
     }
-    let source = fsl_cst::parse(
+    let source = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("agent-ix", "counter"),
         "counter.native",
         text.as_bytes(),
@@ -603,8 +605,9 @@ impl ModelLetters for Letters {
 /// The checked package of a full unit `text` over `document`, for a unit
 /// whose header differs from [`unit_text`]'s.
 pub(crate) fn package_from_text(document: &[u8], text: &str) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let packages = package_input([document]).unwrap();
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("agent-ix", "counter"),
         "counter.native",
         text.as_bytes(),
@@ -620,7 +623,7 @@ pub(crate) fn package_from_text(document: &[u8], text: &str) -> CheckedPackage {
     )
     .expect("the model selection admits")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
     })
     .expect("the operation clauses parse");
     let graph = PackageDeclarations::assemble(

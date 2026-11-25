@@ -75,7 +75,8 @@ fn obligation_model() -> crate::model::intake::SelectedModel {
 }
 
 fn assembled(text: &str) -> PackageDeclarations {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -338,7 +339,8 @@ fn workers(lifetime: &str) -> String {
 
 /// The id of the node `name` of the one protocol `text` declares.
 fn node_id(text: &str, name: &str) -> ProtocolNodeId {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

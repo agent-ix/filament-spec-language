@@ -1467,10 +1467,11 @@ pub(super) fn assemble_units_with_models(
     units: &[(&str, &str)],
     documents: &[&[u8]],
 ) -> Result<PackageDeclarations, String> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let units: Vec<_> = units
         .iter()
         .map(|(identity, text)| {
-            let parsed = fsl_cst::parse(
+            let parsed = fsl_cst::parse(&qsl3309_parser_context,
                 fsl_foundation::SourceIdentity::new("agent-ix", *identity),
                 "program.native",
                 text.as_bytes(),

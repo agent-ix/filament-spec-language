@@ -902,6 +902,7 @@ fn assemble_model_document(
     document: &Value,
     source_name: &str,
 ) -> Result<fsl_semantics::check::PackageDeclarations, fsl_semantics::check::AssemblyRefusal> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let bytes = serde_json::to_vec(document).expect("serialize package");
     let packages = package_input([bytes.as_slice()]).expect("package input");
     let source = format!(
@@ -909,7 +910,7 @@ fn assemble_model_document(
          profile v = \"filament.value.complete/v1\";\n\
          model M = {package:?};\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", source_name),
         format!("{source_name}.native"),
         source.as_bytes(),
@@ -2902,6 +2903,7 @@ fn systems_part_port_allocation_records() {
 #[trace("FSpec-TC-1321", "FSpec-FR-144-AC-33")]
 #[test]
 fn a_map_keyed_by_an_unbounded_package_rational_is_refused() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let mut document = rational_intake_document();
     document["types"][0]["constraints"] = serde_json::json!([]);
     let bytes = serde_json::to_vec(&document).expect("the fixture serializes");
@@ -2913,7 +2915,7 @@ fn a_map_keyed_by_an_unbounded_package_rational_is_refused() {
              model M = \"test/rational-value-type\";\n\
              {declarations}\n"
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "rational-map-key"),
             "rational-map-key.native",
             source.as_bytes(),
@@ -3626,6 +3628,7 @@ fn unbounded_multiplicity_with_nonzero_lower_bound_is_unsupported_feature() {
 #[trace("FR-056-AC-43")]
 #[test]
 fn bare_native_text_rational_and_decimal_model_members_are_admitted() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let package = "test/rational-value-type";
     let mut document = rational_intake_document();
     let fields = document["types"][1]["fields"]
@@ -3649,7 +3652,7 @@ fn bare_native_text_rational_and_decimal_model_members_are_admitted() {
          profile v = \"filament.value.complete/v1\";\n\
          model M = {package:?};\n"
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "bare-native-model-members"),
         "bare-native-model-members.native",
         source.as_bytes(),

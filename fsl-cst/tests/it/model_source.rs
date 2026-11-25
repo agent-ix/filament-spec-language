@@ -10,7 +10,8 @@ fn source(body: &str) -> String {
 }
 
 fn parse(text: &str, limits: Limits) -> ParsedSource {
-    fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "model-syntax"),
         "model-syntax.native",
         text.as_bytes(),
@@ -267,13 +268,14 @@ fn absence_words_remain_identifiers_outside_the_lookup_mode() {
 #[trace("TC-790")]
 #[test]
 fn model_sources_keep_the_existing_budget_refusals() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = source("r.query(lookup<M::T>(p, r) absent refused, 3)");
     for limits in [
         Limits::default().with_tokens(1),
         Limits::default().with_nodes(1),
         Limits::default().with_work_units(0),
     ] {
-        let diagnostic = match fsl_cst::parse(
+        let diagnostic = match fsl_cst::parse(&qsl3309_parser_context,
             SourceIdentity::new("test", "model-syntax"),
             "model-syntax.native",
             text.as_bytes(),
@@ -289,7 +291,7 @@ fn model_sources_keep_the_existing_budget_refusals() {
         assert_eq!(diagnostic.code, CompleteCode::StageLimitExceeded);
         assert!(diagnostic.limit().is_some());
     }
-    let refusal = fsl_cst::parse(
+    let refusal = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "model-syntax"),
         "model-syntax.native",
         text.as_bytes(),
@@ -351,7 +353,8 @@ fn a_reference_literal_parses_as_one_node() {
 
 /// The first diagnostic of `text`, whether S1 recovers or stops.
 fn first_diagnostic(text: &str) -> fsl_cst::CompleteDiagnostic {
-    match fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    match fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "model-syntax"),
         "model-syntax.native",
         text.as_bytes(),

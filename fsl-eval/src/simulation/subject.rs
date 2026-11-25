@@ -5,6 +5,7 @@
 //! [`crate::simulation::protocol::ProtocolSystem`] implement it, so one
 //! engine checks a model subject and a protocol subject.
 
+#[cfg(feature = "test-support")]
 use ix_trace_rs::implements;
 use std::borrow::Cow;
 

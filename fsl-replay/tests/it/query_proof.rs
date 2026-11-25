@@ -16,6 +16,7 @@ const PACKAGE: &str = "example/config-version";
 const MODEL: &[u8] = include_bytes!("../../../examples/config-version/model.semantic-ir.json");
 
 fn checked_collection_query() -> CheckedUnit {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = SourceIdentity::new("agent-ix", "query-proof");
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
@@ -30,7 +31,7 @@ fn checked_collection_query() -> CheckedUnit {
     );
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &source,
             path: "query-proof.native",
@@ -43,7 +44,7 @@ fn checked_collection_query() -> CheckedUnit {
     .into_value();
     let packages = fsl_semantics::model::intake::package_input([MODEL])
         .expect("the checked model fixture is valid");
-    let models = spine::select(&parsed, &packages, limits.model, &cancel)
+    let models = spine::select(&qsl3309_parser_context, &parsed, &packages, limits.model, &cancel)
         .expect("model package is admitted")
         .into_value();
     spine::check(

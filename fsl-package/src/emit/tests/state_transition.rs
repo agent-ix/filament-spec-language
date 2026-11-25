@@ -798,6 +798,7 @@ fn the_emitted_nodes_have_the_published_vector_shape() {
 #[trace("TC-1271", "FR-105-AC-16")]
 #[test]
 fn an_execution_point_on_a_clause_of_the_operation_gives_no_transition() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use filament_contract_model::{AnchorName, ExecutionPoint};
 
     let clauses = unit_13("");
@@ -837,7 +838,7 @@ fn an_execution_point_on_a_clause_of_the_operation_gives_no_transition() {
         ),
     ] {
         let (unit, packages) = unit(&clauses, true);
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "test:tc-1271"),
             "program.native",
             unit.as_bytes(),

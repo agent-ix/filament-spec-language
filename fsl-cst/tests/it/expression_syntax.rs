@@ -16,7 +16,8 @@ fn document(expression: &str) -> String {
 }
 
 fn parse(bytes: &[u8]) -> Result<ParsedSource, Box<fsl_cst::CompleteDiagnostic>> {
-    fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "test:expression-syntax"),
         "expression.native",
         bytes,

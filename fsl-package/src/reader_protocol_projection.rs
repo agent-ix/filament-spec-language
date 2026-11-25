@@ -23,8 +23,8 @@ use filament_contract_model::{
     OperationModeKind,
 };
 use filament_exact::{
-    admit_text, ArithmeticOperator, Meter, NodeKey, OrderingOperator, ScalarLimits, TextPayload,
-    Timestamp, Uuid, Value, ValueType,
+    ArithmeticOperator, Meter, NodeKey, OrderingOperator, ScalarLimits, TextPayload, Timestamp,
+    Uuid, Value, ValueType, admit_text,
 };
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::{
@@ -38,7 +38,7 @@ use ix_trace_rs::implements;
 
 use crate::equality_file::{EqualityWitnessRefusal, ReadEqualityRows};
 use crate::introduced_binders::is_sum_identity;
-use crate::wire_form::{has_form, has_tag, split_tag_form, OperationSuffix, WireForm, WireTag};
+use crate::wire_form::{OperationSuffix, WireForm, WireTag, has_form, has_tag, split_tag_form};
 
 /// One projected protocol slot: owned evaluator nodes, the admitted function
 /// table its calls reach, and the frame its locals and case binders use.
@@ -3142,7 +3142,11 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             }
             Some("filament.op.collection.seq") => {
                 // FR-322 `seq`: two bounds outside the binder, the body inside.
-                let [low_term, high_term, CheckedTerm::Binding { name, value, .. }] = arguments
+                let [
+                    low_term,
+                    high_term,
+                    CheckedTerm::Binding { name, value, .. },
+                ] = arguments
                 else {
                     return Err(fault("reader-seq-has-two-bounds-and-binder").into());
                 };
@@ -3564,9 +3568,12 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             let CheckedTerm::Aggregate { members, .. } = value.as_ref() else {
                 return Err(fault("reader-union-case-arm-has-body").into());
             };
-            let [CheckedTerm::Aggregate {
-                members: binders, ..
-            }, body] = members.as_slice()
+            let [
+                CheckedTerm::Aggregate {
+                    members: binders, ..
+                },
+                body,
+            ] = members.as_slice()
             else {
                 return Err(fault("reader-union-case-arm-has-binders-and-body").into());
             };
@@ -5435,6 +5442,7 @@ mod order_tests {
     #[trace("FR-945-AC-1", "FR-650-AC-1", "FR-1039-AC-11")]
     #[test]
     fn admitted_population_parameter_types_preserve_absence_zero_and_maximum() {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         use filament_semantic_value::checking::{CheckMode, CheckingLimits};
         let mut model: serde_json::Value = serde_json::from_slice(include_bytes!(
             "../../tests/fixtures/spine-model.semantic-ir.json"
@@ -5468,6 +5476,7 @@ mod order_tests {
                     function tally using v(p: Population<M::Gadget>[1]): Integer pure { size(allInstances<M::Gadget>(p)) }\n\
                     temporal C using t over (c: Counter) clock \"sensor\" on origin { always[0,5] holds(size(allInstances<M::Widget>(M::widgets)) >= 0) }\n";
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("agent-ix", "test:population-projection"),
             "population.native",
             text.as_bytes(),

@@ -146,13 +146,14 @@ fn compile(
     declarations: &str,
     limits: SpineLimits,
 ) -> Result<CheckedUnit, Box<CompileRefusal>> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let (text, packages) = unit(document, declarations);
     let source = SourceIdentity::new("a", "u");
     let cancel = Cancel::new();
     let refusal = |failure| {
         spine::refusal_or_fault(failure).expect("the front end does not fault on this source")
     };
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &source,
             path: "unit.native",
@@ -163,7 +164,7 @@ fn compile(
     )
     .map_err(refusal)?
     .into_value();
-    let models = spine::select(&parsed, &packages, limits.model, &cancel)
+    let models = spine::select(&qsl3309_parser_context, &parsed, &packages, limits.model, &cancel)
         .map_err(refusal)?
         .into_value();
     Ok(spine::check(
@@ -194,12 +195,13 @@ fn compile_text_with_execution_points(
     execution_points: &spine::StateClauseExecutionPoints,
     limits: SpineLimits,
 ) -> Result<CheckedUnit, Box<CompileRefusal>> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = SourceIdentity::new("a", "u");
     let cancel = Cancel::new();
     let refusal = |failure| {
         spine::refusal_or_fault(failure).expect("the front end does not fault on this source")
     };
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &source,
             path: "unit.native",
@@ -210,7 +212,7 @@ fn compile_text_with_execution_points(
     )
     .map_err(refusal)?
     .into_value();
-    let models = spine::select(&parsed, packages, limits.model, &cancel)
+    let models = spine::select(&qsl3309_parser_context, &parsed, packages, limits.model, &cancel)
         .map_err(refusal)?
         .into_value();
     Ok(spine::check_with_execution_points(
@@ -1509,6 +1511,7 @@ fn a_clause_function_is_a_known_owner_and_no_fault() {
 #[trace("TC-774", "FR-290-AC-15")]
 #[test]
 fn a_synthesized_owners_application_item_is_not_replayable() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let declarations = format!(
         "{}\nfunction inc using v(x: Int[0, 9]): Int[0, 10] pure {{ x + 1 }}",
         add_unit(
@@ -1520,7 +1523,7 @@ fn a_synthesized_owners_application_item_is_not_replayable() {
     let source = SourceIdentity::new("a", "u");
     let cancel = Cancel::new();
     let limits = SpineLimits::default();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &source,
             path: "unit.native",
@@ -1531,7 +1534,7 @@ fn a_synthesized_owners_application_item_is_not_replayable() {
     )
     .expect("parses")
     .into_value();
-    let models = spine::select(&parsed, &packages, limits.model, &cancel)
+    let models = spine::select(&qsl3309_parser_context, &parsed, &packages, limits.model, &cancel)
         .expect("selects")
         .into_value();
     let checked = spine::check(
@@ -1854,9 +1857,10 @@ fn a_body_on_an_operation_without_a_declared_result_refuses_type_mismatch() {
 #[trace("FSpec-FR-500-AC-1")]
 #[test]
 fn the_spine_parse_refuses_an_unsupported_edition_at_its_literal() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = SourceIdentity::new("a", "u");
     let text = "language \"ix:native\" edition \"0-draft\";\nfunction f(): Boolean pure { true }";
-    let failure = match spine::parse(
+    let failure = match spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &source,
             path: "unit.native",

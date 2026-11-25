@@ -137,6 +137,7 @@ impl FenceCheckCause {
 
 /// Check every native fence with the request's caller law (FR-767-AC-11).
 /// A refused body does not prevent checking other fences.
+#[ix_trace_rs::implements("NFR-141-AC-10")]
 pub fn check_native_fences(
     request: &NativeFenceRequest<'_>,
     limits: CheckLimits,
@@ -148,6 +149,7 @@ pub fn check_native_fences(
     let fences = fsl_source::extract_native_fences(request.original, limits.extraction)
         .map_err(|error| StageFailure::Refused(FenceCheckCause::Extraction(error)))?;
     let mut results = Vec::with_capacity(fences.len());
+    let parser_context = fsl_cst::ParserContext::new();
     let mut work = StageWork::default();
     for fence in fences {
         if cancel.poll() {
@@ -209,13 +211,25 @@ pub fn check_native_fences(
             };
             let checked = (|| {
                 let parsed = if let Some(catalog) = request.extensions {
-                    super::parse_selecting_extensions(&parse, catalog, limits.spine.source, cancel)?
+                    super::parse_selecting_extensions(
+                        &parser_context,
+                        &parse,
+                        catalog,
+                        limits.spine.source,
+                        cancel,
+                    )?
                 } else {
-                    super::parse(&parse, limits.spine.source, cancel)?
+                    super::parse(&parser_context, &parse, limits.spine.source, cancel)?
                 };
                 add_work(&mut work, parsed.work());
                 let parsed = parsed.into_value();
-                let models = super::select(&parsed, request.packages, limits.spine.model, cancel)?;
+                let models = super::select(
+                    &parser_context,
+                    &parsed,
+                    request.packages,
+                    limits.spine.model,
+                    cancel,
+                )?;
                 add_work(&mut work, models.work());
                 let models = models.into_value();
                 let name = body.identity().identity.clone();

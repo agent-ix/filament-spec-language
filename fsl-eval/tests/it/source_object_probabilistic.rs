@@ -26,6 +26,7 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
 /// identity and the text after [`HEADER`]'s declarations, which the first
 /// unit alone makes.
 fn checked_units(package: &str, units: &[(&str, &str)]) -> CheckedPackage {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let units: Vec<_> = units
         .iter()
         .enumerate()
@@ -35,7 +36,7 @@ fn checked_units(package: &str, units: &[(&str, &str)]) -> CheckedPackage {
                 .take(if at == 0 { usize::MAX } else { 3 })
                 .map(|line| format!("{line}\n"))
                 .collect();
-            let parsed = fsl_cst::parse(
+            let parsed = fsl_cst::parse(&qsl3309_parser_context,
                 fsl_foundation::SourceIdentity::new("agent-ix", *identity),
                 "program.native",
                 format!("{header}{text}").as_bytes(),

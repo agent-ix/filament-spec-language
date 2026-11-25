@@ -20,6 +20,7 @@ const ADVISE: &str = "recommend Advise by R on M::Actor::op contracts [] as (r: 
 #[trace("TC-2989", "FR-218-AC-45", "FSpec-TC-2016", "FSpec-FR-822-AC-1")]
 #[test]
 fn an_observe_only_step_checks() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let gate = "check Gate using v { true };";
     let by_role = protocol(
         "",
@@ -95,7 +96,7 @@ fn an_observe_only_step_checks() {
         "observe observe sequence Review { check Gate using v { true }; }",
     );
     let source = format!("{}{}", super::HEADER, source);
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("observe-only", "unit.native"),
         "unit.native",
         source.as_bytes(),

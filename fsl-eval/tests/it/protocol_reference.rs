@@ -35,7 +35,8 @@ fn unit() -> String {
 
 /// TC-1121's FR-403-AC-14 runtime vector through the explicit no_std entry.
 pub(super) fn no_std_protocol_reference_call() -> Result<Evaluation, CallFailure> {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         unit().as_bytes(),
@@ -107,7 +108,8 @@ const UNLIMITED: ScalarLimits = ScalarLimits {
 
 #[test]
 fn evaluating_a_protocol_reference_refuses_unsupported_feature() {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         unit().as_bytes(),

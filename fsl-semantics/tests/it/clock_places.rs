@@ -4667,8 +4667,9 @@ fn native_target_constraint_refusals_name_the_keyword() {
 #[trace("TC-3084", "FR-1040-AC-8")]
 #[test]
 fn a_model_unit_emits_a_clock_reference_definition() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = "language \"ix:native\" edition \"1-draft\"; domain \"acme/rpc\"; object Call { x: Clock; r: Reference<Clock>; }";
-    let parsed = fsl_forms::cst::parse(
+    let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "clock-reference"),
         "model.fsl",
         source.as_bytes(),
@@ -4705,7 +4706,7 @@ fn a_model_unit_emits_a_clock_reference_definition() {
     let packages =
         fsl_semantics::model::intake::package_input([compiled.bytes()]).expect("package input");
     let selection = "language \"ix:native\" edition \"1-draft\"; model Rpc = \"acme/rpc\";";
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "rpc-selection"),
         "select.fsl",
         selection.as_bytes(),

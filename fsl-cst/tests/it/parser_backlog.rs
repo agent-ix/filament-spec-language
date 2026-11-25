@@ -11,7 +11,8 @@ const HEADER: &str =
     "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
 
 fn parse(text: &str) -> ParsedSource {
-    fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("producer-tests", "original:diagnostics"),
         "producer.native",
         text.as_bytes(),

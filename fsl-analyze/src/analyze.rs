@@ -32,6 +32,7 @@
 //! A cancelled [`Cancel`] settles every item that would run `incomplete`,
 //! with the cancellation cause kept.
 
+use ix_trace_rs::implements;
 mod clause_item;
 mod derived_item;
 mod digital_item;

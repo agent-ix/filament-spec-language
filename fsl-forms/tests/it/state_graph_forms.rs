@@ -14,8 +14,9 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n";
 
 fn build(declaration: &str) -> (String, StateGraphClaimForm) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declaration}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),
@@ -291,8 +292,9 @@ fn a_predicate_that_derives_as_an_expression_is_read_as_one() {
 /// The S1 syntax error of `declaration`: the diagnostic code and the byte
 /// offset, relative to the declaration's first byte.
 fn error_offset(declaration: &str) -> (String, usize) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!("{HEADER}{declaration}\n");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

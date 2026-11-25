@@ -461,13 +461,14 @@ fn an_undeclared_or_unimportable_function_refuses_paired_with_the_library() {
 #[trace("TC-3210")]
 #[test]
 fn a_package_name_that_is_no_library_name_is_a_fault() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use fsl_replay::spine;
 
     let unit = unit_source("test/units", UNIT_BODY);
     let source = SourceIdentity::new("a", "u");
     let limits = spine::SpineLimits::default();
     let cancel = filament_exact::Cancel::new();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &spine::ParseRequest {
             source: &source,
             path: "unit.native",
@@ -480,7 +481,7 @@ fn a_package_name_that_is_no_library_name_is_a_fault() {
     .into_value();
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("no packages");
-    let models = spine::select(&parsed, &packages, limits.model, &cancel)
+    let models = spine::select(&qsl3309_parser_context, &parsed, &packages, limits.model, &cancel)
         .expect("the models select")
         .into_value();
     let dependencies = DependencyInput::new(vec![units()]).expect("a dependency input");

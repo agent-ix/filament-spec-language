@@ -8,10 +8,11 @@ use ix_trace_rs::trace;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn check(source: &str) -> Result<(), FrontEndFailure> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let cancel = Cancel::new();
     let identity = SourceIdentity::new("agent-ix", "property-generators");
     let limits = SpineLimits::default();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &identity,
             path: "generated.native",
@@ -21,7 +22,7 @@ fn check(source: &str) -> Result<(), FrontEndFailure> {
         &cancel,
     )?
     .into_value();
-    let models = spine::select(&parsed, &BTreeMap::new(), limits.model, &cancel)?.into_value();
+    let models = spine::select(&qsl3309_parser_context, &parsed, &BTreeMap::new(), limits.model, &cancel)?.into_value();
     spine::check(
         &parsed,
         "property-generators".into(),
@@ -203,6 +204,7 @@ fn trace_generator_respects_profile() {
 /// Provenance: QSL-2054. Typed round-trip inputs reach real package emission.
 #[test]
 fn package_generator_emits_checked_units() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     prop::run(
         "package_generator_emits_checked_units",
         prop::config(256),
@@ -212,7 +214,7 @@ fn package_generator_emits_checked_units() {
             let cancel = Cancel::new();
             let identity = SourceIdentity::new("agent-ix", "property-generators");
             let limits = SpineLimits::default();
-            let parsed = spine::parse(
+            let parsed = spine::parse(&qsl3309_parser_context,
                 &ParseRequest {
                     source: &identity,
                     path: "generated.native",
@@ -223,7 +225,7 @@ fn package_generator_emits_checked_units() {
             )
             .map_err(|error| TestCaseError::fail(format!("{error:?}")))?
             .into_value();
-            let models = spine::select(&parsed, &BTreeMap::new(), limits.model, &cancel)
+            let models = spine::select(&qsl3309_parser_context, &parsed, &BTreeMap::new(), limits.model, &cancel)
                 .map_err(|error| TestCaseError::fail(format!("{error:?}")))?
                 .into_value();
             let checked = spine::check(

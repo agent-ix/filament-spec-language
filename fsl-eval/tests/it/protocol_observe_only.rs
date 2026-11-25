@@ -81,7 +81,8 @@ fn fixture_with_document(
     DocumentProvision,
     DocumentRef,
 ) {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("qsl-2211", "unit.native"),
         "unit.native",
         source.as_bytes(),
@@ -391,8 +392,9 @@ protocol Watch using P over (view: M::Node) on origin {
 )]
 #[test]
 fn an_observed_attempt_refuses_before_the_first_step() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = SOURCE.replace("run sequence Main {", "run observe sequence Main {");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("qsl-2211", "observed-attempt.native"),
         "observed-attempt.native",
         source.as_bytes(),

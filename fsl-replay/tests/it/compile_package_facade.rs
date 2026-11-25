@@ -35,13 +35,14 @@ fn spine_run(
     text: &str,
     packages: &fsl_semantics::model::intake::PackageInput,
 ) -> Result<Vec<u8>, Box<CompileRefusal>> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = identity();
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let refusal = |failure| {
         spine::refusal_or_fault(failure).expect("the front end does not fault on this source")
     };
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &source,
             path: "unit.native",
@@ -52,7 +53,7 @@ fn spine_run(
     )
     .map_err(refusal)?
     .into_value();
-    let models = spine::select(&parsed, packages, limits.model, &cancel)
+    let models = spine::select(&qsl3309_parser_context, &parsed, packages, limits.model, &cancel)
         .map_err(refusal)?
         .into_value();
     let checked = spine::check(

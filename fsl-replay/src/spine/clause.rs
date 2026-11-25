@@ -1822,6 +1822,7 @@ fn run_clause_reading(
     )
 }
 
+#[ix_trace_rs::implements("NFR-141-AC-10")]
 fn run_clause_reading_with_source_map(
     request: ClauseRunRequest,
     temporal_selections: &[fsl_package::TemporalClockSelection],
@@ -1868,8 +1869,10 @@ fn run_clause_reading_with_source_map(
         | ClauseRunSelection::Temporal { .. }
         | ClauseRunSelection::SampledTemporal { .. } => Cancel::new(),
     };
+    let parser_context = fsl_cst::ParserContext::new();
     let front_end = || -> Result<_, front_end::FrontEndFailure> {
         let parsed = front_end::parse(
+            &parser_context,
             &front_end::ParseRequest {
                 source: unit.identity,
                 path: unit.path,
@@ -1882,8 +1885,14 @@ fn run_clause_reading_with_source_map(
         if let Some(actual) = extracted_clause_count(&unit, &parsed).filter(|n| *n > 1) {
             return Ok(Err(actual));
         }
-        let models = front_end::select(&parsed, &request.packages, request.limits.model, &cancel)?
-            .into_value();
+        let models = front_end::select(
+            &parser_context,
+            &parsed,
+            &request.packages,
+            request.limits.model,
+            &cancel,
+        )?
+        .into_value();
         let by_name = temporal_selections.is_empty();
         let check_selections = if by_name {
             request.clocks.check_selections(&parsed)
@@ -2511,6 +2520,7 @@ fn run_compiled_value_invariants(
     })
 }
 
+#[ix_trace_rs::implements("NFR-141-AC-10")]
 fn compile_program_parts(
     unit: Unit<'_>,
     package_name: String,
@@ -2543,8 +2553,10 @@ fn compile_program_parts(
         }
     }
     let cancel = Cancel::new();
+    let parser_context = fsl_cst::ParserContext::new();
     let front_end = || -> Result<_, front_end::FrontEndFailure> {
         let parsed = front_end::parse(
+            &parser_context,
             &front_end::ParseRequest {
                 source: unit.identity,
                 path: unit.path,
@@ -2557,7 +2569,8 @@ fn compile_program_parts(
         if let Some(actual) = extracted_clause_count(&unit, &parsed).filter(|n| *n > 1) {
             return Ok(Err(actual));
         }
-        let models = front_end::select(&parsed, packages, limits.model, &cancel)?.into_value();
+        let models = front_end::select(&parser_context, &parsed, packages, limits.model, &cancel)?
+            .into_value();
         let check_selections = clocks.check_selections(&parsed);
         let checked = front_end::check_with_refinement_internals(
             &parsed,
@@ -3798,10 +3811,12 @@ fn function_result_type_locus(
     sources: &[Source],
     function: &str,
 ) -> Option<(String, fsl_foundation::LocatedSpan, String)> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use fsl_cst::{CstElement, Production, TokenKind};
 
     for source in sources {
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             source.identity().clone(),
             source.path().to_owned(),
             source.text().as_bytes(),

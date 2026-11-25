@@ -65,8 +65,9 @@ fn selected_unit_declarations(
     identity: &str,
     packages: &PackageInput,
 ) -> Result<PackageDeclarations, String> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = unit(identity);
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "model-unit-input"),
         "unit.native",
         text.as_bytes(),
@@ -150,6 +151,7 @@ fn a_model_unit_for_another_identity_is_refused_wrong_model_selection() {
 #[trace("FR-710-AC-1", "TC-1942")]
 #[test]
 fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = fsl_cst::diagnostic::read_source(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:shop-model"),
         "shop.fsl",
@@ -157,7 +159,7 @@ fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
         fsl_cst::Limits::default().source_bytes,
     )
     .expect("source metadata admitted");
-    let parsed = fsl_forms::cst::parse(
+    let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:shop-model"),
         "shop.fsl",
         SHOP.as_bytes(),
@@ -298,6 +300,7 @@ fn compile_model_unit_returns_its_identity_and_stable_document_bytes() {
 #[trace("FR-710-AC-1", "TC-1942")]
 #[test]
 fn package_input_from_sources_keeps_source_labels_and_compiled_document_conflicts() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = fsl_cst::diagnostic::read_source(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:shop-model"),
         "shop.fsl",
@@ -311,7 +314,7 @@ fn package_input_from_sources_keeps_source_labels_and_compiled_document_conflict
         serde_json::from_slice(&packages["example/shop"]).expect("compiled document is JSON");
     assert_origin_sources(&document, "ix://agent-ix/test:shop-model");
     let selected = unit("example/shop");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "model-unit-source-intake"),
         "unit.native",
         selected.as_bytes(),
@@ -337,12 +340,13 @@ fn package_input_from_sources_keeps_source_labels_and_compiled_document_conflict
 #[trace("FR-710-AC-2", "TC-1942")]
 #[test]
 fn a_model_unit_compiles_its_relationship_and_population() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/graph";
 object Node { rank: Int[0, 9]; relationship next: Node [0, 1]; }
 population nodes: Node;
 "#;
-    let parsed = fsl_forms::cst::parse(
+    let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "graph-model"),
         "graph.fsl",
         source.as_bytes(),
@@ -453,11 +457,12 @@ fn a_model_unit_names_every_native_type() {
 #[trace("FR-710-AC-4", "TC-1943")]
 #[test]
 fn a_model_unit_with_an_unresolved_relationship_target_refuses_at_the_name() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/graph";
 object Node { relationship next: Ghost [0, 1]; }
 "#;
-    let parsed = fsl_forms::cst::parse(
+    let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "ghost-model"),
         "ghost.fsl",
         source.as_bytes(),
@@ -485,12 +490,13 @@ object Node { relationship next: Ghost [0, 1]; }
 #[trace("FR-710-AC-4", "TC-1943")]
 #[test]
 fn duplicate_object_declarations_refuse_at_the_second_name() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/graph";
 object Node { }
 object Node { }
 "#;
-    let parsed = fsl_forms::cst::parse(
+    let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "duplicate-model"),
         "duplicate.fsl",
         source.as_bytes(),
@@ -519,11 +525,12 @@ object Node { }
 #[trace("FR-710-AC-4", "TC-1943")]
 #[test]
 fn an_operation_on_a_record_refuses_as_an_unsupported_construct() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/records";
 record Row { amount: Integer; operation update(); }
 "#;
-    let parsed = fsl_forms::cst::parse(
+    let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "record-operation-model"),
         "records.fsl",
         source.as_bytes(),
@@ -552,10 +559,11 @@ record Row { amount: Integer; operation update(); }
 #[trace("FR-710-AC-4", "TC-1943")]
 #[test]
 fn a_reserved_domain_identity_refuses_at_the_string() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = r#"language "ix:native" edition "1-draft";
 domain "filament/native/x";
 "#;
-    let parsed = fsl_forms::cst::parse(
+    let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "reserved-model-unit"),
         "reserved.fsl",
         source.as_bytes(),
@@ -586,13 +594,14 @@ domain "filament/native/x";
 #[trace("FR-710-AC-3", "TC-1942")]
 #[test]
 fn a_model_unit_compiles_a_bounded_native_type_alias() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = r#"language "ix:native" edition "1-draft";
 domain "example/scalars";
 type Small = Int[0, 3];
 object Item { amount: Small; }
 population items: Item;
 "#;
-    let parsed = fsl_forms::cst::parse(
+    let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "scalar-model"),
         "scalar.fsl",
         source.as_bytes(),
@@ -1138,11 +1147,12 @@ population orders: Order;
 #[test]
 #[trace("FR-710-AC-1", "FR-710-AC-5", "FSpec-FR-154")]
 fn inline_integer_fields_retain_exact_admitted_bounds_and_origins() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use filament_exact::{Integer, Value, ValueType};
     let mut admitted_types = Vec::new();
     for (declaration, field_type) in [("", "Int[-2,3]"), ("type Amount = Int[-2,3];\n", "Amount")] {
         let source = format!("language \"ix:native\" edition \"1-draft\";\ndomain \"example/shop\";\n{declaration}object Order {{ total: {field_type}; }}\npopulation orders: Order;\n");
-        let parsed = fsl_forms::cst::parse(
+        let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "inline-bounds"),
             "inline.native",
             source.as_bytes(),
@@ -1239,12 +1249,13 @@ fn inline_integer_fields_retain_exact_admitted_bounds_and_origins() {
 #[test]
 #[trace("FR-710-AC-3", "FSpec-FR-154")]
 fn inline_integer_fields_refuse_invalid_intervals_at_the_authored_type() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     for interval in [
         "Int[3,0]",
         "Int[-170141183460469231731687303715884105729,3]",
     ] {
         let source = format!("language \"ix:native\" edition \"1-draft\";\ndomain \"example/shop\";\nobject Order {{ total: {interval}; }}\npopulation orders: Order;\n");
-        let parsed = fsl_forms::cst::parse(
+        let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "invalid-inline-bounds"),
             "inline.native",
             source.as_bytes(),
@@ -1274,6 +1285,7 @@ fn inline_integer_fields_refuse_invalid_intervals_at_the_authored_type() {
 #[test]
 #[trace("FR-710-AC-3", "FSpec-FR-154")]
 fn inline_integer_fields_refuse_constrained_alias_identity_collisions() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     for declarations in [
         "type OrderTotal = Int[0,9]; object Order { total: Int[0,3]; }",
         "object Order { total: Int[0,3]; } type OrderTotal = Int[0,9];",
@@ -1284,7 +1296,7 @@ fn inline_integer_fields_refuse_constrained_alias_identity_collisions() {
         let source = format!(
             "language \"ix:native\" edition \"1-draft\"; domain \"example/shop\"; {declarations}"
         );
-        let parsed = fsl_forms::cst::parse(
+        let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "inline-collision"),
             "inline.native",
             source.as_bytes(),
@@ -1314,6 +1326,7 @@ fn inline_integer_fields_refuse_constrained_alias_identity_collisions() {
 #[test]
 #[trace("FR-710-AC-3", "TC-1942", "FSpec-FR-154")]
 fn inline_integer_machine_and_process_fields_preserve_admitted_intervals() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use fsl_semantics::model::domain_package::{DomainPackageRecord, ScalarValueDomain};
     for (declaration, kind, meaning) in [
         (
@@ -1328,7 +1341,7 @@ fn inline_integer_machine_and_process_fields_preserve_admitted_intervals() {
         ),
     ] {
         let source = format!("language \"ix:native\" edition \"1-draft\";\ndomain \"example/bounded\";\n{declaration}\n");
-        let parsed = fsl_forms::cst::parse(
+        let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "bounded-owners"),
             "bounded.native",
             source.as_bytes(),
@@ -1482,7 +1495,8 @@ fn assert_inline_integer_refusal(
     cause: &str,
     inline_type: &str,
 ) {
-    let parsed = fsl_forms::cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "inline-owner-refusal"),
         "inline.native",
         source.as_bytes(),

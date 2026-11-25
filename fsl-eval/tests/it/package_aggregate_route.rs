@@ -31,6 +31,7 @@ fn with_routes<R>(
     body: &str,
     run: impl FnOnce(EvidenceRoutes<'_>, &fsl_package::CheckedNodeId, &Env) -> R,
 ) -> R {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let fixture = fixture(EVENT, "e: Int[0, 9]", "on origin", body);
     let env = rows_for(
         fixture,
@@ -38,7 +39,7 @@ fn with_routes<R>(
         json!({"kind": "event_position", "sequence_authority": "order-events"}),
     )
     .with_clock_name("events");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("a", "aggregate-route"),
         "aggregate-route.native",
         env.fixture.text.as_bytes(),

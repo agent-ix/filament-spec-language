@@ -13,7 +13,8 @@ fn header(profile: &str) -> String {
 }
 
 fn parse(text: &str) -> ParsedSource {
-    fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity {
             authority: "test".into(),
             identity: "test:formatter-style".into(),

@@ -13,7 +13,7 @@ use fsl_replay::spine;
 use fsl_replay::{Cancel, OutcomeDocument};
 use fsl_semantics::model::{intake, observation};
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::{ConsumerType, InputFile, InputKind, Operation, Vector};
 
@@ -345,6 +345,7 @@ pub(super) fn execute(
     limits: &fsl_replay::CallerLimits,
     overrides: &[String],
     schemas: &Schemas,
+    parser_context: &fsl_cst::ParserContext,
 ) -> Result<Execution, Failure> {
     let inputs = Inputs::read(vector, root)?;
     match (vector.subject.consumer_type, &vector.subject.operation) {
@@ -380,6 +381,7 @@ pub(super) fn execute(
         (ConsumerType::Tool, Operation::Format) => {
             let (source, bytes) = inputs.one(InputKind::Source)?;
             let result = fsl_cst::parse(
+                parser_context,
                 fsl_foundation::SourceIdentity::new("agent-ix", &source.path),
                 &source.path,
                 bytes,
@@ -579,7 +581,7 @@ fn run(
                 )
             })?;
             if let filament_exact::ValueType::Population(maximum) = parameter_type {
-                use fsl_semantics::model::population::{admit_binding, AdmissionOutcome};
+                use fsl_semantics::model::population::{AdmissionOutcome, admit_binding};
                 let pointer = format!("/arguments/{index}");
                 let name = text(&value["name"], &pointer)?;
                 let provenance = objects
@@ -643,7 +645,7 @@ fn run(
                             ),
                             bytes: None,
                             partition: Partition::Incomplete,
-                        })
+                        });
                     }
                 };
                 objects = std::mem::take(&mut objects)

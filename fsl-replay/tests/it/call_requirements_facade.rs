@@ -97,10 +97,11 @@ fn members(source: &str, call: &Call) -> Vec<(OccurrenceKey, usize)> {
 
 /// The checked graph's record keys in package order, read through the spine.
 fn record_keys(source: &str) -> Vec<OccurrenceKey> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let identity = identity();
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &identity,
             path: "unit.native",
@@ -111,7 +112,7 @@ fn record_keys(source: &str) -> Vec<OccurrenceKey> {
     )
     .expect("parses")
     .into_value();
-    let models = spine::select(&parsed, &BTreeMap::new(), limits.model, &cancel)
+    let models = spine::select(&qsl3309_parser_context, &parsed, &BTreeMap::new(), limits.model, &cancel)
         .expect("selects")
         .into_value();
     let checked = spine::check(

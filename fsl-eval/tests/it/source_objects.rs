@@ -296,6 +296,7 @@ fn document_ref(label: &str) -> DocumentRef {
 impl Unit {
     /// The twin over `extra` declarations after the shared clauses.
     fn new(twin: Twin, extra: &str) -> Self {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let (packages, selection, objects, ty) = match twin {
             Twin::Source => (PackageInput::new(), "", OBJECTS, ""),
             Twin::Mixed => (
@@ -317,7 +318,7 @@ impl Unit {
              {selection}{objects}{}{extra}\n",
             clauses(ty),
         );
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "tc-1408"),
             "unit.native",
             text.as_bytes(),

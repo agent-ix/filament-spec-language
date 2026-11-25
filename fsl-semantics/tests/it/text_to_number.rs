@@ -25,8 +25,9 @@ fn unit_text(declarations: &str) -> String {
 }
 
 fn assemble(declarations: &str) -> Result<PackageDeclarations, AssemblyRefusal> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = unit_text(declarations);
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "text-to-number"),
         "text-to-number.native",
         text.as_bytes(),
@@ -342,6 +343,7 @@ fn conversion_to_the_same_text_type_is_an_identity_without_a_node() {
 #[trace("TC-1196", "FR-093-AC-66")]
 #[test]
 fn bare_decimal_and_rational_conversion_targets_fail_at_s1() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     for (target, expression) in [
         ("Decimal", "convert<Decimal>(t)"),
         ("Rational", "convert<Rational>(t)"),
@@ -349,7 +351,7 @@ fn bare_decimal_and_rational_conversion_targets_fail_at_s1() {
         let source = unit_text(&format!(
             "function f using v(t: Text[0, 64; unicode-scalars]): Boolean pure {{ {expression} }}"
         ));
-        let parsed = fsl_cst::parse(
+        let parsed = fsl_cst::parse(&qsl3309_parser_context,
             SourceIdentity::new("test", "bare-numeric-conversion"),
             "text-conversion.native",
             source.as_bytes(),

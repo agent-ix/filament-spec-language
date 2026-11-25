@@ -9,7 +9,8 @@ use ix_trace_rs::trace;
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n";
 
 fn parse(text: &str) -> ParsedSource {
-    fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "model-unit"),
         "shop.native",
         text.as_bytes(),

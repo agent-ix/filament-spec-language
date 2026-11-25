@@ -69,6 +69,7 @@ fn declarations_over(
     alias: &str,
     declarations: &str,
 ) -> PackageDeclarations {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let bytes = serde_json::to_vec(document).expect("the fixture serializes");
     let packages = package_input([bytes.as_slice()]).unwrap();
     let source = format!(
@@ -78,7 +79,7 @@ fn declarations_over(
          {declarations}\n",
         package = fixture::PACKAGE,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "child-composite"),
         "child-composite.native",
         source.as_bytes(),
@@ -207,6 +208,7 @@ fn an_indexed_reference_chain_evaluates_in_its_selected_component() {
 }
 
 fn linked_ledger_clause(trace: &str) -> (CheckedPackage, fsl_semantics::check::CheckedHyperClause) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source_document = include_str!("../../../examples/config-version/model.semantic-ir.json")
         .replace("example/config-version", fixture::PACKAGE);
     let document: serde_json::Value =
@@ -223,7 +225,7 @@ fn linked_ledger_clause(trace: &str) -> (CheckedPackage, fsl_semantics::check::C
          model M = {package:?};\n{body}",
         package = fixture::PACKAGE,
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "hyper-linked-ledger"),
         "hyper-linked-ledger.native",
         source.as_bytes(),

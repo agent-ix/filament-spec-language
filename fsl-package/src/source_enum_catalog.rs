@@ -10,7 +10,7 @@ use filament_contract_model::{
 use filament_exact::{EnumShape, NodeKey, NodeKeyView, NodePathIter, PathSegmentView, VariantId};
 use filament_semantic_value::enumeration::{EnumDeclaration, EnumMemberIndex};
 
-use crate::{native_row, NativeRowError};
+use crate::{NativeRowError, native_row};
 
 /// The authenticated row family at a catalog construction refusal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -542,6 +542,7 @@ mod tests {
     }
 
     fn fixture(body: &str, model: bool) -> Fixture {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let mut evidence = CheckedPackageEvidence::new();
         let checked = if model {
             let document = serde_json::to_vec(&model_fixture::document()).unwrap();
@@ -552,6 +553,7 @@ mod tests {
                 model_fixture::PACKAGE
             );
             let parsed = fsl_cst::parse(
+                &qsl3309_parser_context,
                 fsl_foundation::SourceIdentity::new("test", "enum-catalog"),
                 "catalog.native",
                 text.as_bytes(),
@@ -825,10 +827,12 @@ mod tests {
         }
         for row in &sources {
             for member in &row.members {
-                assert!(catalog
-                    .enum_members()
-                    .resolve(member.variant.clone())
-                    .is_some());
+                assert!(
+                    catalog
+                        .enum_members()
+                        .resolve(member.variant.clone())
+                        .is_some()
+                );
                 assert!(matches!(
                     catalog
                         .classify_variant(&member.variant, &mut budget)
@@ -1137,12 +1141,14 @@ mod tests {
         assert_eq!(error.locus(), Some(locus(7, "source_enum_nested_identity")));
         assert_eq!(budget.consumed().storage, 0);
         let mut exact = NativeJoinBudget::new(u64::MAX, 2);
-        assert!(node_equal(
-            &key,
-            &key,
-            &mut exact,
-            locus(7, "source_enum_nested_identity")
-        )
-        .unwrap());
+        assert!(
+            node_equal(
+                &key,
+                &key,
+                &mut exact,
+                locus(7, "source_enum_nested_identity")
+            )
+            .unwrap()
+        );
     }
 }

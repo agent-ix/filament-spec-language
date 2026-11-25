@@ -360,9 +360,10 @@ mod tests {
         function: &str,
         identity: SourceIdentity,
     ) -> (OccurrenceKey, Vec<NodeKey>) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
         let limits = CallerLimits::default().spine;
         let cancel = Cancel::new();
-        let parsed = spine::parse(
+        let parsed = spine::parse(&qsl3309_parser_context,
             &ParseRequest {
                 source: &identity,
                 path: "unit.native",
@@ -373,7 +374,7 @@ mod tests {
         )
         .expect("parses")
         .into_value();
-        let models = spine::select(&parsed, &BTreeMap::new(), limits.model, &cancel)
+        let models = spine::select(&qsl3309_parser_context, &parsed, &BTreeMap::new(), limits.model, &cancel)
             .expect("selects")
             .into_value();
         let checked = spine::check(

@@ -2,7 +2,7 @@
 //! FR-282 source-backed probability certificate checking without an analyzer.
 
 use super::document::{
-    check_probability_certificate_document_as, ProbabilityDocumentError, ProbabilityDocumentLimits,
+    ProbabilityDocumentError, ProbabilityDocumentLimits, check_probability_certificate_document_as,
 };
 use super::{CertificateRole, ExactProbabilityCertificateCheck, ObligationIdentity};
 use crate::spine::{
@@ -13,9 +13,9 @@ use filament_exact::{Cancel, ScalarLimits};
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
+use fsl_foundation::SourceIdentity;
 use fsl_foundation::node_wire::{node_key_from_text, node_key_to_json};
 use fsl_foundation::source::{Source, SourceReadCause, SourceReadError};
-use fsl_foundation::SourceIdentity;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef, ObservationLimits};
 use ix_trace_rs::implements;
@@ -108,7 +108,9 @@ pub enum ProbabilitySourceError {
     #[error("probability certificate package names {0} sources, not one")]
     PackageSources(usize),
     /// The request names a package name other than the emitted package's.
-    #[error("conflicting_identity: probability certificate package name {requested:?} is not {actual:?}")]
+    #[error(
+        "conflicting_identity: probability certificate package name {requested:?} is not {actual:?}"
+    )]
     PackageName {
         /// The name the request stated.
         requested: String,
@@ -152,11 +154,12 @@ pub struct ProbabilityPackageRequest<'a> {
 /// ambient I/O or analyzer implementation enters this path.
 #[implements("FR-282-AC-11")]
 pub fn check_probability_certificate_source(
+    parser_context: &fsl_cst::ParserContext,
     request: ProbabilitySourceRequest<'_>,
     limits: ProbabilitySourceLimits,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilitySourceError> {
-    check_recompiled(request, None, limits, cancel)
+    check_recompiled(parser_context, request, None, limits, cancel)
 }
 
 /// Check a certificate over an emitted package: the package names its
@@ -165,6 +168,7 @@ pub fn check_probability_certificate_source(
 /// document is checked.
 #[implements("FR-282-AC-1")]
 pub fn check_probability_certificate_package(
+    parser_context: &fsl_cst::ParserContext,
     request: ProbabilityPackageRequest<'_>,
     limits: ProbabilitySourceLimits,
     cancel: &Cancel,
@@ -212,6 +216,7 @@ pub fn check_probability_certificate_package(
         content: text.text().to_owned(),
     };
     check_recompiled(
+        parser_context,
         ProbabilitySourceRequest {
             source,
             expected_source: &expected,
@@ -230,6 +235,7 @@ pub fn check_probability_certificate_package(
 }
 
 fn check_recompiled(
+    parser_context: &fsl_cst::ParserContext,
     request: ProbabilitySourceRequest<'_>,
     emitted: Option<&[u8]>,
     limits: ProbabilitySourceLimits,
@@ -311,6 +317,7 @@ fn check_recompiled(
     let packages = package_input(request.provision.package_documents())
         .map_err(|refusal| ProbabilitySourceError::Packages(Box::new(refusal)))?;
     let parsed = spine::parse(
+        parser_context,
         &ParseRequest {
             source: &identity,
             path: request.source.identity(),
@@ -324,9 +331,15 @@ fn check_recompiled(
     if !parsed.unit().selections().imports.is_empty() {
         return Err(ProbabilityDocumentError::Unsupported.into());
     }
-    let models = spine::select(&parsed, &packages, limits.spine.model, cancel)
-        .map_err(|failure| ProbabilitySourceError::Compile(Box::new(failure)))?
-        .into_value();
+    let models = spine::select(
+        parser_context,
+        &parsed,
+        &packages,
+        limits.spine.model,
+        cancel,
+    )
+    .map_err(|failure| ProbabilitySourceError::Compile(Box::new(failure)))?
+    .into_value();
     let checked = spine::check(
         &parsed,
         request.package_name.to_owned(),
@@ -410,7 +423,7 @@ fn refuse_foreign_claim(
         Err(error) => {
             return super::document::document_admission_error(error)
                 .map(|_| ())
-                .map_err(Into::into)
+                .map_err(Into::into);
         }
     };
     if &identity != item {

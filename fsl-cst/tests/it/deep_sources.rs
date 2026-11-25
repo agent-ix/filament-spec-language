@@ -30,10 +30,11 @@ fn raised() -> Limits {
 /// Parse `text` on a 512 KiB thread under [`raised`] limits, which must
 /// admit it.
 fn parses_on_a_small_stack(text: String) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     std::thread::Builder::new()
         .stack_size(512 * 1024)
         .spawn(move || {
-            let parsed: ParsedSource = fsl_cst::parse(
+            let parsed: ParsedSource = fsl_cst::parse(&qsl3309_parser_context,
                 SourceIdentity {
                     authority: "test".into(),
                     identity: "test:deep".into(),

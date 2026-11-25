@@ -22,7 +22,8 @@ fn unit(members: &str, control: &str) -> String {
 }
 
 fn parsed(source: &str) -> ParsedSource {
-    fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "test:production-protocol-forms"),
         "production-protocol-forms.native",
         source.as_bytes(),

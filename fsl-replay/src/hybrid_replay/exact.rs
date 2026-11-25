@@ -4,8 +4,6 @@
 //! instant that makes a reproduced trace a `formula` or an
 //! `undefined-evaluation` counterexample.
 
-use ix_trace_rs::implements;
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::Rational;
@@ -1336,14 +1334,14 @@ impl Enabled<'_> {
                 captures: &[],
                 activation: &before,
             };
-            let (satisfied, read) = section.has_witness(body, &env)?;
+            let (satisfied, read) = section.exists(body, &env)?;
             decisions.extend(projection(&read, &mut |work| section.charge_by(work))?);
             if !satisfied {
                 return Ok(false);
             }
         }
         for joint in &quantified.joint {
-            if !joint.has_witness(&env, at, decisions, &mut *self.meter)? {
+            if !joint.exists(&env, at, decisions, &mut *self.meter)? {
                 return Ok(false);
             }
         }

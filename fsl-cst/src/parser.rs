@@ -3283,6 +3283,7 @@ mod tests {
     #[test]
     fn deep_brackets_never_overflow_the_stack() {
         on_bounded_stack(|| {
+            let parser_context = ParserContext::new();
             let limits = Limits::default();
             // Deeper than the node ceiling can hold for parentheses.
             let depth = 6_000;
@@ -3306,7 +3307,7 @@ mod tests {
                     limits,
                     &Cancel::new(),
                     &ExtensionForms::default(),
-                    &ParserContext::new(),
+                    &parser_context,
                 ) {
                     Ok(parsed) => assert!(parsed.is_admissible()),
                     Err(refusal) => {
@@ -3335,7 +3336,7 @@ mod tests {
                 limits,
                 &Cancel::new(),
                 &ExtensionForms::default(),
-                &ParserContext::new(),
+                &parser_context,
             )
             .expect("2000 nested Option<...> fit the node ceiling");
             assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());

@@ -651,13 +651,14 @@ temporal Projection using inf over (c: M::Call) clock \"model-steps\" on origin 
     #[trace("FR-234-AC-2")]
     #[test]
     fn reversed_and_empty_open_intervals_are_typed_refusals_before_a_verdict() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
         for (interval, reason) in [
             ("[3 ms, 1 ms]", InvalidTimedInterval::Inverted),
             ("(2 ms, 2 ms]", InvalidTimedInterval::EmptyOpenEnd),
         ] {
             let model = document(&["x"], &[]);
             let text = unit_text(PACKAGE,TIMED,&format!("{DENSE}temporal Bad using tt over (c: M::Call) clock \"model-time\" on origin {{ eventually{interval} holds(c.phase = 1) }}"));
-            let parsed = fsl_cst::parse(
+            let parsed = fsl_cst::parse(&qsl3309_parser_context,
                 SourceIdentity::new("test", "zone-interval-refusal"),
                 "zone-interval.native",
                 text.as_bytes(),

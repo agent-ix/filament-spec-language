@@ -289,8 +289,9 @@ fn other_document(document: &[u8]) -> Vec<u8> {
 }
 
 fn declarations(documents: &[&[u8]], text: &str) -> PackageDeclarations {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let packages = package_input(documents.iter().copied()).unwrap();
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("agent-ix", "hyper"),
         "hyper.native",
         text.as_bytes(),
@@ -306,7 +307,7 @@ fn declarations(documents: &[&[u8]], text: &str) -> PackageDeclarations {
     )
     .expect("the model selection admits")
     .with_parsed_operation_clauses(|text| {
-        fsl_forms::parse_clause_text(text, fsl_cst::Limits::default())
+        fsl_forms::parse_clause_text(&qsl3309_parser_context, text, fsl_cst::Limits::default())
     })
     .expect("the operation clauses parse");
     let mut declarations = PackageDeclarations::assemble(

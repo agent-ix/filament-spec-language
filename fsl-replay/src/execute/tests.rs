@@ -695,12 +695,13 @@ fn tc_444_a_non_function_target_refuses_before_the_recompile() {
 #[trace("TC-759", "FR-278-AC-3")]
 #[test]
 fn tc_759_the_emitted_provision_replays_to_the_same_package() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = proved();
     let limits = SpineLimits::default();
     let cancel = filament_exact::Cancel::new();
     let identity = SourceIdentity::new(AUTHORITY, IDENTITY);
     let packages = BTreeMap::new();
-    let parsed = crate::spine::parse(
+    let parsed = crate::spine::parse(&qsl3309_parser_context,
         &crate::spine::ParseRequest {
             source: &identity,
             path: IDENTITY,
@@ -711,7 +712,7 @@ fn tc_759_the_emitted_provision_replays_to_the_same_package() {
     )
     .expect("the unit parses")
     .into_value();
-    let models = crate::spine::select(&parsed, &packages, limits.model, &cancel)
+    let models = crate::spine::select(&qsl3309_parser_context, &parsed, &packages, limits.model, &cancel)
         .expect("the unit selects")
         .into_value();
     let checked = crate::spine::check(

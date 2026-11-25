@@ -516,6 +516,7 @@ impl CheckedClosureHandle {
     }
 
     /// Create a fresh registry over the designated FSL adapter and leaf scheduler.
+    #[implements("FR-284-AC-4")]
     pub fn registry(&self) -> ApplicationRegistry {
         ApplicationRegistry {
             acquisition: Arc::clone(&self.acquisition),
@@ -889,6 +890,7 @@ pub struct ApplicationRegistry {
 
 impl ApplicationRegistry {
     /// Bind a generated body after checking acquisition identity.
+    #[implements("FR-284-AC-4")]
     pub fn register(
         &mut self,
         selection: &CallableSelection,
@@ -916,6 +918,7 @@ impl ApplicationRegistry {
     ///
     /// The caller's `limits` are forwarded unchanged; set `held` when an
     /// enclosing application already owns live frames.
+    #[implements("FR-284-AC-4")]
     pub fn begin_call<'a>(
         &mut self,
         selection: &CallableSelection,
@@ -959,6 +962,7 @@ impl ApplicationRegistry {
     ///
     /// Use [`Self::begin_call`] when this call inherits a caller's bound or
     /// held live-occurrence count.
+    #[implements("FR-284-AC-4")]
     pub fn begin_call_default<'a>(
         &mut self,
         selection: &CallableSelection,
@@ -991,6 +995,7 @@ pub struct CheckedApplicationSession<'a> {
 
 impl<'a> CheckedApplicationSession<'a> {
     /// Take one leaf transition, consuming this session.
+    #[implements("FR-284-AC-4")]
     pub fn step(self) -> CheckedApplicationProgress<'a> {
         let host_root = self.host_root;
         let held = self.held;
@@ -1030,6 +1035,7 @@ struct ChildRequestTrackingFactory<F> {
 }
 
 impl<F: BodyFactory> BodyFactory for ChildRequestTrackingFactory<F> {
+    #[implements("FR-284-AC-4")]
     fn begin(&self) -> Box<dyn Body> {
         let tracker = self
             .child_request_slot
@@ -1050,6 +1056,7 @@ struct ChildRequestTrackingBody {
 }
 
 impl Body for ChildRequestTrackingBody {
+    #[implements("FR-284-AC-4")]
     fn resume(
         &mut self,
         input: Resume,
@@ -1654,7 +1661,9 @@ mod tests {
         let name =
             crate::QualifiedName::new(vec![crate::Identifier::new("f").expect("identifier")])
                 .expect("function name");
+        let parser_context = fsl_cst::ParserContext::new();
         let site = crate::call_site(
+            &parser_context,
             identity("unit"),
             crate::CallSiteUnit::new("fixture", "unit.native", source.as_bytes()),
             [],

@@ -442,6 +442,7 @@ pub(in crate::spine) fn lookup_driver_context(
     filament_exact::ObjectReference,
     filament_exact::ObjectReference,
 ) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use filament_semantic_value::object_closure::ObjectClosure;
     use fsl_semantics::model::dispatch::GeneralizationClosure;
     use fsl_semantics::model::population::{
@@ -451,7 +452,7 @@ pub(in crate::spine) fn lookup_driver_context(
 
     let cancel = Cancel::new();
     let source_identity = source();
-    let parsed = crate::spine::parse(
+    let parsed = crate::spine::parse(&qsl3309_parser_context,
         &crate::spine::ParseRequest {
             source: &source_identity,
             path: "tc-792-lookup.native",
@@ -462,7 +463,7 @@ pub(in crate::spine) fn lookup_driver_context(
     )
     .expect("the lookup driver source parses")
     .into_value();
-    let models = crate::spine::select(
+    let models = crate::spine::select(&qsl3309_parser_context,
         &parsed,
         &fixture.packages,
         SpineLimits::default().model,
@@ -836,13 +837,14 @@ fn typed_model_values_bind_without_integer_coercion() {
 #[test]
 #[trace("TC-792", "FR-100-AC-14", "FR-100-AC-16")]
 fn tc_792_driver_returns_the_admitted_reference_identity() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let unit = crate::spine::spine_model::unit();
     let bytes = unit.as_bytes();
     let packages =
         fsl_semantics::model::intake::package_input([crate::spine::spine_model::DOCUMENT]).unwrap();
     let cancel = Cancel::new();
     let identity = source();
-    let parsed = crate::spine::parse(
+    let parsed = crate::spine::parse(&qsl3309_parser_context,
         &crate::spine::ParseRequest {
             source: &identity,
             path: "spine-model.native",
@@ -853,7 +855,7 @@ fn tc_792_driver_returns_the_admitted_reference_identity() {
     )
     .unwrap()
     .into_value();
-    let models = crate::spine::select(&parsed, &packages, SpineLimits::default().model, &cancel)
+    let models = crate::spine::select(&qsl3309_parser_context, &parsed, &packages, SpineLimits::default().model, &cancel)
         .unwrap()
         .into_value();
     let checked = crate::spine::check(

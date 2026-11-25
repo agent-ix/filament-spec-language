@@ -112,12 +112,13 @@ fn world() -> World {
 }
 
 fn world_source(source: &str) -> World {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let identity = SourceIdentity::new("agent-ix", "monitor-incremental");
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("no domain package");
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &identity,
             path: PATH,
@@ -128,10 +129,10 @@ fn world_source(source: &str) -> World {
     )
     .expect("the unit parses")
     .into_value();
-    let models = spine::select(&parsed, &packages, limits.model, &cancel)
+    let models = spine::select(&qsl3309_parser_context, &parsed, &packages, limits.model, &cancel)
         .expect("selects")
         .into_value();
-    let cst = fsl_cst::parse(
+    let cst = fsl_cst::parse(&qsl3309_parser_context,
         identity,
         PATH,
         source.as_bytes(),

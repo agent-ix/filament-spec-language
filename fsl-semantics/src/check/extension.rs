@@ -206,6 +206,7 @@ pub(crate) struct CheckedExtensionForm {
 
 /// What the check reads besides the forms.
 pub(crate) struct ExtensionInput<'a> {
+    pub(crate) parser: &'a fsl_forms::cst::ParserContext,
     pub(crate) scope: &'a Scope,
     pub(crate) signatures: &'a Signatures,
     pub(crate) held: &'a HeldExtensions,
@@ -590,7 +591,7 @@ impl Builder<'_, '_, '_> {
             _ => None,
         };
         if let Some(spelling) = hint {
-            return parse_type_text(&spelling)
+            return parse_type_text(self.input.parser, &spelling)
                 .ok()
                 .and_then(|form| {
                     resolve_type_form(&self.input.scope.in_source(None), &form, location).ok()
@@ -643,7 +644,7 @@ impl Builder<'_, '_, '_> {
             "Decimal" => return ClauseType::Unbounded("Decimal", "decimal"),
             _ => {}
         }
-        let Ok(form) = parse_type_text(type_ref) else {
+        let Ok(form) = parse_type_text(self.input.parser, type_ref) else {
             return ClauseType::Unsupported;
         };
         let supported = match &form.head {

@@ -8,7 +8,8 @@ const HEADER: &str =
     "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
 
 fn messages(text: &str) -> Vec<String> {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "test:qsl-2198-syntax-messages"),
         "messages.native",
         text.as_bytes(),

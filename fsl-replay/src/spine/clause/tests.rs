@@ -59,6 +59,7 @@ fn compose(
     dependencies: &DependencyInput,
     limits: SpineLimits,
 ) -> Result<ComposedUnit, Box<crate::spine::CompileRefusal>> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let original = crate::spine::compose(
         identity.clone(),
         path,
@@ -67,14 +68,14 @@ fn compose(
         dependencies,
         limits,
     )?;
-    let parsed = fsl_cst::parse(identity.clone(), path, bytes, limits.source)
+    let parsed = fsl_cst::parse(&qsl3309_parser_context, identity.clone(), path, bytes, limits.source)
         .expect("the original fixture passed S1");
     let formatted = fsl_cst::format::format_with_limit(&parsed, usize::MAX)
         .expect("the admitted private fixture formats");
     let mut formatted_limits = limits;
     formatted_limits.source.source_bytes = limits.source.source_bytes.max(formatted.len());
     let formatted_identity = identity;
-    let reparsed = fsl_cst::parse(
+    let reparsed = fsl_cst::parse(&qsl3309_parser_context,
         formatted_identity.clone(),
         path,
         formatted.as_bytes(),

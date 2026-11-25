@@ -57,9 +57,10 @@ fn dependencies(with_library: bool) -> DependencyInput {
 
 /// The library `check` operation over `text`, under `cancel`.
 fn check(text: &str, dependencies: &DependencyInput, cancel: &Cancel) -> Checked {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = program_identity();
     let limits = SpineLimits::default();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &source,
             path: "program.native",
@@ -70,7 +71,7 @@ fn check(text: &str, dependencies: &DependencyInput, cancel: &Cancel) -> Checked
     )
     .expect("the source parses")
     .into_value();
-    let models = spine::select(&parsed, &BTreeMap::new(), limits.model, &Cancel::new())
+    let models = spine::select(&qsl3309_parser_context, &parsed, &BTreeMap::new(), limits.model, &Cancel::new())
         .expect("no model is selected")
         .into_value();
     spine::check(

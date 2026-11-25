@@ -175,9 +175,10 @@ fn a_state_graph_claim_refuses_the_protocol_profile() {
 /// The refusal of the fixture unit with `body`: S2 builds its forms, so the
 /// refusal is S3's. Its code, cause and the text it names.
 fn forms_refusal(body: &str) -> (Code, Option<&'static str>, String) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let document = document();
     let (unit, _) = config_unit_with_profiles(&document, PROFILES, body);
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "fr-612"),
         "unit.native",
         unit.as_bytes(),

@@ -110,11 +110,12 @@ fn try_compile_with_mode(
     ),
     spine::FrontEndFailure,
 > {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let identity = SourceIdentity::new("test", "bounded-certificate-source");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
     let packages = package_input([domain]).unwrap();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &identity,
             path: "bounded.native",
@@ -125,7 +126,7 @@ fn try_compile_with_mode(
     )
     .unwrap()
     .into_value();
-    let models = spine::select(&parsed, &packages, limits.model, &cancel)
+    let models = spine::select(&qsl3309_parser_context, &parsed, &packages, limits.model, &cancel)
         .unwrap()
         .into_value();
     let checked = spine::check_with_execution_points_and_source_inputs(

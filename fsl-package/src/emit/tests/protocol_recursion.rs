@@ -520,6 +520,7 @@ fn checked_large_text(
     text: &str,
     limits: CheckingLimits,
 ) -> (fsl_semantics::check::CheckedGraph, String) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let packages = fsl_semantics::model::intake::package_input([SPINE_MODEL_DOCUMENT])
         .expect("the spine model document admits");
     let identity = package_identity(SPINE_MODEL_DOCUMENT);
@@ -527,7 +528,7 @@ fn checked_large_text(
     parse_limits.source_bytes = parse_limits.source_bytes.max(text.len());
     parse_limits.tokens = parse_limits.tokens.max(text.len());
     parse_limits.nodes = parse_limits.nodes.max(text.len().saturating_mul(16));
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:spine-model"),
         "program.native",
         text.as_bytes(),

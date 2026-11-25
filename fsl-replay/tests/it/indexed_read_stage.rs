@@ -22,8 +22,9 @@ fn json(document: &OutcomeDocument) -> (Value, u8) {
 }
 
 fn parse_document(text: &str) -> (Value, u8) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = SourceIdentity::new("agent-ix", "test:indexed-read");
-    let result = spine::parse(
+    let result = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &source,
             path: "indexed-read.native",
@@ -36,9 +37,10 @@ fn parse_document(text: &str) -> (Value, u8) {
 }
 
 fn check_document(text: &str) -> (Value, u8) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = SourceIdentity::new("agent-ix", "test:indexed-read");
     let limits = SpineLimits::default();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &source,
             path: "indexed-read.native",
@@ -49,7 +51,7 @@ fn check_document(text: &str) -> (Value, u8) {
     )
     .expect("the source parses")
     .into_value();
-    let models = spine::select(&parsed, &BTreeMap::new(), limits.model, &Cancel::new())
+    let models = spine::select(&qsl3309_parser_context, &parsed, &BTreeMap::new(), limits.model, &Cancel::new())
         .expect("no model is selected")
         .into_value();
     let checked = spine::check(

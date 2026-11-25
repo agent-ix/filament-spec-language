@@ -535,8 +535,9 @@ pub(crate) fn assemble(
     models: &[(&str, &str, &[u8])],
     body: &str,
 ) -> (String, Result<PackageDeclarations, AssemblyRefusal>) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let (text, packages) = unit_text(profiles, models, body);
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "tc-540"),
         "unit.native",
         text.as_bytes(),

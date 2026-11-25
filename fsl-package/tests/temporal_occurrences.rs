@@ -67,7 +67,8 @@ fn declarations_named(
     model_document: &[u8],
     package_name: &str,
 ) -> PackageDeclarations {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:qsl-2094-temporal-rows"),
         "unit.native",
         source_text.as_bytes(),

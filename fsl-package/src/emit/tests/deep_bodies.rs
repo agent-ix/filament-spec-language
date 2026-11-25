@@ -361,12 +361,13 @@ fn deep_source_at(label: &str, depth: usize) -> String {
 /// `source` through S1 and S2 and the assembler, with S1's size and work
 /// limits raised to fit it.
 fn deep_declarations(source: &str) -> PackageDeclarations {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let bytes = source.len();
     let mut limits = fsl_cst::Limits::default();
     limits.source_bytes = limits.source_bytes.max(bytes);
     limits.tokens = limits.tokens.max(bytes);
     limits.nodes = limits.nodes.max(bytes.saturating_mul(16));
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         source.as_bytes(),
@@ -677,6 +678,7 @@ fn omission_names_share_one_guard_row_per_edge_at_1000_levels() {
 /// with `levels` connectives, through S1 at its default limits, S2 and the
 /// assembler, or `None` when S1's defaults do not admit it.
 fn and_chain(levels: usize) -> Option<PackageDeclarations> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
@@ -684,7 +686,7 @@ fn and_chain(levels: usize) -> Option<PackageDeclarations> {
         "a and (".repeat(levels),
         ")".repeat(levels),
     );
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("a", "u"),
         "unit.native",
         text.as_bytes(),

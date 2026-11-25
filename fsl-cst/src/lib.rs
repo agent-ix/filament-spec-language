@@ -103,10 +103,10 @@ pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
     fsl_foundation::diagnostic::CatalogCode::new("resource_exhausted", "input-bytes-exceeded"),
 ];
 
-use ix_trace_rs::implements;
 use filament_exact::Cancel;
 use fsl_foundation::selection::SourceSelections;
 use fsl_foundation::{Source, SourceIdentity, Span};
+use ix_trace_rs::implements;
 use std::collections::BTreeSet;
 
 /// A version-bound source artifact and its lossless parse evidence.
@@ -379,29 +379,32 @@ impl Default for ParserContext {
 /// resource failures use the outer error result.
 #[implements("NFR-141-AC-10")]
 pub fn parse(
+    context: &ParserContext,
     identity: SourceIdentity,
     path: impl Into<String>,
     bytes: &[u8],
     limits: Limits,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    ParserContext::new().parse(identity, path, bytes, limits)
+    context.parse(identity, path, bytes, limits)
 }
 
 /// Parse with a caller-owned cancellation handle (FR-276).
 #[implements("NFR-141-AC-10")]
 pub fn parse_with_cancel(
+    context: &ParserContext,
     identity: SourceIdentity,
     path: impl Into<String>,
     bytes: &[u8],
     limits: Limits,
     cancel: &Cancel,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    ParserContext::new().parse_with_cancel(identity, path, bytes, limits, cancel)
+    context.parse_with_cancel(identity, path, bytes, limits, cancel)
 }
 
 /// Parse with caller-supplied extension forms (FR-354).
 #[implements("NFR-141-AC-10")]
 pub fn parse_with_extensions(
+    context: &ParserContext,
     identity: SourceIdentity,
     path: impl Into<String>,
     bytes: &[u8],
@@ -409,14 +412,15 @@ pub fn parse_with_extensions(
     forms: &ExtensionForms,
     cancel: &Cancel,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    ParserContext::new().parse_with_extensions(identity, path, bytes, limits, forms, cancel)
+    context.parse_with_extensions(identity, path, bytes, limits, forms, cancel)
 }
 
 /// Parse an already admitted exact source.
 #[implements("NFR-141-AC-10")]
 pub fn parse_source(
+    context: &ParserContext,
     source: Source,
     limits: Limits,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    ParserContext::new().parse_source(source, limits)
+    context.parse_source(source, limits)
 }

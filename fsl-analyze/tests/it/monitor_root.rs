@@ -836,6 +836,7 @@ fn the_root_key_covers_the_bodies_of_called_helpers() {
 #[trace("TC-1081", "FR-251-AC-42")]
 #[test]
 fn the_plan_root_retains_the_acquisitions_witness_rows() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let unit = authored(ROOT_SHAPES[0]);
     let root = root_of(&unit, "C", &target()).expect("the plan root");
     let emission = root.emission();
@@ -845,7 +846,7 @@ fn the_plan_root_retains_the_acquisitions_witness_rows() {
         fsl_semantics::model::intake::package_input([domain.document.as_slice()]).unwrap();
     let source = SourceIdentity::new("agent-ix", "monitor-root");
     let cancel = Cancel::new();
-    let parsed = fsl_replay::spine::parse(
+    let parsed = fsl_replay::spine::parse(&qsl3309_parser_context,
         &fsl_replay::spine::ParseRequest {
             source: &source,
             path: "monitor.native",
@@ -858,7 +859,7 @@ fn the_plan_root_retains_the_acquisitions_witness_rows() {
     .expect("the stage succeeds")
     .into_value();
     let selected =
-        fsl_replay::spine::select(&parsed, &packages, SpineLimits::default().model, &cancel)
+        fsl_replay::spine::select(&qsl3309_parser_context, &parsed, &packages, SpineLimits::default().model, &cancel)
             .map_err(|_| "selects")
             .expect("the stage succeeds")
             .into_value();

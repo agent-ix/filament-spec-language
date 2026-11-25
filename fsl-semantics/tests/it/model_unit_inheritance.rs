@@ -32,7 +32,8 @@ population children: Child;
 ";
 
 fn compile(model: &str) -> Result<PackageInput, Vec<fsl_forms::cst::CompleteDiagnostic>> {
-    let parsed = fsl_forms::cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "inheritance-model"),
         "model.fsl",
         model.as_bytes(),
@@ -48,7 +49,8 @@ fn compile(model: &str) -> Result<PackageInput, Vec<fsl_forms::cst::CompleteDiag
 
 /// The causes `compile` refuses `model` with, and the text each is at.
 fn compile_refusals(model: &str) -> Vec<(&'static str, String)> {
-    let parsed = fsl_forms::cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "inheritance-model"),
         "model.fsl",
         model.as_bytes(),
@@ -82,7 +84,8 @@ invariant I using P on M::Child at current { self.total >= 0 }
 /// Every cause the checker refuses the unit with over `packages`, from model
 /// intake through the checked graph.
 fn check_causes(packages: &PackageInput) -> Vec<&'static str> {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "inheritance-unit"),
         "unit.native",
         UNIT.as_bytes(),
@@ -149,8 +152,9 @@ fn causes(refusals: &[fsl_semantics::check::SemanticCheckRefusal]) -> Vec<&'stat
 }
 
 fn assert_redefinition_target(model: &str, expected_target: &str, expected_redefiner: &str) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let packages = compile(model).expect("the model unit compiles");
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "inheritance-unit"),
         "unit.native",
         UNIT.as_bytes(),
@@ -480,11 +484,12 @@ fn missing_machine_and_process_supertypes_refuse_at_the_name() {
 #[trace("FR-710-AC-4", "TC-1943")]
 #[test]
 fn an_object_extending_another_meaning_refuses_at_its_declaration() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     for parent in ["Row", "BaseMachine", "BaseProcess"] {
         let declaration = format!("object Child extends {parent} {{ }}");
         let source = MACHINES_AND_PROCESSES.replace("object Child extends Base { }", &declaration)
             + "record Row { n: Integer; }\n";
-        let parsed = fsl_forms::cst::parse(
+        let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "inheritance-model"),
             "model.fsl",
             source.as_bytes(),
@@ -698,6 +703,7 @@ fn non_object_redefinitions_retain_the_shared_refusal_at_the_source_declaration(
 #[trace("FR-710-AC-4", "TC-1943")]
 #[test]
 fn non_object_disallowed_members_preserve_the_exact_parser_diagnostic() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     for (declaration, offending) in [
         (
             "event Notice { operation bump(); timestamp: Timestamp; occurs timestamp; }",
@@ -708,7 +714,7 @@ fn non_object_disallowed_members_preserve_the_exact_parser_diagnostic() {
         let source = format!(
             "language \"ix:native\" edition \"1-draft\";\ndomain \"example/shop\";\nobject Node identity (id) {{ id: Integer; }}\n{declaration}\n"
         );
-        let parsed = fsl_forms::cst::parse(
+        let parsed = fsl_forms::cst::parse(&qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "inheritance-model"),
             "model.fsl",
             source.as_bytes(),
@@ -741,8 +747,9 @@ fn non_object_disallowed_members_preserve_the_exact_parser_diagnostic() {
 #[trace("FR-710-AC-10", "FR-710-AC-3", "TC-1942")]
 #[test]
 fn non_object_contextual_operation_is_an_event_field_name() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let source = "language \"ix:native\" edition \"1-draft\";\ndomain \"example/shop\";\nevent Notice { operation: Integer; timestamp: Timestamp; occurs timestamp; }\n";
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "inheritance-model"),
         "model.fsl",
         source.as_bytes(),

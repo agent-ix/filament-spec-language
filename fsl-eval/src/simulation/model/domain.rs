@@ -3,11 +3,10 @@
 //! of a declared type, indexed rather than materialized so a caller walks a
 //! product of domains one element at a time.
 
-use ix_trace_rs::implements;
 use filament_exact::{
-    from_admitted, from_admitted_slots, ClockPlaceReference, CollectionKind, CollectionType,
-    EnumMember, FieldValue, Integer, NodeKey, ObjectId, ObjectReference, OptionValue, Presence,
-    TextType, UnionMember, UnionValue, Value, ValueType,
+    ClockPlaceReference, CollectionKind, CollectionType, EnumMember, FieldValue, Integer, NodeKey,
+    ObjectId, ObjectReference, OptionValue, Presence, TextType, UnionMember, UnionValue, Value,
+    ValueType, from_admitted, from_admitted_slots,
 };
 use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, TypeEnvironment, UnionMemberDeclaration,
@@ -981,7 +980,6 @@ impl Domain {
     /// The exact number of values when this domain has a supported exact
     /// count. Text counts may exceed the machine integer used by iteration.
 
-
     #[implements("FR-752-AC-9", "FR-752-AC-10")]
     pub(super) fn exact_len_with_cache(&self, cache: &mut TextCache) -> Option<Integer> {
         match self {
@@ -992,7 +990,6 @@ impl Domain {
 
     /// The value at an exact integer index, including Text domains wider than
     /// the machine index used by finite graph enumeration.
-
 
     #[implements("FR-752-AC-9", "FR-752-AC-10")]
     pub(super) fn nth_exact_with_cache(
@@ -1821,6 +1818,7 @@ mod tests {
     #[trace("TC-3084", "FR-106-AC-80")]
     #[test]
     fn clock_reference_domains_hold_exactly_the_supplied_place_identities() {
+        let qsl3309_parser_context = fsl_cst::ParserContext::new();
         use filament_semantic_value::checking::{CheckMode, CheckingLimits};
         use fsl_semantics::model::accounting::ModelNormalizationLimits;
         use fsl_semantics::model::intake::{admit_unit, package_input};
@@ -1832,6 +1830,7 @@ mod tests {
             dimension Time; unit ms : Time = rational(1, 1); time Call dense unit ms;\n\
             object Call { q: Sequence<Clock>[0, 2]; x: Clock; }\n";
         let parsed = fsl_cst::parse(
+            &qsl3309_parser_context,
             fsl_foundation::SourceIdentity::new("test", "clock-reference-domain"),
             "clock-domain.native",
             source.as_bytes(),

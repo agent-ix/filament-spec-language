@@ -1574,10 +1574,11 @@ fn point_bound_emission(
     body: &str,
     points: &[(&str, ExecutionPointKind)],
 ) -> (crate::emit::Emission, Value) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     use filament_contract_model::{AnchorName, ExecutionPoint};
     let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
     let unit = clocked_unit(body);
-    let parsed = fsl_cst::parse(
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("agent-ix", "test:spine-model"),
         "program.native",
         unit.as_bytes(),

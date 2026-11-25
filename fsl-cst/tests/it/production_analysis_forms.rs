@@ -10,7 +10,8 @@ fn unit(declarations: &str) -> String {
 }
 
 fn parse(source: &str) -> ParsedSource {
-    fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    fsl_cst::parse(&qsl3309_parser_context,
         SourceIdentity::new("test", "test:analysis-production-forms"),
         "analysis-production-forms.native",
         source.as_bytes(),

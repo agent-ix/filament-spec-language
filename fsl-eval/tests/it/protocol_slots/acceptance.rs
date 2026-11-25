@@ -80,7 +80,8 @@ fn fixture_named(
     CheckedPackage,
     fsl_semantics::model::normalize::EffectiveView,
 ) {
-    let parsed = fsl_cst::parse(
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
+    let parsed = fsl_cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("protocol", "acceptance"),
         "acceptance.native",
         source.as_bytes(),

@@ -15,8 +15,6 @@
 //! <https://www.cl.cam.ac.uk/~lp15/papers/Formath/LiRealAlgebraicNumbers.pdf>,
 //! section 3.2, for the specialization and signed-remainder distinction.
 
-use ix_trace_rs::implements;
-
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
@@ -675,7 +673,7 @@ impl<'a> Kernel<'a> {
         }
     }
 
-    pub(super) fn has_witness(
+    pub(super) fn exists(
         &mut self,
         levels: &[Vec<Polynomial>],
         predicate: &mut impl FnMut(&mut Self) -> Result<bool>,
@@ -687,7 +685,7 @@ impl<'a> Kernel<'a> {
         for sample in self.samples(&levels[coordinate - 1], coordinate)? {
             self.meter.charge()?;
             self.prefix.push(sample);
-            let found = self.has_witness(levels, predicate)?;
+            let found = self.exists(levels, predicate)?;
             self.prefix.pop();
             if found {
                 return Ok(true);

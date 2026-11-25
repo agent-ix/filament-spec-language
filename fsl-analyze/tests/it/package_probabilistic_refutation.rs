@@ -42,11 +42,12 @@ fn a_package_refutation_preserves_the_negative_witness_replay_and_charges() {
 }
 
 fn enum_fixture() -> (String, Vec<u8>) {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let mut model: serde_json::Value = serde_json::from_slice(LINK_MODEL).expect("Link model JSON");
     let enum_source = b"language \"ix:native\" edition \"1-draft\";\n\
                         domain \"test/link\";\n\
                         enum Loss { Lost, Delivered }\n";
-    let parsed = cst::parse(
+    let parsed = cst::parse(&qsl3309_parser_context,
         fsl_foundation::SourceIdentity::new("test", "link/spec"),
         "spec.fspec",
         enum_source,

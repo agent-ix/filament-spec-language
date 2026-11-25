@@ -550,6 +550,7 @@ mod tests {
     /// dispatches `self.size()`, when `size`'s body returns `size` and its
     /// precondition is `self.versionNumber >= gate`.
     fn dispatch_closure(size: i64, gate: i64) -> BTreeMap<NodeKey, CheckedBody> {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
         use fsl_replay::spine::{self, ParseRequest, SpineLimits};
         fn fail<T>(failure: spine::FrontEndFailure) -> T {
             panic!("the unit compiles: {:?}", spine::refusal_or_fault(failure))
@@ -567,7 +568,7 @@ mod tests {
         let source = fsl_foundation::SourceIdentity::new("agent-ix", "dispatch-closure");
         let cancel = filament_exact::Cancel::new();
         let limits = SpineLimits::default();
-        let parsed = spine::parse(
+        let parsed = spine::parse(&qsl3309_parser_context,
             &ParseRequest {
                 source: &source,
                 path: "unit.native",
@@ -578,7 +579,7 @@ mod tests {
         )
         .unwrap_or_else(fail)
         .into_value();
-        let models = spine::select(&parsed, &packages, limits.model, &cancel)
+        let models = spine::select(&qsl3309_parser_context, &parsed, &packages, limits.model, &cancel)
             .unwrap_or_else(fail)
             .into_value();
         let checked = spine::check(

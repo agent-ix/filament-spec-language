@@ -15,10 +15,11 @@ const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"f
 #[test]
 #[trace("TC-2197", "FR-767-AC-11")]
 fn check_operation_takes_the_supplied_law() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let identity = SourceIdentity::new("agent-ix", "division-check");
     let cancel = Cancel::new();
     let limits = SpineLimits::default();
-    let parsed = spine::parse(
+    let parsed = spine::parse(&qsl3309_parser_context,
         &ParseRequest {
             source: &identity,
             path: "unit.fsl",
@@ -29,7 +30,7 @@ fn check_operation_takes_the_supplied_law() {
     )
     .unwrap()
     .into_value();
-    let models = spine::select(&parsed, &Default::default(), limits.model, &cancel)
+    let models = spine::select(&qsl3309_parser_context, &parsed, &Default::default(), limits.model, &cancel)
         .unwrap()
         .into_value();
     let dependencies = DependencyInput::default();
@@ -97,6 +98,7 @@ fn check_operation_takes_the_supplied_law() {
 #[test]
 #[trace("TC-2196", "FR-767-AC-8")]
 fn multi_unit_checker_takes_one_caller_selection() {
+    let qsl3309_parser_context = fsl_cst::ParserContext::new();
     let cancel = Cancel::new();
     let limits = SpineLimits::default();
     let dependencies = DependencyInput::default();
@@ -107,7 +109,7 @@ fn multi_unit_checker_takes_one_caller_selection() {
             let text = UNIT
                 .replace("function q ", &format!("function q_{name} "))
                 .replace("function r ", &format!("function r_{name} "));
-            spine::parse(
+            spine::parse(&qsl3309_parser_context,
                 &ParseRequest {
                     source: &identity,
                     path: "unit.fsl",
@@ -121,7 +123,7 @@ fn multi_unit_checker_takes_one_caller_selection() {
         })
         .collect();
     let admitted = spine::admit_parsed_unit_list(units, &dependencies).unwrap();
-    let models = spine::select_units(
+    let models = spine::select_units(&qsl3309_parser_context,
         &admitted,
         &Default::default(),
         limits.model,
