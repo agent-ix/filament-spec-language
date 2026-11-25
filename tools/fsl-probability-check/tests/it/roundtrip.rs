@@ -1421,3 +1421,50 @@ fn weighted_zero_component_certificate_round_trips_in_fresh_process() {
     assert_eq!(code, 0, "{result}");
     assert_eq!(result["status"], "accepted", "{result}");
 }
+
+/// The availability chain over the link domain, `delivered` standing for up:
+/// `send_a` fails an up server once in 2000 steps, `send_b` repairs a down one
+/// nine times in ten, and both carry `duration` 0.
+const ZERO_DURATION_AVAILABILITY: &str = r#"language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile inf = "filament.temporal.infinite-trace/v1";
+model M = "test/link";
+pre Up using v on M::Msg::send_a { self.delivered }
+post Ticked using v on M::Msg::send_a { self.attempts = 0 and self.delivered = (not lost) }
+pre Down using v on M::Msg::send_b { not self.delivered }
+post Repaired using v on M::Msg::send_b { self.attempts = 0 and self.delivered = (not lost) }
+random Msg::send_a(lost) ~ { true: 1, false: 1999 };
+random Msg::send_b(lost) ~ { true: 1, false: 9 };
+reward duration on Msg::send_a = 0;
+reward duration on Msg::send_b = 0;
+workload Steady on M { weight Msg::send_a = 1; weight Msg::send_b = 1; }
+probabilistic Likely using inf on M over (m: M::Msg) under Steady on origin { long_run_fraction holds(m.delivered) weighted by duration >= rational(999,1000) }
+"#;
+
+/// FR-199-AC-4 (TC-2177): the checker process accepts the zero-duration
+/// availability proof at the unweighted fraction `1800/1801`, and rejects it
+/// once the unweighted gain-bias pair is altered.
+#[trace("TC-2177", "FR-199-AC-4")]
+#[test]
+fn zero_duration_availability_certificate_is_checked_in_a_fresh_process() {
+    let request = proof_source_request(ZERO_DURATION_AVAILABILITY, |_, _, _, _, _| {});
+    let (code, result) = run(&request, &[]);
+    assert_eq!(code, 0, "{result}");
+    assert_eq!(result["status"], "accepted", "{result}");
+    assert_eq!(
+        result["value"],
+        json!({"numerator":"1800", "denominator":"1801"})
+    );
+
+    let mut altered = request;
+    change_certificate(&mut altered, |document| {
+        let bias = &mut document["components"][0]["bias"][1]["value"];
+        let zero = json!({"numerator":"0", "denominator":"1"});
+        assert_ne!(*bias, zero);
+        *bias = zero;
+    });
+    let (code, result) = run(&altered, &[]);
+    assert_eq!(code, 1, "{result}");
+    assert_eq!(result["status"], "rejected", "{result}");
+    assert_eq!(result["rule"], "inequality-fails", "{result}");
+}
