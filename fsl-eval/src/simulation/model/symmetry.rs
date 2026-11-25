@@ -461,7 +461,7 @@ mod tests {
         let class = &group.classes[0];
         let mut state = system.initial().into_iter().next().expect("initial state");
         let objects = state
-            .state
+            .state_mut()
             .populations
             .get_mut(&class.population)
             .expect("class population exists");
@@ -584,27 +584,29 @@ mod tests {
         let system = world.system();
         let mut state = system.initial().into_iter().next().expect("initial state");
         let class = &group.classes[0];
-        let object = state
+        let object_type = state
             .state
             .populations
             .get(&class.population)
             .and_then(|objects| objects.get("a"))
-            .expect("initial class object exists");
+            .expect("initial class object exists")
+            .type_identity
+            .clone();
         let relationship = DeclarationKey {
             package: "test/symmetry".to_owned(),
             node: "ix://test/symmetry/links".to_owned(),
         };
-        state.state.extents.push(RelationshipExtent {
+        state.state_mut().extents.push(RelationshipExtent {
             relationship,
             complete: true,
             instances: vec![RelationshipInstance {
                 source: system
                     .model
-                    .object_reference(&object.type_identity, "a")
+                    .object_reference(&object_type, "a")
                     .expect("source reference resolves"),
                 target: system
                     .model
-                    .object_reference(&object.type_identity, "b")
+                    .object_reference(&object_type, "b")
                     .expect("target reference resolves"),
                 positions: Default::default(),
             }],

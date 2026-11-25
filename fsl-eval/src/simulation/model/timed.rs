@@ -1548,7 +1548,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             let mut next = state.clone();
             for ((population, key, field, min), extra) in holders.iter().zip(added) {
                 let Some(object) = next
-                    .state
+                    .state_mut()
                     .populations
                     .get_mut(population)
                     .and_then(|objects| objects.get_mut(key))

@@ -321,6 +321,13 @@ impl ModelSimState {
         }
     }
 
+    /// The population state, to write. The key memoized for the state before
+    /// the write, and shared with its clones, is not this state's.
+    fn state_mut(&mut self) -> &mut ModelState {
+        self.canonical_key = Default::default();
+        &mut self.state
+    }
+
     /// The closed population state.
     pub fn state(&self) -> &ModelState {
         &self.state
@@ -4313,7 +4320,7 @@ fn ranged<'s>(
         let mut held = state.clone();
         for ((population, key), digit) in holders.iter().zip(&current) {
             if let Some(object) = held
-                .state
+                .state_mut()
                 .populations
                 .get_mut(population)
                 .and_then(|objects| objects.get_mut(key))
