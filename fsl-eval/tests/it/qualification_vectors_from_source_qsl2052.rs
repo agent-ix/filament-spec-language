@@ -2553,8 +2553,8 @@ const MIN_DIV_MINUS_ONE: Probe = Probe {
 /// Vectors with a probe. D13 and D18's authored text says their retained
 /// operands are not members of the result type, so no FSL source form
 /// exists; the probes write those operands anyway. The `Int[..]`
-/// consumer-domain rows meet `integer_out_of_domain`, not the standard's
-/// division/modulo codes. The out-of-bounds `Text` literal rows meet
+/// consumer-domain rows preserve operation-specific `division_out_of_domain`
+/// provenance. The out-of-bounds `Text` literal rows meet
 /// `ill_typed` at check time.
 const PROBED: &[Unexpressible] = &[
     refused!(
@@ -2597,7 +2597,10 @@ const PROBED: &[Unexpressible] = &[
             },
             Probe {
                 source: "#kernel\nprofile d = \"filament.value.integer-division.truncating/v1\";\nfunction f using v(): Int[-9223372036854775808, 9223372036854775807] pure { (-9223372036854775807 - 1) div (-1) }",
-                met: Met::Refused("integer_out_of_domain", Some("outside-domain")),
+                met: Met::Refused(
+                    "division_out_of_domain",
+                    Some("quotient-outside-domain"),
+                ),
             },
         ],
         key: V2,
