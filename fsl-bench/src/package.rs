@@ -19,8 +19,6 @@ pub struct Fixture {
     pub packages: fsl_semantics::model::intake::PackageInput,
     /// The checked package's current wire emission.
     pub emission: fsl_package::Emission,
-    /// One valid source region supplied to checked-package emission.
-    pub region: fsl_foundation::source::provenance::SourceRegion,
     /// Raw domain-package documents provisioned to replay requests.
     pub documents: Vec<Vec<u8>>,
 }
@@ -33,13 +31,6 @@ pub fn fixture(count: usize) -> Result<Fixture, String> {
         .map_err(|error| format!("model package admission: {error:?}"))?;
     let unit = source(count);
     let identity = fsl_foundation::SourceIdentity::new("bench", "package");
-    let region = fsl_foundation::source::provenance::SourceRegion::new(
-        fsl_foundation::source::provenance::RawSourceRef::new("bench", "package")
-            .map_err(|error| format!("source identity: {error:?}"))?,
-        0,
-        u64::try_from(unit.len()).map_err(|error| format!("source length: {error}"))?,
-    )
-    .map_err(|error| format!("source region: {error:?}"))?;
     let cancel = filament_exact::Cancel::new();
     let limits = fsl_replay::spine::SpineLimits::default();
     let parsed = fsl_replay::spine::parse(
@@ -66,9 +57,10 @@ pub fn fixture(count: usize) -> Result<Fixture, String> {
     )
     .map_err(|error| format!("source check: {error:?}"))?
     .into_value();
+    let checked_package = checked.package();
     let emission = fsl_package::emit_package(
-        checked.package(),
-        |_| Some(region.clone()),
+        checked_package,
+        |location| checked_package.graph().region(location),
         fsl_package::EmitLimits::new(1 << 32),
     )
     .map_err(|error| format!("package emission: {error:?}"))?;
@@ -76,7 +68,6 @@ pub fn fixture(count: usize) -> Result<Fixture, String> {
         checked,
         packages: input,
         emission,
-        region,
         documents,
     })
 }

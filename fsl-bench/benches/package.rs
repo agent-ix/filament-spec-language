@@ -31,9 +31,10 @@ fn package_axes(criterion: &mut Criterion) {
                 emit_group.throughput(Throughput::Elements(widen(count)));
                 emit_group.bench_function(BenchmarkId::from_parameter(count), |b| {
                     b.iter(|| {
+                        let checked_package = fixture.checked.package();
                         black_box(emit_package(
-                            fixture.checked.package(),
-                            |_| Some(fixture.region.clone()),
+                            checked_package,
+                            |location| checked_package.graph().region(location),
                             EmitLimits::new(1 << 32),
                         ))
                     });
