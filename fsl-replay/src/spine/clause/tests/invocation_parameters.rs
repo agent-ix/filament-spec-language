@@ -281,6 +281,10 @@ fn optional_operation_parameters_admit_present_absent_and_omitted_values() {
         Some("expectedVersion")
     );
     assert_eq!(
+        record.fields.get("member").map(String::as_str),
+        Some("expectedVersion")
+    );
+    assert_eq!(
         record.fields.get("path").map(String::as_str),
         Some("/parameters/expectedVersion")
     );

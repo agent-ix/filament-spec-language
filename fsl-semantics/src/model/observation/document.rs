@@ -2786,7 +2786,9 @@ pub(super) fn check_untyped_parameters(
             if raw_field(parameters, name).is_none() {
                 return Err(refuse(
                     admission_record(Code::InvalidRuntimeInput, "missing-member")
-                        .with("field", name.to_owned()),
+                        .with("member", name.to_owned())
+                        .with("field", name.to_owned())
+                        .with("path", parameter_path(name)),
                 ));
             }
             if let Some(record) =
@@ -4934,6 +4936,7 @@ pub(super) fn admit_parameters(
             }
             return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "missing-member")
+                    .with("member", name.clone())
                     .with("field", name.clone())
                     .with("path", parameter_path(name)),
             ));
@@ -4972,6 +4975,7 @@ pub(super) fn admit_parameters(
         {
             return Err(refuse(
                 admission_record(Code::InvalidRuntimeInput, "unknown-member")
+                    .with("member", name.clone())
                     .with("field", name.clone())
                     .with("path", parameter_path(name)),
             ));
