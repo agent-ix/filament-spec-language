@@ -582,7 +582,7 @@ fn one_check_refusal(declarations: PackageDeclarations) -> fsl_semantics::check:
     refusals.remove(0)
 }
 
-/// Trace: FR-091-AC-39, TC-394
+#[trace("FR-091-AC-39", "TC-394")]
 #[test]
 fn complete_value_requires_one_admitted_division_law_but_mod_needs_none() {
     for operator in ["div", "rem"] {
@@ -598,7 +598,8 @@ fn complete_value_requires_one_admitted_division_law_but_mod_needs_none() {
                 role: LawRole::IntegerDivision
             }
         ));
-        assert_eq!(refusal.location.path(), vec![0], "{refusal:?}");
+        // The authored operator is the function body's root expression.
+        assert!(refusal.location.path().is_empty(), "{refusal:?}");
     }
     integer_operator_with_mode("mod", None, "a: Integer, b: Int[1, 9]", CheckMode::Linked);
 }
