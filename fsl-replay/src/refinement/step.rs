@@ -25,6 +25,7 @@ use fsl_eval::simulation::model::{
     operation_identity_text, AbstractApplication, Judgement, ModelFinding, ModelSimState,
     ModelSystem, Rejection, ResolvedStep, RowReading,
 };
+use fsl_eval::simulation::protocol::ProtocolRefusal;
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop};
 use fsl_semantics::check::StepClass;
 use fsl_semantics::model::state::ModelState;
@@ -362,6 +363,10 @@ fn check_step_inner(
 
 /// FR-148 PR-3: map a concrete initial state to the abstract protocol's
 /// initial roots, then close those roots over its admitted internal classes.
+///
+/// # Errors
+///
+/// The original refusal when an abstract protocol initial state fails to settle.
 pub fn check_protocol_initial(
     refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
@@ -369,7 +374,7 @@ pub fn check_protocol_initial(
     protocol: &AbstractProtocolSystem<'_>,
     index: usize,
     concrete_initial: &ModelState,
-) -> StepResult {
+) -> Result<StepResult, ProtocolRefusal> {
     let verdict = check_initial(
         refinement,
         concrete_system,
@@ -378,35 +383,36 @@ pub fn check_protocol_initial(
         concrete_initial,
     );
     let StepVerdict::Passes { post, taken } = verdict else {
-        return StepResult {
+        return Ok(StepResult {
             verdict,
             abstract_successors: 0,
-        };
+        });
     };
     let visible_key =
         match abstract_system.state_key_of(&visible_part(refinement, &post.abstract_states[0])) {
             Ok((key, _)) => key,
             Err(_) => {
-                return StepResult {
+                return Ok(StepResult {
                     verdict: fault("mapped-state-encodes"),
                     abstract_successors: 0,
-                };
+                })
             }
         };
     let mut roots = Vec::new();
     for candidate in protocol.initial() {
+        let candidate = candidate?;
         let Some(state) = protocol.model_state(&candidate) else {
-            return StepResult {
+            return Ok(StepResult {
                 verdict: fault("candidate-belongs-to-admitted-system"),
                 abstract_successors: 0,
-            };
+            });
         };
         let Ok((key, _)) = abstract_system.state_key_of(&visible_part(refinement, state.state()))
         else {
-            return StepResult {
+            return Ok(StepResult {
                 verdict: fault("initial-state-encodes"),
                 abstract_successors: 0,
-            };
+            });
         };
         if key == visible_key {
             roots.push(candidate);
@@ -415,35 +421,35 @@ pub fn check_protocol_initial(
     let (candidates, abstract_successors) = match protocol_closure(refinement, protocol, roots) {
         Ok(closure) => closure,
         Err(verdict) => {
-            return StepResult {
+            return Ok(StepResult {
                 verdict,
                 abstract_successors: 0,
-            };
+            })
         }
     };
     if candidates.is_empty() {
-        return StepResult {
+        return Ok(StepResult {
             verdict: fails(RefinementFailure::InitialNotAbstract { initial: index }),
             abstract_successors,
-        };
+        });
     }
     let mut model_states = Vec::with_capacity(candidates.len());
     for candidate in &candidates {
         let Some(state) = protocol.model_state(candidate) else {
-            return StepResult {
+            return Ok(StepResult {
                 verdict: fault("candidate-belongs-to-admitted-system"),
                 abstract_successors,
-            };
+            });
         };
         model_states.push(state.state().clone());
     }
     let mut post = post;
     post.abstract_states = model_states;
     post.abstract_protocol_states = candidates;
-    StepResult {
+    Ok(StepResult {
         verdict: passes(*post, *taken),
         abstract_successors,
-    }
+    })
 }
 
 /// FR-148: decide a concrete model edge against abstract protocol states.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-1041/FR-1042 interval bounds for fair eventual probabilities.
 
-use filament_exact::{Integer, Rational};
+use filament_exact::{Cancel, Integer, Rational};
 
 use super::{
     decide_until_threshold, maximal_fair_end_components, Dyadic, ExactProbLimits, ProbProduct,
@@ -19,6 +19,7 @@ pub fn decide_fair_reachability_threshold(
     target: &[bool],
     threshold: &Rational,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<UnboundedOutcome, UnboundedError> {
     if target.len() != product.states.len() {
         return Err(UnboundedError::InvalidState);
@@ -48,6 +49,7 @@ pub fn decide_fair_reachability_threshold(
         UnboundedObjective::Max,
         &avoidance_threshold,
         limits,
+        cancel,
     )? {
         UnboundedOutcome::Exact(mut result) => {
             for value in &mut result.values {
@@ -119,6 +121,7 @@ mod tests {
                     accumulator: None,
                     pending: None,
                     certificate_state: None,
+                    timed_history: None,
                 })
                 .collect(),
             kind: ProductKind::Mdp,
@@ -163,6 +166,7 @@ mod tests {
             &[false, true, false],
             &rational(2, 5),
             &limits,
+            &Cancel::new(),
         )
         .unwrap() else {
             panic!("the fair value should be bounded by interval iteration");

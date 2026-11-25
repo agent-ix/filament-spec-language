@@ -118,7 +118,7 @@ fn queues(system: &ProtocolSystem<'_, Sc>, state: &ProtocolState<Sc>) -> Vec<(Js
 fn state_after_send(system: &ProtocolSystem<'_, Sc>) -> ProtocolState<Sc> {
     const MAX_EXPANDED_STATES: usize = 32;
 
-    let mut pending = system.initial();
+    let mut pending = system.try_initial().expect("initial states settle");
     for _ in 0..MAX_EXPANDED_STATES {
         let state = pending
             .pop()

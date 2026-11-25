@@ -519,6 +519,39 @@ fn symmetry_admission_is_judged_before_the_search() {
     );
 }
 
+/// The symbolic-state budget is enforced before searching or deciding closure.
+#[trace("TC-1170", "FR-430-AC-3")]
+#[test]
+fn zone_symmetry_closure_respects_the_symbolic_state_budget() {
+    use fsl_analyze::zone_check::{ZoneCheckLimit, ZoneStop};
+
+    let world = timers_over(
+        false,
+        "always holds(not t.inflight)",
+        &["t1", "t2"],
+        &["t1"],
+    );
+    let outcome = claim_with(
+        &world,
+        ZoneCheckLimits {
+            max_symbolic_states: 0,
+            ..ZoneCheckLimits::default()
+        },
+        &Cancel::new(),
+        &swap(),
+    );
+    assert!(
+        matches!(
+            outcome,
+            ZoneCheckOutcome::Stopped {
+                cause: ZoneStop::LimitReached(ZoneCheckLimit::MaxSymbolicStates(0)),
+                stats,
+            } if stats.symbolic_states == 0
+        ),
+        "{outcome:?}"
+    );
+}
+
 /// FR-151 over EN-6: with three timers and the class `[[t1, t2]]`, `t3`
 /// is fixed. The deadlock item holds reduced as unreduced; in the
 /// latching variant both runs find the deadlock with equal delays, and the

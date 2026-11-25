@@ -56,9 +56,47 @@ impl ReaderProtocolProjection {
     /// Resolve runtime representations against the closed declarations. A
     /// native-authenticated reference needs no object population environment.
     pub(crate) fn has_unrepresented_types(&self, types: &TypeEnvironment) -> bool {
-        self.nodes
-            .iter()
-            .any(|node| types.runtime_type(&node.value_type).is_none())
+        self.nodes.iter().any(|node| {
+            let mut pending = vec![node.value_type.clone()];
+            if let NodeKind::Case { declaration, .. } | NodeKind::UnionValue { declaration, .. } =
+                &node.kind
+            {
+                pending.push(ValueType::Composite(declaration.clone()));
+            }
+            let mut visited = BTreeSet::new();
+            while let Some(value_type) = pending.pop() {
+                if types.runtime_type(&value_type).is_none() {
+                    return true;
+                }
+                match &value_type {
+                    ValueType::Option(payload) => pending.push((**payload).clone()),
+                    ValueType::Collection(collection) => pending.push(collection.element().clone()),
+                    ValueType::Map(map) => pending.push(map.values().clone()),
+                    ValueType::Composite(key) if visited.insert(key.clone()) => {
+                        let Some(declaration) = types.composite(key.clone()) else {
+                            return true;
+                        };
+                        match declaration.shape() {
+                            filament_semantic_value::declaration::CompositeShape::Record(fields) => {
+                                pending.extend(fields.iter().map(|field| field.value_type().clone()));
+                            }
+                            filament_semantic_value::declaration::CompositeShape::Tuple(positions) => {
+                                pending.extend(positions.iter().cloned());
+                            }
+                            filament_semantic_value::declaration::CompositeShape::Union(members) => {
+                                pending.extend(
+                                    members
+                                        .iter()
+                                    .flat_map(|member| member.positions().iter().cloned()),
+                                );
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            false
+        })
     }
 
     /// Index of the selected root node.

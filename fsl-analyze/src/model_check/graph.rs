@@ -9,12 +9,16 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use filament_semantic_value::catalog::CatalogCode;
+use fsl_eval::simulation::protocol::ProtocolRefusal;
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
-    ExpansionStop, Limit, Limits, Outcome, Permutation, Stats, SymmetryGroup, TransitionSystem,
+    EncodingRefusal, ExpansionStop, Limit, Limits, Outcome, Permutation, Stats, SymmetryGroup,
+    TransitionSystem,
 };
 use fsl_foundation::IdentityLimits;
 use quire_canonical::Encode;
+
+use super::ModelCheckRefusal;
 
 /// The successors a state is expanded through under partial-order reduction.
 pub enum Choice<T> {
@@ -173,8 +177,30 @@ type RetainResult<S> = Result<
         <S as TransitionSystem>::TransitionId,
         <S as TransitionSystem>::Finding,
     >,
-    quire_canonical::Error,
+    RetainError,
 >;
+
+/// Why a graph could not be retained.
+#[derive(Debug, thiserror::Error)]
+pub enum RetainError {
+    /// An initial state failed while it settled.
+    #[error(transparent)]
+    Initial(ProtocolRefusal),
+    /// A state or transition identity has no canonical encoding.
+    #[error(transparent)]
+    Encoding(#[from] quire_canonical::Error),
+}
+
+impl RetainError {
+    pub(super) fn model_refusal(self, identity: IdentityLimits) -> ModelCheckRefusal {
+        match self {
+            Self::Initial(error) => ModelCheckRefusal::Protocol(error),
+            Self::Encoding(error) => {
+                ModelCheckRefusal::Encoding(EncodingRefusal::of(&error, identity))
+            }
+        }
+    }
+}
 
 pub(super) struct RetainConfig {
     pub(super) limits: Limits,
@@ -200,8 +226,8 @@ fn encode(
 /// retained because it has no admitted target. Findings require a full expansion.
 ///
 /// # Errors
-/// The shared encoder's typed error when a state or transition identity has no
-/// canonical encoding, exceeds `identity.input_bytes`, or allocation fails.
+/// The original construction refusal, or the encoder's typed error when a
+/// state or transition identity cannot be encoded within `identity` limits.
 pub fn retain<S: TransitionSystem>(
     system: &S,
     limits: Limits,
@@ -308,7 +334,8 @@ where
         initial: Vec::new(),
     };
     let mut initial = Vec::new();
-    for state in system.initial() {
+    for state in system.initial_iter() {
+        let state = state.map_err(|error| RetainError::Initial(error.into()))?;
         let state = match canonical(system, group, state) {
             Ok((state, _)) => state,
             Err(cause) => {
@@ -486,9 +513,12 @@ mod worker_capacity_tests {
         type TransitionId = u8;
         type Key = u8;
         type Finding = ();
+        type InitialError = std::convert::Infallible;
 
-        fn initial(&self) -> Vec<Self::State> {
-            vec![0]
+        fn initial_iter(
+            &self,
+        ) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+            std::iter::once(Ok(0))
         }
 
         fn key(&self, state: &Self::State) -> Self::Key {

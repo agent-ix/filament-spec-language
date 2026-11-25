@@ -236,6 +236,8 @@ impl Encode for Events<'_> {
             }
         } else if self.document.timed.is_some() {
             TIMED_PROFILE
+        } else if !self.fairness.is_empty() {
+            BOUNDED_FAIR_PROFILE
         } else if self.cyclic_mdp && self.document.reward.is_some() {
             CYCLIC_MDP_REWARD_PROFILE
         } else if self.cyclic_mdp && self.document.event.is_some() {

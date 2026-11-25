@@ -2,13 +2,13 @@
 //! The EDF processor-demand test with Quick Processor-demand Analysis
 //! (ADR-026 RT-5; Baruah, Rosier and Howell; Zhang and Burns).
 
-use filament_exact::{Cancel, Rational};
+use filament_exact::Rational;
 use fsl_replay::{
     ClosedFormEvidence, ClosedFormOutcome, DemandWitness, MissEvidence, ScheduleSubject,
 };
 
 use super::arith::{ceil, floor, int, quotient};
-use super::{poll, Analysed, ScheduleLimits, Stop};
+use super::{Analysed, Pace};
 
 fn utilization(subject: &ScheduleSubject) -> Rational {
     subject.task_set().tasks().iter().fold(int(0), |sum, task| {
@@ -30,13 +30,13 @@ fn demand_bound(subject: &ScheduleSubject, t: &Rational) -> Rational {
 
 /// The synchronous busy period: the least `w` with
 /// `w = sum of ceil(w / T) * C`, which exists when utilization is at most 1.
-fn busy_period(subject: &ScheduleSubject, cancel: &Cancel) -> Analysed<Rational> {
+fn busy_period(subject: &ScheduleSubject, pace: &mut Pace<'_>) -> Analysed<Rational> {
     let tasks = subject.task_set().tasks();
     let mut window = tasks
         .iter()
         .fold(int(0), |sum, task| sum.add(task.wcet.hi()));
     loop {
-        poll(cancel)?;
+        pace.step()?;
         let next = tasks.iter().fold(int(0), |sum, task| {
             let count = ceil(&quotient(&window, task.arrival.interval()));
             sum.add(&count.mul(task.wcet.hi()))
@@ -65,14 +65,13 @@ fn deadline_below(subject: &ScheduleSubject, t: &Rational) -> Option<Rational> {
 
 pub(super) fn analyse(
     subject: &ScheduleSubject,
-    limits: &ScheduleLimits,
-    cancel: &Cancel,
+    pace: &mut Pace<'_>,
 ) -> Analysed<ClosedFormOutcome> {
     let load = utilization(subject);
     if load > int(1) {
         return Ok(ClosedFormOutcome::Miss(MissEvidence::Utilization(load)));
     }
-    let length = busy_period(subject, cancel)?;
+    let length = busy_period(subject, pace)?;
     let shortest = subject
         .task_set()
         .tasks()
@@ -82,11 +81,7 @@ pub(super) fn analyse(
     let mut sequence: Vec<Rational> = Vec::new();
     let mut next = deadline_below(subject, &length);
     while let (Some(t), Some(shortest)) = (next.take(), shortest.as_ref()) {
-        poll(cancel)?;
-        let checked = u64::try_from(sequence.len()).map_err(|_| Stop::DemandPoints)?;
-        if checked >= limits.max_demand_points {
-            return Err(Stop::DemandPoints);
-        }
+        pace.step()?;
         let demand = demand_bound(subject, &t);
         if demand > t {
             return Ok(ClosedFormOutcome::Miss(MissEvidence::Edf(DemandWitness {

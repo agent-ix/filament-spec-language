@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-198/FR-1042 interval iteration for finite expected-reward values.
 
-use filament_exact::{Integer, Rational, Value};
+use filament_exact::{Cancel, Integer, Rational, Value};
 use num_bigint::BigInt;
 use num_integer::Integer as BigInteger;
 
@@ -42,6 +42,7 @@ pub fn decide_expected_reward_threshold(
     reward: &str,
     threshold: &Rational,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<ExpectedRewardOutcome, UnboundedError> {
     if target.len() != product.states.len()
         || limits.precision_bits == 0
@@ -76,6 +77,7 @@ pub fn decide_expected_reward_threshold(
             reward,
             super::UnboundedObjective::Min,
             limits,
+            cancel,
         )?;
         return Ok(ExpectedRewardOutcome::Exact(exact));
     }
@@ -106,6 +108,7 @@ pub fn decide_expected_reward_threshold(
             reward,
             super::UnboundedObjective::Min,
             limits,
+            cancel,
         )?;
         return Ok(ExpectedRewardOutcome::Exact(exact));
     }
@@ -360,6 +363,7 @@ mod tests {
                     accumulator: None,
                     pending: None,
                     certificate_state: None,
+                    timed_history: None,
                 })
                 .collect(),
             kind: ProductKind::Dtmc,
@@ -387,6 +391,7 @@ mod tests {
             "R",
             &rational(3, 2),
             &limits,
+            &Cancel::new(),
         )
         .unwrap()
         else {

@@ -1240,20 +1240,12 @@ fn an_altered_finite_window_expectation_reports_expected_and_actual() {
 }
 
 /// Provenance: QSL-2048. An absent standard cannot become a zero-case pass.
-#[trace("FR-350-AC-20")]
+#[trace("FR-350-AC-20", "FR-760-AC-2")]
 #[test]
-fn a_missing_standard_is_an_error_before_any_case_runs() {
-    let missing = std::path::Path::new("/nonexistent/fspec-dir-for-the-self-test");
-    let error = fspec_standard::read_from(Some(missing.as_os_str()), FIXTURE)
-        .expect_err("a missing FSPEC_DIR fails");
-    assert!(
-        error.contains("FSPEC_DIR=") && error.contains("is not a directory"),
-        "{error}"
-    );
-    let empty = tempfile::tempdir().expect("a temporary directory");
-    let error = fspec_standard::read_from(Some(empty.path().as_os_str()), FIXTURE)
-        .expect_err("a directory without the fixture fails");
-    assert!(error.contains("does not hold"), "{error}");
+fn the_finite_window_fixture_resolves_from_the_pinned_standard() {
+    assert!(!fspec_standard::read(FIXTURE)
+        .expect("the pinned package publishes the finite-window fixture")
+        .is_empty());
     let error = fixtures_from(None, None)
         .err()
         .expect("no bytes is an error");

@@ -897,7 +897,8 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
 
     let mut queue = VecDeque::new();
     let mut seen = BTreeSet::new();
-    for (initial_state, state) in system.initial().into_iter().enumerate() {
+    for (initial_state, state) in system.initial_iter().enumerate() {
+        let state = state.ok()?;
         let (bytes, _) = system.state_key(&state).ok()?;
         if seen.insert((initial_state, bytes)) {
             queue.push_back(Pending {
@@ -1287,11 +1288,10 @@ fn replay_pending_finish<M: fsl_eval::simulation::protocol::MemoryModel>(
     if !matches!(counterexample.kind, CounterexampleKind::Deadlock) {
         return false;
     }
-    let Some(mut state) = system
-        .initial()
-        .into_iter()
-        .nth(counterexample.initial_state)
-    else {
+    let Ok(initial) = system.try_initial() else {
+        return false;
+    };
+    let Some(mut state) = initial.into_iter().nth(counterexample.initial_state) else {
         return false;
     };
     for step in &counterexample.prefix {
@@ -1392,7 +1392,8 @@ fn replay_protocol<M: fsl_eval::simulation::protocol::MemoryModel>(
     cancel: &Cancel,
 ) -> Result<ConformanceReplay, ConformanceReplayRefusal> {
     let mut state = system
-        .initial()
+        .try_initial()
+        .map_err(protocol_refusal)?
         .into_iter()
         .nth(counterexample.initial_state)
         .ok_or_else(|| ConformanceReplayRefusal::invalid("initial state is out of range", None))?;

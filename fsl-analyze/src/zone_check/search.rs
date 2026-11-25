@@ -57,7 +57,7 @@ use super::concretise::{concretise, Concrete, Target};
 use super::divergence::Escape;
 use super::liveness::Liveness;
 use super::{scale_constants, Bound, Dbm, DbmError};
-use crate::model_check::{admit, closure, instance_groups, ClosureRefusal};
+use crate::model_check::{admit, closure_under_limit, instance_groups, ClosureRefusal};
 use fsl_eval::automaton::{
     position_automaton, AutomatonError, PositionAutomaton, Read, Stamp, WindowClaim, WindowFault,
     WindowRefusal,
@@ -710,10 +710,28 @@ pub fn check_timed_model<S: Clone>(
     // FR-151: the declarations admit, and the initial states are closed
     // under their group.
     let group = admit(system, &reductions.symmetry).map_err(ZoneCheckRefusal::Symmetry)?;
-    let closed = closure(system, &group).map_err(|refusal| match refusal {
-        ClosureRefusal::Encoding(_) => ZoneCheckRefusal::Fault("state-key"),
-        ClosureRefusal::Unordered => ZoneCheckRefusal::Fault("symmetry-closure"),
-    })?;
+    let max_states = request.limits.max_symbolic_states;
+    let closed = match closure_under_limit(
+        system,
+        &group,
+        usize::try_from(max_states).unwrap_or(usize::MAX),
+    ) {
+        Ok(closed) => closed,
+        Err(ClosureRefusal::OverBudget) => {
+            return Ok(ZoneCheckOutcome::Stopped {
+                cause: ZoneStop::LimitReached(ZoneCheckLimit::MaxSymbolicStates(max_states)),
+                stats: ZoneStats::default(),
+            });
+        }
+        Err(ClosureRefusal::Encoding(_)) => return Err(ZoneCheckRefusal::Fault("state-key")),
+        Err(
+            ClosureRefusal::Unordered
+            | ClosureRefusal::Stopped(_)
+            | ClosureRefusal::Initial(_),
+        ) => {
+            return Err(ZoneCheckRefusal::Fault("symmetry-closure"));
+        }
+    };
     if let Some(ReductionCause::SymmetryBroken { population, cause }) = closed {
         return Ok(reduced(ZoneReduction::SymmetryBroken { population, cause }));
     }

@@ -258,13 +258,12 @@ fn a_state_graph_replay_allocation_stops_before_the_next_real_instance() {
     );
 }
 
-/// FR-050-AC-6: state-graph identity read-back emits the whole package, so a
+/// State-graph identity read-back emits the whole package, so a
 /// configured temporal clause in the same package requires the fixture's
 /// independently selected typed clock row.
-#[trace("FR-050-AC-6")]
 #[test]
 fn state_graph_identity_readback_uses_the_explicit_temporal_selection() {
-    let world = crate::graph_world::temporal_config_world();
+    let world = crate::graph_world::temporal_config_world_ordered();
     let claim = world.claim("ReachesTwo");
     let mut selections = crate::fill::tcb_01_event_position_selection(&world.package);
     let hyper = &world.package.graph().hyper_clauses()[0];

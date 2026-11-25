@@ -135,7 +135,7 @@ pub enum ReplayError<T: std::fmt::Debug> {
 /// # Errors
 ///
 /// The first [`ReplayError`] reached, in step order.
-pub fn replay<S: TransitionSystem>(
+pub fn replay<S: TransitionSystem<InitialError = std::convert::Infallible>>(
     system: &S,
     trace: &Trace<S::TransitionId, S::Finding>,
     identity: IdentityLimits,

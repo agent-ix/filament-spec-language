@@ -29,6 +29,37 @@ use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
 use serde_json::{Value as Json, json};
 
+/// Cancel a request at its first dense elimination poll, after row conversion.
+pub(crate) fn assert_dense_elimination_cancelled(request: ProductRequest<'_>) {
+    use filament_exact::{Cancel, CancelCause};
+    use fsl_analyze::analyze::settle_exact_engine_report;
+    use fsl_analyze::exact_probabilistic::polling_dense_elimination;
+    use fsl_replay::{IncompleteCause, TerminalValue};
+    use std::sync::{Arc, OnceLock};
+
+    let slot = Arc::new(OnceLock::<Cancel>::new());
+    let observer = Arc::downgrade(&slot);
+    let cancel = Cancel::observing(move || {
+        if polling_dense_elimination() {
+            if let Some(handle) = observer.upgrade().and_then(|slot| slot.get().cloned()) {
+                handle.cancel(CancelCause::Requested);
+            }
+        }
+    });
+    slot.set(cancel.clone()).expect("the handle is set once");
+    let record = settle_exact_engine_report(request, &cancel);
+    let terminal = record
+        .terminal()
+        .unwrap_or_else(|| panic!("cancellation must settle: {:?}", record.settlement));
+    assert_eq!(cancel.tripped(), Some(CancelCause::Requested));
+    assert_eq!(
+        terminal.value(),
+        &TerminalValue::Incomplete(IncompleteCause::Cancelled {
+            source: CancelCause::Requested,
+        })
+    );
+}
+
 /// The native Boolean type reference.
 pub(crate) const BOOLEAN: &str = "ix://filament/native/Boolean";
 

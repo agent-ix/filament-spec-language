@@ -431,7 +431,10 @@ fn scheduling_adversarial_admits_the_lasso_that_starves_a_branch() {
     let subject = adversarial.subject();
     let system = concrete_sc_system(&subject);
     let s = ThreadPath::root(0).child("Both", "s", 0);
-    let mut state = system.initial().remove(0);
+    let mut state = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let mut loop_states = Vec::new();
     for (index, step) in counterexample.prefix.iter().enumerate() {
         if index >= lasso.entry {

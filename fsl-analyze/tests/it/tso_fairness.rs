@@ -357,7 +357,7 @@ type Reach<M> = (ProtocolState<M>, Vec<(ProtocolTransition, usize)>);
 fn reached<M: MemoryModel>(system: &ProtocolSystem<'_, M>) -> Vec<Reach<M>> {
     let mut known: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
     let mut states: Vec<Reach<M>> = Vec::new();
-    for state in system.initial() {
+    for state in system.try_initial().expect("initial states settle") {
         let key = system.state_key(&state).expect("a key").0;
         known.insert(key, states.len());
         states.push((state, Vec::new()));

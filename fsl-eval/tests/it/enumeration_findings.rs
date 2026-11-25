@@ -37,8 +37,10 @@ impl TransitionSystem for Chain {
     type Key = u64;
     type Finding = String;
 
-    fn initial(&self) -> Vec<u64> {
-        vec![0]
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        std::iter::once(Ok(0))
     }
 
     fn key(&self, state: &u64) -> u64 {

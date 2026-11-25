@@ -669,7 +669,13 @@ fn check_system<S: SubjectSystem>(
     if proof.components.is_none() && instances.iter().any(liveness) {
         return Err(ClosureRefusal::LivenessNeedsComponents);
     }
-    if system.initial().is_empty() {
+    if system
+        .initial_iter()
+        .next()
+        .transpose()
+        .map_err(|error| ClosureRefusal::Protocol(error.into()))?
+        .is_none()
+    {
         return Err(ClosureRefusal::NoInitialState);
     }
 
@@ -953,7 +959,8 @@ impl<S: SubjectSystem> Check<'_, S> {
     fn run(&mut self, instances: &mut [Instance]) -> Step<()> {
         self.poll()?;
         let mut initial = Vec::new();
-        for (index, state) in self.system.initial().into_iter().enumerate() {
+        for (index, state) in self.system.initial_iter().enumerate() {
+            let state = state.map_err(|error| ClosureRefusal::Protocol(error.into()))?;
             let (key, _) = self.system.state_key(&state)?;
             let state_key = StateKey::from_canonical_bytes(key.clone());
             initial.push((key, index, state_key, state));

@@ -635,7 +635,10 @@ fn the_model_checker_counts_steps_over_the_repaired_fill() {
     };
     let subject = refuted.subject("Fill");
     let system = sc_system(&subject);
-    let mut state = system.initial().remove(0);
+    let mut state = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let (mut distance, mut values) = (0, vec![(0, v(&system.atom_state(&state), "c"))]);
     for step in &counterexample.prefix {
         let next = system
@@ -1371,7 +1374,7 @@ fn walked_before_violation(
             queue.push_back((state, next));
         }
     };
-    for initial in system.initial() {
+    for initial in system.try_initial().expect("initial states settle") {
         reach(&mut monitor, initial, start, true, &mut queue);
     }
     while let Some((state, at)) = queue.pop_front() {
@@ -1398,7 +1401,7 @@ fn reachable_keys(
     system: &ProtocolSystem<'_, Sc>,
 ) -> std::collections::BTreeSet<fsl_eval::simulation::StateKey> {
     let mut seen = std::collections::BTreeSet::new();
-    let mut frontier = system.initial();
+    let mut frontier = system.try_initial().expect("initial states settle");
     while let Some(state) = frontier.pop() {
         let (key, _) = system.state_key(&state).expect("encodes");
         if !seen.insert(fsl_eval::simulation::StateKey::from_canonical_bytes(key)) {
@@ -1518,7 +1521,10 @@ fn a_past_tp3_clause_over_the_repaired_fill_keys_distance_history() {
 
     let subject = case.subject("Fill");
     let system = sc_system(&subject).with_cycle_keys(std::collections::BTreeSet::new());
-    let origin = system.initial().remove(0);
+    let origin = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let forked = after(&system, &origin, StepKind::Fork);
     let at_origin = entries_at(certificate, &system, &origin);
     let at_fork = entries_at(certificate, &system, &forked);
@@ -1601,7 +1607,10 @@ fn a_future_tp3_clause_over_the_repaired_fill_keeps_the_older_deadline() {
     );
     let subject = case.subject("Fill");
     let system = sc_system(&subject).with_cycle_keys(std::collections::BTreeSet::new());
-    let origin = system.initial().remove(0);
+    let origin = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let forked = after(&system, &origin, StepKind::Fork);
     let at_origin = entries_at(certificate, &system, &origin);
     let at_fork = entries_at(certificate, &system, &forked);

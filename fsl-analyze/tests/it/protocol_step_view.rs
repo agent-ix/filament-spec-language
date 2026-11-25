@@ -127,7 +127,10 @@ fn the_view_labels_every_step_of_the_fsl_eval_system() {
         .expect("a fork step");
     assert_eq!(fork.record, None);
     assert!(fork.node.is_some());
-    let initial = system.initial();
+    let initial = system
+        .initial()
+        .collect::<Result<Vec<_>, _>>()
+        .expect("initial states settle");
     let expected: Vec<_> = system
         .successors(&initial[0])
         .expect("the initial state expands")

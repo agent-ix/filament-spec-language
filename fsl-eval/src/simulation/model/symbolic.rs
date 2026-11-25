@@ -195,7 +195,7 @@ impl<'a> ModelSystem<'a> {
         let package: &'a CheckedPackage = self
             .source_package()
             .ok_or_else(|| fault("smt-encoding-reads-source-forms"))?;
-        let first = self.initial.first().ok_or(Refusal::NoInitialState)?;
+        let first = self.initial_base.first().ok_or(Refusal::NoInitialState)?;
         let mut rows: Vec<(DeclarationKey, String, DeclarationKey)> = Vec::new();
         for (population, objects) in &first.state.populations {
             for (key, object) in objects {
@@ -218,7 +218,7 @@ impl<'a> ModelSystem<'a> {
                 }
             }
         }
-        for state in &self.initial {
+        for state in self.initial_states() {
             let mismatch = rows
                 .iter()
                 .find(|(population, key, type_key)| {
@@ -319,7 +319,7 @@ impl<'a> ModelSystem<'a> {
         }
 
         let initial = self
-            .initial
+            .initial_states()
             .iter()
             .map(|state| {
                 objects

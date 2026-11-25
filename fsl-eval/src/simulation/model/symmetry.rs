@@ -182,7 +182,7 @@ impl ModelSystem<'_> {
 
     /// The universes the objects of `population` are referenced in: one per
     /// declared member type.
-    fn universes_of(&self, population: &DeclarationKey) -> Vec<UniverseId> {
+    pub(super) fn universes_of(&self, population: &DeclarationKey) -> Vec<UniverseId> {
         let mut universes = Vec::new();
         let Some(declared) = self
             .populations
@@ -226,12 +226,21 @@ impl ModelSystem<'_> {
         state: &ModelSimState,
         permutation: &Permutation,
     ) -> Result<ModelSimState, ExpansionStop> {
+        Ok(state.without_effect(self.permute_state(&state.state, permutation)?))
+    }
+
+    /// The state-only projection of [`Self::permute`], for initial recipes
+    /// whose key is decided before a `ModelSimState` is materialized.
+    pub(super) fn permute_state(
+        &self,
+        state: &ModelState,
+        permutation: &Permutation,
+    ) -> Result<ModelState, ExpansionStop> {
         if permutation.is_identity() {
-            return Ok(state.without_effect(state.state.clone()));
+            return Ok(state.clone());
         }
         let renaming = self.renaming(permutation);
         let populations = state
-            .state
             .populations
             .iter()
             .map(|(population, objects)| {
@@ -248,7 +257,6 @@ impl ModelSystem<'_> {
             })
             .collect::<Result<_, ExpansionStop>>()?;
         let extents = state
-            .state
             .extents
             .iter()
             .map(|extent| {
@@ -264,10 +272,10 @@ impl ModelSystem<'_> {
                 extent
             })
             .collect();
-        Ok(state.without_effect(ModelState {
+        Ok(ModelState {
             populations,
             extents,
-        }))
+        })
     }
 
     /// ADR-021 SYM-1: `permutation` applied to `transition`: its receiver
@@ -411,7 +419,11 @@ impl ModelSystem<'_> {
 mod tests {
     use filament_checked::key::DeclarationKey;
     use filament_exact::{Integer, Value};
+    use filament_semantic_value::relationship_extent::{
+        RelationshipExtent, RelationshipInstance,
+    };
     use ix_trace_rs::trace;
+    use quire_canonical::Limits;
     use serde_json::json;
 
     use crate::simulation::model::{ModelSimState, ModelSystem};
@@ -561,5 +573,69 @@ mod tests {
                 "canonicalising permutation {images:?} twice preserves its key",
             );
         }
+    }
+
+    /// Initial recipe projection applies symmetry renames to relationship
+    /// extent endpoints just as it does to object and field references.
+    #[trace("TC-569", "FR-152-AC-2")]
+    #[test]
+    fn initial_projection_renames_relationship_extent_endpoints() {
+        let (world, group) = fixture();
+        let system = world.system();
+        let mut state = system.initial().into_iter().next().expect("initial state");
+        let class = &group.classes[0];
+        let object = state
+            .state
+            .populations
+            .get(&class.population)
+            .and_then(|objects| objects.get("a"))
+            .expect("initial class object exists");
+        let relationship = DeclarationKey {
+            package: "test/symmetry".to_owned(),
+            node: "ix://test/symmetry/links".to_owned(),
+        };
+        state.state.extents.push(RelationshipExtent {
+            relationship,
+            complete: true,
+            instances: vec![RelationshipInstance {
+                source: system
+                    .model
+                    .object_reference(&object.type_identity, "a")
+                    .expect("source reference resolves"),
+                target: system
+                    .model
+                    .object_reference(&object.type_identity, "b")
+                    .expect("target reference resolves"),
+                positions: Default::default(),
+            }],
+        });
+
+        let permutation = Permutation::of(
+            &class.population,
+            [("a".to_owned(), "b".to_owned()), ("b".to_owned(), "a".to_owned())],
+        );
+        let universes = system.universes_of(&class.population);
+        let renaming = permutation
+            .maps()
+            .iter()
+            .map(|(_, mapping)| (universes.clone(), mapping.clone()))
+            .collect();
+        let projected = super::super::encode::initial_model_key(
+            &system.model,
+            &state.state,
+            system.typing(),
+            &Default::default(),
+            &renaming,
+        );
+        let permuted = system
+            .permute_state(&state.state, &permutation)
+            .expect("permutation applies");
+        let expected = super::super::encode::model_key(&system.model, &permuted, system.typing());
+
+        let limits = Limits::new(u64::MAX);
+        assert_eq!(
+            quire_canonical::to_vec(&projected.0, limits).expect("projected key encodes"),
+            quire_canonical::to_vec(&expected.0, limits).expect("permuted key encodes"),
+        );
     }
 }

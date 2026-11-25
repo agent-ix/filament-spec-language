@@ -209,7 +209,7 @@ fn has_reachable_non_atomic_access<M: MemoryModel>(
     memory: M,
 ) -> bool {
     let system = case.concrete_system(selection, memory).expect("protocol system");
-    let mut queue: VecDeque<_> = system.initial().into();
+    let mut queue: VecDeque<_> = system.try_initial().expect("initial states settle").into();
     let mut seen = BTreeSet::new();
     while let Some(state) = queue.pop_front() {
         let (key, _) = system.state_key(&state).expect("state key");
@@ -410,7 +410,10 @@ fn forged_race_under<M: MemoryModel>(
     later: u64,
 ) -> TemporalCounterexample<ProtocolTransition> {
     let system = case.concrete_system(selection, memory).expect("builds");
-    let mut state = system.initial().remove(0);
+    let mut state = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let mut prefix = Vec::new();
     for hop in path {
         let (transition, next) = system
@@ -1057,8 +1060,13 @@ fn a_forged_race_settles_inconclusive_under_tso() {
 /// Walk `case`'s `tso` system along `path` and return the JSON of the state
 /// key after each hop.
 fn tso_keys_after(case: &Case, path: &[Hop]) -> Vec<Json> {
-    let system = case.concrete_system(&tso(), Tso::default()).expect("builds");
-    let mut state = system.initial().remove(0);
+    let system = case
+        .concrete_system(&tso(), Tso::default())
+        .expect("builds");
+    let mut state = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let mut keys = Vec::new();
     for hop in path {
         let (_, next) = system

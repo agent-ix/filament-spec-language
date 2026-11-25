@@ -2644,7 +2644,9 @@ fn replay_prefix_stopped_with_mismatch_explanation<S: SubjectSystem>(
     if payload.final_delay.is_some() {
         return Err(refused(ModelTraceRefusal::UntimedDelay { step: None }));
     }
-    let initial = system.initial();
+    let initial = system
+        .try_initial()
+        .map_err(|error| refused(ModelTraceRefusal::Protocol(error.into())))?;
     let count = initial.len();
     let state = initial
         .into_iter()
