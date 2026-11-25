@@ -845,7 +845,7 @@ fn with_package_version(document: Vec<u8>, version: &str) -> Vec<u8> {
 
 /// FR-136 and FSpec FR-375-AC-22: source provenance covers every authored
 /// step row, including `any`, before any proof eligibility filtering.
-#[trace("FR-375-AC-22")]
+#[trace("FSpec-FR-375-AC-22")]
 #[test]
 fn checked_step_sources_keep_source_order_and_exact_rows_including_any() {
     let base = cas_refines_counter();

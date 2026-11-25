@@ -1324,7 +1324,7 @@ fn every_emitted_node_family_is_admitted() {
 /// Two refinements of different names with one subject, profile and body
 /// are two nodes, because a refinement's name is part of its identity (the
 /// planner's ruling on STD-493): both emit, under distinct node ids.
-#[trace("FR-375", "TC-310")]
+#[trace("FSpec-FR-375", "FSpec-TC-310")]
 #[test]
 fn two_refinements_of_one_meaning_are_two_distinct_nodes() {
     let abstract_document = state_machine_document("example/refinement-abstract");
@@ -1351,7 +1351,7 @@ fn two_refinements_of_one_meaning_are_two_distinct_nodes() {
 /// Two refinements of different meanings are two nodes and both emit: `R`
 /// refines `A` by `C` and `R2` refines `C` by `A`, so their subjects differ
 /// and both emit.
-#[trace("FR-375", "TC-310")]
+#[trace("FSpec-FR-375", "FSpec-TC-310")]
 #[test]
 fn two_refinements_of_different_meanings_both_emit() {
     let abstract_document = state_machine_document("example/refinement-abstract");
@@ -1392,8 +1392,8 @@ fn row_empty_refinement() -> (String, Vec<Vec<u8>>) {
 /// The declaration occurrence is provenance rather than refinement identity:
 /// moving the authored declaration changes its source-map region while the
 /// refinement node and package identities stay fixed.
-#[trace("FR-375", "QSL-1102")]
-#[trace("FR-375-AC-20")]
+#[trace("FSpec-FR-375", "QSL-1102")]
+#[trace("FSpec-FR-375-AC-20")]
 #[test]
 fn a_row_empty_refinement_identity_excludes_its_source_region() {
     let (unit, documents) = row_empty_refinement();
@@ -1535,7 +1535,7 @@ fn refinement_node(emission: &Emission) -> Value {
 /// abstract model's operation classes, each in UTF-8 byte order; every
 /// class node and binder type is a local node of the package and a
 /// dependency of the refinement.
-#[trace("FR-375-AC-23", "TC-310")]
+#[trace("FSpec-FR-375-AC-23", "FSpec-TC-310")]
 #[test]
 fn a_concrete_protocol_gives_a_model_refinement_its_class_catalog() {
     let (unit, documents) = catalog_refinement();
@@ -1622,7 +1622,7 @@ fn a_concrete_protocol_gives_a_model_refinement_its_class_catalog() {
 /// FSpec FR-375-AC-27: an `on each` clause over the concrete model writes
 /// `activate <P>` naming the clause node, with the trigger's binder record
 /// (one field for a Boolean trigger).
-#[trace("FR-375-AC-27", "TC-310")]
+#[trace("FSpec-FR-375-AC-27", "FSpec-TC-310")]
 #[test]
 fn an_each_clause_writes_its_activate_class() {
     let (unit, documents) = catalog_refinement();
@@ -1662,7 +1662,7 @@ fn an_each_clause_writes_its_activate_class() {
 /// FSpec FR-375-AC-23: a clause whose `owner_model` is a model of a third
 /// selected declaration is foreign to the refinement: it contributes no
 /// class, so the row-empty model refinement has no catalog.
-#[trace("FR-375-AC-23", "TC-310")]
+#[trace("FSpec-FR-375-AC-23", "FSpec-TC-310")]
 #[test]
 fn a_clause_over_a_third_model_contributes_no_class() {
     let (unit, mut documents) = catalog_refinement();
@@ -2608,7 +2608,7 @@ fn the_internal_list_order_does_not_change_the_refinement_node() {
 /// a local dependency. Its catalog lists the clause's classes on the
 /// abstract side. The model subject over the same models writes no
 /// `protocol` member.
-#[trace("FR-375-AC-11", "FR-375-AC-25", "FR-375-AC-23", "TC-310")]
+#[trace("FSpec-FR-375-AC-11", "FSpec-FR-375-AC-25", "FSpec-FR-375-AC-23", "FSpec-TC-310")]
 #[test]
 fn a_row_empty_protocol_subject_names_its_clause() {
     let (unit, documents) = protocol_subject();
@@ -2667,7 +2667,7 @@ fn a_row_empty_protocol_subject_names_its_clause() {
 }
 
 /// FSpec FR-375: the protocol subject reads back through IR.
-#[trace("FR-375-AC-11", "TC-310")]
+#[trace("FSpec-FR-375-AC-11", "FSpec-TC-310")]
 #[test]
 fn a_row_empty_protocol_subject_reads_back() {
     let (unit, documents) = protocol_subject();
@@ -2688,7 +2688,7 @@ fn a_row_empty_protocol_subject_reads_back() {
 /// the concrete model whose `run` holds a `parallel` writes its `fork` and
 /// `join` classes, both naming the `parallel` control, and the `memory
 /// drain` entry of its source-default model (`sc` when none is written).
-#[trace("FR-375-AC-23", "FR-375-AC-26", "TC-310")]
+#[trace("FSpec-FR-375-AC-23", "FSpec-FR-375-AC-26", "FSpec-TC-310")]
 #[test]
 fn a_parallel_clause_writes_fork_join_and_drain_classes() {
     let (unit, documents) = catalog_refinement();
@@ -2731,7 +2731,7 @@ fn a_parallel_clause_writes_fork_join_and_drain_classes() {
 }
 
 /// FSpec FR-375: the emitted catalog reads back through IR.
-#[trace("FR-375-AC-23", "TC-310")]
+#[trace("FSpec-FR-375-AC-23", "FSpec-TC-310")]
 #[test]
 fn a_model_refinement_class_catalog_reads_back() {
     let (unit, documents) = catalog_refinement();
@@ -3315,7 +3315,7 @@ fn span_of(text: &str, needle: &str) -> (u64, u64) {
 /// the package. A model with no operation needs no step row, and with
 /// every abstract field mapped the owner is proof-eligible: one `generated`
 /// occurrence, at its declaration.
-#[trace("FR-375-AC-21", "FR-375-AC-24", "FR-322-AC-88", "TC-310")]
+#[trace("FSpec-FR-375-AC-21", "FSpec-FR-375-AC-24", "FSpec-FR-322-AC-88", "FSpec-TC-310")]
 #[test]
 fn population_and_object_rows_read_back() {
     let (emitted, _) = emit_rows(MAPS, &[]);
@@ -3355,12 +3355,12 @@ fn population_and_object_rows_read_back() {
 /// occurrence per row (ordinal `i + 1` at row `i`'s region) beside the one
 /// at its declaration, whichever order the rows are written in.
 #[trace(
-    "FR-375-AC-22",
-    "FR-322-AC-88",
-    "FR-322-AC-128",
+    "FSpec-FR-375-AC-22",
+    "FSpec-FR-322-AC-88",
+    "FSpec-FR-322-AC-128",
     "FR-136-AC-13",
-    "TC-310",
-    "TC-233"
+    "FSpec-TC-310",
+    "FSpec-TC-233"
 )]
 #[test]
 fn step_rows_carry_their_source_regions_by_ordinal() {
@@ -3523,7 +3523,7 @@ fn seq_rows_are_emitted_and_read_back() {
 /// `filament.op.collection.seq [ref(lo), ref(hi), binding i]`, never through
 /// `map`, and every `integer_range` node's body is exactly its two integer
 /// literals, so its identity is `[.., min, {operand: Integer}, <lo>, max, <hi>]`.
-#[trace("FR-375-AC-21", "TC-310")]
+#[trace("FSpec-FR-375-AC-21", "FSpec-TC-310")]
 #[test]
 fn a_seq_row_lowers_over_its_bounds_with_literal_integer_ranges() {
     let rows = "population A::config_history from C::config_history;\n\
@@ -3602,7 +3602,7 @@ fn a_seq_row_with_a_foreign_identity_or_range_body_is_refused() {
 /// Boolean parameter `flag`, a step row binds `self` at level 0 and `flag`
 /// at level 1, each a `parameter` node, whether the row passes `flag`,
 /// `not flag` or leaves it open (`_`).
-#[trace("FR-375-AC-22", "TC-310")]
+#[trace("FSpec-FR-375-AC-22", "FSpec-TC-310")]
 #[test]
 fn a_row_parameter_above_self_binds_at_level_one() {
     for arguments in ["(self, flag)", "(self, not flag)", "(self, _)"] {
@@ -3652,7 +3652,7 @@ fn a_row_parameter_above_self_binds_at_level_one() {
 /// FSpec FR-322-AC-129: an owner that is not proof-eligible (an `any`
 /// step) still carries every step row's region, and no `generated`
 /// occurrence.
-#[trace("FR-322-AC-129", "TC-233", "TC-310")]
+#[trace("FSpec-FR-322-AC-129", "FSpec-TC-233", "FSpec-TC-310")]
 #[test]
 fn an_ineligible_owner_has_step_rows_and_no_generated_occurrence() {
     let row = "step C::ConfigVersion::attemptUpdate -> any;";
@@ -3673,7 +3673,7 @@ fn an_ineligible_owner_has_step_rows_and_no_generated_occurrence() {
 /// `operation_anchor` with the written kind and granularity, and an
 /// operation's step row names that anchor as its `source_node` (no class
 /// catalog), and an abstract target's operation its own anchor.
-#[trace("FR-375-AC-21", "TC-310")]
+#[trace("FSpec-FR-375-AC-21", "FSpec-TC-310")]
 #[test]
 fn fairness_and_operation_rows_name_operation_anchors() {
     let (emitted, _) = emit_rows(
@@ -3768,7 +3768,7 @@ pub(super) const PROTOCOL_ROWS: [&str; 3] = [
 ];
 
 /// A protocol subject's step rows read back through IR's catalog rebuild.
-#[trace("FR-375-AC-19", "TC-310")]
+#[trace("FSpec-FR-375-AC-19", "FSpec-TC-310")]
 #[test]
 fn protocol_step_rows_read_back() {
     let (unit, documents) = protocol_rows(&PROTOCOL_ROWS);
@@ -3784,7 +3784,7 @@ fn protocol_step_rows_read_back() {
 
 /// FSpec FR-375-AC-19 (the declaration-naming rows): a protocol subject
 /// writes one `steps` entry per row, each naming its class catalog node.
-#[trace("FR-375-AC-19", "TC-310")]
+#[trace("FSpec-FR-375-AC-19", "FSpec-TC-310")]
 #[test]
 fn protocol_step_rows_name_their_class_catalog_node() {
     let (unit, documents) = protocol_rows(&PROTOCOL_ROWS);
@@ -3835,7 +3835,7 @@ fn memory_emission(run: &str, rows: &[&str]) -> Emitted {
 /// FSpec FR-375-AC-19 (the memory rows, QSL-1181): the `memory drain` and
 /// `memory flush` rows name no declaration, so they carry no
 /// `source_node`; every other row carries one.
-#[trace("FR-375-AC-19", "TC-310")]
+#[trace("FSpec-FR-375-AC-19", "FSpec-TC-310")]
 #[test]
 fn memory_rows_carry_no_source_node() {
     let emitted = memory_emission(MEMORY_RUN, &MEMORY_ROWS);
@@ -3861,7 +3861,7 @@ fn memory_rows_carry_no_source_node() {
 /// `memory drain` once per model in the order `ra`, `sc`, `tso`, each with
 /// `drain: store-buffer-flush` and no `node` or `binder_types`, then
 /// `memory flush` once for `tso`.
-#[trace("FR-375-AC-23", "FR-375-AC-26", "TC-310")]
+#[trace("FSpec-FR-375-AC-23", "FSpec-FR-375-AC-26", "FSpec-TC-310")]
 #[test]
 fn memory_catalog_entries_are_one_drain_per_model_then_flush() {
     let parallel = |name: &str, memory: &str| {
@@ -3909,7 +3909,7 @@ fn memory_catalog_entries_are_one_drain_per_model_then_flush() {
 }
 
 /// The memory rows and catalog entries read back through IR's catalog rebuild.
-#[trace("FR-375-AC-19", "FR-375-AC-26", "TC-310")]
+#[trace("FSpec-FR-375-AC-19", "FSpec-FR-375-AC-26", "FSpec-TC-310")]
 #[test]
 fn memory_rows_read_back() {
     let emitted = memory_emission(MEMORY_RUN, &MEMORY_ROWS);
@@ -3951,7 +3951,7 @@ fn refinement_verdict(emitted: &Emitted, envelope: &Value, _position: usize) -> 
 /// wrong-kind object-row type key and a wrong-kind `semantic_type` refuse
 /// `invalid_model_binding`/`malformed-declaration` at that member, and an
 /// absent local `abstract` key refuses `missing_declaration`/`missing-name`.
-#[trace("FR-375-AC-21", "TC-310")]
+#[trace("FSpec-FR-375-AC-21", "FSpec-TC-310")]
 #[test]
 fn a_refinement_row_or_header_key_of_the_wrong_kind_or_absent_refuses_at_its_member() {
     let (emitted, _) = emit_rows(MAPS, &[]);
@@ -4054,7 +4054,7 @@ fn a_refinement_row_or_header_key_of_the_wrong_kind_or_absent_refuses_at_its_mem
 /// FSpec FR-375-AC-21's ordering half: with every identity recomputed, an
 /// object row whose two fields are written out of name order refuses
 /// `invalid_semantic_graph` at the first offending entry.
-#[trace("FR-375-AC-21", "TC-310")]
+#[trace("FSpec-FR-375-AC-21", "FSpec-TC-310")]
 #[test]
 fn an_out_of_order_row_refuses_at_its_first_offending_entry() {
     let (unit, documents) = rows_refinement_with(

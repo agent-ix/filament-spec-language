@@ -431,10 +431,10 @@ fn an_invalid_protocol_temporal_requirement_refuses_during_s3() {
     }
 }
 
-/// FR-147-AC-16 (TC-552): a local protocol whose role acts on the concrete
+/// TC-552: a local protocol whose role acts on the concrete
 /// model cannot be selected as the abstract subject of a refinement over
 /// the other model.
-#[trace("TC-552", "FR-147-AC-16")]
+#[trace("TC-552")]
 #[test]
 fn a_protocol_over_the_concrete_model_is_not_an_abstract_subject() {
     let protocol = twice("Spec")
@@ -1217,7 +1217,7 @@ fn the_catalog_carries_every_class_of_a_compensation_template() {
 /// The class catalog is derived from the checked subjects, includes classes
 /// with no authored row, and retains their node, binder and source-memory
 /// facts in canonical alias-free order.
-#[trace("FR-375-AC-23", "TC-310")]
+#[trace("FSpec-FR-375-AC-23", "FSpec-TC-310")]
 #[test]
 fn class_catalog_is_complete_and_independent_of_refinement_rows() {
     let graph = checked(
@@ -1828,7 +1828,7 @@ fn memory_graph(models: &[&str]) -> CheckedGraph {
 /// STD-494 / FR-375-AC-23: each source-default model defines `memory drain`
 /// (`store-buffer-flush`, a no-op under `sc`) and only `tso` defines
 /// `memory flush`, which carries no drain. TC-310 CC-12.
-#[trace("TC-310", "FR-375-AC-23")]
+#[trace("FSpec-TC-310", "FSpec-FR-375-AC-23")]
 #[test]
 fn each_source_default_model_defines_a_drain_class() {
     // The abstract `Full` already selects `tso`, so its catalog is the same
@@ -1846,7 +1846,7 @@ fn each_source_default_model_defines_a_drain_class() {
 /// FR-375-AC-26 / TC-310 CC-12, CC-15: the three drains are ordered `ra`,
 /// `sc`, `tso`, then `memory flush` for `tso`, in any source order, and two
 /// controls selecting `tso` yield one drain and one flush.
-#[trace("TC-310", "FR-375-AC-26")]
+#[trace("FSpec-TC-310", "FSpec-FR-375-AC-26")]
 #[test]
 fn drains_are_keyed_by_model_ordered_and_unique() {
     let canonical = vec![

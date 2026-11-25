@@ -8454,15 +8454,14 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
                     walk.push(PathSegment::Node(declaration.clone()));
                     walk.text(&alias.node);
                 }
-                // FSpec FR-322: a projection's member operands are its
-                // declaring node and its field name, so reads of two fields
-                // are two nodes.
+                // FSpec FR-322: a field member's operands are its declaring
+                // node and its field name, so two fields are two nodes.
                 Some(Member::Field {
                     declaration,
                     name,
                     explicit_deref,
-                    ..
-                }) if operation.identity() == "filament.op.record.project" => {
+                    population,
+                }) => {
                     walk.push(PathSegment::Node(declaration.clone()));
                     walk.text(name.as_str());
                     // FR-322 read_form is a checked semantic distinction,
@@ -8470,6 +8469,11 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
                     // bare and explicit source forms under one node key.
                     if let Some(explicit_deref) = explicit_deref {
                         walk.text(if *explicit_deref { "true" } else { "false" });
+                    }
+                    // FSpec FR-322 "Population link of a `reaches`": the
+                    // population is part of the path when present.
+                    if let Some(population) = population {
+                        walk.push(PathSegment::Node(population.clone()));
                     }
                 }
                 _ => {}
