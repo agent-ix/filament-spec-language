@@ -2736,31 +2736,35 @@ fn n06_wide_ancestry_with_a_single_uncontested_redefiner_completes() {
 
 /// The `edges.len() < 2` guard above only ever fixed the *uncontested*
 /// wide-ancestry case. `Owner` (`O`) still declares `n_parents` direct
-/// generalizations, one of them to `Base` (`G000`), but now `G000` itself
-/// also declares a second field, `G000.w`, that redefines `G000.x` — a
-/// genuine two-redefiner contest (`c = 2`: `O.z` and `G000.w`) whose
+/// generalizations, including `Base` (`G000`) and `G001`; `G001` itself
+/// generalizes `G000` and declares `G001.w` redefining `G000.x` — a valid
+/// two-redefiner contest (`c = 2`: `O.z` and `G001.w`) whose
 /// dominance resolution, before this fix, still built `G000`'s own
 /// [`crate::model::conformance::ancestor_closure`] and exceeded
 /// `MAX_CONFORMANCE_DEPTH` on `O`'s breadth alone, exactly as the
-/// uncontested case did. `O` is a proper descendant of `G000` (one of its
-/// `n_parents` direct generalizations), so `O` dominates `G000` and `O.z`
-/// wins outright.
+/// uncontested case did. `O` is a proper descendant of both redefining
+/// owners, so `O` dominates `G001` and `O.z` wins outright.
 fn fixture_wide_ancestry_contested_redefiners(n_parents: usize) -> DomainPackage {
     let mut records = vec![
         object_type("model.G000", vec![]),
         field_member("model.G000.x", "model.G000", "model.G000"),
-        field_member_redefining(
-            "model.G000.w",
-            "model.G000",
-            "model.G000",
-            Some("model.G000.x"),
-            vec![],
-        ),
     ];
     let parent_ids: Vec<String> = (1..n_parents).map(|i| format!("model.G{i:03}")).collect();
     for id in &parent_ids {
-        records.push(object_type(id, vec![]));
+        let supertypes = if id == "model.G001" {
+            vec!["model.G000"]
+        } else {
+            vec![]
+        };
+        records.push(object_type(id, supertypes));
     }
+    records.push(field_member_redefining(
+        "model.G001.w",
+        "model.G001",
+        "model.G000",
+        Some("model.G000.x"),
+        vec![],
+    ));
     let mut owner_supertypes: Vec<&str> = vec!["model.G000"];
     owner_supertypes.extend(parent_ids.iter().map(String::as_str));
     records.push(object_type("model.O", owner_supertypes));
@@ -2814,10 +2818,10 @@ fn n06_wide_ancestry_with_two_contesting_redefiners_completes() {
         if n_parents == 128 {
             assert_eq!(
                 view.declarations().len(),
-                134,
-                "129 type declarations (G000..G127, O) plus 5 member \
-                 declarations (G000.x and G000.w at G000's own view; O's own \
-                 inherited x and w plus its direct z)"
+                135,
+                "129 type declarations (G000..G127, O) plus 6 member \
+                 declarations (G000.x; G001's inherited x and own w; and \
+                 O's inherited x and w plus its direct z)"
             );
         }
 
@@ -2835,12 +2839,12 @@ fn n06_wide_ancestry_with_two_contesting_redefiners_completes() {
         let winner = find_member(&view, &owner_o, "model.O.z");
         assert!(
             winner.visible,
-            "O properly dominates G000, so O.z must win over G000.w"
+            "O properly dominates G001, so O.z must win over G001.w"
         );
-        let loser = find_member(&view, &owner_o, "model.G000.w");
+        let loser = find_member(&view, &owner_o, "model.G001.w");
         assert!(
             !loser.visible,
-            "G000.w loses to the more-derived O.z at O's own effective view"
+            "G001.w loses to the more-derived O.z at O's own effective view"
         );
     }
 }

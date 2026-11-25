@@ -172,16 +172,28 @@ fn type_mut<'a>(document: &'a mut Value, name: &str) -> &'a mut Value {
 }
 
 fn assembled(document: &Value) -> PackageDeclarations {
+    assembled_with_record_reader(document, true)
+}
+
+fn assembled_without_record_reader(document: &Value) -> PackageDeclarations {
+    assembled_with_record_reader(document, false)
+}
+
+fn assembled_with_record_reader(document: &Value, include_record_reader: bool) -> PackageDeclarations {
     let bytes = serde_json::to_vec(document).expect("the fixture serializes");
     let packages = package_input([bytes.as_slice()]).unwrap();
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
          model Config = {package:?};\n\
-         function keep using v(): Boolean pure {{ true }}\n\
-         function previous using v(account: Reference<Config::Account>): Option<Config::Address> pure {{ deref(account).previous }}\n",
+         function keep using v(): Boolean pure {{ true }}\n",
         package = variants::PACKAGE,
     );
+    let source = if include_record_reader {
+        format!("{source}function previous using v(account: Reference<Config::Account>): Option<Config::Address> pure {{ deref(account).previous }}\n")
+    } else {
+        source
+    };
     let parsed = fsl_cst::parse(
         SourceIdentity::new("test", "record-valued"),
         "record-valued.native",
@@ -890,7 +902,7 @@ fn member_type(declarations: &PackageDeclarations, owner: &str, field: &str) -> 
 #[trace("TC-992", "FR-056-AC-34")]
 #[test]
 fn k2_string_and_uuid_members_map_to_distinct_value_leaves() {
-    let declarations = assembled(&base::k2());
+    let declarations = assembled_without_record_reader(&base::k2());
     let currency = member_type(&declarations, "Money", "currency");
     let order = member_type(&declarations, "Order", "order_id");
     let correlation = member_type(&declarations, "Fulfilment", "correlation_id");
@@ -927,7 +939,7 @@ fn k2_string_and_uuid_members_map_to_distinct_value_leaves() {
             .expect("the field");
         declared["typeRef"] = json!(native);
     }
-    let declarations = assembled(&swapped);
+    let declarations = assembled_without_record_reader(&swapped);
     assert_eq!(
         member_type(&declarations, "Money", "currency"),
         ValueType::Uuid
