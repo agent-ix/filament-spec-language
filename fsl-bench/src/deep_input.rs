@@ -18,6 +18,7 @@ use std::fmt::Write as _;
 
 use filament_exact::Cancel;
 use filament_semantic_value::checking::CheckingLimits;
+use fsl_cst::ParserContext;
 use fsl_replay::spine::{
     DependencyInput, EmittedUnit, FrontEndFailure, PackageLimits, ParseRequest, SpineLimits,
 };
@@ -211,15 +212,27 @@ impl DeepInput {
 
     /// Compile the input through S1 to S4.
     pub fn compile(&self) -> Result<EmittedUnit, FrontEndFailure> {
-        self.compile_under(self.limits())
+        self.compile_with_context(&ParserContext::new())
+    }
+
+    /// Compile the input using a parser context owned by the process entry.
+    pub fn compile_with_context(
+        &self,
+        parser: &ParserContext,
+    ) -> Result<EmittedUnit, FrontEndFailure> {
+        self.compile_under(self.limits(), parser)
     }
 
     /// Compile the input through S1 to S4 under `limits`.
-    fn compile_under(&self, limits: SpineLimits) -> Result<EmittedUnit, FrontEndFailure> {
-        use fsl_replay::spine::{check, package, parse, select};
+    fn compile_under(
+        &self,
+        limits: SpineLimits,
+        parser: &ParserContext,
+    ) -> Result<EmittedUnit, FrontEndFailure> {
+        use fsl_replay::spine::{check, package, parse_with_context, select};
         let cancel = Cancel::new();
         let source = SourceIdentity::new("agent-ix", "fsl-bench");
-        let parsed = parse(
+        let parsed = parse_with_context(
             &ParseRequest {
                 source: &source,
                 path: "deep-input.native",
@@ -227,6 +240,7 @@ impl DeepInput {
             },
             limits.source,
             &cancel,
+            parser,
         )?
         .into_value();
         let models = select(&parsed, &BTreeMap::new(), limits.model, &cancel)?.into_value();
@@ -251,14 +265,15 @@ mod tests {
     /// resolves and every shape reaches the checker and passes it.
     #[test]
     fn shallow_units_of_every_shape_compile() {
+        let parser = ParserContext::new();
         for level in Level::ALL {
             let input = DeepInput::new(Shape::Expression(vec![level; 3]));
-            if let Err(refusal) = input.compile() {
+            if let Err(refusal) = input.compile_with_context(&parser) {
                 panic!("{level:?}: {refusal:?}\n{}", input.source);
             }
         }
         let input = DeepInput::new(Shape::OptionType(3));
-        if let Err(refusal) = input.compile() {
+        if let Err(refusal) = input.compile_with_context(&parser) {
             panic!("Option: {refusal:?}\n{}", input.source);
         }
     }
@@ -297,12 +312,13 @@ mod tests {
     /// The deepest `Option` nest S1 admits at its default limits, found by
     /// bisection.
     fn deepest_admitted_options() -> usize {
+        let parser = ParserContext::new();
         let limits = SpineLimits::default().source;
         let (mut low, mut high) = (0_usize, 200_000_usize);
         while low + 1 < high {
             let middle = (low + high) / 2;
             let input = DeepInput::new(Shape::OptionType(middle));
-            let parsed = fsl_cst::parse(
+            let parsed = parser.parse(
                 SourceIdentity::new("agent-ix", "fsl-bench"),
                 "deep-input.native",
                 input.source.as_bytes(),

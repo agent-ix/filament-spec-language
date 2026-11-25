@@ -1464,7 +1464,31 @@ pub fn parse(
     limits: SourceLimits,
     cancel: &Cancel,
 ) -> Result<Staged<ParsedUnitSource>, FrontEndFailure> {
-    parse_operation(request, &HeldExtensions::default(), limits, cancel, false)
+    parse_operation(
+        request,
+        &HeldExtensions::default(),
+        limits,
+        cancel,
+        None,
+        false,
+    )
+}
+
+/// S1 and S2 using a caller-owned parser context reused by the process entry.
+pub fn parse_with_context(
+    request: &ParseRequest<'_>,
+    limits: SourceLimits,
+    cancel: &Cancel,
+    context: &fsl_cst::ParserContext,
+) -> Result<Staged<ParsedUnitSource>, FrontEndFailure> {
+    parse_operation(
+        request,
+        &HeldExtensions::default(),
+        limits,
+        cancel,
+        Some(context),
+        false,
+    )
 }
 
 /// S1 and S2 for a unit that selects the extensions `held` (FR-354): each
@@ -1477,7 +1501,18 @@ pub fn parse_with_extensions(
     limits: SourceLimits,
     cancel: &Cancel,
 ) -> Result<Staged<ParsedUnitSource>, FrontEndFailure> {
-    parse_operation(request, held, limits, cancel, false)
+    parse_operation(request, held, limits, cancel, None, false)
+}
+
+/// S1 and S2 with held extensions and a caller-owned parser context.
+pub fn parse_with_extensions_context(
+    request: &ParseRequest<'_>,
+    held: &HeldExtensions,
+    limits: SourceLimits,
+    cancel: &Cancel,
+    context: &fsl_cst::ParserContext,
+) -> Result<Staged<ParsedUnitSource>, FrontEndFailure> {
+    parse_operation(request, held, limits, cancel, Some(context), false)
 }
 
 /// The names an extension's leading keywords and node kinds must not equal
@@ -1595,7 +1630,14 @@ pub(crate) fn parse_for_continuation(
     limits: SourceLimits,
     cancel: &Cancel,
 ) -> Result<Staged<ParsedUnitSource>, FrontEndFailure> {
-    parse_operation(request, &HeldExtensions::default(), limits, cancel, true)
+    parse_operation(
+        request,
+        &HeldExtensions::default(),
+        limits,
+        cancel,
+        None,
+        true,
+    )
 }
 
 fn parse_operation(
@@ -1603,6 +1645,7 @@ fn parse_operation(
     held: &HeldExtensions,
     limits: SourceLimits,
     cancel: &Cancel,
+    context: Option<&fsl_cst::ParserContext>,
     continue_protocol_refusals: bool,
 ) -> Result<Staged<ParsedUnitSource>, FrontEndFailure> {
     let source_len =
@@ -1616,6 +1659,7 @@ fn parse_operation(
                 held,
                 limits,
                 cancel,
+                context,
             )
         });
         let parsed = match parsed {
@@ -2913,11 +2957,29 @@ fn parse_unit(
     held: &HeldExtensions,
     limits: SourceLimits,
     cancel: &Cancel,
+    context: Option<&fsl_cst::ParserContext>,
 ) -> Result<ParsedUnitSource, StageError> {
-    let parsed = if held.is_empty() {
-        fsl_cst::parse_with_cancel(source, path, bytes, limits, cancel)
-    } else {
-        fsl_cst::parse_with_extensions(source, path, bytes, limits, &extension_forms(held), cancel)
+    let parsed = match context {
+        Some(context) if held.is_empty() => {
+            context.parse_with_cancel(source, path, bytes, limits, cancel)
+        }
+        Some(context) => context.parse_with_extensions(
+            source,
+            path,
+            bytes,
+            limits,
+            &extension_forms(held),
+            cancel,
+        ),
+        None if held.is_empty() => fsl_cst::parse_with_cancel(source, path, bytes, limits, cancel),
+        None => fsl_cst::parse_with_extensions(
+            source,
+            path,
+            bytes,
+            limits,
+            &extension_forms(held),
+            cancel,
+        ),
     }
     .map_err(|diagnostic| Box::new(CompileRefusal::Source(diagnostic)))?;
     let raw = parsed.source().reference().clone();
@@ -4131,6 +4193,7 @@ impl<'a> Resolution<'a> {
                     &held,
                     limits.source,
                     cancel,
+                    None,
                 )
             })
             .map_err(|error| error.refusal)?;
@@ -4197,6 +4260,7 @@ impl<'a> Resolution<'a> {
                     &held,
                     limits.source,
                     cancel,
+                    None,
                 )
             })
             .map_err(|error| error.refusal)?;

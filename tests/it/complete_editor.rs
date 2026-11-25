@@ -66,6 +66,34 @@ fn the_header_profile_catalog_admits_the_temporal_layer() {
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
 }
 
+/// The complete-V1 entry object reuses its process-owned parser across inputs.
+#[trace("NFR-141-AC-10")]
+#[test]
+fn one_complete_parser_handles_repeated_profile_checked_inputs() {
+    let parser = complete::CompleteParser::new();
+    let catalog = complete::header_profile_catalog();
+    let source = concat!(
+        "language \"ix:native\" edition \"1-draft\";\n",
+        "profile Complete = \"filament.value.complete/v1\";\n",
+        "function f using Complete (): Integer pure { 1 }\n",
+    );
+    for identity in ["test:one", "test:two"] {
+        let parsed = parser
+            .parse_with_catalog(
+                SourceIdentity {
+                    authority: "test".into(),
+                    identity: identity.to_owned(),
+                },
+                "reused.native",
+                source.as_bytes(),
+                &catalog,
+                Limits::default(),
+            )
+            .expect("valid source parses");
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    }
+}
+
 #[trace("FSpec-TC-223", "FSpec-FR-303-AC-1")]
 #[test]
 fn formatting_is_idempotent_and_preserves_semantic_tokens() {

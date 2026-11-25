@@ -189,7 +189,10 @@ mod tests {
     fn one_parse_session_handles_repeated_sources() {
         let session = ParseSession::new();
         for text in [nested_source(0), volume_source(1)] {
-            assert!(ParseOutcome::of(&session.parse(&text)).is_admitted(), "{text}");
+            assert!(
+                ParseOutcome::of(&session.parse(&text)).is_admitted(),
+                "{text}"
+            );
         }
     }
 }
