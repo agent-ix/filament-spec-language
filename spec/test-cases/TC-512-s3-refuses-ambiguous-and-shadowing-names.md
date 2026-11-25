@@ -14,7 +14,7 @@ Verify the `ambiguous_declaration`/`ambiguous-name` refusals for two
 declarations of one name in one scope and for a shadowing binder, and the
 refusal order.
 
-Scope: FR-113-AC-4 to FR-113-AC-10.
+Scope: FR-113-AC-4 to FR-113-AC-13.
 
 ## Test Procedure
 
@@ -41,6 +41,18 @@ Use TC-510's `RecoveryFlow` fixture.
    `sequence Inner { event Recovered2 by R for Undo as (tried: Boolean) { true }; }`
    in `Main` after `attempt Tried by R on M::Actor::op contracts [] as
    (tried: Boolean) { true };`. Check it.
+8. **FR-113-AC-11:** In a fresh TC-510 `RecoveryFlow` fixture, insert
+   `sequence Inner { event Nested by R for Undo as (shared: Boolean) { true }; }`
+   followed in the enclosing sequence by
+   `event After by R for Undo as (shared: Boolean) { true };`. Check it.
+9. **FR-113-AC-12:** In a fresh TC-510 `RecoveryFlow` fixture, rename the
+   `finish` record binder to `tried`, matching `attempt Tried`'s record binder.
+   Check it.
+10. **FR-113-AC-13:** In a fresh TC-510 `RecoveryFlow` fixture, add one
+    `choice` with a `left` case containing `sequence Left { event LeftSeen by R
+    for Undo as (dup: Boolean) { true }; }` and a `right` case containing
+    `sequence Right { event RightSeen by R for Undo as (dup: Boolean) { true
+    }; }`. Check it.
 
 Tag the tests `#[trace("TC-512", "FR-113-AC-n")]`.
 
@@ -65,3 +77,10 @@ Tag the tests `#[trace("TC-512", "FR-113-AC-n")]`.
   at the capture naming the active trigger binder.
 - Step 7: the inner event refuses `ambiguous_declaration`/`ambiguous-name`
   naming the outer attempt binder, which remains active in the nested scope.
+- Step 8: the later event refuses `ambiguous_declaration`/`ambiguous-name`
+  naming the earlier nested event binder, which remains active through the
+  enclosing sequence's output.
+- Step 9: the finish binder refuses `ambiguous_declaration`/`ambiguous-name`
+  naming the attempt binder in `Out(root)`.
+- Step 10: the protocol checks without `ambiguous_declaration`; neither
+  sibling case's binder is active at the other's declaration.
