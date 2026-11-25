@@ -42,3 +42,4 @@ Round 1, fix head b0345aee9f5ba7a25271c61478596a3f8620e313.
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-001 | fixed | FR-106:657-659 now gives missing-member and unknown-member for record payload members; AC-84 and TC-464 step 11 include the record's extra-member control with unknown-member |
+| FND-002 | fixed | Round 2, head 236a06f11414e7a4956ce1e6956442d95ac765ec: FR-106:661-669 gives clock record fields no entry (a supplied one is unknown-member) and FR-106:689-695 now covers record fields; FR-650:175-179 applies the clock rule to the run form, and FR-650:368 lists data fields only |

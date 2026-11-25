@@ -43,3 +43,4 @@ Round 1, fix head b0345aee9f5ba7a25271c61478596a3f8620e313.
 | --- | --- | --- |
 | FND-001 | fixed | FR-106:717-735 adds an eight-step first-defect order for record, tuple and union that extends FR-360 item 9 |
 | FND-002 | fixed | FR-106:687-693 excludes clock entries from `components` and arity; FR-106:703-705 makes an all-clock member such as Armed use the nullary form |
+| FND-003 | fixed | Round 2, head 236a06f11414e7a4956ce1e6956442d95ac765ec: FR-106 step 1 adds a non-string `type` or `case` and a non-object `fields` as wrong-value-kind, and step 7 adds a non-array `components` as wrong-value-kind |
