@@ -1857,7 +1857,7 @@ fn fair_exact_fallback_is_not_yet() {
         &Cancel::new(),
     )
     .remove(0);
-    assert!(record.terminal().is_none());
+    assert!(record.terminal().is_none(), "{record:#?}");
     assert!(matches!(
         &record.settlement,
         fsl_analyze::analyze::Settlement::Disposed(disposal)
