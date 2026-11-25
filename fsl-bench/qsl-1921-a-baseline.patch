@@ -49,7 +49,7 @@ index 2d4ded1663..13826c1655 100644
  # Test-only fixtures and views (`ReaderAuthority::fixture`,
  # `DeclarationKey::fixture`, `DomainPackageRef::fixture{,_with_version}`,
  # `check::family::fixtures`, `model::refusal::fixtures` and the items widened
- diff --git a/fsl-semantics/src/check/mod.rs b/fsl-semantics/src/check/mod.rs
+diff --git a/fsl-semantics/src/check/mod.rs b/fsl-semantics/src/check/mod.rs
 index c788ac4c20..70247e78d1 100644
 --- a/fsl-semantics/src/check/mod.rs
 +++ b/fsl-semantics/src/check/mod.rs
