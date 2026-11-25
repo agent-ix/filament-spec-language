@@ -4,15 +4,15 @@
 //! A replay reads its clock configurations from the proving package, so a
 //! `clocks` member is refused at stage `request`, naming it.
 
-use crate::command_harness::{Output, compile_file, run_file};
+use crate::command_harness::{compile_file, run_file, Output};
 use fsl_foundation::SourceIdentity;
 use fsl_replay::{
-    DependencyEntryWire, DependencyInput, QualifiedName, ReplayLimits, ReplayPackage,
-    ReplayRequestWire, ReplaySource, RequestTargetWire, StateEnvironment, SuppliedLibrary,
-    call_site, replay,
+    call_site, replay, DependencyEntryWire, DependencyInput, QualifiedName, ReplayLimits,
+    ReplayPackage, ReplayRequestWire, ReplaySource, RequestTargetWire, StateEnvironment,
+    SuppliedLibrary,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -175,7 +175,7 @@ impl Fixture {
             bytes: LIBRARY_HEAD.as_bytes().to_vec(),
         }])
         .unwrap();
-        call_site(
+        let site = call_site(
             SourceIdentity::new(AUTHORITY, PROGRAM_ID),
             fsl_replay::CallSiteUnit::new(
                 self.package["name"].as_str().unwrap().to_owned(),
@@ -187,7 +187,13 @@ impl Fixture {
             &fsl_replay::RequestClocks::default(),
             &entry(),
         )
-        .expect("the program's call site resolves")
+        .expect("the program's call site resolves");
+        let package: Value =
+            serde_json::from_slice(&site.package).expect("call_site returns checked-package bytes");
+        assert_eq!(site.package_id.as_str(), PROGRAM_ID);
+        assert_eq!(package["name"], PROGRAM_ID);
+        assert_eq!(site.package_id.as_str(), package["name"].as_str().unwrap());
+        site
     }
 
     /// The `native-replay/1` request over `package`, in FSpec FR-336's
@@ -309,7 +315,7 @@ fn canonical(package: &Value) -> ReplayPackage {
 /// replays to the value the in-process replay of the same members gives,
 /// for a library whose clauses need no clock configuration.
 #[test]
-#[trace("TC-2443")]
+#[trace("TC-2443", "FR-121-AC-12")]
 fn a_replay_request_file_replays_as_the_in_process_request_does() {
     let row = Fixture::compile(OWN_VALUE, LIBRARY_HEAD, None).assert_replays_as_in_process();
     assert_eq!(row["arm"], "input", "{row}");
@@ -320,7 +326,7 @@ fn a_replay_request_file_replays_as_the_in_process_request_does() {
 /// settles as the in-process replay does, and with the package's `lib-ms`
 /// dependency clock selection removed refuses `missing-clock-selection`.
 #[test]
-#[trace("TC-2443", "FR-862-AC-2", "TC-2213", "FR-640-AC-11")]
+#[trace("TC-2443", "FR-862-AC-2", "TC-2213", "FR-640-AC-11", "FR-121-AC-12")]
 fn a_replay_request_file_replays_a_library_clock_from_the_package() {
     let fixture = Fixture::compile(
         PROGRAM,
@@ -346,7 +352,7 @@ fn a_replay_request_file_replays_a_library_clock_from_the_package() {
 /// FR-286-AC-21: a replay's outcome document carries the `replayed` result,
 /// each entry the `results` document's row.
 #[test]
-#[trace("TC-2963", "FR-286-AC-21")]
+#[trace("TC-2963", "FR-286-AC-21", "FR-121-AC-12")]
 fn a_replay_outcome_carries_and_renders_its_results() {
     let fixture = Fixture::compile(OWN_VALUE, LIBRARY_HEAD, None);
     let path = fixture.request_file(&fixture.package);
@@ -361,7 +367,7 @@ fn a_replay_outcome_carries_and_renders_its_results() {
 /// FR-267-AC-27 (TC-3081): a replay package member refusal from
 /// `command::run` is located in the caller's request document.
 #[test]
-#[trace("TC-3081", "FR-267-AC-27")]
+#[trace("TC-3081", "FR-267-AC-27", "FR-121-AC-12")]
 fn a_replay_package_member_refusal_uses_the_request_document_locus() {
     let fixture = Fixture::compile(OWN_VALUE, LIBRARY_HEAD, None);
     let path = fixture.request_file(&fixture.package);
@@ -394,7 +400,7 @@ fn a_replay_package_member_refusal_uses_the_request_document_locus() {
 /// The `CommandLimits` an entry point refuses when it belongs to another
 /// operation, before any work: the request path need not exist.
 #[test]
-#[trace("TC-721")]
+#[trace("TC-721", "FR-121-AC-12")]
 fn an_entry_point_refuses_the_limits_of_another_operation() {
     use fsl_command::command::{CommandLimits, MonitorPreparationLimits, RunLimits};
     let absent = Path::new("absent-request.json");
