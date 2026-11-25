@@ -711,9 +711,10 @@ fn an_invariant_named_over_a_package_is_never_an_unknown_claim() {
     assert_eq!(run.exit, source.exit);
 }
 
-/// FR-940: package `claim_names` resolves named operation clauses to their
-/// claim occurrence, but cannot transport their operation-contract requirement
-/// records. Refuse that missing form before EN-2 can settle a fallback item.
+/// FR-940, FR-962-AC-1: package `claim_names` resolves named operation clauses
+/// to their claim occurrence, and the admitted requirement row gives the item:
+/// it reaches `contract-checker` alone and, over an unbounded subject, settles
+/// `requires_bound` exactly as the source route settles it.
 #[trace("TC-2702", "FR-489-AC-2")]
 #[test]
 fn named_operation_clauses_resolve_over_a_package() {
@@ -739,31 +740,27 @@ fn named_operation_clauses_resolve_over_a_package() {
         let source = analyze(&request);
         let (members, _) = package_selection(&ws, &request_of(&request));
         let run = analyze_members(&ws, &format!("analyze-{name}.json"), &members);
-        let item = source.item(0);
+        let item = run.item(0);
+        assert_eq!(item["claim_name"], name, "{item}");
+        assert_eq!(claim_ordinal(&item), json!(0), "{item}");
         assert_eq!(
             item["request"]["candidates"]["backends"],
             json!(["contract-checker"]),
             "{item}"
         );
-        let diagnostic = first_diagnostic(&run);
-        assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
-        let message = diagnostic["message"].as_str().expect("a refusal message");
-        assert!(
-            message.contains("operation-contract requirement record"),
-            "{message}"
+        assert_eq!(
+            item["record"]["diagnostic"]["cause"], "requires-bound",
+            "{item}"
         );
-        assert!(
-            message.contains(&format!("`{name}` (claim occurrence 0)")),
-            "{message}"
-        );
-        assert_eq!(run.document()["items"], json!([]));
+        assert_eq!(item, source.item(0), "{}", run.document());
+        assert_eq!(run.exit, source.exit, "{}", run.document());
     }
 }
 
 /// FR-940: package operation-contract claims with one shared structural node
 /// retain their distinct claim occurrence ordinals when names resolve. The
-/// later name must not fall back to the first state clause on that node, even
-/// when the package route refuses the missing requirement-record form.
+/// later name must not fall back to the first state clause on that node, and
+/// each settles as the source route settles the same name.
 #[trace("TC-2967", "FR-940-AC-7")]
 #[test]
 fn shared_operation_contract_node_keeps_each_named_occurrence() {
@@ -803,20 +800,23 @@ fn shared_operation_contract_node_keeps_each_named_occurrence() {
         let mut selected = members.clone();
         selected["items"] = json!([items[index].clone()]);
         let run = analyze_members(&ws, &format!("analyze-shared-{index}.json"), &selected);
-        let diagnostic = first_diagnostic(&run);
-        assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
-        let message = diagnostic["message"].as_str().expect("a refusal message");
-        let name = items[index]["claim"].as_str().expect("the selected name");
-        assert!(
-            message.contains(&format!("`{name}` (claim occurrence {expected_ordinal})")),
-            "{message}"
+        let selected_item = run.item(0);
+        assert_eq!(selected_item["claim_name"], items[index]["claim"]);
+        assert_eq!(claim_ordinal(&selected_item), json!(expected_ordinal));
+        assert_eq!(
+            selected_item["request"]["claim"], item["request"]["claim"],
+            "{selected_item}"
         );
-        assert!(
-            message.contains("operation-contract requirement record"),
-            "{message}"
-        );
-        assert_eq!(run.document()["items"], json!([]));
+        assert_eq!(selected_item["record"], item["record"], "{selected_item}");
     }
+    let run = analyze_members(&ws, "analyze-shared-both.json", &members);
+    assert_eq!(
+        run.document()["items"],
+        source.document()["items"],
+        "{}",
+        run.document()
+    );
+    assert_eq!(run.exit, source.exit, "{}", run.document());
 }
 
 /// FR-850 "Admission" (FSpec FR-520): an absent handoff directory, and a

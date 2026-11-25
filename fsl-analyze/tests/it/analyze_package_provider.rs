@@ -274,10 +274,11 @@ fn contract_package_reads_operation_contract_requirement_records() {
             }
             // The package route reads the claim's operation-contract record and
             // settles the item as the source route does, with no "no package
-            // form" refusal. A provider-backed item is the one divergence: the
-            // source route settles it `proved`; the package route answers
+            // form" refusal. A provider-backed item is the one divergence here:
+            // the source route settles it `proved`; the package route answers
             // `unsupported-requested-capability` for kind `operation-contract`
-            // and sends the provider nothing.
+            // and sends the provider nothing. FR-940-AC-37 asks for parity, and
+            // the package provider route is still owed (QSL-2934).
             let (source, package) = both_contract(
                 &format!("pkg-contract-{name}-{}", backend.unwrap_or("default")),
                 &json!([selection]),
@@ -436,8 +437,11 @@ fn unbounded_operation_contract_item_is_written_requires_bound() {
         json!([{"claim": "Keeps", "kind": "operation-contract"}]),
     );
     let source = analyze_with_providers(&path, vec![]);
-    let items = json!([{"claim": "Keeps", "kind": "operation-contract"}]);
-    let (members, _) = package_selection(&ws, &request_members(Some(items)));
+    // The package request is the source request with its program selected as a
+    // package, so both name the same model, snapshot and items.
+    let document: Json =
+        serde_json::from_slice(&std::fs::read(&path).expect("the request")).expect("request JSON");
+    let (members, _) = package_selection(&ws, &document["request"]);
     let package = analyze_with_providers(
         &ws.write(
             "analyze-package.json",

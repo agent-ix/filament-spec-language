@@ -3261,13 +3261,16 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
-    /// FR-625's item over the `invariant` state clause `name`, whose
-    /// `claim_names` row is on `declaration`, as the source route's
-    /// `resolve_one` resolves it: at the clause's node and `claim`
-    /// occurrence, kind `operation-contract` unless the item names another,
-    /// and, over a model subject, FR-489's tie narrowed to EN-1 (FR-962). An
-    /// item with no model subject is decided by EN-2's contract check, which
-    /// has no package form yet.
+    /// FR-625's item over the state clause `name` (`invariant`, `pre` or
+    /// `post`), whose `claim_names` row is on `declaration`, as the source
+    /// route's `resolve_one` resolves it: at the clause's node and `claim`
+    /// occurrence, with the extent of its admitted requirement row, kind
+    /// `operation-contract` unless the item names another, and, for an
+    /// invariant over a model subject, FR-489's tie narrowed to EN-1
+    /// (FR-962). The contract check and an external provider have no
+    /// evaluator over a package yet (QSL-2934): a negotiated item that needs
+    /// one settles `unsupported`. A default item with no model subject refuses
+    /// the request.
     fn state_clause(
         &self,
         index: RequestIndex,
@@ -3314,11 +3317,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         else {
             return Err(pending_requirement_record());
         };
-        if !record.invariant && self.explicit_items {
-            // Named pre/post clauses have a retained requirement row, but
-            // the package route has no operation-contract form for them.
-            return Err(pending_requirement_record());
-        }
+        // FR-940: an admitted record is a request item whatever its kind of
+        // clause, so negotiation settles it before any evaluator is chosen.
         let claim = if record.invariant {
             let input = self
                 .input
