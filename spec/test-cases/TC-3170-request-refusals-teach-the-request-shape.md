@@ -10,8 +10,8 @@ relationships:
 
 ## Description
 
-Verify FR-1047-AC-1 to FR-1047-AC-8 through `fsl_command::command` in
-process: missing members listed at once as JSON pointers with one-of groups,
+Verify FR-1047-AC-1 to FR-1047-AC-8 and FR-1047-AC-10 through
+`fsl_command::command` in process: missing members listed at once as JSON pointers with one-of groups,
 the accepted formats of each entry family, the export member's shape, and
 `request_example`'s documents fed back through their entries. Each test
 asserts the exact `message` string and the exact `details` value, and is
@@ -42,6 +42,10 @@ tagged `#[trace("TC-3170", "FR-1047-AC-n")]` with the criterion it backs.
    monitor-run reading lists `/request/records`.
 6. Call `request_example("native-export/1", None)` and
    `request_example("native-compile/1", Some(ExportSelection::Ordinary))`.
+7. In an empty directory, call `run_with_providers`, `prepare_run` and
+   `read_clause_run_request` over FR-1047-AC-10's program request and package
+   request, then over the program request without `models`, then over the
+   package request with a `libraries` entry.
 
 ## Expected Results
 
@@ -68,3 +72,5 @@ tagged `#[trace("TC-3170", "FR-1047-AC-n")]` with the criterion it backs.
 - Step 5 refuses with `/request/records` as the one missing entry.
 - Step 6 gives `UnknownFormat` and `SelectionNeedsRunFormat` with the exact
   `Display` texts, `known` list and `code()` of FR-1047-AC-8.
+- Step 7 gives the messages and `details` of FR-1047-AC-10, at stage
+  `request`, exit 20, with no file read.
