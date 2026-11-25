@@ -1641,7 +1641,8 @@ fn float_exceptional_cases(vector: &QualificationVector) -> Option<Vec<SourceCas
         "F32" => {
             let results = hexes(vector.expected);
             assert_eq!((operands.len(), results.len()), (7, 7));
-            modes()
+            ["nearest-even", "toward-zero", "exact"]
+                .into_iter()
                 .flat_map(|mode| {
                     operands.iter().zip(&results).enumerate().flat_map(
                         move |(index, (operand, negated))| {
