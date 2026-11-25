@@ -6757,7 +6757,10 @@ fn append_model_roots<'a>(
     ids: &StructuralIds,
     roots: impl Iterator<
         Item = (
-            (&'a fsl_semantics::model::domain_package::DomainPackageRef, NodeKey),
+            (
+                &'a fsl_semantics::model::domain_package::DomainPackageRef,
+                NodeKey,
+            ),
             Option<SourceRegion>,
         ),
     >,
@@ -8065,6 +8068,7 @@ fn emit_package_nodes(
         &mut nodes,
         &mut source_map,
     )?;
+    model_correspondence::append(ids, graph, &regions, &mut nodes, &mut source_map)?;
     normalize_model_declaration_occurrences(&mut nodes, &mut source_map)?;
     probabilistic::append_probabilistic_nodes(ids, graph, &mut nodes, &mut source_map)?;
     probabilistic::write_claim_bodies(ids, graph, &mut nodes, &mut source_map)?;
@@ -11192,6 +11196,7 @@ fn own_evidence(lock: &CheckedPackageLockV2) -> CheckedPackageEvidence {
     evidence
 }
 
+mod model_correspondence;
 mod model_relation_requirements;
 mod probabilistic;
 mod selected_rows;

@@ -173,36 +173,6 @@ fn fault(invariant: &'static str) -> ProductRefusal {
     ProductRefusal::Internal(InternalFault::new("exact-probabilistic-digital", invariant))
 }
 
-fn advance_nested_deadline(
-    root: &mut TimedOperatorState,
-    nested: &mut TimedOperatorState,
-    truths: &[bool],
-    elapsed: u64,
-) {
-    use fsl_eval::probabilistic::DeadlinePhase;
-
-    let lower = root.lower.saturating_add(nested.lower);
-    let upper = root.upper.saturating_add(nested.upper);
-    if root.phase == DeadlinePhase::Pending && (lower..=upper).contains(&elapsed) {
-        nested.elapsed = elapsed.saturating_sub(root.lower);
-        nested.phase = if truths.first().copied().unwrap_or(false) {
-            root.phase = DeadlinePhase::Accept;
-            DeadlinePhase::Accept
-        } else {
-            DeadlinePhase::Reject
-        };
-    } else {
-        nested.elapsed = elapsed.saturating_sub(root.lower).min(nested.upper);
-        if root.phase == DeadlinePhase::Pending {
-            nested.phase = DeadlinePhase::Pending;
-        }
-    }
-    if root.phase == DeadlinePhase::Pending && elapsed > upper {
-        root.phase = DeadlinePhase::Reject;
-    }
-    root.elapsed = elapsed;
-}
-
 fn one() -> Rational {
     Rational::from_integer(Integer::one())
 }
@@ -1700,7 +1670,12 @@ impl<'c> Builder<'_, '_, 'c> {
                     phase: DeadlinePhase::Pending,
                 };
                 let elapsed = state.deadline.unwrap_or(0);
-                advance_nested_deadline(&mut root, &mut child, truths, elapsed);
+                fsl_eval::probabilistic::advance_nested_timed_deadline(
+                    &mut root,
+                    &mut child,
+                    truths.first().copied().unwrap_or(false),
+                    elapsed,
+                );
                 Ok(Some(MonitorState::TimedFormula {
                     root,
                     nested: Some(child),
@@ -1852,7 +1827,12 @@ impl<'c> Builder<'_, '_, 'c> {
             };
             let elapsed = reached.deadline.unwrap_or(root.elapsed);
             for truths in letters {
-                advance_nested_deadline(&mut root, &mut child, truths, elapsed);
+                fsl_eval::probabilistic::advance_nested_timed_deadline(
+                    &mut root,
+                    &mut child,
+                    truths.first().copied().unwrap_or(false),
+                    elapsed,
+                );
             }
             nested = Some(child);
             return Ok(Some(MonitorState::TimedFormula { root, nested }));

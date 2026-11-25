@@ -249,7 +249,7 @@ fn malformed_or_unknown_run_law_refuses_before_reading_the_program() {
 }
 
 #[test]
-#[trace("TC-2188", "FR-767-AC-3")]
+#[trace("TC-2188", "FR-767-AC-3", "TC-3019", "FR-1039-AC-1")]
 fn native_run_package_and_integer_division_refuse_before_reading_files() {
     let directory = tempfile::tempdir().unwrap();
     let mut body = run_body(Some(json!("floor")), "q");

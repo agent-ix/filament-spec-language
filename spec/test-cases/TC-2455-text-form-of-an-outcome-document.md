@@ -10,18 +10,20 @@ relationships:
 
 ## Description
 
-Verify `render_outcome`'s text form of FR-286 outcome documents. Scope: FR-865-AC-1, FR-865-AC-2, FR-865-AC-5.
+Verify `render_outcome`'s text form of FR-286 outcome documents. Scope: FR-865-AC-1, FR-865-AC-2, FR-865-AC-5, FR-865-AC-25.
 
 ## Test Procedure
 
 1. Render as text a `check` document at S3, category refusal, with one `ill_typed` diagnostic carrying cause `type-mismatch`, and a `package` document at S4, category success.
 2. Render as text FR-286-AC-5's three `execute` documents, FR-286-AC-11's monitor document and FR-286-AC-9's indeterminate document.
 3. Render step 1's refusal with a `RenderSources` holding its source under path `src/rule.fsl`, and a compile refusal through the outcome's exposed admitted sources.
+4. Build a `check_fences` `OutcomeDocument` from three report entries: `Healthy` success with `first_line` 4; `Broken` refusal with `first_line` 12 and a diagnostic whose first original region is at `spec.md` line 7, column 9, code `ill_typed`, cause `type-mismatch`, label `payload` and hint `replace the payload`; and `Repeated` refusal with `first_line` 20, `actual` 2 and one diagnostic. Render it as text. Repeat with the cause, label and hint omitted from `Broken`'s diagnostic.
 
 ## Expected Results
 
 - Step 1: the header `check: refusal (exit 20) at stage checking`, FR-298's diagnostic line, then `  cause: type-mismatch`; the package document, whose `result` is `null`, is the one line `package: success (exit 0) at stage packaging`.
 - Step 2: the `result:` lines FR-865-AC-2 states, the item line with its clause and the `undefined-evaluation (division-by-zero)` cause line, and `(exit 11)` in the indeterminate header.
 - Step 3: the diagnostic line begins `src/rule.fsl:`; the compile refusal names the program source's path.
+- Step 4: the fence lines are `item 0: checked (success) clause Healthy first-line 4`, `item 1: checked (refusal) clause Broken first-line 12` and `item 2: checked (refusal) clause Repeated first-line 20`, in that order; the third is followed by `  actual: 2`. `Broken`'s diagnostic line uses `spec.md:7:9`, its code and its message, followed by `  cause: type-mismatch`, `  label: payload` and `  hint: replace the payload`; the repeated rendering without those members has none of those lines. All diagnostics are present in report order.
 
 Test: `fsl-inspect/src/render.rs` (tests module).

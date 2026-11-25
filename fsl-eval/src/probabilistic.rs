@@ -122,6 +122,60 @@ pub struct TimedOperatorState {
     pub phase: DeadlinePhase,
 }
 
+/// Advance the shared Eventually/Always monitor used for a punctual nested
+/// timed formula.
+///
+/// The nested Always result remains provisional through all ordered
+/// observations at its target timestamp. A later false observation can
+/// therefore invalidate an earlier true one before the timestamp closes.
+pub fn advance_nested_timed_deadline(
+    root: &mut TimedOperatorState,
+    nested: &mut TimedOperatorState,
+    holds: bool,
+    elapsed: u64,
+) {
+    if elapsed > root.elapsed {
+        if root.phase == DeadlinePhase::Pending && nested.phase == DeadlinePhase::Accept {
+            root.phase = DeadlinePhase::Accept;
+        }
+        if root.phase == DeadlinePhase::Pending {
+            nested.phase = DeadlinePhase::Pending;
+        }
+    }
+    let lower = root.lower.saturating_add(nested.lower);
+    let upper = root.upper.saturating_add(nested.upper);
+    if root.phase == DeadlinePhase::Pending && (lower..=upper).contains(&elapsed) {
+        nested.elapsed = elapsed.saturating_sub(root.lower);
+        nested.phase = if nested.lower == 0 {
+            // At zero delay a later position at this timestamp can itself be
+            // the Eventually witness, so only the suffix after the last
+            // observation determines whether one remains possible.
+            if holds {
+                DeadlinePhase::Accept
+            } else {
+                DeadlinePhase::Reject
+            }
+        } else if !holds {
+            // At positive delay all positions at the target timestamp belong
+            // to the same Always window; one false observation invalidates it.
+            DeadlinePhase::Reject
+        } else if nested.phase == DeadlinePhase::Pending {
+            DeadlinePhase::Accept
+        } else {
+            nested.phase
+        };
+    } else {
+        nested.elapsed = elapsed.saturating_sub(root.lower).min(nested.upper);
+        if root.phase == DeadlinePhase::Pending && elapsed > upper {
+            nested.phase = DeadlinePhase::Pending;
+        }
+    }
+    if root.phase == DeadlinePhase::Pending && elapsed > upper {
+        root.phase = DeadlinePhase::Reject;
+    }
+    root.elapsed = elapsed;
+}
+
 impl MonitorState {
     /// Whether the control is decided: nothing it reads can change it, so
     /// the product does not expand the state.
