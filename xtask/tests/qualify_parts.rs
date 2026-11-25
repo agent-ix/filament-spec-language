@@ -174,7 +174,7 @@ fn round_to_integer(value: &filament_exact::Decimal) -> filament_exact::Decimal 
 #[cfg(feature = "test-support")]
 #[trace("TC-1396", "FR-567-AC-1")]
 #[test]
-fn a_passing_run_names_the_three_parts_and_qualifies() {
+fn a_parity_backed_run_names_the_three_parts_and_qualifies() {
     use filament_eval::ExecutionBackendChoice;
     use fsl_eval::execution::Interpreter;
     let (_fspec, mut inputs) = inputs();
@@ -204,7 +204,7 @@ fn a_passing_run_names_the_three_parts_and_qualifies() {
 #[cfg(feature = "test-support")]
 #[trace("TC-1396")]
 #[test]
-fn the_report_names_the_root_package_version() {
+fn a_parity_backed_report_names_the_root_package_version() {
     use filament_eval::ExecutionBackendChoice;
     use fsl_eval::execution::Interpreter;
     let (_fspec, mut inputs) = inputs();
