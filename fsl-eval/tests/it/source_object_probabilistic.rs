@@ -503,10 +503,10 @@ fn the_package_route_rebuilds_every_collection_kind_of_a_parameter() {
     }
 }
 
-/// One parameter as a source package's record holds it.
+/// Every operation parameter record the source packages hold.
 fn parameter_records(
     packages: &[fsl_semantics::model::domain_package::DomainPackage],
-) -> Vec<String> {
+) -> Vec<fsl_semantics::model::domain_package::OperationParameterRecord> {
     use fsl_semantics::model::domain_package::DomainPackageRecord;
     packages
         .iter()
@@ -516,55 +516,69 @@ fn parameter_records(
             _ => None,
         })
         .flatten()
-        .map(|parameter| {
-            format!(
-                "{:?} {:?} {:?} {}",
-                parameter.key, parameter.multiplicity, parameter.presence, parameter.value_type
-            )
-        })
+        .cloned()
         .collect()
 }
 
 /// A unit whose one operation takes a parameter of the type `spelling`, which
-/// a workload weighs.
-fn with_parameter_type(spelling: &str) -> CheckedPackage {
+/// a workload weighs; `support`, when given, declares the parameter random.
+fn with_parameter_type(spelling: &str, support: Option<&str>) -> CheckedPackage {
+    let random = support.map_or_else(String::new, |support| {
+        format!("random O::step(p) ~ {{ {support} }};\n")
+    });
     checked(&format!(
         "enum Tier {{ Gold, Standard }}\n\
          record Point {{ x: Integer; }}\n\
          type Small = Int[1, 3];\n\
          object O {{ n: Integer; operation step(p: {spelling}) modifies self.n; }}\n\
+         {random}\
          workload W on O {{ weight O::step = 1; }}\n"
     ))
 }
 
 /// FR-740-AC-6: a parameter type the route rebuilds is the one S3's record
 /// holds, with its bounds, its layers and the object type it references, and
-/// the probabilistic model builds over it.
+/// the probabilistic model builds over it. A distribution's support is written
+/// as Boolean or integer literals, so only those types also declare the
+/// parameter random.
 #[trace("TC-3012", "FR-740-AC-6")]
 #[test]
 fn a_rebuilt_parameter_type_equals_s3s_with_its_bounds() {
-    for spelling in [
-        "Boolean",
-        "Integer",
-        "Int[1, 3]",
-        "Small",
-        "Text[0, 8; nfc]",
-        "Decimal[0, 100; 2, 2; exact]",
-        "Tier",
-        "Point",
-        "Reference<O>",
-        "Option<Int[1, 3]>",
-        "Option<Set<Text[0, 8; nfc]>[0, 2]>",
-        "Sequence<Reference<O>>[0, 2]",
-        "Sequence<Set<Int[1, 3]>[0, 2]>[1, 2]",
-        "Set<Option<Small>>[0, 2]",
-        "Quantity<ms>",
-        "Option<Quantity<ms>>",
-        "Sequence<Quantity<ms>>[0, 2]",
-        "Quantity<ms^2>",
-        "Set<Quantity<ms^2>>[0, 2]",
+    const BITS: Option<&str> = Some("true: 1, false: 3");
+    const NUMBERS: Option<&str> = Some("1: 1, 3: 3");
+    for (spelling, support) in [
+        ("Boolean", BITS),
+        ("Integer", NUMBERS),
+        ("Int[1, 3]", NUMBERS),
+        ("Small", NUMBERS),
+        ("Text[0, 8; nfc]", None),
+        ("Decimal[0, 100; 2, 2; exact]", None),
+        ("Tier", None),
+        ("Point", None),
+        ("Reference<O>", None),
+        ("Option<Int[1, 3]>", None),
+        ("Option<Reference<O>>", None),
+        ("Option<Set<Text[0, 8; nfc]>[0, 2]>", None),
+        ("Sequence<Reference<O>>[0, 2]", None),
+        ("Sequence<Set<Int[1, 3]>[0, 2]>[1, 2]", None),
+        ("Set<Option<Small>>[0, 2]", None),
+        ("Map<String, Integer>[0, 4]", None),
+        ("Option<Map<String, Int[1, 3]>[0, 2]>", None),
+        ("Sequence<Map<String, Integer>[0, 2]>[0, 3]", None),
+        ("Quantity<ms>", None),
+        ("Option<Quantity<ms>>", None),
+        ("Sequence<Quantity<ms>>[0, 2]", None),
+        ("Quantity<ms^2>", None),
+        ("Set<Quantity<ms^2>>[0, 2]", None),
     ] {
-        let package = with_parameter_type(spelling);
+        let package = with_parameter_type(spelling, support);
+        let source = package.graph().probabilistic_model();
+        assert_eq!(
+            source.random_parameters().len(),
+            usize::from(support.is_some()),
+            "{spelling}"
+        );
+        assert_eq!(source.workloads().len(), 1, "{spelling}");
         let expected = parameter_records(package.graph().source_packages());
         assert_eq!(expected.len(), 1, "{spelling}");
         through_the_route("source-object-probabilistic", &package, |bare| {
@@ -576,7 +590,7 @@ fn a_rebuilt_parameter_type_equals_s3s_with_its_bounds() {
         });
         let model = rebuilt("source-object-probabilistic", &package)
             .unwrap_or_else(|pending| panic!("{spelling}: {pending}"));
-        assert_equal_to_s3(&model, package.graph().probabilistic_model());
+        assert_equal_to_s3(&model, source);
     }
 }
 
@@ -596,17 +610,13 @@ fn a_parameter_type_the_route_does_not_rebuild_is_never_widened() {
         "Quantity<ms, Int[0, 10]>",
         "Option<Quantity<ms, Int[0, 10]>>",
     ] {
-        let package = with_parameter_type(spelling);
+        let package = with_parameter_type(spelling, None);
         through_the_route("source-object-probabilistic", &package, |bare| {
             let model = bare
                 .source_model()
                 .expect("the rows describe the source model");
             assert_eq!(model.unread.len(), 1, "{spelling}");
-            assert_eq!(
-                parameter_records(&model.packages),
-                Vec::<String>::new(),
-                "{spelling}"
-            );
+            assert_eq!(parameter_records(&model.packages), Vec::new(), "{spelling}");
         });
     }
 }

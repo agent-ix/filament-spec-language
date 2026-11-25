@@ -4303,66 +4303,101 @@ enum TypeLayer {
     ),
 }
 
+/// The collection kind a composite type node of kind `kind` is, `None` for any
+/// other node.
+fn collection_kind(
+    kind: Option<filament_contract_model::CheckedNodeKind>,
+) -> Option<filament_exact::CollectionKind> {
+    use filament_contract_model::{CheckedNodeKind, CompositeTypeForm};
+    use filament_exact::CollectionKind;
+    match kind? {
+        CheckedNodeKind::CompositeType(CompositeTypeForm::Sequence) => {
+            Some(CollectionKind::Sequence)
+        }
+        CheckedNodeKind::CompositeType(CompositeTypeForm::Set) => Some(CollectionKind::Set),
+        CheckedNodeKind::CompositeType(CompositeTypeForm::Bag) => Some(CollectionKind::Bag),
+        CheckedNodeKind::CompositeType(CompositeTypeForm::OrderedSet) => {
+            Some(CollectionKind::OrderedSet)
+        }
+        _ => None,
+    }
+}
+
+/// The bounds a `collection_bounds` node states.
+fn cardinality_bound(
+    node: &CheckedSemanticNodeV2,
+) -> Result<filament_exact::CardinalityBound, TypeError> {
+    let (Some(min), Some(max)) = (
+        bound_member(&node.body, "min"),
+        bound_member(&node.body, "max"),
+    ) else {
+        return Err(fault("reader-type-collection-bounds-are-admitted").into());
+    };
+    filament_exact::CardinalityBound::new(min, max)
+        .map_err(|_| fault("reader-type-collection-bounds-are-ordered").into())
+}
+
+/// The bounded map the `collection_bounds` node `bounds` declares: the key and
+/// value types of the map node under it, inside the node's own bounds. Bounds
+/// over anything else are unsupported.
+fn bounded_map_type(
+    index: &TypeReader<'_>,
+    bounds: &CheckedSemanticNodeV2,
+) -> Result<ValueType, TypeError> {
+    let base = node_value_type(index, &bounds.semantic_type)?;
+    let ValueType::Map(map) = &base else {
+        return Err(TypeError::Unsupported);
+    };
+    let map = filament_exact::MapType::new(
+        map.key().clone(),
+        map.values().clone(),
+        Some(cardinality_bound(bounds)?),
+    )
+    .map_err(|_| fault("reader-type-map-key-is-a-leaf"))?;
+    Ok(ValueType::map(map))
+}
+
 /// The `Option` and collection layers of type node `id`, outermost first, with
-/// the leaf type node under them. `None` for a type that reaches no leaf: a
-/// recursive type stays unsupported instead of looping.
+/// the leaf type node under them. Cardinality bounds belong to the collection
+/// layer they constrain; bounds over any other node (a map) are the leaf
+/// itself, so no bound is ever dropped. `None` for a type that reaches no
+/// leaf: a recursive type stays unsupported instead of looping.
 fn type_layers<'a>(
     index: &'a TypeReader<'_>,
     id: &'a CheckedNodeId,
 ) -> Result<Option<(Vec<TypeLayer>, &'a CheckedSemanticNodeV2)>, TypeError> {
     use filament_contract_model::{BoundedDomainForm, CheckedNodeKind, CompositeTypeForm};
-    use filament_exact::CollectionKind;
     let mut current = id;
     let mut layers = Vec::new();
-    let mut bound = None;
     // A finite type cannot revisit a type node.
     for _ in 0..=index.nodes.len() {
         let node = index.node(current).ok_or(TypeError::Unsupported)?;
-        let kind = index.admitted.node_kind(current);
-        if kind
-            == Some(CheckedNodeKind::BoundedDomain(
-                BoundedDomainForm::CollectionBounds,
-            ))
-        {
-            let (Some(min), Some(max)) = (
-                bound_member(&node.body, "min"),
-                bound_member(&node.body, "max"),
-            ) else {
-                return Err(fault("reader-type-collection-bounds-are-admitted").into());
-            };
-            bound = Some(
-                filament_exact::CardinalityBound::new(min, max)
-                    .map_err(|_| fault("reader-type-collection-bounds-are-ordered"))?,
-            );
-            current = &node.semantic_type;
-            continue;
-        }
-        let collection = match kind {
-            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Option)) => None,
-            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Sequence)) => {
-                Some(CollectionKind::Sequence)
+        let (wrapper, layer) = match index.admitted.node_kind(current) {
+            Some(CheckedNodeKind::BoundedDomain(BoundedDomainForm::CollectionBounds)) => {
+                let bound = cardinality_bound(node)?;
+                let base = index
+                    .node(&node.semantic_type)
+                    .ok_or(TypeError::Unsupported)?;
+                let Some(kind) = collection_kind(index.admitted.node_kind(&base.node_id)) else {
+                    return Ok(Some((layers, node)));
+                };
+                (base, TypeLayer::Collection(kind, Some(bound)))
             }
-            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Set)) => {
-                Some(CollectionKind::Set)
+            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Option)) => {
+                (node, TypeLayer::Option)
             }
-            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Bag)) => {
-                Some(CollectionKind::Bag)
-            }
-            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::OrderedSet)) => {
-                Some(CollectionKind::OrderedSet)
-            }
-            _ => return Ok(Some((layers, node))),
+            kind => match collection_kind(kind) {
+                Some(kind) => (node, TypeLayer::Collection(kind, None)),
+                None => return Ok(Some((layers, node))),
+            },
         };
-        let CheckedTerm::Aggregate { members, .. } = &node.body else {
+        let CheckedTerm::Aggregate { members, .. } = &wrapper.body else {
             return Err(fault("reader-type-layer-has-admitted-aggregate").into());
         };
         let [CheckedTerm::Reference { target }] = members.as_slice() else {
             return Err(fault("reader-type-layer-has-one-element").into());
         };
-        layers.push(match collection {
-            Some(kind) => TypeLayer::Collection(kind, bound.take()),
-            None => TypeLayer::Option,
-        });
+        layers.push(layer);
         current = target;
     }
     Ok(None)
@@ -4429,6 +4464,10 @@ pub(crate) fn declared_value_type(
         }
         Some(CheckedNodeKind::BoundedDomain(BoundedDomainForm::DecimalRange)) => {
             crate::checked_v2::decimal_range_type(index.admitted, &leaf.node_id)?
+        }
+        // Bounds no layer took are a map's.
+        Some(CheckedNodeKind::BoundedDomain(BoundedDomainForm::CollectionBounds)) => {
+            bounded_map_type(index, leaf)?
         }
         Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Reference)) => {
             reference_node_type(index, &leaf.node_id)?
