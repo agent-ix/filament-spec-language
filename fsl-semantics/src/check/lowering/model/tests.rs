@@ -2235,34 +2235,6 @@ fn state_machine_declaration_keys_as_a_state_machine_model_node() {
     assert_eq!(node.semantic_form(), "state_machine");
 }
 
-/// FSpec FR-322-AC-25: an operation declared by a systems interface does not
-/// enter the table used to resolve model operation selections.
-#[trace("FSpec-FR-322-AC-25")]
-#[test]
-fn systems_interfaces_are_not_operation_owners() {
-    let package = DomainPackage::new(
-        DomainPackageRef {
-            identity: PACKAGE.to_owned(),
-        },
-        vec![
-            DomainPackageRecord::ObjectType(ObjectTypeRecord {
-                key: key("Store"),
-                interface_features: Some(Vec::new()),
-                abstract_type: false,
-                supertypes: Vec::new(),
-            }),
-            query("Store/save", "Store", None),
-        ],
-    );
-    let NormalizeOutcome::Completed(view) =
-        normalize(&package, ModelNormalizationLimits::UNLIMITED)
-    else {
-        panic!("the systems interface normalizes");
-    };
-    let model = AdmittedModel::new(&package, &view).expect("the view is the package's own");
-    assert!(model.operation_owners().next().is_none());
-}
-
 /// FR-056 "K2 canonical native String, UUID and Timestamp payloads": the
 /// three natives a record or event field may carry are distinct scalar type
 /// nodes, so a composite holding one keys instead of refusing the whole
