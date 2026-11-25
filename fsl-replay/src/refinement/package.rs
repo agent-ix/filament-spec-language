@@ -16,6 +16,48 @@ use super::read::{
     self, FieldMapping, MappingExpression, MappingTarget, ObjectMapping, PopulationMapping,
     RefinementRead, StepMapping,
 };
+use std::collections::HashSet;
+
+fn hidden_field_keys<'a>(
+    declared_keys: Vec<DeclarationKey>,
+    mapped_keys: impl IntoIterator<Item = &'a DeclarationKey>,
+) -> Vec<DeclarationKey> {
+    let mapped_keys: HashSet<_> = mapped_keys
+        .into_iter()
+        .inspect(|_| record_hidden_field_membership_work())
+        .collect();
+    declared_keys
+        .into_iter()
+        .filter(|key| {
+            record_hidden_field_membership_work();
+            !mapped_keys.contains(key)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+thread_local! {
+    static HIDDEN_FIELD_MEMBERSHIP_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn record_hidden_field_membership_work() {
+    HIDDEN_FIELD_MEMBERSHIP_WORK.with(|count| count.set(count.get().saturating_add(1)));
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn record_hidden_field_membership_work() {}
+
+#[cfg(test)]
+fn reset_hidden_field_membership_work() {
+    HIDDEN_FIELD_MEMBERSHIP_WORK.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn hidden_field_membership_work() -> usize {
+    HIDDEN_FIELD_MEMBERSHIP_WORK.with(std::cell::Cell::get)
+}
 
 /// Why no package refinement execution definition could be published.
 #[derive(Debug, thiserror::Error)]
@@ -319,10 +361,7 @@ impl<'a> PackageRefinement<'a> {
                     },
                 });
             }
-            let hidden = declared_keys
-                .into_iter()
-                .filter(|key| !fields.iter().any(|field| field.key == *key))
-                .collect();
+            let hidden = hidden_field_keys(declared_keys, fields.iter().map(|field| &field.key));
             objects.push(Object {
                 abstract_type,
                 concrete_type,
@@ -487,5 +526,69 @@ impl RefinementRead for PackageRefinement<'_> {
     }
     fn abstract_operation_fairness(&self) -> Box<dyn Iterator<Item = &FairnessConstraint> + '_> {
         Box::new(std::iter::empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    fn declaration_key(index: usize) -> DeclarationKey {
+        DeclarationKey {
+            package: "test/refinement".to_owned(),
+            node: format!("Abstract/field-{index:04}"),
+        }
+    }
+
+    fn prior_hidden_projection(
+        declared: &[DeclarationKey],
+        mapped: &[&DeclarationKey],
+    ) -> (Vec<DeclarationKey>, usize) {
+        let mut hidden = Vec::new();
+        let mut comparisons = 0usize;
+        for key in declared {
+            let mut present = false;
+            for field in mapped {
+                comparisons = comparisons.saturating_add(1);
+                if *field == key {
+                    present = true;
+                    break;
+                }
+            }
+            if !present {
+                hidden.push(key.clone());
+            }
+        }
+        (hidden, comparisons)
+    }
+
+    #[trace("FR-140-AC-4", "NFR-141-AC-21")]
+    #[test]
+    fn hidden_field_membership_work_is_linear_and_preserves_declaration_order() {
+        for count in [512, 1_024, 2_048] {
+            let declared: Vec<_> = (0..count).map(declaration_key).collect();
+            let mapped: Vec<_> = (0..count)
+                .filter(|index| index % 2 == 0)
+                .rev()
+                .map(|index| &declared[index])
+                .collect();
+            let (expected, prior_comparisons) = prior_hidden_projection(&declared, &mapped);
+
+            reset_hidden_field_membership_work();
+            let actual = hidden_field_keys(declared.clone(), mapped.iter().copied());
+            let indexed_operations = hidden_field_membership_work();
+
+            assert_eq!(actual, expected, "hidden keys at N = {count}");
+            assert_eq!(
+                indexed_operations,
+                declared.len() + mapped.len(),
+                "each mapped key is inserted once and each declaration is queried once at N = {count}"
+            );
+            assert!(
+                prior_comparisons > count * mapped.len() / 2,
+                "the prior nested scan makes {prior_comparisons} comparisons at N = {count}"
+            );
+        }
     }
 }
