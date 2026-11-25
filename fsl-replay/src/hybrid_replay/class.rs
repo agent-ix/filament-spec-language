@@ -30,6 +30,18 @@ struct Gap {
 struct Walk<'a, 'g> {
     expander: &'a mut Expander<'g>,
     meter: &'a mut HybridReplayMeter,
+    #[cfg(test)]
+    stats: WalkStats,
+}
+
+#[derive(Default)]
+struct WalkStats {
+    term_visits: usize,
+    term_frames: usize,
+    path_steps: usize,
+    path_elements_copied: usize,
+    exp_visits: usize,
+    exp_frames: usize,
 }
 
 impl Walk<'_, '_> {
@@ -39,76 +51,176 @@ impl Walk<'_, '_> {
         path: &[usize],
         position: Position,
     ) -> Result<Option<Gap>, HybridReplayRefusal> {
-        let here = |form| {
-            Some(Gap {
-                form,
-                locus: TermLocus {
-                    term: path.to_vec(),
-                    body: Vec::new(),
-                },
-            })
-        };
-        let child = |position: usize| {
-            let mut next = path.to_vec();
-            next.push(position);
-            next
-        };
-        Ok(match (term, position) {
-            (HybridTerm::Constant(_) | HybridTerm::Variable(_), Position::Numeric)
-            | (HybridTerm::Boolean(_), Position::Boolean) => None,
-            (HybridTerm::Negate(a), Position::Numeric) => {
-                self.term(a, &child(0), Position::Numeric)?
+        struct Pending<'a> {
+            term: &'a HybridTerm,
+            position: Position,
+            /// The path length before this term's incoming edge.
+            base_path_len: usize,
+            incoming_edge: Option<usize>,
+        }
+
+        let mut pending = vec![Pending {
+            term,
+            position,
+            base_path_len: path.len(),
+            incoming_edge: None,
+        }];
+        let mut current_path = path.to_vec();
+
+        while let Some(next) = pending.pop() {
+            #[cfg(test)]
+            {
+                self.stats.term_visits += 1;
+                self.stats.path_steps += 1;
             }
-            (HybridTerm::Arithmetic(ArithmeticOp::Div, _, _), Position::Numeric) => {
-                here("division")
-            }
-            (HybridTerm::Arithmetic(_, a, b), Position::Numeric) => {
-                match self.term(a, &child(0), Position::Numeric)? {
-                    Some(gap) => Some(gap),
-                    None => self.term(b, &child(1), Position::Numeric)?,
+            current_path.truncate(next.base_path_len);
+            if let Some(edge) = next.incoming_edge {
+                current_path.push(edge);
+                #[cfg(test)]
+                {
+                    self.stats.path_steps += 1;
                 }
             }
-            (HybridTerm::Not(a), Position::Boolean) => {
-                self.term(a, &child(0), Position::Boolean)?
-            }
-            (HybridTerm::Logic(_, a, b), Position::Boolean) => {
-                match self.term(a, &child(0), Position::Boolean)? {
-                    Some(gap) => Some(gap),
-                    None => self.term(b, &child(1), Position::Boolean)?,
-                }
-            }
-            (HybridTerm::Compare(_, a, b), Position::Boolean) => {
-                match self.term(a, &child(0), Position::Numeric)? {
-                    Some(gap) => Some(gap),
-                    None => self.term(b, &child(1), Position::Numeric)?,
-                }
-            }
-            (HybridTerm::Call(..), _) => {
-                let expanded = self.expander.term(term, self.meter)?;
-                // The expansion's loci are relative to the call, so the
-                // call's own path leads them.
-                polynomial_gap(&expanded, position).map(|(form, inner)| {
-                    let mut locus = inner.unwrap_or_default();
-                    locus.term.splice(0..0, path.iter().copied());
-                    Gap { form, locus }
+
+            let here = |form| {
+                Some(Gap {
+                    form,
+                    locus: TermLocus {
+                        term: current_path.clone(),
+                        body: Vec::new(),
+                    },
                 })
-            }
-            // A Boolean-valued `if` is a Boolean combination; a numeric one
-            // is piecewise, so not a polynomial.
-            (HybridTerm::Conditional(c, a, b), Position::Boolean) => {
-                let mut found = self.term(c, &child(0), Position::Boolean)?;
-                if found.is_none() {
-                    found = self.term(a, &child(1), Position::Boolean)?;
+            };
+            match (next.term, next.position) {
+                (HybridTerm::Constant(_) | HybridTerm::Variable(_), Position::Numeric)
+                | (HybridTerm::Boolean(_), Position::Boolean) => {}
+                (HybridTerm::Negate(a), Position::Numeric) => {
+                    pending.push(Pending {
+                        term: a,
+                        position: Position::Numeric,
+                        base_path_len: current_path.len(),
+                        incoming_edge: Some(0),
+                    });
+                    #[cfg(test)]
+                    {
+                        self.stats.term_frames += 1;
+                    }
                 }
-                if found.is_none() {
-                    found = self.term(b, &child(2), Position::Boolean)?;
+                (HybridTerm::Arithmetic(ArithmeticOp::Div, _, _), Position::Numeric) => {
+                    #[cfg(test)]
+                    {
+                        self.stats.path_elements_copied += current_path.len();
+                    }
+                    return Ok(here("division"));
                 }
-                found
+                (HybridTerm::Arithmetic(_, a, b), Position::Numeric)
+                | (HybridTerm::Logic(_, a, b), Position::Boolean)
+                | (HybridTerm::Compare(_, a, b), Position::Boolean) => {
+                    let child_position = match next.position {
+                        Position::Numeric => Position::Numeric,
+                        Position::Boolean if matches!(next.term, HybridTerm::Logic(..)) => {
+                            Position::Boolean
+                        }
+                        Position::Boolean => Position::Numeric,
+                    };
+                    pending.push(Pending {
+                        term: b,
+                        position: child_position,
+                        base_path_len: current_path.len(),
+                        incoming_edge: Some(1),
+                    });
+                    pending.push(Pending {
+                        term: a,
+                        position: child_position,
+                        base_path_len: current_path.len(),
+                        incoming_edge: Some(0),
+                    });
+                    #[cfg(test)]
+                    {
+                        self.stats.term_frames += 2;
+                    }
+                }
+                (HybridTerm::Not(a), Position::Boolean) => {
+                    pending.push(Pending {
+                        term: a,
+                        position: Position::Boolean,
+                        base_path_len: current_path.len(),
+                        incoming_edge: Some(0),
+                    });
+                    #[cfg(test)]
+                    {
+                        self.stats.term_frames += 1;
+                    }
+                }
+                (HybridTerm::Call(..), _) => {
+                    let expanded = self.expander.term(next.term, self.meter)?;
+                    #[cfg(test)]
+                    let gap =
+                        polynomial_gap_with_stats(&expanded, next.position, Some(&mut self.stats));
+                    #[cfg(not(test))]
+                    let gap = polynomial_gap(&expanded, next.position);
+                    if let Some((form, inner)) = gap {
+                        // The expansion's loci are relative to the call, so
+                        // the call's own path leads them.
+                        let mut locus = inner.unwrap_or_default();
+                        #[cfg(test)]
+                        {
+                            self.stats.path_elements_copied += current_path.len();
+                        }
+                        locus.term.splice(0..0, current_path.iter().copied());
+                        return Ok(Some(Gap { form, locus }));
+                    }
+                }
+                // A Boolean-valued `if` is a Boolean combination; a numeric
+                // one is piecewise, so not a polynomial.
+                (HybridTerm::Conditional(c, a, b), Position::Boolean) => {
+                    pending.push(Pending {
+                        term: b,
+                        position: Position::Boolean,
+                        base_path_len: current_path.len(),
+                        incoming_edge: Some(2),
+                    });
+                    pending.push(Pending {
+                        term: a,
+                        position: Position::Boolean,
+                        base_path_len: current_path.len(),
+                        incoming_edge: Some(1),
+                    });
+                    pending.push(Pending {
+                        term: c,
+                        position: Position::Boolean,
+                        base_path_len: current_path.len(),
+                        incoming_edge: Some(0),
+                    });
+                    #[cfg(test)]
+                    {
+                        self.stats.term_frames += 3;
+                    }
+                }
+                (HybridTerm::Conditional(..), Position::Numeric) => {
+                    #[cfg(test)]
+                    {
+                        self.stats.path_elements_copied += current_path.len();
+                    }
+                    return Ok(here("conditional"));
+                }
+                (HybridTerm::Capture(_) | HybridTerm::ActivationVariable(_), _) => {
+                    #[cfg(test)]
+                    {
+                        self.stats.path_elements_copied += current_path.len();
+                    }
+                    return Ok(here("activation"));
+                }
+                _ => {
+                    #[cfg(test)]
+                    {
+                        self.stats.path_elements_copied += current_path.len();
+                    }
+                    return Ok(here("mixed-kinds"));
+                }
             }
-            (HybridTerm::Conditional(..), Position::Numeric) => here("conditional"),
-            (HybridTerm::Capture(_) | HybridTerm::ActivationVariable(_), _) => here("activation"),
-            _ => here("mixed-kinds"),
-        })
+        }
+        Ok(None)
     }
 }
 
@@ -118,31 +230,80 @@ impl Walk<'_, '_> {
 /// term's, as in exact replay's polynomial flow (FR-450 "Exact replay"), so
 /// they do not leave the class.
 fn polynomial_gap(exp: &Exp, position: Position) -> Option<(&'static str, Option<TermLocus>)> {
-    match (exp, position) {
-        (Exp::Number(_) | Exp::Variable(_) | Exp::Boolean(_), _) => None,
-        (Exp::Negate(a) | Exp::Not(a), _) => polynomial_gap(a, position),
-        (Exp::Ranged { value, .. }, _) => polynomial_gap(value, position),
-        (Exp::Arithmetic(ArithmeticOp::Div, _, _, locus), _) => {
-            Some(("division", Some(locus.clone())))
-        }
-        (Exp::Arithmetic(_, a, b, _), _) => {
-            polynomial_gap(a, Position::Numeric).or_else(|| polynomial_gap(b, Position::Numeric))
-        }
-        (Exp::Logic(_, a, b), _) => {
-            polynomial_gap(a, Position::Boolean).or_else(|| polynomial_gap(b, Position::Boolean))
-        }
-        (Exp::Compare(_, a, b), _) => {
-            polynomial_gap(a, Position::Numeric).or_else(|| polynomial_gap(b, Position::Numeric))
-        }
-        (Exp::Conditional(c, a, b, _), Position::Boolean) => polynomial_gap(c, Position::Boolean)
-            .or_else(|| polynomial_gap(a, Position::Boolean))
-            .or_else(|| polynomial_gap(b, Position::Boolean)),
-        (Exp::Conditional(.., locus), Position::Numeric) => {
-            Some(("conditional", Some(locus.clone())))
-        }
-        (Exp::Recursive(call), _) => Some(("recursive-call", Some(call.locus.clone()))),
-        (Exp::Activation(_) | Exp::Capture(_) | Exp::Parameter(_), _) => Some(("activation", None)),
+    polynomial_gap_with_stats(exp, position, None)
+}
+
+fn polynomial_gap_with_stats(
+    exp: &Exp,
+    position: Position,
+    mut stats: Option<&mut WalkStats>,
+) -> Option<(&'static str, Option<TermLocus>)> {
+    let mut pending = vec![(exp, position)];
+    if let Some(stats) = stats.as_deref_mut() {
+        stats.exp_frames += 1;
     }
+    while let Some((next, position)) = pending.pop() {
+        if let Some(stats) = stats.as_deref_mut() {
+            stats.exp_visits += 1;
+        }
+        match (next, position) {
+            (Exp::Number(_) | Exp::Variable(_) | Exp::Boolean(_), _) => {}
+            (Exp::Negate(a) | Exp::Not(a), _) => {
+                pending.push((a, position));
+                if let Some(stats) = stats.as_deref_mut() {
+                    stats.exp_frames += 1;
+                }
+            }
+            (Exp::Ranged { value, .. }, _) => {
+                pending.push((value, position));
+                if let Some(stats) = stats.as_deref_mut() {
+                    stats.exp_frames += 1;
+                }
+            }
+            (Exp::Arithmetic(ArithmeticOp::Div, _, _, locus), _) => {
+                return Some(("division", Some(locus.clone())));
+            }
+            (Exp::Arithmetic(_, a, b, _), _) => {
+                pending.push((b, Position::Numeric));
+                pending.push((a, Position::Numeric));
+                if let Some(stats) = stats.as_deref_mut() {
+                    stats.exp_frames += 2;
+                }
+            }
+            (Exp::Logic(_, a, b), _) => {
+                pending.push((b, Position::Boolean));
+                pending.push((a, Position::Boolean));
+                if let Some(stats) = stats.as_deref_mut() {
+                    stats.exp_frames += 2;
+                }
+            }
+            (Exp::Compare(_, a, b), _) => {
+                pending.push((b, Position::Numeric));
+                pending.push((a, Position::Numeric));
+                if let Some(stats) = stats.as_deref_mut() {
+                    stats.exp_frames += 2;
+                }
+            }
+            (Exp::Conditional(c, a, b, _), Position::Boolean) => {
+                pending.push((b, Position::Boolean));
+                pending.push((a, Position::Boolean));
+                pending.push((c, Position::Boolean));
+                if let Some(stats) = stats.as_deref_mut() {
+                    stats.exp_frames += 3;
+                }
+            }
+            (Exp::Conditional(.., locus), Position::Numeric) => {
+                return Some(("conditional", Some(locus.clone())));
+            }
+            (Exp::Recursive(call), _) => {
+                return Some(("recursive-call", Some(call.locus.clone())));
+            }
+            (Exp::Activation(_) | Exp::Capture(_) | Exp::Parameter(_), _) => {
+                return Some(("activation", None));
+            }
+        }
+    }
+    None
 }
 
 /// The first construct of `model` outside the class of FR-1019 "Class", in
@@ -167,6 +328,8 @@ pub fn polynomial_class_gap(
     let mut walk = Walk {
         expander: &mut expander,
         meter,
+        #[cfg(test)]
+        stats: WalkStats::default(),
     };
     let found = |gap: Option<Gap>, site: ExpressionSite, mode: usize, variable: Option<usize>| {
         gap.map(|gap| UnsupportedConstruct {
@@ -243,4 +406,138 @@ pub fn polynomial_class_gap(
         }
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    fn deep_term(depth: usize) -> &'static HybridTerm {
+        let mut term = Box::new(HybridTerm::ActivationVariable(VariableIndex::new(0)));
+        for _ in 0..depth {
+            term = Box::new(HybridTerm::Negate(term));
+        }
+        Box::leak(term)
+    }
+
+    fn deep_exp(depth: usize) -> &'static Exp {
+        let mut exp = Box::new(Exp::Activation(0));
+        for _ in 0..depth {
+            exp = Box::new(Exp::Negate(exp));
+        }
+        Box::leak(exp)
+    }
+
+    fn assert_linear_hybrid_walk(graph: &CheckedGraph, depth: usize) {
+        let term = deep_term(depth);
+        let mut expander = Expander::new(graph);
+        let mut meter = HybridReplayMeter::new(u64::MAX);
+        let mut walk = Walk {
+            expander: &mut expander,
+            meter: &mut meter,
+            stats: WalkStats::default(),
+        };
+        let gap = walk
+            .term(term, &[], Position::Numeric)
+            .expect("walk does not expand calls")
+            .expect("the terminal activation is outside FR-1019 Class");
+        assert_eq!(gap.form, "activation");
+        assert_eq!(gap.locus.term, vec![0; depth]);
+        assert_eq!(walk.stats.term_visits, depth + 1);
+        assert_eq!(walk.stats.term_frames, depth);
+        assert!(walk.stats.path_steps <= 2 * (depth + 1));
+        assert!(walk.stats.path_elements_copied <= 2 * (depth + 1));
+
+        let exp = deep_exp(depth);
+        let mut stats = WalkStats::default();
+        let gap = polynomial_gap_with_stats(exp, Position::Numeric, Some(&mut stats))
+            .expect("the terminal activation is outside FR-1019 Class");
+        assert_eq!(gap.0, "activation");
+        assert_eq!(stats.exp_visits, depth + 1);
+        assert_eq!(stats.exp_frames, depth + 1);
+
+        // The pre-change term walk clones every path prefix. Its deterministic
+        // element-copy count exceeds the linear candidate bound at each size.
+        let prior_prefix_copies = depth * (depth + 1) / 2;
+        assert!(prior_prefix_copies > 2 * (depth + 1));
+    }
+
+    #[test]
+    #[trace("NFR-141-AC-22", "FR-1019")]
+    fn hybrid_class_walks_scale_and_support_one_hundred_thousand_depth() {
+        let graph = super::super::tests::graph_for_class_walk();
+        for depth in [5_000, 10_000, 20_000] {
+            assert_linear_hybrid_walk(&graph, depth);
+        }
+
+        let term = deep_term(100_000);
+        let exp = deep_exp(100_000);
+        std::thread::Builder::new()
+            .name("hybrid-class-depth-100000".to_owned())
+            .stack_size(512 * 1024)
+            .spawn(move || {
+                let mut expander = Expander::new(&graph);
+                let mut meter = HybridReplayMeter::new(u64::MAX);
+                let mut walk = Walk {
+                    expander: &mut expander,
+                    meter: &mut meter,
+                    stats: WalkStats::default(),
+                };
+                let gap = walk
+                    .term(term, &[], Position::Numeric)
+                    .expect("deep walk does not expand calls")
+                    .expect("terminal activation leaves the class");
+                assert_eq!(gap.locus.term.len(), 100_000);
+                assert_eq!(walk.stats.term_visits, 100_001);
+                assert_eq!(walk.stats.term_frames, 100_000);
+
+                let mut stats = WalkStats::default();
+                let gap = polynomial_gap_with_stats(exp, Position::Numeric, Some(&mut stats))
+                    .expect("terminal activation leaves the class");
+                assert_eq!(gap.0, "activation");
+                assert_eq!(stats.exp_visits, 100_001);
+                assert_eq!(stats.exp_frames, 100_001);
+            })
+            .expect("small-stack thread starts")
+            .join()
+            .expect("both explicit-stack walkers support depth 100,000");
+    }
+
+    #[test]
+    #[trace("NFR-141-AC-22", "FR-1019")]
+    fn prior_recursive_class_walk_fails_only_in_a_child_process() {
+        const CHILD: &str = "FSL_RECURSIVE_CLASS_WALK_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            fn prior_recursive_walk(term: &HybridTerm) -> usize {
+                match term {
+                    HybridTerm::Negate(inner) => 1 + prior_recursive_walk(inner),
+                    _ => 0,
+                }
+            }
+
+            let term = deep_term(100_000);
+            std::thread::Builder::new()
+                .stack_size(512 * 1024)
+                .spawn(move || std::hint::black_box(prior_recursive_walk(term)))
+                .expect("small-stack child thread starts")
+                .join()
+                .expect("the prior recursive walk overflows this isolated stack");
+            return;
+        }
+
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "hybrid_replay::class::tests::prior_recursive_class_walk_fails_only_in_a_child_process",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .status()
+            .expect("test binary starts as an isolated child");
+        assert!(
+            !status.success(),
+            "the old recursive walk unexpectedly survived"
+        );
+    }
 }
