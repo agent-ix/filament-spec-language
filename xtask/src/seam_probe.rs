@@ -746,7 +746,9 @@ fn forms_s2_report(workspace_root: &Path) -> Result<String> {
         .iter()
         .filter(|arm| {
             production(arm).is_some_and(|path| {
-                path.segments.len() == 2 && path.segments[0].ident == "state_model"
+                path.segments
+                    .iter()
+                    .any(|segment| segment.ident == "state_model")
             })
         })
         .collect();
@@ -792,7 +794,7 @@ mod state_model_tests {
     use super::*;
     use ix_trace_rs::trace;
 
-    #[trace("TC-791")]
+    #[trace("TC-791", "FR-300-AC-3")]
     #[test]
     fn state_model_arm_report_reads_the_production_matches() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
@@ -843,7 +845,36 @@ mod state_model_tests {
             + position.column
     }
 
-    #[trace("TC-791")]
+    #[trace("TC-791", "FR-300-AC-3")]
+    #[test]
+    fn deleting_the_actual_s1_state_model_arm_names_it_as_missing() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        for file in [
+            "fsl-semantics/src/family/mod.rs",
+            "fsl-forms/src/dispatch.rs",
+            "fsl-semantics/src/check/state_model.rs",
+        ] {
+            let destination = scratch.path().join(file);
+            fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            fs::copy(root.join(file), destination).unwrap();
+        }
+        state_model_arm_report(scratch.path()).unwrap();
+        let file = scratch.path().join("fsl-semantics/src/family/mod.rs");
+        let source = fs::read_to_string(&file).unwrap();
+        let arm = "            Self::StateModel => STATE_MODEL_CATALOG_PREFIX,\n";
+        let changed = source.replace(arm, "");
+        assert_ne!(changed, source, "the actual S1 StateModel arm was found");
+        fs::write(file, changed).unwrap();
+
+        let message = state_model_arm_report(scratch.path())
+            .expect_err("removing the S1 prefix arm must fail the report")
+            .to_string();
+        assert!(message.contains("expected-but-missing"), "{message}");
+        assert!(message.contains("StateModel S1 prefix arm"), "{message}");
+    }
+
+    #[trace("TC-791", "FR-300-AC-3")]
     #[test]
     fn deleting_the_actual_s3_lookup_arm_names_it_as_missing() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
@@ -883,9 +914,9 @@ mod state_model_tests {
         eprintln!("{message}");
     }
 
-    #[trace("TC-791")]
+    #[trace("TC-791", "FR-300-AC-3")]
     #[test]
-    fn a_state_model_arm_in_the_s2_dispatch_is_rejected() {
+    fn a_qualified_state_model_arm_in_the_s2_dispatch_is_rejected() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let scratch = tempfile::tempdir().unwrap();
         for file in [
@@ -902,7 +933,7 @@ mod state_model_tests {
         let source = fs::read_to_string(&file).unwrap();
         let changed = source.replace(
             "LeadingTokenKind::Body => protocol_clause::operation_body(construct),",
-            "LeadingTokenKind::Body => state_model::declaration(construct),",
+            "LeadingTokenKind::Body => crate::state_model::declaration(construct),",
         );
         assert_ne!(changed, source, "the real Body arm was found");
         fs::write(file, changed).unwrap();
@@ -912,7 +943,7 @@ mod state_model_tests {
         assert!(message.contains("state_model::"), "{message}");
     }
 
-    #[trace("TC-791")]
+    #[trace("TC-791", "FR-300-AC-3")]
     #[test]
     fn a_second_state_model_arm_or_a_missing_bound_arm_in_the_s2_dispatch_is_rejected() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
@@ -1200,12 +1231,9 @@ mod tests {
             "CheckCause::code"
         ));
         // The forms table is reported by `fsl-forms`' own probe build.
-        assert!(
-            PROBE_BUILDS
-                .iter()
-                .any(|(package, flags)| *package == "fsl-forms"
-                    && flags.contains("seam_probe_forms"))
-        );
+        assert!(PROBE_BUILDS
+            .iter()
+            .any(|(package, flags)| *package == "fsl-forms" && flags.contains("seam_probe_forms")));
     }
 
     /// FR-507-AC-6 (TC-1302): a `Capability` variant with no applicable-family

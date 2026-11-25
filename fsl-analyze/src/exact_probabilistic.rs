@@ -28,9 +28,11 @@
 mod build;
 mod digital;
 mod fair;
+mod fair_interval;
 mod finite_horizon;
 pub mod manifest;
 pub(crate) mod plan;
+mod reward_interval;
 mod rows;
 mod settle;
 mod unbounded;
@@ -104,44 +106,50 @@ pub(crate) fn observe_path_search() {
     });
 }
 
-pub use build::build_product;
 #[cfg(not(feature = "test-support"))]
 pub(crate) use build::BudgetedProductError;
+pub use build::build_product;
+#[cfg(feature = "test-support")]
+pub use build::{BudgetedProductError, build_product_with_key_budget};
 pub(crate) use build::{
     automaton_refusal, build_retaining_monitor, build_retaining_monitor_with_budget,
 };
-#[cfg(feature = "test-support")]
-pub use build::{build_product_with_key_budget, BudgetedProductError};
-pub(crate) use digital::model_constraints;
 pub(crate) use digital::ELAPSED_REWARD;
+pub(crate) use digital::model_constraints;
 pub(crate) use fair::bottom_components;
 pub use fair::{
     decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,
-    decide_fair_reachability, deterministic_policy_is_fair, maximal_fair_end_components,
-    ActionChoice, FairBoundedResult, FairEndComponent, FairExpectedRewardResult, FairLongRunResult,
-    FairProductError, FairRandomizedWitness, FairUnboundedResult, SchedulerChoice,
+    decide_fair_reachability, deterministic_policy_is_fair, induced_fair_randomized_chain,
+    maximal_fair_end_components, ActionChoice, FairBoundedResult, FairEndComponent,
+    FairExpectedRewardResult, FairLongRunResult, FairProductError, FairRandomizedWitness,
+    FairUnboundedResult, SchedulerChoice,
 };
+pub use fair_interval::decide_fair_reachability_threshold;
+pub(crate) use finite_horizon::round as round_probability;
 pub use finite_horizon::{
-    backward_induction, decide_bounded_event, Dyadic, FhError, FhObjective, FhResult,
+    Dyadic, FhError, FhObjective, FhResult, backward_induction, decide_bounded_event,
 };
-pub(crate) use finite_horizon::{decide_measure_exact, QualifiedFhError};
+pub(crate) use finite_horizon::{QualifiedFhError, decide_measure_exact};
 pub use fsl_replay::FreeDelayRow;
+pub use reward_interval::{decide_expected_reward_threshold, ExpectedRewardOutcome};
 pub use rows::free_delays_choice;
 pub use settle::settle_product_refusal;
+#[cfg(feature = "test-support")]
+pub use unbounded::polling_dense_elimination;
 pub use unbounded::{
-    avoiding_policy, decide_always, decide_expected_reward, decide_long_run_mdp,
-    decide_long_run_workload, decide_reachability, decide_reachability_threshold, decide_until,
-    decide_until_threshold, ComponentValue, ExtRational, GainBias, LongRunResult, UnboundedError,
-    UnboundedObjective, UnboundedOutcome, UnboundedResult,
+    ComponentValue, ExtRational, GainBias, LongRunResult, UnboundedError, UnboundedObjective,
+    UnboundedOutcome, UnboundedResult, avoiding_policy, decide_always, decide_expected_reward,
+    decide_long_run_mdp, decide_long_run_workload, decide_reachability,
+    decide_reachability_threshold, decide_until, decide_until_threshold,
 };
 pub(crate) use witness::ProducedRandomizedWitness;
 pub use witness::{
-    action_steps, entry_choice, induced_chain, policy_action, produce_witness, witness_scheduler,
     EntryChoice, ProducedPath, ProducedStep, ProducedWitness, WitnessError, WitnessScope,
+    action_steps, entry_choice, induced_chain, policy_action, produce_witness, witness_scheduler,
 };
 pub(crate) use witness::{
-    choice_index, produce_quantile_witness, produce_randomized_witness, produce_witness_stopping,
-    WitnessWork,
+    WitnessWork, choice_index, produce_quantile_witness, produce_randomized_witness,
+    produce_witness_stopping,
 };
 
 pub(crate) fn timed_region_route(
@@ -163,13 +171,13 @@ use filament_exact::{CancelCause, Rational, Value};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::AutomatonError;
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{ClauseOutcome, ScheduledIdentity};
 use fsl_eval::simulation::model::{NotMarkov, UndecidedSuccessor};
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{ExpansionStop, NotSimulated};
 use fsl_eval::temporal::UndefinedCause;
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::Span;
+use fsl_foundation::source::provenance::OccurrenceKey;
 pub use fsl_replay::ExactProbLimits;
 use fsl_replay::{ModelCheckLimit, ProbabilityProductKey};
 use fsl_semantics::check::{CheckedProbabilisticClaim, FormulaNodeId};
@@ -251,6 +259,9 @@ pub struct ProbKey {
     pub model: Vec<u8>,
     /// The monitor or measure control; `None` for an unbounded form.
     pub monitor: Option<MonitorState>,
+    /// Exact timed event observations retained until the complete bounded
+    /// formula horizon has elapsed.
+    pub timed_history: Option<Vec<TimedObservation>>,
     /// The accumulated amounts; `None` for an event and for an unbounded
     /// form.
     pub accumulator: Option<Accumulator>,
@@ -259,6 +270,15 @@ pub struct ProbKey {
     /// The independently checkable canonical timed key, when this is a timed
     /// digital or region product state.
     pub certificate_state: Option<ProbabilityProductKey>,
+}
+
+/// A checked event formula's valuation at one model position and timestamp.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct TimedObservation {
+    /// Exact digital timestamp in the product's common clock scale.
+    pub time: u64,
+    /// Truth of each checked `holds` occurrence in formula arena order.
+    pub values: Vec<bool>,
 }
 
 impl ProbKey {
@@ -280,6 +300,19 @@ impl ProbKey {
         }
         cycle_identity_field(&mut identity, &self.model);
         encode_cycle_monitor(&mut identity, self.monitor);
+        if let Some(history) = &self.timed_history {
+            identity.push_str("timed-history=some;");
+            cycle_identity_number(&mut identity, history.len() as u64);
+            for observation in history {
+                cycle_identity_number(&mut identity, observation.time);
+                cycle_identity_number(&mut identity, observation.values.len() as u64);
+                for value in &observation.values {
+                    identity.push_str(if *value { "1;" } else { "0;" });
+                }
+            }
+        } else {
+            identity.push_str("timed-history=none;");
+        }
         encode_cycle_accumulator(&mut identity, self.accumulator.as_ref());
         match &self.pending {
             Some(pending) => {
@@ -335,6 +368,25 @@ fn encode_cycle_monitor(identity: &mut String, monitor: Option<MonitorState>) {
                 DeadlinePhase::Accept => "accept;",
                 DeadlinePhase::Reject => "reject;",
             });
+        }
+        Some(MonitorState::TimedFormula { root, nested }) => {
+            identity.push_str("monitor=timed-formula;");
+            for operator in [Some(root), nested].into_iter().flatten() {
+                cycle_identity_number(identity, operator.occurrence);
+                identity.push_str(match operator.kind {
+                    DeadlineKind::Eventually => "eventually;",
+                    DeadlineKind::Always => "always;",
+                    DeadlineKind::Until => "until;",
+                });
+                cycle_identity_number(identity, operator.lower);
+                cycle_identity_number(identity, operator.upper);
+                cycle_identity_number(identity, operator.elapsed);
+                identity.push_str(match operator.phase {
+                    DeadlinePhase::Pending => "pending;",
+                    DeadlinePhase::Accept => "accept;",
+                    DeadlinePhase::Reject => "reject;",
+                });
+            }
         }
     }
 }
@@ -430,13 +482,14 @@ impl Ord for ProbKey {
             .cmp(&other.binding)
             .then_with(|| self.model.cmp(&other.model))
             .then_with(|| self.monitor.cmp(&other.monitor))
+            .then_with(|| self.timed_history.cmp(&other.timed_history))
             .then_with(|| self.accumulator.cmp(&other.accumulator))
             .then_with(|| self.pending.cmp(&other.pending))
     }
 }
 
 /// What an MDP chooses at a state, or the one move of a DTMC state.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ProductAction {
     /// A scheduled identity (FR-187): the operation, its receiver and its
     /// non-random arguments.
@@ -633,6 +686,15 @@ pub struct UndefinedPath {
 pub enum ProbBuild {
     /// The product.
     Built(ProbProduct),
+    /// The explored product prefix and its lower-completion for computation
+    /// when `max_states` stopped admission.
+    Partial {
+        /// The product used to construct the partial certificate document.
+        product: ProbProduct,
+        /// A solver-only product that sends omitted successor mass to the
+        /// objective's least continuation value.
+        lower_product: ProbProduct,
+    },
     /// The first product state, in breadth-first order, at which the claim
     /// reads an undefined value.
     Undefined(UndefinedPath),

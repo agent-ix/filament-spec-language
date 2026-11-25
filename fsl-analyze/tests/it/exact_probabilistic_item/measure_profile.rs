@@ -85,6 +85,7 @@ fn refuted(world: &World, name: &str) {
 }
 
 #[trace("TC-3152", "FR-1043-AC-1")]
+#[trace("FSpec-TC-364", "FSpec-FR-413-AC-9")]
 #[test]
 fn workload_quantile_has_independently_checked_numerator_denominator_and_ranks() {
     let world = World::new(&retry(
@@ -179,7 +180,11 @@ fn workload_quantile_has_independently_checked_numerator_denominator_and_ranks()
         ),
         "{checked:?}"
     );
-    refuted(&world, "No");
+    let counterexample = settle(&world, "No", ModelCheckLimits::default())
+        .probabilistic_counterexample
+        .expect("the quantile refutation carries replayed path evidence");
+    assert_eq!(counterexample.mass(), &ratio(1, 4));
+    assert!(!counterexample.evidence().paths.is_empty());
 }
 
 #[trace("TC-3152", "FR-1043-AC-2", "FR-1043-AC-3")]
@@ -1140,6 +1145,14 @@ fn workload_mean_refutation_uses_a_checked_subsystem_and_equality_never_refutes(
     assert_eq!(
         token.wire.as_ref().unwrap()["evidence"]["type"],
         "subsystem"
+    );
+    assert_eq!(
+        token.wire.as_ref().unwrap()["bound"]["type"],
+        "mean-of-fraction"
+    );
+    assert_eq!(
+        token.wire.as_ref().unwrap()["bound"]["comparison"],
+        "greater-or-equal"
     );
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let replay = fsl_replay::replay_probabilistic_witness(

@@ -600,22 +600,6 @@ pub fn check_state_graph(
     }
     let declared_symmetry = super::reduce::admit(&system, &request.reductions.symmetry)
         .map_err(ModelCheckRefusal::Symmetry)?;
-    if !declared_symmetry.is_trivial() {
-        let closed =
-            super::reduce::closure(&system, &declared_symmetry).map_err(
-                |refusal| match refusal {
-                    super::reduce::ClosureRefusal::Encoding(refusal) => {
-                        ModelCheckRefusal::Encoding(refusal)
-                    }
-                    super::reduce::ClosureRefusal::Unordered => {
-                        fault("a-permuted-collection-is-ordered")
-                    }
-                },
-            )?;
-        if closed.is_some() {
-            return Err(fault("state-graph-symmetry-initial-closure"));
-        }
-    }
     let views = symmetry_instances(views, &declared_symmetry)?;
     let symmetry_group = common_stabiliser(&views, &declared_symmetry);
     let possible: Vec<&InstanceView<'_>> = views
@@ -624,6 +608,38 @@ pub fn check_state_graph(
         .filter(|(_, item)| matches!(item.claim.form(), StateGraphForm::Possible { .. }))
         .flat_map(|(item, _)| item.iter())
         .collect();
+    let check_closure = !declared_symmetry.is_trivial();
+    let sample = request.limits.witness_samples != 0 && !possible.is_empty();
+    let initial = match explore::Initial::admit(
+        &system,
+        &symmetry_group,
+        request.limits.limits.max_states,
+        check_closure || sample,
+        budgets,
+    )? {
+        Ok(initial) => initial,
+        Err(halt) => {
+            return Ok(stopped_before_exploring(
+                &views,
+                request.deadlock_freedom,
+                halt,
+                seed,
+            ));
+        }
+    };
+    if check_closure {
+        let closed =
+            super::reduce::closure_of_initial(&system, &declared_symmetry, &initial.starts)
+                .map_err(|refusal| match refusal {
+                    super::reduce::ClosureRefusal::Encoding(refusal) => {
+                        ModelCheckRefusal::Encoding(refusal)
+                    }
+                    _ => fault("a-permuted-collection-is-ordered"),
+                })?;
+        if closed.is_some() {
+            return Err(fault("state-graph-symmetry-initial-closure"));
+        }
+    }
     let phase_zero = sample::Phase {
         system: &system,
         limits: &request.limits,
@@ -633,7 +649,7 @@ pub fn check_state_graph(
         budgets,
         walks: fsl_eval::simulation::model::WalkMemo::new(),
     };
-    let sampled = match phase_zero.run(&possible)? {
+    let sampled = match phase_zero.run(&possible, &initial.starts)? {
         Ok(sampled) => sampled,
         Err(halt) => {
             return Ok(stopped_before_exploring(
@@ -682,7 +698,7 @@ pub fn check_state_graph(
         declared_symmetry: &declared_symmetry,
         symmetry: &symmetry_group,
     }
-    .run()?;
+    .run(initial)?;
     let items = views
         .iter()
         .zip(&request.items)

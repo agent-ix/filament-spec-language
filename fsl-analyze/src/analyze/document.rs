@@ -36,6 +36,7 @@ use super::{
     SourceProvision, SubjectBinding, TemporalItem,
 };
 use fsl_eval::simulation::model::PopulationUniverse;
+pub use crate::model_check::smt::SmtProofEvidence;
 
 pub mod effect_decision;
 
@@ -3242,14 +3243,7 @@ fn derived_items(
     // FR-124-AC-12: the subject's items are over the models its universes
     // read, not over every model the unit selects.
     let selections = read_identities(package, binding);
-    derived_items_for_selections(
-        package,
-        subject,
-        registry,
-        authored,
-        first,
-        &selections,
-    )
+    derived_items_for_selections(package, subject, registry, authored, first, &selections)
 }
 
 /// The model subjects named by hyper aliases, each of which contributes its
@@ -3308,14 +3302,8 @@ fn append_hyper_subject_items(
         }
         let selections = BTreeSet::from([identity]);
         let first = resolved.len();
-        let derived = derived_items_for_selections(
-            package,
-            subject,
-            registry,
-            &[],
-            first,
-            &selections,
-        );
+        let derived =
+            derived_items_for_selections(package, subject, registry, &[], first, &selections);
         resolved.extend(derived);
     }
 }
@@ -3864,6 +3852,28 @@ pub fn analyze_document(
     settle_run(run, negotiate, cancel).map(|settled| (settled.document, settled.exit_code))
 }
 
+/// Write an FR-621 document with already checked temporal SMT proof evidence.
+///
+/// Evidence is joined to the run by request index. Its certified terminal
+/// value and checker identity replace the ordinary engine result before the
+/// existing FR-621 writer projects the item. Callers obtain evidence by
+/// passing CG's [`fsl_replay::SmtProofOutcome`] through
+/// [`crate::model_check::smt::settle_temporal_smt_proof`].
+///
+/// # Errors
+///
+/// As [`analyze_document`], and [`AnalyzeDocumentError::Fault`] when an
+/// evidence entry does not match a settled run item.
+pub fn analyze_document_with_smt_proofs(
+    run: AnalyzeRun<'_>,
+    negotiate: &dyn Negotiate,
+    cancel: &Cancel,
+    evidence: &BTreeMap<RequestIndex, SmtProofEvidence>,
+) -> Result<(Value, u8), AnalyzeDocumentError> {
+    settle_run_with_smt_proofs(run, negotiate, cancel, evidence)
+        .map(|settled| (settled.document, settled.exit_code))
+}
+
 /// One FR-635 `registry` entry: a registered backend and its FSpec FR-331
 /// tool record.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3919,6 +3929,18 @@ pub fn settle_run(
     run: AnalyzeRun<'_>,
     negotiate: &dyn Negotiate,
     cancel: &Cancel,
+) -> Result<SettledRun, AnalyzeDocumentError> {
+    settle_run_with_smt_proofs(run, negotiate, cancel, &BTreeMap::new())
+}
+
+/// [`settle_run`] with FR-314-verified SMT proof results supplied by request
+/// index. This is the production handoff from an SMT runner to the common
+/// FR-621 item writer.
+pub fn settle_run_with_smt_proofs(
+    run: AnalyzeRun<'_>,
+    negotiate: &dyn Negotiate,
+    cancel: &Cancel,
+    evidence: &BTreeMap<RequestIndex, SmtProofEvidence>,
 ) -> Result<SettledRun, AnalyzeDocumentError> {
     let AnalyzeRun {
         package,
@@ -3977,6 +3999,104 @@ pub fn settle_run(
         _ => AnalyzeDocumentError::Fault,
     })?
     .into_value();
+    for (index, evidence) in evidence {
+        if evidence.request_index() != *index
+            || evidence.settlement().checker() != Some(fsl_replay::CertificateChecker::SmtProof)
+            || !matches!(
+                evidence.settlement().value(),
+                TerminalValue::Proved {
+                    certification: fsl_replay::Certification::Certified,
+                    ..
+                }
+            )
+        {
+            return Err(AnalyzeDocumentError::Fault);
+        }
+        let mut matching_items = negotiated.iter().filter(|item| {
+            item.item.request_index == *index && item.item.kind == Capability::TemporalSatisfaction
+        });
+        let Some(matching_item) = matching_items.next() else {
+            return Err(AnalyzeDocumentError::Fault);
+        };
+        let duplicate_item = matching_items.next().is_some();
+        if duplicate_item
+            || settled.contains_key(index)
+            || unrouted_items.contains(index)
+            || matching_item.item.claim != *evidence.claim()
+            || matching_item.disposition.target().map(|target| target.id())
+                != Some(evidence.backend())
+        {
+            return Err(AnalyzeDocumentError::Fault);
+        }
+        let ItemForm::Temporal(temporal) = matching_item.item.form.as_ref().ok_or(AnalyzeDocumentError::Fault)? else {
+            return Err(AnalyzeDocumentError::Fault);
+        };
+        let clock_selections = super::clause_item::clock_selections(package, &provision);
+        let encoding = temporal.smt_encoding.clone().unwrap_or_default();
+        if evidence.item_kind() != temporal.item_kind
+            || evidence.temporal_clock_selections() != clock_selections
+            || evidence.smt_encoding() != &encoding
+        {
+            return Err(AnalyzeDocumentError::Fault);
+        }
+        let subject = fsl_eval::model_subject::ModelSubject {
+            simulation: super::request::simulation(&source_input, &binding, &limits),
+            proof_bounds: temporal.proof_bounds.clone(),
+        };
+        if fsl_replay::SubjectIdentity::of(&subject) != *evidence.subject() {
+            return Err(AnalyzeDocumentError::Fault);
+        }
+        let clause_node = package.graph().temporal_clauses().iter().find(|node| {
+            node.identity() == *matching_item.item.claim.node()
+                && node.claim() == matching_item.item.claim.origin()
+        }).ok_or(AnalyzeDocumentError::Fault)?;
+        let expected_digests = match evidence.settlement().value() {
+            TerminalValue::Proved { basis: fsl_replay::ProofBasis::BoundedComplete { depth }, .. } => {
+                vec![fsl_replay::smt_query_digest(&fsl_replay::encode_temporal_smt_query(
+                    &subject, clause_node.clause(), fsl_replay::SmtQueryKind::Unrolling { depth: *depth }, &encoding,
+                ).map_err(|_| AnalyzeDocumentError::Fault)?)]
+            }
+            TerminalValue::Proved { basis: fsl_replay::ProofBasis::Inductive { depth }, .. } => vec![
+                fsl_replay::smt_query_digest(&fsl_replay::encode_temporal_smt_query(
+                    &subject, clause_node.clause(), fsl_replay::SmtQueryKind::InductionBase { depth: *depth }, &encoding,
+                ).map_err(|_| AnalyzeDocumentError::Fault)?),
+                fsl_replay::smt_query_digest(&fsl_replay::encode_temporal_smt_query(
+                    &subject, clause_node.clause(), fsl_replay::SmtQueryKind::InductionStep { depth: *depth }, &encoding,
+                ).map_err(|_| AnalyzeDocumentError::Fault)?),
+            ],
+            _ => return Err(AnalyzeDocumentError::Fault),
+        };
+        if evidence.settlement().query_digests() != Some(expected_digests.as_slice()) {
+            return Err(AnalyzeDocumentError::Fault);
+        }
+        let mut matching_records = outcome
+            .records
+            .iter_mut()
+            .filter(|record| record.request_index() == *index);
+        let Some(record) = matching_records.next() else {
+            return Err(AnalyzeDocumentError::Fault);
+        };
+        if matching_records.next().is_some() {
+            return Err(AnalyzeDocumentError::Fault);
+        }
+        *record = fsl_replay::TerminalRecord::proved_by_smt_proof(
+            *index,
+            evidence.backend().clone(),
+            evidence.settlement(),
+        )
+        .ok_or(AnalyzeDocumentError::Fault)?;
+        let mut matching_details = outcome
+            .details
+            .iter_mut()
+            .filter(|detail| detail.request_index == *index);
+        let Some(detail) = matching_details.next() else {
+            return Err(AnalyzeDocumentError::Fault);
+        };
+        if matching_details.next().is_some() {
+            return Err(AnalyzeDocumentError::Fault);
+        }
+        detail.checker = Some(fsl_replay::CertificateChecker::SmtProof);
+    }
     gate_compositions(&mut outcome.records, &gates);
     let (targets, routes) = negotiated_routes(&negotiated, &unrouted_items, engines);
     // FR-634: each simulation item's document at its request index; it
@@ -4792,6 +4912,18 @@ fn exact_certificate_member(identity: Option<Value>, document: Value) -> Value {
     Value::Object(member)
 }
 
+fn checker_certificate_member(
+    identity: Value,
+    checker: fsl_replay::CertificateChecker,
+    accepted: bool,
+) -> Value {
+    json!({
+        "identity": identity,
+        "checker": checker.as_str(),
+        "accepted": accepted,
+    })
+}
+
 /// FR-741's `counterpart` of a `ValueBounds` proof: the other side's
 /// `{kind, document, accepted}`, its `document` a bare FSpec FR-331
 /// `ProbabilityCertificate`.
@@ -4901,11 +5033,8 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
         record.get("result").and_then(Value::as_str),
     ) {
         if matches!(result, "proved" | "refuted") {
-            let mut certificate = json!({
-                "identity": identity,
-                "checker": checker.as_str(),
-                "accepted": result == "proved"
-            });
+            let mut certificate =
+                checker_certificate_member(identity, checker, result == "proved");
             if let Some(document) = certificate_document {
                 if let Some(certificate) = certificate.as_object_mut() {
                     certificate.insert("document".to_owned(), document);

@@ -1005,11 +1005,11 @@ impl ValueSink for Bounded<'_, '_> {
         &mut self,
         object: &'v StateObject,
         key: &DeclarationKey,
-    ) -> Result<Option<&'v Value>, Self::Error> {
+    ) -> Result<Option<std::borrow::Cow<'v, Value>>, Self::Error> {
         for (candidate, value) in &object.fields {
             self.scope.work(1)?;
             if self.scope.declaration_equal(candidate, key)? {
-                return Ok(Some(value));
+                return Ok(Some(std::borrow::Cow::Borrowed(value)));
             }
         }
         Ok(None)

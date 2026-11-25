@@ -4,8 +4,8 @@
 use super::{ModelKeyBudget, ModelKeyError, ModelSimState, ModelStateProvenance, ModelSystem};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
-    CollectionType, FieldValue, Integer, MapType, Meter, NodeKey, Outcome, Presence, Rational,
-    UnionMember, UnionValue, Value, ValueType,
+    ClockPlaceReference, CollectionType, FieldValue, Integer, MapType, Meter, NodeKey, Outcome,
+    Presence, Rational, UnionMember, UnionValue, Value, ValueType,
 };
 use filament_semantic_value::declaration::CompositeShape;
 use filament_semantic_value::relationship_extent::{RelationshipInstance, RelationshipPositions};
@@ -195,6 +195,27 @@ impl Restore<'_, '_, '_> {
         let bytes = self.canonical(node)?;
         let spelling = std::str::from_utf8(&bytes).map_err(|_| bad())?;
         super::encode::parse_reference(spelling).ok_or_else(bad)
+    }
+    fn clock_reference(
+        &mut self,
+        node: NodeRef<'_>,
+    ) -> Result<ClockPlaceReference, ModelRestoreError> {
+        tagged(node, "clock_reference")?;
+        let place_id = text(member(node, "place_id")?)?;
+        self.tick(place_id.len())?;
+        self.retain(
+            place_id
+                .len()
+                .checked_mul(4)
+                .ok_or(ModelKeyError::SizeOverflow)?,
+        )?;
+        self.system
+            .clock_reference_candidates(None)
+            .map_err(|_| bad())?
+            .iter()
+            .find(|reference| reference.text() == place_id)
+            .cloned()
+            .ok_or_else(bad)
     }
     fn declaration(&mut self, node: NodeRef<'_>) -> Result<DeclarationKey, ModelRestoreError> {
         let spelling = text(node)?;
@@ -446,6 +467,9 @@ impl Restore<'_, '_, '_> {
                         ),
                         ValueType::Reference(_) if tag == "reference" => {
                             Value::Reference(self.reference(node)?)
+                        }
+                        ValueType::ClockReference if tag == "clock_reference" => {
+                            Value::ClockReference(self.clock_reference(node)?)
                         }
                         ValueType::Enum(shape) if tag == "enum" => {
                             let case = text(member(node, "member")?)?;
@@ -960,6 +984,7 @@ impl ModelSystem<'_> {
         let state = ModelSimState {
             state,
             provenance: ModelStateProvenance::RestoredFromKey { effect: None },
+            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
         };
         let actual = self.state_key_bytes_with_budget(&state, identity, restore.budget, cancel)?;
         restore.tick(bytes.len())?;

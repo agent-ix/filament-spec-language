@@ -484,6 +484,7 @@ pub(super) fn run(
         }),
         values: certificate.values.clone(),
         ranking: Vec::new(),
+        policy: None,
     };
     let checked = (|| {
         let bytes = write_probability_certificate(&document, document_limits, cancel)?;

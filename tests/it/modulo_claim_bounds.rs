@@ -475,6 +475,7 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
         let wire = run
             .context()
             .request(
+                run.package_id(),
                 member.request_index(),
                 item.proof_bounds(),
                 &plugin,

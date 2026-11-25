@@ -258,7 +258,7 @@ fn the_parallel_explorer_matches_a_sequential_fifo_search() {
     let mut queue = VecDeque::new();
     let mut keys: Vec<Vec<u8>> = Vec::new();
     let mut edges: Vec<Vec<usize>> = Vec::new();
-    for state in system.initial() {
+    for state in system.try_initial().expect("initial states settle") {
         let key = key_of(&state);
         if !known.contains_key(&key) {
             known.insert(key.clone(), keys.len());

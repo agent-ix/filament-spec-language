@@ -5,7 +5,7 @@ use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::simulation::NotSimulated;
 use fsl_replay::statistical::SubjectLimits;
 use fsl_replay::{
-    settle_exact_prob_build_issue, ExactProbBuildIssue, ExactProbBuildRecord, UnavailabilityCause,
+    ExactProbBuildIssue, ExactProbBuildRecord, UnavailabilityCause, settle_exact_prob_build_issue,
 };
 
 use super::{ProductRefusal, ProductStop};
@@ -19,7 +19,9 @@ pub fn settle_product_refusal(
     let issue = match refusal {
         request @ ProductRefusal::Admission(_) => return Err(request),
         request @ ProductRefusal::NotSimulated(
-            NotSimulated::RequiresBound(_) | NotSimulated::UnboundCapacity(_),
+            NotSimulated::RequiresBound(_)
+            | NotSimulated::UnboundCapacity(_)
+            | NotSimulated::ProtocolInitial(_),
         ) => return Err(request),
         // FR-204's digital product exposes these recognized unsupported
         // forms as typed EN-5 terminal causes.

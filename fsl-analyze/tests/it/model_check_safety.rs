@@ -25,7 +25,7 @@ use filament_exact::{Cancel, Charge, ChargePoint, Incomplete, LimitKind, Meter};
 use fsl_analyze::model_check::{check_model, Atoms, ModelCheckRefusal, ModelCheckRequest, Por};
 use fsl_eval::automaton::translate;
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
-use fsl_eval::simulation::model::ModelSimState;
+use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::temporal::AtomReading;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::{
@@ -35,7 +35,7 @@ use fsl_replay::{
 };
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::counter::{CONTRACT, UNLIMITED};
 use crate::model_world::{self, Atom, Clause, Letters, World, BOUNDED, INFINITE};
@@ -77,11 +77,14 @@ fn run_letters(
     let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(&world.package);
     check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &temporal_clock_selections,
             subject: world.subject(keys, UNLIMITED),
             item: ModelCheckItem::Clause { clause, letters },
             max_depth: None,
             limits,
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),
@@ -135,6 +138,112 @@ fn counter_world(profile: &str, clauses: &[Clause<'_>]) -> World {
         clauses,
         &[("c", json!({"value": {"integer": "0"}}))],
     )
+}
+
+/// FR-125-AC-14: a key that is unused at initialization stays excluded from
+/// the claim's instances even after `make` creates a value-1 Counter there.
+/// The temporal proof covers only the initial instances `c` and `d`.
+#[trace("TC-520", "FR-125-AC-14")]
+#[test]
+fn an_operation_created_key_stays_excluded_from_temporal_instances() {
+    use fsl_eval::simulation::TransitionSystem;
+
+    let mut domain = model_world::counter();
+    let mut document: Value = serde_json::from_slice(&domain.document).expect("counter JSON");
+    let counter = document["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|declared| declared["identity"] == domain.key("Counter").node)
+        .expect("Counter declaration");
+    let operations = counter["operations"].as_array_mut().expect("operations");
+    let mut make = operations[0].clone();
+    make["identity"] = json!(domain.key("Counter/make").node);
+    make["name"] = json!("make");
+    make["frame"] = json!({
+        "modifies": [], "creates": [domain.key("Counter").node], "deletes": []
+    });
+    operations.push(make);
+    domain.document = document.to_string().into_bytes();
+
+    let clauses = [Clause {
+        activation: ORIGIN,
+        formula: "always holds(c.value = 0)",
+    }];
+    let unit = "pre Disabled using v on M::Counter::inc { false }\n";
+    let initial = [
+        ("c", json!({"value": {"integer": "0"}})),
+        ("d", json!({"value": {"integer": "0"}})),
+    ];
+    let world = World::new(domain, unit, INFINITE, &clauses, &initial);
+    let keys = ["c", "d", "z"];
+    let system =
+        ModelSystem::new(world.subject(&keys, UNLIMITED).simulation).expect("the subject admits");
+    let [node] = world.package.graph().temporal_clauses() else {
+        panic!("one temporal clause");
+    };
+    let clause = node.clause();
+    assert_eq!(
+        system.instances(&clause.over().1).expect("instances"),
+        [
+            ModelInstance {
+                population: world.domain.key(world.domain.population),
+                key: "c".to_owned(),
+            },
+            ModelInstance {
+                population: world.domain.key(world.domain.population),
+                key: "d".to_owned(),
+            },
+        ],
+    );
+    assert_eq!(
+        system
+            .excluded_keys(&clause.over().1)
+            .expect("excluded keys"),
+        ["z"],
+    );
+
+    let start = &system.initial_states()[0];
+    let reachable_created_value_one = system
+        .successors(start)
+        .expect("the initial state expands")
+        .successors
+        .iter()
+        .any(|(_, state)| {
+            state
+                .state()
+                .populations
+                .get(&world.domain.key(world.domain.population))
+                .and_then(|objects| objects.get("z"))
+                .is_some_and(|_| world.domain.integer(state, "z", "value") == 1)
+        });
+    assert!(reachable_created_value_one, "make reaches z.value = 1");
+
+    let letters = system
+        .clause_letters(node)
+        .expect("the production temporal letters admit");
+    let outcome = check_model(
+        ModelCheckRequest {
+            workers: 1,
+            temporal_clock_selections: &[],
+            subject: world.subject(&keys, UNLIMITED),
+            item: ModelCheckItem::Clause {
+                clause,
+                letters: &letters,
+            },
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+            reductions: Default::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("checked");
+    assert!(
+        matches!(outcome, ModelCheckOutcome::Holds { .. }),
+        "{outcome:?}"
+    );
 }
 
 /// `c.value` read by `test`; `None` is undefined.
@@ -354,7 +463,7 @@ fn a_long_interval_materializes_automaton_states_as_the_product_reaches_them() {
 /// c.value) = 0 and c.value = 1)` under event-position false-extension, `on
 /// origin`, false at position 0 and true at 1, holds, reading positions 0
 /// and 1 only, so the undefined atom at position 2 is never evaluated.
-#[trace("TC-537")]
+#[trace("TC-537", "FR-126-AC-9")]
 #[test]
 fn a_formula_violation_before_an_undefined_position_and_an_unread_position() {
     let world = counter_world(
@@ -502,6 +611,7 @@ fn the_production_letters_read_the_counter_guard_and_its_footprint() {
             .expect("the guard has a footprint");
         let outcome = check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &crate::fill::tcb_01_event_position_selection(
                     &world.package,
                 ),
@@ -512,6 +622,8 @@ fn the_production_letters_read_the_counter_guard_and_its_footprint() {
                 },
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
@@ -564,6 +676,7 @@ fn production_letters_decide_each_guard_row_and_include_guard_only_por_visibilit
             .expect("the production letters build");
         let outcome = check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &crate::fill::tcb_01_event_position_selection(
                     &world.package,
                 ),
@@ -574,6 +687,8 @@ fn production_letters_decide_each_guard_row_and_include_guard_only_por_visibilit
                 },
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
@@ -886,6 +1001,7 @@ fn a_denied_letter_or_guard_charge_stops_with_the_accounting_setting() {
         }
         let outcome = check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &crate::fill::tcb_01_event_position_selection(
                     &world.package,
                 ),
@@ -896,6 +1012,8 @@ fn a_denied_letter_or_guard_charge_stops_with_the_accounting_setting() {
                 },
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
@@ -1073,6 +1191,7 @@ fn a_partial_order_run_reads_the_guards_footprint() {
             .guarded(value(|v| Some(v >= 1)), reads);
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: world.subject(&["c"], UNLIMITED),
                 item: ModelCheckItem::Clause {
@@ -1081,6 +1200,8 @@ fn a_partial_order_run_reads_the_guards_footprint() {
                 },
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: fsl_route::reductions::Reductions {
                     partial_order,
                     ..Default::default()

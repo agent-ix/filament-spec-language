@@ -18,6 +18,7 @@
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use filament_exact::{NodeKey, PathSegment, PathSegmentView};
 
@@ -48,8 +49,9 @@ pub fn node_keys_within<'a>(
     superset: impl IntoIterator<Item = &'a NodeKey>,
 ) -> bool {
     let mut ranking = Ranking::new();
-    let present: std::collections::HashSet<usize> =
-        superset.into_iter().map(|key| ranking.class(key)).collect();
+    let mut present =
+        std::collections::HashSet::with_hasher(BuildHasherDefault::<IdentityHasher>::default());
+    present.extend(superset.into_iter().map(|key| ranking.class(key)));
     subset
         .into_iter()
         .all(|key| present.contains(&ranking.class(key)))
@@ -70,7 +72,7 @@ struct Shape {
 /// position is its rank; two classes are ordered by walking each to the root.
 struct Ranking {
     /// Each key allocation reached, by [`identity`], and its shape.
-    ids: HashMap<usize, usize>,
+    ids: HashMap<usize, usize, BuildHasherDefault<IdentityHasher>>,
     shapes: Vec<Shape>,
     /// Each shape's class.
     class_of: Vec<usize>,
@@ -101,10 +103,35 @@ fn identity(key: &NodeKey) -> usize {
     key.package().as_ptr() as usize
 }
 
+/// A deterministic hasher for the internal allocation and class indices in
+/// this module. These integer keys are process-local bookkeeping; neither
+/// map's iteration order contributes to checked output.
+#[derive(Default)]
+struct IdentityHasher(u64);
+
+impl Hasher for IdentityHasher {
+    fn finish(&self) -> u64 {
+        mix(self.0)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        // The keys in these maps are usize values, whose standard Hash
+        // implementation uses write_usize. Keep a deterministic fallback for
+        // completeness if another internal key type is introduced later.
+        self.0 = bytes.iter().fold(0xcbf2_9ce4_8422_2325, |state, byte| {
+            (state ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+    }
+
+    fn write_usize(&mut self, value: usize) {
+        self.0 = u64::try_from(value).unwrap_or(u64::MAX);
+    }
+}
+
 impl Ranking {
     fn new() -> Self {
         Self {
-            ids: HashMap::new(),
+            ids: HashMap::with_hasher(BuildHasherDefault::default()),
             shapes: Vec::new(),
             class_of: Vec::new(),
             representative: Vec::new(),
@@ -449,6 +476,7 @@ mod tests {
 
     /// The ranking orders keys exactly as `NodeKey::cmp` does, equal keys
     /// built apart included.
+    #[trace("NFR-141-AC-14")]
     #[test]
     fn ranks_agree_with_node_key_order() {
         let mut input = keys(400);

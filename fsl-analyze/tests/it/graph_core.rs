@@ -53,8 +53,10 @@ impl TransitionSystem for Model {
     type Key = usize;
     type Finding = usize;
 
-    fn initial(&self) -> Vec<usize> {
-        self.initial.clone()
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        self.initial.iter().cloned().map(Ok)
     }
     fn key(&self, state: &usize) -> usize {
         *state
@@ -447,12 +449,8 @@ impl PropertyComponent<Model> for Property {
     type State = u8;
     type Key = u8;
     type Finding = &'static str;
-    fn initial(&self, model: &usize) -> Vec<u8> {
-        if model % 3 == 2 {
-            vec![0]
-        } else {
-            vec![1, 0]
-        }
+    fn initial(&self, model: &usize) -> impl Iterator<Item = u8> + use<> {
+        (model % 3 != 2).then_some(1).into_iter().chain([0])
     }
     fn key(&self, state: &u8) -> u8 {
         *state
@@ -778,7 +776,10 @@ fn canonical_encoding_failures_are_typed_errors() {
         || false,
     )
     .unwrap_err();
-    assert!(matches!(error, quire_canonical::Error::Limit(_)));
+    assert!(matches!(
+        error,
+        fsl_analyze::model_check::RetainError::Encoding(quire_canonical::Error::Limit(_))
+    ));
     let invalid = Model::new(&[usize::MAX], &[]);
     assert!(retain(
         &invalid,
@@ -860,8 +861,8 @@ impl PropertyComponent<Model> for AnchoredProperty {
     type State = String;
     type Key = String;
     type Finding = ();
-    fn initial(&self, _model: &usize) -> Vec<String> {
-        vec!["initialization".to_owned()]
+    fn initial(&self, _model: &usize) -> impl Iterator<Item = String> + use<> {
+        std::iter::once("initialization".to_owned())
     }
     fn key(&self, state: &String) -> String {
         state.clone()

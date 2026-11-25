@@ -758,6 +758,150 @@ fn initial_decided_cyclic_subjects_are_refuted_not_unsupported() {
     }
 }
 
+#[trace(
+    "TC-3172",
+    "FR-202-AC-46",
+    "FSpec-TC-433",
+    "FSpec-FR-412-AC-25",
+    "FSpec-FR-412-AC-28",
+    "FSpec-FR-413-AC-18"
+)]
+#[test]
+fn a_repeatable_operation_cycle_refutes_always_and_empty_event_without_path_search() {
+    let world = World::new(&item(
+        1,
+        vec![operation("call", false)],
+        format!(
+            "pre Call using v on M::Item::call {{ self.phase = 0 }}\n\
+             post Called using v on M::Item::call {{ self.phase = 0 }}\n\
+             workload W on M {{ weight Item::call = 1; }}\n{}{}",
+            claim(
+                "Always",
+                "W",
+                "probability >= rational(1,2) [ always holds(x.phase = 1) ]",
+            ),
+            claim(
+                "EmptyEvent",
+                "W",
+                "probability >= rational(1,2) [ eventually holds(x.phase = 1) ]",
+            ),
+        ),
+    ));
+
+    for name in ["Always", "EmptyEvent"] {
+        let found = refuted(&world, name);
+        assert!(found.scheduler.is_empty(), "{name}");
+        assert!(found.paths.is_empty(), "{name}");
+        expect_rows(&found, vec![(found.initial_key.clone(), q(1, 1), 0)]);
+        assert!(
+            matches!(
+                replay(&world, &found),
+                Ok(ProbabilityWitnessReplay::Reproduced(_))
+            ),
+            "{name}: subsystem replay reproduces the cyclic certificate"
+        );
+
+        let mut path_set = found;
+        path_set.subsystem = None;
+        assert!(
+            matches!(
+                replay(&world, &path_set),
+                Err(ProbabilityWitnessError::Graph(
+                    ExactProbabilityGraphError::Cycle
+                ))
+            ),
+            "{name}: the path-set entry reports the raw graph cycle"
+        );
+    }
+}
+
+#[trace("FSpec-TC-433", "FSpec-FR-412-AC-28", "FR-202-AC-46")]
+#[test]
+fn a_fair_minimum_ranking_over_the_repeatable_operation_cycle_is_malformed() {
+    let fair_claim = claim(
+        "FairEmpty",
+        "every scheduler fair strong Item::call",
+        "probability >= rational(1,2) [ eventually holds(x.phase = 1) ]",
+    );
+    let world = World::new(&item(
+        1,
+        vec![operation("call", false)],
+        format!(
+            "pre Call using v on M::Item::call {{ self.phase = 0 }}\n\
+             post Called using v on M::Item::call {{ self.phase = 0 }}\n{}",
+            fair_claim
+        ),
+    ));
+
+    let checked_claim = world.claim("FairEmpty");
+    let item_identity = fsl_replay::probabilistic_claim_identity(checked_claim).unwrap();
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let binding = claim_binding(&system, checked_claim).unwrap().unwrap();
+    let raw = system.state_key(&system.initial()[0]).unwrap().0;
+    let initial = ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap();
+    let malformed = json!({
+        "identity": {
+            "node_id": fsl_foundation::node_wire::node_key_to_json(item_identity.node()).unwrap(),
+            "model": item_identity.model().map(|model| model.as_str()),
+            "ordinal": item_identity.ordinal(),
+        },
+        "objective": {
+            "profile": "filament.probability-objective/value-bounds/v1",
+            "base": {
+                "profile": "filament.probability-objective/cyclic-mdp-fair-eventual/v1",
+            },
+        },
+        "kind": "lower",
+        "values": [],
+        "ranking": [{"state": encoded(&initial), "rank": 1}],
+    });
+    let malformed = fsl_foundation::canonical_json::encode(&malformed).unwrap();
+    let subsystem = fsl_replay::ProbabilitySubsystemCertificate::from_bytes(
+        &malformed,
+        limits(),
+        &Cancel::new(),
+    )
+    .unwrap();
+    let witness = ProbabilisticCounterexample {
+        item: item_identity,
+        binding: Some(binding.reference),
+        instance: None,
+        initial: system.initial()[0].clone(),
+        initial_key: initial,
+        scheduler: Vec::new(),
+        paths: Vec::new(),
+        subsystem: Some(Box::new(subsystem)),
+    };
+    assert!(matches!(
+        replay(&world, &witness),
+        Err(ProbabilityWitnessError::CertificateRejected(
+            ProbabilityCertificateRejection {
+                rule: ProbabilityCertificateRule::Malformed,
+                at: ProbabilityCertificateLocus::Member("ranking"),
+            }
+        ))
+    ));
+    let initial_claims = format!(
+        "pre Call using v on M::Item::call {{ self.phase = 0 }}\n\
+         post Called using v on M::Item::call {{ self.phase = 0 }}\n\
+         workload W on M {{ weight Item::call = 1; }}\n{}",
+        claim(
+            "Always",
+            "W",
+            "probability >= rational(1,2) [ always holds(x.phase = 1) ]",
+        )
+    );
+    let initial_world = World::new(&item(1, vec![operation("call", false)], initial_claims));
+    let initial_verdict = refuted(&initial_world, "Always");
+    assert!(
+        matches!(
+            replay(&initial_world, &initial_verdict),
+            Ok(ProbabilityWitnessReplay::Reproduced(_))
+        ),
+        "rejecting the fair-minimum ranking does not alter the initial refutation"
+    );
+}
+
 fn rejected_member(
     replayed: Result<ProbabilityWitnessReplay, ProbabilityWitnessError>,
     member: &'static str,

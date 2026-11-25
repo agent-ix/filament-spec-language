@@ -993,6 +993,9 @@ pub struct CheckedGraph {
     /// ADR-011 §2.4 `model_selections`: each admitted domain package's
     /// selection, ascending by identity.
     model_selections: Vec<DomainPackageRef>,
+    /// FR-081/FR-400: retain the effective views formed for the selected
+    /// model aliases so package emission uses admitted facts directly.
+    selected_views: BTreeMap<String, crate::model::normalize::EffectiveView>,
     /// Exact identity rows issued by model intake for the same selected
     /// documents, carried to the package's IR projection boundary.
     selected_exact_identity_rows: (
@@ -1020,6 +1023,8 @@ pub struct CheckedGraph {
     >,
     /// FSpec FR-322: the `model_root` key of each selection, in the same order.
     model_roots: Vec<filament_exact::NodeKey>,
+    /// The selected model declaration location that owns each `model_root`.
+    model_root_locations: Vec<Location>,
     /// FR-110: the header-selectable layers the unit's header profiles
     /// resolve to, ascending.
     header_layers: Vec<crate::value::layer::HeaderLayer>,
@@ -1162,11 +1167,10 @@ pub struct CheckedGraph {
     /// FR-115: every admitted object type's effective identity, by its
     /// declaration key.
     object_types: BTreeMap<filament_checked::key::DeclarationKey, filament_exact::EffectiveId>,
-    /// ADR-012 §15.4: every admitted object type's `model`/`object_type`
-    /// node key, by its declaration key -- keyed from the declaration
-    /// whether or not this package's lowering minted the node, so
-    /// [`Self::field_domain`] names a field's declaring type even when no
-    /// clause reads it.
+    /// ADR-012 §15.4: every admitted object type or operation owner's model
+    /// node key, by declaration key -- keyed from the declaration whether or
+    /// not this package's lowering minted the node, so requirement rows can
+    /// name state-machine and process owners as well as object types.
     object_nodes: BTreeMap<filament_checked::key::DeclarationKey, filament_exact::NodeKey>,
     /// ADR-012 §15.7: each `model` alias's population declarations, by
     /// artifact id, each with its canonical member type and ordinal, as
@@ -1241,12 +1245,14 @@ impl DebugWith for CheckedGraph {
             synthesized_spans,
             embedding,
             model_selections,
+            selected_views,
             selected_exact_identity_rows,
             selected_tuple_declaration_rows,
             operation_effects,
             operation_bodies,
             protocol_population_types,
             model_roots,
+            model_root_locations,
             header_layers,
             source_packages,
             source_object_identity_fields,
@@ -1361,6 +1367,7 @@ impl DebugWith for CheckedGraph {
             .field("synthesized_spans", &synthesized_spans)
             .field("embedding", &embedding)
             .field("model_selections", &model_selections)
+            .field("selected_views", &selected_views)
             .field(
                 "selected_exact_identity_rows",
                 &selected_exact_identity_rows,
@@ -1376,6 +1383,7 @@ impl DebugWith for CheckedGraph {
                 &NodeMap(protocol_population_types.iter(), table),
             )
             .field("model_roots", &NodeList(model_roots.iter(), table))
+            .field("model_root_locations", model_root_locations)
             .field("header_layers", &header_layers)
             .field("source_packages", &source_packages)
             .field(
@@ -3456,6 +3464,7 @@ impl PackageDeclarations {
             .collect();
         let object_nodes = object_types
             .keys()
+            .chain(owner_types.keys())
             .filter_map(|declaration| {
                 models
                     .iter()
@@ -3508,6 +3517,18 @@ impl PackageDeclarations {
                 }
             }
         }
+        let model_root_locations = model_selections
+            .iter()
+            .map(|selection| {
+                let alias = admitted_by_identity
+                    .get(&selection.identity)
+                    .and_then(|model| model.alias())
+                    .unwrap_or(&selection.identity);
+                Location::root(Origin::TypeDeclaration {
+                    name: alias.to_owned(),
+                })
+            })
+            .collect();
         if let Some((&index, _)) = self.model_clauses.range(self.functions.len()..).next() {
             return Err(vec![invalid_dispatch(
                 root(Origin::Expression),
@@ -6500,7 +6521,6 @@ impl PackageDeclarations {
                                 location,
                                 reference: location,
                             }),
-                        authored_operation_name: form.authored_operation.as_deref(),
                         parameters: &typed.parameters,
                         body: typed.body.root(),
                         body_slots: &typed.slot_names,
@@ -7411,6 +7431,14 @@ impl PackageDeclarations {
                 _ => None,
             };
             occurrences.relocate(moved);
+            // Duplicate authored `related by` rows that canonicalize to the
+            // same emitted record share one source occurrence, just as the
+            // lowering's canonical record array does.
+            let canonical_related_sites: BTreeSet<_> = related_renames.values().cloned().collect();
+            occurrences.deduplicate_locations(|location| match &location.origin {
+                Origin::TypeDeclaration { name } => canonical_related_sites.contains(name),
+                _ => false,
+            });
             for checked in &mut checked_protocols {
                 for related in &mut checked.slots.related {
                     for end in &mut related.ends {
@@ -8617,10 +8645,11 @@ impl PackageDeclarations {
             };
             let boolean = builtin_boolean_type_key(&package_name).map_err(|_| unkeyable())?;
             let mut claim_requirements = claim.requirements();
-            if checked_task_sets
-                .releases()
-                .iter()
-                .any(|release| release.task_set() == claim.task_set)
+            if matches!(&claim.claim, ScheduleClaim::Schedulable(_))
+                && checked_task_sets
+                    .releases()
+                    .iter()
+                    .any(|release| release.task_set() == claim.task_set)
             {
                 claim_requirements = claim_requirements.for_task_product();
             }
@@ -8691,12 +8720,14 @@ impl PackageDeclarations {
             synthesized_spans,
             embedding,
             model_selections,
+            selected_views: self.selected_views,
             selected_exact_identity_rows: self.selected_exact_identity_rows,
             selected_tuple_declaration_rows: self.selected_tuple_declaration_rows,
             operation_effects,
             operation_bodies,
             protocol_population_types,
             model_roots,
+            model_root_locations,
             header_layers,
             source_packages,
             source_object_identity_fields,
@@ -9767,6 +9798,16 @@ impl CheckedGraph {
         &self.model_selections
     }
 
+    /// FR-081/FR-400: the completed effective declaration view for each
+    /// selected model alias, as produced during S3 admission. Package
+    /// emission reads these retained views rather than normalizing source
+    /// documents a second time.
+    pub fn selected_model_views(
+        &self,
+    ) -> &BTreeMap<String, crate::model::normalize::EffectiveView> {
+        &self.selected_views
+    }
+
     /// The model-intake declaration and field rows, validated against the
     /// IR package admitted from this checked graph's selected documents,
     /// charged to the caller's `budget`.
@@ -9871,6 +9912,14 @@ impl CheckedGraph {
         self.model_selections
             .iter()
             .zip(self.model_roots.iter().cloned())
+    }
+
+    /// The source selection location that owns each `model_root`, in the
+    /// same order as [`Self::model_roots`].
+    pub fn model_root_locations(
+        &self,
+    ) -> &[filament_semantic_value::location::ExpressionLocation] {
+        &self.model_root_locations
     }
 
     /// FR-110: the header-selectable layers the unit's header profiles

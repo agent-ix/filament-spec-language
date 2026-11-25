@@ -7,10 +7,12 @@
 //! Each document wraps the base objective of an exact proof the analyzer
 //! emits for the same model, with the values the criterion names.
 
-use super::bounded::{document, replace_source_and_rebind, request_with, run};
+use super::bounded::{
+    document, mutate, replace_source_and_rebind, request_with, requests_with_mode, run,
+};
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 const VALUE_BOUNDS: &str = "filament.probability-objective/value-bounds/v1";
@@ -36,7 +38,9 @@ fn header() -> String {
 }
 
 fn claim(op: &str, threshold: &str) -> String {
-    format!("probabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin {{ probability {op} {threshold} [ eventually holds(m.delivered) ] }}\n")
+    format!(
+        "probabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin {{ probability {op} {threshold} [ eventually holds(m.delivered) ] }}\n"
+    )
 }
 
 /// AC-1's cyclic `link` chain: from the undelivered `s`, `send_a` moves
@@ -306,6 +310,51 @@ fn cyclic_chain_bounds_are_checked_by_their_claim_side_role() {
         doc["policy"] = Value::Null;
     });
     rejected(&null_policy, "malformed", at_member("policy"));
+}
+
+/// FR-1042-AC-21: a one-action cyclic MDP exceeds the rational budget but its
+/// interval documents still pass the independent checker, including mutation.
+#[trace("TC-3212", "FR-1042-AC-21")]
+#[test]
+fn cyclic_mdp_interval_documents_are_accepted_by_the_separate_checker() {
+    let source = link(">=", "rational(2,5)");
+    let limits = ExactProbLimits {
+        max_rational_bits: 1,
+        precision_bits: 4,
+        max_precision_bits: 16,
+        ..ExactProbLimits::default()
+    };
+    let (requests, settlement) =
+        requests_with_mode(&source, SNAPSHOT, limits, domain().as_bytes(), false);
+    let [claim, counterpart] = requests.as_slice() else {
+        panic!("interval proof carries both documents: {settlement:?}");
+    };
+    let fsl_analyze::analyze::Settlement::Terminal(record) = settlement else {
+        panic!("interval proof settles terminal: {settlement:?}");
+    };
+    assert!(matches!(
+        record.value(),
+        fsl_replay::TerminalValue::Proved {
+            basis: fsl_replay::ProofBasis::ValueBounds {
+                method: fsl_replay::BoundsMethod::IntervalIteration { .. },
+                ..
+            },
+            certification: fsl_replay::Certification::Certified,
+        }
+    ));
+    assert_eq!(document(claim)["kind"], "lower");
+    assert_eq!(claim["claim_side"], true);
+    assert_eq!(document(counterpart)["kind"], "upper");
+    assert_eq!(counterpart["claim_side"], false);
+    for request in [claim, counterpart] {
+        let (code, output) = run(request);
+        assert_eq!(code, 0, "{output}");
+        let altered = mutate(request, |doc| {
+            doc["values"][0]["value"] = rational(1, 7);
+        });
+        let (code, output) = run(&altered);
+        assert_ne!(code, 0, "a changed interval row is rejected: {output}");
+    }
 }
 
 /// The `<= rational(3,5)` proof over `W` and the same proof rebound to the

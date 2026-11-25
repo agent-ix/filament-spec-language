@@ -1066,7 +1066,7 @@ fn tc_774_an_undefined_application_item_is_refuted() {
 }
 
 /// FR-290-AC-14.
-#[trace("TC-774", "FR-290-AC-14")]
+#[trace("TC-774", "FR-290-AC-14", "FR-255-AC-24")]
 #[test]
 fn tc_774_limits_flow_into_the_request_and_refusals_are_ordered() {
     let fixture = fixture();

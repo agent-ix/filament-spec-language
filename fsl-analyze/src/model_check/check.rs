@@ -72,7 +72,14 @@
 //! the clause reads. A clause with no instance is `Undecided(NoInstance)`
 //! before any state is explored (FR-125).
 
+#[cfg(test)]
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+#[cfg(test)]
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use filament_exact::{Cancel, Incomplete, Meter};
 use filament_semantic_value::catalog::InternalFault;
@@ -99,8 +106,8 @@ use fsl_eval::simulation::protocol::{
 };
 use fsl_eval::simulation::{
     ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, FairLoop,
-    Location, NotSimulated, Permutation, RequiresBound, SubjectSystem, SubjectTransition,
-    SymmetryGroup, TransitionSystem, ZeroProgress, ZeroProgressError,
+    InitialStateRefusal, Location, NotSimulated, Permutation, RequiresBound, SubjectSystem,
+    SubjectTransition, SymmetryGroup, TransitionSystem, ZeroProgress, ZeroProgressError,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_package::TemporalClockSelection;
@@ -121,6 +128,7 @@ use super::ample::{Atoms, Por};
 use super::concretise::{Lift, LiftStop};
 use super::fair_walk::FairModel;
 use super::false_extension::false_extension_rejects;
+use super::initial::{admit_initial, Refused};
 use super::reduce::{self, InstanceGroup, TableForm};
 use fsl_route::reductions::Reductions;
 
@@ -130,6 +138,9 @@ pub(super) use fsl_eval::simulation::BOUND_POSITIONS;
 pub struct ModelCheckRequest<'a> {
     /// The model subject.
     pub subject: ModelSubject<'a>,
+    /// Number of concurrent state expansions; results still commit in
+    /// breadth-first canonical order.
+    pub workers: usize,
     /// Explicit clock configurations selected for this subject's checked
     /// temporal declarations.
     pub temporal_clock_selections: &'a [TemporalClockSelection],
@@ -141,6 +152,47 @@ pub struct ModelCheckRequest<'a> {
     pub limits: ModelCheckLimits,
     /// The reductions the request selects (FR-159).
     pub reductions: Reductions,
+    /// FR-315's limits for encoding this item's SMT queries.
+    pub smt_encoding: fsl_replay::SmtEncodingLimits,
+    /// FR-315's limits for running this item's SMT queries.
+    pub smt_run: fsl_replay::SmtRunLimits,
+}
+
+/// The identity contribution of one EN-1 request's SMT limits.
+///
+/// Encoding bounds and solver-step bounds change the work a request can
+/// complete, so they are identity-bearing. Solver wall-clock time is
+/// nondeterministic and is deliberately omitted.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ModelCheckRequestIdentity {
+    /// The caller's query-encoding bounds.
+    pub smt_encoding: fsl_replay::SmtEncodingLimits,
+    /// The deterministic solver-step bound.
+    pub max_solver_steps: u64,
+}
+
+impl<'a> ModelCheckRequest<'a> {
+    /// The identity-bearing SMT limits of this request (FR-315, FR-331).
+    pub fn identity(&self) -> ModelCheckRequestIdentity {
+        ModelCheckRequestIdentity {
+            smt_encoding: self.smt_encoding,
+            max_solver_steps: self.smt_run.max_solver_steps,
+        }
+    }
+
+    /// The closure-certificate request for this run, carrying its exact
+    /// encoding limits forward to FR-338's checker.
+    pub fn certificate_request(&self) -> fsl_replay::CertificateRequest<'a> {
+        fsl_replay::CertificateRequest {
+            subject: ModelSubject {
+                simulation: self.subject.simulation.clone(),
+                proof_bounds: self.subject.proof_bounds.clone(),
+            },
+            temporal_clock_selections: self.temporal_clock_selections,
+            item: self.item,
+            smt_encoding: self.smt_encoding,
+        }
+    }
 }
 
 /// The model system `request` runs over. The derived deadlock-freedom item
@@ -157,6 +209,9 @@ fn read_system<'a>(request: &ModelCheckRequest<'a>) -> Result<ModelSystem<'a>, A
 /// Why [`check_model`] explored nothing (FR-126).
 #[derive(Debug, thiserror::Error)]
 pub enum ModelCheckRefusal {
+    /// FR-126: the requested worker count is zero.
+    #[error("invalid_runtime_input/invalid-value: model-check workers must be nonzero")]
+    Workers,
     /// FR-106's admission of the subject's `ModelSystem` failed.
     #[error("the subject's model system did not admit: {0:?}")]
     Admission(Box<AdmissionFailure>),
@@ -564,6 +619,9 @@ pub(crate) fn check_model_with_stutter_closure(
     cancel: &Cancel,
     stutter_closure: bool,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
+    if request.workers == 0 {
+        return Err(ModelCheckRefusal::Workers);
+    }
     if let ModelCheckItem::Clause { clause, .. } = request.item {
         if clause.property_form() == Some(PropertyForm::Liveness) {
             // FR-159 (a) reads the clause alone, so it settles before the
@@ -817,6 +875,7 @@ fn check_safety(
         fairness: item.fairness(),
         reducer: Some(&system),
         item: &item,
+        workers: request.workers,
         limits,
         max_depth: request.max_depth,
         meter,
@@ -874,6 +933,8 @@ fn check_safety(
 pub struct ProtocolCheckRequest<'a> {
     /// The protocol subject.
     pub subject: ProtocolSubject<'a>,
+    /// Number of concurrent state expansions, merged in canonical BFS order.
+    pub workers: usize,
     /// Explicit clock configurations selected for this subject's checked
     /// temporal declarations.
     pub temporal_clock_selections: &'a [TemporalClockSelection],
@@ -943,6 +1004,9 @@ pub fn check_protocol_constrained(
     constraint: Option<&str>,
     cancel: &Cancel,
 ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
+    if request.workers == 0 {
+        return Err(ModelCheckRefusal::Workers);
+    }
     if matches!(request.item, ModelCheckItem::Invariant { .. }) {
         return Err(ModelCheckRefusal::InvariantOverProtocol);
     }
@@ -1061,6 +1125,7 @@ pub fn check_protocol_constrained(
         root_cancelled,
         no_initial,
         limits: request.limits,
+        workers: request.workers,
         max_depth: request.max_depth,
         meter,
         max_candidates,
@@ -1256,6 +1321,7 @@ fn check_protocol_liveness(
                     request.temporal_clock_selections,
                     request.max_depth,
                     super::liveness::ProtocolLivenessOptions {
+                        workers: request.workers,
                         limits: request.limits,
                         ignore_memory_constraints: request.ignore_memory_constraints,
                         instance_bound,
@@ -1282,6 +1348,7 @@ fn check_protocol_liveness(
                     request.temporal_clock_selections,
                     request.max_depth,
                     super::liveness::ProtocolLivenessOptions {
+                        workers: request.workers,
                         limits: request.limits,
                         ignore_memory_constraints: request.ignore_memory_constraints,
                         instance_bound,
@@ -1303,6 +1370,7 @@ fn check_protocol_liveness(
                 request.temporal_clock_selections,
                 request.max_depth,
                 super::liveness::ProtocolLivenessOptions {
+                    workers: request.workers,
                     limits: request.limits,
                     ignore_memory_constraints: request.ignore_memory_constraints,
                     instance_bound,
@@ -1312,13 +1380,14 @@ fn check_protocol_liveness(
             )
         }),
     };
-    decided.unwrap_or_else(|refusal| {
-        construction_refusal(
+    match decided {
+        Ok(Err(ModelCheckRefusal::Protocol(refusal))) | Err(refusal) => construction_refusal(
             refusal,
             &subject.model.simulation.meter,
             subject.model.simulation.expansion.max_candidates,
-        )
-    })
+        ),
+        Ok(outcome) => outcome,
+    }
 }
 
 /// What a refusal of `ProtocolSystem::new` settles, before any state is
@@ -1356,6 +1425,7 @@ struct ProtocolRun<'r> {
     root_cancelled: Option<filament_exact::CancelCause>,
     no_initial: bool,
     limits: ModelCheckLimits,
+    workers: usize,
     max_depth: Option<usize>,
     meter: filament_exact::ScalarLimits,
     max_candidates: u64,
@@ -1388,12 +1458,16 @@ impl ProtocolRun<'_> {
     /// The run over `system`, under the memory bound `bound` when its memory
     /// model has one (ADR-025 MB-3, MB-4), and the state constraint when the
     /// request names one.
-    fn decide<M: MemoryModel>(
+    fn decide<M>(
         &self,
         system: &ProtocolSystem<'_, M>,
         automaton: Box<dyn SafetyAutomaton>,
         bound: Option<MemoryBound>,
-    ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
+    ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal>
+    where
+        M: MemoryModel + Sync,
+        M::Component: Send + Sync,
+    {
         // FR-430 adds scheduler constraints to infinite-trace clauses, not
         // to the derived deadlock-freedom item.
         let fairness = match self.item {
@@ -1412,6 +1486,7 @@ impl ProtocolRun<'_> {
                 .constraint
                 .map(|_| system as &dyn Reducer<ProtocolState<M>>),
             item: self.item,
+            workers: self.workers,
             limits: self.limits,
             max_depth: self.max_depth,
             meter: self.meter,
@@ -1464,7 +1539,12 @@ impl ProtocolRun<'_> {
                 stats: run.stats(),
             });
         }
-        run.decide(self.instances)
+        match run.decide(self.instances) {
+            Err(ModelCheckRefusal::Protocol(refusal)) => {
+                construction_refusal(refusal, &self.meter, self.max_candidates)
+            }
+            outcome => outcome,
+        }
     }
 }
 
@@ -1472,7 +1552,7 @@ impl ProtocolRun<'_> {
 /// with, naming the limit it reached and that limit's configured value (the
 /// counter's bound in `meter`, or `max_candidates`); `None` for a stop that
 /// broke an invariant.
-fn expansion_stopped(
+pub(super) fn expansion_stopped(
     stop: ExpansionStop,
     meter: &filament_exact::ScalarLimits,
     max_candidates: u64,
@@ -1547,7 +1627,12 @@ fn check_reduced(
     let system =
         read_system(request).map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
     check_model_bounds(&system, BOUND_POSITIONS).map_err(not_simulated)?;
-    let group = match precheck(reductions, &request.item, &system)? {
+    let group = match precheck(
+        reductions,
+        &request.item,
+        &system,
+        request.limits.limits.max_states,
+    )? {
         Admitted::Group(group) => group,
         Admitted::Settled(outcome) => return Ok(outcome),
     };
@@ -1619,6 +1704,7 @@ fn check_reduced(
             fairness: item.fairness(),
             reducer: Some(&system),
             item: &item,
+            workers: request.workers,
             limits,
             max_depth: request.max_depth,
             meter,
@@ -1759,6 +1845,15 @@ trait Chooser<State, Transition> {
         state: &State,
     ) -> Result<Expansion<Transition, State, ModelFinding>, ExpansionStop>;
 
+    /// Expand a BFS batch without sharing coordinator state. Implementors
+    /// may parallelize their pure system expansion and return results in the
+    /// supplied state order.
+    fn expand_batch(
+        &self,
+        states: Vec<State>,
+        workers: usize,
+    ) -> Vec<Result<Expansion<Transition, State, ModelFinding>, ExpansionStop>>;
+
     /// The ample set among `enabled` at `state`, where `fresh` says whether
     /// every successor through a transition is a product state not yet
     /// discovered (C3).
@@ -1768,6 +1863,130 @@ trait Chooser<State, Transition> {
         enabled: &[Transition],
         fresh: &dyn Fn(&Transition) -> bool,
     ) -> Result<Vec<Transition>, ExpansionStop>;
+}
+
+/// Map one bounded BFS batch on scoped threads, returning outcomes in input
+/// order even when a later state finishes first.
+#[cfg(test)]
+struct WorkerTestHook {
+    delay_first_job: bool,
+    cancel_after_merged: Option<usize>,
+    cancelled: AtomicBool,
+    active_workers: AtomicUsize,
+    peak_workers: AtomicUsize,
+    next_batch: AtomicUsize,
+    completed: Mutex<BTreeMap<usize, Vec<usize>>>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static WORKER_TEST_HOOK: RefCell<Option<Arc<WorkerTestHook>>> = const { RefCell::new(None) };
+    static WORKER_TEST_FRONTIER: RefCell<Vec<Vec<u8>>> = const { RefCell::new(Vec::new()) };
+    static WORKER_TEST_MERGE: Cell<Option<usize>> = const { Cell::new(None) };
+    static WORKER_TEST_STOP_MERGE: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+#[cfg(test)]
+fn cancel_at_test_merge(cancel: &Cancel, merged: usize) {
+    WORKER_TEST_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow().as_ref() {
+            if hook.cancel_after_merged == Some(merged)
+                && !hook.cancelled.swap(true, Ordering::Relaxed)
+            {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                cancel.cancel(filament_exact::CancelCause::Requested);
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+fn take_worker_test_frontier() -> Vec<Vec<u8>> {
+    WORKER_TEST_FRONTIER.with(|frontier| std::mem::take(&mut *frontier.borrow_mut()))
+}
+
+#[cfg(test)]
+fn take_worker_test_stop_merge() -> Option<usize> {
+    WORKER_TEST_STOP_MERGE.with(Cell::take)
+}
+
+fn parallel_map<State, Output>(
+    states: Vec<State>,
+    workers: usize,
+    expand: impl Fn(&State) -> Output + Sync,
+) -> Vec<Output>
+where
+    State: Send,
+    Output: Send,
+{
+    if workers <= 1 || states.len() <= 1 {
+        return states.iter().map(expand).collect();
+    }
+    #[cfg(test)]
+    let hook = WORKER_TEST_HOOK.with(|slot| slot.borrow().clone());
+    #[cfg(test)]
+    let batch = hook
+        .as_ref()
+        .map(|hook| hook.next_batch.fetch_add(1, Ordering::Relaxed));
+    let queue = states.into_iter().enumerate().collect::<VecDeque<_>>();
+    let count = queue.len();
+    let queue = Mutex::new(queue);
+    let outputs = Mutex::new((0..count).map(|_| None).collect::<Vec<Option<Output>>>());
+    let thread_count = workers.min(count);
+    std::thread::scope(|scope| {
+        let mut threads = Vec::with_capacity(thread_count);
+        for _ in 0..thread_count {
+            let queue = &queue;
+            let outputs = &outputs;
+            let expand = &expand;
+            #[cfg(test)]
+            let hook = hook.clone();
+            #[cfg(test)]
+            let batch = batch;
+            threads.push(scope.spawn(move || loop {
+                    let Some((position, state)) = queue
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .pop_front()
+                    else {
+                        break;
+                    };
+                    #[cfg(test)]
+                    if let (Some(hook), Some(batch)) = (&hook, batch) {
+                        let active = hook.active_workers.fetch_add(1, Ordering::Relaxed) + 1;
+                        hook.peak_workers.fetch_max(active, Ordering::Relaxed);
+                        if hook.delay_first_job && position == 0 {
+                            std::thread::sleep(std::time::Duration::from_millis(20));
+                        }
+                        let output = expand(&state);
+                        outputs.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[position] =
+                            Some(output);
+                        hook.completed
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .entry(batch)
+                            .or_default()
+                            .push(position);
+                        hook.active_workers.fetch_sub(1, Ordering::Relaxed);
+                        continue;
+                    }
+                    let output = expand(&state);
+                    outputs.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[position] =
+                        Some(output);
+                }));
+        }
+        for thread in threads {
+            if let Err(panic) = thread.join() {
+                std::panic::resume_unwind(panic);
+            }
+        }
+    });
+    outputs
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .into_iter()
+        .map(|output| output.expect("every worker slot has one result"))
+        .collect()
 }
 
 /// A model subject's ample sets: [`Por`] over its `ModelSystem`.
@@ -1782,6 +2001,16 @@ impl Chooser<ModelSimState, ModelTransition> for ModelAmple<'_, '_> {
         state: &ModelSimState,
     ) -> Result<Expansion<ModelTransition, ModelSimState, ModelFinding>, ExpansionStop> {
         self.system.successors_enforced(state)
+    }
+
+    fn expand_batch(
+        &self,
+        states: Vec<ModelSimState>,
+        workers: usize,
+    ) -> Vec<Result<Expansion<ModelTransition, ModelSimState, ModelFinding>, ExpansionStop>> {
+        parallel_map(states, workers, |state| {
+            self.system.successors_enforced(state)
+        })
     }
 
     fn choose(
@@ -1863,6 +2092,7 @@ pub(super) fn precheck(
     reductions: &Reductions,
     item: &ModelCheckItem<'_>,
     system: &ModelSystem<'_>,
+    max_states: usize,
 ) -> Result<Admitted, ModelCheckRefusal> {
     let form = TableForm::of(item).ok_or_else(|| fault("a-decided-item-has-a-table-row"))?;
     if let Some(reduction) = reduce::not_preserving(reductions, form) {
@@ -1882,10 +2112,35 @@ pub(super) fn precheck(
         })));
     }
     let group = reduce::admit(system, &reductions.symmetry).map_err(ModelCheckRefusal::Symmetry)?;
-    let closed = reduce::closure(system, &group).map_err(|refusal| match refusal {
-        reduce::ClosureRefusal::Encoding(refusal) => ModelCheckRefusal::Encoding(refusal),
-        reduce::ClosureRefusal::Unordered => fault("a-permuted-collection-is-ordered"),
-    })?;
+    let closed = match reduce::closure_under_limit(system, &group, max_states) {
+        Ok(closed) => closed,
+        Err(reduce::ClosureRefusal::OverBudget) => {
+            return Ok(Admitted::Settled(ModelCheckOutcome::Stopped {
+                cause: IncompleteCause::ResourceExhausted,
+                limit: Some(ReachedLimit {
+                    limit: ModelCheckLimit::MaxStates,
+                    value: widen(max_states),
+                }),
+                stats: RunStats::default(),
+            }));
+        }
+        Err(reduce::ClosureRefusal::Stopped(stop)) => {
+            let (cause, limit) = expansion_stopped(stop, &system.meter(), system.max_candidates())
+                .ok_or_else(|| fault("model-expansion-invariant"))?;
+            return Ok(Admitted::Settled(ModelCheckOutcome::Stopped {
+                cause,
+                limit,
+                stats: RunStats::default(),
+            }));
+        }
+        Err(reduce::ClosureRefusal::Encoding(refusal)) => return Err(refusal.into()),
+        Err(reduce::ClosureRefusal::Initial(_)) => {
+            return Err(fault("model-initial-admission-has-no-protocol-construction-fault"));
+        }
+        Err(reduce::ClosureRefusal::Unordered) => {
+            return Err(fault("a-permuted-collection-is-ordered"));
+        }
+    };
     if let Some(cause) = closed {
         return Ok(Admitted::Settled(settled(cause)));
     }
@@ -2056,7 +2311,7 @@ trait Reducer<State> {
     ) -> Result<(State, Permutation), ExpansionStop>;
 
     fn constraint_value(&self, state: &State, name: &str)
-    -> Result<ConstraintValue, ExpansionStop>;
+        -> Result<ConstraintValue, ExpansionStop>;
 }
 
 impl Reducer<ModelSimState> for ModelSystem<'_> {
@@ -2105,6 +2360,8 @@ struct Run<'r, S: SubjectSystem> {
     /// The system's reductions; `None` for a subject that offers none.
     reducer: Option<&'r dyn Reducer<S::State>>,
     item: &'r Item<'r>,
+    /// Parallel expansion count; all results are committed by BFS position.
+    workers: usize,
     limits: ModelCheckLimits,
     max_depth: Option<usize>,
     meter: filament_exact::ScalarLimits,
@@ -2174,7 +2431,66 @@ struct DeferredLocalAccess {
     shape: Box<WeakAccessShape>,
 }
 
-impl<S: SubjectSystem> Run<'_, S> {
+impl<S> Run<'_, S>
+where
+    S: SubjectSystem + Sync,
+    S::State: Send,
+    S::TransitionId: Send,
+{
+    #[cfg(test)]
+    fn snapshot_worker_frontier(&self, active: usize) {
+        let frontier = std::iter::once(active)
+            .chain(self.queue.iter().copied())
+            .filter_map(|index| {
+                self.nodes
+                    .get(index)
+                    .map(|node| node.key.as_bytes().to_vec())
+            })
+            .collect();
+        WORKER_TEST_FRONTIER.with(|slot| *slot.borrow_mut() = frontier);
+    }
+
+    /// Expand a bounded BFS batch on scoped workers. The coordinator consumes
+    /// these indexed outcomes in queue order, so expansion completion order
+    /// cannot change a finding, refusal, or budget boundary.
+    fn expand_batch(
+        &self,
+        positions: &[usize],
+    ) -> Vec<(
+        usize,
+        Result<(Expansion<S::TransitionId, S::State, ModelFinding>, Cut), ExpansionStop>,
+    )>
+    where
+        ModelFinding: Send,
+    {
+        let system = self.system;
+        let chooser = self.chooser;
+        let states: Vec<_> = positions
+            .iter()
+            .map(|&position| (position, self.nodes[position].state.clone()))
+            .collect();
+        let outcomes = match chooser {
+            Some(chooser) => chooser
+                .expand_batch(
+                    states.iter().map(|(_, state)| state.clone()).collect(),
+                    self.workers,
+                )
+                .into_iter()
+                .map(|result| result.map(|expansion| (expansion, Cut::default())))
+                .collect(),
+            None => parallel_map(
+                states.iter().map(|(_, state)| state.clone()).collect(),
+                self.workers,
+                |state| system.successors_bounded(state),
+            ),
+        };
+        states
+            .into_iter()
+            .zip(outcomes)
+            .map(|((position, _), result)| (position, result))
+            .collect()
+    }
+
     fn record_weak_access_classification(&mut self, findings: &[ModelFinding]) -> Step<()> {
         for finding in findings {
             match finding {
@@ -2498,24 +2814,37 @@ impl<S: SubjectSystem> Run<'_, S> {
     fn explore(&mut self) -> Step<()> {
         self.poll()?;
         let start = self.monitor.initial().map_err(Self::automaton)?;
-        let mut initial = Vec::new();
-        for (index, state) in self.system.initial().into_iter().enumerate() {
-            let (state, permutation) = self.canonical(state)?;
-            let (key, state_key) = self.system.state_key(&state)?;
-            initial.push((key, index, state_key, state, permutation));
-        }
-        // Equal keys coalesce into the first initial state that has the key.
-        initial.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
-        initial.dedup_by(|later, earlier| later.0 == earlier.0);
-        if initial.len() > self.limits.limits.max_states {
-            return Err(Self::stopped(
-                ModelCheckLimit::MaxStates,
-                widen(self.limits.limits.max_states),
-            )
-            .into());
-        }
+        // Equal keys coalesce into the first initial state that has the key;
+        // the budget refuses before the remaining states are constructed.
+        let initial = admit_initial(
+            self.system
+                .initial_for_check_with_symmetry(self.limits.limits.max_states, &self.group),
+            self.limits.limits.max_states,
+            |_, state| {
+                let (state, permutation) = self.canonical(state)?;
+                let (key, state_key) = self.system.state_key(&state)?;
+                Ok::<_, Halt>((key, (state_key, state, permutation)))
+            },
+        )
+        .map_err(|refused| match refused {
+            Refused::OverBudget | Refused::Construction(InitialStateRefusal::OverBudget(_)) => {
+                Self::stopped(
+                    ModelCheckLimit::MaxStates,
+                    widen(self.limits.limits.max_states),
+                )
+                .into()
+            }
+            Refused::Construction(InitialStateRefusal::Construction(refusal)) => {
+                ModelCheckRefusal::Protocol(refusal).into()
+            }
+            Refused::Construction(InitialStateRefusal::Encoding(refusal)) => refusal.into(),
+            Refused::Construction(InitialStateRefusal::Expansion(stop)) => {
+                self.expansion_stop(stop).into()
+            }
+            Refused::Keying(halt) => halt,
+        })?;
         let before = vec![start; self.item.instance_count()];
-        for (key, index, state_key, state, permutation) in initial {
+        for (key, index, (state_key, state, permutation)) in initial {
             if self.first_bad.is_some() && !self.has_unresolved_local_access() {
                 break;
             }
@@ -2533,205 +2862,230 @@ impl<S: SubjectSystem> Run<'_, S> {
             };
             self.create(key, node, &before, None)?;
         }
-        while let Some(at) = self.queue.pop_front() {
-            self.poll()?;
-            if self.first_bad.as_ref().is_some_and(|(bad, _)| *bad == at)
-                && !self.has_unresolved_local_access()
-            {
-                if let Some((_, violation)) = self.first_bad.take() {
-                    return Err(Finish::Violated(violation).into());
+        #[cfg(test)]
+        let mut merged_states = 0usize;
+        while !self.queue.is_empty() {
+            let batch_positions: Vec<_> = self
+                .queue
+                .iter()
+                .take(self.workers.max(1))
+                .copied()
+                .collect();
+            let mut expanded_batch = self.expand_batch(&batch_positions).into_iter();
+            for expected in batch_positions {
+                #[cfg(test)]
+                cancel_at_test_merge(self.cancel, merged_states);
+                let (at, expanded) = expanded_batch
+                    .next()
+                    .unwrap_or_else(|| panic!("every queued expansion has a result"));
+                if at != expected || self.queue.pop_front() != Some(at) {
+                    return Err(fault("worker-results-preserve-breadth-first-order").into());
                 }
-            }
-            if let Some(violation) = self.system.loop_proof_violation(&self.nodes[at].state) {
-                let target = match self.item {
-                    Item::LoopInvariant { repeat } => {
-                        (repeat, fsl_replay::LoopProofObligation::Invariant)
-                    }
-                    Item::LoopTermination { repeat } => {
-                        (repeat, fsl_replay::LoopProofObligation::Termination)
-                    }
-                    _ => return Err(fault("loop-proof-failure-has-loop-proof-item").into()),
-                };
-                if *target.0 != violation.repeat {
-                    return Err(fault("loop-proof-failure-names-requested-repeat").into());
+                #[cfg(test)]
+                {
+                    WORKER_TEST_MERGE.with(|merge| merge.set(Some(merged_states)));
+                    self.snapshot_worker_frontier(at);
+                    merged_states = merged_states.saturating_add(1);
                 }
-                use fsl_eval::simulation::protocol::ProtocolLoopProofFailure as Failure;
-                let failure = match violation.failure {
-                    Failure::InvariantFalse => fsl_replay::LoopProofFailure::InvariantFalse,
-                    Failure::Undefined => fsl_replay::LoopProofFailure::Undefined,
-                    Failure::VariantDidNotDecrease => {
-                        fsl_replay::LoopProofFailure::VariantDidNotDecrease
+                self.poll()?;
+                if self.first_bad.as_ref().is_some_and(|(bad, _)| *bad == at)
+                    && !self.has_unresolved_local_access()
+                {
+                    if let Some((_, violation)) = self.first_bad.take() {
+                        return Err(Finish::Violated(violation).into());
                     }
-                    Failure::VariantBelowFloor => fsl_replay::LoopProofFailure::VariantBelowFloor,
-                    Failure::EvaluationIncomplete => {
-                        return Err(Finish::Undecided(UndecidedCause::UndecidedSuccessor).into());
-                    }
-                    Failure::EvaluationRefused => {
-                        return Err(fault("a-checked-loop-proof-body-does-not-refuse").into());
-                    }
-                };
-                return Err(Finish::violated(
-                    CounterexampleKind::LoopProof(fsl_replay::LoopProofCounterexample {
-                        repeat: violation.repeat.0,
-                        obligation: target.1,
-                        failure,
-                    }),
-                    at,
-                    None,
-                )
-                .into());
-            }
-            // FR-158: a boundary state is never expanded, stutter-extended
-            // or classified as a deadlock.
-            if self.nodes[at].boundary {
-                continue;
-            }
-            let expanded = match self.chooser {
-                Some(chooser) => chooser
-                    .expand(&self.nodes[at].state)
-                    .map(|expansion| (expansion, Cut::default())),
-                None => self.system.successors_bounded(&self.nodes[at].state),
-            };
-            let (expansion, cut) = match expanded {
-                Ok(expanded) => expanded,
-                Err(stop) => return Err(self.expansion_stop(stop)),
-            };
-            self.record_weak_access_classification(&expansion.findings)?;
-            self.contracts(at, &expansion.findings)?;
-            if cut.memory {
-                self.bound_limited.insert(self.nodes[at].state_key.clone());
-                // ADR-025 MB-3: a state whose only enabled steps are cut
-                // stores is a boundary state: never stutter-extended and
-                // never a deadlock.
-                if expansion.successors.is_empty() {
-                    continue;
                 }
-            }
-            if cut.messages {
-                self.message_bound_limited
-                    .insert(self.nodes[at].state_key.clone());
-                if expansion.successors.is_empty() {
-                    continue;
-                }
-            }
-            // ADR-027 AE-4: an instance-limited state is never terminal. With
-            // no expanded successor it is a boundary state, as MB-3's is:
-            // never closed, stutter-extended or a deadlock.
-            if cut.instances {
-                self.instance_limited
-                    .insert(self.nodes[at].state_key.clone());
-                if expansion.successors.is_empty() {
-                    continue;
-                }
-            }
-            if matches!(self.item, Item::Deadlock) {
-                let after = self.deadlock_letter(at, &expansion, cut)?;
-                self.nodes[at].monitor = vec![after];
-            }
-            if self.chooser.is_none()
-                && matches!(
-                    self.item,
-                    Item::Clause {
-                        uncounted: Some(_),
-                        ..
+                if let Some(violation) = self.system.loop_proof_violation(&self.nodes[at].state) {
+                    let target = match self.item {
+                        Item::LoopInvariant { repeat } => {
+                            (repeat, fsl_replay::LoopProofObligation::Invariant)
+                        }
+                        Item::LoopTermination { repeat } => {
+                            (repeat, fsl_replay::LoopProofObligation::Termination)
+                        }
+                        _ => return Err(fault("loop-proof-failure-has-loop-proof-item").into()),
+                    };
+                    if *target.0 != violation.repeat {
+                        return Err(fault("loop-proof-failure-names-requested-repeat").into());
                     }
-                )
-            {
-                let enabled = expansion
-                    .successors
-                    .iter()
-                    .map(|(transition, _)| transition.clone())
-                    .collect();
-                self.enabled.insert(at, enabled);
-            }
-            let terminal = expansion.successors.is_empty();
-            if terminal {
-                self.close(at)?;
-            }
-            if self.first_bad.is_some() && !self.has_unresolved_local_access() {
-                continue;
-            }
-            let mut steps = Vec::with_capacity(expansion.successors.len());
-            for (transition, state) in expansion.successors {
-                let order = self.system.transition_key(&transition)?;
-                let (state, permutation) = self.canonical(state)?;
-                let (key, state_key) = self.system.state_key(&state)?;
-                steps.push((order, key, state_key, Some(transition), state, permutation));
-            }
-            steps.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
-            if terminal && self.stutters() {
-                let (key, state_key) = self.system.state_key(&self.nodes[at].state)?;
-                steps.push((
-                    Vec::new(),
-                    key,
-                    state_key,
-                    None,
-                    self.nodes[at].state.clone(),
-                    Permutation::identity(),
-                ));
-            }
-            let depth = self.nodes[at].depth;
-            let before = self.nodes[at].monitor.clone();
-            if self.max_depth.is_some_and(|horizon| depth >= horizon) {
-                // A terminal stutter that coalesces with an explored product
-                // state leaves nothing unexplored.
-                let unexplored = match steps.pop() {
-                    Some((_, key, state_key, None, state, permutation)) => {
-                        let node = Node {
-                            state,
-                            key: fsl_eval::simulation::StateKey::from_canonical_bytes(key.clone()),
-                            state_key,
-                            depth: depth.saturating_add(1),
-                            distance: self.distance_after(at, None),
-                            parent: Some((at, None)),
-                            initial_index: self.nodes[at].initial_index,
-                            monitor: Vec::new(),
-                            permutation,
-                            boundary: false,
-                        };
-                        let (after, canonical, bad) = self.advance(&node, &before)?;
-                        bad.is_some()
-                            || !self.known.contains_key(&self.product(
-                                key,
-                                after,
-                                node.distance,
-                                &canonical,
-                            ))
-                    }
-                    Some(_) => true,
-                    None => false,
-                };
-                self.horizon_cut |= unexplored;
-                continue;
-            }
-            let mut reads = self.ample(at, &before, &mut steps)?.into_iter();
-            for (_, key, state_key, transition, state, permutation) in steps {
-                if self.edges >= self.limits.limits.max_transitions {
-                    return Err(Self::stopped(
-                        ModelCheckLimit::MaxTransitions,
-                        widen(self.limits.limits.max_transitions),
+                    use fsl_eval::simulation::protocol::ProtocolLoopProofFailure as Failure;
+                    let failure = match violation.failure {
+                        Failure::InvariantFalse => fsl_replay::LoopProofFailure::InvariantFalse,
+                        Failure::Undefined => fsl_replay::LoopProofFailure::Undefined,
+                        Failure::VariantDidNotDecrease => {
+                            fsl_replay::LoopProofFailure::VariantDidNotDecrease
+                        }
+                        Failure::VariantBelowFloor => {
+                            fsl_replay::LoopProofFailure::VariantBelowFloor
+                        }
+                        Failure::EvaluationIncomplete => {
+                            return Err(
+                                Finish::Undecided(UndecidedCause::UndecidedSuccessor).into()
+                            );
+                        }
+                        Failure::EvaluationRefused => {
+                            return Err(fault("a-checked-loop-proof-body-does-not-refuse").into());
+                        }
+                    };
+                    return Err(Finish::violated(
+                        CounterexampleKind::LoopProof(fsl_replay::LoopProofCounterexample {
+                            repeat: violation.repeat.0,
+                            obligation: target.1,
+                            failure,
+                        }),
+                        at,
+                        None,
                     )
                     .into());
                 }
-                self.edges += 1;
-                if transition.is_none() {
-                    self.stutter_edges += 1;
+                // FR-158: a boundary state is never expanded, stutter-extended
+                // or classified as a deadlock.
+                if self.nodes[at].boundary {
+                    continue;
                 }
-                let node = Node {
-                    state,
-                    key: fsl_eval::simulation::StateKey::from_canonical_bytes(key.clone()),
-                    state_key,
-                    depth: depth.saturating_add(1),
-                    distance: self.distance_after(at, transition.as_ref()),
-                    parent: Some((at, transition)),
-                    initial_index: self.nodes[at].initial_index,
-                    monitor: Vec::new(),
-                    permutation,
-                    boundary: false,
+                let (expansion, cut) = match expanded {
+                    Ok(expanded) => expanded,
+                    Err(stop) => return Err(self.expansion_stop(stop)),
                 };
-                self.create(key, node, &before, reads.next().flatten())?;
+                self.record_weak_access_classification(&expansion.findings)?;
+                self.contracts(at, &expansion.findings)?;
+                if cut.memory {
+                    self.bound_limited.insert(self.nodes[at].state_key.clone());
+                    // ADR-025 MB-3: a state whose only enabled steps are cut
+                    // stores is a boundary state: never stutter-extended and
+                    // never a deadlock.
+                    if expansion.successors.is_empty() {
+                        continue;
+                    }
+                }
+                if cut.messages {
+                    self.message_bound_limited
+                        .insert(self.nodes[at].state_key.clone());
+                    if expansion.successors.is_empty() {
+                        continue;
+                    }
+                }
+                // ADR-027 AE-4: an instance-limited state is never terminal. With
+                // no expanded successor it is a boundary state, as MB-3's is:
+                // never closed, stutter-extended or a deadlock.
+                if cut.instances {
+                    self.instance_limited
+                        .insert(self.nodes[at].state_key.clone());
+                    if expansion.successors.is_empty() {
+                        continue;
+                    }
+                }
+                if matches!(self.item, Item::Deadlock) {
+                    let after = self.deadlock_letter(at, &expansion, cut)?;
+                    self.nodes[at].monitor = vec![after];
+                }
+                if self.chooser.is_none()
+                    && matches!(
+                        self.item,
+                        Item::Clause {
+                            uncounted: Some(_),
+                            ..
+                        }
+                    )
+                {
+                    let enabled = expansion
+                        .successors
+                        .iter()
+                        .map(|(transition, _)| transition.clone())
+                        .collect();
+                    self.enabled.insert(at, enabled);
+                }
+                let terminal = expansion.successors.is_empty();
+                if terminal {
+                    self.close(at)?;
+                }
                 if self.first_bad.is_some() && !self.has_unresolved_local_access() {
-                    break;
+                    continue;
+                }
+                let mut steps = Vec::with_capacity(expansion.successors.len());
+                for (transition, state) in expansion.successors {
+                    let order = self.system.transition_key(&transition)?;
+                    let (state, permutation) = self.canonical(state)?;
+                    let (key, state_key) = self.system.state_key(&state)?;
+                    steps.push((order, key, state_key, Some(transition), state, permutation));
+                }
+                steps.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+                if terminal && self.stutters() {
+                    let (key, state_key) = self.system.state_key(&self.nodes[at].state)?;
+                    steps.push((
+                        Vec::new(),
+                        key,
+                        state_key,
+                        None,
+                        self.nodes[at].state.clone(),
+                        Permutation::identity(),
+                    ));
+                }
+                let depth = self.nodes[at].depth;
+                let before = self.nodes[at].monitor.clone();
+                if self.max_depth.is_some_and(|horizon| depth >= horizon) {
+                    // A terminal stutter that coalesces with an explored product
+                    // state leaves nothing unexplored.
+                    let unexplored = match steps.pop() {
+                        Some((_, key, state_key, None, state, permutation)) => {
+                            let node = Node {
+                                state,
+                                key: fsl_eval::simulation::StateKey::from_canonical_bytes(
+                                    key.clone(),
+                                ),
+                                state_key,
+                                depth: depth.saturating_add(1),
+                                distance: self.distance_after(at, None),
+                                parent: Some((at, None)),
+                                initial_index: self.nodes[at].initial_index,
+                                monitor: Vec::new(),
+                                permutation,
+                                boundary: false,
+                            };
+                            let (after, canonical, bad) = self.advance(&node, &before)?;
+                            bad.is_some()
+                                || !self.known.contains_key(&self.product(
+                                    key,
+                                    after,
+                                    node.distance,
+                                    &canonical,
+                                ))
+                        }
+                        Some(_) => true,
+                        None => false,
+                    };
+                    self.horizon_cut |= unexplored;
+                    continue;
+                }
+                let mut reads = self.ample(at, &before, &mut steps)?.into_iter();
+                for (_, key, state_key, transition, state, permutation) in steps {
+                    if self.edges >= self.limits.limits.max_transitions {
+                        return Err(Self::stopped(
+                            ModelCheckLimit::MaxTransitions,
+                            widen(self.limits.limits.max_transitions),
+                        )
+                        .into());
+                    }
+                    self.edges += 1;
+                    if transition.is_none() {
+                        self.stutter_edges += 1;
+                    }
+                    let node = Node {
+                        state,
+                        key: fsl_eval::simulation::StateKey::from_canonical_bytes(key.clone()),
+                        state_key,
+                        depth: depth.saturating_add(1),
+                        distance: self.distance_after(at, transition.as_ref()),
+                        parent: Some((at, transition)),
+                        initial_index: self.nodes[at].initial_index,
+                        monitor: Vec::new(),
+                        permutation,
+                        boundary: false,
+                    };
+                    self.create(key, node, &before, reads.next().flatten())?;
+                    if self.first_bad.is_some() && !self.has_unresolved_local_access() {
+                        break;
+                    }
                 }
             }
         }
@@ -3593,6 +3947,8 @@ impl<S: SubjectSystem> Run<'_, S> {
     /// An expansion stop: a named budget settles V-7 naming it, a broken
     /// invariant refuses, any other stop settles V-7 with no limit.
     fn expansion_stop(&self, stop: ExpansionStop) -> Halt {
+        #[cfg(test)]
+        WORKER_TEST_MERGE.with(|merge| WORKER_TEST_STOP_MERGE.set(merge.get()));
         expansion_stopped(stop, &self.meter, self.max_candidates).map_or_else(
             || fault("model-expansion-invariant").into(),
             |(cause, limit)| Finish::Stopped(cause, limit).into(),
@@ -3708,6 +4064,284 @@ impl<S: SubjectSystem> Run<'_, S> {
             final_delay: None,
             closure_stutters: Vec::new(),
         })
+    }
+}
+
+#[cfg(test)]
+mod worker_determinism_tests {
+    use super::*;
+    use crate::counter;
+    use filament_semantic_value::checking::CheckMode;
+    use fsl_replay::{ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome};
+    use fsl_route::reductions::Reductions;
+    use ix_trace_rs::trace;
+
+    const MAKE: &str = "pre CanMake using v on M::Counter::make { self.value = 1 }\n\
+                        post Make using v on M::Counter::make { self.value = 2 }\n";
+
+    struct Evidence {
+        outcome: Result<ModelCheckOutcome, ModelCheckRefusal>,
+        frontier: Vec<Vec<u8>>,
+        stopped_at_merge: Option<usize>,
+        merged_states: Option<usize>,
+    }
+
+    fn hook(delay_first_job: bool, cancel_after_merged: Option<usize>) -> Arc<WorkerTestHook> {
+        Arc::new(WorkerTestHook {
+            delay_first_job,
+            cancel_after_merged,
+            cancelled: AtomicBool::new(false),
+            active_workers: AtomicUsize::new(0),
+            peak_workers: AtomicUsize::new(0),
+            next_batch: AtomicUsize::new(0),
+            completed: Mutex::new(BTreeMap::new()),
+        })
+    }
+
+    fn run(
+        workers: usize,
+        max_candidates: u64,
+        cancel_after_merged: Option<usize>,
+        set_to: bool,
+    ) -> Evidence {
+        let mut document = counter::document(false);
+        if set_to {
+            let mut source: serde_json::Value =
+                serde_json::from_slice(&document).expect("the counter source parses");
+            let counter_type = source["types"]
+                .as_array_mut()
+                .expect("types")
+                .iter_mut()
+                .find(|declared| declared["identity"] == counter::key("Counter").node)
+                .expect("Counter type");
+            let operations = counter_type["operations"]
+                .as_array_mut()
+                .expect("operations");
+            let mut make = operations[0].clone();
+            make["identity"] = serde_json::json!(counter::key("Counter/make").node);
+            make["name"] = serde_json::json!("make");
+            operations.push(make);
+            document = serde_json::to_vec(&source).expect("the fixture serializes");
+        }
+        let body = if set_to {
+            format!("{}{MAKE}", counter::CONTRACT)
+        } else {
+            counter::CONTRACT.to_owned()
+        };
+        let package = counter::package_with_mode(&document, &body, CheckMode::Linked);
+        let mut documents = counter::Documents::new(document);
+        let initial = vec![documents.start("initial", &[("a", 0), ("b", 0), ("c", 0), ("d", 0)])];
+        let mut subject = counter::subject(
+            &package,
+            &documents,
+            initial,
+            &["a", "b", "c", "d"],
+            counter::UNLIMITED,
+        );
+        subject.simulation.expansion.max_candidates = max_candidates;
+        let cancel = Cancel::new();
+        let worker_hook = hook(workers > 1, cancel_after_merged);
+        WORKER_TEST_HOOK.with(|slot| *slot.borrow_mut() = Some(Arc::clone(&worker_hook)));
+        WORKER_TEST_FRONTIER.with(|frontier| frontier.borrow_mut().clear());
+        WORKER_TEST_MERGE.set(None);
+        WORKER_TEST_STOP_MERGE.set(None);
+        let outcome = check_model(
+            ModelCheckRequest {
+                subject,
+                workers,
+                temporal_clock_selections: &[],
+                item: ModelCheckItem::DeadlockFreedom,
+                max_depth: None,
+                limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
+                reductions: Reductions::default(),
+            },
+            &cancel,
+        );
+        WORKER_TEST_HOOK.with(|slot| {
+            slot.borrow_mut().take();
+        });
+        let frontier = take_worker_test_frontier();
+        let stopped_at_merge = take_worker_test_stop_merge();
+        Evidence {
+            outcome,
+            frontier,
+            stopped_at_merge,
+            merged_states: WORKER_TEST_MERGE.with(Cell::get),
+        }
+    }
+
+    fn stopped(outcome: &ModelCheckOutcome) -> (&IncompleteCause, Option<ReachedLimit>, RunStats) {
+        match outcome {
+            ModelCheckOutcome::Stopped {
+                cause,
+                limit,
+                stats,
+            } => (cause, *limit, *stats),
+            other => panic!("expected a stopped run, got {other:?}"),
+        }
+    }
+
+    fn completed_out_of_order(completions: &BTreeMap<usize, Vec<usize>>) -> bool {
+        completions
+            .values()
+            .any(|batch| batch.len() > 1 && batch.first() != Some(&0) && batch.last() == Some(&0))
+    }
+
+    fn counter_frontier(states: &[Vec<u8>]) -> Vec<[i64; 4]> {
+        states
+            .iter()
+            .map(|bytes| {
+                let state: serde_json::Value =
+                    serde_json::from_slice(bytes).expect("canonical state is JSON");
+                let entries = state
+                    .pointer("/semantic/entries/0/value/entries")
+                    .and_then(serde_json::Value::as_array)
+                    .expect("the counter population is in the semantic state");
+                let mut values = [None; 4];
+                for entry in entries {
+                    let key = entry["key"]["identity"]
+                        .as_str()
+                        .expect("the state key has an object identity");
+                    let index = match key {
+                        "a" => 0,
+                        "b" => 1,
+                        "c" => 2,
+                        "d" => 3,
+                        other => panic!("unexpected counter key {other}"),
+                    };
+                    let value = entry["value"]["fields"][0]["value"]["value"]
+                        .as_str()
+                        .expect("the counter value is an integer")
+                        .parse()
+                        .expect("the counter value fits i64");
+                    values[index] = Some(value);
+                }
+                values.map(|value| value.expect("all four counters remain present"))
+            })
+            .collect()
+    }
+
+    fn frontier_fingerprint(states: &[[i64; 4]]) -> u64 {
+        let mut hash = 0xcbf29ce484222325_u64;
+        for state in states {
+            for value in state {
+                for byte in value.to_le_bytes() {
+                    hash = (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+                }
+            }
+            hash = (hash ^ 0xff).wrapping_mul(0x100000001b3);
+        }
+        hash
+    }
+
+    /// FR-126-AC-20's raw worker outcomes can finish out of order, while the
+    /// helper returns each expansion at its original frontier position.
+    #[trace("TC-1417", "FR-126-AC-20")]
+    #[test]
+    fn a_later_worker_finishes_first_without_reordering_results() {
+        let worker_hook = hook(true, None);
+        WORKER_TEST_HOOK.with(|slot| *slot.borrow_mut() = Some(Arc::clone(&worker_hook)));
+        let output = parallel_map(vec![0, 1, 2], 2, |position| *position);
+        WORKER_TEST_HOOK.with(|slot| {
+            slot.borrow_mut().take();
+        });
+        assert_eq!(output, [0, 1, 2]);
+        assert!(completed_out_of_order(
+            &worker_hook
+                .completed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        ));
+        assert_eq!(worker_hook.peak_workers.load(Ordering::Relaxed), 2);
+    }
+
+    /// The bounded setTo domain contributes its first extra candidates when
+    /// a Counter reaches value 2; the checked assertion is the seventh BFS
+    /// expansion and its pending frontier is stable for all worker counts.
+    #[trace("TC-1417", "FR-126-AC-20")]
+    #[test]
+    fn seventh_candidate_stop_has_the_same_frontier_for_every_worker_count() {
+        for workers in [1, 2, 4, 64] {
+            let evidence = run(workers, 1_200, None, true);
+            let outcome = evidence.outcome.expect("the worker request is valid");
+            let (cause, limit, stats) = stopped(&outcome);
+            assert_eq!(cause, &IncompleteCause::ResourceExhausted);
+            assert_eq!(
+                limit,
+                Some(ReachedLimit {
+                    limit: ModelCheckLimit::MaxCandidates,
+                    value: 1_200,
+                })
+            );
+            assert_eq!(evidence.stopped_at_merge, Some(6));
+            assert_eq!(
+                stats,
+                RunStats {
+                    product_states: 245,
+                    product_edges: 1_920,
+                    stutter_edges: 0,
+                    automaton_states: 1,
+                    depth: 2,
+                    bound_limited: 0,
+                    message_bound_limited: 0,
+                    instance_limited: 0,
+                }
+            );
+            let frontier = counter_frontier(&evidence.frontier);
+            assert_eq!(frontier.len(), 239);
+            assert_eq!(frontier.first(), Some(&[1, 0, 1, 1]));
+            assert_eq!(frontier.last(), Some(&[3, 3, 2, 0]));
+            assert_eq!(frontier_fingerprint(&frontier), 0xd911_fe24_9387_6e78);
+        }
+    }
+
+    /// Cancellation after four coordinator-merged states has the same
+    /// public stop and private frontier with one or four expansion workers.
+    #[trace("TC-1417", "FR-126-AC-20")]
+    #[test]
+    fn cancellation_after_four_merges_keeps_the_same_frontier() {
+        let sequential = run(1, 1_000_000, Some(4), false);
+        let parallel = run(4, 1_000_000, Some(4), false);
+        let sequential_outcome = sequential
+            .outcome
+            .expect("the single-worker request is valid");
+        let parallel_outcome = parallel.outcome.expect("the four-worker request is valid");
+        let sequential_stop = stopped(&sequential_outcome);
+        let parallel_stop = stopped(&parallel_outcome);
+        let sequential_frontier = counter_frontier(&sequential.frontier);
+        assert_eq!(
+            sequential_stop.0,
+            &IncompleteCause::Cancelled {
+                source: filament_exact::CancelCause::Requested,
+            }
+        );
+        assert_eq!(sequential_stop.1, None);
+        assert_eq!(
+            sequential_stop.2,
+            RunStats {
+                product_states: 239,
+                product_edges: 1_024,
+                stutter_edges: 0,
+                automaton_states: 1,
+                depth: 2,
+                bound_limited: 0,
+                message_bound_limited: 0,
+                instance_limited: 0,
+            }
+        );
+        assert_eq!(parallel_stop, sequential_stop);
+        assert_eq!(sequential.frontier, parallel.frontier);
+        assert_eq!(sequential.merged_states, Some(4));
+        assert_eq!(parallel.merged_states, Some(4));
+        assert_eq!(sequential_frontier.len(), 235);
+        assert_eq!(sequential_frontier.first(), Some(&[1, 0, 0, 3]));
+        assert_eq!(sequential_frontier.last(), Some(&[3, 3, 3, 3]));
+        assert_eq!(
+            frontier_fingerprint(&sequential_frontier),
+            0x4af4_e346_6be5_c4e7
+        );
     }
 }
 

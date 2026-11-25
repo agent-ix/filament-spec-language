@@ -735,7 +735,14 @@ fn an_other_hyper_clause_keeps_its_supported_universal_sibling() {
         })
     );
     assert_eq!(sibling.form(), Some(&HyperForm::Universal));
-    assert_eq!(sibling.aliases().iter().map(|alias| alias.as_str()).collect::<Vec<_>>(), ["V"]);
+    assert_eq!(
+        sibling
+            .aliases()
+            .iter()
+            .map(|alias| alias.as_str())
+            .collect::<Vec<_>>(),
+        ["V"]
+    );
 }
 
 /// FR-174-AC-1: noninterference has the copy group `[[a, b]]`; a `<=` body, a
@@ -852,11 +859,9 @@ fn a_copy_group_carries_the_exchange_of_the_body_s_atoms() {
     assert!(clause(&["V"], one).copy_group().generators.is_empty());
 }
 
-/// FR-180-AC-1 (S3): `Det` over a vault whose `step` is bound to an
-/// implementation has a code claim beside its model claim; with no binding it
-/// has the model claim alone. The current S3 claim types expose capability
-/// kind and presence but no independent code-claim identity, so the identity
-/// clause remains uncovered.
+/// TC-605: a bound relation exposes an operation-contract claim, while an
+/// unbound one has no code claim. This does not assert the finalized package
+/// claim identities or relation payload.
 #[trace("TC-605")]
 #[test]
 fn a_bound_step_relation_has_a_code_claim_beside_its_model_claim() {
@@ -866,11 +871,7 @@ fn a_bound_step_relation_has_a_code_claim_beside_its_model_claim() {
 
     let det = relation(DET);
     let (_, step) = det.executions()[0].clone();
-    let (_, package) = assemble(
-        &["V"],
-        INFINITE,
-        "function noop using v(): Boolean pure { true }",
-    );
+    let (_, package) = assemble(&["V"], INFINITE, DET);
     let graph = package
         .check(
             CheckMode::Linked,
@@ -899,10 +900,150 @@ fn a_bound_step_relation_has_a_code_claim_beside_its_model_claim() {
     assert_ne!(code.kind(), det.model_claim().kind());
     assert_eq!(det.model_claim().kind(), Capability::TemporalSatisfaction);
 
+    let declaration = format!(
+        "{DET} abstraction A using v {{ \
+         operation V::ConfigVersion::step to \"vault::step\" \
+         receiver \"self\" (i to \"input\"); }}"
+    );
+    let (_, bound_package) =
+        assemble_under("filament.model.complete/v1", &["V"], INFINITE, &declaration);
+    let checked = bound_package
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+        .expect("bound relation checks");
+    let [relation] = checked.step_relations() else {
+        panic!("one checked relation");
+    };
+    let occurrence = relation.occurrence().expect("claim occurrence");
+    let model_record = checked
+        .requirements()
+        .get_kind(occurrence, Capability::TemporalSatisfaction)
+        .expect("temporal model obligation");
+    let code_record = checked
+        .requirements()
+        .get_kind(occurrence, Capability::OperationContract)
+        .expect("operation contract obligation");
+    assert_ne!(
+        model_record.requirements(),
+        code_record.requirements(),
+        "the two capabilities and extents yield distinct obligation identities"
+    );
+
     let unbound = graph
         .check_abstraction(&[])
         .expect("the empty relation checks");
     assert!(det.code_claim(&unbound).is_none());
+    let [unbound_relation] = graph.step_relations() else {
+        panic!("one unbound relation");
+    };
+    let occurrence = unbound_relation
+        .occurrence()
+        .expect("unbound claim occurrence");
+    assert!(graph
+        .requirements()
+        .get_kind(occurrence, Capability::TemporalSatisfaction)
+        .is_some());
+    assert!(graph
+        .requirements()
+        .get_kind(occurrence, Capability::OperationContract)
+        .is_none());
+}
+
+/// The emitted relation body uses the four ordered FR-477 members, and an
+/// unbound relation leaves each execution's implementation premise empty.
+/// Binder identity and malformed-node reader refusal remain independently
+/// specified by FR-180-AC-4 and are not asserted here.
+#[trace("TC-605")]
+#[test]
+fn a_step_relation_emits_the_fr477_body_member_order() {
+    use fsl_semantics::check::{BindingValue, BodyTerm, GroupMember, LeafTerm, MemberTerm};
+
+    let (_, package) = assemble(&["V"], INFINITE, DET);
+    let checked = package
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::reward_evaluator::ZeroRewardEvaluator,
+        )
+        .expect("unbound relation checks");
+    let node = checked
+        .semantic_graph()
+        .nodes()
+        .find(|node| node.semantic_form() == "step_relation")
+        .expect("emitted step-relation node");
+    let BodyTerm::Aggregate(body) = node.body() else {
+        panic!("aggregate relation body");
+    };
+    let names: Vec<_> = body
+        .members
+        .iter()
+        .map(|member| match member {
+            MemberTerm::Binding(binding) => binding.name.as_str(),
+            _ => panic!("relation body member is a binding"),
+        })
+        .collect();
+    assert_eq!(
+        &names[..4],
+        ["subjects", "executions", "invariants", "body"]
+    );
+    let MemberTerm::Binding(executions) = &body.members[1] else {
+        panic!("executions binding");
+    };
+    let BindingValue::Aggregate(executions) = &executions.value else {
+        panic!("execution aggregate");
+    };
+    assert_eq!(executions.members.len(), 2);
+    let mut execution_parameters = Vec::new();
+    for member in &executions.members {
+        let MemberTerm::Binding(execution) = member else {
+            panic!("execution entry");
+        };
+        let BindingValue::Aggregate(execution) = &execution.value else {
+            panic!("execution facts");
+        };
+        let parameters = execution
+            .members
+            .iter()
+            .find_map(|member| match member {
+                MemberTerm::Binding(binding) if binding.name == "parameters" => {
+                    Some(&binding.value)
+                }
+                _ => None,
+            })
+            .expect("parameter member");
+        let BindingValue::Group(parameters) = parameters else {
+            panic!("execution parameter group");
+        };
+        let parameter_keys: Vec<_> = parameters
+            .members
+            .iter()
+            .map(|parameter| {
+                let GroupMember::Leaf(LeafTerm::Reference { target }) = parameter else {
+                    panic!("parameter reference");
+                };
+                target.admitted().expect("parameter node key").clone()
+            })
+            .collect();
+        execution_parameters.push(parameter_keys);
+        let implementation = execution
+            .members
+            .iter()
+            .find_map(|member| match member {
+                MemberTerm::Binding(binding) if binding.name == "implementation" => {
+                    Some(&binding.value)
+                }
+                _ => None,
+            })
+            .expect("implementation member");
+        assert!(matches!(implementation, BindingValue::Group(group) if group.members.is_empty()));
+    }
+    assert_eq!(execution_parameters[0].len(), 2);
+    assert_eq!(execution_parameters[1].len(), 2);
+    assert_ne!(execution_parameters[0][0], execution_parameters[1][0]);
+    assert_ne!(execution_parameters[0][1], execution_parameters[1][1]);
 }
 
 /// FR-361-AC-4: a `hyper` clause and a `relation` are gated by neither layer.
@@ -2095,7 +2236,13 @@ fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
         .replace("hyper Det", "tuple NotRecord(Int[0, 3]);\nhyper Det")
         .replace("in Obs", "in NotRecord");
     let object = FINITE_DET.replace("in Obs", "in V::ConfigVersion");
-    type Case = (String, Vec<&'static str>, Code, &'static str, fn(&str) -> Span);
+    type Case = (
+        String,
+        Vec<&'static str>,
+        Code,
+        &'static str,
+        fn(&str) -> Span,
+    );
     let cases: [Case; 5] = [
         (
             FINITE_DET.replace("bounded 3", "bounded 0"),

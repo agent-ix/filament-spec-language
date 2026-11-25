@@ -73,6 +73,97 @@ fn qualify_runs_fspec_formatter_fixture_and_reports_a_qualified_scope() {
     );
 }
 
+/// FR-353-AC-3: a caller-selected passing capability is qualified under its
+/// named scope, without claiming complete-v1; FR-567 still gates the same run
+/// on the lifecycle matrix and linked-backend parity part.
+#[test]
+#[trace("TC-881", "FR-353-AC-3")]
+fn qualify_scoped_passing_capability_keeps_all_gate_parts() {
+    let temp = tempfile::tempdir().unwrap();
+    let corpus = copy_fixture(&temp);
+    let corpus_file = corpus.join("complete-v1.json");
+    let mut value: Value = serde_json::from_slice(&fs::read(&corpus_file).unwrap()).unwrap();
+
+    // TC-880 step 2's control corpus: retain the published passing formatter
+    // vector, and add an actual typed refusal. The checked-in ill-typed source
+    // returns ill_typed/type-mismatch; changing only its expected cause makes
+    // the second capability fail as TC-880 specifies.
+    let refusal_source = corpus.join("inputs/refusal.native");
+    fs::write(
+        &refusal_source,
+        include_bytes!("../../fsl-conformance/cases/some-ill-typed.native"),
+    )
+    .unwrap();
+    let mut refusal_coverage = value["coverage"]["primary"][0].clone();
+    refusal_coverage["capability_id"] = Value::String("V1-SRC-003".into());
+    refusal_coverage["applicability"]["consumer_types"] = serde_json::json!(["language"]);
+    value["coverage"]["primary"]
+        .as_array_mut()
+        .unwrap()
+        .push(refusal_coverage);
+    let refusal_rollup = serde_json::json!({
+        "consumer_type": "language",
+        "capability_ids": ["V1-SRC-003"]
+    });
+    value["coverage"]["consumer_rollups"]
+        .as_array_mut()
+        .unwrap()
+        .push(refusal_rollup);
+    value["vectors"].as_array_mut().unwrap().push(serde_json::json!({
+        "id": "V1-SRC-003-ill-typed-refusal",
+        "capability_id": "V1-SRC-003",
+        "class": "refusal",
+        "subject": {"consumer_type": "language", "operation": "compile"},
+        "applicability": {"consumer_types": ["language"]},
+        "input": {"files": [{"kind": "source", "path": "inputs/refusal.native"}]},
+        "expected": {
+            "disposition": "refusal",
+            "code": "ill_typed",
+            "cause": "type-mismatch"
+        }
+    }));
+    write_canonical(&corpus_file, &value);
+
+    let passing = run(&["qualify", "--corpus", corpus.to_str().unwrap()]);
+    assert_eq!(passing.status.code(), Some(0), "{}", utf8(&passing.stderr));
+    let mut value: Value = serde_json::from_slice(&fs::read(&corpus_file).unwrap()).unwrap();
+    value["vectors"][1]["expected"]["cause"] = Value::String("unit-mismatch".into());
+    write_canonical(&corpus_file, &value);
+
+    let control = run(&["qualify", "--corpus", corpus.to_str().unwrap()]);
+    assert_eq!(control.status.code(), Some(1), "{}", utf8(&control.stderr));
+    let control_report: Value = serde_json::from_slice(&control.stdout).expect("JSON report");
+    assert_eq!(control_report["verdict"], "not-qualified");
+    assert_eq!(control_report["scope"], serde_json::json!(["V1-SRC-003", "V1-TOOL-004"]));
+    assert_eq!(control_report["capabilities"][0]["outcome"], "failed");
+
+    let output = run(&[
+        "qualify",
+        "--corpus",
+        corpus.to_str().unwrap(),
+        "--capability",
+        "V1-TOOL-004",
+    ]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", utf8(&output.stderr));
+    let report: Value = serde_json::from_slice(&output.stdout).expect("JSON report");
+    assert_eq!(report["verdict"], "qualified");
+    assert_eq!(report["scope"], serde_json::json!(["V1-TOOL-004"]));
+    assert!(report["qualification"].is_null());
+    assert!(!utf8(&output.stdout).contains("complete-v1"));
+    let parts = report["parts"].as_array().expect("the gate parts");
+    let lifecycle = parts
+        .iter()
+        .find(|part| part["part"] == "lifecycle-matrix")
+        .expect("the lifecycle matrix remains in the verdict");
+    let parity = parts
+        .iter()
+        .find(|part| part["part"] == "parity")
+        .expect("backend parity remains in the verdict");
+    assert_eq!(lifecycle["result"], "passed");
+    assert_eq!(parity["result"], "no-backend");
+}
+
 #[test]
 #[trace("TC-875", "FR-350-AC-1")]
 fn qualify_compiles_a_language_vector_through_the_public_entry_point() {

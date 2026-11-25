@@ -295,7 +295,7 @@ fn a_package_with_body_location_rows_is_emitted_at_its_exact_length() {
 /// refusal the source map causes (bound N/10) allocates under two thirds of what a
 /// refusal at the final encode (bound `N - 1`) does; the first unpaid byte is
 /// exactly `bound + 1` in both.
-#[trace("TC-738", "FR-264-AC-6")]
+#[trace("TC-738", "FR-264-AC-9")]
 #[test]
 fn a_bound_below_the_source_map_refuses_before_the_typed_rows_are_built() {
     // A `let` chain has no body-location rows, which main already meters per
@@ -331,7 +331,7 @@ fn a_bound_below_the_source_map_refuses_before_the_typed_rows_are_built() {
 /// source map fits but whose claim-name rows overflow refuses before the
 /// sections after them are built (allocations are counted, not time), with the
 /// first unpaid byte exactly `bound + 1`.
-#[trace("TC-738", "FR-264-AC-6")]
+#[trace("TC-738", "FR-264-AC-9")]
 #[test]
 fn a_bound_below_the_typed_rows_refuses_before_the_later_rows_are_built() {
     let claims: Vec<String> = (0..150)
@@ -387,7 +387,7 @@ fn a_bound_below_the_typed_rows_refuses_before_the_later_rows_are_built() {
 /// summed refuses inside the body rows, before the rows after them are built.
 /// The bound sits below the summed sections and above the body-location rows
 /// alone, which the rows' own meter did not refuse.
-#[trace("TC-738", "FR-264-AC-6")]
+#[trace("TC-738", "FR-264-AC-9")]
 #[test]
 fn body_location_rows_count_into_the_shared_total() {
     let package = nested_not_package(1_000);

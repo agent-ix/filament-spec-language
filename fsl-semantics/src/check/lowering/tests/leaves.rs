@@ -897,6 +897,99 @@ fn an_union_leaf_walk_charges_its_composite_and_full_path_bytes() {
     ));
 }
 
+/// FR-093-AC-26 (TC-757): cancellation and the one-below work limit stop the
+/// same Union text-leaf walk without returning a partial checked graph.
+#[trace("FR-093-AC-26", "TC-757")]
+#[test]
+fn a_cancelled_union_leaf_walk_stops_at_the_next_charge() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, OnceLock};
+
+    let declarations = || {
+        package(
+            vec![union_declaration(
+                "U",
+                vec![("M", vec![text(8, TextProfile::Nfc)]), ("Empty", vec![])],
+            )],
+            vec![equality("eq", ("a", "b"), named("U"))],
+        )
+    };
+
+    let limit_cancel = filament_exact::Cancel::new();
+    let limit_refusals = declarations()
+        .check_with_cancel(
+            CheckMode::Linked,
+            work_limit(51),
+            &crate::check::test_support::ZeroRewardEvaluator,
+            &limit_cancel,
+        )
+        .expect_err("one unit below the 52-unit Union leaf walk refuses");
+    assert_eq!(limit_cancel.tripped(), None);
+    assert_eq!(limit_refusals.len(), 1);
+    assert_eq!(
+        limit_refusals[0].cause.code().as_str(),
+        "stage_limit_exceeded"
+    );
+    assert_eq!(
+        limit_refusals[0].cause.cause(),
+        Some("work-budget-exceeded")
+    );
+    assert!(matches!(
+        limit_refusals[0].cause.as_ref(),
+        CheckCause::ResourceExhausted(ref limit)
+            if limit.stage == CheckingStage::Typing
+                && limit.kind == CheckingLimitKind::WorkBudget
+                && limit.limit == 51
+                && limit.actual == 52
+    ));
+
+    let charges = Arc::new(AtomicUsize::new(0));
+    let cancel_slot = Arc::new(OnceLock::<filament_exact::Cancel>::new());
+    let observed_charges = Arc::clone(&charges);
+    let observed_cancel = Arc::clone(&cancel_slot);
+    let cancel = filament_exact::Cancel::observing(move || {
+        if observed_charges.fetch_add(1, Ordering::Relaxed) + 1 == 31 {
+            observed_cancel
+                .get()
+                .expect("the checking handle is installed")
+                .cancel(filament_exact::CancelCause::Requested);
+        }
+    });
+    cancel_slot
+        .set(cancel.clone())
+        .expect("the observing handle is installed once");
+    let cancelled_refusals = declarations()
+        .check_with_cancel(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &crate::check::test_support::ZeroRewardEvaluator,
+            &cancel,
+        )
+        .expect_err("cancellation denies the next Union leaf-walk charge");
+    assert_eq!(charges.load(Ordering::Relaxed), 31);
+    assert_eq!(
+        cancel.tripped(),
+        Some(filament_exact::CancelCause::Requested)
+    );
+    assert_eq!(cancelled_refusals.len(), 1);
+    assert_eq!(
+        cancelled_refusals[0].cause.code().as_str(),
+        "stage_limit_exceeded"
+    );
+    assert_eq!(
+        cancelled_refusals[0].cause.cause(),
+        Some("work-budget-exceeded")
+    );
+    assert!(matches!(
+        cancelled_refusals[0].cause.as_ref(),
+        CheckCause::ResourceExhausted(ref limit)
+            if limit.stage == CheckingStage::Typing
+                && limit.kind == CheckingLimitKind::WorkBudget
+                && limit.limit == 51
+                && limit.actual == 52
+    ));
+}
+
 /// `n` records `R0` .. `R{n-1}`, each with a `label` text field and an
 /// optional field of every other record: every record reaches a text type,
 /// so FR-093's leaf list over `R0` holds one leaf per simple path through

@@ -991,7 +991,24 @@ fn assert_values_corpus_counts() {
 fn corpus_collections() {
     let directory = corpus_root().join("collections");
     let report = run_directory(&directory).unwrap_or_else(|error| panic!("{error}"));
+    families::assert_families("collections", families::COLLECTION_FAMILIES);
+    families::assert_flips("collections", families::COLLECTION_FLIPS);
     println!("{report}");
+}
+
+/// FR-100-AC-4: a Boolean result crosses the run boundary in tagged form.
+#[trace("FR-100-AC-4")]
+#[test]
+fn unbounded_forall_run_result_uses_the_tagged_boolean_envelope() {
+    let directory = corpus_root().join("collections");
+    let stem = "r-unbounded-forall";
+    let program = directory.join(format!("{stem}.native"));
+    let expected: Expectation = serde_json::from_slice(
+        &std::fs::read(directory.join(format!("{stem}.expected.json"))).unwrap(),
+    )
+    .unwrap();
+    let actual = execute(&program, &expected).unwrap();
+    assert_eq!(mismatch(&program, &expected, &actual), None, "{stem}");
 }
 
 #[trace("TC-3064", "FR-680-AC-9")]
@@ -1068,6 +1085,8 @@ fn corpus_collection_call_values() {
 fn corpus_operations() {
     let directory = corpus_root().join("operations");
     let report = run_directory(&directory).unwrap_or_else(|error| panic!("{error}"));
+    families::assert_families("operations", families::OPERATION_FAMILIES);
+    families::assert_flips("operations", families::OPERATION_FLIPS);
     println!("{report}");
 }
 
@@ -1293,6 +1312,8 @@ fn corpus_temporal() {
 #[test]
 fn corpus_protocol() {
     run_area("protocol");
+    families::assert_families("protocol", families::PROTOCOL_FAMILIES);
+    families::assert_flips("protocol", families::PROTOCOL_FLIPS);
 }
 
 #[test]
@@ -1873,3 +1894,6 @@ fn corpus_runner_compares_lifecycle_members_of_every_command_kind() {
 
 #[path = "source_corpus_collection_contexts.rs"]
 mod collection_contexts;
+
+#[path = "source_corpus_families.rs"]
+mod families;

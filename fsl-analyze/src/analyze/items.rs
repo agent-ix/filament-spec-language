@@ -149,8 +149,9 @@ pub fn model_item<'a>(
 pub(super) fn run_model_item(
     index: RequestIndex,
     family: Option<DeclarationFamily>,
-    item: ModelItem<'_>,
+    mut item: ModelItem<'_>,
 ) -> AnalyzeItem<'_> {
+    item.certificate = item.request.certificate_request();
     let kind = match item.request.item {
         ModelCheckItem::Invariant { .. } => Capability::OperationContract,
         ModelCheckItem::Clause { .. }
@@ -218,11 +219,15 @@ pub(super) fn settle_model_item(item: ModelItem<'_>, cancel: &Cancel) -> EngineR
         replay,
     } = item;
     let limits = request.limits;
+    let method = request.reductions.constraint.as_ref().map_or_else(
+        || fsl_replay::EXPLICIT_STATE.to_owned(),
+        |constraint| format!("{} (constraint: {constraint})", fsl_replay::EXPLICIT_STATE),
+    );
     match check_model_with_stutter_closure(request, cancel, stutter_closure) {
         Ok(outcome) => {
             let allocation = super::document::effect_decision::ReplayAllocation::default();
             let replay = |payload: &TemporalCounterexample| allocation.capture(replay(payload));
-            let record = if stutter_closure {
+            let mut record = if stutter_closure {
                 fsl_replay::settle_model_check_over_stutter_closure(
                     &outcome,
                     &limits,
@@ -233,6 +238,7 @@ pub(super) fn settle_model_item(item: ModelItem<'_>, cancel: &Cancel) -> EngineR
             } else {
                 fsl_replay::settle_model_check(&outcome, &limits, &certificate, cancel, replay)
             };
+            record.method = method;
             if let Some(report) = allocation.report() {
                 return report;
             }
@@ -1099,7 +1105,12 @@ fn timed_refinement_refusal(refusal: &TimedRefinementRefusal) -> Refusal {
         TimedRefinementRefusal::Subject(SubjectRefusal::NoModels | SubjectRefusal::NoUniverse)
         | TimedRefinementRefusal::Timed(_) => Refusal::Failed(INVALID_VALUE),
         // EN-6 opens its subjects from snapshots, which stop on no budget.
-        TimedRefinementRefusal::Subject(SubjectRefusal::Stopped(_)) => Refusal::Failed(BROKEN),
+        TimedRefinementRefusal::Subject(
+            SubjectRefusal::Stopped(_)
+            | SubjectRefusal::InitialStateLimit(_)
+            | SubjectRefusal::InitialEncoding
+            | SubjectRefusal::InitialConstruction(_),
+        ) => Refusal::Failed(BROKEN),
     }
 }
 
@@ -1258,6 +1269,7 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         // A request defect: an operation or subject count the request names
         // wrongly, or the race-freedom item over a model subject.
         ModelCheckRefusal::RaceOverModel
+        | ModelCheckRefusal::Workers
         | ModelCheckRefusal::LoopProofOverModel
         | ModelCheckRefusal::InvariantOverProtocol
         | ModelCheckRefusal::Liveness(LivenessRefusal::UnknownOperation { .. })
@@ -1334,6 +1346,7 @@ pub(super) fn statistical_refusal(
     EngineReport::Refused(match refusal {
         R::Admission(failure) => admission(failure),
         R::Symmetry(_) => symmetry(),
+        R::Workers => named_decline(INVALID_VALUE, "workers", "0".to_owned()),
         R::RequiresBound(_) => Refusal::RequiresBound,
         R::NotStatistical { .. } => Refusal::NotStatistical,
         // FR-192's map settles the rest, a refused predicate by FR-192-AC-7's

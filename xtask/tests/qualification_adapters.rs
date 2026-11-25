@@ -492,6 +492,59 @@ fn replay_vectors_decode_and_execute_without_a_source_file_kind() {
 }
 
 #[test]
+#[trace("TC-1325", "FR-350-AC-13")]
+fn replay_request_maps_a_closed_object_environment_and_rejects_extra_identity_members() {
+    let fixture = replay_fixture();
+    let request_path = fixture.corpus.join("inputs/request.json");
+    let mut request: Value = serde_json::from_slice(&fs::read(&request_path).unwrap()).unwrap();
+    let object_environment = json!({
+        "identity": {
+            "authority": "agent-ix",
+            "identity": "ix://fixture/environment"
+        }
+    });
+    request["object_environment"] = object_environment.clone();
+    fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
+
+    let decoded = fsl_command::replay_request::read(
+        &fs::read(&request_path).unwrap(),
+        fsl_replay::ReplayLimits::default().input_bytes,
+        |path, pointer| {
+            assert_eq!(pointer, "/byte_provision/0/bytes_path");
+            assert_eq!(path, "inputs/bytes.native");
+            Ok::<_, fsl_command::replay_request::RequestDefect>(
+                fs::read(fixture.corpus.join(path)).unwrap(),
+            )
+        },
+        Vec::new(),
+    )
+    .expect("the valid closed identity maps to a replay request");
+    assert_eq!(
+        decoded
+            .object_environment
+            .as_ref()
+            .expect("the object environment is retained")
+            .to_value(),
+        object_environment
+    );
+
+    request["object_environment"]["identity"]["revision"] = json!("r1");
+    fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let rejected = fixture.execute(&[]);
+    let rejected_report = report(&rejected);
+    assert_eq!(rejected.outcome.code, 1, "{rejected_report}");
+    let rejected_row = &rejected_report["capabilities"][0]["vectors"][0];
+    assert_eq!(rejected_row["outcome"], "tool-failure");
+    assert_eq!(rejected_row["actual"]["cause"], "corpus-decode");
+    assert!(
+        rejected_row["actual"]["pointer"]
+            .as_str()
+            .is_some_and(|pointer| pointer == "/object_environment"),
+        "the extra member is attributed to the closed identity: {rejected_row}"
+    );
+}
+
+#[test]
 #[trace(
     "TC-1325",
     "FR-350-AC-14",

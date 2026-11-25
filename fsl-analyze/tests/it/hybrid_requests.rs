@@ -297,6 +297,7 @@ fn named(claim: &str, backend: &str) -> Value {
 /// `proved`, `bounded-solver`, `uncertified`, naming the fixture.
 #[test]
 #[trace("TC-2100", "FR-750-AC-1")]
+#[trace("TC-1187", "FR-447-AC-4")]
 fn a_covering_delta_complete_proof_settles_proved_bounded_solver() {
     let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
         "basis": {"type": "bounded-solver", "method": "delta-complete",

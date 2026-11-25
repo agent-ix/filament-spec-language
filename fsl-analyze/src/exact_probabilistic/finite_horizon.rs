@@ -10,11 +10,14 @@ use num_traits::Zero as _;
 
 use super::rows::Evaluation;
 use super::unbounded::{
-    Graph, UnboundedError, UnboundedObjective, maximal_end_components_from, policy_iteration,
+    maximal_end_components_from, policy_iteration, Dense, Graph, PolicyBudget, UnboundedError,
+    Choice,
+    UnboundedObjective,
 };
 use super::{
     ExactProbLimits, MonitorVerdict, ProbEdge, ProbProduct, ProbStateId, ProductAction, ProductKind,
 };
+use filament_exact::{Cancel, CancelCause};
 use fsl_eval::probabilistic::MonitorState;
 use fsl_semantics::check::Bound;
 
@@ -103,6 +106,13 @@ pub enum FhError {
     /// stop, not a cycle.
     #[error("policy iteration reached the iteration limit")]
     PolicyIterationLimit,
+    /// A dense linear system would exceed the working-storage ceiling
+    /// (`certificate_check.max_working_bytes`): a limit stop, not a cycle.
+    #[error("the dense exact linear system exceeds the working-storage limit")]
+    MaxWorkingBytes,
+    /// The run was cancelled during a dense solve.
+    #[error("the exact solve was cancelled")]
+    Cancelled(CancelCause),
 }
 
 /// Decide a bounded formula event on an already-built product (FR-197).
@@ -117,6 +127,7 @@ pub fn decide_bounded_event(
     product: &ProbProduct,
     bound: &Bound,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<FhResult, FhError> {
     let mut terminal = vec![None; product.states.len()];
     for (state, verdict) in &product.decided {
@@ -141,6 +152,7 @@ pub fn decide_bounded_event(
         limits.precision_bits,
         limits.max_precision_bits,
         limits.max_policy_iterations,
+        Dense::new(limits, cancel),
     )
 }
 
@@ -177,6 +189,7 @@ pub fn backward_induction(
         precision_bits,
         max_precision_bits,
         u64::MAX,
+        Dense::unlimited(&Cancel::new()),
     )
 }
 
@@ -193,6 +206,7 @@ fn backward_induction_with_policy_limit(
     precision_bits: u32,
     max_precision_bits: u32,
     max_policy_iterations: u64,
+    dense: Dense<'_>,
 ) -> Result<FhResult, FhError> {
     if terminal.len() != product.states.len()
         || precision_bits == 0
@@ -208,6 +222,7 @@ fn backward_induction_with_policy_limit(
         objective,
         max_rational_bits,
         max_policy_iterations,
+        dense,
     )? {
         return Ok(FhResult::Exact {
             values: evaluation.restrict(result.0),
@@ -254,6 +269,7 @@ fn collapse_zero_time_components(
     objective: FhObjective,
     max_rational_bits: u64,
     max_policy_iterations: u64,
+    dense: Dense<'_>,
 ) -> Result<Option<ComponentPolicy>, FhError> {
     let graph = Graph::with_terminals(product, terminal).map_err(|error| match error {
         UnboundedError::InvalidState => FhError::InvalidState,
@@ -274,6 +290,27 @@ fn collapse_zero_time_components(
     let zero_graph = Graph {
         product,
         choices: zero_choices,
+    };
+    let zero_edge_graph = Graph {
+        product,
+        choices: graph
+            .choices
+            .iter()
+            .map(|choices| {
+                choices
+                    .iter()
+                    .filter_map(|choice| {
+                        let edges = choice
+                            .edges
+                            .iter()
+                            .copied()
+                            .filter(|edge| edge.elapsed.is_zero() && !edge.probability.is_zero())
+                            .collect::<Vec<_>>();
+                        (!edges.is_empty()).then_some(Choice { edges })
+                    })
+                    .collect()
+            })
+            .collect(),
     };
     let all_states = (0..product.states.len()).collect::<BTreeSet<_>>();
     let mut found: Vec<Vec<usize>> = maximal_end_components_from(&zero_graph, all_states.clone())
@@ -319,7 +356,11 @@ fn collapse_zero_time_components(
     }
     components.sort_by_key(|component| component.iter().min().copied().unwrap_or(usize::MAX));
     if components.is_empty() {
-        if !has_cycle(&zero_graph)? {
+        // A choice can mix a zero-time outcome with a positive-delay exit.
+        // Such a choice is absent from `zero_graph` as a whole, but its
+        // positive-probability zero-time edges can still form a transient
+        // cycle that policy iteration solves on the full action distribution.
+        if !has_cycle(&zero_edge_graph)? {
             return Ok(None);
         }
         // This branch is the production path for a product with a zero-delay
@@ -348,9 +389,12 @@ fn collapse_zero_time_components(
             &graph,
             terminal,
             objective,
-            max_policy_iterations,
             policy,
-            max_rational_bits,
+            PolicyBudget {
+                max_iterations: max_policy_iterations,
+                max_rational_bits,
+                dense,
+            },
         )
         .map_err(policy_failure)?;
         return Ok(Some((values, policy)));
@@ -389,6 +433,7 @@ fn collapse_zero_time_components(
                     objective,
                     max_rational_bits,
                     max_policy_iterations,
+                    dense,
                     &components,
                 )
                 .map(Some);
@@ -412,6 +457,8 @@ fn policy_failure(error: UnboundedError) -> FhError {
             FhError::InvalidProbability
         }
         UnboundedError::MaxPolicyIterations => FhError::PolicyIterationLimit,
+        UnboundedError::MaxWorkingBytes => FhError::MaxWorkingBytes,
+        UnboundedError::Cancelled(cause) => FhError::Cancelled(cause),
         UnboundedError::Singular
         | UnboundedError::MissingReward
         | UnboundedError::ZeroWeightComponent => FhError::Cycle,
@@ -433,6 +480,7 @@ fn solve_collapsed(
     objective: FhObjective,
     max_rational_bits: u64,
     max_policy_iterations: u64,
+    dense: Dense<'_>,
     components: &[Vec<usize>],
 ) -> Result<ComponentPolicy, FhError> {
     let count = product.states.len();
@@ -522,9 +570,12 @@ fn solve_collapsed(
         &collapsed,
         &fixed,
         objective,
-        max_policy_iterations,
         policy,
-        max_rational_bits,
+        PolicyBudget {
+            max_iterations: max_policy_iterations,
+            max_rational_bits,
+            dense,
+        },
     )
     .map_err(policy_failure)?;
     let mut values = Vec::with_capacity(count);
@@ -1465,7 +1516,7 @@ fn validate_probability_mass(
     Ok(())
 }
 
-fn round(value: &Rational, bits: u32, upward: bool) -> Result<Dyadic, FhError> {
+pub(crate) fn round(value: &Rational, bits: u32, upward: bool) -> Result<Dyadic, FhError> {
     let scale = BigInt::from(1_u8) << bits;
     let numerator = value.numerator().as_big() * &scale;
     let denominator = value.denominator().as_big();
@@ -1521,6 +1572,7 @@ mod tests {
             binding: None,
             model: vec![model],
             monitor: None,
+            timed_history: None,
             accumulator: None,
             pending: None,
             certificate_state: None,
@@ -1563,6 +1615,7 @@ mod tests {
             binding: None,
             model: vec![model],
             monitor: None,
+            timed_history: None,
             accumulator: None,
             pending: None,
             certificate_state: None,
@@ -1608,6 +1661,7 @@ mod tests {
             binding: None,
             model: vec![model],
             monitor: None,
+            timed_history: None,
             accumulator: None,
             pending: None,
             certificate_state: None,
@@ -1659,10 +1713,20 @@ mod tests {
             fairness: Vec::new(),
         };
         let limits = ExactProbLimits::default();
-        let minimum = decide_bounded_event(&product, &Bound::AtLeast(rational(1, 2)), &limits)
-            .expect("zero-time MEC min exit is finite");
-        let maximum = decide_bounded_event(&product, &Bound::AtMost(rational(1, 2)), &limits)
-            .expect("zero-time MEC max exit is finite");
+        let minimum = decide_bounded_event(
+            &product,
+            &Bound::AtLeast(rational(1, 2)),
+            &limits,
+            &Cancel::new(),
+        )
+        .expect("zero-time MEC min exit is finite");
+        let maximum = decide_bounded_event(
+            &product,
+            &Bound::AtMost(rational(1, 2)),
+            &limits,
+            &Cancel::new(),
+        )
+        .expect("zero-time MEC max exit is finite");
         assert!(matches!(
             minimum,
             FhResult::Exact { values, .. } if values[0] == rational(0, 1)
@@ -1679,6 +1743,7 @@ mod tests {
             binding: None,
             model: vec![model],
             monitor: None,
+            timed_history: None,
             accumulator: None,
             pending: None,
             certificate_state: None,
@@ -1817,6 +1882,7 @@ mod tests {
             4,
             8,
             0,
+            Dense::unlimited(&Cancel::new()),
         );
         assert_eq!(result.err(), Some(FhError::PolicyIterationLimit));
     }
@@ -1891,6 +1957,7 @@ mod tests {
             binding: None,
             model: vec![model],
             monitor: None,
+            timed_history: None,
             accumulator: None,
             pending: None,
             certificate_state: None,
@@ -1941,6 +2008,7 @@ mod tests {
             4,
             8,
             10_000,
+            Dense::unlimited(&Cancel::new()),
         );
         match result {
             Ok(FhResult::Exact { values, policy }) => (values, policy),

@@ -55,6 +55,9 @@ pub(super) struct Stage {
     /// Auxiliary timed-system resets at this same post-discrete boundary,
     /// over the combined concrete-then-auxiliary clock-place vector.
     pub auxiliary_resets: Vec<(usize, Rational)>,
+    /// Abstract clock places advanced by an abstract tick, and their
+    /// periods, applied before this step's clock carries and resets.
+    pub auxiliary_advances: Vec<(usize, Rational)>,
     /// The zone over clock places, in units of the concretisation's scale,
     /// the valuation after the position lies in: the cell of the symbolic
     /// state a liveness product enters there (FR-240).
@@ -76,6 +79,8 @@ pub(super) struct ClockTransform {
     pub carries: Vec<(usize, usize)>,
     /// Reset place and value in the combined place vector.
     pub resets: Vec<(usize, Rational)>,
+    /// Abstract tick shifts by place and period.
+    pub advances: Vec<(usize, Rational)>,
 }
 
 /// Where the path's last valuation must lie.
@@ -240,6 +245,11 @@ pub(super) fn concretise(
             resets.within(&mut times, at, before, scale)?;
         }
         if let Some((step, _)) = &stage.step {
+            for (place, amount) in &stage.auxiliary_advances {
+                if let Some(slot) = resets.0.get_mut(*place) {
+                    slot.1 = slot.1.add(amount);
+                }
+            }
             let before = resets.0.clone();
             for &(target, source) in step.carries() {
                 if let (Some(slot), Some(value)) = (resets.0.get_mut(target), before.get(source)) {
@@ -348,6 +358,14 @@ pub(super) fn concretise(
             continue;
         };
         let delay = std::mem::replace(&mut waited, zero.clone()).add(&delay);
+        for (place, amount) in &stage.auxiliary_advances {
+            if let Some(value) = values.get_mut(*place) {
+                *value = value.add(amount);
+            }
+            if let Some(value) = reset_values.get_mut(*place) {
+                *value = value.add(amount);
+            }
+        }
         let before = values.clone();
         for &(target, source) in step.carries() {
             if let (Some(value), Some(source_value)) = (values.get_mut(target), before.get(source))

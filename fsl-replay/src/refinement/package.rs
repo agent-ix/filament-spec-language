@@ -3,7 +3,7 @@
 
 use filament_checked::key::DeclarationKey;
 use filament_contract_model::{CheckedNodeId, CheckedTerm, RefinementKey, RefinementStepTarget};
-use filament_exact::{MemberOwner, NodeKey, Value};
+use filament_exact::{NodeKey, Value};
 use filament_semantic_value::fairness::FairnessConstraint;
 use fsl_eval::simulation::ExpansionStop;
 use fsl_eval::simulation::model::{ModelSystem, PackageModelInput, RowReading, StateObservation};
@@ -284,26 +284,16 @@ impl<'a> PackageRefinement<'a> {
                 .package()
                 .model_object_fields(abstract_node)
                 .map_err(|_| unsupported("abstract field declarations"))?;
-            let identities = package
-                .identities()
-                .ok_or_else(|| unsupported("abstract field identities"))?;
             let identity_key = |field: &filament_contract_model::CheckedModelField|
              -> Result<DeclarationKey, PackageRefinementRefusal> {
-                let owner = package
-                    .node_key(field.declaring_node_id())
-                    .ok_or_else(|| unsupported("abstract field owner identity"))?;
-                let identity = identities
-                    .field_rows()
-                    .iter()
-                    .find(|identity| {
-                        identity.record_node == *abstract_node
-                            && identity.member_id.member() == field.name()
-                            && identity.member_id.owner() == &MemberOwner::Node(owner.clone())
-                    })
-                    .ok_or_else(|| unsupported("abstract field identity"))?;
+                // FSpec's model field key is its declaring object key with
+                // the field name appended (FR-106). The admitted model field
+                // table supplies both facts; exact-field rows in
+                // `identities.json` describe record value types instead.
+                let owner = object_key(package, field.declaring_node_id())?;
                 Ok(DeclarationKey {
-                    package: identity.selected_document.to_string(),
-                    node: identity.field_original_identity.to_string(),
+                    package: owner.package,
+                    node: format!("{}/{}", owner.node, field.name()),
                 })
             };
             let declared_keys = declared

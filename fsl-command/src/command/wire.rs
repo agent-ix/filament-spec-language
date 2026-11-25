@@ -275,6 +275,12 @@ fn present_json_value<'de, D: serde::Deserializer<'de>>(
     serde_json::Value::deserialize(decoder).map(Some)
 }
 
+fn present_raw_value<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<Box<RawValue>>, D::Error> {
+    Box::<RawValue>::deserialize(decoder).map(Some)
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Request {
@@ -315,6 +321,10 @@ pub(super) struct Request {
     /// when absent.
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub libraries: Vec<RunLibrary>,
+    /// FR-1039: a checked-package request cannot restate compile-time
+    /// refinement internals; presence is retained for the package refusal.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub refinement_internals: Option<serde_json::Value>,
     /// FR-660: request supplied extension definitions.
     #[serde(default, deserialize_with = "extensions")]
     pub extensions: Vec<Extension>,
@@ -975,6 +985,10 @@ pub(super) struct MonitorRequest {
     /// The path of a `filament.monitor-state/1` checkpoint to resume from.
     #[serde(default)]
     pub state: Option<String>,
+    /// FR-644's optional FR-251 target, retained raw so every target defect
+    /// can be reported at the single `/request/target` locus.
+    #[serde(default, deserialize_with = "present_raw_value")]
+    pub target: Option<Box<RawValue>>,
     /// Snapshot files by key, for records that name a snapshot by key.
     #[serde(default, deserialize_with = "from_object")]
     pub observations: std::collections::BTreeMap<String, String>,
@@ -995,6 +1009,67 @@ pub(super) struct MonitorRequest {
     /// The items' deadline in milliseconds, as FR-620 reads it.
     #[serde(default, deserialize_with = "deadline")]
     pub deadline_ms: Option<u64>,
+}
+
+/// The closed request members for FR-251's monitor target. `max_activations`
+/// comes from the caller setting and is deliberately absent here.
+#[derive(Clone, Debug)]
+pub(super) struct MonitorTargetWire {
+    pub counter: String,
+    pub unit: String,
+    pub width_bits: u32,
+    pub uncertainty: fsl_package::number::ExactRational,
+    pub max_event_rate: Option<fsl_package::number::ExactRational>,
+    pub max_reading_gap: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MonitorTargetMembers {
+    counter: String,
+    unit: String,
+    width_bits: u32,
+    uncertainty: fsl_package::number::ExactRational,
+    max_event_rate: Box<RawValue>,
+    max_reading_gap: u64,
+}
+
+impl<'de> serde::Deserialize<'de> for MonitorTargetWire {
+    fn deserialize<D: serde::Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+
+        let members = from_object::<_, MonitorTargetMembers>(decoder)
+            .map_err(|_| D::Error::custom("invalid MonitorTarget"))?;
+        let max_event_rate = if members.max_event_rate.get() == "null" {
+            None
+        } else {
+            Some(
+                serde_json::from_str::<fsl_package::number::ExactRational>(
+                    members.max_event_rate.get(),
+                )
+                .map_err(|_| D::Error::custom("invalid MonitorTarget"))?,
+            )
+        };
+        let zero = |value: fsl_package::number::ExactRational| value.numerator() == 0;
+        let invalid = members.counter.is_empty()
+            || members.unit.is_empty()
+            || !(1..=64).contains(&members.width_bits)
+            || members.uncertainty.numerator() < 0
+            || max_event_rate.is_some_and(|rate| zero(rate) || rate.numerator() < 0)
+            || members.max_reading_gap == 0
+            || u128::from(members.max_reading_gap) >= (1_u128 << members.width_bits);
+        if invalid {
+            return Err(D::Error::custom("invalid MonitorTarget"));
+        }
+        Ok(Self {
+            counter: members.counter,
+            unit: members.unit,
+            width_bits: members.width_bits,
+            uncertainty: members.uncertainty,
+            max_event_rate,
+            max_reading_gap: members.max_reading_gap,
+        })
+    }
 }
 
 /// One selected clause: its name and, for a snapshot trace, its `over`.
@@ -1035,4 +1110,56 @@ pub(super) enum MonitorKindWire {
     Progressed,
     Timestamped,
     Timed,
+}
+
+#[cfg(test)]
+mod monitor_target_tests {
+    use ix_trace_rs::trace;
+
+    use super::MonitorTargetWire;
+
+    const VALID: &str = r#"{"counter":"ticks","unit":"ms","width_bits":16,"uncertainty":{"kind":"rational","numerator":"0","denominator":"1"},"max_event_rate":null,"max_reading_gap":1}"#;
+
+    /// FR-644-AC-17: unknown, repeated, missing, wrong-kind and invalid
+    /// target members share the required normalized request error.
+    #[trace("TC-721", "FR-644-AC-17")]
+    #[test]
+    fn monitor_target_wire_normalizes_invalid_members() {
+        let invalid = [
+            VALID.replace(
+                "\"max_reading_gap\":1",
+                "\"max_reading_gap\":1,\"extra\":true",
+            ),
+            VALID.replace(
+                "\"counter\":\"ticks\",",
+                "\"counter\":\"ticks\",\"counter\":\"again\",",
+            ),
+            r#"["ticks","ms",16,{"kind":"rational","numerator":"0","denominator":"1"},null,1]"#.to_owned(),
+            VALID.replace(
+                "\"max_event_rate\":null",
+                "\"max_event_rate\":{\"kind\":\"rational\",\"numerator\":\"0\",\"numerator\":\"0\",\"denominator\":\"1\"}",
+            ),
+            VALID.replace(",\"unit\":\"ms\"", ""),
+            VALID.replace("\"width_bits\":16", "\"width_bits\":\"wide\""),
+            VALID.replace("\"max_reading_gap\":1", "\"max_reading_gap\":0"),
+            VALID.replace(",\"max_event_rate\":null", ""),
+        ];
+        for wire in invalid {
+            let error = serde_json::from_str::<MonitorTargetWire>(&wire)
+                .expect_err("invalid target must refuse");
+            assert_eq!(error.to_string(), "invalid MonitorTarget");
+        }
+    }
+
+    /// FR-644-AC-16/17: a null event rate remains the default-rate selector.
+    #[trace("TC-721", "FR-644-AC-16", "FR-644-AC-17")]
+    #[test]
+    fn monitor_target_wire_admits_null_event_rate() {
+        let target = serde_json::from_str::<MonitorTargetWire>(VALID)
+            .expect("null max_event_rate selects the published default");
+        assert_eq!(target.counter, "ticks");
+        assert_eq!(target.unit, "ms");
+        assert_eq!(target.width_bits, 16);
+        assert_eq!(target.max_event_rate, None);
+    }
 }

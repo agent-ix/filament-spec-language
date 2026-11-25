@@ -411,7 +411,7 @@ fn sc_attempt_undefined_end_filters_only_its_candidate_and_retains_findings() {
         )
         .expect("native");
         for system in [&source, &native] {
-            let state = system.initial().into_iter().next().expect("initial");
+            let state = system.try_initial().expect("initial states settle").into_iter().next().expect("initial");
             let (expansion, _) = system.successors_bounded(&state).expect("expansion");
             assert_eq!(expansion.successors.len(), 1);
             assert!(matches!(
@@ -511,7 +511,8 @@ fn false_send_and_receive_premises_disable_only_their_candidate() {
         .expect("native undefined end");
         for system in [&source, &native] {
             let state = system
-                .initial()
+                .try_initial()
+                .expect("initial states settle")
                 .into_iter()
                 .next()
                 .expect("one initial state");
@@ -682,6 +683,7 @@ fn weak_package_profile_refuses_correlation_outside_parallel_and_sc_override_exe
 fn witness(fixture: &Fixture) -> fsl_replay::TemporalCounterexample<ProtocolTransition> {
     let outcome = fsl_analyze::model_check::check_protocol(
         fsl_analyze::model_check::ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: fixture.subject(),
             item: fsl_replay::ModelCheckItem::DeadlockFreedom,

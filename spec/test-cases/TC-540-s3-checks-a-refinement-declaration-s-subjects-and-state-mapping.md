@@ -15,7 +15,7 @@ object rows into a `CheckedRefinement`, refuses each missing, duplicated,
 misplaced or ill-typed row at its span, lifts references, records hidden
 fields and puts the declaration in the package identity.
 
-Scope: FR-135-AC-1 to FR-135-AC-10.
+Scope: FR-135-AC-1 to FR-135-AC-19.
 
 ## Test Procedure
 
@@ -40,8 +40,17 @@ Fixtures: ADR-020 §8's `CasRefinesCounter` unit, with `Spec` local and with
    an `Option<Reference<Ring>>` row and the same field as a plain reference;
    then the `Sequence<Reference<Queue>>[0, 2]` field mapped by a
    `Sequence<Reference<Slot>>[0, 2]` row. Also a `Sequence<Option<Reference<
-   Ring>>>[0, 2]` row (two carriers deep), the box, tuple and union rows
-   (pending QSL-2959: they refuse `ill_typed`/`type-mismatch` until then).
+   Ring>>>[0, 2]` row (two carriers deep); then the `Box` record row
+   `box = self.box` with same-named `target` fields of types
+   `Reference<Ring>` and `Reference<Queue>`, the `Pair` tuple row
+   `pair = self.pair` with `(Reference<Ring>, Boolean)` and
+   `(Reference<Queue>, Boolean)`, and the `Holder` union row
+   `holder = self.holder` with `Has` payloads carrying those references.
+   Finally check `Parcel { owners: Sequence<Option<Reference<Ring>>>[0, 2] }`
+   mapped to the same record field with `Reference<Queue>`; its value is
+   `[Some(ring b), None]`. The map-key and map-value cases in FR-135-AC-6
+   are the `lift_nested` unit cases in TC-1086/FR-140-AC-16; no validated
+   package declares a map type.
 7. Check `RingIsQueue` with a relationship declared on the abstract `Queue`.
 8. Check `RingIsQueue` in a unit that selects no layer of its own, then with
    a Boolean row naming a protocol of the unit.
@@ -53,8 +62,21 @@ Fixtures: ADR-020 §8's `CasRefinesCounter` unit, with `Spec` local and with
     `population` row. Remove that row, duplicate it, and pair the abstract
     machine with a concrete object type. Also check `CasRefinesCounter` over
     its object-type-only models.
+11. With abstract `Box { target: Reference<Queue> }` and concrete
+    `Box { link: Reference<Ring> }`, check `box = self.box`; then change
+    the concrete field name to `target` and check again.
+12. With abstract `tuple Pair(Reference<Queue>, Boolean)` and concrete
+    `tuple Triple(Reference<Ring>, Boolean, Boolean)`, check
+    `pair = self.triplet` and record the first unmatched tuple position.
+13. With abstract `union Holder { Empty, Has(Reference<Queue>) }` and
+    concrete `union State { Empty, Points(Reference<Ring>) }`, check
+    `holder = self.state` when the active tag is `Points`; then with concrete
+    `union State { Empty, Has(Reference<Ring>) }`, check the same row when
+    the active tag matches `Has`.
 
-Tag the tests `#[trace("TC-540", "FR-135-AC-n")]`.
+Tag the composite positive cases with `FR-135-AC-13` through `AC-16`, and
+the name, arity and tag refusals with `FR-135-AC-17` through `AC-19`.
+Tag all tests `#[trace("TC-540", "FR-135-AC-n")]` for their owning criteria.
 
 ## Expected Results
 
@@ -68,11 +90,13 @@ Tag the tests `#[trace("TC-540", "FR-135-AC-n")]`.
 - Step 4: `hidden = [value]`; different node identity and different
   `package_id`.
 - Step 5: `CasTwice` refuses `unsupported_construct`/`not-yet-implemented` at `Twice` naming `protocol-abstract-side`, `CasTwice` and the profile, with no `subject` member; the internal-list refinement refuses the same pair naming `refinement-internal-list`; each classifies `unsupported`; no `CheckedRefinement` for either; `CasRefinesCounter` and `RegisterHistory` check.
-- Step 6: the sequence, option and plain-reference rows check, each nested
-  reference lifted through the `Queue` from `Ring` row; the `Slot` row refuses
-  `ill_typed`/`type-mismatch` at the row's expression with no
-  `CheckedRefinement`; the depth-two row checks; the box, tuple and union
-  rows are specified as lifted and their test is ignored until QSL-2959.
+- Step 6: the sequence, option, plain-reference and depth-two rows check, each
+  nested reference lifted through the `Queue` from `Ring` row; the `Slot` row
+  refuses `ill_typed`/`type-mismatch` at the row's expression with no
+  `CheckedRefinement`. The record pairs `target` by name, the tuple pairs
+  element 0 by position and retains element 1, the union pairs `Has` by tag,
+  and the nested record/sequence/option preserves `None` and lifts its
+  `Some` payload through the same object row.
 - Step 7: `unsupported_construct`/`declaration-form` at the alias `Q`; no
   `CheckedRefinement`.
 - Step 8: the rows check; then `unsupported_construct`/`expression-form` at
@@ -86,3 +110,11 @@ Tag the tests `#[trace("TC-540", "FR-135-AC-n")]`.
   object type refuses `invalid_model_binding`/`malformed-declaration`.
   `CasRefinesCounter` checks through its existing population and object rows
   and has no state-machine requirement.
+- Step 11: matching `target` fields lift; replacing the concrete field name
+  with `link` refuses `ill_typed`/`type-mismatch` at record component path
+  `box.target`, with no `CheckedRefinement`.
+- Step 12: unequal tuple arity refuses `ill_typed`/`type-mismatch` at the
+  first unmatched position `[2]`, with no `CheckedRefinement`.
+- Step 13: active `Points` has no paired abstract tag and refuses
+  `ill_typed`/`type-mismatch` at `holder.variant`; matching active `Has`
+  succeeds and lifts its payload through the object row.

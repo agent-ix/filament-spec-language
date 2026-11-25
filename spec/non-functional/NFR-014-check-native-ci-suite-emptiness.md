@@ -20,14 +20,48 @@ policy below.
 
 ## Scope
 
-The four existing local `make ci` test invocations are:
+The local `make ci` test-suite invocations are split across the default-feature
+and all-feature recipes. The workspace selections exclude `fsl-semantics`,
+whose library, integration-test and deep-100k targets run in named package
+lanes. Each invocation below is one ordered `xtask test-suites` command; the
+two `deep-100k` commands with distinct filters share the same named suite
+identity and target-directory root, but each invocation's argv remains exact.
 
-| Lane | Original Cargo test arguments, in order |
+The default-feature recipe passes
+`${CI_DEFAULT_TARGET_DIR:-${CARGO_TARGET_DIR:-target}/ci-default-features}`
+as `CARGO_TARGET_DIR` to every command. Its test-suite invocations are:
+
+| Lane | Cargo arguments forwarded to `test-suites`, in order |
 | --- | --- |
-| default-workspace | `--locked --workspace` |
-| default-fsl-semantics | `--locked -p fsl-semantics` |
-| default-fsl-cst | `--locked -p fsl-cst` |
-| all-features-workspace | `--locked --workspace --all-features` |
+| `default-workspace` | `--locked --workspace --exclude fsl-semantics` |
+| `default-fsl-semantics` | `--locked -p fsl-semantics --lib -- --skip 100000 --skip 100_000 --test-threads=1` |
+| `default-fsl-semantics-it` | `--locked -p fsl-semantics --test it -- --test-threads=1` |
+| `default-fsl-semantics-deep-100k` (filter `100000`) | `--locked -p fsl-semantics --features deep-100k-tests --test deep_100k -- 100000 --test-threads=1` |
+| `default-fsl-semantics-deep-100k` (filter `100_000`) | `--locked -p fsl-semantics --features deep-100k-tests --test deep_100k -- 100_000 --test-threads=1` |
+| `default-fsl-cst` | `--locked -p fsl-cst` |
+
+The all-features recipe passes
+`${CI_ALL_TARGET_DIR:-${CARGO_TARGET_DIR:-target}/ci-all-features}` as
+`CARGO_TARGET_DIR` to every command. Its test-suite invocations are:
+
+| Lane | Cargo arguments forwarded to `test-suites`, in order |
+| --- | --- |
+| `all-features-workspace` | `--locked --workspace --exclude fsl-semantics --all-features` |
+| `all-features-fsl-semantics` | `--locked --all-features -p fsl-semantics --lib -- --skip 100000 --skip 100_000 --test-threads=1` |
+| `all-features-fsl-semantics-it` | `--locked --all-features -p fsl-semantics --test it -- --test-threads=1` |
+| `all-features-fsl-semantics-deep-100k` (filter `100000`) | `--locked --all-features -p fsl-semantics --test deep_100k -- 100000 --test-threads=1` |
+| `all-features-fsl-semantics-deep-100k` (filter `100_000`) | `--locked --all-features -p fsl-semantics --test deep_100k -- 100_000 --test-threads=1` |
+
+For each recipe, a defined `CI_DEFAULT_TARGET_DIR` or
+`CI_ALL_TARGET_DIR` supplies that recipe's exact target root. If it is unset,
+the recipe appends `ci-default-features` or `ci-all-features` to a defined
+`CARGO_TARGET_DIR`; with neither variable defined, it uses the corresponding
+relative `target/` path. The selected path bytes, including spaces or shell
+metacharacters, are preserved at each child boundary.
+
+The existing default-feature `fsl-cst` suite remains selected. The clippy
+invocations in both recipes remain unchanged. These vectors do not change the
+separate build, formatting, lint, conformance or hosted workflow policies.
 
 A suite identity includes its selected workspace package and Cargo target
 (including workspace-relative source), suite kind (test executable or library
@@ -71,7 +105,7 @@ also hide lost coverage.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| NFR-014-AC-1 | Each of the four local test invocations reaches the guard with its original ordered Cargo arguments and selected target-directory environment; discovery and execution use the same effective package/workspace/features/target selection. Unknown lanes and unsupported or inconsistent selections return explicit usage refusal. Target flags follow the Scope rules, including no unexpected doctest requirement for `--lib` or `--tests`. | Test |
+| NFR-014-AC-1 | Every named test-suite invocation in Scope reaches the guard with its exact ordered Cargo argument vector and its recipe's effective `CARGO_TARGET_DIR` value as Scope defines it; the default-feature `fsl-cst` test-suite invocation remains selected. Unknown lanes and unsupported or inconsistent selections return explicit usage refusal. | Test |
 | NFR-014-AC-2 | Selected producer identities resolve unambiguously from genuine Cargo target information. Invalid JSON, missing or wrongly typed identity fields, conflicting duplicate identities/executables or normalized doctest-name collisions refuse; external dependency artifacts are excluded without discarding selected workspace targets. Relative and absolute executable paths resolve to the same selected target where applicable. | Test |
 | NFR-014-AC-3 | Each selected suite has exactly one observed outcome. Unknown or malformed suite headers and duplicate suite outcomes refuse with the affected identity or unresolved header; the guard does not guess an owner from a repeated target name. | Test |
 | NFR-014-AC-4 | Each observed suite has readable running and authoritative terminal summary counts. Missing, malformed, overflowing or inconsistent counts refuse. Running equals passed plus failed plus ignored plus measured; filtered-out counts are retained separately. Test output resembling an earlier summary does not replace the genuine terminal summary. | Test |
@@ -81,6 +115,7 @@ also hide lost coverage.
 | NFR-014-AC-8 | Every expected selected executable and doctest suite has an outcome, including nonallowlisted doctests. Missing selected suites, missing declared suites and an invocation observing no suite refuse. Targets excluded by the actual selection are not reported missing. | Test |
 | NFR-014-AC-9 | An unsuccessful Cargo discovery or test child returns Cargo's original nonzero exit code when one is available; suite findings do not replace that failure with success or a generic guard code. A successful Cargo run violating the suite policy returns a nonzero guard refusal. | Test |
 | NFR-014-AC-10 | After spawning owned Cargo work, a read or echo I/O failure terminates still-running owned child work and waits to reap the child before returning. The original I/O cause remains the reported failure even if cleanup also fails; failure never becomes a successful suite result. | Test |
+| NFR-014-AC-11 | Discovery and execution use the same effective package, workspace, excluded-package, feature, test-target, test-filter and test-thread selection. The workspace lanes exclude `fsl-semantics`; its library, `it` and `deep_100k` targets are selected only by their corresponding named package lanes. Both deep-100k filters execute under the same named lane and remain distinct forwarded argv. Target flags follow the Scope rules, including no unexpected doctest requirement for `--lib` or `--tests`. | Test |
 
 ## Verification
 

@@ -10,7 +10,7 @@
 //! two spellings, and the base's checker compares every member with its own
 //! derivation.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::*;
 
@@ -18,7 +18,16 @@ use super::*;
 /// backward induction rounds into an interval, and unbounded eventual
 /// reachability over a cyclic chain or MDP.
 fn is_wrappable_base(profile: &str) -> bool {
-    matches!(profile, PROFILE | CYCLIC_PROFILE | CYCLIC_MDP_PROFILE)
+    matches!(
+        profile,
+        PROFILE
+            | CYCLIC_PROFILE
+            | CYCLIC_MDP_PROFILE
+            | CYCLIC_REWARD_PROFILE
+            | CYCLIC_MDP_REWARD_PROFILE
+            | measure::PROFILE
+            | "filament.probability-objective/fair-mdp-eventual/v1"
+    )
 }
 
 /// One unchecked `policy` row of a bound document: a complete product key and
@@ -62,6 +71,29 @@ fn policy_hints(bytes: &[u8]) -> Result<Vec<PolicyHint>, ProbabilityDocumentErro
             choice: row.choice.get().to_owned(),
         })
         .collect())
+}
+fn is_fair_base(profile: &str) -> bool {
+    profile == "filament.probability-objective/fair-mdp-eventual/v1"
+}
+
+/// Fair-MDP intervals carry a progressing policy on the existential side:
+/// upper for a minimum and lower for a maximum. The opposite endpoint is
+/// certified universally and therefore has no ranking or policy member.
+fn fair_existential_side(
+    base: &Value,
+    side: SubsystemBoundKind,
+) -> Result<bool, ProbabilityDocumentError> {
+    let optimization = base
+        .get("optimization")
+        .and_then(Value::as_str)
+        .ok_or(ProbabilityDocumentError::MalformedMember("objective"))?;
+    match (optimization, side) {
+        ("minimum", SubsystemBoundKind::Upper) | ("maximum", SubsystemBoundKind::Lower) => Ok(true),
+        ("minimum", SubsystemBoundKind::Lower) | ("maximum", SubsystemBoundKind::Upper) => {
+            Ok(false)
+        }
+        _ => Err(ProbabilityDocumentError::Unsupported),
+    }
 }
 
 fn object(value: &Value) -> Result<&serde_json::Map<String, Value>, ProbabilityDocumentError> {
@@ -136,6 +168,14 @@ pub(super) fn unwrap(
         .pointer("/objective/profile")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let cyclic_mdp_reward = document
+        .pointer("/objective/base/profile")
+        .and_then(Value::as_str)
+        == Some(CYCLIC_MDP_REWARD_PROFILE);
+    let cyclic_reward = document
+        .pointer("/objective/base/profile")
+        .and_then(Value::as_str)
+        == Some(CYCLIC_REWARD_PROFILE);
     let root = document
         .as_object_mut()
         .ok_or(ProbabilityDocumentError::Malformed)?;
@@ -158,16 +198,42 @@ pub(super) fn unwrap(
                 return Ok(None);
             }
             let base = objective["base"].clone();
+            let fair = base
+                .get("profile")
+                .and_then(Value::as_str)
+                .is_some_and(is_fair_base);
+            let existential = fair
+                .then(|| fair_existential_side(&base, side))
+                .transpose()?;
             root.insert("objective".into(), base);
             if root.remove("policy").is_some() {
                 policy = Some(policy_hints(bytes)?);
             }
-            match side {
-                SubsystemBoundKind::Upper => {
-                    if root.contains_key("ranking") {
+            if fair {
+                if !existential.expect("fair objective has a role") {
+                    if root.contains_key("ranking") || policy.is_some() {
                         return Err(ProbabilityDocumentError::MalformedMember("ranking"));
                     }
                     root.insert("ranking".into(), json!([]));
+                }
+            }
+            match side {
+                SubsystemBoundKind::Upper => {
+                    if fair {
+                        // The fair-MDP checker validates the rank against its
+                        // independently reconstructed zero component for
+                        // either interval endpoint.
+                    } else if root.contains_key("ranking")
+                        && !cyclic_mdp_reward
+                        && !cyclic_reward
+                    {
+                        return Err(ProbabilityDocumentError::MalformedMember("ranking"));
+                    } else if !root.contains_key("ranking") {
+                        root.insert("ranking".into(), json!([]));
+                    }
+                }
+                SubsystemBoundKind::Lower if cyclic_mdp_reward || cyclic_reward => {
+                    root.entry("ranking").or_insert_with(|| json!([]));
                 }
                 SubsystemBoundKind::Lower => {}
             }
@@ -216,15 +282,40 @@ pub(super) fn wrap(
         .and_then(|objective| objective.get("profile"))
         .and_then(Value::as_str)
         == Some(TIMED_PROFILE);
+    let cyclic_mdp_reward = root
+        .get("objective")
+        .and_then(|objective| objective.get("profile"))
+        .and_then(Value::as_str)
+        == Some(CYCLIC_MDP_REWARD_PROFILE);
+    let cyclic_reward = root
+        .get("objective")
+        .and_then(|objective| objective.get("profile"))
+        .and_then(Value::as_str)
+        == Some(CYCLIC_REWARD_PROFILE);
     if !timed {
         let base = root
             .remove("objective")
             .ok_or(ProbabilityDocumentError::Malformed)?;
+        let fair = base
+            .get("profile")
+            .and_then(Value::as_str)
+            .is_some_and(is_fair_base);
+        let existential = fair
+            .then(|| fair_existential_side(&base, side))
+            .transpose()?;
         root.insert(
             "objective".into(),
             json!({"profile": measure::bounds::PROFILE, "base": base}),
         );
-        if side == SubsystemBoundKind::Upper {
+        if fair {
+            if !existential.expect("fair objective has a role") {
+                root.remove("ranking");
+                root.remove("policy");
+            }
+        } else if side == SubsystemBoundKind::Upper
+            && !cyclic_mdp_reward
+            && !cyclic_reward
+        {
             root.remove("ranking");
         }
     }

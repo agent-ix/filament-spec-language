@@ -196,8 +196,7 @@ const NATIVE_SCALARS: &str = "function eqs using v(a: String, b: String): Boolea
 
 /// TC-827: a union, a construction of one of its members and a `case` over
 /// it, the families FR-320 emits.
-const UNION_NODES: &str =
-    "union Shape { Empty, Circle(Integer), Rect(Integer, Integer) }\n\
+const UNION_NODES: &str = "union Shape { Empty, Circle(Integer), Rect(Integer, Integer) }\n\
      function area using v(s: Shape): Integer pure { case s { Empty: 0; Circle(r): r; Rect(w, h): w * h; } }\n\
      function rect using v(): Shape pure { Shape::Rect(2, 3) }\n";
 
@@ -838,8 +837,7 @@ fn rows() -> Vec<Row> {
 /// Every IR node kind neither FSL's emitter nor typed timed-model writer writes.
 const NOT_EMITTED_BY_QSL: &[(CheckedNodeKind, &str)] = {
     use CheckedNodeKind as K;
-    const NO_RECORD_FORM: &str =
-        "lowering's record_form maps only object types, systems interfaces, record value types and variant types to model nodes";
+    const NO_RECORD_FORM: &str = "lowering's record_form maps only object types, systems interfaces, record value types and variant types to model nodes";
     const NO_TAG: &str = "lowering builds no node of this tag";
     &[
         (
@@ -1070,10 +1068,12 @@ fn a_terminal_object_type_target_has_the_same_native_refusal_on_both_routes() {
         Some(filament_contract_model::CheckedPackageRefusalCause::MalformedDeclaration)
     );
     let pointer = format!("/semantic_graph/nodes/{position}/body/members/0/value/target");
-    assert!(bare.loci.iter().any(|locus| locus
-        .path
-        .as_ref()
-        .is_some_and(|path| path.as_str() == pointer)));
+    assert!(bare.loci.iter().any(|locus| {
+        locus
+            .path
+            .as_ref()
+            .is_some_and(|path| path.as_str() == pointer)
+    }));
     let name = emitted.emission.package.name().to_owned();
     emitted.emission.package = EmittedPackage::new(&name, |_| Ok::<_, ()>(bytes)).expect("package");
     let documents = emitted
@@ -2962,7 +2962,10 @@ fn quantity_literals(wire: &Value) -> (Vec<(String, Value)>, BTreeMap<String, Va
 fn quantity_literals_lower_to_shared_quantity_literal_nodes_the_strict_reader_admits() {
     // (functions beside f, expected (value, unit) literals in order)
     let cases: [(&str, &[(&str, &str)]); 7] = [
-        ("function h using v(): Boolean pure { f(3 ms) }", &[("3", "ms")]),
+        (
+            "function h using v(): Boolean pure { f(3 ms) }",
+            &[("3", "ms")],
+        ),
         // `h`, `h2`, `h3` and `h4` together: `h4` shares `h`'s node, and
         // `0.5` and `rational(2, 4)` share one `1/2` node.
         (
@@ -2989,7 +2992,10 @@ fn quantity_literals_lower_to_shared_quantity_literal_nodes_the_strict_reader_ad
             "function a using v(d: Quantity<s>, e: Quantity<ms>): Boolean pure { d = 3 s and e = 3 ms }",
             &[("3", "ms"), ("3", "s")],
         ),
-        ("function z using v(): Boolean pure { f(0 ms) }", &[("0", "ms")]),
+        (
+            "function z using v(): Boolean pure { f(0 ms) }",
+            &[("0", "ms")],
+        ),
     ];
     for (functions, expected) in cases {
         let (_, package) = package_from_text(&format!("{QUANTITY_TIME}{functions}\n"));
@@ -3441,7 +3447,9 @@ fn whole_population_rows_are_emitted_and_read_back() {
 /// The sequence expression must emit a canonical, strictly admitted mapping.
 #[test]
 fn seq_rows_are_emitted_and_read_back() {
-    assert_field_row_reads_back("versionNumber = if size(seq(i in 0 .. 1: i)) = 2 then self.versionNumber else self.versionNumber;");
+    assert_field_row_reads_back(
+        "versionNumber = if size(seq(i in 0 .. 1: i)) = 2 then self.versionNumber else self.versionNumber;",
+    );
 }
 
 /// FSpec FR-322 `seq` (QSL-2729): `seq(i in lo .. hi: e)` lowers to

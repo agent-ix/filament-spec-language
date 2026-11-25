@@ -143,7 +143,7 @@ fn begun(counter: &Arc<AtomicUsize>) -> usize {
 /// Registration invokes no factory.
 #[trace("FR-262-AC-3")]
 #[test]
-fn registration_is_first_wins_and_a_successful_begin_seals_it() {
+pub(crate) fn registration_is_first_wins_and_a_successful_begin_seals_it() {
     let package = package(vec![
         identity_function("host"),
         identity_function("extra"),
@@ -341,7 +341,7 @@ fn run_expression(
 /// causes no charge and no body invocation.
 #[trace("FR-262-AC-5")]
 #[test]
-fn argument_applications_charge_left_to_right_before_the_call_and_its_body() {
+pub(crate) fn argument_applications_charge_left_to_right_before_the_call_and_its_body() {
     let source = Expression::call(
         "add".to_owned(),
         vec![
@@ -616,7 +616,7 @@ fn drive(session: filament_eval::Session<'_, Closure<'_>>) -> Result<Evaluation,
 /// in that order, and the child's loss record survives the hand-off.
 #[trace("FR-262-AC-8")]
 #[test]
-fn a_charging_body_runs_each_transition_once_and_keeps_the_childs_losses() {
+pub(crate) fn a_charging_body_runs_each_transition_once_and_keeps_the_childs_losses() {
     let package = package(vec![identity_function("host"), identity_function("lossy")]);
     let objects = ObjectEnvironment::default();
     let (host, lossy) = (identity(&package, "host"), identity(&package, "lossy"));
@@ -716,6 +716,55 @@ fn loss_package() -> CheckedPackage {
             )
             .expect("the package checks"),
     )
+}
+
+/// TC-1121 FR-403-AC-10's kernel-loss vector through the no_std entry.
+pub(crate) fn no_std_kernel_loss_vector() -> Result<Evaluation, CallFailure> {
+    use filament_semantic_value::supplied_stop::{SuppliedLimits, SuppliedRun};
+
+    let package = loss_package();
+    let name = QualifiedName::unqualified("f").expect("function name");
+    let cancel = Cancel::new();
+    let request = ExecuteRequest {
+        selection: ExecuteSelection::Function {
+            name,
+            arguments: Vec::new(),
+            environment: ObjectEnvironment::default(),
+        },
+        backend: ExecutionBackendChoice::Interpreter,
+    };
+    let limits = ExecuteLimits {
+        accounting: UNLIMITED,
+        prepare: PrepareLimits::default(),
+        session: SessionLimits::default(),
+    };
+    let mut run = SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+        .expect("supplied run initializes");
+    let actual = fsl_eval::execution::execute(
+        &package,
+        &request,
+        &SuppliedBackends::default(),
+        &limits,
+        &mut run,
+        &cancel,
+    )?;
+    let mut reference_run = SuppliedRun::new(SuppliedLimits::default(), Cancel::new())
+        .expect("reference supplied run initializes");
+    let expected = package
+        .call_supplied(
+            &QualifiedName::unqualified("f").expect("function name"),
+            Vec::new(),
+            &ObjectEnvironment::default(),
+            &mut Meter::new(UNLIMITED),
+            &mut reference_run,
+        )
+        .expect("the synchronous reference runs");
+    assert_eq!(
+        format!("{actual:?}"),
+        format!("{expected:?}"),
+        "no_std/reference kernel-loss results differ"
+    );
+    Ok(actual)
 }
 
 /// FR-262-AC-8: prepared-entry execution gives the synchronous reference's
@@ -882,7 +931,7 @@ fn assert_incomplete_at(run: &Run, point: ChargePoint) {
 /// `function.call` charge, the result has the same form at that charge.
 #[trace("FR-262-AC-10")]
 #[test]
-fn a_handle_cancelled_at_a_kernel_or_call_charge_is_a_located_incomplete_result() {
+pub(crate) fn a_handle_cancelled_at_a_kernel_or_call_charge_is_a_located_incomplete_result() {
     let baseline = relay_run(None, CancelCause::Deadline);
     assert_eq!(completed_int(baseline.result.as_ref().unwrap()), Some(0));
     let start = baseline.start_poll;
@@ -945,7 +994,8 @@ impl Body for YieldingBody {
 /// terminates at the first charge after it.
 #[trace("FR-262-AC-10")]
 #[test]
-fn a_chargeless_transition_runs_after_a_cancellation_and_the_next_charge_ends_the_session() {
+pub(crate) fn a_chargeless_transition_runs_after_a_cancellation_and_the_next_charge_ends_the_session(
+) {
     let package = package(vec![identity_function("host"), keep()]);
     let objects = ObjectEnvironment::default();
     let (host, target) = (identity(&package, "host"), identity(&package, "keep"));

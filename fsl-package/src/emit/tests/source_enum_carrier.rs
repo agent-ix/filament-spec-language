@@ -37,9 +37,9 @@ fn source_enum_carrier_preserves_original_rows_shapes_order_and_unused_case() {
         .identity_rows(&admitted, &mut ledger)
         .expect("paid producer rows");
     assert_eq!(rows.source_enums(), original);
-    let bytes = rows.to_bytes(&admitted).expect("identities/6");
+    let bytes = rows.to_bytes(&admitted).expect("identities/7");
     let json: Value = serde_json::from_slice(&bytes).expect("identity object");
-    assert_eq!(json["format"], "filament.checked-handoff.identities/6");
+    assert_eq!(json["format"], "filament.checked-handoff.identities/7");
     assert_eq!(json["model_enum_declarations"], json!([]));
     assert_eq!(json["model_enum_members"], json!([]));
     assert_eq!(json["model_enum_shapes"], json!([]));

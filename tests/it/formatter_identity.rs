@@ -1895,7 +1895,7 @@ fn call_site_authored_units_keep_format_identity() {
         "language ",
     ));
     plain_fixture(&source_literal(
-        include_str!("../../fsl-replay/tests/declared_domain_facade.rs"),
+        include_str!("../../fsl-replay/tests/it/declared_domain_facade.rs"),
         "UNIT",
     ));
 }
@@ -1903,7 +1903,7 @@ fn call_site_authored_units_keep_format_identity() {
 #[trace("TC-885", "FR-003-AC-9")]
 #[test]
 fn compile_facade_authored_units_keep_format_identity() {
-    let fixture = include_str!("../../fsl-replay/tests/compile_package_facade.rs");
+    let fixture = include_str!("../../fsl-replay/tests/it/compile_package_facade.rs");
     let header = source_literal(fixture, "HEADER");
     for constant in ["LIST", "TREE"] {
         plain_fixture(&format!("{header}{}", source_literal(fixture, constant)));

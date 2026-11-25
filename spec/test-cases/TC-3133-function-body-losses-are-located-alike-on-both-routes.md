@@ -39,7 +39,7 @@ Scope: FR-531-AC-36, FR-531-AC-37, FR-531-AC-38, FR-531-AC-39, FR-531-AC-40, FR-
    second `sqrt`'s row and refuse them, and refuse them again with the
    carrier emptied.
 8. Emit FR-531-AC-40's unit (`ConfigVersion` a source object type, its
-   `SourceOwner` identity `I`), read the clause function's rows' `name`,
+   `SourceOwner` identity `I`), with each `sqrtPre` input explicitly written as `convert<Float64[nearest-even]>(float64(bits: 0x4000000000000000))`, read the clause function's rows' `name`,
    search the bytes for `ix://source/`, then evaluate the clause function at
    `size`'s pre-state on both routes, once to completion and once under every
    `work_units` limit below its spend.

@@ -1475,21 +1475,26 @@ fn a_stopped_exploration_leaves_sampled_witnesses_unchecked() {
 }
 
 /// A `max_states` below the subject's distinct initial states stops the run
-/// before any node is inserted: `ReachesTwo` decides nothing, never a
-/// witness for each initial state with no path, though phase 0 sampled one
-/// for each.
+/// before sampling, inserting a node, or deciding `ReachesTwo`.
+#[trace("TC-521", "FR-126-AC-26")]
 #[test]
 fn a_state_limit_below_the_initial_states_decides_nothing() {
-    let world = config_world(REACHES_TWO, &[(0, 0), (1, 1)]);
+    use fsl_eval::simulation::model::generated_initial_states;
+
+    let world = config_world(REACHES_TWO, &[(0, 0), (1, 1), (2, 2)]);
     let end = stopped_at(ModelCheckLimit::MaxStates, 1);
+    let before = generated_initial_states();
     let result = run(world.request(
         AB,
         vec![world.item("ReachesTwo")],
         max_states(ModelCheckLimits::default(), 1),
     ));
     assert_eq!(result.graph.end, end);
+    assert_eq!(generated_initial_states() - before, 1);
     assert!(result.graph.nodes.is_empty());
     for instance in &result.items[0] {
+        assert!(instance.sampled.is_empty());
+        assert_eq!(instance.walks_stopped, 0);
         assert_eq!(
             instance.outcome,
             StateGraphOutcome::NoDecision {
@@ -1497,6 +1502,111 @@ fn a_state_limit_below_the_initial_states_decides_nothing() {
                 open: BTreeSet::new()
             }
         );
+    }
+}
+
+/// A nontrivial declared group checks closure only after bounded admission.
+#[trace("TC-521", "FR-126-AC-26")]
+#[test]
+fn state_graph_symmetry_closure_respects_max_states_before_sampling() {
+    use fsl_eval::simulation::model::generated_initial_states;
+
+    let keys = &["a", "b", "c"];
+    let world = crate::graph_world::symmetric_config_world_over(
+        "",
+        REACHES_TWO,
+        keys,
+        &[vec![0, 0, 0], vec![0, 1, 1], vec![0, 2, 2], vec![1, 2, 2]],
+    );
+    let mut request = world.request(
+        keys,
+        vec![world.item("ReachesTwo")],
+        max_states(ModelCheckLimits::default(), 1),
+    );
+    request
+        .reductions
+        .symmetry
+        .push(fsl_route::reductions::SymmetryDeclaration {
+            population: filament_checked::key::DeclarationKey {
+                package: "test/config".to_owned(),
+                node: "ix://test/config/config_history".to_owned(),
+            },
+            classes: vec![vec!["b".to_owned(), "c".to_owned()]],
+        });
+    let before = generated_initial_states();
+    let result = run(request);
+    assert_eq!(result.graph.end, stopped_at(ModelCheckLimit::MaxStates, 1));
+    assert_eq!(generated_initial_states() - before, 1);
+    assert!(result.items[0]
+        .iter()
+        .all(|instance| instance.sampled.is_empty()));
+}
+
+/// Two distinct concrete initial recipes related by the selected swap close
+/// the initial set; symmetry admission must not replace one recipe with the
+/// other's canonical representative before closure checks it.
+#[trace("TC-521", "FR-126-AC-26", "FR-151-AC-4")]
+#[test]
+fn state_graph_symmetry_closure_keeps_concrete_initial_roots() {
+    let keys = &["a", "b", "c"];
+    let world = crate::graph_world::symmetric_config_world_over(
+        "",
+        REACHES_TWO,
+        keys,
+        &[vec![0, 1, 2], vec![0, 2, 1]],
+    );
+    let mut request = world.request(keys, vec![world.item("ReachesTwo")], no_samples());
+    request.max_depth = Some(0);
+    request
+        .reductions
+        .symmetry
+        .push(fsl_route::reductions::SymmetryDeclaration {
+            population: filament_checked::key::DeclarationKey {
+                package: "test/config".to_owned(),
+                node: "ix://test/config/config_history".to_owned(),
+            },
+            classes: vec![vec!["b".to_owned(), "c".to_owned()]],
+        });
+
+    let result = run(request);
+    assert_eq!(
+        result.graph.initial().len(),
+        2,
+        "the graph keeps both concrete initial roots"
+    );
+    assert_eq!(result.graph.stats.nodes, 2, "both admitted roots are explored");
+    assert!(matches!(
+        result.items[0][0].outcome,
+        StateGraphOutcome::NoDecision { .. }
+    ));
+}
+
+/// Phase 0 and phase 1 reuse the same declaration-order initial states.
+#[trace("TC-521", "FR-126-AC-26")]
+#[test]
+fn sampled_state_graph_generates_each_initial_state_once() {
+    use fsl_eval::simulation::model::generated_initial_states;
+
+    let starts = [(0, 0), (1, 1), (1, 2), (2, 2)];
+    let world = config_world(REACHES_TWO, &starts);
+    let mut limits = ModelCheckLimits::default();
+    limits.witness_samples = 1;
+    let mut request = world.request(AB, vec![world.item("ReachesTwo")], limits);
+    request.max_depth = Some(0);
+    let before = generated_initial_states();
+    let result = run(request);
+    assert_eq!(generated_initial_states() - before, starts.len() as u64);
+    assert_eq!(result.graph.initial().len(), starts.len());
+    for instance in &result.items[0] {
+        assert_eq!(instance.sampled.len(), starts.len());
+        let witness = instance.sampled[3]
+            .as_ref()
+            .expect("the fourth start holds the target");
+        assert_eq!(witness.path.initial, 3);
+        let WitnessSource::Sampled(provenance) = &witness.source else {
+            panic!("expected a sampled witness: {witness:?}");
+        };
+        assert_eq!(provenance.trace, 3);
     }
 }
 

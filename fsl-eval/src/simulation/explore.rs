@@ -13,9 +13,9 @@ use quire_canonical::Encode;
 use crate::simulation::expansion::{Expansion, ExpansionStop, StateFindings};
 use crate::simulation::footprint::Footprint;
 use crate::simulation::frontier::{Frontier, Limit};
-use crate::simulation::key::{EncodingRefusal, StateKey};
+use crate::simulation::key::StateKey;
 use crate::simulation::not_simulated::{check_requires_bound, NotSimulated, Root};
-use crate::simulation::order::{expand, sorted_initial, Expanded};
+use crate::simulation::order::{expand, sort_initial, Expanded};
 use crate::simulation::reduction::{
     ConstraintValue, OfferedReductions, Permutation, SymmetryGroup,
 };
@@ -43,8 +43,32 @@ pub trait TransitionSystem {
     /// and never interprets it (FR-101-AC-13).
     type Finding: Clone + Eq + std::fmt::Debug;
 
-    /// Every state the system starts from.
-    fn initial(&self) -> Vec<Self::State>;
+    /// The failure encountered while constructing an initial state.
+    type InitialError: Into<super::protocol::ProtocolRefusal>;
+
+    /// The initial states in declaration order, together with any construction
+    /// failure at its position. A budgeted caller can stop pulling before the
+    /// remaining states are built.
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_;
+
+    /// Collect all initial states and report the first construction failure.
+    ///
+    /// # Errors
+    ///
+    /// The first error yielded by [`Self::initial_iter`].
+    fn try_initial(&self) -> Result<Vec<Self::State>, Self::InitialError> {
+        self.initial_iter().collect()
+    }
+
+    /// Collect all initial states of an infallible system in declaration order.
+    fn initial(&self) -> Vec<Self::State>
+    where
+        Self: TransitionSystem<InitialError = std::convert::Infallible>,
+    {
+        self.initial_iter()
+            .map(|state| state.unwrap_or_else(|never| match never {}))
+            .collect()
+    }
 
     /// The typed canonical view of `state`'s full state key. Two states are
     /// the same state to the engine exactly when their encoded key bytes are
@@ -335,17 +359,19 @@ fn frontier_of<S>(head: StateKey, queue: &VecDeque<Queued<S>>) -> Frontier {
 ///
 /// # Errors
 ///
-/// [`EncodingRefusal`] when a state or transition identity reached during
-/// the walk has no RFC 8785 encoding.
+/// The construction refusal or an encoding failure reached during the walk.
 pub(crate) fn explore<S: TransitionSystem>(
     system: &S,
     limits: Limits,
     identity: IdentityLimits,
     max_depth: Option<usize>,
     mut poll: impl FnMut() -> bool,
-) -> Result<Exploration<S::Finding>, EncodingRefusal> {
+) -> Result<Exploration<S::Finding>, NotSimulated> {
     let mut findings = Vec::new();
-    let initial = sorted_initial(system, identity)?;
+    let states = system
+        .try_initial()
+        .map_err(|error| NotSimulated::ProtocolInitial(Box::new(error.into())))?;
+    let initial = sort_initial(system, identity, states)?;
     if initial.len() > limits.max_states {
         let frontier: Frontier = initial.iter().map(|item| item.key.clone()).collect();
         return Ok(Exploration {
@@ -496,7 +522,8 @@ pub(crate) fn explore<S: TransitionSystem>(
 /// under the ADR-014 §4 extent rule; [`NotSimulated::Extent`] when
 /// `classify_extent` itself stops at a stage limit or an internal fault;
 /// [`NotSimulated::KeyEncoding`] when a state or transition identity reached
-/// during the walk has no RFC 8785 encoding. Never
+/// during the walk has no RFC 8785 encoding, or
+/// [`NotSimulated::ProtocolInitial`] when an initial state fails to settle. Never
 /// [`NotSimulated::GeneratorMismatch`] or [`NotSimulated::EmptyInitial`].
 #[allow(
     clippy::too_many_arguments,
@@ -513,7 +540,7 @@ pub fn explore_request<S: TransitionSystem, R: Root>(
     poll: impl FnMut() -> bool,
 ) -> Result<Exploration<S::Finding>, NotSimulated> {
     check_requires_bound(domains, types, position_limit)?;
-    explore(system, limits, identity, max_depth, poll).map_err(NotSimulated::from)
+    explore(system, limits, identity, max_depth, poll)
 }
 
 #[cfg(test)]

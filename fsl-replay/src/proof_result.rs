@@ -123,15 +123,17 @@ pub enum ProofBasis {
         /// The reductions used by the run.
         reductions: Vec<AppliedReduction>,
     },
-    /// FR-203: an outward interval whose lower or upper certificate the
-    /// qualified core accepted.
+    /// FR-203/FR-1042: a checked value interval, or a partial lower proof with
+    /// the objective's least upper bound.
     ValueBounds {
         /// The lower endpoint.
         lower: ExactRational,
-        /// The upper endpoint.
-        upper: ExactRational,
+        /// The upper endpoint, or positive infinity for a partial lower proof.
+        upper: ExactBound,
         /// The method used to produce the interval.
         method: BoundsMethod,
+        /// Whether the product was fully explored.
+        exploration: BoundsExploration,
         /// The values or intervals for every initial state and binding.
         entries: Vec<ExactEntry>,
         /// The reductions used by the run.
@@ -230,13 +232,41 @@ pub enum ExactOrBounds {
         /// The reduced exact value.
         value: ExactRational,
     },
-    /// An interval containing the true value.
+    /// An interval containing the true value, or a partial lower proof.
     Bounds {
         /// Lower endpoint.
         lower: ExactRational,
-        /// Upper endpoint.
-        upper: ExactRational,
+        /// Upper endpoint, or positive infinity for partial evidence.
+        upper: ExactBound,
     },
+}
+
+/// A finite exact endpoint or positive infinity (FR-331 ExtRational).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ExactBound {
+    /// A finite rational endpoint.
+    Finite(ExactRational),
+    /// Positive infinity.
+    Infinity,
+}
+
+impl Serialize for ExactBound {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Finite(value) => value.serialize(serializer),
+            Self::Infinity => serializer.serialize_str("infinity"),
+        }
+    }
+}
+
+/// Whether a value-bounds proof covers the complete product or a partial one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BoundsExploration {
+    /// The complete product was explored.
+    Complete,
+    /// A lower bound settled a partial product.
+    Partial,
 }
 
 /// A reduced exact rational with FR-331's decimal-string JSON form.
@@ -1701,6 +1731,33 @@ impl TerminalRecord {
         )
     }
 
+    /// A temporal SMT proof accepted by FR-314's certificate checker.
+    ///
+    /// A record is produced only from the matching certified settlement;
+    /// callers cannot label an uncertified result as an accepted SMT proof.
+    pub fn proved_by_smt_proof(
+        request_index: RequestIndex,
+        backend: BackendId,
+        settlement: &crate::SmtProofSettlement,
+    ) -> Option<Self> {
+        if settlement.checker() != Some(crate::CertificateChecker::SmtProof)
+            || !matches!(
+                settlement.value(),
+                TerminalValue::Proved {
+                    certification: Certification::Certified,
+                    ..
+                }
+            )
+        {
+            return None;
+        }
+        Some(Self::with_backend(
+            request_index,
+            backend,
+            settlement.value().clone(),
+        ))
+    }
+
     /// A `proved` record for a supplied finite trace that replayed step by step
     /// (FR-636): its basis is the completed replay depth, the trace's length.
     pub fn proved_by_replay(request_index: RequestIndex, backend: BackendId, steps: u64) -> Self {
@@ -1710,6 +1767,20 @@ impl TerminalRecord {
             TerminalValue::Proved {
                 basis: ProofBasis::BoundedComplete { depth: steps },
                 certification: Certification::Certified,
+            },
+        )
+    }
+
+    /// A proof established by a first-party engine after it fully explored
+    /// its finite closed decision product, without an independently checked
+    /// certificate.
+    pub fn proved_by_exhaustive_engine(request_index: RequestIndex, backend: BackendId) -> Self {
+        Self::with_backend(
+            request_index,
+            backend,
+            TerminalValue::Proved {
+                basis: ProofBasis::Exhaustive,
+                certification: Certification::Uncertified,
             },
         )
     }
@@ -1850,7 +1921,7 @@ impl TerminalRecord {
         }
         let (lower_value, upper_value) = (
             ExactRational::new(lower.value().clone()),
-            ExactRational::new(upper.value().clone()),
+            ExactBound::Finite(ExactRational::new(upper.value().clone())),
         );
         let mut record = Self::with_backend(
             request_index,
@@ -1860,6 +1931,7 @@ impl TerminalRecord {
                     lower: lower_value.clone(),
                     upper: upper_value.clone(),
                     method,
+                    exploration: BoundsExploration::Complete,
                     entries: vec![ExactEntry {
                         initial: 0,
                         binding,
@@ -1877,6 +1949,59 @@ impl TerminalRecord {
         );
         record.exact_certificate_document = claim.document().map(Into::into);
         record.exact_counterpart_document = counterpart.document().map(Into::into);
+        Some(record)
+    }
+
+    /// FR-1042: settle an accepted lower document on a partial product using
+    /// the objective's least upper bound and no counterpart document.
+    pub fn proved_by_partial_value_bounds(
+        request_index: RequestIndex,
+        backend: BackendId,
+        claim: &crate::ExactProbabilityCertificateCheck,
+        upper: ExactBound,
+        method: BoundsMethod,
+        extremum: Option<Extremum>,
+        binding: Option<ExactBinding>,
+    ) -> Option<Self> {
+        use crate::{ExactProbabilityCertificateCheck::Accepted, SubsystemBoundKind};
+        let Accepted(claim) = claim else {
+            return None;
+        };
+        if claim.bound()? != SubsystemBoundKind::Lower {
+            return None;
+        }
+        if let ExactBound::Finite(upper) = &upper {
+            if claim.value() > upper.value() {
+                return None;
+            }
+        }
+        let lower = ExactRational::new(claim.value().clone());
+        let entry_upper = upper.clone();
+        let mut record = Self::with_backend(
+            request_index,
+            backend,
+            TerminalValue::Proved {
+                basis: ProofBasis::ValueBounds {
+                    lower: lower.clone(),
+                    upper,
+                    method,
+                    exploration: BoundsExploration::Partial,
+                    entries: vec![ExactEntry {
+                        initial: 0,
+                        binding,
+                        instance: None,
+                        value: ExactOrBounds::Bounds {
+                            lower,
+                            upper: entry_upper,
+                        },
+                        extremum,
+                    }],
+                    reductions: Vec::new(),
+                },
+                certification: Certification::Certified,
+            },
+        );
+        record.exact_certificate_document = claim.document().map(Into::into);
         Some(record)
     }
 
@@ -4103,6 +4228,17 @@ mod tests {
             ProofResultEnvelope::to_source(&[]).unwrap_err(),
             EmptyEnvelopeSet
         );
+    }
+
+    #[test]
+    fn partial_value_bounds_serialize_positive_infinity_and_exploration() {
+        let json = serde_json::json!({
+            "lower": ExactRational::new(Rational::from_integer(1_i64.into())),
+            "upper": ExactBound::Infinity,
+            "exploration": BoundsExploration::Partial,
+        });
+        assert_eq!(json["upper"], "infinity");
+        assert_eq!(json["exploration"], "partial");
     }
 }
 

@@ -195,7 +195,7 @@ impl<'a> ModelSystem<'a> {
         let package: &'a CheckedPackage = self
             .source_package()
             .ok_or_else(|| fault("smt-encoding-reads-source-forms"))?;
-        let first = self.initial.first().ok_or(Refusal::NoInitialState)?;
+        let first = self.initial_base.first().ok_or(Refusal::NoInitialState)?;
         let mut rows: Vec<(DeclarationKey, String, DeclarationKey)> = Vec::new();
         for (population, objects) in &first.state.populations {
             for (key, object) in objects {
@@ -218,7 +218,7 @@ impl<'a> ModelSystem<'a> {
                 }
             }
         }
-        for state in &self.initial {
+        for state in self.initial_states() {
             let mismatch = rows
                 .iter()
                 .find(|(population, key, type_key)| {
@@ -319,7 +319,7 @@ impl<'a> ModelSystem<'a> {
         }
 
         let initial = self
-            .initial
+            .initial_states()
             .iter()
             .map(|state| {
                 objects
@@ -403,12 +403,7 @@ impl<'a> ModelSystem<'a> {
                         Some(support) => ParameterValues::Values(support.values()),
                         None => match self.domain_with_clocks(value_type, references) {
                             Some(domain) => ordered(domain, false)?,
-                            None => match Domain::map_size(
-                                value_type,
-                                references,
-                                self.types,
-                                &self.record_orders,
-                            ) {
+                            None => match self.map_size_with_clocks(value_type, references) {
                                 Some(size) if size > MAX_DOMAIN => ParameterValues::TooMany(size),
                                 _ => ParameterValues::Unbounded,
                             },
@@ -418,20 +413,15 @@ impl<'a> ModelSystem<'a> {
             }
             let result = match application.declaration.result() {
                 None => ResultValues::None,
-                Some(result_type) => ResultValues::Declared(
-                    match self.domain_with_clocks(result_type, references) {
+                Some(result_type) => {
+                    ResultValues::Declared(match self.domain_with_clocks(result_type, references) {
                         Some(domain) => ordered(domain, true)?,
-                        None => match Domain::map_size(
-                            result_type,
-                            references,
-                            self.types,
-                            &self.record_orders,
-                        ) {
+                        None => match self.map_size_with_clocks(result_type, references) {
                             Some(size) if size > MAX_DOMAIN => ParameterValues::TooMany(size),
                             _ => ParameterValues::Unbounded,
                         },
-                    },
-                ),
+                    })
+                }
             };
             let applicable =
                 |group: &[ClauseInfo]| -> Result<Vec<&'a CheckedStateClause>, SmtEncodingRefusal> {

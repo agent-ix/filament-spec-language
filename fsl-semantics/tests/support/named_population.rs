@@ -261,7 +261,7 @@ pub fn check_with_profiles(
                     at: text[error.span.start..error.span.end].to_owned(),
                     refusal: None,
                 })
-                .collect())
+                .collect());
         }
     };
     let regions = declarations.regions();

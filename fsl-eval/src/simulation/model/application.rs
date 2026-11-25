@@ -115,12 +115,13 @@ impl<'a> ModelSystem<'a> {
         {
             // A Clock reference in the record ranges over this universe's
             // declared places, never over nothing; no candidates, no domain.
-            let Some(objects) = self.with_clock_candidates(value_type, &references, None) else {
+            let Some(clock_references) = self.clock_references_for(value_type, None) else {
                 return Ok(None);
             };
-            return super::domain::composite_values(
+            return super::domain::composite_values_with_clock_references(
                 value_type,
-                &objects,
+                &references,
+                &clock_references,
                 self.types,
                 &self.record_orders,
                 || budget.charge(),

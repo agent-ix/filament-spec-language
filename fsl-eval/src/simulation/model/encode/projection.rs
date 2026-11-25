@@ -118,7 +118,7 @@ pub(super) trait ValueSink: StructuralSink {
         &mut self,
         object: &'v StateObject,
         key: &DeclarationKey,
-    ) -> Result<Option<&'v Value>, Self::Error>;
+    ) -> Result<Option<std::borrow::Cow<'v, Value>>, Self::Error>;
     fn declaration_equal(
         &mut self,
         left: &DeclarationKey,
@@ -126,6 +126,14 @@ pub(super) trait ValueSink: StructuralSink {
     ) -> Result<bool, Self::Error>;
     fn clock_count(&mut self, value: &Integer) -> Result<Option<u64>, Self::Error>;
 }
+
+/// Values layered over admitted model objects by a lazy initial-state recipe.
+pub(super) type InitialOverrides = BTreeMap<usize, BTreeMap<DeclarationKey, Value>>;
+
+/// Object-key renames a canonical symmetry permutation applies to identities
+/// and nested references during virtual key projection.
+pub(super) type InitialRenaming =
+    Vec<(Vec<filament_exact::UniverseId>, BTreeMap<String, String>)>;
 
 enum Frame {
     Object {
@@ -337,8 +345,8 @@ impl ValueSink for Retained {
         &mut self,
         object: &'v StateObject,
         key: &DeclarationKey,
-    ) -> Result<Option<&'v Value>, Self::Error> {
-        Ok(object.fields.get(key))
+    ) -> Result<Option<std::borrow::Cow<'v, Value>>, Self::Error> {
+        Ok(object.fields.get(key).map(std::borrow::Cow::Borrowed))
     }
 
     fn declaration_equal(
@@ -418,6 +426,159 @@ impl StructuralSink for Retained {
 
     fn effective(&mut self, source: &EffectiveId) -> Result<(), Self::Error> {
         self.scalar(Scalar::Effective(source))
+    }
+}
+
+struct InitialProjectionSink<'a> {
+    retained: Retained,
+    overrides: &'a InitialOverrides,
+    renaming: &'a InitialRenaming,
+}
+
+impl InitialProjectionSink<'_> {
+    fn renamed(&self, reference: &ObjectReference) -> Option<ObjectReference> {
+        let key = reference.object().as_str();
+        self.renaming.iter().find_map(|(universes, mapping)| {
+            if !universes.contains(reference.universe()) {
+                return None;
+            }
+            let identity = mapping.get(key)?;
+            Some(ObjectReference::new(
+                reference.universe().clone(),
+                reference.object_type().clone(),
+                filament_exact::ObjectId::new(identity.clone()).ok()?,
+            ))
+        })
+    }
+
+    fn finish(self) -> Enc {
+        self.retained.finish()
+    }
+}
+
+impl StructuralSink for InitialProjectionSink<'_> {
+    type Error = Infallible;
+
+    fn begin_object(&mut self) -> Result<(), Self::Error> {
+        self.retained.begin_object()
+    }
+    fn name(&mut self, name: &'static str) -> Result<(), Self::Error> {
+        self.retained.name(name)
+    }
+    fn end_object(&mut self) -> Result<(), Self::Error> {
+        self.retained.end_object()
+    }
+    fn text(&mut self, source: &str) -> Result<(), Self::Error> {
+        self.retained.text(source)
+    }
+    fn node(&mut self, source: &NodeKey) -> Result<(), Self::Error> {
+        self.retained.node(source)
+    }
+    fn effective(&mut self, source: &EffectiveId) -> Result<(), Self::Error> {
+        self.retained.effective(source)
+    }
+    fn null(&mut self) -> Result<(), Self::Error> {
+        self.retained.null()
+    }
+}
+
+impl ValueSink for InitialProjectionSink<'_> {
+    fn pending<T>(&mut self, stack: &mut Vec<T>, task: T) -> Result<(), Self::Error> {
+        self.retained.pending(stack, task)
+    }
+    fn visit(&mut self) -> Result<(), Self::Error> {
+        self.retained.visit()
+    }
+    fn reference(&mut self, value: &ObjectReference) -> Result<(), Self::Error> {
+        self.retained
+            .reference(&self.renamed(value).unwrap_or_else(|| value.clone()))
+    }
+    fn scalar(&mut self, source: Scalar<'_>) -> Result<(), Self::Error> {
+        match source {
+            Scalar::ModelReference {
+                model,
+                object_type,
+                object,
+                names,
+            } => {
+                if let Ok(reference) = model.object_reference(object_type, object) {
+                    if let Some(renamed) = self.renamed(&reference) {
+                        return self.retained.scalar(Scalar::ModelReference {
+                            model,
+                            object_type,
+                            object: renamed.object().as_str(),
+                            names,
+                        });
+                    }
+                }
+                self.retained.scalar(Scalar::ModelReference {
+                    model,
+                    object_type,
+                    object,
+                    names,
+                })
+            }
+            source => self.retained.scalar(source),
+        }
+    }
+    fn begin_array(&mut self, order: ArrayOrder) -> Result<(), Self::Error> {
+        self.retained.begin_array(order)
+    }
+    fn end_array(&mut self) -> Result<(), Self::Error> {
+        self.retained.end_array()
+    }
+    fn composite<'t>(
+        &mut self,
+        types: &'t TypeEnvironment,
+        key: &NodeKey,
+    ) -> Result<Option<&'t CompositeDeclaration>, Self::Error> {
+        self.retained.composite(types, key)
+    }
+    fn variant(
+        &mut self,
+        owner: &NodeKey,
+        case: &str,
+        value: &VariantId,
+    ) -> Result<bool, Self::Error> {
+        self.retained.variant(owner, case, value)
+    }
+    fn fields(
+        &mut self,
+        model: &StateModel,
+        object_type: &DeclarationKey,
+    ) -> Result<Option<Vec<StateField>>, Self::Error> {
+        self.retained.fields(model, object_type)
+    }
+    fn cached_fields<'t>(
+        &mut self,
+        fields: &'t BTreeMap<DeclarationKey, Vec<StateField>>,
+        object_type: &DeclarationKey,
+    ) -> Result<Option<&'t [StateField]>, Self::Error> {
+        self.retained.cached_fields(fields, object_type)
+    }
+    fn field<'v>(
+        &mut self,
+        object: &'v StateObject,
+        key: &DeclarationKey,
+    ) -> Result<Option<std::borrow::Cow<'v, Value>>, Self::Error> {
+        if let Some(value) = self
+            .overrides
+            .get(&(object as *const StateObject as usize))
+            .and_then(|fields| fields.get(key))
+        {
+            return Ok(Some(std::borrow::Cow::Owned(value.clone())));
+        }
+        self.retained.field(object, key)
+    }
+    fn declaration_equal(
+        &mut self,
+        left: &DeclarationKey,
+        right: &DeclarationKey,
+    ) -> Result<bool, Self::Error> {
+        self.retained.declaration_equal(left, right)
+    }
+    fn clock_count(&mut self, value: &Integer) -> Result<Option<u64>, Self::Error> {
+        self.retained.clock_count(value)
     }
 }
 
@@ -520,8 +681,41 @@ pub(super) fn object(
     retained(|sink| project_object(sink, model, source, typing, Some(placeholder)))
 }
 
+pub(super) fn initial_object(
+    model: &StateModel,
+    source: &StateObject,
+    typing: Typing<'_>,
+    placeholder: &Placeholder<'_>,
+    overrides: &InitialOverrides,
+    renaming: &InitialRenaming,
+) -> Enc {
+    let mut sink = InitialProjectionSink {
+        retained: Retained::default(),
+        overrides,
+        renaming,
+    };
+    let _ = project_object(&mut sink, model, source, typing, Some(placeholder));
+    sink.finish()
+}
+
 pub(super) fn model_state(model: &StateModel, state: &ModelState, typing: Typing<'_>) -> Enc {
     retained(|sink| project_model_state(sink, model, state, typing))
+}
+
+pub(super) fn initial_model_state(
+    model: &StateModel,
+    state: &ModelState,
+    typing: Typing<'_>,
+    overrides: &InitialOverrides,
+    renaming: &InitialRenaming,
+) -> Enc {
+    let mut sink = InitialProjectionSink {
+        retained: Retained::default(),
+        overrides,
+        renaming,
+    };
+    let _ = project_model_state(&mut sink, model, state, typing);
+    sink.finish()
 }
 
 fn tagged<S: StructuralSink>(
@@ -641,9 +835,9 @@ fn project_extents<S: ValueSink>(sink: &mut S, state: &ModelState) -> Result<(),
                         sink.visit()?;
                         sink.begin_object()?;
                         sink.name("source")?;
-                        project_reference(sink, &instance.source)?;
+                        sink.reference(&instance.source)?;
                         sink.name("target")?;
-                        project_reference(sink, &instance.target)?;
+                        sink.reference(&instance.target)?;
                         if instance.positions.source.is_some()
                             || instance.positions.target.is_some()
                         {
@@ -734,7 +928,7 @@ pub(super) fn project_object<S: ValueSink>(
             sink.text(&field.name)?;
             sink.name("value")?;
             match sink.field(object, &field.key)? {
-                Some(value) => project_value(sink, value, typing, placeholder, false)?,
+                Some(value) => project_value(sink, &value, typing, placeholder, false)?,
                 None => sink.scalar(Scalar::Null)?,
             }
             sink.end_object()?;
@@ -747,7 +941,7 @@ pub(super) fn project_object<S: ValueSink>(
             let Some(value) = sink.field(object, &field.key)? else {
                 continue;
             };
-            if !matches!(value, Value::Integer(_) | Value::Collection(_)) {
+            if !matches!(&*value, Value::Integer(_) | Value::Collection(_)) {
                 continue;
             }
             sink.begin_object()?;
@@ -757,7 +951,7 @@ pub(super) fn project_object<S: ValueSink>(
             tagged(sink, "sequence", |sink| {
                 sink.name("elements")?;
                 sink.begin_array(ArrayOrder::Retained)?;
-                match value {
+                match &*value {
                     Value::Integer(count) => {
                         let count = sink.clock_count(count)?.unwrap_or(0);
                         for _ in 0..count {
@@ -789,7 +983,9 @@ pub(super) fn project_object<S: ValueSink>(
             if !sink.declaration_equal(owner, &object.type_identity)? {
                 continue;
             }
-            let present = matches!(sink.field(object, &field.key)?, Some(Value::Boolean(true)));
+            let present = sink
+                .field(object, &field.key)?
+                .is_some_and(|value| matches!(&*value, Value::Boolean(true)));
             sink.begin_object()?;
             sink.name("name")?;
             sink.text(&field.name)?;
@@ -1417,7 +1613,12 @@ mod tests {
     /// `{"type":"clock_reference","place_id":<text>}` with their own place
     /// texts and so two distinct canonical keys, ordered by the place text's
     /// UTF-8 bytes, and never as the reference triple.
-    #[trace("FSpec-TC-2084", "FSpec-FR-181-AC-35")]
+    #[trace(
+        "FSpec-TC-2084",
+        "FSpec-FR-181-AC-35",
+        "FR-1040-AC-11",
+        "FR-1040-AC-12"
+    )]
     #[test]
     fn clock_references_encode_as_their_place_id_text() {
         let encode = |value: &Value| {
@@ -1466,5 +1667,60 @@ mod tests {
         );
         assert_eq!(set_of(vec![y.clone(), x.clone()]), expected);
         assert_eq!(set_of(vec![x, y]), expected);
+
+        let (Value::ClockReference(x), Value::ClockReference(y)) = (
+            crate::test_clock_reference::clock_reference_of("x"),
+            crate::test_clock_reference::clock_reference_of("y"),
+        ) else {
+            panic!("clock references");
+        };
+        let map_of = |entries| {
+            let map_type = MapType::new(ValueType::ClockReference, ValueType::Boolean, None)
+                .expect("clock references are leaf map keys");
+            let value = filament_exact::from_admitted_map(map_type, entries)
+                .expect("distinct clock-reference keys form a map");
+            encode(&value)
+        };
+        let xy = map_of(vec![
+            (Value::ClockReference(x.clone()), Value::Boolean(false)),
+            (Value::ClockReference(y.clone()), Value::Boolean(true)),
+        ]);
+        let yx = map_of(vec![
+            (Value::ClockReference(y.clone()), Value::Boolean(true)),
+            (Value::ClockReference(x.clone()), Value::Boolean(false)),
+        ]);
+        assert_eq!(
+            xy, yx,
+            "map key order is independent of supplied entry order"
+        );
+
+        let state_key = |value: &Enc| {
+            crate::simulation::key::canonical_state_key(
+                value,
+                fsl_foundation::IdentityLimits::default(),
+            )
+            .expect("a typed clock reference has a state key")
+        };
+        assert_eq!(state_key(&xy), state_key(&yx));
+        let set_xy = set_of(vec![
+            Value::ClockReference(x.clone()),
+            Value::ClockReference(y.clone()),
+        ]);
+        let set_yx = set_of(vec![
+            Value::ClockReference(y.clone()),
+            Value::ClockReference(x.clone()),
+        ]);
+        assert_eq!(state_key(&set_xy), state_key(&set_yx));
+        let set_x = set_of(vec![Value::ClockReference(x.clone())]);
+        assert_ne!(
+            state_key(&set_x),
+            state_key(&set_xy),
+            "adding a distinct place changes the Set state key"
+        );
+        assert_ne!(
+            state_key(&encode(&Value::ClockReference(x))),
+            state_key(&encode(&Value::ClockReference(y))),
+            "two places have different state keys"
+        );
     }
 }

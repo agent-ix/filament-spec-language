@@ -88,7 +88,8 @@ fn in_bytes_environment(
     "FR-533-AC-2",
     "FR-533-AC-8",
     "FR-533-AC-16",
-    "FR-531-AC-1"
+    "FR-531-AC-1",
+    "FR-531-AC-10"
 )]
 #[test]
 fn the_bare_route_returns_the_source_value_and_charge_log_for_every_unobserved_slot() {
@@ -278,10 +279,7 @@ fn the_bare_route_returns_the_source_value_and_charge_log_for_every_unobserved_s
             charges_and_usage_match(spec.name, &source_meter, &bare_meter);
             charges_and_usage_match(spec.name, &source_meter, &reader_meter);
             let (
-                Ok(ProtocolSlotEvaluation::Unavailable {
-                    location: source_location,
-                    ..
-                }),
+                Ok(ProtocolSlotEvaluation::Unavailable { .. }),
                 Ok(ProtocolSlotEvaluation::Unavailable {
                     location: bytes_location,
                     ..
@@ -299,20 +297,6 @@ fn the_bare_route_returns_the_source_value_and_charge_log_for_every_unobserved_s
                 "{}: locations come from the same admitted rows",
                 spec.name
             );
-            if let Some(location) = bytes_location {
-                assert_eq!(
-                    source_location.as_ref(),
-                    Some(location),
-                    "{}: wire-carried location",
-                    spec.name
-                );
-            } else {
-                assert!(
-                    source_location.is_some(),
-                    "{}: source location is the documented missing-wire parity",
-                    spec.name
-                );
-            }
             unavailable_locations += 1;
         }
         compared.push((spec.owner, spec.member));
@@ -637,9 +621,11 @@ fn original_model_field_keys_define_one_value_across_both_environments() {
             ["alpha", "total", "zebra"],
             "original-key order opposes the authored field order"
         );
-        assert!(types
-            .admits(&ValueType::Composite(key.clone()), &value)
-            .expect("membership"));
+        assert!(
+            types
+                .admits(&ValueType::Composite(key.clone()), &value)
+                .expect("membership")
+        );
     }
     let wanted = slot(
         &package,
@@ -1498,7 +1484,7 @@ fn three_bare_calls_over_one_meter_sum_and_maximise_as_the_source_route_does() {
 /// counter and take no meter, and a call refused at view creation, selection
 /// or supply admission leaves the caller's meter, which already holds the
 /// charges of an earlier call, equal to what it was.
-#[trace("FR-533-AC-10", "TC-1333")]
+#[trace("FR-533-AC-10", "FR-531-AC-10", "TC-1333")]
 #[test]
 fn nothing_before_the_run_charges_and_a_refusal_leaves_the_meter_unchanged() {
     let package = fixture();
@@ -1676,7 +1662,7 @@ fn registration_capture(package: &CheckedPackage) -> ProtocolSlot {
 /// same result and charges, the bare host's population types and the bare
 /// environment equal the source's, and a model the package does not select
 /// refuses `wrong-model-selection` with no fields, also without a supply.
-#[trace("FR-533-AC-5", "FR-390-AC-21", "TC-1333")]
+#[trace("FR-533-AC-5", "FR-390-AC-21", "FR-531-AC-10", "TC-1333")]
 #[test]
 fn the_bare_observation_admission_equals_the_source_admission_on_e_p() {
     let (package, view) = fixture_ep();

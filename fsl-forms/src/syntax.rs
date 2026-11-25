@@ -425,6 +425,8 @@ pub enum BinderQuery {
     Forall,
     /// `exists(x in c: p)`.
     Exists,
+    /// `only(x in c: e)`, requiring exactly one source element.
+    Only,
 }
 
 /// A population-valued form of a refinement row (FR-139, ADR-020 RM-8).

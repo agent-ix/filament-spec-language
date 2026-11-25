@@ -140,10 +140,28 @@ pub(super) fn parse(
     cancel: &Cancel,
     forms: &ExtensionForms,
 ) -> Result<ParsedSource, Box<CompleteDiagnostic>> {
-    let grammar = grammar::complete_v1_with(forms);
-    let compounds = grammar::complete_compound_spellings(&grammar);
+    let custom_grammar =
+        (!forms.productions().is_empty()).then(|| grammar::complete_v1_with(forms));
+    let grammar = match custom_grammar.as_ref() {
+        Some(grammar) => grammar,
+        None => grammar::complete_v1(),
+    };
+    let custom_compounds = custom_grammar
+        .as_ref()
+        .map(grammar::complete_compound_spellings);
+    let compounds = match custom_compounds.as_deref() {
+        Some(compounds) => compounds,
+        None => grammar::default_compound_spellings(),
+    };
+    let custom_reserved_words = custom_grammar
+        .as_ref()
+        .map(grammar::complete_reserved_words);
+    let reserved_words = match custom_reserved_words.as_ref() {
+        Some(reserved_words) => reserved_words,
+        None => grammar::default_reserved_words(),
+    };
     let (tokens, significant, mut diagnostics, mut recoveries) =
-        scan(&source, limits, &compounds, cancel)?;
+        scan(&source, limits, compounds, cancel)?;
     if diagnostics.len() > limits.diagnostics {
         let cut_span = diagnostics[limits.diagnostics]
             .byte_span()
@@ -165,13 +183,21 @@ pub(super) fn parse(
             ),
         ));
     }
-    let prelude_nodes = selection_prelude_nodes(&source, &grammar, &significant, limits, cancel);
+    let prelude_nodes = selection_prelude_nodes(
+        &source,
+        grammar,
+        reserved_words,
+        &significant,
+        limits,
+        cancel,
+    );
     let (matched, parse_significant, mut parser_diagnostics, parser_recoveries) =
         parse_with_declaration_recovery(
             &source,
-            &grammar,
+            grammar,
             significant.clone(),
             &diagnostics,
+            reserved_words,
             limits,
             cancel,
         )?;
@@ -202,7 +228,7 @@ pub(super) fn parse(
     // A declaration the recovery skipped is kept as a `Declaration` node,
     // whether or not the declarations around it matched (FR-762-AC-3, AC-9).
     {
-        let starts = declaration_starts(&grammar);
+        let starts = declaration_starts(grammar);
         let recovered_declarations: Vec<_> = recoveries
             .iter()
             .filter(|recovery| recovery.expected == "next declaration")
@@ -276,6 +302,17 @@ pub(super) fn parse(
     diagnostics.extend(reference_literal_spacing(&source, &cst));
     diagnostics.extend(interval_bounds(&source, &cst));
     diagnostics.extend(decimal_constructor_numbers(&source, &cst));
+    for diagnostic in bit_constructor_diagnostics(&source, &cst) {
+        let span = diagnostic.byte_span();
+        diagnostics.retain(|existing| {
+            existing.byte_span().is_none_or(|existing_span| {
+                span.is_some_and(|span| {
+                    existing_span.end <= span.start || span.end <= existing_span.start
+                })
+            })
+        });
+        diagnostics.push(diagnostic);
+    }
     diagnostics
         .sort_by_key(|diagnostic| diagnostic.byte_span().map_or(usize::MAX, |span| span.start));
     Ok(ParsedSource::from_parts(
@@ -399,10 +436,10 @@ fn parse_with_declaration_recovery(
     grammar: &Grammar,
     significant: Vec<Significant>,
     scanned: &[CompleteDiagnostic],
+    reserved_words: &std::collections::BTreeSet<&'static str>,
     limits: Limits,
     cancel: &Cancel,
 ) -> Result<DeclarationRecovery, Box<CompleteDiagnostic>> {
-    let reserved_words = grammar::complete_reserved_words(grammar);
     let lexical_spans: Vec<_> = scanned
         .iter()
         .filter(|diagnostic| diagnostic.phase == Phase::Lex)
@@ -430,7 +467,7 @@ fn parse_with_declaration_recovery(
     }
 
     loop {
-        let mut engine = Engine::new(grammar, &tokens, limits, cancel);
+        let mut engine = Engine::new(grammar, reserved_words, &tokens, limits, cancel);
         match engine.production(Production::CompleteUnit, 0) {
             Outcome::Match(_) => {
                 append_omitted_diagnostic(
@@ -475,6 +512,7 @@ fn parse_with_declaration_recovery(
             Outcome::No(failure) => {
                 if let Some((forest, recovered, span)) = recover_at_protocol_delimiter(
                     grammar,
+                    reserved_words,
                     &tokens,
                     limits,
                     cancel,
@@ -614,7 +652,7 @@ fn parse_with_declaration_recovery(
                                         &tokens,
                                         failure.position,
                                         &failure.expected,
-                                        &reserved_words,
+                                        reserved_words,
                                     )
                                 },
                                 str::to_owned,
@@ -701,7 +739,7 @@ fn parse_with_declaration_recovery(
                             spelling: ";".into(),
                         },
                     );
-                    let mut retry = Engine::new(grammar, &inserted, limits, cancel);
+                    let mut retry = Engine::new(grammar, reserved_words, &inserted, limits, cancel);
                     if let Outcome::Match(_) = retry.production(Production::CompleteUnit, 0) {
                         let span = failure_span(source, &tokens, failure.position);
                         let expected = failure
@@ -719,7 +757,7 @@ fn parse_with_declaration_recovery(
                                     &tokens,
                                     failure.position,
                                     &failure.expected,
-                                    &reserved_words,
+                                    reserved_words,
                                 )
                             },
                             str::to_owned,
@@ -779,7 +817,7 @@ fn parse_with_declaration_recovery(
                                 &tokens,
                                 failure.position,
                                 &failure.expected,
-                                &reserved_words,
+                                reserved_words,
                             )
                         },
                         str::to_owned,
@@ -846,6 +884,110 @@ fn failure_span(source: &Source, tokens: &[Significant], position: usize) -> Spa
         },
         |token| token.span,
     )
+}
+
+/// Bit constructors have a closed, width-specific hexadecimal token shape.
+/// If a constructor-shaped call violates that shape, report the malformed
+/// spelling at the constructor instead of exposing parser recovery's later
+/// `)`/identifier as an unrelated unexpected token (FR-397-AC-11).
+fn bit_constructor_diagnostics(source: &Source, cst: &LosslessCst) -> Vec<CompleteDiagnostic> {
+    let text = source.text();
+    let bytes = text.as_bytes();
+    let constructor_starts: BTreeSet<usize> = cst
+        .tokens()
+        .iter()
+        .filter(|token| {
+            token.class() == TokenClass::Token
+                && matches!(token.spelling(), b"float32" | b"float64")
+        })
+        .map(|token| token.span().start)
+        .collect();
+    let mut diagnostics = Vec::new();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        let (name, digits) = if bytes[cursor..].starts_with(b"float32") {
+            (b"float32".as_slice(), 8)
+        } else if bytes[cursor..].starts_with(b"float64") {
+            (b"float64".as_slice(), 16)
+        } else {
+            cursor += 1;
+            continue;
+        };
+        let start = cursor;
+        if !constructor_starts.contains(&start) {
+            cursor += 1;
+            continue;
+        }
+        if start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+            cursor += 1;
+            continue;
+        }
+        let after_name = cursor + name.len();
+        if after_name < bytes.len()
+            && (bytes[after_name].is_ascii_alphanumeric() || bytes[after_name] == b'_')
+        {
+            cursor = after_name;
+            continue;
+        }
+        let mut at = after_name;
+        skip_ascii_space(bytes, &mut at);
+        if bytes.get(at) != Some(&b'(') {
+            cursor = after_name;
+            continue;
+        }
+        at += 1;
+        skip_ascii_space(bytes, &mut at);
+        let has_bits = bytes.get(at..at + 4) == Some(b"bits");
+        if has_bits {
+            at += 4;
+            skip_ascii_space(bytes, &mut at);
+        }
+        let has_colon = bytes.get(at) == Some(&b':');
+        if has_colon {
+            at += 1;
+            skip_ascii_space(bytes, &mut at);
+        }
+        let payload_start = at;
+        while bytes
+            .get(at)
+            .is_some_and(|byte| !byte.is_ascii_whitespace() && *byte != b')')
+        {
+            at += 1;
+        }
+        let payload = &bytes[payload_start..at];
+        let valid_payload = payload.len() == digits + 2
+            && payload.starts_with(b"0x")
+            && payload[2..]
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte));
+        skip_ascii_space(bytes, &mut at);
+        let has_close = bytes.get(at) == Some(&b')');
+        let valid = has_bits && has_colon && valid_payload && has_close;
+        if !valid {
+            let end = if has_close {
+                at + 1
+            } else {
+                at.max(payload_start)
+            };
+            diagnostics.push(*super::diagnostic::error(
+                source,
+                CompleteCode::InvalidSyntax,
+                CompleteCause::InvalidToken,
+                Phase::Parse,
+                start,
+                end.max(start + name.len()),
+                format!("malformed {name:?} bit constructor"),
+            ));
+        }
+        cursor = (at + usize::from(has_close)).max(start + name.len());
+    }
+    diagnostics
+}
+
+fn skip_ascii_space(bytes: &[u8], at: &mut usize) {
+    while bytes.get(*at).is_some_and(u8::is_ascii_whitespace) {
+        *at += 1;
+    }
 }
 
 fn append_omitted_diagnostic(
@@ -1038,6 +1180,7 @@ fn declaration_starts(grammar: &Grammar) -> BTreeSet<String> {
 /// unit boundary.
 fn recover_at_protocol_delimiter(
     grammar: &Grammar,
+    reserved_words: &BTreeSet<&'static str>,
     significant: &[Significant],
     limits: Limits,
     cancel: &Cancel,
@@ -1107,7 +1250,7 @@ fn recover_at_protocol_delimiter(
             },
         );
     }
-    let mut engine = Engine::new(grammar, &recovered, limits, cancel);
+    let mut engine = Engine::new(grammar, reserved_words, &recovered, limits, cancel);
     let Outcome::Match(_) = engine.production(Production::CompleteUnit, 0) else {
         return None;
     };
@@ -1117,6 +1260,7 @@ fn recover_at_protocol_delimiter(
 fn selection_prelude_nodes(
     source: &Source,
     grammar: &Grammar,
+    reserved_words: &BTreeSet<&'static str>,
     tokens: &[Significant],
     limits: Limits,
     cancel: &Cancel,
@@ -1129,7 +1273,7 @@ fn selection_prelude_nodes(
         }
     }
 
-    let mut engine = Engine::new(grammar, tokens, limits, cancel);
+    let mut engine = Engine::new(grammar, reserved_words, tokens, limits, cancel);
     let Outcome::Match(mut position) = engine.production(Production::Header, 0) else {
         return Vec::new();
     };
@@ -2230,7 +2374,7 @@ pub(crate) const DEFAULT_WORK_UNITS: usize = 288;
 /// matches and 0.17 links per step, about 14 bytes per step.
 struct Engine<'a> {
     grammar: &'a Grammar,
-    reserved_words: BTreeSet<&'static str>,
+    reserved_words: &'a std::collections::BTreeSet<&'static str>,
     tokens: &'a [Significant],
     limits: Limits,
     cancel: &'a Cancel,
@@ -2265,13 +2409,14 @@ impl<'a> Engine<'a> {
     /// is linear in the input.
     fn new(
         grammar: &'a Grammar,
+        reserved_words: &'a std::collections::BTreeSet<&'static str>,
         tokens: &'a [Significant],
         limits: Limits,
         cancel: &'a Cancel,
     ) -> Self {
         Self {
             grammar,
-            reserved_words: grammar::complete_reserved_words(grammar),
+            reserved_words,
             tokens,
             limits,
             frames: Vec::new(),
@@ -2925,12 +3070,18 @@ mod tests {
     fn work(text: &str) -> (usize, usize) {
         let source = source(text);
         let grammar = grammar::complete_v1();
-        let compounds = grammar::complete_compound_spellings(&grammar);
+        let compounds = grammar::complete_compound_spellings(grammar);
         let cancel = Cancel::new();
         let (_, significant, diagnostics, _) =
             scan(&source, Limits::default(), &compounds, &cancel).expect("scan");
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
-        let mut engine = Engine::new(&grammar, &significant, Limits::default(), &cancel);
+        let mut engine = Engine::new(
+            grammar,
+            grammar::default_reserved_words(),
+            &significant,
+            Limits::default(),
+            &cancel,
+        );
         let outcome = engine.production(Production::CompleteUnit, 0);
         assert!(matches!(outcome, Outcome::Match(_)), "{outcome:?}");
         (engine.steps, significant.len())
@@ -2961,12 +3112,18 @@ mod tests {
             )
             .expect("test source");
             let grammar = grammar::complete_v1();
-            let compounds = grammar::complete_compound_spellings(&grammar);
+            let compounds = grammar::complete_compound_spellings(grammar);
             let cancel = Cancel::new();
             let (_, significant, diagnostics, _) =
                 scan(&source, unlimited, &compounds, &cancel).expect("scan");
             assert!(diagnostics.is_empty(), "{diagnostics:?}");
-            let mut engine = Engine::new(&grammar, &significant, unlimited, &cancel);
+            let mut engine = Engine::new(
+                grammar,
+                grammar::default_reserved_words(),
+                &significant,
+                unlimited,
+                &cancel,
+            );
             let outcome = engine.production(Production::CompleteUnit, 0);
             assert!(matches!(outcome, Outcome::Match(_)), "{outcome:?}");
             let tokens = significant.len();
@@ -3038,13 +3195,19 @@ mod tests {
     #[test]
     fn nested_trailing_comma_work_is_linear_in_depth() {
         let grammar = grammar::complete_v1();
-        let compounds = grammar::complete_compound_spellings(&grammar);
+        let compounds = grammar::complete_compound_spellings(grammar);
         let steps = |depth: usize| {
             let source = source(&nested_trailing_comma(depth));
             let cancel = Cancel::new();
             let (_, significant, _, _) =
                 scan(&source, Limits::default(), &compounds, &cancel).expect("scan");
-            let mut engine = Engine::new(&grammar, &significant, Limits::default(), &cancel);
+            let mut engine = Engine::new(
+                grammar,
+                grammar::default_reserved_words(),
+                &significant,
+                Limits::default(),
+                &cancel,
+            );
             let outcome = engine.production(Production::CompleteUnit, 0);
             assert!(
                 matches!(outcome, Outcome::No(_)),

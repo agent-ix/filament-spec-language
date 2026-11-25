@@ -38,7 +38,10 @@ mod value_invariants;
 pub(crate) use bare::evaluate_generated_package_protocol_slot;
 pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol_slot;
 pub(crate) use bare::post_targets as bare_post_targets;
-pub use bare::{evaluate_bare_expression, evaluate_bare_refinement_row};
+pub use bare::{
+    evaluate_bare_expression, evaluate_bare_refinement_row, evaluate_bare_source_operation_clause,
+    BareSourceOperationEvaluationFailure,
+};
 pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations, ProjectedReward};
 pub(crate) use bare::{
     evaluate_probability_predicate as evaluate_bare_probability_predicate,

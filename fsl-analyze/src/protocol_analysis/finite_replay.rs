@@ -552,7 +552,8 @@ fn replay_steps<M: MemoryModel>(
     formula: &Formula<'_, '_>,
 ) -> Result<ReplayVerdict, ReplayFault> {
     use fsl_eval::simulation::SubjectSystem;
-    let Some(mut state) = system.initial().into_iter().nth(trace.initial_state) else {
+    let initial = system.try_initial().map_err(|_| ReplayFault::Protocol)?;
+    let Some(mut state) = initial.into_iter().nth(trace.initial_state) else {
         return Ok(ReplayVerdict::NoInitialState);
     };
     let key_of = |state: &_| {

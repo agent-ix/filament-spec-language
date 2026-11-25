@@ -85,6 +85,15 @@ accepts both, so the reported interval is certified at both ends.
   which raising that setting resolves, with no certificate and no truth
   value.
 
+- A `finite-horizon-measure/v1` base with payoff `shifted` uses the exact
+  objective shape FR-1043 defines: `profile`, `payoff`, `measure`,
+  `optimization` and `fairness`; `measure` retains `kind`, `window`,
+  `reward`, `unit`, `comparison`, `threshold` and `level`. In particular,
+  `lower` and `upper` ValueBounds documents for a quantile do not rewrite
+  `shifted` as `event`, `ratio` or another payoff. Their complete product keys,
+  values, ranking and optional policy use this profile's rules; the checker
+  rederives the complete base objective from the checked claim.
+
 - A dyadic interval document SHALL use `scalar_bits = max(max_rational_bits,
   16 * max_precision_bits)`, where `max_rational_bits` and
   `max_precision_bits` are the request's `exact_prob` limits. The producer and
@@ -270,7 +279,7 @@ successor of strictly smaller rank whose value is positive (FSpec FR-412
 | FR-1042-AC-21 | Over FR-198-AC-3's one-action `Loop`, unbounded `probability >= rational(2,5) [eventually holds(goal)]` under every scheduler has exact value 1/2. With `max_rational_bits` 1 and `max_precision_bits` 16, EN-5 settles `proved`, `ValueBounds` enclosing 1/2 with the lower end meeting 2/5; both documents are accepted by fresh independent `fsl-probability-check` invocations, and a one-value mutation is rejected. | Test (TC-3212) |
 | FR-1042-AC-22 | Over FR-1041-AC-1's `W` under `every scheduler fair strong go`, `probability >= rational(2,5) [eventually holds(delivered)]` has exact value 1/2. With `max_rational_bits` 1 and `max_precision_bits` 16, EN-5 settles `proved`, `ValueBounds` enclosing 1/2 with the lower end meeting 2/5; the `cyclic-mdp-fair-eventual/v1` documents are accepted by fresh independent `fsl-probability-check` invocations, and a one-value mutation is rejected. | Test (TC-3212) |
 | FR-1042-AC-23 | Over FR-1043-AC-5's `Retry` under its workload, `mean of fraction holds(delivered) over [0, 2] >= rational(2,5)` has exact value 5/12. With `max_rational_bits` 1 and `max_precision_bits` 16, EN-5 settles `proved`, `ValueBounds` enclosing 5/12 with the lower end meeting 2/5; both `finite-horizon-measure/v1` fraction documents are accepted by fresh independent `fsl-probability-check` invocations, and a one-value mutation is rejected. | Test (TC-3212) |
-| FR-1042-AC-24 | Over FR-1043-AC-2's `fast`/`slow` model under every scheduler, `quantile 0.4 of (steps from holds(true) until holds(delivered) within 4) <= 2` has shifted value 3/80. With `max_rational_bits` 1 and `max_precision_bits` 16, EN-5 settles `proved`, `ValueBounds` enclosing 3/80 with the lower end at least 0; both `finite-horizon-measure/v1` shifted documents are accepted by fresh independent `fsl-probability-check` invocations, and a one-value mutation is rejected. | Test (TC-3212) |
+| FR-1042-AC-24 | Over FR-1043-AC-2's `fast`/`slow` model under every scheduler, `quantile 0.4 of (steps from holds(true) until holds(delivered) within 4) <= 2` has shifted value `3/80`. With `max_rational_bits` 1 and `max_precision_bits` 16, EN-5 settles `proved`, `ValueBounds` with interval `[lower, upper]` satisfying `0 <= lower <= 3/80 <= upper`, where `lower` meets the claim-side threshold. The emitted `lower` and `upper` documents each retain `base.profile = "finite-horizon-measure/v1"`, `base.payoff = "shifted"`, `measure = {kind: "steps", window: 4, reward: null, unit: null, comparison: "le", threshold: 2, level: 2/5}`, the source-derived `minimum` optimization and empty fairness set; their initial values equal the reported interval endpoints. Canonical read/encode/read preserves both complete documents, and fresh independent `fsl-probability-check` invocations accept each. In the `lower` document, replacing only the `value` in the row keyed by the initial complete product key `K0` with the valid dyadic `1/16` is rejected `InequalityFails` at `K0`. | Test |
 
 ## Dependencies
 

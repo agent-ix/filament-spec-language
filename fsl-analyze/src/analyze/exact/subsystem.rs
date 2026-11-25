@@ -106,6 +106,28 @@ pub(super) fn refute(
             };
             (Role::Avoidance(boundary), threshold)
         }
+        ProbForm::Probability {
+            bound,
+            event:
+                Event::Formula {
+                    formula,
+                    timed_horizon: None,
+                    ..
+                },
+        } if super::is_unbounded_eventually_formula(formula) => {
+            let (accepting, threshold) = match bound {
+                Bound::AtLeast(threshold) => (false, threshold),
+                Bound::AtMost(threshold) => (true, threshold),
+            };
+            let success = (0..count).map(|state| label(state, 0)).collect::<Vec<_>>();
+            let boundary = Boundary {
+                stop: success.clone(),
+                success,
+                undecided_accepts: false,
+                accepting,
+            };
+            (Role::Avoidance(boundary), threshold)
+        }
         ProbForm::ExpectedReward {
             bound: Bound::AtMost(threshold),
             ..
@@ -161,9 +183,9 @@ pub(super) fn refute(
         Err(error) => return document_failure(error, subject),
     };
     let evidence = match &role {
-        Role::Avoidance(boundary) => {
-            avoidance(&chain, start, boundary, &reached, threshold, limits, budget)
-        }
+        Role::Avoidance(boundary) => avoidance(
+            &chain, start, boundary, &reached, threshold, limits, cancel, budget,
+        ),
         Role::RewardLower | Role::RewardUpper => {
             let ProbForm::ExpectedReward { reward, .. } = &claim.form else {
                 return broken();
@@ -177,6 +199,7 @@ pub(super) fn refute(
                 threshold,
                 matches!(role, Role::RewardUpper),
                 limits,
+                cancel,
                 budget,
             )
         }
@@ -252,7 +275,10 @@ pub(super) fn refute(
             let ProductAction::Identity(identity) = &action else {
                 // Terminal stutter has no scheduler entry; other actions
                 // belong to products this role does not refute.
-                if matches!(action, ProductAction::TerminalStutter) {
+                if matches!(
+                    action,
+                    ProductAction::TerminalStutter | ProductAction::PostState(_)
+                ) {
                     continue;
                 }
                 return not_yet();
@@ -447,6 +473,7 @@ struct Boundary {
 /// FSpec FR-412's lower values for the violating quantity: the probability
 /// of reaching the union of the chain's bottom components classified on the
 /// violating side, with ranks by distance to it.
+#[allow(clippy::too_many_arguments)]
 fn avoidance(
     chain: &ProbProduct,
     start: ProbStateId,
@@ -454,6 +481,7 @@ fn avoidance(
     reached: &[bool],
     threshold: &Rational,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
     budget: &mut CandidateBudget<'_>,
 ) -> Result<Option<Evidence>, Stop> {
     let mut adjacency = Vec::with_capacity(chain.states.len());
@@ -494,7 +522,14 @@ fn avoidance(
     let open = (0..chain.states.len())
         .map(|state| violated[state] || !boundary.stop[state])
         .collect::<Vec<_>>();
-    let solved = decide_until(chain, &open, &violated, UnboundedObjective::Min, limits)?;
+    let solved = decide_until(
+        chain,
+        &open,
+        &violated,
+        UnboundedObjective::Min,
+        limits,
+        cancel,
+    )?;
     let value = |state: usize| match solved.values.get(state) {
         Some(ExtRational::Finite(value)) => Ok(value.clone()),
         _ => Err(UnboundedError::InvalidState),
@@ -548,9 +583,17 @@ fn reward_bound(
     threshold: &Rational,
     upper: bool,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
     budget: &mut CandidateBudget<'_>,
 ) -> Result<Option<Evidence>, Stop> {
-    let expected = decide_expected_reward(chain, target, reward, UnboundedObjective::Min, limits)?;
+    let expected = decide_expected_reward(
+        chain,
+        target,
+        reward,
+        UnboundedObjective::Min,
+        limits,
+        cancel,
+    )?;
     let one = Rational::from_integer(filament_exact::Integer::from(1_i64));
     let initial = expected.values.get(start.index());
     let mut values = Vec::new();
@@ -589,7 +632,8 @@ fn reward_bound(
         Some(ExtRational::Finite(initial)) if initial > threshold => None,
         Some(ExtRational::Finite(_)) => return Ok(None),
         Some(ExtRational::PlusInfinity) => {
-            let reaches = decide_reachability(chain, target, UnboundedObjective::Min, limits)?;
+            let reaches =
+                decide_reachability(chain, target, UnboundedObjective::Min, limits, cancel)?;
             let never = |state: usize| match reaches.values.get(state) {
                 Some(ExtRational::Finite(value)) => Ok(one.sub(value)),
                 _ => Err(Stop::Solver(UnboundedError::InvalidState)),

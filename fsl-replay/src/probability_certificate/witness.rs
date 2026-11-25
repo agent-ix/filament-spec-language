@@ -598,9 +598,14 @@ fn replay_probabilistic_witness_impl(
     let ProbForm::Reach { bound, target } = &claim.form else {
         return Err(ExactProbabilityGraphError::UnsupportedClaimForm.into());
     };
+    let fair_unbounded_eventual = !claim.fairness.is_empty()
+        && matches!(target, ReachTarget::Eventually(_))
+        && fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
+            == Some(fsl_semantics::check::TemporalProfile::InfiniteTrace);
     if !matches!(target, ReachTarget::Eventually(_))
         && fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
             != Some(fsl_semantics::check::TemporalProfile::InfiniteTrace)
+        || !claim.fairness.is_empty() && !fair_unbounded_eventual
     {
         return Err(ExactProbabilityGraphError::UnsupportedClaimForm.into());
     }
@@ -690,7 +695,11 @@ fn replay_probabilistic_witness_impl(
             limits,
         )?;
     }
-    topological_order(&graph, cancel)?;
+    // A fair unbounded eventual witness may traverse a cyclic model graph;
+    // the independently rebuilt bottom components below establish fairness.
+    if !fair_unbounded_eventual {
+        topological_order(&graph, cancel)?;
+    }
     let initials = system.initial();
     let [initial] = initials.as_slice() else {
         return Err(ExactProbabilityGraphError::UnsupportedInitial.into());

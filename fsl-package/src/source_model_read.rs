@@ -18,7 +18,7 @@
 use std::collections::BTreeMap;
 
 use filament_contract_model::{CheckedNodeId, CheckedNodeOwner};
-use filament_exact::{Integer, IntegerInterval, ValueType};
+use filament_exact::{EffectiveId, Integer, IntegerInterval, ValueType};
 use fsl_semantics::check::{
     object_types_of_source_rows, package_of_source_rows, source_identity, source_type_node_key,
     SourceRowObject, SourceRowOperation, SourceRowParameter,
@@ -117,6 +117,7 @@ pub(crate) struct UnitRows {
     /// The position in the supply's source-object rows of each object, in
     /// `objects` order.
     pub(crate) rows: Vec<usize>,
+    pub(crate) nodes: Vec<CheckedNodeId>,
 }
 
 impl BarePackage<'_> {
@@ -180,6 +181,7 @@ impl BarePackage<'_> {
                 identity: String::new(),
                 objects: Vec::new(),
                 rows: Vec::new(),
+                nodes: Vec::new(),
             });
             unit.objects.push(SourceRowObject {
                 name: row.source_identity.to_string(),
@@ -188,6 +190,7 @@ impl BarePackage<'_> {
                 operations: Vec::new(),
             });
             unit.rows.push(index);
+            unit.nodes.push(row.structural_node.clone());
         }
         Ok(by_unit
             .into_values()
@@ -199,8 +202,30 @@ impl BarePackage<'_> {
             .collect())
     }
 
-    /// The object types of [`Self::source_units`] as declarations of a type
-    /// environment, so an operation of a source type resolves in it.
+    /// The admitted source-object node to the effective type identity the
+    /// source route builds for its declaring unit.
+    pub(crate) fn source_object_effective_ids(
+        &self,
+    ) -> Result<BTreeMap<CheckedNodeId, EffectiveId>, SourceModelFault> {
+        let units = self.source_units()?;
+        if self.witness().is_err() {
+            return Ok(BTreeMap::new());
+        }
+        let mut identities = BTreeMap::new();
+        for unit in units {
+            for (object, node) in unit.objects.iter().zip(unit.nodes) {
+                identities.insert(
+                    node,
+                    source_object_effective_id(&unit.identity, &object.name),
+                );
+            }
+        }
+        Ok(identities)
+    }
+
+    /// The object types of the source units as declarations of a type
+    /// environment, keyed under the same source-unit identities as source
+    /// evaluation.
     pub(crate) fn source_object_declarations(
         &self,
     ) -> Result<Vec<filament_semantic_value::declaration::ObjectTypeDeclaration>, SourceModelFault>
@@ -302,6 +327,17 @@ impl BarePackage<'_> {
         }
         Ok(model)
     }
+}
+
+/// The original checked declaration identity of a source object admitted by
+/// its source-object row. The synthetic `source/<package>` identity used for
+/// rebuilding the source model is a separate intake identity.
+pub(crate) fn source_object_effective_id(source_identity: &str, name: &str) -> EffectiveId {
+    let original = filament_checked::key::DeclarationKey {
+        package: source_identity.to_owned(),
+        node: format!("ix://{source_identity}/{name}"),
+    };
+    fsl_semantics::model::key::effective_id_of(None, &original)
 }
 
 /// The value type a source operation's parameter row renders, for the types

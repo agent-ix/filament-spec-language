@@ -1095,7 +1095,7 @@ impl Reader<'_> {
                             HybridFormula::Triggered(interval, Box::new(left), Box::new(right))
                         }
                         FormulaOperation::Constant(_) | FormulaOperation::Holds => {
-                            return Err(HybridReadError::Fault(SHAPE))
+                            return Err(HybridReadError::Fault(SHAPE));
                         }
                     };
                     done.push(built);

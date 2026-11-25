@@ -141,10 +141,14 @@ step row, or a history update.
   keys of reference type are lifted as the values are, and the entries keep
   their order (FR-135, FR-630). When two concrete map keys lift to one abstract
   key, `map_state` SHALL return `MappingFailure::Fault`, an established
-  invariant broken, and not a mapped state. A reference nested inside a record, tuple or
-  union is lifted likewise once QSL-2959 settles which abstract composite the
-  value takes; until then S3 refuses such a row `ill_typed`/`type-mismatch`
-  and `map_state` receives none.
+  invariant broken, and not a mapped state. For a record, `map_state` SHALL
+  pair fields by name; for a tuple it SHALL pair elements by position after
+  S3 has required equal arity; for a union it SHALL pair the active value by
+  variant tag. It SHALL recursively apply the same lifting rule to each paired
+  component, preserving scalar values, option presence, collection order and
+  union tags. S3 rejects a missing or extra record field, unequal tuple arity,
+  or active union tag without a paired case at the first mismatched component
+  path; `map_state` receives no such row.
 - Where one concrete object type is the source of several object rows (one
   for each abstract population it maps into, ADR-020 RM-2), `map_state` SHALL
   lift a reference to it to the abstract type of the one of those rows whose
@@ -254,6 +258,10 @@ step row, or a history update.
 | FR-140-AC-17 | Over a refinement whose object rows `Q::Queue from C::Call` and `Q::Cell from C::Call` both name the concrete `Call`, a reference to a `Call` in a field declared `Reference<Cell>` lifts to the `Cell` reference with the same key, in a field declared `Reference<Queue>` to the `Queue` reference, and with a declared type that names neither, and conforms to both, a `MappingFailure::Fault`; a declared type that is a supertype of exactly one of the two types picks that one, and of both picks the more specific. The mapped state holds a `Queue` `r` in `queues` and a `Cell` `r` in `cells` in either row order. The real two-row world is the ring world's `twin` variant (`Queue` and `Cell` from `Ring`, `twin: Reference<Cell>`); the conformance cases are checked on the row choice. | Test (TC-1086) |
 | FR-140-AC-15 | Fixture `TwoPopulations`: a refinement with two populations `P` and `Q` whose first named declarations (the abstract populations) have node-key order opposite to their `DeclarationKey` byte order, each with a row that evaluates undefined at the state. `map_state` returns the `MappingFailure::Undefined` naming the row and object of the population first in node-key order, and a state with only the other population undefined returns that one. | Test (TC-545) |
 | FR-140-AC-18 | With the abstract `queues` population admitting `Queue` and its subtype `SubQueue`, both object rows naming the concrete `Call`, a reference to a `Call` lifts to the `SubQueue` reference whichever row is written first, and swapping the two rows changes no mapped state key and no verdict; rows `Queue` and `Cell` (unrelated types) are never ranked against each other and a field declared with a type to which both conform, neither more specific, is a `MappingFailure::Fault`. | Test (TC-1086) |
+| FR-140-AC-19 | Over the `Box` fixture of FR-135-AC-13, with ring `a.box.target` holding the reference to ring `b`, `map_state` produces abstract `Queue` `a` whose `box.target` is a `Reference<Queue>` with key `b`; record fields pair by name and the reference keeps its key. | Test (TC-545) |
+| FR-140-AC-20 | Over the `Pair` fixture of FR-135-AC-14, with ring `a.pair = Pair(b, true)`, `map_state` produces `Queue` `a` with `pair = Pair(Reference<Queue>(b), true)`; tuple element 0 is lifted by position and element 1 is retained. | Test (TC-545) |
+| FR-140-AC-21 | Over the `Holder` fixture of FR-135-AC-15, `Ring a` with `holder = Holder::Has(b)` maps to `Queue a` with `Holder::Has(Reference<Queue>(b))`, and `Holder::Empty` maps to `Holder::Empty`; the active variant tag is retained and its reference payload is lifted. | Test (TC-545) |
+| FR-140-AC-22 | Over the `Parcel` fixture of FR-135-AC-16, with ring `a.parcel.owners = [Some(b), None]`, `map_state` produces `Queue a` with `parcel.owners = [Some(Reference<Queue>(b)), None]`; the record field name, sequence positions and option presence are preserved while the nested reference is lifted. | Test (TC-545) |
 
 ## Dependencies
 

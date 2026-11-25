@@ -123,6 +123,7 @@ impl Case {
     pub(crate) fn model_item(&self) -> fsl_analyze::analyze::ModelItem<'_> {
         fsl_analyze::analyze::ModelItem {
             request: ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: subject(
                     &self.checked,
@@ -134,6 +135,8 @@ impl Case {
                 item: ModelCheckItem::DeadlockFreedom,
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             stutter_closure: false,
@@ -172,7 +175,7 @@ pub(crate) fn case(body: &str, values: &[i64]) -> Case {
 /// [`case`] over a body whose `functions` (unit-level declarations) are checked
 /// in `CheckMode::Kernel`, so a function whose divisor may be zero is checked
 /// by the Kernel (FR-495-AC-3).
-fn kernel_case(body: &str, functions: &str, values: &[i64]) -> Case {
+pub(crate) fn kernel_case(body: &str, functions: &str, values: &[i64]) -> Case {
     case_in_mode(&format!("{body}{functions}"), values, CheckMode::Kernel)
 }
 
@@ -188,11 +191,14 @@ fn case_in_mode(body: &str, values: &[i64], mode: CheckMode) -> Case {
         .collect();
     let outcome = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: subject(&checked, &documents, initial.clone(), &["c"], UNLIMITED),
             item: ModelCheckItem::DeadlockFreedom,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),
@@ -1118,6 +1124,7 @@ fn an_invariant_counterexample_replays_by_the_invariant_rule() {
         .expect("the invariant is checked");
     let outcome = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: subject(
                 &case.checked,
@@ -1131,6 +1138,8 @@ fn an_invariant_counterexample_replays_by_the_invariant_rule() {
             },
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),

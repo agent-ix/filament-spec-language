@@ -181,20 +181,28 @@ fn indexed_reads_outside_hyper_keep_the_defined_boundary_cause() {
 #[path = "refinement_remaining_source_routes.rs"]
 mod remaining;
 
-/// The same model-to-model refinement must retain its entire certified record
-/// when its emitted package is the only remaining program representation.
-/// This compares public records under identical default engine limits; it does
-/// not claim to measure internal charges, which these records do not expose.
+/// FR-940-AC-45: the CounterIdentity package route retains the complete
+/// certified source result after source representations have been removed.
 #[test]
-#[trace("FR-940", "FR-630", "FR-144", "FR-149")]
+#[trace(
+    "TC-1590",
+    "TC-2958",
+    "FR-630-AC-11",
+    "FR-940-AC-45"
+)]
 fn identity_refinement_package_matches_source_without_source() {
     refinement_package_matches_source_without_source("refinement");
 }
 
-/// A refinement declaration cannot stand in for a different temporal property.
-/// Both routes retain their exact refusal after all source files are removed.
+/// FR-940-AC-46..48: unrelated temporal item kinds retain their exact source
+/// outcomes on the package route after source representations are removed.
 #[test]
-#[trace("FR-940", "FR-630", "FR-626")]
+#[trace(
+    "TC-2958",
+    "FR-940-AC-46",
+    "FR-940-AC-47",
+    "FR-940-AC-48"
+)]
 fn unrelated_temporal_kinds_do_not_run_package_refinement() {
     for item_kind in ["deadlock-freedom", "time-lock-freedom", "race-freedom"] {
         refinement_package_matches_source_without_source(item_kind);
@@ -245,6 +253,11 @@ fn refinement_package_matches_source_without_source(item_kind: &str) {
             fsl_analyze::model_check::manifest::BACKEND_ID,
             "the fixture selects EN-1's actual refinement checker: {source_value}"
         );
+        assert_eq!(
+            source_value["items"][0]["claim_name"],
+            "CounterIdentity",
+            "FR-940-AC-45 selects the refinement declaration: {source_value}"
+        );
     } else {
         let (exit, cause) = match item_kind {
             "deadlock-freedom" | "time-lock-freedom" => (20, "unknown-claim"),
@@ -257,9 +270,9 @@ fn refinement_package_matches_source_without_source(item_kind: &str) {
             item["record"]["diagnostic"]["cause"], cause,
             "{source_value}"
         );
-        assert!(item["certificate"].is_null(), "{source_value}");
-        assert!(item["counterexample"].is_null(), "{source_value}");
-        assert!(item["replay"].is_null(), "{source_value}");
+        assert!(item.get("certificate").is_none(), "{source_value}");
+        assert!(item.get("counterexample").is_none(), "{source_value}");
+        assert!(item.get("replay").is_none(), "{source_value}");
     }
 
     let compile = json!({"format": "native-compile/1", "request": {

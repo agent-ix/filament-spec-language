@@ -111,6 +111,18 @@ fn closed_composites<'a>(
     let mut reverse: BTreeMap<&CheckedNodeId, Vec<&CheckedNodeId>> = BTreeMap::new();
     let mut blocked = BTreeSet::new();
     let mut pending = Vec::new();
+    for (node, declaration) in &candidates {
+        if let CompositeShape::Union(members) = declaration.shape() {
+            if members
+                .iter()
+                .flat_map(|member| member.positions())
+                .any(|payload| contains_unrepresented_composite(payload, &represented_handles))
+            {
+                blocked.insert(*node);
+                pending.push(*node);
+            }
+        }
+    }
     for node in &package.package().resolved_graph().nodes {
         let id = &node.node_id;
         let requires_declaration = matches!(
@@ -131,12 +143,23 @@ fn closed_composites<'a>(
         reverse.entry(&node.semantic_type).or_default().push(id);
         if let Some(term) = package.package().term(id) {
             for dependency in term.reference_targets() {
-                reverse.entry(dependency).or_default().push(id);
+                if !matches!(
+                    package.package().node_kind(id),
+                    Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Union))
+                ) {
+                    reverse.entry(dependency).or_default().push(id);
+                }
             }
         }
     }
     while let Some(missing) = pending.pop() {
         for parent in reverse.get(missing).into_iter().flatten() {
+            if matches!(
+                package.package().node_kind(parent),
+                Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Union))
+            ) {
+                continue;
+            }
             if blocked.insert(*parent) {
                 pending.push(*parent);
             }
@@ -147,6 +170,31 @@ fn closed_composites<'a>(
         .filter(|(node, _)| !blocked.contains(node))
         .map(|(_, declaration)| declaration)
         .collect()
+}
+
+fn contains_unrepresented_composite(
+    value_type: &ValueType,
+    represented: &BTreeSet<filament_exact::NodeKey>,
+) -> bool {
+    let mut pending = vec![value_type];
+    let mut visited = BTreeSet::new();
+    while let Some(value_type) = pending.pop() {
+        match value_type {
+            ValueType::Option(payload) => pending.push(payload),
+            ValueType::Collection(collection) => pending.push(collection.element()),
+            ValueType::Map(map) => pending.push(map.values()),
+            ValueType::Composite(key) => {
+                if !represented.contains(key) {
+                    return true;
+                }
+                if !visited.insert(key) {
+                    continue;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 impl BarePackage<'_> {
@@ -185,7 +233,7 @@ impl BarePackage<'_> {
         include_units: bool,
     ) -> Result<BareWorld, BareSelectionFailure> {
         let package = self.package();
-        let (_, identities) = self.witness()?;
+        let (_supply, identities) = self.witness()?;
         let mut composites = Vec::new();
         for row in identities.declaration_rows() {
             if !matches!(row.exact_identity, SelectedExactIdentity::Record(_)) {
@@ -281,12 +329,6 @@ impl BarePackage<'_> {
             ));
         }
         for union in identities.source_union_rows() {
-            if !matches!(
-                self.exact_type_projections().get(&union.structural_node),
-                Some(Ok(_))
-            ) {
-                continue;
-            }
             let members = union
                 .members
                 .iter()

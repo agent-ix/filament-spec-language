@@ -668,6 +668,33 @@ The record carries no object key, population or identity, and an object
 FR-208 by most-specific type and every effective field; JSON member order
 does not affect the typed value.
 
+A tuple value is `{"tuple":{"type":"<declaration identity>","values":[<value>, ...]}}`.
+The outer object has exactly the `tuple` tag, and its payload has exactly
+`type` and `values`. `type` is the exact checked declaration identity of the
+nominal tuple type selected from the admitted model; `values` is an array in
+the tuple declaration's positional order, with exactly one value for each
+declared element. Admission checks each value against the declared type at
+that position using this same closed value grammar, including nested
+references. It retains the tuple declaration identity and element order. A
+tuple value is not a record and cannot be supplied with named fields.
+
+A payload-bearing union value is
+`{"variant":{"type":"<declaration identity>","case":"<member>","values":[<value>, ...]}}`.
+The outer object has exactly the `variant` tag. Its payload has exactly
+`type`, `case` and `values`; `type` is the exact checked declaration identity
+of the nominal union type, and `case` is one declared member name. `values`
+contains exactly the active member's declared payload values in declaration
+order. The existing nullary form
+`{"variant":{"type":"<declaration identity>","case":"<member>"}}`
+remains the spelling for a nullary member and has exactly `type` and `case`.
+Admission rejects unknown members, extra or missing object members, and a
+payload count different from the active member's declared arity; it checks
+each payload against the corresponding declared type using this same closed
+value grammar, including nested references. The admitted value retains the
+nominal union identity, active member and ordered payload values. A union
+value is not a record or tuple and cannot be supplied using either carrier's
+tag.
+
 A **native payload value** is a String, a UUID, a Timestamp, a Bytes or a
 JsonObject, the closed wire objects of FR-056's K2 canonical native payloads
 and "Native Bytes, JsonObject and Duration". The Bytes object is
@@ -1557,6 +1584,8 @@ completeness.
 | FR-106-AC-80 | A finite reference domain includes identities producible within the declared or exploration-derived selector range plus every valid `Reference<Clock>` identity admitted from the initial snapshots, including identities for absent slots with indices greater than the `model_check.max_clocks`-derived selector maximum. Those seed values remain available for equality, state-key encoding and data propagation without being truncated, refused or counted as live clocks; selectors invalid for the declared template still refuse `invalid_runtime_input`/`invalid-value`. The generic model check without a selector maximum returns `NotSimulated::RequiresBound` with the relevant `ClockReferenceDomain`; the timed check derives exploration selectors from `model_check.max_clocks`, and a state exceeding the live-clock limit stops incomplete with `TimedStop::MaxClocks` naming `model_check.max_clocks`, without a completed or partial state result. An unbounded ordinary carrier or missing complete owner-population authority retains its existing typed `RequiresBound` refusal. The out-of-range seed value is exercised by AC-81, not by AC-78. | Test (TC-3084, TC-464) |
 | FR-106-AC-81 | In the planned `fsl-eval/tests/it/clock_reference_v2.rs::clock_reference_seed_ref_outside_timed_selector_range_remains_admitted` vector, extend the TC-464 `Call` fixture with `q: Sequence<Clock>` having no declared maximum, use a complete `calls` population containing `c1` with `q` empty, and set `r` to `{"reference":{"population":<calls declaration> ,"key":<canonical place/v2 id>}}`. Construct that id from `P` = `Call`'s `calls` population declaration, `K` = `c1`, `S` = the selected `Call` model scope, `T` = the declared `Call.q` collection-of-Clock path, and `J` = `[["slot","1","7"]]`. With `model_check.max_clocks` 4 and the fixture's four live scalar places, slot 7 is outside the derived selector range but valid for the unbounded declared template. Source and Bare admission retain `r` as the exact reference data value; `q[7]` is not a live clock, and a stored-field read, equality comparison and state-key encoding preserve the identity. The timed engine admits the input without refusing or truncating that reference. | Test (TC-464) |
 | FR-106-AC-82 | Over TC-465's `ConfigVersion` snapshot with `versionNumber` removed from the first object, admission refuses `invalid_runtime_input`/`missing-member` with `object` `root`, `field` and `member` `versionNumber`, and `path` `/populations/0/objects/0/fields/versionNumber`, the pointer of the absent member; the unknown, invalid-value and wrong-kind field refusals name `/populations/0/objects/0/fields/NAME` and a duplicate key `/populations/0/objects/2/key`; the native result retains the same `path`. | Test (TC-465) |
+| FR-106-AC-83 | When an unseeded refinement-row receiver admits an initial snapshot whose raw `Clock` reference targets a declared or removed place identity, admission refuses before refinement evaluation with `unknown_required_feature`/`unsupported-feature`, `reason` `missing-route-neutral-place-identity`, `document` equal to the `DocumentRef.identity` member of the snapshot (for identity `test/clock-snapshot`, the field value is `clock-snapshot`, not the authority or combined identity), `target` equal to the exact supplied place identity, and `path` `/populations/0/objects/0/fields/r`. It produces no admitted observation or truth value. For the TC-464 `Call` fixture with snapshot identity `test/clock-snapshot`, each of `c1.x` and `c1.removed` exercises the refusal at the same `r` field path and retains its own exact target identity. | Test (TC-464) |
+| FR-106-AC-84 | Over TC-464 step 11's `Box`, `Pair` and `Holder` fields, admit a record using the existing `record`/`fields` carrier, a nominal tuple using `{"tuple":{"type":"<Pair declaration identity>","values":[<Reference<Ring> value>,{"boolean":true}]}}`, and the `Holder::Has` union case using `{"variant":{"type":"<Holder declaration identity>","case":"Has","values":[<Reference<Ring> value>]}}`; retain the selected declaration identities and tuple/payload order, and recursively admit each nested reference as the same checked reference value. The `Holder::Empty` nullary case remains `{"variant":{"type":"<Holder declaration identity>","case":"Empty"}}`. An extra tuple or variant payload member, a tuple value count other than two, a `Has` payload count other than one, or an unknown case is refused before an observation is produced. | Test (TC-464) |
 
 ## Dependencies
 
