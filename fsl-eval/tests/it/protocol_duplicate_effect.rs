@@ -72,9 +72,9 @@ protocol Review using P over (view: M::Node) on origin {
   run sequence Main {
     send Acknowledged via Acknowledgement as (sent: M::Flag) { true };
     receive FirstDelivery via Acknowledgement of Main::Acknowledged
-        as (first: M::Flag) { true };
+        as (originalCopy: M::Flag) { true };
     receive Redelivered via Acknowledgement of Main::Acknowledged
-        as (redelivered: M::Flag) { true };
+        as (repeatedCopy: M::Flag) { true };
     attempt RecordAcceptance by Requester on M::Node::step contracts []
         as (tried: M::Flag) { true };
     effect Accepted of Main::RecordAcceptance as (accepted: M::Receipt) { true };
