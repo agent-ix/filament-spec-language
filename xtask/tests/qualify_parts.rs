@@ -520,104 +520,94 @@ fn an_unbuildable_vector_fails_parity_and_a_duplicate_id_refuses() {
         0
     );
 }
-fn digits_end(value: &str, from: usize) -> usize {
-    value[from..]
-        .find(|character: char| !character.is_ascii_digit())
-        .map_or(value.len(), |offset| from + offset)
-}
 
-fn explicit_criteria(value: &str) -> Vec<(String, usize)> {
-    let mut found = Vec::new();
-    let mut cursor = 0;
-    while let Some(offset) = value[cursor..].find("FR-") {
-        let start = cursor + offset;
-        let family_start = start + 3;
-        let family_end = digits_end(value, family_start);
-        if family_end + 4 <= value.len() && &value[family_end..family_end + 4] == "-AC-" {
-            let criterion_start = family_end + 4;
-            let criterion_end = digits_end(value, criterion_start);
-            if criterion_end > criterion_start {
-                found.push((
-                    format!(
-                        "FR-{}-AC-{}",
-                        &value[family_start..family_end],
-                        &value[criterion_start..criterion_end]
-                    ),
-                    criterion_end,
-                ));
-                cursor = criterion_end;
-                continue;
+/// The criteria `text` names, in order. `family` carries the last `FR-m` named,
+/// which completes a bare `AC-n`.
+fn criteria_named<'a>(text: &'a str, family: &mut Option<&'a str>) -> Vec<String> {
+    let mut named = Vec::new();
+    for word in text.split(|c: char| !c.is_ascii_alphanumeric() && c != '-') {
+        if let Some((explicit, _)) = word.split_once("-AC-") {
+            if explicit.starts_with("FR-") {
+                *family = Some(explicit);
+                named.push(word.to_owned());
             }
+        } else if let (true, Some(family)) = (word.starts_with("AC-"), *family) {
+            named.push(format!("{family}-{word}"));
         }
-        cursor = family_end.max(start + 3);
     }
-    found
+    named
 }
 
+/// The criteria a cell quotes for the location group that follows `prefix`:
+/// those named since the previous parenthesis, except in a note marked
+/// `untagged`.
 fn criteria_for_location(prefix: &str) -> Vec<String> {
-    let segment = prefix
-        .rfind(')')
-        .map_or(prefix, |close| &prefix[close + 1..]);
-    let explicit = explicit_criteria(segment);
-    let family = explicit
-        .last()
-        .map(|(criterion, _)| criterion.split('-').nth(1).expect("family").to_owned())
-        .or_else(|| {
-            explicit_criteria(prefix)
-                .last()
-                .map(|(criterion, _)| criterion.split('-').nth(1).expect("family").to_owned())
-        });
-    let mut criteria = explicit
-        .iter()
-        .map(|(criterion, _)| criterion.clone())
-        .collect::<Vec<_>>();
-    if let Some(family) = family {
-        let mut cursor = 0;
-        while let Some(offset) = segment[cursor..].find("AC-") {
-            let start = cursor + offset;
-            if start >= 3 && &segment[start - 3..start] == "-AC" {
-                cursor = start + 3;
-                continue;
-            }
-            let number_start = start + 3;
-            let number_end = digits_end(segment, number_start);
-            if number_end > number_start {
-                let criterion = format!("FR-{family}-AC-{}", &segment[number_start..number_end]);
-                if !criteria.contains(&criterion) {
-                    criteria.push(criterion);
-                }
-                cursor = number_end;
-            } else {
-                cursor = number_start;
-            }
+    let (earlier, quoted) = prefix.split_at(prefix.rfind(')').map_or(0, |close| close + 1));
+    let mut family = None;
+    criteria_named(earlier, &mut family);
+    let mut criteria = Vec::new();
+    for note in quoted.split([';', ',']) {
+        let named = criteria_named(note, &mut family);
+        if !note.contains("untagged") {
+            criteria.extend(named);
         }
     }
     criteria
 }
 
+/// The `#[trace(...)]` attribute that opens on `line_number`, or `None` when
+/// that line opens none.
 fn trace_at(source: &str, line_number: usize) -> Option<String> {
-    let lines: Vec<_> = source.lines().collect();
-    let mut at = line_number
-        .checked_sub(1)?
-        .min(lines.len().saturating_sub(1));
-    loop {
-        if lines[at].contains("#[trace(") {
-            let mut attribute = lines[at].to_owned();
-            while !attribute.contains(")]") && at + 1 < lines.len() {
-                at += 1;
-                attribute.push_str(lines[at]);
-            }
-            return Some(attribute);
-        }
-        if at == 0 {
-            return None;
-        }
-        at -= 1;
+    let mut lines = source.lines().skip(line_number.checked_sub(1)?);
+    let mut attribute = lines.next()?.trim_start().to_owned();
+    if !attribute.starts_with("#[trace(") {
+        return None;
     }
+    while !attribute.contains(")]") {
+        attribute.push_str(lines.next()?);
+    }
+    Some(attribute)
 }
 
-/// FR-500-AC-2 (TC-1294): every tabled successor source location resolves to
-/// a test whose nearest `#[trace]` attribute carries the stated criterion.
+/// Whether `attribute` lists one of `criteria` as a whole tag.
+fn lists_any(attribute: &str, criteria: &[String]) -> bool {
+    criteria
+        .iter()
+        .any(|criterion| attribute.contains(&format!("\"{criterion}\"")))
+}
+
+/// FR-500-AC-2 (TC-1294): a line that opens no attribute, a longer criterion
+/// number and a criterion noted `untagged` do not satisfy a location.
+#[trace("TC-1294", "FR-500-AC-2")]
+#[test]
+fn a_drifted_line_or_a_longer_criterion_is_not_a_location() {
+    // Assembled so that no scanner reads these fixtures as tags of this file.
+    let source = [
+        concat!("#[", "trace(\"FR-900-AC-10\")]"),
+        "fn ten() {}",
+        concat!("#[", "trace("),
+        "    \"FR-900-AC-1\",",
+        ")]",
+        "fn one() {}",
+    ]
+    .join("\n");
+    let first = ["FR-900-AC-1".to_owned()];
+    assert!(trace_at(&source, 2).is_none(), "a line below an attribute");
+    assert!(trace_at(&source, 4).is_none(), "a line inside an attribute");
+    assert!(trace_at(&source, 7).is_none(), "a line past the end");
+    let ten = trace_at(&source, 1).expect("an attribute line");
+    assert!(!lists_any(&ten, &first), "AC-1 is not AC-10");
+    let one = trace_at(&source, 3).expect("a split attribute's first line");
+    assert!(lists_any(&one, &first));
+    assert_eq!(
+        criteria_for_location("FR-901-AC-8 (x), AC-16 untagged; FR-900-AC-1 "),
+        first
+    );
+    assert_eq!(criteria_for_location("FR-900-AC-19 (x) and AC-1 "), first);
+}
+
+/// FR-500-AC-2 (TC-1294): every tabled successor source location is the first
+/// line of a `#[trace]` attribute that carries the stated criterion.
 #[trace("TC-1294", "FR-500-AC-2")]
 #[test]
 fn every_staged_successor_location_names_its_traced_test() {
@@ -684,15 +674,10 @@ fn every_staged_successor_location_names_its_traced_test() {
                             panic!("invalid source location {token:?}: {error}")
                         });
                         let attribute = trace_at(&source, line).unwrap_or_else(|| {
-                            panic!(
-                                "{}:{line} has a preceding trace attribute",
-                                source_path.display()
-                            )
+                            panic!("{}:{line} opens no trace attribute", source_path.display())
                         });
                         assert!(
-                            criteria
-                                .iter()
-                                .any(|criterion| attribute.contains(criterion)),
+                            lists_any(&attribute, &criteria),
                             "{}:{line}: expected one of {criteria:?} in {attribute}",
                             source_path.display()
                         );
@@ -854,7 +839,11 @@ fn a_scratch_build_reports_its_changed_root_package_version() {
         .args(["diff", "--binary", "HEAD"])
         .output()
         .expect("git reads the working diff");
-    assert!(changes.status.success(), "git diff succeeds");
+    assert!(
+        changes.status.success(),
+        "git diff succeeds:\n{}",
+        String::from_utf8_lossy(&changes.stderr)
+    );
     if !changes.stdout.is_empty() {
         let applied = Command::new("git")
             .current_dir(scratch.path())
@@ -926,10 +915,11 @@ fn a_scratch_build_reports_its_changed_root_package_version() {
         .env("CARGO_TARGET_DIR", scratch.path().join("target"))
         .output()
         .expect("filtered scratch-version test runs");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // A filter that selects no test also exits zero.
     assert!(
-        output.status.success(),
-        "scratch-version test succeeds:\n{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
+        output.status.success() && stdout.contains(" 1 passed;"),
+        "the scratch-version test runs and passes:\n{stdout}\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
 }
