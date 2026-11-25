@@ -5383,14 +5383,14 @@ fn flow_millisecond_dimension_equivalence_fixture(include_negative_controls: boo
     else {
         panic!("a missing root scale must be refused");
     };
-    let missing_code = refusal.code;
     let missing_path = refusal.loci[0].path.as_ref().map(ToString::to_string);
     let missing_refusal = refusal;
     assert_eq!(
-        missing_code,
+        missing_refusal.code,
         filament_contract_model::CheckedPackageRefusalCode::MalformedWire,
         "missing scale: {missing_refusal:?}"
     );
+    assert_eq!(missing_refusal.cause, None);
     let expected_node_path = format!("/semantic_graph/nodes/{node_position}");
     assert_eq!(
         missing_path.as_deref(),
@@ -5418,25 +5418,13 @@ fn flow_millisecond_dimension_equivalence_fixture(include_negative_controls: boo
             refusal.code, expected_code,
             "root scale {numerator}/{denominator}: {refusal:?}"
         );
-        if expected_code == filament_contract_model::CheckedPackageRefusalCode::InvalidSemanticGraph
-        {
-            assert_eq!(
-                refusal.loci[0]
-                    .path
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .as_deref(),
-                Some(expected_node_path.as_str()),
-                "root scale {numerator}/{denominator} must identify its wire node"
-            );
-        } else {
-            let path = refusal.loci[0].path.as_ref().map(ToString::to_string);
-            assert_eq!(
-                path.as_deref(),
-                Some(expected_node_path.as_str()),
-                "root scale {numerator}/{denominator} must identify its equivalence node: {refusal:?}"
-            );
-        }
+        assert_eq!(refusal.cause, None);
+        let path = refusal.loci[0].path.as_ref().map(ToString::to_string);
+        assert_eq!(
+            path.as_deref(),
+            Some(expected_node_path.as_str()),
+            "root scale {numerator}/{denominator} must identify its equivalence node: {refusal:?}"
+        );
     }
 }
 
