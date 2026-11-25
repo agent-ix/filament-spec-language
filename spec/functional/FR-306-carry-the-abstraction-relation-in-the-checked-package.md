@@ -28,8 +28,9 @@ relationships:
 
 When the S4 emitter writes a checked package whose unit declares an
 abstraction relation, the emitter SHALL write the `CheckedAbstractionRelation`
-as one `filament.checked-package/v2` node, so the relation enters the
-`package_id`, and the checked package SHALL be the relation's only authority.
+as one `filament.checked-package/v2` node, so the relation is part of the
+checked package's value, and the checked package SHALL be the relation's only
+authority.
 
 ## Inputs
 
@@ -48,16 +49,19 @@ emitted package.
 
 The relation SHALL be emitted as the v2 node whose tag, form and body FSpec
 spells for the FSpec FR-353 relation (FSpec FR-451), carrying ADR-017 AR-2's
-keys and values. Its node ids enter the `package_id` (ADR-013 O-02). Kani and
-Verus generation read the relation only from the v2 bytes (ADR-011 FB-05).
+keys and values. Kani and Verus generation read the relation only from the v2
+bytes (ADR-011 FB-05).
 
-### Rebinding is a new package
+### Rebinding is a new package value
 
-Changing any binding changes the relation node and so the `package_id`.
-Every generated contract carries the `package_id` it was generated from
-(ADR-013 O-25), so a rebinding is a new relation revision and never
-reinterprets a contract generated from the earlier package (FSpec
-FR-353-AC-5).
+Changing a binding SHALL change the relation node's body, and so the checked
+package's value (FSpec FR-451). The package identity (identity and version,
+ADR-013 O-02) does not depend on a binding. A rebinding is a new relation
+revision and SHALL NOT reinterpret a contract generated from the earlier
+package (FSpec FR-353-AC-5). The two revisions are told apart by comparing
+checked-package values: their relation nodes have an equal `node_id` (FSpec
+FR-451 `node_id`), and the two packages are unequal values, so they are not
+the same package (FSpec FR-322).
 
 ### The relation is a premise, not a claim
 
@@ -74,7 +78,7 @@ through S6a (ADR-012 §8; ADR-017 AR-5).
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-306-AC-1 | A unit with FR-304-AC-1's relation emits one relation node, and reading the emitted v2 bytes yields the same three keys and binding values that the in-process `CheckedAbstractionRelation` holds. | Test (TC-804) |
-| FR-306-AC-2 | Recompiling the unit unchanged gives the same `package_id`; changing one `ObjectBinding` field's `RustField` gives a different `package_id`. | Test (TC-804) |
+| FR-306-AC-2 | Recompiling the unit unchanged gives an equal relation node id and body. Changing one `ObjectBinding` field's `RustField` gives a relation node with an equal node id and an unequal body, whose `objects` entry for that type holds the new `RustField` in `fields` where the first holds the old one, and the changed package reads back. | Test (TC-804) |
 | FR-306-AC-3 | The unit's requirement records and their `route` results are equal with and without its relation declaration. | Test (TC-805) |
 | FR-306-AC-4 | A clause run of the unit's ConfigVersion clauses through the spine run entry gives the same disposition with and without its relation declaration. | Test (TC-805) |
 

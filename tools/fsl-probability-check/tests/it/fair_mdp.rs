@@ -2,8 +2,10 @@
 //! FR-1041-AC-1: the analyzer's fair-MDP W document is accepted by the
 //! independent `fsl-probability-check` process.
 
-use super::bounded::{request_with, run};
+use super::bounded::{document, mutate, request_with, requests_with_mode, run};
+use fsl_analyze::analyze::Settlement;
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
+use fsl_replay::{ProofBasis, TerminalValue};
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -57,7 +59,7 @@ fn the_emitted_fair_w_document_is_accepted_in_a_separate_process() {
 
     assert_eq!(
         document["objective"]["profile"],
-        "filament.probability-objective/fair-mdp-eventual/v1"
+        "filament.probability-objective/cyclic-mdp-fair-eventual/v1"
     );
     let fairness = document["objective"]["fairness"]
         .as_array()
@@ -83,4 +85,82 @@ fn the_emitted_fair_w_document_is_accepted_in_a_separate_process() {
         checked["value"],
         json!({"numerator": "1", "denominator": "2"})
     );
+}
+
+/// FR-1041-AC-1's `W` at one rational bit: both interval documents over the
+/// fair base are accepted by fresh checker processes, and changing the initial
+/// value in either document is rejected.
+#[trace("TC-3212", "FR-1042-AC-22")]
+#[test]
+fn fair_eventual_interval_documents_are_accepted_by_separate_checker_processes() {
+    let source = fair_w_source().replace("rational(1,2)", "rational(2,5)");
+    let limits = ExactProbLimits {
+        max_rational_bits: 1,
+        max_precision_bits: 16,
+        ..ExactProbLimits::default()
+    };
+    let (requests, settlement) = requests_with_mode(&source, SNAPSHOT, limits, DOMAIN, false);
+    let [lower, upper] = requests.as_slice() else {
+        panic!("the interval proof carries both documents: {settlement:?}");
+    };
+    let Settlement::Terminal(record) = &settlement else {
+        panic!("the interval proof settles terminal: {settlement:?}");
+    };
+    assert!(
+        matches!(
+            record.value(),
+            TerminalValue::Proved {
+                basis: ProofBasis::ValueBounds { .. },
+                ..
+            }
+        ),
+        "{record:?}"
+    );
+    // The one row of positive rank in the upper document is the initial state.
+    let initial = document(upper)["ranking"]
+        .as_array()
+        .expect("upper progress ranks")
+        .iter()
+        .find(|row| row["rank"] == 1)
+        .expect("the initial state has rank 1")["state"]
+        .clone();
+    for (request, kind, replacement) in [
+        (
+            lower,
+            "lower",
+            json!({"numerator": "3", "denominator": "4"}),
+        ),
+        (
+            upper,
+            "upper",
+            json!({"numerator": "1", "denominator": "4"}),
+        ),
+    ] {
+        let doc = document(request);
+        assert_eq!(doc["kind"], kind);
+        assert_eq!(
+            doc["objective"]["profile"],
+            "filament.probability-objective/value-bounds/v1"
+        );
+        assert_eq!(
+            doc["objective"]["base"]["profile"],
+            "filament.probability-objective/cyclic-mdp-fair-eventual/v1"
+        );
+        let (status, output) = run(request);
+        assert_eq!(status, 0, "{kind}: {output}");
+        let altered = mutate(request, |doc| {
+            let row = doc["values"]
+                .as_array_mut()
+                .expect("value rows")
+                .iter_mut()
+                .find(|row| row["state"] == initial)
+                .expect("the initial state is valued");
+            assert_ne!(row["value"], replacement);
+            row["value"] = replacement.clone();
+        });
+        let (status, output) = run(&altered);
+        assert_eq!(status, 1, "{kind}: {output}");
+        assert_eq!(output["status"], "rejected", "{kind}: {output}");
+        assert_eq!(output["at"]["product_key"], initial, "{kind}: {output}");
+    }
 }
