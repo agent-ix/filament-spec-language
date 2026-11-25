@@ -30,3 +30,17 @@ FAIL. Reconcile FR-201's key and admission requirements for the multi-root reset
 - Paired FSpec PR #837 FR-412-AC-35..41 and `ProbabilityProductKey` schema description, context only: they require root-indexed reset certificate rows and preserve eight-member bytes otherwise.
 
 No applicable AssuranceProfile was found under `spec/assurance/`. The changed FR-196 document validates grammar-clean; no new IDs, links, hash/digest/pin records or schema object declarations were added.
+
+## Disposition pass 1 scope
+
+Reviewed fix head `0c75b949cce41befab16250628d7053cfdadd65d` against FND-001. The updated FR-201-AC-11 limits its multi-initial unsupported result to the `reachability/v1` profile and explicitly exempts conditional optimum certificates whose reset process has multiple roots. FR-201 now states its eight-member basis applies to its no-reset reachability profile, while FR-196, ADR-028, FR-1041, FR-1043 and TC-3060 consistently limit exact eight-member bytes to no-reset/single-root cases. The paired FSpec PR #837 still defines root-specific reset rows and matching legacy bytes. All six changed spec documents validate grammar-clean; `quoin advise --mismatch-only` reported zero candidates. No new defect was found in the fix diff.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-201-AC-11 now scopes multi-initial refusal to reachability/v1 and explicitly admits conditional optimum certificates over multi-root reset processes; FR-201's eight-member key statement is explicitly limited to its no-reset profile. |
+
+After excerpt from related FR-201-AC-11 (FR-196-AC-18 remains unchanged):
+
+> This profile-specific rejection does not apply to a `conditional` `optimum` certificate: when its reset process has multiple canonical initial roots, FR-196 keys retain the root index and the checker validates each root's rows as required by FSpec FR-412-AC-35..41.
