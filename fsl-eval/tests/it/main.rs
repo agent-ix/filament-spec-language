@@ -90,7 +90,6 @@ mod protocol_slots;
 mod qualification_enum_rows;
 mod qualification_vectors_from_packages;
 mod qualification_vectors_from_source;
-mod qualification_vectors_from_source_qsl2052;
 mod qualified_bounded_monitor;
 mod quantity_class_convert;
 mod quantity_literals;
