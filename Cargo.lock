@@ -734,7 +734,7 @@ dependencies = [
 name = "facade-contract-consumer"
 version = "0.1.0"
 dependencies = [
- "filament-contract-model",
+ "filament-contract-model 0.1.2 (git+https://github.com/agent-ix/filament-contract-ir?rev=244513eacba42d24c15ce4fb2c3a532fb86212ce)",
  "filament-exact",
  "filament-observation",
  "filament-semantic-value",
@@ -797,7 +797,7 @@ version = "0.1.0"
 source = "git+https://github.com/agent-ix/filament-contract-codegen?rev=6e139bed2984e86e8f0f8cc2873a6a638fd58256#6e139bed2984e86e8f0f8cc2873a6a638fd58256"
 dependencies = [
  "filament-contract-ir",
- "filament-contract-model",
+ "filament-contract-model 0.1.2 (git+https://github.com/agent-ix/filament-contract-ir?rev=dc9b220b92390eb8c5999a1b26ac8ff94cfffd33)",
  "filament-contract-runtime",
  "filament-eval 0.1.6 (git+https://github.com/agent-ix/filament-eval?rev=b50cfacb80459d5f1fb3b8deeafc63222db69401)",
  "filament-exact",
@@ -823,11 +823,37 @@ name = "filament-contract-ir"
 version = "0.1.5"
 source = "git+https://github.com/agent-ix/filament-contract-ir?rev=dc9b220b92390eb8c5999a1b26ac8ff94cfffd33#dc9b220b92390eb8c5999a1b26ac8ff94cfffd33"
 dependencies = [
- "filament-contract-model",
+ "filament-contract-model 0.1.2 (git+https://github.com/agent-ix/filament-contract-ir?rev=dc9b220b92390eb8c5999a1b26ac8ff94cfffd33)",
  "ix-trace-rs",
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "filament-contract-model"
+version = "0.1.2"
+source = "git+https://github.com/agent-ix/filament-contract-ir?rev=244513eacba42d24c15ce4fb2c3a532fb86212ce#244513eacba42d24c15ce4fb2c3a532fb86212ce"
+dependencies = [
+ "filament-exact",
+ "filament-semantic-value",
+ "filament-verification-contracts",
+ "filament-walk",
+ "ix-trace-rs",
+ "jsonschema 0.17.1",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "quire-canonical 0.3.2 (git+https://github.com/agent-ix/quire-canonical?tag=v0.3.2)",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "serde_stacker",
+ "sha2",
+ "stacker",
+ "thiserror",
+ "unicode-ident",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -945,7 +971,7 @@ version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "filament-checked",
- "filament-contract-model",
+ "filament-contract-model 0.1.2 (git+https://github.com/agent-ix/filament-contract-ir?rev=244513eacba42d24c15ce4fb2c3a532fb86212ce)",
  "filament-eval 0.1.6 (git+https://github.com/agent-ix/filament-eval?rev=7fc24dcbb3bf74f77a61dfde897fbdc9883918d3)",
  "filament-exact",
  "filament-observation",
@@ -1071,7 +1097,7 @@ dependencies = [
  "base64 0.22.1",
  "filament-checked",
  "filament-contract-codegen",
- "filament-contract-model",
+ "filament-contract-model 0.1.2 (git+https://github.com/agent-ix/filament-contract-ir?rev=244513eacba42d24c15ce4fb2c3a532fb86212ce)",
  "filament-eval 0.1.6 (git+https://github.com/agent-ix/filament-eval?rev=7fc24dcbb3bf74f77a61dfde897fbdc9883918d3)",
  "filament-exact",
  "filament-observation",
@@ -1133,7 +1159,7 @@ name = "fsl-command"
 version = "0.1.0"
 dependencies = [
  "filament-checked",
- "filament-contract-model",
+ "filament-contract-model 0.1.2 (git+https://github.com/agent-ix/filament-contract-ir?rev=244513eacba42d24c15ce4fb2c3a532fb86212ce)",
  "filament-eval 0.1.6 (git+https://github.com/agent-ix/filament-eval?rev=7fc24dcbb3bf74f77a61dfde897fbdc9883918d3)",
  "filament-exact",
  "filament-mltl",
@@ -1294,7 +1320,7 @@ dependencies = [
 name = "fsl-inspect"
 version = "0.1.0"
 dependencies = [
- "filament-contract-model",
+ "filament-contract-model 0.1.2 (git+https://github.com/agent-ix/filament-contract-ir?rev=244513eacba42d24c15ce4fb2c3a532fb86212ce)",
  "filament-exact",
  "filament-semantic-value",
  "fsl-analyze",
@@ -1342,7 +1368,7 @@ version = "0.3.0"
 dependencies = [
  "allocation-counter",
  "filament-checked",
- "filament-contract-model",
+ "filament-contract-model 0.1.2 (git+https://github.com/agent-ix/filament-contract-ir?rev=244513eacba42d24c15ce4fb2c3a532fb86212ce)",
  "filament-exact",
  "filament-semantic-value",
  "filament-specification-qualification",
@@ -1394,7 +1420,7 @@ version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "filament-checked",
- "filament-contract-model",
+ "filament-contract-model 0.1.2 (git+https://github.com/agent-ix/filament-contract-ir?rev=244513eacba42d24c15ce4fb2c3a532fb86212ce)",
  "filament-eval 0.1.6 (git+https://github.com/agent-ix/filament-eval?rev=7fc24dcbb3bf74f77a61dfde897fbdc9883918d3)",
  "filament-exact",
  "filament-observation",
@@ -1444,7 +1470,7 @@ dependencies = [
  "agent-ix-extraction-frontend",
  "agent-ix-semantic-ir",
  "filament-checked",
- "filament-contract-model",
+ "filament-contract-model 0.1.2 (git+https://github.com/agent-ix/filament-contract-ir?rev=244513eacba42d24c15ce4fb2c3a532fb86212ce)",
  "filament-exact",
  "filament-semantic-value",
  "filament-specification-qualification",
