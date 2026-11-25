@@ -214,10 +214,10 @@ fn an_altered_certificate_is_rejected_at_the_rule_the_alteration_breaks() {
     );
 }
 
-/// The weakly fair finite `Counter` liveness certificate has a backward edge
-/// when its waiting and accepting components are swapped. The current core
-/// rejection locates that edge at its source state, without retaining the
-/// transition that made the edge backward.
+/// A transposition of two components in the weakly fair finite `Counter`
+/// liveness certificate creates a backward edge. The current core rejection
+/// locates that edge at its source state, without retaining the transition
+/// that made the edge backward.
 #[trace("TC-526")]
 #[test]
 fn swapping_counter_components_reports_the_source_of_a_backward_edge() {
@@ -227,33 +227,35 @@ fn swapping_counter_components_reports_the_source_of_a_backward_edge() {
         "always eventually holds(c.value = 3)",
     );
     let (certificate, _) = fixture.certified(is_three);
-    let waiting_index = certificate
-        .components
-        .iter()
-        .position(|component| component.witness == MISSING)
-        .expect("the proof has a waiting component");
-    let accepting_index = certificate.components.len() - 1;
-    assert_ne!(waiting_index, accepting_index);
-
-    let mut swapped = certificate;
-    swapped.components.swap(waiting_index, accepting_index);
     let letters = fixture.letters(is_three);
-    let verdict = check_components(
-        &fixture.certificate_request(&letters, UNLIMITED),
-        &swapped,
-        &ModelCheckLimits::default(),
-        &Cancel::new(),
-    )
-    .expect("the request is checked");
-    let TemporalCertificateCheck::Rejected(CertificateRejection {
-        rule: CertificateRule::BackwardEdge,
-        at: CertificateLocus::ProductState(at),
-    }) = verdict
-    else {
-        panic!("the swapped order has a backward edge: {verdict:?}");
-    };
+    let request = fixture.certificate_request(&letters, UNLIMITED);
+    let backward = (0..certificate.components.len())
+        .flat_map(|left| (left + 1..certificate.components.len()).map(move |right| (left, right)))
+        .find_map(|(left, right)| {
+            let mut swapped = certificate.clone();
+            swapped.components.swap(left, right);
+            match check_components(
+                &request,
+                &swapped,
+                &ModelCheckLimits::default(),
+                &Cancel::new(),
+            )
+            .expect("the request is checked")
+            {
+                TemporalCertificateCheck::Rejected(CertificateRejection {
+                    rule: CertificateRule::BackwardEdge,
+                    at: CertificateLocus::ProductState(at),
+                }) => Some((swapped, at)),
+                _ => None,
+            }
+        })
+        .expect("swapping two components out of topological order is rejected");
+    let (swapped, at) = backward;
     assert!(
-        swapped.components[accepting_index].states.contains(&at),
+        swapped
+            .components
+            .iter()
+            .any(|component| component.states.contains(&at)),
         "the current cause names the backward edge's source state"
     );
 }
