@@ -1007,6 +1007,7 @@ fn admission_replay_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> Re
 /// FR-531 "Dependency artifact names": a join's refusal of an artifact name is
 /// the refusal handoff admission gives that name. A native join refusal stays
 /// the internal fault.
+#[implements("FR-531-AC-61")]
 pub(super) fn handoff_join_refusal(refusal: fsl_package::DependencyJoinRefusal) -> ReplayRefusal {
     match refusal {
         fsl_package::DependencyJoinRefusal::Name { .. } => {
