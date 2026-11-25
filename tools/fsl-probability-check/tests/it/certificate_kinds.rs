@@ -12,6 +12,11 @@ use serde_json::{json, Value};
 
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 
+/// The `link` domain as declared, with a Boolean `lost`: the domain of
+/// [`fair_link_model`], whose draws are `true` and `false`.
+const FAIR_DOMAIN: &str = include_str!("../fixtures/reward.semantic-ir.json");
+
+/// [`model`]'s domain, with `lost` retyped to count attempts.
 fn domain() -> String {
     include_str!("../fixtures/reward.semantic-ir.json").replace(
         "\"typeRef\":\"ix://filament/native/Boolean\"}],\"post\"",
@@ -77,7 +82,12 @@ fn likely(profile: &str, scheduler: &str, form: &str) -> String {
 /// The analyzer's retained certificate request for `source`, which the
 /// decided behaviour requires to exist for every exact class.
 fn certified(source: &str, limits: ExactProbLimits) -> Value {
-    let (request, settlement) = request_with(source, SNAPSHOT, limits, domain().as_bytes());
+    certified_over(source, limits, &domain())
+}
+
+/// [`certified`] for a source over `domain`.
+fn certified_over(source: &str, limits: ExactProbLimits, domain: &str) -> Value {
+    let (request, settlement) = request_with(source, SNAPSHOT, limits, domain.as_bytes());
     request.unwrap_or_else(|| {
         panic!("every exact proof retains an accepted certificate: {settlement:?}\n{source}")
     })
@@ -117,7 +127,7 @@ fn an_unbounded_fair_eventual_certificate_is_accepted() {
         &source,
         SNAPSHOT,
         ExactProbLimits::default(),
-        domain().as_bytes(),
+        FAIR_DOMAIN.as_bytes(),
     );
     let request = request.unwrap_or_else(|| panic!("expected fair certificate: {settlement:?}"));
     assert!(
@@ -171,7 +181,7 @@ fn an_unbounded_fair_eventual_certificate_is_accepted() {
 
     // The later checker request names the emitted package, then independently
     // rejects a certificate whose one literal value is changed.
-    let later = package_request(&source);
+    let later = package_request_over(&source, FAIR_DOMAIN);
     assert_eq!(later["certificate"], request["certificate"]);
     accepted_then_rejected(&later, &["exact"]);
 }
@@ -373,8 +383,13 @@ fn package_source() -> String {
 /// The request that names the package S4 emits for `source` in place of the
 /// source; its certificate is the document's bytes as the run wrote them.
 fn package_request(source: &str) -> Value {
-    let request = certified(source, ExactProbLimits::default());
-    let (checked, _) = super::bounded::compile_source_with(source, domain().as_bytes());
+    package_request_over(source, &domain())
+}
+
+/// [`package_request`] for a source over `domain`.
+fn package_request_over(source: &str, domain: &str) -> Value {
+    let request = certified_over(source, ExactProbLimits::default(), domain);
+    let (checked, _) = super::bounded::compile_source_with(source, domain.as_bytes());
     let emitted = fsl_replay::spine::package(
         &checked,
         fsl_replay::spine::PackageLimits::default(),
