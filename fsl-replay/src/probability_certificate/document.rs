@@ -929,6 +929,10 @@ fn read_document_profile(
             _ => ProbabilityDocumentError::Malformed,
         },
     )?;
+    // The canonical reader is a bounded synchronous parse without a Cancel
+    // hook. Observe cancellation immediately after it returns, before any
+    // decoded document member can be accepted or exposed.
+    poll(cancel)?;
     let root = parsed.root();
     let objective = root.get("objective");
     let timed_fair_profile = allow_fair
@@ -2729,6 +2733,37 @@ pub(super) fn certificate_identity(
 mod tests {
     use super::*;
     use ix_trace_rs::trace;
+
+    #[trace("TC-636", "FR-282-AC-21")]
+    #[test]
+    fn cancellation_during_certificate_document_parse_is_retained() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, OnceLock,
+        };
+
+        let slot = Arc::new(OnceLock::<Cancel>::new());
+        let weak = Arc::downgrade(&slot);
+        let polls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&polls);
+        let cancel = Cancel::observing(move || {
+            if observed.fetch_add(1, Ordering::Relaxed) + 1 == 2 {
+                weak.upgrade()
+                    .expect("the slot remains owned during the read")
+                    .get()
+                    .expect("the cancellation handle is initialized")
+                    .cancel(CancelCause::Requested);
+            }
+        });
+        slot.set(cancel.clone())
+            .expect("the cancellation handle is initialized once");
+
+        assert_eq!(
+            read_probability_certificate(&bytes(), limits(), &cancel),
+            Err(ProbabilityDocumentError::Cancelled(CancelCause::Requested))
+        );
+        assert_eq!(polls.load(Ordering::Relaxed), 2);
+    }
 
     #[trace("TC-636", "FR-201-AC-25", "FR-282-AC-19")]
     #[test]

@@ -152,11 +152,11 @@ fn the_weak_each_proof_is_a_certificate_the_checker_accepts() {
 /// object's constraint on the first accepting component is
 /// `WitnessFails` at its first state, since edges inside the component take
 /// it; the two accepting components listed before the waiting component
-/// that reaches them is `BackwardEdge` at a waiting state; a state in two
+/// that reaches them is `BackwardEdge` at the exact edge; a state in two
 /// components is `NotPartition` at it; and a `Trivial` witness over the
 /// terminal stutter state of the Counter, whose one state has a self-edge,
 /// is `WitnessFails`.
-#[trace("TC-526", "FR-339-AC-2")]
+#[trace("TC-526", "FR-339-AC-2", "FR-282-AC-6")]
 #[test]
 fn an_altered_certificate_is_rejected_at_the_rule_the_alteration_breaks() {
     let (world, certificate, _) = weak_each_proof();
@@ -174,14 +174,24 @@ fn an_altered_certificate_is_rejected_at_the_rule_the_alteration_breaks() {
     let mut early = certificate.clone();
     let waiting = early.components.remove(0);
     early.components.insert(2, waiting.clone());
-    let TemporalCertificateCheck::Rejected(CertificateRejection {
-        rule: CertificateRule::BackwardEdge,
-        at: CertificateLocus::ProductState(at),
-    }) = accepts(&world, &early)
+    let TemporalCertificateCheck::Rejected(rejection) = accepts(&world, &early)
     else {
         panic!("the waiting component reaches the accepting ones");
     };
-    assert!(waiting.states.contains(&at));
+    assert_eq!(rejection.rule, CertificateRule::BackwardEdge);
+    let CertificateLocus::ProductEdge { source, target } = &rejection.at else {
+        panic!("the backward-edge diagnostic names both endpoint states");
+    };
+    assert_eq!(
+        serde_json::to_value(&rejection.at).expect("the edge locus serializes"),
+        serde_json::json!({"source": source, "target": target}),
+        "the diagnostic carries both exact endpoints of the backward edge"
+    );
+    assert!(waiting.states.contains(&source));
+    assert!(early
+        .components
+        .iter()
+        .any(|component| component.states.contains(&target)));
 
     let mut twice = certificate.clone();
     let shared = twice.components[1].states[0].clone();

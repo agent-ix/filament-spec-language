@@ -231,6 +231,13 @@ impl EvaluationOutcome {
 pub enum FailedStep {
     /// The refinement does not hold at the edge.
     Fails(RefinementFailure),
+    /// This concrete transition has no matching abstract transition.
+    NoAbstractMatch {
+        /// The concrete successor position.
+        position: u64,
+        /// The exact concrete transition left unmatched.
+        transition: ModelTransition,
+    },
     /// A mapping row or step-row argument evaluated undefined.
     Undefined(Box<UndefinedEvaluation>),
     /// The check could not decide.
@@ -294,9 +301,19 @@ impl FailedStep {
                     StepRejection::Postcondition => json!({"kind": "Postcondition"}),
                 },
             }),
-            Self::Fails(RefinementFailure::NoAbstractMatch { position }) => {
-                json!({"kind": "NoAbstractMatch", "position": decimal(*position)})
+            Self::Fails(RefinementFailure::NoAbstractMatch { .. }) => {
+                return Err(
+                    "an unmatched abstract step must name its concrete transition".to_owned(),
+                );
             }
+            Self::NoAbstractMatch {
+                position,
+                transition,
+            } => json!({
+                "kind": "NoAbstractMatch",
+                "position": decimal(*position),
+                "transition": transition_wire(transition)?,
+            }),
             Self::Fails(RefinementFailure::AbstractClockGuard {
                 position,
                 operation,
@@ -781,7 +798,20 @@ impl Run<'_, '_> {
             };
             let (post, taken) = match verdict {
                 StepVerdict::Passes { post, taken } => (post, taken),
-                StepVerdict::Fails(failure) => return Err(failed(FailedStep::Fails(*failure))),
+                StepVerdict::Fails(failure) => match *failure {
+                    RefinementFailure::NoAbstractMatch { position } => {
+                        let Some(transition) = transition.clone() else {
+                            return Err(Self::fault(
+                                "an-unmatched-abstract-step-has-a-transition",
+                            ));
+                        };
+                        return Err(failed(FailedStep::NoAbstractMatch {
+                            position,
+                            transition,
+                        }));
+                    }
+                    failure => return Err(failed(FailedStep::Fails(failure))),
+                },
                 StepVerdict::Undefined(evaluation) => {
                     return Err(failed(FailedStep::Undefined(evaluation)))
                 }

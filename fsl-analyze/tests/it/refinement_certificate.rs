@@ -980,7 +980,7 @@ fn a_position_reached_only_from_a_later_position_is_malformed() {
 
 /// FR-149-AC-8 (TC-556): the locus of AC-3's rejection and AC-2's, and one
 /// verdict of each other kind, serialize as the wire-form table lists.
-#[trace("TC-556", "FR-149-AC-8")]
+#[trace("TC-556", "FR-149-AC-8", "FR-282-AC-7")]
 #[test]
 fn a_rejection_serializes_its_locus_and_verdict() {
     let world = World::with(Variant::LOST_UPDATE, &lost_update_refinement());
@@ -1039,8 +1039,26 @@ fn a_rejection_serializes_its_locus_and_verdict() {
             serde_json::json!({"kind": "StutterChanged", "position": "2"}),
         ),
         (
-            FailedStep::Fails(RefinementFailure::NoAbstractMatch { position: 3 }),
-            serde_json::json!({"kind": "NoAbstractMatch", "position": "3"}),
+            FailedStep::NoAbstractMatch {
+                position: 3,
+                transition: filament_semantic_value::model_transition::ModelTransition::new(
+                    "\"commitA\"".to_owned(),
+                    None,
+                    Vec::new(),
+                    quire_canonical::Limits::new(u64::MAX),
+                )
+                .expect("the concrete transition identity is valid"),
+            },
+            serde_json::json!({
+                "kind": "NoAbstractMatch",
+                "position": "3",
+                "transition": {
+                    "type": "transition",
+                    "operation": "\"commitA\"",
+                    "receiver": null,
+                    "arguments": []
+                }
+            }),
         ),
         (
             FailedStep::Undetermined(UndeterminedStep::new(Undetermined::Mapping(Box::new(
