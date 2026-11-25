@@ -20,22 +20,19 @@ API), `it_monitor_protocol`, `it_probabilistic`, `it_model_check`,
 `it_refinement`, and `it_refinement_cx1` (the one heavy CX-1 refinement
 liveness test, isolated) Cargo targets. A normal
 `cargo test -p fsl-analyze` runs every target. The recipe reads every target
-root. A root or shared-fixture change selects every module. A changed module
-file, at any depth, runs that module in each target that declares it; a
-helper-only module (no test in it or below it) runs every module of each target
-that declares it. A consumer filter selects every target containing a matching
-test. The command fails, and prints no recipe, when no target declares a changed
-module file or a filter matches no test. The consumer filters match tests in
-these targets:
+root. An analyzer target-root change, or a change to a crate's own shared
+fixture, selects every module of the crate. A changed module file, at any depth,
+runs that module in each target that declares it; a helper-only module (no test
+in it or below it) runs every module of each target that declares it. A consumer
+filter selects every target containing a matching test. The command fails, and
+prints no recipe, when no target declares a changed module file or a filter
+matches no test.
 
-| `fsl-analyze` filter | Targets |
-| --- | --- |
-| `monitor_`, `timed_` | `it`, `it_model_check`, `it_monitor_protocol`, `it_probabilistic` |
-| `hyper` | `it`, `it_model_check`, `it_probabilistic` |
-| `probabilistic`, `probabilistic_replay`, `bounded_probabilistic_replay`, `package_probabilistic` | `it_probabilistic` |
-| `analyze_request_wire`, `analyze_package_provider`, `analyze_composition_cli` | `it` |
-| `analyze_package_selection`, `timed_within_200`, `timed_within_201`, `protocol_bounded_lasso`, `native_correlation` | `it_model_check` |
-| `race_freedom` | `it`, `it_refinement` |
+A file under the workspace root's `tests/support/` or `tests/fixtures/` runs
+every module of each integration target, in any package, that declares it as a
+module. A file no target declares (data a test reads, a module only library code
+includes, or a deleted file) runs every root-package module, with a note; its
+other readers are not inferred.
 
 | Changed paths | Local controls | Consumer controls |
 | --- | --- | --- |
@@ -60,7 +57,8 @@ these targets:
 | `Cargo.toml`, `Cargo.lock` | Workspace check | All emitter consumers: analyze's four engine filters and command `run_requirement_items` |
 | `spec/**` only | No Cargo commands | None |
 | Crate `lib.rs`, `main.rs`, or root `mod.rs` | Whole `--lib` for small crates; union of crate rules for large crates | Crate-specific consumer routes |
-| `tests/fixtures/**`, `tests/support/**` | All integration-test modules in the crate | — |
+| `<crate>/tests/fixtures/**`, `<crate>/tests/support/**` | All integration-test modules in the crate | — |
+| Root `tests/fixtures/**`, `tests/support/**` | All root-package modules when the root target declares the file, or, with a note, when no target does | All modules of each other declaring target, in any package |
 | `README.md`, `docs/**`, `Makefile`, `.github/**` | Note only; workspace check if combined with code | — |
 | Other crate source or integration modules | Touched library or integration module | No inferred consumers |
 
