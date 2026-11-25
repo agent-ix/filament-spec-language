@@ -1015,44 +1015,6 @@ pub(crate) fn process(extra: &str) -> Model {
     }
 }
 
-/// One fair `go` attempt succeeds with probability one half, then disables
-/// itself. A failed draw can stutter through `wait` outside the target; strong
-/// fairness is vacuous once `go` is disabled.
-pub(crate) fn one_shot(extra: &str) -> Model {
-    Model {
-        package: "test/one-shot",
-        object: "Once",
-        population: "onces",
-        key: "o",
-        integers: vec![],
-        fields: vec![
-            ("attempted", BOOLEAN.to_owned()),
-            ("done", BOOLEAN.to_owned()),
-        ],
-        operations: vec![Operation {
-            name: "go",
-            parameters: vec![("success", BOOLEAN.to_owned())],
-            modifies: vec!["attempted", "done"],
-            deletes: false,
-        }, Operation {
-            name: "wait",
-            parameters: vec![],
-            modifies: vec!["attempted", "done"],
-            deletes: false,
-        }],
-        body: format!(
-            "pre Live_go using v on M::Once::go {{ not self.attempted }}\n\
-             post Went using v on M::Once::go {{ self.attempted = true and self.done = success }}\n\
-             pre Live_wait using v on M::Once::wait {{ self.attempted and not self.done }}\n\
-             post Waited using v on M::Once::wait {{ self.attempted = pre(self.attempted) and self.done = pre(self.done) }}\n\
-             random Once::go(success) ~ {{ true: 1, false: 1 }};\n\
-             terminal Done using v on M when {{ self.done }};\n\
-             {extra}"
-        ),
-        initial: json!({"attempted": {"boolean": false}, "done": {"boolean": false}}),
-    }
-}
-
 /// Coin2: `stall` moves the process into a stuck state where it remains
 /// enabled, while both `flip` and `wait` are disabled. The fair component at
 /// `stuck` therefore witnesses strong fairness to `flip` vacuously.
@@ -1130,47 +1092,6 @@ pub(crate) fn fair_bounds_w(extra: &str) -> Model {
             "{}"
         ), extra),
         initial: json!({"s": {"boolean": true}, "g": {"boolean": false}, "f": {"boolean": false}}),
-    }
-}
-
-/// FR-1042-AC-22 checker regression: `s` and `u` form an SCC, but strong
-/// fairness to `go` leaves the fair non-target MEC `{u}` after `s` is removed.
-pub(crate) fn fair_mec_refinement(extra: &str) -> Model {
-    Model {
-        package: "test/fair-mec-refinement",
-        object: "W",
-        population: "ws",
-        key: "w",
-        integers: vec![],
-        fields: vec![
-            ("s", BOOLEAN.to_owned()),
-            ("u", BOOLEAN.to_owned()),
-            ("g", BOOLEAN.to_owned()),
-        ],
-        operations: vec![
-            Operation { name: "a_wait", parameters: vec![], modifies: vec!["s"], deletes: false },
-            Operation { name: "z_go", parameters: vec![("success", BOOLEAN.to_owned())], modifies: vec!["s", "u", "g"], deletes: false },
-            Operation { name: "drift", parameters: vec![], modifies: vec!["s", "u"], deletes: false },
-            Operation { name: "loop", parameters: vec![], modifies: vec!["u"], deletes: false },
-            Operation { name: "return", parameters: vec![], modifies: vec!["s", "u"], deletes: false },
-        ],
-        body: format!(concat!(
-            "pre WaitAtS using v on M::W::a_wait {{ self.s }}\n",
-            "post Waited using v on M::W::a_wait {{ self.s = true }}\n",
-            "pre GoAtS using v on M::W::z_go {{ self.s }}\n",
-            "post Went using v on M::W::z_go {{ self.s = false and self.u = not success and self.g = success }}\n",
-            "pre DriftAtS using v on M::W::drift {{ self.s }}\n",
-            "post Drifted using v on M::W::drift {{ self.s = false and self.u = true }}\n",
-            "pre LoopAtU using v on M::W::loop {{ self.u }}\n",
-            "post Looped using v on M::W::loop {{ self.u = true }}\n",
-            "pre ReturnAtU using v on M::W::return {{ self.u }}\n",
-            "post Returned using v on M::W::return {{ self.u = false and self.s = true }}\n",
-            "random W::z_go(success) ~ {{ true: 1, false: 1 }};\n",
-            "terminal Done using v on M when {{ self.g }};\n",
-            "workload Equal on M {{ weight W::a_wait = 1; weight W::z_go = 1; weight W::drift = 1; weight W::loop = 1; weight W::return = 1; }}\n",
-            "{}"
-        ), extra),
-        initial: json!({"s": {"boolean": true}, "u": {"boolean": false}, "g": {"boolean": false}}),
     }
 }
 

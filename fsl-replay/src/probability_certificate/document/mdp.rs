@@ -39,17 +39,12 @@ impl ProbabilityProofDocument {
 
     /// Whether this unchecked document selects the bounded fair profile.
     pub fn is_bounded_fair(&self) -> bool {
-        !self.cyclic_mdp && !self.fair_mdp && !self.fairness.is_empty()
+        !self.fairness.is_empty() && !self.fair_mdp
     }
 
     /// Whether this document selects the unbounded fair reachability profile.
     pub fn is_fair_mdp(&self) -> bool {
         self.fair_mdp
-    }
-
-    /// Whether this unchecked document selects the fair cyclic MDP profile.
-    pub fn is_fair_cyclic_mdp(&self) -> bool {
-        self.cyclic_mdp && !self.fairness.is_empty()
     }
 }
 
@@ -61,9 +56,7 @@ pub fn read_probability_proof_document(
 ) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
     let cyclic_mdp = matches!(
         profile_dispatch(bytes, limits, cancel)?,
-        ProfileDispatch::CyclicMdp
-            | ProfileDispatch::CyclicMdpReward
-            | ProfileDispatch::CyclicMdpFair
+        ProfileDispatch::CyclicMdp | ProfileDispatch::CyclicMdpReward
     );
     let fair_mdp = matches!(
         profile_dispatch(bytes, limits, cancel)?,
@@ -153,7 +146,7 @@ pub fn probability_proof_document(
         )?;
         if fair_mdp {
             cx.fair_mdp = true;
-            let mut proof = construct(system, claims, item, certificate, &mut cx, false)?;
+            let mut proof = construct(system, claims, item, certificate, &mut cx)?;
             proof.document.cyclic_dtmc = false;
             proof.cyclic_mdp = false;
             proof.fair_mdp = true;
@@ -200,30 +193,10 @@ pub fn probability_proof_document(
                 || (error == ProbabilityDocumentError::ObjectiveMismatch
                     && super::super::cyclic_state::is_claim(claim)) =>
         {
-            construct(system, claims, item, certificate, &mut cx, false)
+            construct(system, claims, item, certificate, &mut cx)
         }
         Err(error) => Err(error),
     }
-}
-
-/// Construct the fair cyclic MDP base document used by a value-bounds proof.
-/// Exact fair-MDP proofs retain their existing profile through
-/// [`probability_proof_document`].
-pub fn fair_cyclic_probability_proof_document(
-    system: &ModelSystem<'_>,
-    claims: &[CheckedProbabilisticClaim],
-    item: &ObligationIdentity,
-    certificate: &ExactProbabilityCertificate,
-    limits: ProbabilityDocumentLimits,
-    cancel: &Cancel,
-) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
-    let mut cx = Context::new(limits, cancel, None);
-    let claim = bind_claim(claims, item, cancel)?;
-    if claim.fairness.is_empty() {
-        return Err(ProbabilityDocumentError::Unsupported);
-    }
-    super::fairness::admit(claim)?;
-    construct(system, claims, item, certificate, &mut cx, true)
 }
 
 fn may_retry(error: &ProbabilityDocumentError) -> bool {
@@ -261,7 +234,6 @@ pub fn cyclic_mdp_probability_certificate_document(
         item,
         certificate,
         &mut Context::new(limits, cancel, None),
-        false,
     )
 }
 
@@ -287,7 +259,6 @@ pub fn cyclic_mdp_reward_probability_certificate_document(
         item,
         certificate,
         &mut Context::new(limits, cancel, None),
-        false,
     )
 }
 
@@ -316,13 +287,13 @@ pub enum CyclicMdpProbabilityPhase {
     CertificateGraph,
 }
 
-pub(super) struct Context<'a, 'control> {
-    pub(super) limits: ProbabilityDocumentLimits,
-    pub(super) cancel: &'a Cancel,
+struct Context<'a, 'control> {
+    limits: ProbabilityDocumentLimits,
+    cancel: &'a Cancel,
     fair_mdp: bool,
     bound_side: Option<SubsystemBoundKind>,
-    pub(super) meter: filament_exact::Meter,
-    pub(super) storage: u64,
+    meter: filament_exact::Meter,
+    storage: u64,
     reward: bool,
     reward_control: Option<&'a super::super::reward::RewardControl<'control>>,
     identity: fsl_foundation::IdentityLimits,
@@ -356,7 +327,7 @@ pub(super) fn fair_scheduler_is_fair(
     }
     let mut cx = Context::new(limits, cancel, None);
     cx.fair_mdp = true;
-    let (graph, _, _, _, _) = subject(system, claims, item, &mut cx, None, false)?;
+    let (graph, _, _, _, _) = subject(system, claims, item, &mut cx, None)?;
     let binding = claim_binding(system, claim)?;
     let reference = binding.as_ref().map(|binding| &binding.reference);
     Ok(matches!(
@@ -391,10 +362,7 @@ impl<'a, 'control> Context<'a, 'control> {
             observe,
         }
     }
-    pub(super) fn tick(
-        &mut self,
-        phase: CyclicMdpProbabilityPhase,
-    ) -> Result<(), ProbabilityDocumentError> {
+    fn tick(&mut self, phase: CyclicMdpProbabilityPhase) -> Result<(), ProbabilityDocumentError> {
         if let Some(observe) = self.observe.as_mut() {
             observe(phase);
         }
@@ -412,7 +380,7 @@ impl<'a, 'control> Context<'a, 'control> {
         }
         super::super::reward::visit(self.cancel, &mut self.meter)
     }
-    pub(super) fn reserve(&mut self, bytes: usize) -> Result<(), ProbabilityDocumentError> {
+    fn reserve(&mut self, bytes: usize) -> Result<(), ProbabilityDocumentError> {
         let mut admission = ProbabilityKeyAdmission::new(
             &mut self.meter,
             &mut self.storage,
@@ -557,7 +525,6 @@ fn subject(
     item: &ObligationIdentity,
     cx: &mut Context<'_, '_>,
     capture: Option<&super::super::cyclic::CapturedStates>,
-    fair_cyclic: bool,
 ) -> Result<
     (
         CheckerGraph,
@@ -661,7 +628,7 @@ fn subject(
         return Err(ProbabilityDocumentError::Unsupported);
     };
     if !matches!(claim.scheduler, ProbScheduler::Every)
-        || (!claim.fairness.is_empty() && !cx.fair_mdp && !fair_cyclic)
+        || !claim.fairness.is_empty() && !cx.fair_mdp
         || fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
             != Some(fsl_semantics::check::TemporalProfile::InfiniteTrace)
         || !matches!(
@@ -737,10 +704,10 @@ fn subject(
     ))
 }
 
-pub(super) type Values = BTreeMap<ProbabilityProductKey, Rational>;
+type Values = BTreeMap<ProbabilityProductKey, Rational>;
 type Sums = BTreeMap<ProbabilityProductKey, Vec<Rational>>;
 
-pub(super) fn rows(
+fn rows(
     graph: &CheckerGraph,
     certificate: &ExactProbabilityCertificate,
     cx: &mut Context<'_, '_>,
@@ -775,7 +742,7 @@ pub(super) fn rows(
     )?)
 }
 
-pub(super) fn sums(
+fn sums(
     graph: &CheckerGraph,
     values: &Values,
     reward: Option<&super::super::reward::RewardGraph>,
@@ -1155,28 +1122,12 @@ fn construct(
     item: &ObligationIdentity,
     certificate: &ExactProbabilityCertificate,
     cx: &mut Context<'_, '_>,
-    fair_cyclic: bool,
 ) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
     cx.reward = matches!(
         bind_claim(claims, item, cx.cancel)?.form,
         ProbForm::ExpectedReward { .. }
     );
-    let claim = bind_claim(claims, item, cx.cancel)?;
-    let fair_cyclic = fair_cyclic && !claim.fairness.is_empty() && !cx.fair_mdp;
-    let fairness = if fair_cyclic {
-        super::fairness::checked(
-            system,
-            claim,
-            cx.limits,
-            cx.cancel,
-            &mut cx.meter,
-            &mut cx.storage,
-        )?
-    } else {
-        Vec::new()
-    };
-    let (graph, objective, _, reward, event) =
-        subject(system, claims, item, cx, None, fair_cyclic)?;
+    let (graph, objective, _, reward, event) = subject(system, claims, item, cx, None)?;
     let converted;
     let certificate = if event.is_some() {
         let ProbForm::Reach { bound, .. } = &bind_claim(claims, item, cx.cancel)?.form else {
@@ -1204,36 +1155,32 @@ fn construct(
         }
     };
     let action_sums = sums(&graph, &values, reward.as_ref(), cx)?;
-    if !fair_cyclic && equality_failure(&graph, &values, &action_sums, objective, cx)?.is_some() {
+    if equality_failure(&graph, &values, &action_sums, objective, cx)?.is_some() {
         return Err(ProbabilityDocumentError::MalformedMember("values"));
     }
-    let ranks = if fair_cyclic {
-        BTreeMap::new()
-    } else {
-        let fair_zero = if cx.fair_mdp {
-            let claim = bind_claim(claims, item, cx.cancel)?;
-            Some(super::fairness::non_target_fair_end_component_states(
-                system,
-                claim,
-                &graph,
-                cx.limits,
-                cx.cancel,
-                cx.identity,
-                &mut cx.meter,
-                &mut cx.storage,
-            )?)
-        } else {
-            None
-        };
-        derive_ranks_with_fair_zero(
+    let fair_zero = if cx.fair_mdp {
+        let claim = bind_claim(claims, item, cx.cancel)?;
+        Some(super::fairness::non_target_fair_end_component_states(
+            system,
+            claim,
             &graph,
-            &values,
-            &action_sums,
-            objective,
-            fair_zero.as_ref(),
-            cx,
-        )?
+            cx.limits,
+            cx.cancel,
+            cx.identity,
+            &mut cx.meter,
+            &mut cx.storage,
+        )?)
+    } else {
+        None
     };
+    let ranks = derive_ranks_with_fair_zero(
+        &graph,
+        &values,
+        &action_sums,
+        objective,
+        fair_zero.as_ref(),
+        cx,
+    )?;
     let mut ranking = admitted_vector(ranks.len(), cx)?;
     for row in ranks {
         cx.tick(CyclicMdpProbabilityPhase::Ranks)?;
@@ -1254,8 +1201,8 @@ fn construct(
     }
     Ok(ProbabilityProofDocument {
         cyclic_mdp: true,
-        fair_mdp: cx.fair_mdp,
-        fairness,
+        fair_mdp: false,
+        fairness: Vec::new(),
         document: ProbabilityCertificateDocument {
             cyclic_dtmc: false,
             identity: item.clone(),
@@ -1335,9 +1282,10 @@ fn check_with_context(
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     let limits = cx.limits;
     let cancel = cx.cancel;
-    let dispatch = profile_dispatch(bytes, limits, cancel)?;
-    let fair_mdp = dispatch == ProfileDispatch::FairMdp;
-    let fair_cyclic = dispatch == ProfileDispatch::CyclicMdpFair;
+    let fair_mdp = matches!(
+        profile_dispatch(bytes, limits, cancel)?,
+        ProfileDispatch::FairMdp
+    );
     let fair_lower_bound = fair_mdp && cx.bound_side == Some(SubsystemBoundKind::Lower);
     cx.fair_mdp = fair_mdp;
     let mut fairness_records = Vec::new();
@@ -1356,10 +1304,7 @@ fn check_with_context(
     if &document.identity != item {
         return Err(ProbabilityDocumentError::IdentityMismatch);
     }
-    if (fair_mdp || fair_cyclic) != !fairness_records.is_empty() {
-        return Err(ProbabilityDocumentError::ObjectiveMismatch);
-    }
-    if fair_mdp || fair_cyclic {
+    if fair_mdp {
         let claim = bind_claim(claims, item, cancel)?;
         let expected = super::fairness::checked(
             system,
@@ -1396,14 +1341,8 @@ fn check_with_context(
     let captured = offer
         .side
         .map(|_| super::super::cyclic::CapturedStates::default());
-    let (graph, objective, bound, reward, event) = subject(
-        system,
-        claims,
-        item,
-        &mut cx,
-        captured.as_ref(),
-        fair_cyclic,
-    )?;
+    let (graph, objective, bound, reward, event) =
+        subject(system, claims, item, &mut cx, captured.as_ref())?;
     let mut targets = document.targets.iter();
     let mut target_match = true;
     for (key, state) in &graph.states {
@@ -1423,17 +1362,11 @@ fn check_with_context(
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     if let (Some(side), Some(captured)) = (offer.side, captured) {
-        // Non-fair state-event bounds use a separate profile. Fair cyclic
-        // reachability bounds are checked by the dedicated fair-MEC verifier.
-        if event.is_some() && !fair_cyclic {
+        // FR-1042 value bounds currently cover cyclic reward only on a
+        // structurally valid expected-reward subject; state-event bounds use
+        // their separate profile rules.
+        if event.is_some() {
             return Err(ProbabilityDocumentError::Unsupported);
-        }
-        if fair_cyclic {
-            let claim = bind_claim(claims, item, cancel)?;
-            return super::fair_cyclic::check_bounds(
-                system, claim, &graph, &captured, &document, objective, &bound, side, offer,
-                limits, cancel, &mut cx,
-            );
         }
         let relation = offer.relation();
         if relation.misplaced(&bound) {
@@ -1703,7 +1636,7 @@ fn offered_ranks(
 
 /// The canonical schedule of each enabled action at the undecided `key`, in
 /// the order of the rebuilt graph's choices there.
-pub(super) fn schedules_at(
+fn schedules_at(
     system: &ModelSystem<'_>,
     captured: &super::super::cyclic::CapturedStates,
     key: &ProbabilityProductKey,
@@ -1743,7 +1676,7 @@ pub(super) fn schedules_at(
 /// rebuilt choices at its state, `None` when no enabled action there has that
 /// identity. Rows must name undecided states in strictly ascending key order
 /// and carry an FR-181 transition identity.
-pub(super) fn hinted_choices(
+fn hinted_choices(
     system: &ModelSystem<'_>,
     graph: &CheckerGraph,
     captured: &super::super::cyclic::CapturedStates,
@@ -1816,7 +1749,7 @@ fn progresses(
 /// selected action at each existential state, or the first failing rule and
 /// state in key order.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub(super) fn bound_failure(
+fn bound_failure(
     system: &ModelSystem<'_>,
     graph: &CheckerGraph,
     captured: &super::super::cyclic::CapturedStates,

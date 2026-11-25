@@ -27,7 +27,6 @@ fn is_wrappable_base(profile: &str) -> bool {
             | CYCLIC_MDP_REWARD_PROFILE
             | measure::PROFILE
             | "filament.probability-objective/fair-mdp-eventual/v1"
-            | CYCLIC_MDP_FAIR_PROFILE
     )
 }
 
@@ -74,10 +73,7 @@ fn policy_hints(bytes: &[u8]) -> Result<Vec<PolicyHint>, ProbabilityDocumentErro
         .collect())
 }
 fn is_fair_base(profile: &str) -> bool {
-    matches!(
-        profile,
-        "filament.probability-objective/fair-mdp-eventual/v1" | CYCLIC_MDP_FAIR_PROFILE
-    )
+    profile == "filament.probability-objective/fair-mdp-eventual/v1"
 }
 
 /// Fair-MDP intervals carry a progressing policy on the existential side:

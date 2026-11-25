@@ -228,8 +228,6 @@ impl Encode for Events<'_> {
         writer.name("profile")?;
         writer.string(if self.fair_mdp {
             FAIR_MDP_PROFILE
-        } else if self.cyclic_mdp && !self.fairness.is_empty() {
-            CYCLIC_MDP_FAIR_PROFILE
         } else if self.document.timed.is_some() {
             TIMED_PROFILE
         } else if !self.fairness.is_empty() {
