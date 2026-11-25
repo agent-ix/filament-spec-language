@@ -51,7 +51,7 @@ fn an_untimed_protocol_refuses_delay_on_each_step_and_at_the_endpoint() {
     assert_eq!(witness.prefix.len(), 2);
     for index in 0..witness.prefix.len() {
         let mut changed = witness.clone();
-        changed.prefix[index].delay = Some(crate::zone_search::exact(0, 1));
+        changed.prefix[index].delay = Some(crate::zone_support::exact(0, 1));
         let error = case
             .replay("Fill", changed)
             .expect_err("untimed delays must not be ignored");
@@ -66,7 +66,7 @@ fn an_untimed_protocol_refuses_delay_on_each_step_and_at_the_endpoint() {
         assert_eq!(refusal.cause(), "invalid-value");
     }
     let mut changed = witness;
-    changed.final_delay = Some(crate::zone_search::exact(0, 1));
+    changed.final_delay = Some(crate::zone_support::exact(0, 1));
     let error = case
         .replay("Fill", changed)
         .expect_err("an untimed endpoint has no delay");

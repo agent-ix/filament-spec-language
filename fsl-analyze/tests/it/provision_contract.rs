@@ -416,7 +416,7 @@ fn plain(claim: OccurrenceKey, kind: Capability, backend: &str) -> NegotiatedIte
 #[test]
 fn a_value_claim_returns_its_native_replayed_assignment() {
     let declaration = "function Goal using v(x: Int[0,3]): Boolean pure { x < 3 }";
-    let (package, source) = crate::value_validity::package_with_source(declaration);
+    let (package, source) = crate::value_validity_support::package_with_source(declaration);
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
         .expect("empty package input");
     let snapshots = fsl_semantics::model::observation::DocumentProvision::default();
@@ -769,7 +769,7 @@ fn claim_construction_resolves_the_complete_checked_occurrence() {
         filament_exact::Origin::new(filament_exact::Role::new("claim"), 99),
     );
     assert!(matches!(build(wrong), Err(ClaimRefusal::UnknownClaim)));
-    let (other, _) = crate::value_validity::package_with_source(
+    let (other, _) = crate::value_validity_support::package_with_source(
         "function Other using v(x: Int[0,3]): Boolean pure { x < 2 }",
     );
     let (node, origin, _) = other

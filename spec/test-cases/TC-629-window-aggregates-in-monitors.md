@@ -21,7 +21,7 @@ Fixtures: the timestamped response trace of FR-194-AC-1; event-position traces o
 1. Evaluate the quantile clause at `0.95` and `0.9`, and with threshold `0.005 s`.
 2. Evaluate the `count`, `fraction`, `sum`, `min` and `max` terms of FR-194-AC-2.
 3. Evaluate with `min_count 5` over the sparse trace; with `max_window_values` 10 over the dense trace; read the work meter.
-4. Evaluate the `sum of 6 / e.x`, guarded sum, undefined-filter `count` and undefined-predicate `fraction` terms of FR-194-AC-5 at every position and read the clause result and the atom at position 3, with and without `min_count 5`, and at `past[2, 3]`.
+4. Evaluate the `sum of 6 / e.x`, guarded sum, undefined-filter `count` and undefined-predicate `fraction` terms of FR-194-AC-5, their expressions checked standalone under `CheckMode::Kernel`, at every position and read the clause result and the atom at position 3, with and without `min_count 5`, and at `past[2, 3]`.
 5. Evaluate the trace `1, 0, 2, 3` of FR-194-AC-6 with and without `max_window_values` 2; read the atom at position 3, its visit charge, and the clause-level visit charge (window-visit units only); read the visit charge over a filter rejecting 10 of 20 positions.
 6. Check the four refused clauses; compare horizons; read the tl-mltl input and a holding result.
 7. Check each FR-194-AC-7 clause and read each refusal's code, cause and locus.

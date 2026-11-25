@@ -23,7 +23,7 @@ use fsl_replay::{
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-use super::long_run_certificate::limits;
+use crate::long_run_support::limits;
 use crate::timed_world::{self, World};
 
 mod bounded_monitor_profile;

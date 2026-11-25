@@ -1654,19 +1654,6 @@ impl<'a> Definedness<'a> {
                 self.discharge_conversion(node, node.at(*operand), facts)
             }
             NodeKind::Coerce(operand, target) => {
-                if matches!(
-                    &node.location().origin,
-                    filament_semantic_value::location::ExpressionOwner::TypeDeclaration { name }
-                        if name.starts_with("temporal ")
-                            && (name.ends_with(" guard") || name.contains(" holds "))
-                ) {
-                    // Temporal conditions run against observations, so their
-                    // implicit range coercions remain partial until runtime.
-                    // This lets guard and holds evaluation report the typed
-                    // definedness refusal at its source locus. Explicit scalar
-                    // conversions still take the `ConvertScalar` path above.
-                    return Ok(());
-                }
                 let proved = self.interval(node.at(*operand), facts);
                 let required = Interval::of_domain(target);
                 if proved.within(&required) {

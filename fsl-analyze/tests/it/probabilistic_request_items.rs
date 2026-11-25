@@ -4,18 +4,14 @@
 //! builder writes items that name it, the one kind a request selects, or
 //! each kind once when it selects both.
 
+use crate::probabilistic_request_support::{candidate_ids, registry};
 use std::collections::BTreeMap;
 
 use filament_exact::{Origin, Role};
-use fsl_analyze::statistical::manifest;
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::BackendId;
 use fsl_route::request::{items_with_evidence, EvidenceSelection, RequirementItem};
-use fsl_route::{
-    descriptor_from_manifest, Candidate, CandidateOutcome, EvidenceKind, ManifestMembers, Mode,
-    ProviderOrigin, Registry,
-};
+use fsl_route::EvidenceKind;
 use fsl_semantics::check::{Capability, RequirementMap, RequirementRecord};
 use fsl_semantics::family::{ClaimEvidence, ClaimExtent, Requirements};
 use ix_trace_rs::trace;
@@ -98,47 +94,6 @@ fn each_probabilistic_claim_records_its_evidence_kind() {
     }
 }
 
-fn exact_backend() -> fsl_route::BackendDescriptor {
-    descriptor_from_manifest(
-        Candidate::new(BackendId::new("en-5")),
-        ProviderOrigin::Linked,
-        [(
-            Some(Capability::ProbabilisticSatisfaction.to_wire()),
-            Some(Mode::Bounded.to_wire()),
-        )],
-        ManifestMembers {
-            domains: Some(&[DomainKind::Population.to_wire()]),
-            fairness_kinds: None,
-            evidence_kinds: Some(&[EvidenceKind::Exact.to_wire()]),
-            memory_models: None,
-            reductions: None,
-        },
-    )
-    .expect("a well-formed exact backend")
-}
-
-pub(crate) fn registry() -> Registry {
-    let mut registry = Registry::new();
-    registry
-        .register(
-            manifest::descriptor(ProviderOrigin::Linked).expect("EN-4's manifest is admitted"),
-        )
-        .expect("EN-4 registers");
-    registry.register(exact_backend()).expect("EN-5 registers");
-    registry
-}
-
-pub(crate) fn candidate_ids(item: &RequirementItem) -> Vec<String> {
-    match item.candidates() {
-        CandidateOutcome::Candidates(set) => set
-            .candidates()
-            .iter()
-            .map(|candidate| candidate.id().as_str().to_owned())
-            .collect(),
-        CandidateOutcome::UnknownBackend(id) => panic!("unknown backend {id}"),
-    }
-}
-
 /// (index, evidence, candidates, occurrence) of each item.
 fn summary(
     items: &[RequirementItem],
@@ -207,7 +162,11 @@ fn the_request_builder_names_the_evidence_kind_of_each_probabilistic_item() {
             (3, None, vec![]),
         ]
     );
-    assert_eq!(record_kinds[0].3, key(1), "P95 keeps its occurrence identity");
+    assert_eq!(
+        record_kinds[0].3,
+        key(1),
+        "P95 keeps its occurrence identity"
+    );
     assert_eq!(record_kinds[1].3, key(2));
     assert_eq!(record_kinds[2].3, key(3));
     assert_eq!(record_kinds[3].3, key(4));

@@ -22,8 +22,11 @@ Scope: FR-126-AC-12 to FR-126-AC-15.
 Fixtures: ADR-018 §6's ConfigVersion example unit, universe `{a, b}`, both
 versions 0, the subject's `max_candidates` 1,000,000.
 
-1. `eventually (holds(c.versionNumber = 0) and holds(6 mod (2 -
-   c.versionNumber) >= 0))`, with the default limits.
+1. `eventually (holds(c.versionNumber = 0) and
+   holds(mod_defined(c.versionNumber)))`, with
+   `function mod_defined using v(n: Int[0, 2]): Boolean pure
+   { 6 mod (2 - n) >= 0 }`, its body checked under `Kernel` (FR-495-AC-3),
+   and the default limits.
 2. The same claim with `max_states` 1.
 3. AC-1's weak `each` claim, with and without a built FR-339 certificate.
 4. Step 1's claim with initial versions `a` 0 and `b` 1.

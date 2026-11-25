@@ -16,7 +16,7 @@ on the authority and identity but not on the source bytes. This catches a
 defaulted or path-derived label, a reference that carries any other member,
 and source content that leaks into a node key.
 
-Scope: FR-001-AC-5 to FR-001-AC-16.
+Scope: FR-001-AC-1, FR-001-AC-5 to FR-001-AC-16.
 
 ## Test Procedure
 
