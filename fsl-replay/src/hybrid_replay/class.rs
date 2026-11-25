@@ -36,6 +36,7 @@ struct Walk<'a, 'g> {
     stats: WalkStats,
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct WalkStats {
     term_visits: usize,
@@ -108,7 +109,7 @@ struct TermWalk<'a, 'g, 't, 's> {
     #[cfg(test)]
     stats: &'s mut WalkStats,
     #[cfg(not(test))]
-    stats: std::marker::PhantomData<&'s mut WalkStats>,
+    stats: std::marker::PhantomData<&'s mut ()>,
     term: std::marker::PhantomData<&'t HybridTerm>,
 }
 
@@ -288,7 +289,14 @@ impl<'a, 'g, 't, 's> filament_walk::Walk for TermWalk<'a, 'g, 't, 's> {
 /// term's, as in exact replay's polynomial flow (FR-450 "Exact replay"), so
 /// they do not leave the class.
 fn polynomial_gap(exp: &Exp, position: Position) -> Option<(&'static str, Option<TermLocus>)> {
-    polynomial_gap_with_stats(exp, position, None)
+    #[cfg(test)]
+    {
+        polynomial_gap_with_stats(exp, position, None)
+    }
+    #[cfg(not(test))]
+    {
+        polynomial_gap_with_stats(exp, position)
+    }
 }
 
 struct PolynomialNode<'a> {
@@ -297,7 +305,10 @@ struct PolynomialNode<'a> {
 }
 
 struct PolynomialWalk<'a> {
+    #[cfg(test)]
     stats: Option<&'a mut WalkStats>,
+    #[cfg(not(test))]
+    _stats: std::marker::PhantomData<&'a mut ()>,
 }
 
 impl<'a> PolynomialWalk<'a> {
@@ -374,9 +385,14 @@ impl<'a> filament_walk::Walk for PolynomialWalk<'a> {
 fn polynomial_gap_with_stats(
     exp: &Exp,
     position: Position,
-    stats: Option<&mut WalkStats>,
+    #[cfg(test)] stats: Option<&mut WalkStats>,
 ) -> Option<(&'static str, Option<TermLocus>)> {
-    let mut walker = PolynomialWalk { stats };
+    let mut walker = PolynomialWalk {
+        #[cfg(test)]
+        stats,
+        #[cfg(not(test))]
+        _stats: std::marker::PhantomData,
+    };
     match filament_walk::walk(&mut walker, PolynomialNode { exp, position }) {
         ControlFlow::Continue(()) => None,
         ControlFlow::Break(gap) => Some(gap),
