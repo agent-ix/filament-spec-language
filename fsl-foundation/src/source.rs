@@ -491,6 +491,12 @@ impl Source {
     pub fn text(&self) -> &str {
         &self.0.text
     }
+    /// Whether two handles share the same admitted document allocation.
+    /// This is a fast path only; callers that accept equal independently
+    /// read documents must still compare their labels, path and bytes.
+    pub(crate) fn same_document(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
     /// The byte offset of the start of a one-based line, or `None` past the
     /// last line. `pub`: the `fsl-source` crate (I3, feature
     /// `quire-extraction`) reuses this source's existing byte index for
