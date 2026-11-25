@@ -8,7 +8,9 @@ use std::sync::Mutex;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{counter_request, label, Fr290, Workspace};
+use crate::analyze_cli_support::{
+    analyze, counter_request, label, package_selection, Fr290, Workspace,
+};
 
 const AT_MOST_THREE: &str =
     "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n";
@@ -706,4 +708,116 @@ fn an_operation_pre_item_reaches_negotiation_with_contract_checker() {
         !document.to_string().contains("unknown-claim"),
         "{document}"
     );
+}
+
+/// The bound that makes the Counter population, and so the extent of its
+/// operation clauses, finite.
+const BOUNDED_COUNTERS: &str = "bound CountersBound on M::counters [2]\n";
+
+/// A `pre` or `post` clause over a bounded population reaches the negotiator
+/// with `[contract-checker]` over a package as over its source. The package
+/// route has no contract check yet (QSL-2934), so it then refuses the request
+/// whole and writes no verdict. FR-940-AC-37 asks for the source route's
+/// record; this holds the refusal until the package evaluator exists. An item
+/// naming `en-1` or an unknown backend, and an undecided tie, are still
+/// written as the source route writes them.
+#[trace("TC-2702", "FR-962-AC-1")]
+#[test]
+fn a_bounded_contract_check_item_over_a_package_is_refused_after_negotiation() {
+    let unit =
+        crate::counter::unit_text(&format!("{}{BOUNDED_COUNTERS}", crate::counter::CONTRACT));
+    let routes = |case: &str, item: Value| {
+        let ws = Workspace::new(&format!("tied-item-bounded-package-{case}"));
+        let program = crate::analyze_cli_support::request_over(
+            &ws,
+            &unit,
+            &crate::counter::document(false),
+            &[crate::analyze_cli_support::counter_snapshot(&[("a", 0)])],
+            json!({"items": [item]}),
+        );
+        let request: Value =
+            serde_json::from_slice(&std::fs::read(&program).expect("the request")).expect("JSON");
+        let (members, _) = package_selection(&ws, &request["request"]);
+        let package = ws.write(
+            "analyze-package.json",
+            json!({"format": "native-analyze/1", "request": members})
+                .to_string()
+                .as_bytes(),
+        );
+        (ws, program, package)
+    };
+    for name in ["CanInc", "Inc"] {
+        for backend in [None, Some("contract-checker")] {
+            let mut item = json!({"claim": name});
+            if let Some(backend) = backend {
+                item["backend"] = json!(backend);
+            }
+            let case = format!("{name}-{}", backend.unwrap_or("default"));
+            let (_ws, program, package) = routes(&case, item);
+            let (source, source_seen) = analyze_recording(&program, Vec::new());
+            assert_eq!(
+                source["items"][0]["request"]["extent"]["classification"], "bounded",
+                "{source}"
+            );
+            let (refused, seen) = analyze_recording(&package, Vec::new());
+            assert_eq!(seen, vec![vec!["contract-checker".to_owned()]], "{refused}");
+            assert_eq!(seen, source_seen, "{refused}");
+            assert_eq!(refused["items"], json!([]), "{refused}");
+            let diagnostic = &refused["diagnostics"][0];
+            assert_eq!(diagnostic["code"], "unsupported_construct", "{refused}");
+            assert_eq!(diagnostic["cause"], "not-yet-implemented", "{refused}");
+            assert!(
+                diagnostic
+                    .to_string()
+                    .contains(&format!("`{name}` (claim occurrence 0)")),
+                "{refused}"
+            );
+            assert_eq!(analyze(&package).exit, 21, "{refused}");
+        }
+    }
+
+    // EN-1 decides invariants alone, so naming it for either clause settles
+    // as over the source, and no invariant check runs on the clause.
+    for name in ["CanInc", "Inc"] {
+        let named = json!({"claim": name, "backend": "en-1"});
+        let (_ws, program, package) = routes(&format!("{name}-en-1"), named);
+        let (source, package) = (analyze(&program), analyze(&package));
+        assert_eq!(
+            source.item(0)["record"]["diagnostic"]["cause"],
+            "unsupported-requested-capability",
+            "{}",
+            source.document()
+        );
+        assert_eq!(package.item(0), source.item(0), "{}", package.document());
+        assert_eq!(package.exit, source.exit, "{}", package.document());
+    }
+
+    let unknown = json!({"claim": "Inc", "backend": "fsl.absent"});
+    let (_ws, program, package) = routes("unknown-backend", unknown);
+    let (source, package) = (analyze(&program), analyze(&package));
+    assert!(
+        package.item(0).to_string().contains("unknown-backend"),
+        "{}",
+        package.document()
+    );
+    assert_eq!(package.item(0), source.item(0), "{}", package.document());
+    assert_eq!(package.exit, source.exit, "{}", package.document());
+
+    let (_ws, program, package) = routes("tied", json!({"claim": "Inc"}));
+    let providers = || vec![contract_provider(fsl_analyze::provider::ProviderVerdict::Unknown).0];
+    let (source, _) = analyze_recording(&program, providers());
+    let (tied, seen) = analyze_recording(&package, providers());
+    assert_eq!(
+        seen,
+        vec![vec![
+            "contract-checker".to_owned(),
+            "fsl.test-contract".to_owned()
+        ]],
+        "{tied}"
+    );
+    assert!(
+        tied["items"][0].to_string().contains("ambiguous-backend"),
+        "{tied}"
+    );
+    assert_eq!(tied["items"], source["items"], "{tied}");
 }
