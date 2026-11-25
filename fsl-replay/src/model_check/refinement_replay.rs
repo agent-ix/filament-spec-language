@@ -301,6 +301,15 @@ pub fn replay_protocol_assumption_witness(
             Ok(ProtocolAssumptionReplaySettlement::Reproduced)
         }
         ProtocolAssumptionReason::RelationUndetermined => {
+            // No loop confirms a memberless `each` identity here, so only a
+            // forged witness carries one.
+            if witness.identities.iter().any(|identity| {
+                identity.granularity == FairnessGranularity::Each && identity.selected.is_none()
+            }) {
+                return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
+                    disagreement(Category::Success),
+                ));
+            }
             if witness.path.loop_entry.is_some() {
                 return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
                     disagreement(Category::Success),

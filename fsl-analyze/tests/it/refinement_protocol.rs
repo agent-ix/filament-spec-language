@@ -1259,14 +1259,11 @@ fn tso_flush_fairness_replays_against_an_unmet_inc_assumption() {
     forged
         .identities
         .iter_mut()
-        .find(|identity| identity.side == fsl_replay::AssumptionSide::Implementation)
-        .expect("the witness has an implementation identity")
-        .selected = None;
-    forged.identities.iter_mut().for_each(|identity| {
-        if identity.side == fsl_replay::AssumptionSide::Implementation {
+        .filter(|identity| identity.side == fsl_replay::AssumptionSide::Implementation)
+        .for_each(|identity| {
             identity.granularity = filament_semantic_value::fairness::FairnessGranularity::Each;
-        }
-    });
+            identity.selected = None;
+        });
     assert!(matches!(
         replay_protocol_assumption_witness(refinement, &preopened, &forged)
             .expect("the forged witness replays"),
