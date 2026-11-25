@@ -1809,7 +1809,7 @@ mod tests {
     /// A clock-reference domain holds exactly the supplied declared-place
     /// identities, never an owner object; ordinary object references still
     /// enumerate their actual owners.
-    #[trace("TC-3084", "FR-1040-AC-8", "FR-106-AC-80")]
+    #[trace("TC-3084", "FR-106-AC-80")]
     #[test]
     fn clock_reference_domains_hold_exactly_the_supplied_place_identities() {
         use filament_semantic_value::checking::{CheckMode, CheckingLimits};
@@ -1958,7 +1958,7 @@ mod tests {
 
     /// A supplied clock identity enumerates through optional values, collections,
     /// records, tuples and union cases, and the domain size is exact.
-    #[trace("TC-3084", "FR-1040-AC-8", "FR-106-AC-80")]
+    #[trace("TC-3084", "FR-106-AC-80")]
     #[test]
     fn clock_reference_domains_enumerate_through_nested_carriers() {
         use filament_semantic_value::declaration::{FieldDeclaration, ObjectTypeDeclaration};
