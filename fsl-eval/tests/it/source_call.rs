@@ -3,6 +3,7 @@
 //! through S1, S2 and the assembler is checked, linked and called by name.
 
 use filament_eval::FamilyOutcome;
+use filament_eval::{CallFailure, Evaluation, ExecutionBackendChoice, SessionLimits};
 use filament_exact::{
     Cancel, CancelCause, DivisionProfile, Integer, Meter, Outcome, ScalarLimits, Undefined, Value,
     ValueType,
@@ -10,11 +11,12 @@ use filament_exact::{
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::supplied_stop::{SuppliedLimits, SuppliedRun};
+use fsl_eval::execution::{ExecuteLimits, ExecuteRequest, ExecuteSelection, SuppliedBackends};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{BodyTerm, CheckCause, CheckedGraph, LawRole, PackageDeclarations};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::value::{DefinitionRole, admit_integer_division};
+use fsl_semantics::value::{admit_integer_division, DefinitionRole};
 use ix_trace_rs::trace;
 
 const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -98,72 +100,39 @@ fn a_function_compiled_from_source_is_called_by_name() {
 /// Partial TC-1121 no-std guard: these AC-4 calls cannot return Unsupported.
 #[test]
 fn fr403_value_call_vectors_never_return_unsupported() {
-    let package = package_of_with_mode(
+    let package = package_with_truncating_division(
         "type Digit = Int[0, 9];\n\
          function bottom(): Integer pure { 3 }\n\
          function c2(): Integer pure { bottom() }\n\
          function c1(): Integer pure { c2() }\n\
-         function count(x: Digit): Integer pure { c1() }\n\
-         function d(x: Digit): Integer pure { 10 div x }\n\
+         function countFixture(x: Digit): Integer pure { c1() }\n\
+         function plusOne(x: Digit): Integer pure { x + 1 }\n\
+         function d using v(x: Digit): Integer pure { 10 div x }\n\
          function f(x: Digit): Boolean pure { true }",
-        CheckMode::Kernel,
     );
-    let objects = ObjectEnvironment::default();
-    let function = |name: &str| QualifiedName::unqualified(name).expect("function name");
-    let integer = |n| Value::Integer(Integer::from(n));
-    let no_unsupported = |result: Result<_, fsl_eval::value::CallFailure>, case: &str| {
-        assert!(
-            !matches!(result, Err(fsl_eval::value::CallFailure::Unsupported(_))),
-            "{case} returned CallFailure::Unsupported"
-        );
+    let integer = |n: i64| Value::Integer(Integer::from(n));
+    let execute = |name, arguments, accounting, cancel: &Cancel| {
+        let mut run = SuppliedRun::new(SuppliedLimits::default(), Cancel::new())
+            .expect("supplied run initializes");
+        no_std_call(&package, name, arguments, accounting, &mut run, cancel)
     };
 
-    no_unsupported(
-        package.call(
-            &function("count"),
-            vec![integer(3)],
-            &objects,
-            &mut Meter::new(UNLIMITED),
-        ),
+    let cancel = Cancel::new();
+    assert_no_unsupported(
+        execute("count", vec![integer(3)], UNLIMITED, &cancel),
         "count(3)",
     );
-    no_unsupported(
-        package.call(
-            &function("d"),
-            vec![integer(0)],
-            &objects,
-            &mut Meter::new(UNLIMITED),
-        ),
-        "d(0)",
-    );
-    no_unsupported(
-        package.call(
-            &function("f"),
-            vec![integer(10)],
-            &objects,
-            &mut Meter::new(UNLIMITED),
-        ),
-        "f(10)",
-    );
-    no_unsupported(
-        package.call(
-            &function("f"),
-            vec![integer(3), integer(4)],
-            &objects,
-            &mut Meter::new(UNLIMITED),
-        ),
+    assert_no_unsupported(execute("d", vec![integer(0)], UNLIMITED, &cancel), "d(0)");
+    assert_no_unsupported(execute("f", vec![integer(10)], UNLIMITED, &cancel), "f(10)");
+    assert_no_unsupported(
+        execute("f", vec![integer(3), integer(4)], UNLIMITED, &cancel),
         "f(3, 4)",
     );
 
     let cancelled = Cancel::new();
     cancelled.cancel(CancelCause::Requested);
-    no_unsupported(
-        package.call(
-            &function("f"),
-            vec![integer(3)],
-            &objects,
-            &mut Meter::new(UNLIMITED).with_cancel(cancelled),
-        ),
+    assert_no_unsupported(
+        execute("f", vec![integer(3)], UNLIMITED, &cancelled),
         "f(3) with a cancelled meter handle",
     );
 
@@ -171,13 +140,14 @@ fn fr403_value_call_vectors_never_return_unsupported() {
     supplied_cancel.cancel(CancelCause::Requested);
     let mut supplied = SuppliedRun::new(SuppliedLimits::default(), supplied_cancel)
         .expect("supplied run initializes");
-    no_unsupported(
-        package.call_supplied(
-            &function("f"),
+    assert_no_unsupported(
+        no_std_call(
+            &package,
+            "f",
             vec![integer(3)],
-            &objects,
-            &mut Meter::new(UNLIMITED),
+            UNLIMITED,
             &mut supplied,
+            &cancel,
         ),
         "f(3) with a cancelled supplied-value run",
     );
@@ -186,20 +156,194 @@ fn fr403_value_call_vectors_never_return_unsupported() {
         work_units: 3,
         ..UNLIMITED
     };
-    no_unsupported(
-        package.call(
-            &function("count"),
-            vec![integer(3)],
-            &objects,
-            &mut Meter::new(limited),
-        ),
+    assert_no_unsupported(
+        execute("count", vec![integer(3)], limited, &cancel),
         "count(3) one work unit below its four calls",
     );
+
+    assert_no_unsupported(
+        execute("plusOne", vec![integer(10)], UNLIMITED, &cancel),
+        "x + 1 with x = 10",
+    );
+    assert_no_unsupported(
+        execute("plusOne", vec![integer(3)], UNLIMITED, &cancel),
+        "x + 1 with x = 3",
+    );
+    assert_no_unsupported(
+        execute(
+            "c1",
+            Vec::new(),
+            ScalarLimits {
+                work_units: 3,
+                ..UNLIMITED
+            },
+            &cancel,
+        ),
+        "three-call chain with work_units = 3",
+    );
+    assert_no_unsupported(
+        execute(
+            "c1",
+            Vec::new(),
+            ScalarLimits {
+                work_units: 2,
+                ..UNLIMITED
+            },
+            &cancel,
+        ),
+        "three-call chain with work_units = 2",
+    );
+    assert_no_unsupported(
+        super::protocol_reference::no_std_protocol_reference_call(),
+        "refers() with protocol Fill",
+    );
+    assert_no_unsupported(
+        super::model_reference_queries::no_std_all_instances_over_recorded_population(),
+        "allInstances over recorded three-member population",
+    );
+    assert_no_unsupported(
+        super::model_reference_queries::no_std_unrecorded_population_is_wrong_value_kind(),
+        "unrecorded Population argument",
+    );
+    assert_no_unsupported(
+        super::state_model_family::no_std_absent_state_model_lookup(),
+        "lookup with absent key and absent undefined",
+    );
+    assert_no_unsupported(
+        Ok(
+            super::reference_adapter::registration_is_decided_from_the_packages_admitted_signature(
+            ),
+        ),
+        "five no_std registry registration results",
+    );
+    assert_no_unsupported(
+        Ok(super::reference_adapter::invalid_child_requests_fault_and_a_valid_one_is_applied()),
+        "FR-262 child request admission paths",
+    );
+    assert_no_unsupported(
+        Ok(super::model_reference_queries::the_adapter_validates_a_population_request_by_its_declared_maximum()),
+        "FR-262 population child request maximum paths",
+    );
+    assert_no_unsupported(
+        Ok(super::reference_adapter::a_mixed_chain_steps_to_the_synchronous_result_and_stops_at_its_fuel()),
+        "FR-262 mixed generated/interpreted child chain",
+    );
+    assert_no_unsupported(
+        Ok(super::reference_adapter::cancelling_after_a_request_is_saved_ends_at_the_childs_call_charge()),
+        "FR-262 cancellation after saved child request",
+    );
+    assert_no_unsupported(
+        Ok(super::reference_adapter::lifecycle::registration_is_first_wins_and_a_successful_begin_seals_it()),
+        "FR-262 registry sealing behavior",
+    );
+    assert_no_unsupported(
+        Ok(super::reference_adapter::lifecycle::argument_applications_charge_left_to_right_before_the_call_and_its_body()),
+        "FR-262 argument application charge order",
+    );
+    assert_no_unsupported(
+        Ok(super::reference_adapter::lifecycle::a_charging_body_runs_each_transition_once_and_keeps_the_childs_losses()),
+        "FR-262 body transition and child loss sequence",
+    );
+    assert_no_unsupported(
+        Ok(super::reference_adapter::lifecycle::a_handle_cancelled_at_a_kernel_or_call_charge_is_a_located_incomplete_result()),
+        "FR-262 cancelled kernel/call charges",
+    );
+    assert_no_unsupported(
+        Ok(super::reference_adapter::lifecycle::a_chargeless_transition_runs_after_a_cancellation_and_the_next_charge_ends_the_session()),
+        "FR-262 chargeless transition after cancellation",
+    );
+    assert_no_unsupported(
+        super::deep_values::no_std_recursive_count_on_small_stack(),
+        "100000-deep recursive count on a 512 KiB stack",
+    );
+    assert_no_unsupported(
+        Ok(super::deep_values::a_100_000_deep_recursive_call_completes_and_fuel_is_exact_at_the_last_charge()),
+        "FR-262 recursive call exact-fuel vectors",
+    );
+    assert_no_unsupported(
+        Ok(super::deep_values::a_call_that_exceeds_fuel_returns_the_typed_refusal_not_a_crash()),
+        "FR-262 recursive call bounded-fuel vector",
+    );
+    assert_no_unsupported(
+        Ok(super::deep_values::a_100_000_long_list_evaluates_compares_clones_and_drops()),
+        "FR-262 deep list evaluation and state-key vector",
+    );
+    assert_no_unsupported(
+        Ok(
+            super::deep_values::a_100_000_deep_value_type_clones_compares_hashes_formats_and_drops(
+            ),
+        ),
+        "FR-262 deep ValueType vector",
+    );
+    for run in 0..10 {
+        let evaluation = assert_no_unsupported(
+            super::reference_adapter::lifecycle::no_std_kernel_loss_vector(),
+            &format!("kernel-loss vector run {run}"),
+        )
+        .unwrap_or_else(|| panic!("kernel-loss vector run {run} did not evaluate"));
+        assert!(
+            !evaluation.losses.is_empty(),
+            "kernel-loss vector run {run} lost its loss record"
+        );
+    }
+}
+
+fn assert_no_unsupported<T>(result: Result<T, CallFailure>, case: &str) -> Option<T> {
+    match result {
+        Err(CallFailure::Unsupported(entry)) => {
+            panic!("{case} returned CallFailure::Unsupported({entry:?})")
+        }
+        Ok(value) => Some(value),
+        Err(_) => None,
+    }
 }
 
 /// The unit's package, checked and linked, over source `declarations`.
 fn package_of(declarations: &str) -> CheckedPackage {
     package_of_with_mode(declarations, CheckMode::Linked)
+}
+
+/// A kernel package with the profile needed by the FR-403 division vector.
+fn package_with_truncating_division(declarations: &str) -> CheckedPackage {
+    let text = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         {declarations}\n"
+    );
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("a", "u"),
+        "unit.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the division unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the division unit");
+    let mut declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_owned(),
+        unit,
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect("the assembler builds the division package");
+    for function in &mut declarations.functions {
+        if function.name == "countFixture" {
+            // `count` is a reserved source token, so the checked-package fixture
+            // gives the declaration its literal AC name after source assembly.
+            function.name = "count".to_owned();
+        }
+    }
+    declarations.integer_division = Some(admitted_integer_division(DivisionProfile::Truncating));
+    CheckedPackage::link(
+        declarations
+            .check(
+                CheckMode::Kernel,
+                CheckingLimits::default(),
+                &fsl_eval::value::S6aRewardEvaluator,
+            )
+            .expect("the division package checks"),
+    )
 }
 
 fn package_of_with_mode(declarations: &str, mode: CheckMode) -> CheckedPackage {
@@ -233,6 +377,37 @@ fn package_of_with_mode(declarations: &str, mode: CheckMode) -> CheckedPackage {
                 &fsl_eval::value::S6aRewardEvaluator,
             )
             .expect("the package checks"),
+    )
+}
+
+fn no_std_call(
+    package: &CheckedPackage,
+    function: &str,
+    arguments: Vec<Value>,
+    accounting: ScalarLimits,
+    run: &mut SuppliedRun,
+    cancel: &Cancel,
+) -> Result<Evaluation, CallFailure> {
+    let request = ExecuteRequest {
+        selection: ExecuteSelection::Function {
+            name: QualifiedName::unqualified(function).expect("function name"),
+            arguments,
+            environment: ObjectEnvironment::default(),
+        },
+        backend: ExecutionBackendChoice::Interpreter,
+    };
+    let limits = ExecuteLimits {
+        accounting,
+        prepare: fsl_eval::execution::PrepareLimits::default(),
+        session: SessionLimits::default(),
+    };
+    fsl_eval::execution::execute(
+        package,
+        &request,
+        &SuppliedBackends::default(),
+        &limits,
+        run,
+        cancel,
     )
 }
 
@@ -796,7 +971,7 @@ fn a_source_predicate_is_called_through_the_checked_package() {
 /// `filament_eval::modulo` returns when called directly on a fresh meter. The
 /// operation is defined once, in `filament-eval`, and `fsl_semantics::value`
 /// no longer holds it.
-#[trace("FR-403-AC-2", "TC-1121")]
+#[trace("TC-1121")]
 #[test]
 fn modulo_through_the_evaluator_matches_the_filament_eval_operation() {
     let package = integer_operator("mod", None);
