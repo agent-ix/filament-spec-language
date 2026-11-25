@@ -9,6 +9,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-662
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-267
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-218
     type: references
 ---
@@ -24,7 +26,7 @@ bind the embedded body containing both the checked FSL protocol `Review` and
 the temporal clause `ReviewAccepted`; the extraction body identity therefore
 names the same unit that declares both. The temporal clause is a synthetic
 example of a review process. Its event records carry explicit process,
-repository, case, source authority, active and reviewed source-revision,
+repository, case, source authority, active and reviewed source-content digest,
 attempt, event, author, reviewer, assignment and provider-event identities.
 Provider-event identity fields are synthetic labels for GitHub, Linear, relay
 and gate facts. These values are example data; the example defines no
@@ -33,9 +35,10 @@ production review policy or identity namespace.
 For this example, receipt and acknowledgement are separate event facts. A
 receipt alone does not satisfy the acknowledgement predicate. An acknowledgement
 qualifies only when it is accepted, its reviewer differs from its author, its
-reviewed source-revision identity equals the active source-revision identity,
-and a reassigned review has an accepted assignment. A qualifying
-acknowledgement must occur within the
+reviewed source-content digest equals the active source-content digest,
+and a reassigned review has an accepted assignment. The active value is the
+SHA-256 digest of the extracted body bytes; the reviewed value binds the review
+claim to those exact bytes. These digests do not record revision history. A qualifying acknowledgement must occur within the
 fixture's finite time window. These example rules define the test oracle; they
 do not establish any external acceptance or live workflow state.
 
@@ -59,8 +62,9 @@ do not establish any external acceptance or live workflow state.
   clause binding and each explicit identity value through extraction and
   temporal evaluation.
 - FSL SHALL evaluate the example predicate as written: receipt is not
-  acknowledgement; self-review, an acknowledgement bound to a stale source
-  revision, and reassignment without accepted assignment do not qualify.
+  acknowledgement; self-review, an acknowledgement whose reviewed
+  source-content digest differs from the active source-content digest, and
+  reassignment without accepted assignment do not qualify.
 - FSL SHALL distinguish a qualifying event within the closed window, an event
   after the window, and an unresolved trace whose progress or completeness
   does not settle the window, according to FR-501.
@@ -74,18 +78,18 @@ The example uses only synthetic identity values. Let its owned clause be
 body identity be `ix://synthetic/review-process#review_acceptance`, its clause
 binding name the same clause, and its temporal window be ticks 0 through 5.
 Each event carries process, repository, case, source authority, active and
-reviewed source-revision, attempt, event, author, reviewer, assignment and
+reviewed source-content digest, attempt, event, author, reviewer, assignment and
 provider-event identity values. A qualifying event has `acknowledged` and
-`accepted` set true, equal active and reviewed source-revision identities, and
+`accepted` set true, equal active and reviewed source-content digests, and
 an accepted assignment when it is reassigned.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-1050-AC-1 | A complete closed trace has a receipt at tick 0 and one qualifying acknowledgement at tick 3. The command evaluates `ReviewAccepted`; it exits 0 with category `success` and a true temporal result. The checked `Review` protocol is then analyzed from the extracted body bytes under that same body identity and model binding; the protocol result is `proved` with an accepted certificate. The extraction record names the specified original identity, body identity and clause binding; the verified body bytes retain the protocol declaration and the process, repository, case, source authority, active/reviewed source-revision, attempt, event, assignment and provider-event identity fields. Repeating the identical request produces an equal temporal result document. | Test |
+| FR-1050-AC-1 | A complete closed trace has a receipt at tick 0 and one qualifying acknowledgement at tick 3. The command evaluates `ReviewAccepted`; it exits 0 with category `success` and a true temporal result. The checked `Review` protocol is then analyzed from the extracted body bytes under that same body identity and model binding; the protocol result is `proved` with an accepted certificate. The extraction record names the specified original identity, body identity and clause binding; the verified body bytes retain the protocol declaration and the process, repository, case, source authority, active/reviewed source-content digest, attempt, event, assignment and provider-event identity fields. Repeating the identical request produces an equal temporal result document. | Test |
 | FR-1050-AC-2 | The complete closed trace contains a receipt event at tick 2 with `acknowledged` false and no qualifying acknowledgement by tick 5. The temporal item is a violation; receipt does not satisfy the acknowledgement predicate. | Test |
 | FR-1050-AC-3 | The complete closed trace contains a qualifying acknowledgement only at tick 6. The temporal item is a violation for the 0-through-5 window. | Test |
 | FR-1050-AC-4 | With a receipt at tick 3, no qualifying acknowledgement, an open scope, watermark 3 and completeness through 3, the temporal result is `Pending` with deadline 5. With a receipt at tick 3, no qualifying acknowledgement, a closed scope, watermark 5 and `Incomplete` completeness, the temporal result is `Indeterminate` with reason `IncompleteInput`. Neither result has a completed truth. | Test |
-| FR-1050-AC-5 | Each complete closed trace below settles violation: (a) the reviewer equals the author; (b) the reviewed source-revision identity differs from the active source-revision identity; (c) the event is reassigned but its assignment is not accepted; or (d) the event is acknowledged but not accepted. A complete closed trace with `reassigned` true and `assignment_accepted` true qualifies and settles success. | Test |
+| FR-1050-AC-5 | Each complete closed trace below settles violation: (a) the reviewer equals the author; (b) the reviewed source-content digest differs from the active source-content digest; (c) the event is reassigned but its assignment is not accepted; or (d) the event is acknowledged but not accepted. A complete closed trace with `reassigned` true and `assignment_accepted` true qualifies and settles success. | Test |
 | FR-1050-AC-6 | Source identity is evaluated, not merely copied: changing the source-authority identity or a provider-event identity from its bound synthetic value while leaving all other event data unchanged makes the complete closed temporal result a violation. | Test |
 
 ## Dependencies
@@ -95,5 +99,7 @@ an accepted assignment when it is reassigned.
   embedded-source extraction and identity.
 - [FR-501](FR-501-evaluate-a-temporal-clause-under-the-timestamped-event-finite-window-profile.md):
   temporal settlement under timestamped progress and completeness.
+- [FR-267](FR-267-write-run-results-as-native-run-result-2.md): the
+  `native-run-result/2` output contract.
 - [FR-218](FR-218-check-every-protocol-control-construct-at-s3.md): checked
   protocol constructs exercised alongside the temporal example.

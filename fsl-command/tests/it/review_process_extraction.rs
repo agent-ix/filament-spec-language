@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! A synthetic review trace runs from an identity-bound Markdown native fence.
 
-use crate::cli_contract::{Case, Outcome, analyze};
+use crate::cli_contract::{analyze, Case, Outcome};
 use fsl_command::command;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::Path;
 
 const MODEL: &[u8] = include_bytes!("../fixtures/cli-contract/counter.semantic-ir.json");
@@ -15,6 +15,12 @@ const PROTOCOL_SNAPSHOT: &[u8] =
 const PROFILE: &str = "filament.temporal.timestamped-event.finite-window/v1";
 const ORIGINAL_IDENTITY: &str = "ix://synthetic/review-process";
 const BODY_IDENTITY: &str = "ix://synthetic/review-process#review_acceptance";
+/// SHA-256 of `native_source()`'s exact bytes.
+const ACTIVE_SOURCE_CONTENT_DIGEST: &str =
+    "sha256:1159a7931d7d6418b73554cd0323c56cb86a335aed10ec3e46f989d9dd37f023";
+/// SHA-256 of a stale body with `ReviewAccepted` renamed `ReviewAcceptedStale`.
+const OTHER_SOURCE_CONTENT_DIGEST: &str =
+    "sha256:240e380d01c74cfa333fba6347750680efe9ce89964ef2542e19df991fe36be7";
 
 fn native_source() -> String {
     r#"language "ix:native" edition "1-draft";
@@ -46,8 +52,8 @@ record ReviewEvent {
   repository_identity: Integer;
   case_identity: Integer;
   source_authority_identity: Integer;
-  active_source_revision_identity: Integer;
-  reviewed_source_revision_identity: Integer;
+  active_source_content_digest: String;
+  reviewed_source_content_digest: String;
   attempt_identity: Integer;
   event_identity: Integer;
   github_event_identity: Integer;
@@ -73,7 +79,7 @@ temporal ReviewAccepted using t over (review: ReviewEvent) clock "review-ms" on 
     review.relay_event_identity = 23 and review.gate_event_identity = 24 and
     review.assignment_identity = 16 and
     review.reviewer_identity != review.author_identity and
-    review.reviewed_source_revision_identity = review.active_source_revision_identity and
+    review.reviewed_source_content_digest = review.active_source_content_digest and
     (not review.reassigned or review.assignment_accepted)
   )
 }
@@ -85,7 +91,8 @@ fn event(variant: EventVariant) -> Value {
     let (
         author,
         reviewer,
-        reviewed_revision,
+        reviewed_digest,
+        active_digest,
         source_authority,
         event_identity,
         github_event,
@@ -94,15 +101,136 @@ fn event(variant: EventVariant) -> Value {
         acknowledged,
         accepted,
     ) = match variant {
-        EventVariant::Qualified => (1, 2, 14, 17, 18, 21, false, false, true, true),
-        EventVariant::Receipt => (1, 2, 14, 17, 18, 21, false, false, false, true),
-        EventVariant::SelfReview => (1, 1, 14, 17, 18, 21, false, false, true, true),
-        EventVariant::StaleRevision => (1, 2, 19, 17, 18, 21, false, false, true, true),
-        EventVariant::UnacceptedReview => (1, 2, 14, 17, 18, 21, false, false, true, false),
-        EventVariant::UnacceptedReassignment => (1, 2, 14, 17, 18, 21, true, false, true, true),
-        EventVariant::AcceptedReassignment => (1, 2, 14, 17, 18, 21, true, true, true, true),
-        EventVariant::WrongSourceEvent => (1, 2, 14, 17, 18, 99, false, false, true, true),
-        EventVariant::WrongSourceAuthority => (1, 2, 14, 99, 18, 21, false, false, true, true),
+        EventVariant::Qualified => (
+            1,
+            2,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            17,
+            18,
+            21,
+            false,
+            false,
+            true,
+            true,
+        ),
+        EventVariant::Receipt => (
+            1,
+            2,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            17,
+            18,
+            21,
+            false,
+            false,
+            false,
+            true,
+        ),
+        EventVariant::SelfReview => (
+            1,
+            1,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            17,
+            18,
+            21,
+            false,
+            false,
+            true,
+            true,
+        ),
+        EventVariant::StaleSourceContent => (
+            1,
+            2,
+            OTHER_SOURCE_CONTENT_DIGEST,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            17,
+            18,
+            21,
+            false,
+            false,
+            true,
+            true,
+        ),
+        EventVariant::WrongActiveSourceContent => (
+            1,
+            2,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            OTHER_SOURCE_CONTENT_DIGEST,
+            17,
+            18,
+            21,
+            false,
+            false,
+            true,
+            true,
+        ),
+        EventVariant::UnacceptedReview => (
+            1,
+            2,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            17,
+            18,
+            21,
+            false,
+            false,
+            true,
+            false,
+        ),
+        EventVariant::UnacceptedReassignment => (
+            1,
+            2,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            17,
+            18,
+            21,
+            true,
+            false,
+            true,
+            true,
+        ),
+        EventVariant::AcceptedReassignment => (
+            1,
+            2,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            17,
+            18,
+            21,
+            true,
+            true,
+            true,
+            true,
+        ),
+        EventVariant::WrongSourceEvent => (
+            1,
+            2,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            17,
+            18,
+            99,
+            false,
+            false,
+            true,
+            true,
+        ),
+        EventVariant::WrongSourceAuthority => (
+            1,
+            2,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            ACTIVE_SOURCE_CONTENT_DIGEST,
+            99,
+            18,
+            21,
+            false,
+            false,
+            true,
+            true,
+        ),
     };
     json!({
         "position": {"sample": {
@@ -110,8 +238,8 @@ fn event(variant: EventVariant) -> Value {
             "repository_identity": {"integer": "12"},
             "case_identity": {"integer": "13"},
             "source_authority_identity": {"integer": source_authority.to_string()},
-            "active_source_revision_identity": {"integer": "14"},
-            "reviewed_source_revision_identity": {"integer": reviewed_revision.to_string()},
+            "active_source_content_digest": {"kind": "string", "text": active_digest},
+            "reviewed_source_content_digest": {"kind": "string", "text": reviewed_digest},
             "attempt_identity": {"integer": "15"},
             "event_identity": {"integer": event_identity.to_string()},
             "github_event_identity": {"integer": github_event.to_string()},
@@ -134,7 +262,8 @@ enum EventVariant {
     Qualified,
     Receipt,
     SelfReview,
-    StaleRevision,
+    StaleSourceContent,
+    WrongActiveSourceContent,
     UnacceptedReview,
     UnacceptedReassignment,
     AcceptedReassignment,
@@ -311,8 +440,8 @@ fn an_embedded_review_trace_keeps_source_identity_and_repeats_deterministically(
         "repository_identity",
         "case_identity",
         "source_authority_identity",
-        "active_source_revision_identity",
-        "reviewed_source_revision_identity",
+        "active_source_content_digest",
+        "reviewed_source_content_digest",
         "attempt_identity",
         "event_identity",
         "github_event_identity",
@@ -361,9 +490,14 @@ fn receipt_late_self_review_stale_revision_and_unaccepted_reassignment_do_not_qu
             "self-review is not independent",
         ),
         (
-            EventVariant::StaleRevision,
+            EventVariant::StaleSourceContent,
             3,
-            "stale source revision does not qualify",
+            "stale source content does not qualify",
+        ),
+        (
+            EventVariant::WrongActiveSourceContent,
+            3,
+            "unbound active source content does not qualify",
         ),
         (
             EventVariant::UnacceptedReassignment,
