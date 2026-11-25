@@ -4340,6 +4340,7 @@ fn cardinality_bound(
 /// The bounded map the `collection_bounds` node `bounds` declares: the key and
 /// value types of the map node under it, inside the node's own bounds. Bounds
 /// over anything else are unsupported.
+#[implements("FR-740-AC-6")]
 fn bounded_map_type(
     index: &TypeReader<'_>,
     bounds: &CheckedSemanticNodeV2,
