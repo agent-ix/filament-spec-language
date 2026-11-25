@@ -2107,7 +2107,6 @@ fn assert_work_units_stop(record: &fsl_analyze::analyze::AnalyzeRecord, work_uni
 /// under what its build left of `accounting.work_units`, not under a second
 /// allowance.
 #[trace("TC-638", "FR-203-AC-13")]
-#[trace("TC-3187", "FR-201-AC-65")]
 #[test]
 fn the_cyclic_check_past_the_rational_budget_spends_the_items_work_allowance() {
     let world = World::new(&model(false, &claim("Likely", ">= rational(3,5)", UNTIL)));

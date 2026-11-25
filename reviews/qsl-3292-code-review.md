@@ -60,3 +60,20 @@ Resolution is spec text, not more code. FR-196 Outputs and Behavior need a `Part
 
 - Commit 8f9e537858 (FR-196-AC-13, FR-125, FSpec FR-361): `with_object_initials` with a first snapshot holding only `c` and a second holding both keys makes `ghost` an `over` instance by FR-125. The build still ends at initial 0, position 0, binding `ghost`. Every assertion (`steps.is_empty`, `position 0`, `initial 0`, probability `1/1`, the monitor, accumulator and pending shapes, `UndefinedRead::Atom`, the `GhostSteps` measure control) is unchanged. The `null`-filter in `prob_world.rs` only affects entries that are explicitly `null`, and only this test uses that. Nothing is weakened.
 - Commit f168d5ef4c (FR-203-AC-14): the denied target carries `state: None`; `intern` takes the key and `TargetState` separately, and the omitted-edge path is unchanged.
+
+## New findings (disposition pass 1)
+
+Reviewed at head `0cbb54d8ce417fd9068d3c507a235fd475681d78`. This head also carries QSL-3315 (one work allowance per item), commit 7ef5bb5957 (the lower-completion edge order) and main merges including #3897 and #3917.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | medium | The FR-196 amendment adds a SHALL: a `Partial` build that settles nothing settles `Incomplete(LimitReached)` naming `exact_prob.max_states`. Three production paths still settle `Unsupported(not-yet-implemented)` on `ProbBuild::Partial`. Round 1's PR body listed this as remaining; it is now unlisted and has no ticket. | fsl-analyze/src/analyze/exact.rs:684-686; fsl-analyze/src/analyze/exact.rs:1119-1121; fsl-analyze/src/analyze/exact/elapsed.rs:385-387; spec/functional/FR-196-build-the-probabilistic-product.md:974-977 |
+| FND-005 | low | `the_cyclic_check_past_the_rational_budget_spends_the_items_work_allowance` carries `FR-201-AC-65`, but it asserts a `WorkUnits` stop, not AC-65's `Incomplete(LimitReached{MaxRationalBits, 1, …})`. | fsl-analyze/tests/it/cyclic_state_certificate.rs:2108-2120 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | 6451a8c028: the `ProductEdge` and `HyperProductEdge` variants are gone, and `BackwardEdge` is located at the edge's source. The `ProductState` and `HyperProductState` loci are now written in the FR-331 forms, with `{key}` State objects. FR-282-AC-6 and TC-764 step 5 now say "the source product state". The new test `a_backward_edge_rejection_is_written_in_the_fspec_locus_form` validates both written causes against FSpec's `CertificateRejected` and locus schemas, and it fails on a `{source,target}` cause. |
+| FND-002 | fixed | 1d6f3dc94d: `build_product` returns what the production builder returns, `Partial` included. FR-196 Outputs gains `Partial` and a "The partial product" section, and Behavior splits the initial-key stop from the denial of a successor key. The stop tests now assert the prefix and `assert_completion`. |
+| FND-003 | fixed | The test asserts `at == source`, so its name `…reports_the_source_of_a_backward_edge` is accurate again. It now carries `FR-282-AC-6`. |

@@ -35,3 +35,10 @@ Ticket: QSL-3292. A planless gap analysis of PR #3907 at `f168d5ef4c9442fcaca04f
 - Stubs: none found in the diff.
 - Semantic review: not run as a separate opt-in pass. The intent judgements are in the code-review SR.
 - Tests: not run. The memory gate refused the cargo run (24 GB < 30 GB).
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | QSL-3331. Production does not meet FR-1042-AC-18: document construction enumerates the whole stopped graph under `max_states`. The fix is soundness-sensitive independent-checker work that this red-main PR should not take on, and the ticket names the cause, the fix and a draft test. The tag is correctly withheld until a test passes. |
+| FND-002 | fixed | 1d6f3dc94d: the FR-196 and FR-203-AC-14 stop tests run `build_product`, which now returns the production builder's result (`Partial`), and they assert the prefix and its completion. `a_partial_chain_that_settles_nothing_stops_at_max_states` (fsl-probability-check) covers the production settlement. |

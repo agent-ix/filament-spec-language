@@ -508,6 +508,21 @@ fn max_states_limit(
     )
 }
 
+/// The complete product of a timed route's build. Only the untimed builder
+/// returns `Partial`, so no request reaches that arm; it settles as FR-196
+/// states for a `Partial` that settles nothing, whatever a builder returns.
+fn timed_product(
+    built: ProbBuild,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    subject: SubjectLimits<'_>,
+) -> Result<ProbProduct, Box<EngineReport>> {
+    match built {
+        ProbBuild::Built(product) => Ok(product),
+        ProbBuild::Partial { .. } => Err(Box::new(max_states_limit(limits, subject))),
+        ProbBuild::Undefined(_) => Err(Box::new(not_yet())),
+    }
+}
+
 /// A finite-horizon solve that held its probabilities only as outward-rounded
 /// intervals for a form whose interval is not certified: the certificate carries
 /// exact rationals, so the run stopped at the caller's `max_rational_bits`.
@@ -681,8 +696,9 @@ fn run_timed(
         Err(refusal) => return build_refusal(refusal, subject),
     };
     let (built, _) = built;
-    let ProbBuild::Built(product) = built else {
-        return not_yet();
+    let product = match timed_product(built, &limits, subject) {
+        Ok(product) => product,
+        Err(report) => return *report,
     };
     let [(_, _, start)] = product.initial.as_slice() else {
         return not_yet();
@@ -1116,8 +1132,9 @@ fn run_timed_mean(
             return build_refusal(refusal, subject);
         }
     };
-    let ProbBuild::Built(product) = built else {
-        return not_yet();
+    let product = match timed_product(built, &limits, subject) {
+        Ok(product) => product,
+        Err(report) => return *report,
     };
     let [(_, _, start)] = product.initial.as_slice() else {
         return not_yet();
