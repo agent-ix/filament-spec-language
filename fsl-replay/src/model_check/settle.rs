@@ -318,6 +318,8 @@ pub struct SmtProofSettlement {
     value: TerminalValue,
     /// The qualified-core checker that accepted the certificate, if any.
     checker: Option<CertificateChecker>,
+    /// The domain-separated digests of the canonical queries FR-314 checked.
+    query_digests: Option<Vec<[u8; 32]>>,
 }
 
 impl SmtProofSettlement {
@@ -332,6 +334,24 @@ impl SmtProofSettlement {
     pub const fn checker(&self) -> Option<CertificateChecker> {
         self.checker
     }
+
+    /// The query digests accepted by FR-314, in certificate order.
+    #[must_use]
+    pub fn query_digests(&self) -> Option<&[[u8; 32]]> {
+        self.query_digests.as_deref()
+    }
+}
+
+/// SHA-256 digest for a canonical FR-315 query, domain-separated from other
+/// uses of the digest type.
+#[must_use]
+pub fn smt_query_digest(query: &[u8]) -> [u8; 32] {
+    use sha2::Digest;
+
+    let mut digest = sha2::Sha256::new();
+    digest.update(b"FSL-FR315-SMT-QUERY\0");
+    digest.update(query);
+    digest.finalize().into()
 }
 
 /// Settle an SMT proof and retain the FR-621 checker evidence for its writer.
@@ -350,6 +370,7 @@ pub fn settle_smt_proof_with_evidence(
         return SmtProofSettlement {
             value: Row::of_smt_check(Err(rejection), basis).value,
             checker: None,
+            query_digests: None,
         };
     }
     let Some(certificate) = &outcome.certificate else {
@@ -359,14 +380,25 @@ pub fn settle_smt_proof_with_evidence(
                 certification: Certification::Uncertified,
             },
             checker: None,
+            query_digests: None,
         };
     };
     let check = check_smt_proof(request, &outcome.basis, certificate, limits, cancel);
     let checker =
         matches!(&check, Ok(SmtProofCheck::Verified)).then_some(CertificateChecker::SmtProof);
+    let query_digests = checker.map(|_| match certificate {
+        crate::SmtProofCertificate::BoundedComplete { unrolling, .. } => {
+            vec![crate::smt_query_digest(&unrolling.query)]
+        }
+        crate::SmtProofCertificate::Inductive { base, step, .. } => vec![
+            crate::smt_query_digest(&base.query),
+            crate::smt_query_digest(&step.query),
+        ],
+    });
     SmtProofSettlement {
         value: Row::of_smt_check(check, basis).value,
         checker,
+        query_digests,
     }
 }
 

@@ -2,17 +2,17 @@
 
 use std::{ffi::OsString, num::NonZeroUsize, path::Path, time::Duration};
 
-use filament_contract_codegen::smt::temporal::{
-    run_and_settle_temporal_smt_proof, TemporalSmtProofResult,
-};
 use filament_contract_codegen::smt::ProcessLimits;
+use filament_contract_codegen::smt::temporal::{
+    TemporalSmtProofResult, run_and_settle_temporal_smt_proof,
+};
 use filament_exact::Cancel;
 use fsl_analyze::analyze::document::{
-    settle_run_with_smt_proofs, AnalyzeRun, ResolvedClaim, ResolvedItem, SmtProofEvidence,
-    SubjectSelection,
+    AnalyzeRun, ResolvedClaim, ResolvedItem, SubjectSelection, settle_run_with_smt_proofs,
 };
 use fsl_analyze::analyze::{
-    AnalyzeLimits, ClaimItem, Engines, ItemOptions, SourceProvision, SubjectBinding,
+    AnalyzeLimits, ClaimItem, Engines, ItemForm, ItemOptions, SourceProvision, SubjectBinding,
+    TemporalItem,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
@@ -86,7 +86,10 @@ fn counter_smt_proof_settlement_emits_the_fr621_checker_member() {
     let world = world(CONTRACT, &[("c", 0)]);
     let package = crate::counter::bounded_package_with_clauses(
         &world.documents.document,
-        &[("Bounded", "", "always[0,3] holds(c.value <= 3)")],
+        &[
+            ("Bounded", "", "always[0,3] holds(c.value <= 3)"),
+            ("BoundedOther", "", "always[0,3] holds(c.value <= 2)"),
+        ],
     );
     let clause_node = &package.graph().temporal_clauses()[0];
     let claim = OccurrenceKey::new(clause_node.identity(), clause_node.claim().clone());
@@ -94,7 +97,9 @@ fn counter_smt_proof_settlement_emits_the_fr621_checker_member() {
     let letters = crate::counter::Letters {
         atom: |value| Some(value <= 3),
     };
-    let request = world.request_in(
+    let temporal_clock_selections = fsl_replay::RequestClocks::model_selections(&package)
+        .expect("the model temporal declarations have valid clock selections");
+    let mut request = world.request_in(
         &package,
         ModelCheckItem::Clause {
             clause,
@@ -102,6 +107,7 @@ fn counter_smt_proof_settlement_emits_the_fr621_checker_member() {
         },
         UNLIMITED,
     );
+    request.temporal_clock_selections = &temporal_clock_selections;
     let expected_query = fsl_replay::encode_smt_query(
         &request.subject,
         request.item,
@@ -138,16 +144,7 @@ fn counter_smt_proof_settlement_emits_the_fr621_checker_member() {
     };
     assert_eq!(cg_settlement.queries[0].query_bytes(), expected_query);
     assert!(cg_settlement.queries[0].proof_bytes().is_some());
-    let settlement = fsl_analyze::model_check::smt::settle_temporal_smt_proof(
-        &request,
-        &cg_settlement.outcome,
-        &CertificateCheckLimits::default(),
-        &cancel,
-    );
     let backend = BackendId::new("en-1");
-    let evidence = SmtProofEvidence::new(backend.clone(), settlement)
-        .expect("the production API admits only FR-314-verified SMT evidence");
-    let evidence = [(RequestIndex::new(0), evidence)].into();
 
     let engines = Engines::fsl().expect("the manifests register");
     let mut registry = fsl_route::Registry::new();
@@ -166,41 +163,103 @@ fn counter_smt_proof_settlement_emits_the_fr621_checker_member() {
     };
     let subject = SubjectSelection::default_over(&world.documents.snapshots);
     let source = crate::counter::unit_text("")
-        + &crate::counter::clause_text("Bounded", "", "always[0,3] holds(c.value <= 3)");
-    let run = AnalyzeRun {
-        package: &package,
-        binding: SubjectBinding {
-            packages: &world.documents.packages,
-            snapshots: &world.documents.snapshots,
-            initial: world.initial.clone(),
-            universes: request.subject.simulation.universes.clone(),
+        + &crate::counter::clause_text("Bounded", "", "always[0,3] holds(c.value <= 3)")
+        + &crate::counter::clause_text("BoundedOther", "", "always[0,3] holds(c.value <= 2)");
+    let claim_item = ClaimItem {
+        request_index: RequestIndex::new(0),
+        claim: claim.clone(),
+        kind: Capability::TemporalSatisfaction,
+        extent: ExtentClassification::Bounded,
+        backend: Some(backend.clone()),
+        candidates: set.candidates().to_vec(),
+        options: ItemOptions {
+            required: true,
+            ..ItemOptions::default()
         },
+        form: Some(ItemForm::Temporal(TemporalItem::default())),
+    };
+    let bound_request = fsl_analyze::model_check::smt::BoundSmtProofRequest::new(
+        &claim_item,
+        backend.clone(),
+        request,
+    )
+    .expect("the proof request is bound to the exact temporal claim");
+    let evidence = fsl_analyze::model_check::smt::settle_temporal_smt_proof(
+        &bound_request,
+        &cg_settlement.outcome,
+        &CertificateCheckLimits::default(),
+        &cancel,
+    );
+    let evidence: std::collections::BTreeMap<_, _> = [(RequestIndex::new(0), evidence)].into();
+    let second_node = &package.graph().temporal_clauses()[1];
+    let second_item = ClaimItem {
+        request_index: RequestIndex::new(1),
+        claim: OccurrenceKey::new(second_node.identity(), second_node.claim().clone()),
+        kind: Capability::TemporalSatisfaction,
+        extent: ExtentClassification::Bounded,
+        backend: Some(backend.clone()),
+        candidates: set.candidates().to_vec(),
+        options: ItemOptions {
+            required: true,
+            ..ItemOptions::default()
+        },
+        form: Some(ItemForm::Temporal(TemporalItem::default())),
+    };
+    let binding = SubjectBinding {
+        packages: &world.documents.packages,
+        snapshots: &world.documents.snapshots,
+        initial: world.initial.clone(),
+        universes: bound_request
+            .certificate_request()
+            .subject
+            .simulation
+            .universes
+            .clone(),
+    };
+    let make_run = || AnalyzeRun {
+        package: &package,
+        binding: binding.clone(),
         provision: SourceProvision::single(package.graph().source(), source.as_bytes()),
-        items: vec![ResolvedItem::Claim(Box::new(ResolvedClaim {
-            item: ClaimItem {
-                request_index: RequestIndex::new(0),
-                claim,
-                kind: Capability::TemporalSatisfaction,
-                extent: ExtentClassification::Bounded,
-                backend: Some(backend.clone()),
-                candidates: set.candidates().to_vec(),
-                options: ItemOptions {
-                    required: true,
-                    ..ItemOptions::default()
-                },
-                form: None,
-            },
-            claim_name: "Bounded".to_owned(),
-            candidates: candidates.clone(),
-            subject,
-            unrouted: false,
-        }))],
+        items: vec![
+            ResolvedItem::Claim(Box::new(ResolvedClaim {
+                item: claim_item.clone(),
+                claim_name: "Bounded".to_owned(),
+                candidates: candidates.clone(),
+                subject: subject.clone(),
+                unrouted: false,
+            })),
+            ResolvedItem::Claim(Box::new(ResolvedClaim {
+                item: second_item.clone(),
+                claim_name: "BoundedOther".to_owned(),
+                candidates: candidates.clone(),
+                subject: subject.clone(),
+                unrouted: false,
+            })),
+        ],
         engines: &engines,
         limits: AnalyzeLimits::unbounded(),
     };
-    let settled =
-        settle_run_with_smt_proofs(run, &crate::analyze_cli_support::Fr290, &cancel, &evidence)
-            .expect("the full FR-621 writer settles the SMT evidence");
+    let mismapped = [(
+        RequestIndex::new(1),
+        evidence[&RequestIndex::new(0)].clone(),
+    )]
+    .into();
+    assert!(matches!(
+        settle_run_with_smt_proofs(
+            make_run(),
+            &crate::analyze_cli_support::Fr290,
+            &cancel,
+            &mismapped,
+        ),
+        Err(fsl_analyze::analyze::document::AnalyzeDocumentError::Fault)
+    ));
+    let settled = settle_run_with_smt_proofs(
+        make_run(),
+        &crate::analyze_cli_support::Fr290,
+        &cancel,
+        &evidence,
+    )
+    .expect("the full FR-621 writer settles the SMT evidence");
     let serialized = settled.to_bytes().expect("the FR-621 document serializes");
     let document: serde_json::Value =
         serde_json::from_slice(&serialized).expect("the serialized document parses");

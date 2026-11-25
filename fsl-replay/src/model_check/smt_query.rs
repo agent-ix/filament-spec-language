@@ -35,14 +35,25 @@ pub fn encode_smt_query(
             return Err(Refusal::ItemForm {
                 form: "an invariant item",
             }
-            .into())
+            .into());
         }
         ModelCheckItem::LoopInvariant { .. } | ModelCheckItem::LoopTermination { .. } => {
             return Err(Refusal::ItemForm {
                 form: "a protocol loop-proof item",
             }
-            .into())
+            .into());
         }
     };
     fsl_eval::smt::encode_smt_query(subject, item, kind, limits)
+}
+
+/// Encode a temporal clause's proof query without requiring model-check
+/// letters, which do not affect the FR-315 query.
+pub fn encode_temporal_smt_query(
+    subject: &ModelSubject<'_>,
+    clause: &fsl_semantics::check::CheckedTemporalClause,
+    kind: SmtQueryKind,
+    limits: &SmtEncodingLimits,
+) -> Result<Vec<u8>, SmtEncodingRefusal> {
+    fsl_eval::smt::encode_smt_query(subject, SmtItem::Clause(clause), kind, limits)
 }

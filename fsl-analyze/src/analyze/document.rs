@@ -36,6 +36,7 @@ use super::{
     SourceProvision, SubjectBinding, TemporalItem,
 };
 use fsl_eval::simulation::model::PopulationUniverse;
+pub use crate::model_check::smt::SmtProofEvidence;
 
 pub mod effect_decision;
 
@@ -3857,8 +3858,7 @@ pub fn analyze_document(
 /// value and checker identity replace the ordinary engine result before the
 /// existing FR-621 writer projects the item. Callers obtain evidence by
 /// passing CG's [`fsl_replay::SmtProofOutcome`] through
-/// [`crate::model_check::smt::settle_temporal_smt_proof`] and qualifying it
-/// with [`SmtProofEvidence::new`].
+/// [`crate::model_check::smt::settle_temporal_smt_proof`].
 ///
 /// # Errors
 ///
@@ -3872,35 +3872,6 @@ pub fn analyze_document_with_smt_proofs(
 ) -> Result<(Value, u8), AnalyzeDocumentError> {
     settle_run_with_smt_proofs(run, negotiate, cancel, evidence)
         .map(|settled| (settled.document, settled.exit_code))
-}
-
-/// A verified SMT settlement and the backend that produced its solver result.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SmtProofEvidence {
-    backend: BackendId,
-    settlement: fsl_replay::SmtProofSettlement,
-}
-
-impl SmtProofEvidence {
-    /// Qualify a settlement for the FR-621 writer.
-    ///
-    /// Returns `None` unless FR-314 accepted the certificate and the
-    /// settlement carries the SMT proof checker identity.
-    #[must_use]
-    pub fn new(backend: BackendId, settlement: fsl_replay::SmtProofSettlement) -> Option<Self> {
-        (settlement.checker() == Some(fsl_replay::CertificateChecker::SmtProof)
-            && matches!(
-                settlement.value(),
-                TerminalValue::Proved {
-                    certification: fsl_replay::Certification::Certified,
-                    ..
-                }
-            ))
-        .then_some(Self {
-            backend,
-            settlement,
-        })
-    }
 }
 
 /// One FR-635 `registry` entry: a registered backend and its FSpec FR-331
@@ -4029,6 +4000,18 @@ pub fn settle_run_with_smt_proofs(
     })?
     .into_value();
     for (index, evidence) in evidence {
+        if evidence.request_index() != *index
+            || evidence.settlement().checker() != Some(fsl_replay::CertificateChecker::SmtProof)
+            || !matches!(
+                evidence.settlement().value(),
+                TerminalValue::Proved {
+                    certification: fsl_replay::Certification::Certified,
+                    ..
+                }
+            )
+        {
+            return Err(AnalyzeDocumentError::Fault);
+        }
         let mut matching_items = negotiated.iter().filter(|item| {
             item.item.request_index == *index && item.item.kind == Capability::TemporalSatisfaction
         });
@@ -4039,9 +4022,51 @@ pub fn settle_run_with_smt_proofs(
         if duplicate_item
             || settled.contains_key(index)
             || unrouted_items.contains(index)
+            || matching_item.item.claim != *evidence.claim()
             || matching_item.disposition.target().map(|target| target.id())
-                != Some(&evidence.backend)
+                != Some(evidence.backend())
         {
+            return Err(AnalyzeDocumentError::Fault);
+        }
+        let ItemForm::Temporal(temporal) = matching_item.item.form.as_ref().ok_or(AnalyzeDocumentError::Fault)? else {
+            return Err(AnalyzeDocumentError::Fault);
+        };
+        let clock_selections = super::clause_item::clock_selections(package, &provision);
+        let encoding = temporal.smt_encoding.clone().unwrap_or_default();
+        if evidence.item_kind() != temporal.item_kind
+            || evidence.temporal_clock_selections() != clock_selections
+            || evidence.smt_encoding() != &encoding
+        {
+            return Err(AnalyzeDocumentError::Fault);
+        }
+        let subject = fsl_eval::model_subject::ModelSubject {
+            simulation: super::request::simulation(&source_input, &binding, &limits),
+            proof_bounds: temporal.proof_bounds.clone(),
+        };
+        if fsl_replay::SubjectIdentity::of(&subject) != *evidence.subject() {
+            return Err(AnalyzeDocumentError::Fault);
+        }
+        let clause_node = package.graph().temporal_clauses().iter().find(|node| {
+            node.identity() == *matching_item.item.claim.node()
+                && node.claim() == matching_item.item.claim.origin()
+        }).ok_or(AnalyzeDocumentError::Fault)?;
+        let expected_digests = match evidence.settlement().value() {
+            TerminalValue::Proved { basis: fsl_replay::ProofBasis::BoundedComplete { depth }, .. } => {
+                vec![fsl_replay::smt_query_digest(&fsl_replay::encode_temporal_smt_query(
+                    &subject, clause_node.clause(), fsl_replay::SmtQueryKind::Unrolling { depth: *depth }, &encoding,
+                ).map_err(|_| AnalyzeDocumentError::Fault)?)]
+            }
+            TerminalValue::Proved { basis: fsl_replay::ProofBasis::Inductive { depth }, .. } => vec![
+                fsl_replay::smt_query_digest(&fsl_replay::encode_temporal_smt_query(
+                    &subject, clause_node.clause(), fsl_replay::SmtQueryKind::InductionBase { depth: *depth }, &encoding,
+                ).map_err(|_| AnalyzeDocumentError::Fault)?),
+                fsl_replay::smt_query_digest(&fsl_replay::encode_temporal_smt_query(
+                    &subject, clause_node.clause(), fsl_replay::SmtQueryKind::InductionStep { depth: *depth }, &encoding,
+                ).map_err(|_| AnalyzeDocumentError::Fault)?),
+            ],
+            _ => return Err(AnalyzeDocumentError::Fault),
+        };
+        if evidence.settlement().query_digests() != Some(expected_digests.as_slice()) {
             return Err(AnalyzeDocumentError::Fault);
         }
         let mut matching_records = outcome
@@ -4056,8 +4081,8 @@ pub fn settle_run_with_smt_proofs(
         }
         *record = fsl_replay::TerminalRecord::proved_by_smt_proof(
             *index,
-            evidence.backend.clone(),
-            &evidence.settlement,
+            evidence.backend().clone(),
+            evidence.settlement(),
         )
         .ok_or(AnalyzeDocumentError::Fault)?;
         let mut matching_details = outcome
