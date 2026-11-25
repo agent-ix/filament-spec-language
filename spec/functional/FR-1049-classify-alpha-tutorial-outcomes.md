@@ -11,6 +11,8 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-620
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-865
+    type: references
 ---
 # FR-1049: Classify alpha tutorial outcomes
 
@@ -19,6 +21,10 @@ relationships:
 When an FSL command runs an input identified by an alpha tutorial, FSL SHALL
 emit the outcome category, exit status, diagnostics, evidence and
 terminal stage specified by the applicable acceptance criterion.
+
+These criteria specify category, exit status, terminal stage, cause/code
+location and structured outcome shape; they do not specify native message
+text. FR-286 owns the outcome document and FR-865 owns its text rendering.
 
 ## Inputs
 
@@ -83,18 +89,24 @@ terminal stage specified by the applicable acceptance criterion.
 | FR-1049-AC-36 | Given `examples/plant/requests/analyze/close-guarded.json`, **variation:** change the selected claim to `NoSuchClaim`. `fsl analyze` exits 20 with category `refusal`, `last_stage: S4`, `diagnostics: []`, and one item whose `record` is `{diagnostic: {code: invalid_capability, cause: unknown-claim, detail: {name: NoSuchClaim}}, settled_by: disposition}`; the item has keys `category`, `claim_name`, `record`, `request`, and `request_index`. | Test |
 | FR-1049-AC-37 | Given `examples/plant/requests/analyze/close-guarded.json`, **variation:** change its document file entry to a nonexistent file. `fsl analyze` exits 20 with category `refusal`, `last_stage: null`, one `diagnostics[]` entry with `code: io-error` and no cause, and `items: []`. | Test |
 | FR-1049-AC-38 | Given `examples/plant/requests/analyze/close-guarded.json`, **variation:** remove its `documents` member, leaving the initial state absent. `fsl analyze` exits 21 with category `unsupported`, `last_stage: S6b`, `diagnostics: []`, and one item whose `record` is `{result: unsupported, settled_by: disposition, diagnostic: {code: unsupported_projection, cause: unbounded-extent, detail: {candidate: en-1, kind: temporal-satisfaction, modes: [bounded, unbounded]}}}`. | Test |
-| FR-1049-AC-39 | Given `examples/plant/requests/analyze/close-guarded.json`, `fsl analyze` exits 0 with category `success`, `last_stage: S6c`, `diagnostics: []`, and a proved `NeverDeadheads` item with certificate and record evidence; the item has keys `axes`, `category`, `certificate`, `claim_name`, `exploration`, `record`, `request`, and `request_index`. | Test |
-| FR-1049-AC-40 | Given `examples/plant/requests/analyze/close-unguarded.json`, `fsl analyze` exits 10 with category `violation`, `last_stage: S8`, `diagnostics: []`, and a refuted `NeverDeadheads` item with counterexample, replay and record evidence; the item has keys `axes`, `category`, `claim_name`, `counterexample`, `exploration`, `record`, `replay`, `request`, and `request_index`. | Test |
+| FR-1049-AC-39 | Given `examples/plant/requests/analyze/close-guarded.json`, `fsl analyze` exits 0 with category `success`, `last_stage: S6c`, `diagnostics: []`, and exactly one proved `NeverDeadheads` item with certificate and record evidence; the item has keys `axes`, `category`, `certificate`, `claim_name`, `exploration`, `record`, `request`, and `request_index`. | Test |
+| FR-1049-AC-40 | Given `examples/plant/requests/analyze/close-unguarded.json`, `fsl analyze` exits 10 with category `violation`, `last_stage: S8`, `diagnostics: []`, and exactly one refuted `NeverDeadheads` item with counterexample, replay and record evidence; the item has keys `axes`, `category`, `claim_name`, `counterexample`, `exploration`, `record`, `replay`, `request`, and `request_index`. | Test |
 | FR-1049-AC-41 | Given `examples/rover/requests/analyze/timed-zone-deadline-refuted.json`, **variation:** change the selected claim to `NoSuchClaim`. `fsl analyze` exits 20 with category `refusal`, `last_stage: S4`, `diagnostics: []`, and one item whose `record` is `{diagnostic: {code: invalid_capability, cause: unknown-claim, detail: {name: NoSuchClaim}}, settled_by: disposition}`. | Test |
-| FR-1049-AC-42 | Given `examples/rover/requests/analyze/timed-zone-deadline-refuted.json`, `fsl analyze` exits 10 with category `violation`, `last_stage: S8`, `diagnostics: []`, and a refuted `StopsWithin150ms` item with counterexample, replay and record evidence; the item has keys `axes`, `category`, `claim_name`, `counterexample`, `record`, `replay`, `request`, and `request_index`. | Test |
+| FR-1049-AC-42 | Given `examples/rover/requests/analyze/timed-zone-deadline-refuted.json`, `fsl analyze` exits 10 with category `violation`, `last_stage: S8`, `diagnostics: []`, and exactly one refuted `StopsWithin150ms` item with counterexample, replay and record evidence; the item has keys `axes`, `category`, `claim_name`, `counterexample`, `record`, `replay`, `request`, and `request_index`. | Test |
+| FR-1049-AC-43 | Given `examples/plant/requests/analyze/close-guarded.json`, **variation:** remove the `items` member from the analyze request. FR-620 selects the ten derived items for analysis. `fsl analyze` exits 21 with category `unsupported`, `last_stage: S6c`, and `diagnostics: []`; the document has exactly ten items. Exactly eight items have `category: unsupported` and `record: {result: unsupported, settled_by: disposition, diagnostic: {code: unsupported_projection, cause: unbounded-extent, detail: {candidate: contract-checker, kind: operation-contract, modes: [bounded]}}}`. The other two items have `category: success` and `record: {backend: en-1, basis: {type: exhaustive}, cause: null, certification: certified, result: proved, settled_by: result}`. | Test |
 
 ## References
 
 - [FR-286](./FR-286-serialize-every-outcome-as-one-json-outcome-document.md) defines the `filament-outcome/1` document structure.
 - [FR-106](./FR-106-admit-snapshots-and-invocations.md) AC-67 already owns the unknown-population incomplete outcome, which is not duplicated in this requirement.
 - [FR-620](./FR-620-read-a-native-analyze-1-request-and-analyze-its-items.md) owns default/derived analyze-item selection when the request omits `items`, including the ten derived items in the no-items variation.
+- [FR-865](./FR-865-render-every-outcome-document-as-text-the-cli-default.md) owns text rendering of the structured outcome.
+
+The alpha tutorial CLI inputs do not expose a cancellation or fault trigger.
+No cancellation or fault row is specified here. Library API cancellation is
+owned by FR-286-AC-6; fault behavior has no tutorial input in this scope.
 
 ## Dependencies
 
-- The alpha probability tutorial and the named architecture, engine, rover, plant and shop example sources, requests, and initial data define the inputs and intended outputs in AC-1 through AC-42.
+- The alpha probability tutorial and the named architecture, engine, rover, plant and shop example sources, requests, and initial data define the inputs and intended outputs in AC-1 through AC-43.
 - [FR-286](./FR-286-serialize-every-outcome-as-one-json-outcome-document.md) defines the outcome document fields used by these criteria.
