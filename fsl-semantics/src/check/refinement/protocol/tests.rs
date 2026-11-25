@@ -27,7 +27,8 @@ use crate::model::accounting::ModelNormalizationLimits;
 use crate::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, Extent, FieldMemberRecord, Multiplicity,
     NativeValueType, ObjectTypeRecord, OperationEffect, OperationMemberRecord,
-    OperationParameterRecord, PopulationRecord, ValueTypeRef,
+    OperationParameterRecord, PopulationRecord, RecordValueTypeRecord, ScalarTypeRecord,
+    ScalarValueDomain, ValueTypeRef,
 };
 use crate::model::intake::SelectedModel;
 use crate::model::normalize::{NormalizeOutcome, normalize};
@@ -200,6 +201,16 @@ fn check_with_internals(
     text: &str,
     internals: Option<serde_json::Value>,
 ) -> Result<CheckedGraph, Vec<Refused>> {
+    check_over(text, vec![concrete_model(), abstract_model()], internals)
+}
+
+/// Checks the unit `text` over `models`, with its `refinement_internals`
+/// value, if any.
+fn check_over(
+    text: &str,
+    models: Vec<SelectedModel>,
+    internals: Option<serde_json::Value>,
+) -> Result<CheckedGraph, Vec<Refused>> {
     let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
         "unit.native",
@@ -213,7 +224,7 @@ fn check_with_internals(
         parsed.source().reference().clone(),
         "fixture".to_owned(),
         unit,
-        vec![concrete_model(), abstract_model()],
+        models,
         Vec::new(),
     )
     .unwrap_or_else(|refusal| panic!("{text}: the assembler refuses: {refusal:?}"))
@@ -987,6 +998,9 @@ const REFUND_ROWS: &str = "step M::Node::step -> A::Acc::add(self);\n\
     step M::Refunds::Committed -> stutter;\n\
     step M::Refunds::Closed -> stutter;\n\
     step cend M::Refunds::Refund -> stutter;\n\
+    step cfail M::Refunds::Refund -> stutter;\n\
+    step ctimeout M::Refunds::Refund -> stutter;\n\
+    step cexpire M::Refunds::Refund -> stutter;\n\
     step activate M::Refunds -> stutter;";
 
 /// `rows` without the row `row`.
@@ -995,17 +1009,24 @@ fn without(rows: &str, row: &str) -> String {
     rows.replace(row, "")
 }
 
-/// The `Refund` template's `cend`, the `effect` and `commit` nodes, the
-/// `finish` node and the trigger each need a row, and the template's
-/// `cattempt` is covered by the operation's row.
+/// The `Refund` template's `cend`, `cfail`, `ctimeout` and `cexpire`, the
+/// `effect` and `commit` nodes, the `finish` node and the trigger each need a
+/// row, and the template's `cattempt` is covered by the operation's row.
 #[trace("TC-659", "FR-214-AC-3")]
 #[test]
 fn a_template_a_trigger_and_event_nodes_need_their_own_rows() {
     let graph = checks(&unit(REFUNDS, REFUND_ROWS));
     let refinement = only_refinement(&graph);
     let classes: Vec<&StepClass> = refinement.steps().iter().map(|row| &row.class).collect();
-    assert!(classes.contains(&&StepClass::CompensationEnd("Refund".to_owned())));
-    assert!(classes.contains(&&StepClass::Trigger));
+    for class in [
+        StepClass::CompensationEnd("Refund".to_owned()),
+        StepClass::CompensationFail("Refund".to_owned()),
+        StepClass::CompensationTimeout("Refund".to_owned()),
+        StepClass::CompensationExpire("Refund".to_owned()),
+        StepClass::Trigger,
+    ] {
+        assert!(classes.contains(&&class), "{class:?} in {classes:?}");
+    }
     assert_eq!(
         classes
             .iter()
@@ -1025,6 +1046,21 @@ fn a_template_a_trigger_and_event_nodes_need_their_own_rows() {
             "step cend M::Refunds::Refund -> stutter;",
             RowClass::Template,
             "cend M::Refunds::Refund",
+        ),
+        (
+            "step cfail M::Refunds::Refund -> stutter;",
+            RowClass::Template,
+            "cfail M::Refunds::Refund",
+        ),
+        (
+            "step ctimeout M::Refunds::Refund -> stutter;",
+            RowClass::Template,
+            "ctimeout M::Refunds::Refund",
+        ),
+        (
+            "step cexpire M::Refunds::Refund -> stutter;",
+            RowClass::Template,
+            "cexpire M::Refunds::Refund",
         ),
         (
             "step activate M::Refunds -> stutter;",
@@ -1099,6 +1135,9 @@ fn a_row_naming_no_class_of_the_clause_refuses_at_its_name() {
         ("step fork M::Refunds::Tried -> stutter;", "Tried"),
         ("step M::Refunds::Nowhere -> stutter;", "Nowhere"),
         ("step cend M::Refunds::Tried -> stutter;", "Tried"),
+        ("step cfail M::Refunds::Tried -> stutter;", "Tried"),
+        ("step ctimeout M::Refunds::Tried -> stutter;", "Tried"),
+        ("step cexpire M::Refunds::Tried -> stutter;", "Tried"),
         ("step spawn M::Refunds::Service -> stutter;", "Service"),
         ("step duplicate M::Refunds::Wire -> stutter;", "Wire"),
     ] {
@@ -1119,22 +1158,314 @@ fn a_row_naming_no_class_of_the_clause_refuses_at_its_name() {
     assert_eq!(only(&found).at, "Fill");
 }
 
-/// A row whose step source is `cfail`, `ctimeout` or `cexpire` of a template the
-/// clause declares parses, and S3 builds no class for it yet, so it refuses
-/// `missing-name` at the template segment of the name.
-#[trace("TC-541", "FR-136-AC-2")]
-#[test]
-fn a_compensation_outcome_row_refuses_missing_name_at_its_template() {
-    for keyword in ["cfail", "ctimeout", "cexpire"] {
-        let rows = format!("{REFUND_ROWS}\nstep {keyword} M::Refunds::Refund -> stutter;");
-        let found = refused(&unit(REFUNDS, &rows));
-        let unresolved = only(&found);
+const PAY_MODEL: &str = "example/pay";
+const PAY_SPEC: &str = "example/pay-spec";
+
+fn single() -> Multiplicity {
+    Multiplicity {
+        lower: 1,
+        upper: Some(1),
+        ordered: false,
+        unique: true,
+    }
+}
+
+/// The model `package`, aliased `alias`: the object type `Acct` with the field
+/// `bal: Int[0, 1]`, the population `accounts` of it, the operations
+/// `operations`, each modifying its receiver's `bal`, and the record value
+/// types `records`, each with its fields.
+fn account_model(
+    alias: &str,
+    package: &str,
+    operations: &[&str],
+    records: &[(&str, &[(&str, &str)])],
+) -> SelectedModel {
+    let key = |name: &str| DeclarationKey {
+        package: package.to_owned(),
+        node: format!("ix://{package}/{name}"),
+    };
+    let field = |owner: &str, name: &str, value_type: ValueTypeRef| {
+        DomainPackageRecord::FieldMember(FieldMemberRecord {
+            key: key(&format!("{owner}/{name}")),
+            owner: key(owner),
+            value_type,
+            multiplicity: single(),
+            presence: filament_exact::Presence::Required,
+            subsets: Vec::new(),
+            redefines: None,
+            position: 0,
+        })
+    };
+    let mut declared = vec![
+        DomainPackageRecord::ScalarType(ScalarTypeRecord {
+            key: key("Bal"),
+            domain: ScalarValueDomain::Integer { lower: 0, upper: 1 },
+        }),
+        DomainPackageRecord::ObjectType(ObjectTypeRecord {
+            key: key("Acct"),
+            interface_features: None,
+            abstract_type: false,
+            supertypes: Vec::new(),
+        }),
+        field("Acct", "bal", ValueTypeRef::Package(key("Bal"))),
+        DomainPackageRecord::Population(PopulationRecord {
+            key: key("accounts"),
+            member_types: vec![key("Acct")],
+            extent: Extent::Closed,
+            symmetric: false,
+        }),
+    ];
+    for operation in operations {
+        declared.push(DomainPackageRecord::OperationMember(
+            OperationMemberRecord {
+                key: key(&format!("Acct/{operation}")),
+                owner: key("Acct"),
+                parameters: Vec::new(),
+                result: None,
+                effect: OperationEffect {
+                    receiver_modifies: vec![key("Acct/bal")],
+                    ..OperationEffect::default()
+                },
+                requires: Vec::new(),
+                ensures: Vec::new(),
+                has_body: false,
+                redefines: None,
+            },
+        ));
+    }
+    for (record, fields) in records {
+        declared.push(DomainPackageRecord::RecordValueType(
+            RecordValueTypeRecord {
+                key: key(record),
+                identity_fields: Vec::new(),
+                supertypes: Vec::new(),
+            },
+        ));
+        for (name, value_type) in *fields {
+            let value_type = match *value_type {
+                "Boolean" => ValueTypeRef::Native(NativeValueType::Boolean),
+                declared => ValueTypeRef::Package(key(declared)),
+            };
+            declared.push(field(record, name, value_type));
+        }
+    }
+    let domain = DomainPackage::new(
+        DomainPackageRef {
+            identity: package.to_owned(),
+        },
+        declared,
+    );
+    let NormalizeOutcome::Completed(view) = normalize(&domain, ModelNormalizationLimits::UNLIMITED)
+    else {
+        panic!("the account model normalizes");
+    };
+    SelectedModel {
+        alias: alias.to_owned(),
+        span: fsl_foundation::Span { start: 0, end: 0 },
+        view,
+        operation_clauses: Vec::new(),
+        type_invariants: Vec::new(),
+    }
+}
+
+/// FSpec TC-386 SR-16's two models: FSpec TC-380's `M` and the abstract
+/// `Spec`, whose `Acct` declares `ask()`.
+fn pay_models() -> Vec<SelectedModel> {
+    vec![
+        account_model(
+            "M",
+            PAY_MODEL,
+            &["charge", "refund"],
+            &[
+                ("Failure", &[("failed", "Boolean")]),
+                ("ChargeEffect", &[]),
+                ("RefundAttempt", &[]),
+                ("Recovery", &[("bal", "Bal")]),
+            ],
+        ),
+        account_model("Spec", PAY_SPEC, &["ask"], &[]),
+    ]
+}
+
+/// FSpec TC-386 SR-16's unit with the protocol step rows `rows`: TC-380's
+/// contracts and `Pay`, the abstract protocol `Req` (one attempt `Ask`, then
+/// a `finish`) and the refinement with its population, object and operation
+/// rows. `Pay` departs from TC-380's text where the grammar and the binder
+/// rules refuse it: the capture `triggered` is a reserved word (`fired` here),
+/// the template's clock needs a timed profile (`tt`, not the protocol's `p`)
+/// and the event cannot bind `f` again (`failure`).
+fn pay_unit(rows: &str) -> String {
+    format!(
+        r#"language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+profile t = "filament.temporal.infinite-trace/v1";
+profile tt = "filament.temporal.timed/v1";
+profile p = "filament.protocol.finite-global/v1";
+model M = "{PAY_MODEL}";
+model Spec = "{PAY_SPEC}";
+pre ChargePre using v on M::Acct::charge {{ self.bal = 0 }}
+post ChargePost using v on M::Acct::charge {{ self.bal = 1 }}
+pre RefundPre using v on M::Acct::refund {{ self.bal = 1 }}
+post RefundPost using v on M::Acct::refund {{ self.bal = 0 }}
+protocol Pay using p over (k: M::Acct) on origin {{
+  role w on M;
+  compensate Refund for Main::Paid as (fwd: M::ChargeEffect)
+      by w on M::Acct::refund using tt clock "c" {{
+    activate first (f: M::Failure) when {{ f.failed }} {{
+      capture fired: Boolean = f.failed;
+    }}
+    within [0, 10];
+    attempts 1 of M::RefundAttempt;
+    retry (e: M::RefundAttempt, l: M::RefundAttempt) {{ false }};
+    commit never;
+    recover (r: M::Recovery) {{ fired }};
+  }}
+  run sequence Main {{
+    attempt C by w on M::Acct::charge contracts [ChargePre, ChargePost] as (c: M::Acct) {{ true }};
+    effect Paid of Main::C as (pd: M::ChargeEffect) {{ true }};
+    event Fail by w as (failure: M::Failure) {{ true }};
+  }}
+  finish Done as (d: M::Acct) {{ true }};
+}}
+protocol Req using p over (k: Spec::Acct) on origin {{
+  role r on Spec::Acct;
+  run sequence S {{
+    attempt Ask by r on Spec::Acct::ask contracts [] as (asked: Boolean) {{ true }};
+  }}
+  finish F as (f: Boolean) {{ true }};
+}}
+refinement R using t abstract Spec::Req concrete M {{
+  population Spec::accounts from M::accounts;
+  object Spec::Acct from M::Acct {{ bal = self.bal; }}
+  step M::Acct::charge -> stutter;
+  step M::Acct::refund -> stutter;
+  {rows}
+}}
+"#
+    )
+}
+
+/// The step rows of the nine protocol classes of an `on origin` `Pay`.
+const PAY_ROWS: &str = "step M::Pay::C -> stutter;\n\
+    step M::Pay::Paid -> stutter;\n\
+    step M::Pay::Fail -> stutter;\n\
+    step M::Pay::Done -> stutter;\n\
+    step M::Pay::Refund -> stutter;\n\
+    step cend M::Pay::Refund -> stutter;\n\
+    step cfail M::Pay::Refund -> stutter;\n\
+    step ctimeout M::Pay::Refund -> stutter;\n\
+    step cexpire M::Pay::Refund -> stutter;";
+
+/// The checked graph has exactly one of each of `Refund`'s `cend`, `cfail`,
+/// `ctimeout` and `cexpire` classes.
+fn assert_one_class_per_compensation_outcome(graph: &CheckedGraph) {
+    let classes: Vec<&StepClass> = only_refinement(graph)
+        .steps()
+        .iter()
+        .map(|row| &row.class)
+        .collect();
+    let refund = || "Refund".to_owned();
+    for class in [
+        StepClass::CompensationEnd(refund()),
+        StepClass::CompensationFail(refund()),
+        StepClass::CompensationTimeout(refund()),
+        StepClass::CompensationExpire(refund()),
+    ] {
         assert_eq!(
-            unresolved.pair(),
-            (Code::MissingDeclaration, Some("missing-name")),
-            "{keyword}"
+            classes.iter().filter(|found| ***found == class).count(),
+            1,
+            "{class:?}"
         );
-        assert_eq!(unresolved.at, "Refund", "{keyword}");
+    }
+}
+
+/// `found` is one refusal, the missing `keyword` row of `Refund`.
+fn assert_missing_compensation_row(found: &[Refused], keyword: &str) {
+    let refusal = only(found);
+    assert_eq!(
+        refusal.pair(),
+        (Code::MissingDeclaration, Some("missing-name")),
+        "{keyword}"
+    );
+    assert_eq!(
+        refusal.refinement(),
+        &missing(RowClass::Template, &format!("{keyword} M::Pay::Refund")),
+        "{keyword}"
+    );
+}
+
+/// FSpec FR-432-AC-25 (FSpec TC-386 SR-16): the complete source over TC-380's
+/// `on origin` `Pay`, which has no `activate` class, admits, and removing only
+/// the `cfail`, only the `ctimeout` or only the `cexpire` row refuses once,
+/// naming that class, with no checked refinement.
+#[trace("TC-541", "FR-136-AC-14", "FSpec-TC-386", "FSpec-FR-432-AC-25")]
+#[test]
+fn each_compensation_outcome_class_needs_its_own_row() {
+    let check = |rows: &str| check_over(&pay_unit(rows), pay_models(), None);
+    let graph = check(PAY_ROWS).unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    assert_one_class_per_compensation_outcome(&graph);
+    for keyword in ["cfail", "ctimeout", "cexpire"] {
+        let omitted = format!("step {keyword} M::Pay::Refund -> stutter;");
+        let Err(found) = check(&without(PAY_ROWS, &omitted)) else {
+            panic!("{keyword}: expected a refusal");
+        };
+        assert_missing_compensation_row(&found, keyword);
+    }
+}
+
+/// A `Pay` over fixture R, `on each` trigger, with a `Refund` template that
+/// compensates its effect `Paid` with `undo`.
+const PAY_ON_EACH: &str = "protocol Pay using pp over (k: M::Node) \
+    on each (opened: M::Tick) when (opened.ready) {\n\
+    role w on M::Node;\n\
+    compensate Refund for Main::Paid as (fwd: M::Receipt)\n\
+    by w on M::Node::undo using e clock \"c\" {\n\
+    activate first (f: M::Flag) when { f.ready } { }\n\
+    within [0,10]; attempts 1 of M::Attempt;\n\
+    retry (earlier: M::Attempt, later: M::Attempt) { false };\n\
+    commit never;\n\
+    recover (r: M::Receipt) { true };\n\
+    }\n\
+    run sequence Main {\n\
+    attempt C by w on M::Node::step contracts [] as (c: M::Flag) { true };\n\
+    effect Paid of Main::C as (pd: M::Receipt) { true };\n\
+    event Fail by w as (failed: M::Flag) { true };\n\
+    }\n\
+    finish Done as (d: M::Receipt) { true };\n\
+    }\n";
+
+/// The unit refining the abstract protocol `Req` of the model `A`, one attempt
+/// `Ask` and a `finish`, by [`PAY_ON_EACH`] with the step rows `rows`.
+fn on_each_unit(rows: &str) -> String {
+    header(true)
+        + PAY_ON_EACH
+        + "protocol Req using pp over (k: A::Acc) on origin {\n\
+           role r on A::Acc;\n\
+           run sequence S {\n\
+           attempt Ask by r on A::Acc::add contracts [] as (asked: Boolean) { true };\n\
+           }\n\
+           finish F as (f: Boolean) { true };\n\
+           }\n"
+        + &format!(
+            "refinement R using t abstract A::Req concrete M {{\n\
+             population A::accs from M::nodes;\n\
+             object A::Acc from M::Node {{ total = self.total; }}\n\
+             {rows}\n\
+             }}\n"
+        )
+}
+
+/// An `on each` protocol takes its `activate` row beside the same rows, and
+/// its template needs each outcome row just as an `on origin` one does.
+#[trace("TC-541", "FR-136-AC-14")]
+#[test]
+fn an_on_each_compensation_template_needs_the_same_outcome_rows() {
+    let complete = format!("{PAY_ROWS}\nstep activate M::Pay -> stutter;");
+    assert_one_class_per_compensation_outcome(&checks(&on_each_unit(&complete)));
+    for keyword in ["cfail", "ctimeout", "cexpire"] {
+        let omitted = format!("step {keyword} M::Pay::Refund -> stutter;");
+        let found = refused(&on_each_unit(&without(&complete, &omitted)));
+        assert_missing_compensation_row(&found, keyword);
     }
 }
 
