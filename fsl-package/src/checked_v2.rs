@@ -36,6 +36,7 @@ use filament_exact::{NodeKey, Origin, Role};
 mod clause_root;
 mod hybrid;
 mod hyper_root;
+mod model_correspondence;
 mod schedulability_root;
 mod state_graph_root;
 mod terminal;
@@ -863,6 +864,15 @@ pub(crate) fn read_checked_package_v2_at(
                     return refused(V2ReadRefusal::Fault(InternalFault::new("I2", invariant)));
                 }
             };
+            let model_correspondence = match model_correspondence::read(&package) {
+                Ok(rows) => rows,
+                Err(()) => {
+                    return refused(V2ReadRefusal::Fault(InternalFault::new(
+                        "I2",
+                        "admitted-model-correspondence-has-closed-preimage-shape",
+                    )));
+                }
+            };
             let graph = match wire_graph(&package) {
                 Ok(graph) => graph,
                 Err(_) => {
@@ -896,7 +906,7 @@ pub(crate) fn read_checked_package_v2_at(
             };
             match ImportView::of(&candidate) {
                 Ok(view) => Ok(Staged::new(V2Read {
-                    package: view,
+                    package: view.with_model_correspondence(model_correspondence),
                     source_map,
                     effective_limits: limits,
                     admitted: Arc::from(package),
