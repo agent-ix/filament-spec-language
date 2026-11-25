@@ -28,7 +28,7 @@ that it maps to violation with cause `UndefinedEvaluation`; that a bounded
 `on origin` clause reads only its horizon; and that replay reproduces the
 undefined value at its position.
 
-Scope: FR-327-AC-5, FR-327-AC-7, FR-328-AC-5, FR-329-AC-6, FR-330-AC-5,
+Scope: FR-327-AC-5, FR-327-AC-7, FR-327-AC-15, FR-328-AC-5, FR-329-AC-6, FR-330-AC-5,
 FR-330-AC-8, FR-331-AC-4, FR-331-AC-5, FR-331-AC-8,
 FR-331-AC-9, FR-071-AC-8,
 FR-072-AC-6, FR-098-AC-28.
@@ -39,18 +39,29 @@ undefined atom or a refused condition (FR-327-AC-7, FR-330-AC-8).
 
 ## Test Procedure
 
-Fixture: the `Counter` unit, the closed trace and the prefix with `c.value`
-0, 1, 2, and the observed lasso with an empty prefix and loop 0, 1, 2.
-Each clause's undefined letter is `3 mod (2 - c.value)` at `c.value` 2, the
-Euclidean remainder by zero; FR-327-AC-7's clauses run over the non-model
-subject `c: Counter`, a record with the attribute `level`, with the
-window-aggregate samples the observation owner supplies; the step 4 unit compiles from source with no
-refusal.
+Fixtures: the evaluator steps 1 to 3 use the record subject `c: Counter`
+(attribute `level`), the closed trace and the prefix with `c.level` 0, 1, 2,
+and the observed lasso with an empty prefix and loop 0, 1, 2; step 9 uses the
+same subject with a finite trace of `c.level` 0, 1, 2, 3. Their clauses,
+and step 6's, are checked by the temporal family alone, as the package check
+runs it before it types `holds` conditions (S3 would refuse their undefined
+conditions), and the test supplies their letters, reading a zero divisor as
+undefined with cause `division-by-zero`. The clauses run from a unit (steps
+4, 5 and 8) are over the `Counter` model, and each reads its undefined value
+at `c.value` 2, the Euclidean remainder by zero, as a call, on `c.value` or on
+step 8's `on each` binder, of
+`function temporal_mod_undefined using v(n: Integer): Boolean pure
+{ 3 mod (2 - n) >= 0 }`, whose body alone is checked under `Kernel`
+(FR-952): S3 refuses that `mod` written in a declared clause (FR-337-AC-7).
+FR-327-AC-7's clauses run over the non-model subject `c: Counter`, a record
+with the attribute `level`, with the window-aggregate samples the
+observation owner supplies; the step 4 unit compiles with no refusal.
 
 1. Evaluate the two clauses of FR-327-AC-5 over the closed trace.
 2. Evaluate FR-328-AC-5's clause over the prefix.
 3. Evaluate FR-329-AC-6's clause over the lasso.
-4. Run FR-330-AC-5's request from source.
+4. Run FR-330-AC-5's `Undefined` clause from source, the function's body
+   checked under `Kernel`.
 5. Construct, encode and decode both FR-331-AC-4 requests, assert the decoded
    state-clause target and envelope node/occurrence identify the same clause,
    then replay the two undefined-evaluation packets through
@@ -70,10 +81,12 @@ refusal.
    clauses over the one-position trace with `c.value` 2.
 7. Run FR-330-AC-8's request from source: FR-327-AC-7's `always[0,2] A`
    written over the model `Counter`.
-8. Compile FR-125-AC-18's guarded Counter clause whose `when` expression is
-   `6 mod (2 - c.value) = 0`, evaluate it over the prefix 0, 1, 2, and replay
-   an observed temporal `UndefinedEvaluation` packet at position 2 whose locus
-   names that clause's `holds(true)` atom.
+8. Compile FR-331-AC-9's `GuardUndefined` clause, `on each` with `when
+   (temporal_mod_undefined(q.value))`, and replay over the snapshots with
+   `c.value` 2, 0, 1 an observed temporal `UndefinedEvaluation` packet at
+   position 0 whose locus names that clause's `holds` atom.
+9. Evaluate the two clauses of FR-327-AC-15 over its finite trace, reading
+   the positions each evaluation reads.
 
 Tag the tests `#[trace("TC-847", "<AC id>")]`.
 
@@ -126,7 +139,9 @@ Tag the tests `#[trace("TC-847", "<AC id>")]`.
 - Step 7: stage `compile`, `unsupported`, `unsupported_construct`/`expression-form`,
   exit 21, one refusal located at the `count` term; no snapshot is admitted
   and the report holds no position, `count` or `min_count`.
-- Step 8: replay retains `Undefined` at position 2 with cause
-  `division-by-zero` and settles `inconclusive`, `ReplayParity`, because the
-  undefined expression is the activation guard and the packet's locus names a
-  `holds` atom. Tag the test `#[trace("TC-847", "FR-331-AC-9")]`.
+- Step 8: replay retains `Undefined` at position 0 with cause
+  `division-by-zero` and no undefined locus, and settles `inconclusive`,
+  `ReplayParity`, because the undefined expression is the activation guard and
+  the packet's locus names a `holds` atom. Tag the test `#[trace("TC-847", "FR-331-AC-9")]`.
+- Step 9: `Undefined{where: 2, cause: division-by-zero}` with positions 0, 1
+  and 2 read; `Completed(true)` with positions 0 and 1 read.
