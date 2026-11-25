@@ -686,13 +686,20 @@ fn a_null_member_inside_the_verification_plan_object_is_absent() {
 #[trace("FSpec-TC-2039", "FSpec-FR-824-AC-3")]
 fn the_verification_plan_member_selects_one_plan_or_refuses() {
     let one = format!("{MODEL_HEADER}{RELEASE_PLAN}");
-    let (single_plan_exit, single_plan_value) = run(
+    let (_, single_plan_value) = run(
         &one,
         true,
         ("verification_plan", json!({"max_trace_length": 8})),
     );
-    assert_ne!(single_plan_exit, 20, "{single_plan_value}");
     assert_eq!(single_plan_value["verification_plan"]["plan"], "Release");
+    assert_eq!(
+        single_plan_value["verification_plan"]["format"],
+        "filament.verification-plan-outcome/v1"
+    );
+    assert_eq!(
+        single_plan_value["verification_plan"]["dispositions"]["safe"]["status"],
+        "refuted"
+    );
     assert_eq!(
         single_plan_value["verification_plan"]["inputs"]["max_trace_length"],
         8
