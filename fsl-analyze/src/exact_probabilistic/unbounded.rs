@@ -707,6 +707,16 @@ fn expected_reward(
         }
     }
     if fixed.iter().all(Option::is_some) {
+        // FR-198: as for reachability; a positive infinity holds no rational.
+        if fixed
+            .iter()
+            .zip(&infinite)
+            .filter(|(_, infinite)| !**infinite)
+            .filter_map(|(value, _)| value.as_ref())
+            .any(|value| value.max_part_bits() > limits.max_rational_bits)
+        {
+            return Err(UnboundedError::MaxRationalBits);
+        }
         return Ok(UnboundedResult {
             values: fixed
                 .into_iter()
@@ -3488,6 +3498,36 @@ mod tests {
         assert_eq!(
             solve(1).expect("one bit holds 0 and 1").values,
             [one(), zero()].map(ExtRational::Finite)
+        );
+    }
+
+    /// The target's reward `0` still takes a one-bit denominator when the
+    /// graph alone decides every state.
+    #[trace("TC-633", "FR-198-AC-8")]
+    #[test]
+    fn a_graph_only_expected_reward_past_the_rational_budget_keeps_no_value() {
+        // A target and a state that never reaches it, whose reward is infinite.
+        let product = graph(
+            ProductKind::Dtmc,
+            vec![edge(0, 0, one()), edge(1, 1, one())],
+        );
+        let solve = |max_rational_bits| {
+            decide_expected_reward(
+                &product,
+                &[true, false],
+                "cost",
+                UnboundedObjective::Max,
+                &ExactProbLimits {
+                    max_rational_bits,
+                    ..ExactProbLimits::default()
+                },
+                &Cancel::new(),
+            )
+        };
+        assert_eq!(solve(0), Err(UnboundedError::MaxRationalBits));
+        assert_eq!(
+            solve(1).expect("one bit holds 0").values,
+            [ExtRational::Finite(zero()), ExtRational::PlusInfinity]
         );
     }
 
