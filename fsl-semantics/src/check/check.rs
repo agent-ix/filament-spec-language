@@ -517,6 +517,16 @@ pub struct PackageDeclarations {
     /// function resolves to that span. `link_dispatch` fills it for the
     /// precondition functions it synthesizes from the unit's `pre` clauses.
     pub synthesized_spans: BTreeMap<usize, fsl_foundation::Span>,
+    /// FR-569: the span of each source-declared `operation` member, by the
+    /// operation's key. The FR-091 assembler fills it.
+    pub(super) source_operation_spans:
+        BTreeMap<filament_checked::key::DeclarationKey, fsl_foundation::Span>,
+    /// FR-569: the span of the declaration of each source operation's body and
+    /// effective-precondition function, by index into [`Self::functions`]. It
+    /// places the function's `declaration` occurrence only; positions inside
+    /// the function resolve as FR-096 states.
+    /// `link_dispatch` fills it.
+    pub(super) clause_declaration_spans: BTreeMap<usize, fsl_foundation::Span>,
     /// FR-096-AC-1, ADR-013 C-21: the map of a body embedded in a document.
     /// The spans above are body offsets; with a map, each region resolves
     /// under the document's `RawSourceRef`, shifted by the body's offset in
@@ -848,6 +858,8 @@ impl PackageDeclarations {
             declared_type_spans: BTreeMap::new(),
             declared_site_spans: BTreeMap::new(),
             synthesized_spans: BTreeMap::new(),
+            source_operation_spans: BTreeMap::new(),
+            clause_declaration_spans: BTreeMap::new(),
             embedding: None,
             units: filament_semantic_value::unit::UnitGraph::default(),
             nominal_spans: BTreeMap::new(),

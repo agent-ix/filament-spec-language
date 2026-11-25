@@ -444,6 +444,7 @@ pub fn check_protocol_components(
     check_protocol(request, Proof::components(certificate), limits, cancel)
 }
 
+#[implements("FR-338-AC-31", "FR-339-AC-7")]
 fn check_protocol(
     request: &ProtocolCertificateRequest<'_>,
     proof: Proof<'_>,
@@ -629,6 +630,7 @@ struct Bounds {
 /// [`check_closure`] over `system`, whose model is `model` and whose memory
 /// and instance bounds are `bounds`.
 #[allow(clippy::too_many_arguments)]
+#[implements("FR-338-AC-1", "FR-339-AC-6")]
 fn check_system<S: SubjectSystem>(
     system: &S,
     model: &ModelSystem<'_>,
@@ -1662,6 +1664,7 @@ impl<S: SubjectSystem> Check<'_, S> {
     /// The closure of a bounded instance (TP-2): every product state of a
     /// model state, its bounded monitor state and, up to one past the
     /// horizon, its counted distance, from the initial states.
+    #[implements("FR-338-AC-10", "FR-338-AC-28")]
     fn run_bounded(
         &mut self,
         binding: Option<&fsl_eval::model_subject::ModelInstance>,

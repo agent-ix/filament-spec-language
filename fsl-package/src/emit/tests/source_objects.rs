@@ -2355,37 +2355,121 @@ fn a_source_tuple_and_union_clock_place_keep_the_source_spelling() {
     }
 }
 
-/// FSpec FR-322 item 5 (QSL-2726): a source operation whose only precondition
-/// is one term still declares its own effective-precondition clause function
-/// `[O, op, "effective_precondition"]`.
-#[trace("TC-1408")]
+/// The id of the one node declared `name`.
+fn declared_node(wire: &Value, name: &[&str]) -> Value {
+    let [node] = &nodes(wire)
+        .iter()
+        .filter(|node| node["declaration"]["qualified_name"] == json!(name))
+        .collect::<Vec<_>>()[..]
+    else {
+        panic!("one node declared {name:?}: {wire}");
+    };
+    node["node_id"].clone()
+}
+
+/// FSpec FR-322 "Clause functions" item 5: a source candidate whose operation
+/// has one authored `pre` names its own effective-precondition function, a node
+/// distinct from that clause's authored function.
+#[trace("TC-1408", "FR-569-AC-6", "FSpec-FR-322-AC-544")]
 #[test]
 fn a_source_operation_declares_its_effective_precondition_function() {
-    let text = format!("{HEADER}{S}");
+    let emission = emit_checked(&fixture_s_package()).expect("S4 emits fixture S");
+    let wire = wire(&emission);
+    let authored = declared_node(&wire, &["Order", "measure", "precondition", "Qs"]);
+    let effective = declared_node(&wire, &["Order", "measure", "effective_precondition"]);
+    assert_ne!(effective, authored);
+    let candidates = order_candidates(&wire);
+    let candidate_with = |body: &[&str]| {
+        let body = declared_node(&wire, body);
+        candidates
+            .iter()
+            .find(|candidate| candidate["operation_body"] == body)
+            .unwrap_or_else(|| panic!("a candidate with that body: {candidates:?}"))
+    };
+    let order = candidate_with(&["Order", "measure", "body"]);
+    assert_eq!(order["effective_precondition"], effective);
+    assert_ne!(order["effective_precondition"], authored);
+    // `Sub.measure` declares no `pre`.
+    let sub = candidate_with(&["Sub", "measure", "body"]);
+    assert_eq!(sub["effective_precondition"], Value::Null);
+}
+
+/// FR-569: each source clause function has one `declaration` occurrence, at the
+/// declaration it is declared by: an authored precondition at its `pre`, a body
+/// at its `body`, an effective precondition at the candidate's `operation`
+/// member. `T` is the body of an operation no call dispatches.
+#[trace("TC-1408", "FR-569-AC-6")]
+#[test]
+fn a_source_clause_function_is_located_at_the_declaration_it_is_declared_by() {
+    let text = format!(
+        "{HEADER}{S}pre Qs2 using P on Sub::measure {{ self.total >= 1 }}\n\
+         body T using P on Order::tally() {{ 3 }}\n"
+    );
     let packages =
         fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
     let mut declarations =
         assemble_with_models(text.as_bytes(), &packages).expect("the unit assembles");
-    declarations
+    let pending = declarations
         .link_dispatch(Default::default())
-        .expect("dispatch links");
+        .unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let graph = declarations
         .check(
             CheckMode::Linked,
             CheckingLimits::default(),
             &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
-        .unwrap_or_else(|refusals| panic!("{refusals:?}"));
-    let package = CheckedPackage::link(graph);
-    let emission = emit_checked(&package).expect("S4 emits the source model");
-    let wire = wire(&emission);
-    let named = nodes(&wire).iter().any(|node| {
-        node["declaration"]["qualified_name"]
-            == json!(["Order", "measure", "effective_precondition"])
-    });
+        .unwrap_or_else(|refusals| panic!("{:?}", pending.report(refusals)));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("S4 emits S-R");
     assert!(
-        named,
-        "an effective_precondition function of Order::measure"
+        matches!(read_back(&emission), Read::Verified { .. }),
+        "the strict reader admits the package"
+    );
+    let wire = wire(&emission);
+    let occurrence = |name: &[&str]| -> &str {
+        let node = declared_node(&wire, name);
+        let [row] = &wire["source_map"]
+            .as_array()
+            .expect("a source map")
+            .iter()
+            .filter(|row| row["node_id"] == node)
+            .collect::<Vec<_>>()[..]
+        else {
+            panic!("one occurrence of {name:?}");
+        };
+        assert_eq!(row["role"], "declaration", "{name:?}");
+        let [region] = &row["regions"].as_array().expect("regions")[..] else {
+            panic!("one region of {name:?}: {row}");
+        };
+        let at = |end: &str| usize::try_from(region[end].as_u64().unwrap()).unwrap();
+        &text[at("start")..at("end")]
+    };
+    assert_eq!(
+        occurrence(&["Order", "measure", "precondition", "Qs"]),
+        "pre Qs using P on Order::measure { self.total >= 0 }"
+    );
+    assert_eq!(
+        occurrence(&["Sub", "measure", "precondition", "Qs2"]),
+        "pre Qs2 using P on Sub::measure { self.total >= 1 }"
+    );
+    assert_eq!(
+        occurrence(&["Order", "measure", "body"]),
+        "body C using P on Order::measure(n) { n }"
+    );
+    assert_eq!(
+        occurrence(&["Sub", "measure", "body"]),
+        "body B using P on Sub::measure(m) { m }"
+    );
+    assert_eq!(
+        occurrence(&["Order", "tally", "body"]),
+        "body T using P on Order::tally() { 3 }"
+    );
+    assert_eq!(
+        occurrence(&["Order", "measure", "effective_precondition"]),
+        "operation measure(n: Integer): Integer;"
+    );
+    assert_eq!(
+        occurrence(&["Sub", "measure", "effective_precondition"]),
+        "operation measure(m: Integer): Integer redefines Order::measure;"
     );
 }
 
@@ -2553,7 +2637,19 @@ fn fixture_s_regions_and_rows_follow_the_owner_walk_numbering() {
         }
     }
     assert!(checked > 0, "some record's use has a body-location row");
-    let mut inside = 0;
+    // An effective precondition is declared at its `operation` member
+    // (FR-569) and its body is read from the `pre` clauses (FR-096), so its
+    // uses lie outside its declaration region.
+    let is_effective = |function: &CheckedNodeId| {
+        admitted.resolved_graph().nodes.iter().any(|node| {
+            node.node_id == *function
+                && node.declaration.as_ref().is_some_and(|declared| {
+                    declared.qualified_name.last().map(AsRef::as_ref)
+                        == Some("effective_precondition")
+                })
+        })
+    };
+    let (mut inside, mut outside) = (0, 0);
     for row in &data.body_locations {
         let CheckedBodyLocationOrigin::FunctionBody { function, .. } = &row.location.origin;
         let Some(declaration) = admitted
@@ -2565,6 +2661,14 @@ fn fixture_s_regions_and_rows_follow_the_owner_walk_numbering() {
         };
         let (start, end) = region(&row.application, Role::Expression, row.occurrence.ordinal);
         let declared = &declaration.regions[0];
+        if is_effective(function) {
+            assert!(
+                end <= declared.start || declared.end <= start,
+                "an effective precondition's use is at its `pre`: {row:?}"
+            );
+            outside += 1;
+            continue;
+        }
         assert!(
             declared.start <= start && end <= declared.end,
             "a body-location row's occurrence is a use in the function it names: {row:?}"
@@ -2574,5 +2678,9 @@ fn fixture_s_regions_and_rows_follow_the_owner_walk_numbering() {
     assert!(
         inside > 0,
         "fixture S has body-location rows of declared functions"
+    );
+    assert!(
+        outside > 0,
+        "fixture S has body-location rows of an effective precondition"
     );
 }
