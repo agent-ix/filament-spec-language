@@ -117,6 +117,7 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef};
 use fsl_semantics::model::state::ModelState;
+use ix_trace_rs::implements;
 
 use super::closure::CertificateRejection;
 use super::simulation::{position_matches, CertifiedPosition, EvaluationOutcome, FailedStep};
@@ -3096,6 +3097,7 @@ impl<O> Checker<'_, '_, O> {
     /// `Taken::Failing` (`PostDiffers` otherwise); out of the locked region,
     /// the edge stays in it with no `taken` (`PostDiffers`). The first
     /// rejection out of a node is kept for the node's turn.
+    #[implements("FR-245-AC-8", "FR-245-AC-12")]
     fn refine_edge(
         &mut self,
         node: usize,

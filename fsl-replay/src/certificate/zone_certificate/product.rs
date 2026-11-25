@@ -41,6 +41,7 @@ use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{GuardedStep, ModelSimState, PlaceConstraint};
 use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_semantics::check::CaptureSite;
+use ix_trace_rs::implements;
 
 use super::{
     at_edge, at_node, fault, reject, undecided, AcceptanceSet, CertificateLocus, CertificateRule,
@@ -675,6 +676,7 @@ impl<O> Checker<'_, '_, O> {
 
     /// FR-244's Büchi part: every edge goes to an equal or greater
     /// component, and each component's reason holds.
+    #[implements("FR-245-AC-7")]
     pub(super) fn components(&self) -> Step<(), O> {
         let Some(components) = &self.certificate.components else {
             return super::malformed(super::CertificateMember::Components);

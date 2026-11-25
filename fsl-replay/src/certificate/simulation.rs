@@ -44,6 +44,7 @@ use fsl_eval::simulation::model::{
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{TransitionSystem, BOUND_POSITIONS};
 use fsl_eval::temporal::UndefinedCause;
+use ix_trace_rs::implements;
 use serde::{Serialize, Serializer};
 
 use crate::certificate::check::{
@@ -276,6 +277,7 @@ impl FailedStep {
     /// concrete `transition`, `None` for the stutter step. No verdict is a
     /// rejection for `Passes`, `Stopped` or `Fault`, nor for an unmatched step
     /// that names no transition.
+    #[implements("FR-149-AC-8")]
     pub(crate) fn of(verdict: StepVerdict, transition: Option<&ModelTransition>) -> Option<Self> {
         Some(match verdict {
             StepVerdict::Fails(failure) => match *failure {
@@ -299,6 +301,7 @@ impl FailedStep {
     }
 
     /// The verdict as the locus writes it (FR-149 "Wire form").
+    #[implements("FR-149-AC-8")]
     fn wire(&self) -> Result<serde_json::Value, String> {
         use serde_json::json;
         let decimal = |value: u64| value.to_string();
