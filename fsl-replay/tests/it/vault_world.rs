@@ -1761,3 +1761,159 @@ mod tp4 {
         ));
     }
 }
+
+mod en1_closure_certificate {
+    use std::collections::BTreeSet;
+
+    use filament_exact::{Cancel, Meter};
+    use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
+    use fsl_eval::simulation::model::ModelSimState;
+    use fsl_eval::temporal::AtomReading;
+    use fsl_replay::{
+        check_closure, CertificateLocus, CertificateRequest, CertificateRule, ClosureCertificate,
+        ModelCheckItem, ModelCheckLimits, ProductStateRef, TemporalCertificateCheck,
+    };
+    use fsl_semantics::check::footprint::{FootprintRefusal, SymbolicLocation};
+    use fsl_semantics::check::FormulaNodeId;
+    use ix_trace_rs::trace;
+
+    use super::{World, FORALL_EXISTS};
+
+    struct TrueLetters;
+
+    impl ModelLetters for TrueLetters {
+        fn atom(
+            &self,
+            _atom: FormulaNodeId,
+            _instance: &ModelInstance,
+            _state: &ModelSimState,
+            _meter: &mut Meter,
+        ) -> Result<AtomReading, AtomStop> {
+            Ok(AtomReading::True)
+        }
+
+        fn activation(
+            &self,
+            _instance: &ModelInstance,
+            _state: &ModelSimState,
+            _meter: &mut Meter,
+        ) -> Result<AtomReading, AtomStop> {
+            Ok(AtomReading::True)
+        }
+
+        fn activation_reads(&self) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
+            Ok(BTreeSet::new())
+        }
+
+        fn reads(
+            &self,
+            _atom: FormulaNodeId,
+        ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
+            Ok(BTreeSet::new())
+        }
+    }
+
+    static LETTERS: TrueLetters = TrueLetters;
+
+    fn world() -> World {
+        let temporal = "temporal Invariant using inf over (v: V::Vault) clock \"model-steps\" on origin { always holds(v.l = v.l) }";
+        World::new(&["v"], false, &format!("{FORALL_EXISTS}\n{temporal}"))
+    }
+
+    fn request(world: &World) -> CertificateRequest<'_> {
+        CertificateRequest {
+            subject: world.subject(),
+            temporal_clock_selections: &[],
+            item: ModelCheckItem::Clause {
+                clause: world
+                    .temporal_clause
+                    .as_ref()
+                    .expect("the invariant checks"),
+                letters: &LETTERS,
+            },
+            smt_encoding: Default::default(),
+        }
+    }
+
+    /// The state set the closure checker itself asks for: each state it
+    /// reports missing is added until it accepts. No EN-1 run produces it.
+    fn complete_certificate(world: &World) -> ClosureCertificate {
+        let request = request(world);
+        let mut certificate = ClosureCertificate { states: Vec::new() };
+        for _ in 0..256 {
+            match check_closure(
+                &request,
+                &certificate,
+                &ModelCheckLimits::default(),
+                &Cancel::new(),
+            )
+            .expect("the finite invariant subject admits")
+            {
+                TemporalCertificateCheck::Accepted => return certificate,
+                TemporalCertificateCheck::Rejected(rejection)
+                    if matches!(
+                        rejection.rule,
+                        CertificateRule::InitialMissing | CertificateRule::SuccessorMissing
+                    ) =>
+                {
+                    let CertificateLocus::ProductState(missing) = rejection.at else {
+                        panic!("a missing closure member names its product state");
+                    };
+                    certificate.states.push(missing);
+                    certificate.states.sort();
+                    certificate.states.dedup();
+                }
+                other => panic!("the invariant closure reaches an unexpected result: {other:?}"),
+            }
+        }
+        panic!("the finite model's reachable closure terminates");
+    }
+
+    /// TC-764, the checker's rejection half: removing a reached state from an
+    /// accepted closure names that state as a missing successor.
+    #[trace("TC-764")]
+    #[test]
+    fn en1_closure_accepts_the_finite_invariant_and_names_a_removed_successor() {
+        let world = world();
+        let request = request(&world);
+        let certificate = complete_certificate(&world);
+        assert!(
+            certificate.states.len() > 1,
+            "the model reaches successor states"
+        );
+        assert!(matches!(
+            check_closure(
+                &request,
+                &certificate,
+                &ModelCheckLimits::default(),
+                &Cancel::new(),
+            ),
+            Ok(TemporalCertificateCheck::Accepted)
+        ));
+
+        let removed_successor: ProductStateRef = (0..certificate.states.len())
+            .find_map(|index| {
+                let removed = certificate.states[index].clone();
+                let mut altered = certificate.clone();
+                altered.states.remove(index);
+                match check_closure(
+                    &request,
+                    &altered,
+                    &ModelCheckLimits::default(),
+                    &Cancel::new(),
+                )
+                .expect("the finite invariant subject admits")
+                {
+                    TemporalCertificateCheck::Rejected(rejection)
+                        if rejection.rule == CertificateRule::SuccessorMissing
+                            && matches!(&rejection.at, CertificateLocus::ProductState(state) if state == &removed) =>
+                    {
+                        Some(removed)
+                    }
+                    _ => None,
+                }
+            })
+            .expect("removing one reached product state names its missing successor");
+        assert!(certificate.states.contains(&removed_successor));
+    }
+}

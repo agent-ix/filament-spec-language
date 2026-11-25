@@ -487,6 +487,16 @@ impl ModelSystem<'_> {
         }
     }
 
+    /// The admitted record, tuple, or union shape for a composite declaration.
+    pub fn composite_shape(
+        &self,
+        key: &filament_exact::NodeKey,
+    ) -> Option<&filament_semantic_value::declaration::CompositeShape> {
+        self.types
+            .composite(key.clone())
+            .map(|declaration| declaration.shape())
+    }
+
     /// Every value of the finite domain of `value_type`, in FR-120's order,
     /// where a `Reference<T>` ranges over the members of `objects` whose type
     /// conforms to `T`.
