@@ -31,10 +31,9 @@ pub enum Halt {
     /// The first summand of a `sum` is outside the total type: an
     /// `Undefined(SumOutOfDomain)` the host locates at the summand's body.
     SumSeedOutOfDomain,
-    /// An `only` over a population that does not hold exactly one object
-    /// (FR-139): the host reports it as a family result with the population.
+    /// An `only` whose source does not hold exactly one element (FR-139).
     OnlyNotOne {
-        /// How many objects the population holds.
+        /// How many elements the source holds.
         found: u64,
     },
     /// A broken invariant, by identifier.
@@ -394,8 +393,8 @@ impl Iteration {
         self.accumulator.as_ref()
     }
 
-    /// Start `spec` over `source`: an `only` checks its population holds one
-    /// object, and a reduce takes the first element as its accumulator,
+    /// Start `spec` over `source`: an `only` checks its source holds one
+    /// element, and a reduce takes the first element as its accumulator,
     /// charging its visit.
     ///
     /// # Errors
@@ -409,9 +408,8 @@ impl Iteration {
         meter: &mut Meter,
     ) -> Result<Self, Halt> {
         if spec.shape == Shape::Query(Visit::Only) {
-            // FR-139: `only` is `e` for the one object satisfying the
-            // condition, and undefined for none or several, before `e`
-            // reads any object.
+            // FR-139: `only` evaluates the body for the sole element of
+            // the source after filtering. Other cardinalities are undefined.
             let found = u64::try_from(source.elements().len()).unwrap_or(u64::MAX);
             if found != 1 {
                 return Err(Halt::OnlyNotOne { found });

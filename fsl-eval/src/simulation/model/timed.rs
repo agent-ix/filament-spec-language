@@ -29,6 +29,8 @@
 //! is about. An object the state does not hold has no clocks to constrain:
 //! a predicate about it does not apply.
 
+use std::sync::Arc;
+
 use filament_exact::{EffectiveId, Integer, ObjectReference, Rational, ValueType};
 use filament_semantic_value::catalog::UndefinedReason;
 use filament_semantic_value::model_transition::ModelTransition;
@@ -69,8 +71,8 @@ pub struct ClockPlace {
     /// The slot index of each collection on the clock's path, outermost
     /// first (FR-230 "Clock collections"); empty outside collections.
     slots: Vec<usize>,
-    /// The population and key the object is held under.
-    instance: crate::model_subject::ModelInstance,
+    /// The populations whose universes list the object, in canonical order.
+    populations: Arc<[DeclarationKey]>,
 }
 
 impl ClockPlace {
@@ -95,10 +97,10 @@ impl ClockPlace {
         &self,
         state: &'s ModelState,
     ) -> Option<&'s fsl_semantics::model::state::StateObject> {
-        state
-            .populations
-            .get(&self.instance.population)?
-            .get(&self.instance.key)
+        let key = self.object.object().as_str();
+        self.populations
+            .iter()
+            .find_map(|population| state.populations.get(population)?.get(key))
     }
 
     /// The slot of each collection on the clock's path, outermost first.
@@ -734,24 +736,35 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         let mut held = std::collections::BTreeMap::new();
         let mut instances_of = |owner: EffectiveId, name: &str| {
             if let Some(found) = held.get(&owner) {
-                return Ok::<
-                    Vec<(crate::model_subject::ModelInstance, ObjectReference)>,
-                    TimedSubjectRefusal,
-                >(Vec::clone(found));
+                return Ok::<Vec<(Arc<[DeclarationKey]>, ObjectReference)>, TimedSubjectRefusal>(
+                    Vec::clone(found),
+                );
             }
             let unbounded = || TimedSubjectRefusal::Unbounded {
                 clock: name.to_owned(),
             };
-            let instances = system
-                .instances(&ValueType::Reference(owner.clone()))
-                .map_err(|_| unbounded())?;
-            let references = instances
-                .iter()
-                .map(|instance| system.bound_reference(owner.clone(), instance))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| unbounded())?;
-            objects.insert(owner.clone(), references.clone());
-            let pairs: Vec<_> = instances.into_iter().zip(references).collect();
+            let members = system.universe_members(&owner).map_err(|_| unbounded())?;
+            // Overlapping populations can list the same object key. Keep
+            // one placement and allow its object to be held in any of them.
+            let mut by_key = std::collections::BTreeMap::new();
+            for (index, (population, key)) in members.enumerate() {
+                let (_, populations) = by_key.entry(key).or_insert_with(|| (index, Vec::new()));
+                populations.push(population.clone());
+            }
+            let mut owners: Vec<_> = by_key.into_iter().collect();
+            owners.sort_by_key(|(_, (index, _))| *index);
+            let owner_type = system.model.type_key(owner.clone()).ok_or_else(unbounded)?;
+            let mut pairs = Vec::with_capacity(owners.len());
+            let mut references = Vec::with_capacity(owners.len());
+            for (key, (_, populations)) in owners {
+                let reference = system
+                    .model
+                    .object_reference(owner_type, key)
+                    .map_err(|_| unbounded())?;
+                references.push(reference.clone());
+                pairs.push((Arc::from(populations), reference));
+            }
+            objects.insert(owner.clone(), references);
             held.insert(owner, pairs.clone());
             Ok(pairs)
         };
@@ -769,19 +782,19 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
                 .map(|maximum| usize::try_from(*maximum).unwrap_or(usize::MAX))
                 .collect();
             let slots = slot_vectors(&maxima);
-            for (instance, object) in instances_of(field.owner(), field.name())? {
+            for (populations, object) in instances_of(field.owner(), field.name())? {
                 holders.push(ClockPlace {
                     object: object.clone(),
                     clock,
                     slots: Vec::new(),
-                    instance: instance.clone(),
+                    populations: Arc::clone(&populations),
                 });
                 for slots in &slots {
                     places.push(ClockPlace {
                         object: object.clone(),
                         clock,
                         slots: slots.clone(),
-                        instance: instance.clone(),
+                        populations: Arc::clone(&populations),
                     });
                 }
             }
@@ -905,7 +918,10 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             let Some(field) = self.model.and_then(|model| model.clock(holder.clock)) else {
                 continue;
             };
-            let Some(stored) = holder.stored(state) else {
+            let Some(stored) = holder
+                .stored(state)
+                .filter(|stored| self.owner_type_matches(&holder.object, stored))
+            else {
                 continue;
             };
             // The steps through the innermost collection: the clock below
@@ -1077,19 +1093,27 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     /// FSpec FR-430 "Reductions over a dense-time subject": the image of
     /// each clock place under `permutation`, in place order. The place of
     /// clock `c` at slots `s` on the object held under key `k` maps to the
-    /// place of `c` at the same slots on the object held under the key `k`
-    /// is mapped to; `None` when that object has no such place.
+    /// place of `c` at the same slots on the object held under the mapped
+    /// key. Returns `None` if the populations disagree on the mapped key
+    /// or the mapped object has no corresponding place.
     pub fn place_images(&self, permutation: &Permutation) -> Option<Vec<usize>> {
         self.places
             .iter()
             .map(|place| {
-                let population = &place.instance.population;
-                let key = permutation.image(population, &place.instance.key);
+                let key = place.object.object().as_str();
+                let mut images = place
+                    .populations
+                    .iter()
+                    .map(|population| permutation.image(population, key));
+                let image = images.next()?;
+                if images.any(|candidate| candidate != image) {
+                    return None;
+                }
                 self.places.iter().position(|other| {
                     other.clock == place.clock
                         && other.slots == place.slots
-                        && other.instance.population == *population
-                        && other.instance.key == key
+                        && other.populations == place.populations
+                        && other.object.object().as_str() == image
                 })
             })
             .collect()
@@ -1380,7 +1404,10 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
 
     /// [`Self::live`] in the model state `state`.
     fn live_in(&self, place: &ClockPlace, state: &ModelState) -> bool {
-        let Some(stored) = place.stored_in(state) else {
+        let Some(stored) = place
+            .stored_in(state)
+            .filter(|stored| self.owner_type_matches(&place.object, stored))
+        else {
             return false;
         };
         let Some(field) = self.model.and_then(|model| model.clock(place.clock)) else {
@@ -1572,9 +1599,8 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         }
     }
 
-    /// The predicate at `state` about each object of `context`'s universe:
-    /// `true` when it holds, `false` when it does not or the state holds no
-    /// such object.
+    /// The predicate at `state` about each held object of `context`, in
+    /// universe order.
     fn about(
         &self,
         state: &ModelSimState,
@@ -1582,18 +1608,27 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         context: EffectiveId,
         site: &dyn Fn() -> TimedSite,
     ) -> Result<Vec<(ObjectReference, bool)>, TimedStop> {
-        let objects = self.objects.get(&context).map_or(&[][..], Vec::as_slice);
-        let bound: Vec<_> = objects
+        let present: Vec<_> = self
+            .objects
+            .get(&context)
+            .into_iter()
+            .flatten()
+            .filter(|object| {
+                self.stored(state, object)
+                    .is_some_and(|stored| self.owner_type_matches(object, stored))
+            })
+            .collect();
+        let bound: Vec<_> = present
             .iter()
-            .map(|object| (predicate, Some(object), Vec::new()))
+            .map(|&object| (predicate, Some(object), Vec::new()))
             .collect();
         let readings = self.system.state_predicates_with(
             state,
             &bound,
             self.place_presences(state.state()),
         )?;
-        objects
-            .iter()
+        present
+            .into_iter()
             .zip(readings)
             .map(|(object, reading)| {
                 Ok((object.clone(), Self::truth(reading, Some(object), site)?))
@@ -2188,6 +2223,9 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
                                 || place.holds(&vector.receiver))
                     }) && (self.live(place, state)
                         || (reset
+                            && place.stored(state).is_some_and(|stored| {
+                                self.owner_type_matches(&place.object, stored)
+                            })
                             && place.slots.is_empty()
                             && self
                                 .model
@@ -2776,6 +2814,21 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             filament_exact::Value::Collection(collection) => Some(collection),
             _ => None,
         }
+    }
+
+    fn owner_type_matches(
+        &self,
+        object: &ObjectReference,
+        stored: &fsl_semantics::model::state::StateObject,
+    ) -> bool {
+        self.system
+            .model
+            .type_identity(&stored.type_identity)
+            .is_some_and(|actual| {
+                self.system
+                    .types
+                    .conforms(actual, object.object_type().clone())
+            })
     }
 
     /// The stored object `object` names at `state`: held under its key in
