@@ -369,8 +369,13 @@ pub enum OpenCause {
     /// The node is at the search horizon and has a successor the run did not
     /// follow.
     MaxDepth,
-    /// The node's expansion evaluated a contract conjunction undecided; or,
-    /// in one instance's outcome only, a predicate of that instance read
+    /// The selected state constraint is false at the node, so it is not
+    /// expanded (FR-158).
+    ConstraintBoundary,
+    /// The node's expansion evaluated a contract conjunction undecided; or
+    /// the selected state constraint is undefined at the node; or a refused
+    /// `terminal when` leaves the node, which has no successor, undecided;
+    /// or, in one instance's outcome only, a predicate of that instance read
     /// refused at the node.
     UndecidedSuccessor,
     /// The node was discovered and not expanded when a limit or a
@@ -393,8 +398,8 @@ pub enum RunEnd {
     },
 }
 
-/// FSpec FR-391's `where` and `cause` of an undefined predicate evaluation
-/// (ADR-022 GV-7).
+/// FSpec FR-391's `where` and `cause` of an undefined evaluation of a claim
+/// predicate or of one of the subject's expressions (ADR-022 GV-7).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GraphUndefined {
     /// The claim predicate that has no value; absent for an undefined
@@ -482,7 +487,9 @@ pub enum StateGraphOutcome {
         /// The causes of the run's open nodes.
         open: BTreeSet<OpenCause>,
     },
-    /// A predicate of the claim has no value at an explored node.
+    /// A predicate of the claim, or a guard, the `terminal when` predicate
+    /// or a state constraint of the subject, has no value at an explored node
+    /// (FR-168).
     Undefined {
         /// The canonical path to the first such node in discovery order.
         stem: ModelPath,
@@ -513,4 +520,7 @@ pub struct StateGraphInstanceOutcome {
     /// stopped before they visited a target state (FR-166); 0 for every
     /// other form.
     pub walks_stopped: u64,
+    /// The boundary states of the selected state constraint the exploration
+    /// stored (FR-158); 0 with no constraint, or with no exploration.
+    pub boundary_states: u64,
 }
