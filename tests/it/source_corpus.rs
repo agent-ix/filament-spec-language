@@ -996,10 +996,10 @@ fn corpus_collections() {
     println!("{report}");
 }
 
-/// FR-104-AC-18: a quantifier binder shadows the operation parameter for bare reads.
-#[trace("FR-104-AC-18")]
+/// FR-016-AC-11: a quantifier binder shadows the same-named function parameter.
+#[trace("TC-3083", "FR-016-AC-11")]
 #[test]
-fn quantifier_binder_shadowing_an_operation_parameter_is_allowed() {
+fn quantifier_binder_shadowing_a_function_parameter_is_allowed() {
     let directory = corpus_root().join("collections");
     let stem = "quant-binder-shadow";
     let program = directory.join(format!("{stem}.native"));
@@ -1009,6 +1009,26 @@ fn quantifier_binder_shadowing_an_operation_parameter_is_allowed() {
     .unwrap();
     let actual = execute(&program, &expected).unwrap();
     assert_eq!(mismatch(&program, &expected, &actual), None, "{stem}");
+}
+
+/// FR-104-AC-18 / TC-3083: a same-named quantifier binder and qualified
+/// operation-parameter read are admitted together in a precondition.
+#[trace("TC-3083", "FR-104-AC-18")]
+#[test]
+fn operation_parameter_quantifier_shadowing_is_allowed() {
+    let fixtures = corpus_root().join("operations/parameters");
+    let scratch = tempfile::tempdir().expect("operation parameter shadow directory");
+    let stem = "operation-parameter-quantifier-shadow";
+    for extension in ["native", "expected.json", "request.json"] {
+        let name = format!("{stem}.{extension}");
+        std::fs::copy(fixtures.join(&name), scratch.path().join(&name))
+            .unwrap_or_else(|error| panic!("stage {name}: {error}"));
+    }
+    stage_parameter_models(scratch.path(), &fixtures)
+        .unwrap_or_else(|error| panic!("stage operation parameter model: {error}"));
+    let report = run_directory(scratch.path())
+        .unwrap_or_else(|error| panic!("operation parameter shadow corpus: {error}"));
+    assert_eq!(report, "flips_with: none");
 }
 
 #[trace("TC-3064", "FR-680-AC-9")]
