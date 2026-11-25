@@ -421,7 +421,7 @@ struct ParityClause {
 }
 
 enum UnitPackage {
-    Checked(CheckedUnit),
+    Checked(Box<CheckedUnit>),
     #[cfg(feature = "test-support")]
     Direct(Arc<CheckedPackage>),
 }
@@ -444,6 +444,16 @@ struct ParityUnit {
     environment: ObjectEnvironment,
     functions: Vec<ParityFunction>,
     clauses: Vec<ParityClause>,
+}
+
+impl ParityUnit {
+    fn finding_unit(&self) -> FindingUnit {
+        FindingUnit {
+            id: self.id.clone(),
+            source: self.source.clone(),
+            source_files: self.source_files.clone(),
+        }
+    }
 }
 
 struct CompiledSources {
@@ -508,13 +518,15 @@ fn run_with_reference(
                         FindingKind::UnbuildableCase(case.cause.clone()),
                         report.backend,
                         inputs.seed,
-                        case.id.clone(),
-                        source.clone(),
-                        source_files.clone(),
-                        entry.clone(),
-                        Vec::new(),
-                        None,
-                        None,
+                        FindingUnit {
+                            id: case.id.clone(),
+                            source: source.clone(),
+                            source_files: source_files.clone(),
+                        },
+                        FindingCall {
+                            entry: entry.clone(),
+                            ..FindingCall::default()
+                        },
                     ),
                 );
             }
@@ -585,7 +597,7 @@ fn run_with_reference(
             id: index.to_string(),
             source_files: vec![generated_source_file(index, &source)],
             source,
-            package: UnitPackage::Checked(checked),
+            package: UnitPackage::Checked(Box::new(checked)),
             environment: ObjectEnvironment::default(),
             functions,
             clauses: Vec::new(),
@@ -612,13 +624,8 @@ fn run_with_reference(
                     FindingKind::EmptyComparison,
                     report.backend,
                     inputs.seed,
-                    String::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    String::new(),
-                    Vec::new(),
-                    None,
-                    None,
+                    FindingUnit::default(),
+                    FindingCall::default(),
                 ),
             );
         }
@@ -666,13 +673,12 @@ fn record_draw_finding(
                 kind.clone(),
                 report.backend,
                 seed,
-                index.to_string(),
-                source.to_vec(),
-                vec![generated_source_file(index, source)],
-                String::new(),
-                Vec::new(),
-                None,
-                None,
+                FindingUnit {
+                    id: index.to_string(),
+                    source: source.to_vec(),
+                    source_files: vec![generated_source_file(index, source)],
+                },
+                FindingCall::default(),
             ),
         );
     }
@@ -706,13 +712,13 @@ fn record_unprepared_unit(
                     kind.clone(),
                     report.backend,
                     seed,
-                    unit.id.clone(),
-                    unit.source.clone(),
-                    unit.source_files.clone(),
-                    entry.clone(),
-                    arguments.clone(),
-                    reference.map(|failure| Err(failure.clone())),
-                    None,
+                    unit.finding_unit(),
+                    FindingCall {
+                        entry: entry.clone(),
+                        arguments: arguments.clone(),
+                        reference: reference.map(|failure| Err(failure.clone())),
+                        ..FindingCall::default()
+                    },
                 ),
             );
         }
@@ -850,22 +856,21 @@ fn compare_unit(
                     FindingKind::PrepareFailed,
                     *choice,
                     seed,
-                    unit.id.clone(),
-                    unit.source.clone(),
-                    unit.source_files.clone(),
-                    first.map_or_else(
-                        || first_clause.map_or_else(String::new, |clause| clause.name.clone()),
-                        |function| function.name.clone(),
-                    ),
-                    first
-                        .and_then(|function| function.arguments.first())
-                        .cloned()
-                        .or_else(|| {
-                            first_clause.map(|clause| clause_arguments(&clause.observations))
-                        })
-                        .unwrap_or_default(),
-                    None,
-                    None,
+                    unit.finding_unit(),
+                    FindingCall {
+                        entry: first.map_or_else(
+                            || first_clause.map_or_else(String::new, |clause| clause.name.clone()),
+                            |function| function.name.clone(),
+                        ),
+                        arguments: first
+                            .and_then(|function| function.arguments.first())
+                            .cloned()
+                            .or_else(|| {
+                                first_clause.map(|clause| clause_arguments(&clause.observations))
+                            })
+                            .unwrap_or_default(),
+                        ..FindingCall::default()
+                    },
                 );
                 finding.prepare_failure = Some(failure);
                 record_finding(report, limits.max_reported, finding);
@@ -899,13 +904,11 @@ fn compare_unit(
                             FindingKind::CoverageGap,
                             *choice,
                             seed,
-                            unit.id.clone(),
-                            unit.source.clone(),
-                            unit.source_files.clone(),
-                            entry,
-                            Vec::new(),
-                            None,
-                            None,
+                            unit.finding_unit(),
+                            FindingCall {
+                                entry,
+                                ..FindingCall::default()
+                            },
                         ),
                     );
                 }
@@ -927,13 +930,13 @@ fn compare_unit(
                         FindingKind::ReferenceFault,
                         *choice,
                         seed,
-                        unit.id.clone(),
-                        unit.source.clone(),
-                        unit.source_files.clone(),
-                        function.name.clone(),
-                        fault_arguments.clone(),
-                        Some(Err(fault.clone())),
-                        None,
+                        unit.finding_unit(),
+                        FindingCall {
+                            entry: function.name.clone(),
+                            arguments: fault_arguments.clone(),
+                            reference: Some(Err(fault.clone())),
+                            ..FindingCall::default()
+                        },
                     ),
                 );
                 continue;
@@ -985,13 +988,13 @@ fn compare_unit(
                             FindingKind::Nondeterministic,
                             *choice,
                             seed,
-                            unit.id.clone(),
-                            unit.source.clone(),
-                            unit.source_files.clone(),
-                            function.name.clone(),
-                            arguments.clone(),
-                            Some(first),
-                            Some(second),
+                            unit.finding_unit(),
+                            FindingCall {
+                                entry: function.name.clone(),
+                                arguments: arguments.clone(),
+                                reference: Some(first),
+                                result: Some(second),
+                            },
                         ),
                     );
                     continue;
@@ -1004,13 +1007,13 @@ fn compare_unit(
                             FindingKind::Difference(member),
                             *choice,
                             seed,
-                            unit.id.clone(),
-                            unit.source.clone(),
-                            unit.source_files.clone(),
-                            function.name.clone(),
-                            arguments.clone(),
-                            Some(expected),
-                            Some(first),
+                            unit.finding_unit(),
+                            FindingCall {
+                                entry: function.name.clone(),
+                                arguments: arguments.clone(),
+                                reference: Some(expected),
+                                result: Some(first),
+                            },
                         ),
                     );
                 }
@@ -1029,13 +1032,13 @@ fn compare_unit(
                         FindingKind::ReferenceFault,
                         *choice,
                         seed,
-                        unit.id.clone(),
-                        unit.source.clone(),
-                        unit.source_files.clone(),
-                        clause.name.clone(),
-                        clause_arguments,
-                        Some(Err(fault.clone())),
-                        None,
+                        unit.finding_unit(),
+                        FindingCall {
+                            entry: clause.name.clone(),
+                            arguments: clause_arguments,
+                            reference: Some(Err(fault.clone())),
+                            ..FindingCall::default()
+                        },
                     ),
                 );
                 continue;
@@ -1086,13 +1089,13 @@ fn compare_unit(
                         FindingKind::Nondeterministic,
                         *choice,
                         seed,
-                        unit.id.clone(),
-                        unit.source.clone(),
-                        unit.source_files.clone(),
-                        clause.name.clone(),
-                        clause_arguments.clone(),
-                        Some(first),
-                        Some(second),
+                        unit.finding_unit(),
+                        FindingCall {
+                            entry: clause.name.clone(),
+                            arguments: clause_arguments.clone(),
+                            reference: Some(first),
+                            result: Some(second),
+                        },
                     ),
                 );
                 continue;
@@ -1105,13 +1108,13 @@ fn compare_unit(
                         FindingKind::Difference(member),
                         *choice,
                         seed,
-                        unit.id.clone(),
-                        unit.source.clone(),
-                        unit.source_files.clone(),
-                        clause.name.clone(),
-                        clause_arguments,
-                        Some(expected),
-                        Some(first),
+                        unit.finding_unit(),
+                        FindingCall {
+                            entry: clause.name.clone(),
+                            arguments: clause_arguments,
+                            reference: Some(expected),
+                            result: Some(first),
+                        },
                     ),
                 );
             }
@@ -1274,29 +1277,41 @@ fn completed_values_equal(
     }
 }
 
-fn make_finding(
-    kind: FindingKind,
-    backend: ExecutionBackendChoice,
-    seed: u64,
-    unit: String,
+/// The unit a finding is about; empty for a finding about no unit.
+#[derive(Default)]
+struct FindingUnit {
+    id: String,
     source: Vec<u8>,
     source_files: Vec<SourceFile>,
+}
+
+/// The entry call a finding is about, as far as one was made.
+#[derive(Default)]
+struct FindingCall {
     entry: String,
     arguments: Vec<Value>,
     reference: Option<Result<Evaluation, CallFailure>>,
     result: Option<Result<Evaluation, CallFailure>>,
+}
+
+fn make_finding(
+    kind: FindingKind,
+    backend: ExecutionBackendChoice,
+    seed: u64,
+    unit: FindingUnit,
+    call: FindingCall,
 ) -> Finding {
     Finding {
         kind,
         backend,
         seed,
-        unit,
-        source,
-        source_files,
-        entry,
-        arguments,
-        reference,
-        result,
+        unit: unit.id,
+        source: unit.source,
+        source_files: unit.source_files,
+        entry: call.entry,
+        arguments: call.arguments,
+        reference: call.reference,
+        result: call.result,
         prepare_failure: None,
     }
 }
@@ -1405,7 +1420,7 @@ fn corpus_units(path: &Path, cancel: &Cancel) -> Result<CorpusUnits, ParityRefus
                     arguments: vec![case.arguments],
                 }],
                 source_files: inputs.source_files(),
-                package: UnitPackage::Checked(case.checked),
+                package: UnitPackage::Checked(Box::new(case.checked)),
                 environment: case.environment,
                 clauses: Vec::new(),
             }),
@@ -2261,7 +2276,7 @@ mod generator_tests {
                 path: "undefined.native".to_owned(),
                 bytes: source.to_vec(),
             }],
-            package: UnitPackage::Checked(compiled.checked),
+            package: UnitPackage::Checked(Box::new(compiled.checked)),
             environment: ObjectEnvironment::default(),
             functions: vec![ParityFunction {
                 name: "missing".to_owned(),
