@@ -38,6 +38,8 @@ mod settle;
 mod unbounded;
 mod witness;
 
+use ix_trace_rs::implements;
+
 /// Actual product-construction events on the current test thread.
 #[cfg(feature = "test-support")]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -276,6 +278,7 @@ impl ProbKey {
     /// Every product-key member is encoded, including absent controls for
     /// unbounded digital forms. The model member is the full encoded model
     /// and clock state; no Rust `Debug` representation participates.
+    #[implements("FR-204-AC-4")]
     pub fn digital_cycle_identity(&self) -> String {
         let mut identity = String::from("filament.probability-digital-cycle-state/v1;");
         match &self.binding {
@@ -453,6 +456,7 @@ impl PartialOrd for ProbKey {
 }
 
 impl Ord for ProbKey {
+    #[implements("FR-196-AC-6", "FR-196-AC-10")]
     fn cmp(&self, other: &Self) -> Ordering {
         self.binding
             .cmp(&other.binding)
