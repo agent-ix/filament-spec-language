@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Scalar requirement facts survive emission and strict native admission.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use filament_contract_model::{
     CapabilityKind, CheckedPackageReadLimits, CheckedPackageV2, CheckedPackageV2ReadResult,
-    ValueValidityRecord,
+    CheckedTerm, ValueValidityRecord,
 };
 use fsl_semantics::check::wire_id::WireGraph;
 use ix_trace_rs::trace;
 
+use crate::emit::{emit_checked, Emission};
 use crate::CheckedPackage;
-use crate::emit::{Emission, emit_checked};
 
 const GUARDED: &str = "function Guarded using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x * 2 }";
 
@@ -192,19 +192,15 @@ fn both_guard_holds_outcomes_survive_native_admission() {
 fn unguarded_record_keeps_an_empty_path_condition() {
     let (package, _, admitted, records) =
         emitted_records("function Plain using v(x: Int[0, 9]): Integer pure { x + 1 }");
-    assert!(
-        package
-            .graph()
-            .requirements()
-            .values()
-            .all(|source| source.path_condition().is_empty())
-    );
-    assert!(
-        records
-            .iter()
-            .all(|record| record.path_condition_frame.is_none()
-                && admitted.path_condition(record).is_empty())
-    );
+    assert!(package
+        .graph()
+        .requirements()
+        .values()
+        .all(|source| source.path_condition().is_empty()));
+    assert!(records
+        .iter()
+        .all(|record| record.path_condition_frame.is_none()
+            && admitted.path_condition(record).is_empty()));
     assert!(admitted.path_condition_frames().is_empty());
 }
 
@@ -643,14 +639,113 @@ fn records_of_a_shared_application_follow_the_owner_walk() {
 #[trace("FR-825-AC-11", "FR-322", "FR-062-AC-17")]
 #[test]
 fn bounded_mutual_recursion_emits_guarded_range_records() {
-    let (_, _, admitted, records) = emitted_records(
+    let declarations =
         "function a using v(n: Int[0, 9]): Integer pure decreases(n) { if n > 0 then b(n - 1) else 0 }\n\
-         function b using v(n: Int[0, 9]): Integer pure decreases(n) { if n > 0 then a(n - 1) else 0 }\n",
+         function b using v(n: Int[0, 9]): Integer pure decreases(n) { if n > 0 then a(n - 1) else 0 }\n";
+    let (package, emission, admitted, records) = emitted_records(declarations);
+    let wire: serde_json::Value = serde_json::from_slice(emission.package().bytes()).unwrap();
+    let identities = WireGraph::of_package_value(&wire).expect("the emitted graph has identities");
+    let subtraction_node = crate::emit::tests::typed_nodes(&emission)
+        .iter()
+        .find(|node| {
+            matches!(
+                &node.body,
+                CheckedTerm::Application { operation, .. }
+                    if operation.identity() == Some("filament.op.integer.sub")
+            )
+        })
+        .expect("the shared decrement application is emitted")
+        .node_id
+        .clone();
+    let subtraction_node = serde_json::to_value(subtraction_node).unwrap();
+    let decrement_records: Vec<_> = records
+        .iter()
+        .filter(|record| serde_json::to_value(&record.application).unwrap() == subtraction_node)
+        .collect();
+    assert_eq!(decrement_records.len(), 2, "one decrement record per owner");
+    assert_eq!(
+        decrement_records[0].application,
+        decrement_records[1].application
     );
-    assert!(
-        records
+    let owner_a = identities
+        .wire_value(
+            &package
+                .graph()
+                .function_identity("a")
+                .expect("function a has an identity"),
+        )
+        .expect("function a is emitted");
+    let owner_b = identities
+        .wire_value(
+            &package
+                .graph()
+                .function_identity("b")
+                .expect("function b has an identity"),
+        )
+        .expect("function b is emitted");
+    let record_a = decrement_records
+        .iter()
+        .find(|record| serde_json::to_value(&record.owner).unwrap() == owner_a)
+        .expect("function a has a bounded decrement record");
+    let record_b = decrement_records
+        .iter()
+        .find(|record| serde_json::to_value(&record.owner).unwrap() == owner_b)
+        .expect("function b has a bounded decrement record");
+    assert_eq!(record_a.application, record_b.application);
+    assert_eq!(record_a.occurrence, 1, "a names its root-body visit");
+    assert_eq!(record_b.occurrence, 3, "b names its root-body visit");
+
+    for (name, record) in [("a", record_a), ("b", record_b)] {
+        let source = package
+            .graph()
+            .requirements()
             .iter()
-            .any(|record| !admitted.path_condition(record).is_empty()),
-        "the bounded decrement requirement retains its positive-guard frame"
+            .find(|(claim, source)| {
+                source.owner() == Some(name)
+                    && identities.wire_value(claim.node()).ok().as_ref()
+                        == Some(&serde_json::to_value(&record.application).unwrap())
+            })
+            .map(|(_, source)| source)
+            .expect("the owner has its checked requirement");
+        assert_eq!(source.path_condition().len(), 1);
+        let actual = chain(&admitted, record);
+        assert_eq!(actual.len(), 1, "{name} has exactly one frame guard");
+        assert!(actual[0].1, "{name}'s decrement is under the true branch");
+        assert_eq!(actual, source_chain(&identities, source));
+    }
+
+    // The reader visits the shared application under b while walking a, then
+    // under a while walking b. Those synthetic slots retain the source region
+    // of the syntax they repeat and keep the root-owner claims at ordinals 1/3.
+    let application = serde_json::to_value(&record_a.application).unwrap();
+    let mut regions = BTreeMap::<u64, serde_json::Value>::new();
+    for entry in wire["source_map"].as_array().expect("source map") {
+        if entry["node_id"] == application && entry["role"] == "expression" {
+            let ordinal = entry["ordinal"].as_u64().expect("expression ordinal");
+            assert!(regions.insert(ordinal, entry["regions"].clone()).is_none());
+        }
+    }
+    assert_eq!(regions.keys().copied().collect::<Vec<_>>(), [0, 1, 2, 3]);
+    assert_eq!(
+        regions[&0], regions[&3],
+        "the transitive b slot clones b's region"
     );
+    assert_eq!(
+        regions[&1], regions[&2],
+        "the transitive a slot clones a's region"
+    );
+    assert_ne!(
+        regions[&0], regions[&1],
+        "a and b retain distinct source regions"
+    );
+    let source_prefix =
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n";
+    let source_a_start =
+        source_prefix.len() as u64 + declarations.find("n - 1").expect("a decrement") as u64;
+    let source_b_start =
+        source_prefix.len() as u64 + declarations.rfind("n - 1").expect("b decrement") as u64;
+    let region_start =
+        |regions: &serde_json::Value| regions[0]["start"].as_u64().expect("source region start");
+    assert_eq!(region_start(&regions[&1]), source_a_start);
+    assert_eq!(region_start(&regions[&3]), source_b_start);
 }
