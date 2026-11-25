@@ -782,6 +782,9 @@ pub struct ModelSystem<'a> {
     initial_all: std::sync::OnceLock<Vec<ModelSimState>>,
     /// FR-1000: subject-specific resolutions for checked reference literals.
     reference_bindings: ReferenceBindings,
+    /// FR-125 "Instancing": the type of the member record an initial state
+    /// admits for each (universe, key); a key has one type across the subject.
+    admitted_types: BTreeMap<(UniverseId, String), DeclarationKey>,
     clauses: Clauses,
     applications: BTreeMap<EffectiveId, Vec<Application>>,
     fields: BTreeMap<DeclarationKey, Vec<StateField>>,
@@ -1727,6 +1730,7 @@ impl<'a> ModelSystem<'a> {
             initial_stages,
             initial_all: std::sync::OnceLock::new(),
             reference_bindings,
+            admitted_types,
             applications,
             fields,
             populations,
@@ -2839,6 +2843,31 @@ impl<'a> ModelSystem<'a> {
         self.model
             .object_reference(type_key, &instance.key)
             .map_err(|_| InternalFault::new("model-simulation", "universe-key-references"))
+    }
+
+    /// The reference a binding of `instance`, for a parameter of object type
+    /// `declared`, is written as (FR-125 "Instancing"): the universe of
+    /// `declared`, the type of the member record an initial state admits for
+    /// the key in that universe, and the key. A key with no such record,
+    /// which a hyper parameter's instance may have, is written with `declared`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::bound_reference`].
+    #[implements("FR-125-AC-9")]
+    pub fn written_reference(
+        &self,
+        declared: EffectiveId,
+        instance: &ModelInstance,
+    ) -> Result<ObjectReference, InternalFault> {
+        let declared = self.bound_reference(declared, instance)?;
+        let identity = (declared.universe().clone(), instance.key.clone());
+        let Some(admitted) = self.admitted_types.get(&identity) else {
+            return Ok(declared);
+        };
+        self.model
+            .object_reference(admitted, &instance.key)
+            .map_err(|_| InternalFault::new("model-simulation", "admitted-key-references"))
     }
 
     /// ADR-027 FT-3: every object of this subject's universe whose type

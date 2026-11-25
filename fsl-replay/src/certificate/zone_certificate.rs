@@ -4095,7 +4095,7 @@ impl<O> Checker<'_, '_, O> {
                 let bound = instances.iter().any(|instance| {
                     self.timed
                         .system()
-                        .bound_reference(parameter.object.clone(), instance)
+                        .written_reference(parameter.object.clone(), instance)
                         .is_ok_and(|candidate| candidate == *reference)
                 });
                 if !bound {

@@ -20,14 +20,14 @@ use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
 use ix_trace_rs::trace;
 use serde_json::{Value, json};
 
-const DOMAIN: &[u8] = include_bytes!("../fixtures/link.semantic-ir.json");
+pub(super) const DOMAIN: &[u8] = include_bytes!("../fixtures/link.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 const SOURCE: &str = include_str!("../fixtures/link.native");
 const COIN_DOMAIN: &[u8] = include_bytes!("../fixtures/coin.semantic-ir.json");
 const COIN_SNAPSHOT: &[u8] = include_bytes!("../fixtures/coin.snapshot.json");
 const COIN_SOURCE: &str = include_str!("../fixtures/coin.native");
 
-fn model_source() -> String {
+pub(super) fn model_source() -> String {
     SOURCE.replace(
         "filament.temporal.infinite-trace/v1",
         "filament.temporal.event-position.false-extension/v1",
