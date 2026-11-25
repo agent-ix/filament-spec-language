@@ -122,7 +122,8 @@ pub enum CertificateRule {
 
 /// FR-338 and FR-314: where a certificate rejection occurred.
 ///
-/// A product-state locus serializes as [`ProductStateRef`]'s object. Query
+/// A product-state locus and a hyper product state locus serialize in FSpec
+/// FR-331's forms, each model state key as its State locus `{key}`. Query
 /// loci serialize with FSpec FR-331's query-part spelling. A proof-step
 /// locus serializes as an object containing its part and its canonical decimal
 /// `u64` index string.
@@ -147,20 +148,6 @@ pub enum CertificateLocus {
     },
     /// The product state of a closure certificate at which a rule failed.
     ProductState(ProductStateRef),
-    /// The source and target of a backward product edge.
-    ProductEdge {
-        /// Source of the edge.
-        source: ProductStateRef,
-        /// Target of the edge.
-        target: ProductStateRef,
-    },
-    /// The source and target of a hyper product edge.
-    HyperProductEdge {
-        /// Source of the edge.
-        source: StateKey,
-        /// Target of the edge.
-        target: StateKey,
-    },
     /// The query whose encoding or certificate shape failed.
     Query {
         /// The query's proof obligation part.
@@ -216,6 +203,17 @@ pub enum CertificateLocus {
     },
 }
 
+/// Writes each state key in `tuple`'s `states` as FSpec FR-331's State locus,
+/// `{"key": <base64url key octets>}`.
+fn write_state_loci(tuple: &mut serde_json::Value) {
+    let states = tuple
+        .get_mut("states")
+        .and_then(serde_json::Value::as_array_mut);
+    for state in states.into_iter().flatten() {
+        *state = serde_json::json!({"key": state.take()});
+    }
+}
+
 impl Serialize for CertificateLocus {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
@@ -234,31 +232,32 @@ impl Serialize for CertificateLocus {
                 object.serialize_field("part", part.as_str())?;
                 object.end()
             }
-            Self::ProductState(state) => state.serialize(serializer),
-            Self::ProductEdge { source, target } => {
-                let mut object = serializer.serialize_struct("ProductEdge", 2)?;
-                object.serialize_field("source", source)?;
-                object.serialize_field("target", target)?;
+            Self::ProductState(state) => {
+                use base64::Engine as _;
+                let engine = &base64::engine::general_purpose::URL_SAFE_NO_PAD;
+                let mut object = serializer.serialize_struct("CertificateLocus", 2)?;
+                let model_state =
+                    serde_json::json!({"key": engine.encode(state.model_state.as_bytes())});
+                object.serialize_field("model_state", &model_state)?;
+                let automaton_state = engine.encode(state.automaton_state.as_bytes());
+                object.serialize_field("automaton_state", &automaton_state)?;
                 object.end()
             }
-            Self::HyperProductEdge { source, target } => {
-                let source = crate::certificate::product::product_key_wire(source)
-                    .map_err(serde::ser::Error::custom)?;
-                let target = crate::certificate::product::product_key_wire(target)
-                    .map_err(serde::ser::Error::custom)?;
-                let mut object = serializer.serialize_struct("HyperProductEdge", 2)?;
-                object.serialize_field("source", &source)?;
-                object.serialize_field("target", &target)?;
-                object.end()
+            Self::HyperProductState(state) => {
+                let mut written =
+                    product::product_key_wire(state).map_err(serde::ser::Error::custom)?;
+                write_state_loci(&mut written);
+                let witnesses = written
+                    .get_mut("witness_set")
+                    .and_then(serde_json::Value::as_array_mut);
+                witnesses.into_iter().flatten().for_each(write_state_loci);
+                written.serialize(serializer)
             }
-            Self::HyperProductState(state) => product::product_key_wire(state)
-                .map_err(serde::ser::Error::custom)?
-                .serialize(serializer),
             Self::HyperState(state) => {
                 use base64::Engine as _;
                 let mut object = serializer.serialize_struct("HyperState", 1)?;
                 let key = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(state.as_bytes());
-                object.serialize_field("states", &[key])?;
+                object.serialize_field("states", &[serde_json::json!({"key": key})])?;
                 object.end()
             }
             Self::HyperTransitionTuple(tuple) => tuple.serialize(serializer),

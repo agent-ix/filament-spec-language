@@ -75,7 +75,11 @@ pub fn build_product(
     request: ProductRequest<'_>,                  // { subject: ModelSubject, claim: &CheckedProbabilisticClaim, limits: ModelCheckLimits }
     cancel: &Cancel,
 ) -> Result<ProbBuild, ProductRefusal>;
-pub enum ProbBuild { Built(ProbProduct), Undefined(UndefinedPath) }
+pub enum ProbBuild {
+    Built(ProbProduct),
+    Partial { product: ProbProduct, lower_product: ProbProduct }, // max_states denied a successor key
+    Undefined(UndefinedPath),
+}
 pub enum ProductRefusal {
     Admission(AdmissionFailure), NotSimulated(NotSimulated), Expansion(ExpansionStop),
     NotMarkov(Box<NotMarkov>), UndecidedSuccessor(UndecidedSuccessor), PredicateRefused(ClauseOutcome),
@@ -92,7 +96,9 @@ EN-1's `ModelCheckRefusal` does (FR-126). FR-203's table settles
 `PredicateRefused`, `Translation` and an `Expansion` that names a limit
 too. A build that finds an
 undefined read is no refusal but a result: `ProbBuild::Undefined` is the
-refutation's evidence (see "Behavior").
+refutation's evidence (see "Behavior"). A build whose successor `max_states`
+denied is no refusal either: it returns `ProbBuild::Partial` (see "Outputs"
+and "Behavior").
 
 The names `ProductStateId` and `Binding`, which FR-199, FR-200, FR-202 and
 FR-203 cite, are `ProbStateId` and `ModelInstance` below.
@@ -889,6 +895,20 @@ Every component of the applicable canonical key form must be round-tripped
 by each consumer, including the conditional `root` component when present,
 with rejection loci and no model-only shortcut.
 
+### The partial product
+
+`ProbBuild::Partial` is the result of a build in which `max_states` denied a
+successor key; no other budget produces it, so the variant names that limit.
+Its `product` is the explored prefix: at most `max_states` states, each with
+its complete canonical key, and the edges between them. A denied successor has
+no state, key or edge in it. The other edges of its source keep their own
+probabilities, so a row of the prefix may sum to less than 1. `lower_product`
+is a completion of `product` for the solver alone, in which every omitted
+edge, with its choice, action, draw, probability and rewards, leads to one
+added absorbing state decided `Reject`; no row is renormalized. The added
+state is no product state: its key enters no certificate document, path or
+result.
+
 ## Behavior
 
 - Under a workload, the product SHALL be a DTMC whose edges are FR-187's
@@ -939,9 +959,22 @@ with rejection loci and no model-only shortcut.
   claim-initialized control.
 - Exploration SHALL use FR-101's canonical breadth-first order, so the
   product, its state numbering and its edge order are functions of the
-  subject, the claim and the limits. Reaching `max_states`,
-  `max_transitions` or `max_automaton_states` SHALL stop the build and name
-  the limit (FR-203).
+  subject, the claim and the limits.
+- When exploration reaches `max_transitions` or `max_automaton_states`, or
+  `max_states` denies an initial state's key, EN-5 SHALL stop the build and
+  name the limit (FR-203).
+- When `max_states` denies a successor's new key, the target's FR-203-AC-14
+  `MaxStates` stop, EN-5 SHALL construct no representation of that target and
+  keep no edge to it, SHALL continue to expand the admitted states in the same
+  order under the other rules of this requirement, and SHALL return
+  `ProbBuild::Partial` when that exploration ends. A key already admitted
+  reuses its slot. A later undefined read still returns
+  `ProbBuild::Undefined`, and a later `max_transitions` or
+  `max_automaton_states` limit still stops the build. Only partial evidence
+  reads a `Partial` product (FSpec FR-411 "Evidence on a partial product",
+  FR-1042); when it settles nothing, the item settles as FR-203 states for a
+  budget reached, `Incomplete(LimitReached)` naming `exact_prob.max_states`
+  and its value.
 
 ## Acceptance Criteria
 
