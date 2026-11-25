@@ -461,8 +461,7 @@ fn public_analyze_proves_fair_each_service_and_refutes_unfair_service() {
     assert_eq!(item["record"]["cause"]["limit"], "max_states", "{item}");
     assert_eq!(item["record"]["cause"]["value"], 1, "{item}");
     assert_eq!(
-        item["record"]["cause"]["setting"],
-        "model_check.max_states",
+        item["record"]["cause"]["setting"], "model_check.max_states",
         "{item}"
     );
     assert!(item.get("counterexample").is_none(), "{item}");
