@@ -17,7 +17,7 @@ included, with `unknown_edition`. This catches a `0-draft` or unknown edition
 that is admitted, and a `1-draft` request whose native-only members are
 silently ignored.
 
-Scope: FR-100-AC-1 to FR-100-AC-3.
+Scope: FR-100-AC-1 to FR-100-AC-3 and FR-100-AC-25.
 
 ## Test Procedure
 
@@ -32,13 +32,16 @@ Scope: FR-100-AC-1 to FR-100-AC-3.
    `snapshots`, `invocations`, `limits.validation_work`,
    `limits.expression_steps`, program `clauses`, program `extraction`, and a
    `native-rule-model/1` model whose file holds malformed bytes added; then
-   with `call` removed; then with a `call.accounting` member `work_units` of
+   with a `call.accounting` member `work_units` of
    `18446744073709551616`, `-1`, `1.5` and `null`, with an `accounting`
    member `depth`, with an `accounting` of `5`, and with a top-level
    a legacy `work_units` member directly in `call`. Run the program
    `extraction` request twice more: through the command built with no
    features and through the command built with `--all-features`.
-5. Run a `1-draft` program that imports `test/geometry` and declares
+5. Starting from the native-run/1 request of step 1, remove `call` and submit
+   the `1-draft` function-run request with neither `call` nor the FR-031
+   clause-run form.
+6. Run a `1-draft` program that imports `test/geometry` and declares
    `model M` by the identity of
    `tests/fixtures/spine-model.semantic-ir.json`, and calls a function using
    both, with `libraries` supplying `test/geometry` and `models` supplying the
@@ -46,7 +49,8 @@ Scope: FR-100-AC-1 to FR-100-AC-3.
 
 Tag the tests `#[trace("TC-450", "FR-100-AC-1")]` (step 1),
 `#[trace("TC-450", "FR-100-AC-2")]` (steps 2 and 3) and
-`#[trace("TC-450", "FR-100-AC-3")]` (steps 4 and 5).
+`#[trace("TC-450", "FR-100-AC-3")]` (steps 4, 5 and 6), and
+`#[trace("TC-450", "FR-100-AC-25")]` (step 5).
 
 ## Expected Results
 
@@ -64,4 +68,7 @@ Tag the tests `#[trace("TC-450", "FR-100-AC-1")]` (step 1),
   stage `request`, exit 20, no result document, and no model file is read.
   The `extraction` request refuses `invalid-request` naming `extraction` in the
   no-feature build, and `extraction-requires-run` in the feature-enabled build.
-- Step 5: exit 0 and a `completed` outcome.
+- Step 5: the request refuses `invalid-request` at stage `request`, exit 20,
+  with no result document before model or library reads; the refusal message
+  is exactly `a 1-draft program runs through the spine; the request selects no call`.
+- Step 6: exit 0 and a `completed` outcome.
