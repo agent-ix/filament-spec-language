@@ -1831,7 +1831,11 @@ mod tests {
                 Some("type-mismatch"),
                 "ill_typed",
                 Some(fsl_replay::OutcomeLocus::Region {
-                    source: body.reference().clone(),
+                    source: fsl_foundation::source::provenance::RawSourceRef::new(
+                        "docs",
+                        "spec.md#Broken",
+                    )
+                    .expect("valid test source identity"),
                     start: 0,
                     end: 1,
                 }),
@@ -2968,8 +2972,10 @@ mod tests {
             &Cancel::new(),
         )
         .expect("the exact byte bound admits every line")
-        .value();
-        assert_eq!(exact.as_str(), complete);
+        .value()
+        .as_str()
+        .to_owned();
+        assert_eq!(exact, complete);
     }
 
     #[test]
