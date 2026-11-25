@@ -720,6 +720,54 @@ fn a_proved_liveness_half_is_uncertified_and_a_replayed_lasso_refutes() {
     assert_eq!(settled.liveness, Some(TerminalValue::Refuted));
 }
 
+/// FR-630-AC-7/10 (TC-1590): the Box and nested Parcel initial snapshots hold
+/// a reference from `a` to distinct object `b`, and the checked simulation
+/// certificates accept the resulting abstract images.
+#[trace("TC-1590", "FR-630-AC-7", "FR-630-AC-10")]
+#[test]
+fn composite_nested_reference_refinements_receive_checked_certificates() {
+    for (name, field, variant) in [
+        (
+            "Box",
+            "box",
+            RingVariant {
+                boxed_reference: true,
+                composite_two_targets: true,
+                ..RingVariant::default()
+            },
+        ),
+        (
+            "Parcel",
+            "parcel",
+            RingVariant {
+                parcel_reference: true,
+                composite_two_targets: true,
+                ..RingVariant::default()
+            },
+        ),
+    ] {
+        let refinement = ring_is_queue(&format!("items = sequence[]; {field} = self.{field};"))
+            .replace("Q::Queue::enq(self.ring, x)", "stutter")
+            .replace("Q::Queue::deq(self.ring)", "stutter");
+        let world = RingWorld::with(variant, &refinement);
+        let subject = ring(&world);
+        let checked = outcome(&subject);
+        let settled = settle_item(&subject, &checked);
+        assert_eq!(
+            settled.record.value,
+            proved(Certification::Certified),
+            "{name}: {:?}",
+            settled.record
+        );
+        assert_eq!(settled.record.label, ResultLabel::Proved, "{name}");
+        assert_eq!(
+            settled.safety,
+            Some(proved(Certification::Certified)),
+            "{name}"
+        );
+    }
+}
+
 /// FR-899-AC-1/AC-5 (TC-2536/TC-550): a hidden-field peek loop refutes with
 /// `HiddenUnfair`, and FR-145 reproduces it from the counterexample.
 #[trace("TC-2536", "FR-899-AC-1", "FR-899-AC-5")]

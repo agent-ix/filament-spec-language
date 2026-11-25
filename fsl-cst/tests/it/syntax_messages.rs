@@ -80,7 +80,7 @@ fn expression_start_does_not_advertise_decimal_literal() {
     );
 }
 
-#[trace("TC-2198", "FR-762-AC-4")]
+#[trace("TC-2198", "FR-397-AC-11")]
 #[test]
 fn uppercase_hex_reports_the_lowercase_digit_rule() {
     let output = messages(&format!(
@@ -90,6 +90,10 @@ fn uppercase_hex_reports_the_lowercase_digit_rule() {
         output
             .iter()
             .any(|message| message == "expected a lowercase hex digit"),
+        "{output:?}"
+    );
+    assert!(
+        output.iter().all(|message| !message.contains("malformed")),
         "{output:?}"
     );
 }

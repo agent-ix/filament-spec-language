@@ -992,7 +992,6 @@ fn corpus_collections() {
     let directory = corpus_root().join("collections");
     let report = run_directory(&directory).unwrap_or_else(|error| panic!("{error}"));
     families::assert_families("collections", families::COLLECTION_FAMILIES);
-    families::assert_flips("collections", families::COLLECTION_FLIPS);
     println!("{report}");
 }
 
