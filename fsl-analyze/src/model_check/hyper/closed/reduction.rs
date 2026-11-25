@@ -369,7 +369,7 @@ impl Run<'_, '_> {
                 .permute(state, renaming)
                 .map_err(|_| fault("a-closed-key-permutation-preserves-state-encoding"))?;
             let key = system
-                .state_key(&state)
+                .state_key(&state, fsl_foundation::IdentityLimits::default())
                 .map_err(ModelCheckRefusal::Encoding)?
                 .0;
             let incoming = position

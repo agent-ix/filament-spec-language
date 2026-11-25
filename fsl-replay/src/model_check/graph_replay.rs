@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-170's state-graph evidence checks over the admitted `ModelSystem`.
 
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, VecDeque};
 
 use filament_exact::ObjectReference;
@@ -767,6 +768,7 @@ fn replay_claim_evidence(
     Ok(result(settlement, evaluated, closure_nodes, first_target))
 }
 
+#[implements("FR-170-AC-7", "FR-168-AC-16")]
 fn replay_claim_undefined(
     system: &ModelSystem<'_>,
     loci: Loci<'_>,
@@ -1219,7 +1221,7 @@ fn replay_steps(
     steps: &[ModelStep],
 ) -> Result<Vec<Position>, ReplayRefusal> {
     let (bytes, _) = system
-        .state_key(&start)
+        .state_key(&start, fsl_foundation::IdentityLimits::default())
         .map_err(|_| fault("state-graph-state-key"))?;
     let key = StateKey::from_canonical_bytes(bytes);
     let mut positions = vec![(start, key)];
@@ -1243,7 +1245,7 @@ fn replay_steps(
             }
             enabled = true;
             let (bytes, _) = system
-                .state_key(&next)
+                .state_key(&next, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| fault("state-graph-state-key"))?;
             let key = StateKey::from_canonical_bytes(bytes);
             reached.push(key.clone());
@@ -1319,7 +1321,7 @@ fn explore_closure(
     evaluated: &mut Vec<(PredicateRole, bool)>,
 ) -> Result<(u64, Option<StateKey>, Option<ReachedLimit>), ReplayRefusal> {
     let (bytes, _) = system
-        .state_key(initial)
+        .state_key(initial, fsl_foundation::IdentityLimits::default())
         .map_err(|_| fault("state-graph-state-key"))?;
     let key = StateKey::from_canonical_bytes(bytes);
     let mut seen = BTreeMap::from([(key.clone(), initial.clone())]);
@@ -1355,7 +1357,7 @@ fn explore_closure(
                 ));
             }
             let (bytes, _) = system
-                .state_key(&next)
+                .state_key(&next, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| fault("state-graph-state-key"))?;
             let key = StateKey::from_canonical_bytes(bytes);
             let transition_key = system
@@ -1419,12 +1421,13 @@ pub(super) enum Loci<'a> {
 }
 
 impl Loci<'_> {
-    /// The name of the state clause whose body is at `locus`; only an
-    /// `invariant` when `invariant` is set.
+    /// The name of the state clause whose body is at `locus`; only a state
+    /// constraint, a `constraint` clause (FR-158), when `constraint` is set.
+    #[implements("FR-170-AC-7")]
     fn state_clause_at(
         self,
         locus: &filament_semantic_value::location::ExpressionLocation,
-        invariant: bool,
+        constraint: bool,
     ) -> Option<String> {
         match self {
             Self::Source(package) => package
@@ -1433,11 +1436,13 @@ impl Loci<'_> {
                 .iter()
                 .find(|clause| {
                     clause.body().location() == locus
-                        && (!invariant || clause.kind() == fsl_forms::StateClauseKind::Invariant)
+                        && (!constraint || clause.kind() == fsl_forms::StateClauseKind::Constraint)
                 })
                 .map(|clause| clause.name().to_owned()),
             Self::Package(input) => input.state_clauses().iter().find_map(|entry| {
-                if invariant && !entry.invariant {
+                // A constraint is the one clause that is neither an invariant
+                // nor an operation's, as the model system resolves it.
+                if constraint && (entry.invariant || entry.operation.is_some()) {
                     return None;
                 }
                 let body = input

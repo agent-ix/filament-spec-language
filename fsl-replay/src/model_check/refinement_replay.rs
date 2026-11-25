@@ -35,6 +35,7 @@ use fsl_eval::fairness::{Constraint, Identity, Strength};
 use fsl_eval::simulation::model::{ClockValuation, ModelFinding, TimedSystem};
 use fsl_eval::simulation::{Limits, TransitionSystem};
 use fsl_semantics::model::state::ModelState;
+use ix_trace_rs::implements;
 
 use crate::certificate::simulation::CertifiedEdge;
 use crate::execute::ReplayRefusal;
@@ -121,7 +122,7 @@ pub fn replay_protocol_assumption_witness(
     let Some(mut concrete) = systems.concrete.initial().into_iter().find(|state| {
         systems
             .concrete
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .is_ok_and(|(_, key)| key == witness.path.concrete_initial)
     }) else {
         return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
@@ -144,7 +145,7 @@ pub fn replay_protocol_assumption_witness(
     let mut paired_keys = vec![(
         systems
             .concrete
-            .state_key(&concrete)
+            .state_key(&concrete, fsl_foundation::IdentityLimits::default())
             .map_err(|_| fault("assumption-replay-concrete-state-has-a-key"))?
             .1,
         protocol
@@ -164,7 +165,7 @@ pub fn replay_protocol_assumption_witness(
         paired_keys.push((
             systems
                 .concrete
-                .state_key(&concrete)
+                .state_key(&concrete, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| fault("assumption-replay-concrete-state-has-a-key"))?
                 .1,
             protocol
@@ -185,7 +186,7 @@ pub fn replay_protocol_assumption_witness(
                 enabled == transition
                     && systems
                         .concrete
-                        .state_key(next)
+                        .state_key(next, fsl_foundation::IdentityLimits::default())
                         .is_ok_and(|(_, key)| key == step.concrete_post)
             }) else {
                 return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
@@ -195,7 +196,7 @@ pub fn replay_protocol_assumption_witness(
             concrete = next;
         } else if systems
             .concrete
-            .state_key(&concrete)
+            .state_key(&concrete, fsl_foundation::IdentityLimits::default())
             .map_or(true, |(_, key)| key != step.concrete_post)
         {
             return Ok(ProtocolAssumptionReplaySettlement::Inconclusive(
@@ -257,7 +258,7 @@ pub fn replay_protocol_assumption_witness(
         paired_keys.push((
             systems
                 .concrete
-                .state_key(&concrete)
+                .state_key(&concrete, fsl_foundation::IdentityLimits::default())
                 .map_err(|_| fault("assumption-replay-concrete-state-has-a-key"))?
                 .1,
             protocol
@@ -1453,6 +1454,7 @@ struct Walk<'p> {
 
 /// The settlement of a lasso whose prefix and loop `check_step` has run along:
 /// `found` is what the checks found, `walk` what they recomputed.
+#[implements("FR-145-AC-2")]
 fn replay_lasso(
     refinement: &dyn RefinementRead,
     systems: &RefinementSystems<'_>,

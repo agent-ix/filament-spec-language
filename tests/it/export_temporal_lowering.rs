@@ -45,22 +45,22 @@ fn checked_protocol_identity_and_locus(tail: &str) -> (String, Value) {
     let path = directory.path().join("compile.json");
     std::fs::write(&path, request.to_string()).unwrap();
     let bytes = fsl_command::command::compile(&path).expect("the checked fixture compiles");
-    let package: Value = serde_json::from_slice(&bytes).unwrap();
+    let mut package: Value = serde_json::from_slice(&bytes).unwrap();
+    // FR-322 uses document-held IDs for export outcomes and source maps.
+    fsl_semantics::check::wire_id::resolve_operand_slots(&mut package)
+        .expect("checked operand slots resolve to graph indexes");
     let node = package["semantic_graph"]["nodes"]
         .as_array()
         .unwrap()
         .iter()
         .find(|node| node["node_tag"] == "protocol" && node["semantic_form"] == "protocol_clause")
         .expect("the checked graph contains Hand");
-    let node_id = node["node_id"].clone();
-    let checked_node_id: filament_contract_model::CheckedNodeId =
-        serde_json::from_value(node_id.clone()).unwrap();
-    let identity = fsl_replay::protocol_analysis::node_text(&checked_node_id).unwrap();
+    let identity = node_text(node);
     let mut locus = package["source_map"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|entry| entry["node_id"] == node_id)
+        .find(|entry| entry["node_id"] == node["node_id"])
         .and_then(|entry| entry["regions"].as_array())
         .and_then(|regions| regions.first())
         .cloned()

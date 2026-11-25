@@ -293,7 +293,7 @@ fn block_key(
             .permute(canonical.0, &swap)
             .map_err(|_| fault("a-canonical-state-permutes"))?;
         let swapped = system
-            .state_key(&swapped)
+            .state_key(&swapped, fsl_foundation::IdentityLimits::default())
             .map_err(|_| fault("a-permuted-state-has-a-key"))?;
         if swapped.0 == canonical.1 {
             return Ok(member.clone());
@@ -327,7 +327,7 @@ fn orbit_representatives(
             .ok_or_else(|| fault("a-test-starts-at-an-initial-state"))?;
         let key_of = |state: &ModelSimState| {
             system
-                .state_key(state)
+                .state_key(state, fsl_foundation::IdentityLimits::default())
                 .map(|(key, _)| key)
                 .map_err(|_| fault("an-initial-state-has-a-key"))
         };
@@ -995,7 +995,7 @@ impl<'c> Shared<'_, '_, 'c> {
                 position: u64::try_from(position).unwrap_or(u64::MAX),
                 state_key: self
                     .system
-                    .state_key(state.discrete())
+                    .state_key(state.discrete(), fsl_foundation::IdentityLimits::default())
                     .map_err(|_| broken())?
                     .1,
                 locus: UndefinedLocus::ClaimPredicate(ClaimPredicate::Target),
@@ -1173,7 +1173,7 @@ impl<'c> Shared<'_, '_, 'c> {
                         position: undefined.at.index(),
                         state_key: self
                             .system
-                            .state_key(state.discrete())
+                            .state_key(state.discrete(), fsl_foundation::IdentityLimits::default())
                             .map_err(|_| broken())?
                             .1,
                         locus: UndefinedLocus::Atom(atom),
@@ -1269,7 +1269,10 @@ impl<'c> Shared<'_, '_, 'c> {
                                     position: u64::try_from(position).unwrap_or(u64::MAX),
                                     state_key: self
                                         .system
-                                        .state_key(state.discrete())
+                                        .state_key(
+                                            state.discrete(),
+                                            fsl_foundation::IdentityLimits::default(),
+                                        )
                                         .map_err(|_| broken())?
                                         .1,
                                     locus: UndefinedLocus::ClaimPredicate(if index == 0 {
@@ -1667,7 +1670,10 @@ impl ModelWalk<'_, '_, '_> {
             }
         };
         let discrete = system
-            .state_key(walk.state.discrete())
+            .state_key(
+                walk.state.discrete(),
+                fsl_foundation::IdentityLimits::default(),
+            )
             .map_err(|_| broken())?;
         let key = (walk.binding, discrete.0.to_vec());
         let readings = match truths.get(&key) {

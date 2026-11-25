@@ -533,14 +533,15 @@ FSpec FR-829, using FR-230's canonical `place/v2` identity.
 > `missing-type-representation`, before any snapshot is read (QSL-2776). The
 > QSL-2776 handoff must supply the package route's declaration table.
 
-> Current STEP2 implementation boundary: the shared object closure cannot
-> retain two explicitly listed populations of the same declared type with
-> the same local object key as distinct occurrences. Admission refuses this
-> overlap at the second population binding as
+> Current STEP2 implementation boundary: when two explicitly listed
+> populations have the same declared type and local object key, admission
+> retains one shared object only if that type owns no Clock and both records
+> have identical admitted field values. Both population membership rows
+> remain available. If the type owns a Clock or any field values differ,
+> admission refuses the second population binding as
 > `unknown_required_feature`/`unsupported-feature`, naming
 > `population-qualified-object-identity`, both populations and the key.
-> One population and populations with distinct keys remain supported. This
-> partial boundary leaves the same-key population identity criteria unmet;
+> One population and populations with distinct keys remain supported;
 > map-keyed clock identities also remain unsupported. Clock-reference
 > enumeration follows the normative domain contract above; ordinary
 > native-Clock timed simulation retains its existing bounds and selectors.

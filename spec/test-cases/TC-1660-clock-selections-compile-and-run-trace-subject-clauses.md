@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify FR-640-AC-1, AC-2 and AC-5: a request's `clocks` member configures event-position, fixed-sample and timestamped-event clocks by clock name, the package rows carry them, the run evaluates each clause, and the selection enters the package identity.
+Verify FR-640-AC-1, AC-2, AC-5 and AC-15: a request's `clocks` member configures event-position, fixed-sample and timestamped-event clocks by clock name, the package rows carry them, the run evaluates each clause, and the selection enters the package identity.
 
 ## Test Procedure
 
@@ -18,9 +18,11 @@ Verify FR-640-AC-1, AC-2 and AC-5: a request's `clocks` member configures event-
 2. Compile it through `command::compile` with `clocks` `{"events": {"kind": "event_position", "sequence_authority": "events"}, "sample": {"kind": "fixed_sample", "epoch": {"kind": "integer", "decimal": "0"}, "period": {"kind": "integer", "decimal": "1"}, "unit": "s"}, "plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}}`.
 3. Run each clause through `command::run` with the same `clocks` over a sample trace of the kind its profile reads (FR-641).
 4. Compile twice more: once with another `sequence_authority`, once with the members reordered.
+5. Emit a timed-profile protocol with a `compensate` template and an `await` on one clock: with a `timed` selection for each, with no selection, with event-position selections, and, for each declaration in turn, with its `timed` selection given an empty `unit` and then another definition.
 
 ## Expected Results
 
 - Step 2 exits 0 and the package's `temporal_bindings` rows name `events`, `sample` and `plant-ms` with the configured `clock` values.
 - Step 3 reports dispositions from stage `evaluate`, never a compile refusal.
 - Step 4: another authority changes the package identity; reordering gives equal bytes.
+- Step 5: the `timed` selections and the empty table give an admitted package with no `temporal_bindings` member; event-position selections refuse as a profile mismatch; each altered `timed` selection refuses as an invalid temporal clock value naming `unit` or `definition` at its declaration.

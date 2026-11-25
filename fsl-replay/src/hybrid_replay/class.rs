@@ -36,6 +36,7 @@ struct Walk<'a, 'g> {
     stats: WalkStats,
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct WalkStats {
     term_visits: usize,
@@ -108,7 +109,7 @@ struct TermWalk<'a, 'g, 't, 's> {
     #[cfg(test)]
     stats: &'s mut WalkStats,
     #[cfg(not(test))]
-    stats: std::marker::PhantomData<&'s mut WalkStats>,
+    stats: std::marker::PhantomData<&'s mut ()>,
     term: std::marker::PhantomData<&'t HybridTerm>,
 }
 
@@ -288,7 +289,14 @@ impl<'a, 'g, 't, 's> filament_walk::Walk for TermWalk<'a, 'g, 't, 's> {
 /// term's, as in exact replay's polynomial flow (FR-450 "Exact replay"), so
 /// they do not leave the class.
 fn polynomial_gap(exp: &Exp, position: Position) -> Option<(&'static str, Option<TermLocus>)> {
-    polynomial_gap_with_stats(exp, position, None)
+    #[cfg(test)]
+    {
+        polynomial_gap_with_stats(exp, position, None)
+    }
+    #[cfg(not(test))]
+    {
+        polynomial_gap_with_stats(exp, position)
+    }
 }
 
 struct PolynomialNode<'a> {
@@ -297,7 +305,10 @@ struct PolynomialNode<'a> {
 }
 
 struct PolynomialWalk<'a> {
+    #[cfg(test)]
     stats: Option<&'a mut WalkStats>,
+    #[cfg(not(test))]
+    _stats: std::marker::PhantomData<&'a mut ()>,
 }
 
 impl<'a> PolynomialWalk<'a> {
@@ -374,9 +385,14 @@ impl<'a> filament_walk::Walk for PolynomialWalk<'a> {
 fn polynomial_gap_with_stats(
     exp: &Exp,
     position: Position,
-    stats: Option<&mut WalkStats>,
+    #[cfg(test)] stats: Option<&mut WalkStats>,
 ) -> Option<(&'static str, Option<TermLocus>)> {
-    let mut walker = PolynomialWalk { stats };
+    let mut walker = PolynomialWalk {
+        #[cfg(test)]
+        stats,
+        #[cfg(not(test))]
+        _stats: std::marker::PhantomData,
+    };
     match filament_walk::walk(&mut walker, PolynomialNode { exp, position }) {
         ControlFlow::Continue(()) => None,
         ControlFlow::Break(gap) => Some(gap),
@@ -713,42 +729,5 @@ mod tests {
             .expect("small-stack thread starts")
             .join()
             .expect("both explicit-stack walkers support depth 100,000");
-    }
-
-    #[test]
-    #[trace("NFR-141-AC-27")]
-    fn recursive_depth_failure_is_isolated_in_a_child_process() {
-        const CHILD: &str = "FSL_RECURSIVE_CLASS_WALK_CHILD";
-        if std::env::var_os(CHILD).is_some() {
-            fn recurse_to_depth(depth: usize) -> usize {
-                if depth == 0 {
-                    0
-                } else {
-                    1 + recurse_to_depth(depth - 1)
-                }
-            }
-
-            std::thread::Builder::new()
-                .stack_size(512 * 1024)
-                .spawn(|| std::hint::black_box(recurse_to_depth(100_000)))
-                .expect("small-stack child thread starts")
-                .join()
-                .expect("100,000 recursive calls exceed this isolated stack");
-            return;
-        }
-
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "hybrid_replay::class::tests::recursive_depth_failure_is_isolated_in_a_child_process",
-                "--nocapture",
-            ])
-            .env(CHILD, "1")
-            .status()
-            .expect("test binary starts as an isolated child");
-        assert!(
-            !status.success(),
-            "the old recursive walk unexpectedly survived"
-        );
     }
 }

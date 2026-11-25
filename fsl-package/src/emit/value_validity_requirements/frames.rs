@@ -14,12 +14,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use filament_contract_model::{
     CheckedBindingNameKind, CheckedNodeId, CheckedNodePathSegment, CheckedOccurrenceRole,
-    CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef, CheckedTerm, LiteralKind,
+    CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef, CheckedTerm,
     PathConditionFrame, PathConditionFrameId,
 };
 use filament_exact::NodeKey;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_semantics::check::wire_id::{StructuralIds, StructuralKeys, WireGraph};
+use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::{Capability, CheckedGraph, RequirementRecord};
 use ix_trace_rs::implements;
 
@@ -163,24 +163,10 @@ fn function_measure_root(term: &CheckedTerm) -> Option<&CheckedNodeId> {
     })
 }
 
-pub(super) enum KeyResolver<'a> {
-    Reader(&'a mut StructuralKeys),
-    Graph(&'a WireGraph),
-}
-
-impl KeyResolver<'_> {
-    fn key(&mut self, id: &CheckedNodeId) -> Option<NodeKey> {
-        match self {
-            Self::Reader(reader) => reader.key(id).ok(),
-            Self::Graph(graph) => graph.key(id).ok(),
-        }
-    }
-}
-
 /// A shallow identity for the graph-owned representation of a checked id.
 /// `CheckedNodeId` clones retain the same `Arc` operands, so their pointer
 /// identity is a safe fast key when it matches an emitted node. The canonical
-/// structural-key lookup below remains the fallback for independently built
+/// structural-ID lookup below remains the fallback for independently built
 /// but value-equal ids.
 #[derive(Hash, PartialEq, Eq)]
 enum IdentitySegment {
@@ -231,20 +217,14 @@ fn identity_index(nodes: &[CheckedSemanticNodeV2]) -> HashMap<IdentityKey, usize
 }
 
 /// The walk of one owner's body over the emitted graph.
-struct Walk<'a, 'k> {
+struct Walk<'a> {
     nodes: &'a [CheckedSemanticNodeV2],
     index: &'a BTreeMap<&'a CheckedNodeId, usize>,
-    identity_index: &'k HashMap<IdentityKey, usize>,
-    key_index: Option<&'k HashMap<NodeKey, usize>>,
-    resolver: Option<KeyResolver<'k>>,
-    /// Resolve each immutable reference term once. The same term is visited
-    /// from multiple package owners, and structural-ID comparison can walk a
-    /// deep path; keying the cache by the term's stable borrowed ID address
-    /// avoids repeating that comparison on every owner walk.
+    identity_index: &'a HashMap<IdentityKey, usize>,
     resolved: HashMap<*const CheckedNodeId, usize>,
 }
 
-impl<'a, 'k> Walk<'a, 'k> {
+impl<'a> Walk<'a> {
     #[implements("FSpec-FR-322-AC-490", "FSpec-FR-825-AC-11")]
     fn position(&mut self, id: &CheckedNodeId) -> Option<usize> {
         let pointer = std::ptr::from_ref(id);
@@ -254,15 +234,6 @@ impl<'a, 'k> Walk<'a, 'k> {
         if let Some(&position) = self.identity_index.get(&identity_key(id)) {
             self.resolved.insert(pointer, position);
             return Some(position);
-        }
-        if let (Some(resolver), Some(key_index)) = (&mut self.resolver, self.key_index) {
-            if let Some(position) = resolver
-                .key(id)
-                .and_then(|key| key_index.get(&key).copied())
-            {
-                self.resolved.insert(pointer, position);
-                return Some(position);
-            }
         }
         let position = *self.index.get(id)?;
         self.resolved.insert(pointer, position);
@@ -277,23 +248,6 @@ impl<'a, 'k> Walk<'a, 'k> {
             .filter(|occurrence| occurrence.role == CheckedOccurrenceRole::Expression)
             .nth(nth)
             .map(|occurrence| occurrence.ordinal)
-    }
-
-    /// The Boolean literal a guard reference names, if it names one.
-    fn literal(&mut self, term: &CheckedTerm) -> Option<bool> {
-        let position = self.position(reference(term)?)?;
-        let node = &self.nodes[position];
-        if node.node_tag.as_ref() != "value" {
-            return None;
-        }
-        match &node.body {
-            CheckedTerm::Literal {
-                value_kind: LiteralKind::Boolean,
-                value,
-                ..
-            } => value.as_bool(),
-            _ => None,
-        }
     }
 
     /// The guard of `term` as its node position and the expression occurrence
@@ -333,10 +287,8 @@ impl<'a, 'k> Walk<'a, 'k> {
         let mut syntax_visits = HashMap::<(usize, usize), usize>::new();
         // The nodes whose bodies the walk is inside. A reference back to one is
         // a recursive call: the walk does not enter it again, so a recursive
-        // owner is walked once, not without end. The root function itself is
-        // already being walked even though this walk starts at its body node.
+        // owner is walked once, not without end.
         let mut active = HashSet::<usize>::new();
-        active.insert(root_owner);
         while let Some(task) = pending.pop() {
             match task {
                 Task::Leave(position) => {
@@ -401,22 +353,10 @@ impl<'a, 'k> Walk<'a, 'k> {
                                 }
                                 continue;
                             };
-                            match self.literal(&arguments[0]) {
-                                Some(true) => {
-                                    let then = table.intern(terminal, guard, occurrence, true);
-                                    pending.push(Task::Term(&arguments[1], Some(then), syntax));
-                                }
-                                Some(false) => {
-                                    let other = table.intern(terminal, guard, occurrence, false);
-                                    pending.push(Task::Term(&arguments[2], Some(other), syntax));
-                                }
-                                None => {
-                                    let then = table.intern(terminal, guard, occurrence, true);
-                                    let other = table.intern(terminal, guard, occurrence, false);
-                                    pending.push(Task::Term(&arguments[2], Some(other), syntax));
-                                    pending.push(Task::Term(&arguments[1], Some(then), syntax));
-                                }
-                            }
+                            let then = table.intern(terminal, guard, occurrence, true);
+                            let other = table.intern(terminal, guard, occurrence, false);
+                            pending.push(Task::Term(&arguments[2], Some(other), syntax));
+                            pending.push(Task::Term(&arguments[1], Some(then), syntax));
                             pending.push(Task::Term(&arguments[0], terminal, syntax));
                         } else if derive
                             && matches!(
@@ -430,26 +370,13 @@ impl<'a, 'k> Walk<'a, 'k> {
                             && arguments.len() == 2
                         {
                             let holds = identity != Some("filament.op.boolean.or");
-                            let literal = self.literal(&arguments[0]);
-                            let short_circuited = match identity {
-                                Some("filament.op.boolean.and" | "filament.op.boolean.implies") => {
-                                    literal == Some(false)
+                            let right = match self.guard(&arguments[0], visits) {
+                                Some((guard, occurrence)) => {
+                                    Some(table.intern(terminal, guard, occurrence, holds))
                                 }
-                                Some("filament.op.boolean.or") => literal == Some(true),
-                                _ => false,
+                                None => terminal,
                             };
-                            let right = if short_circuited {
-                                terminal
-                            } else if let Some((guard, occurrence)) =
-                                self.guard(&arguments[0], visits)
-                            {
-                                Some(table.intern(terminal, guard, occurrence, holds))
-                            } else {
-                                terminal
-                            };
-                            if !short_circuited {
-                                pending.push(Task::Term(&arguments[1], right, syntax));
-                            }
+                            pending.push(Task::Term(&arguments[1], right, syntax));
                             pending.push(Task::Term(&arguments[0], terminal, syntax));
                         } else {
                             for argument in arguments.iter().rev() {
@@ -535,24 +462,13 @@ pub(super) struct Visit {
     pub(super) node: usize,
 }
 
-pub(super) fn key_index(node_keys: &[NodeKey]) -> HashMap<NodeKey, usize> {
-    node_keys
-        .iter()
-        .cloned()
-        .enumerate()
-        .map(|(position, key)| (key, position))
-        .collect()
-}
-
 /// Every visit of the package-wide owner walk over `nodes`, in walk order: the
 /// function owners in FR-322's order, each owner's body and then its
-/// termination measure, with the guard-literal pruning of FSpec FR-825.
+/// termination measure.
 pub(super) fn visits(
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
     keep: &[bool],
-    resolver: Option<KeyResolver<'_>>,
-    keys: Option<HashMap<NodeKey, usize>>,
 ) -> Vec<Visit> {
     let index: BTreeMap<&CheckedNodeId, usize> = nodes
         .iter()
@@ -564,8 +480,6 @@ pub(super) fn visits(
         nodes,
         index: &index,
         identity_index: &identities,
-        key_index: keys.as_ref(),
-        resolver,
         resolved: HashMap::new(),
     };
     let mut table = Table::default();
@@ -707,21 +621,10 @@ pub(super) fn derive(
         .map(|(position, node)| (&node.node_id, position))
         .collect();
     let identities = identity_index(nodes);
-    let mut keys = ids.key_reader();
-    let node_keys = nodes
-        .iter()
-        .map(|node| {
-            keys.key(&node.node_id)
-                .map_err(|_| EmitRefusal::SourceMapInvariant)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let key_index = key_index(&node_keys);
     let mut walk = Walk {
         nodes,
         index: &index,
         identity_index: &identities,
-        key_index: Some(&key_index),
-        resolver: Some(KeyResolver::Reader(&mut keys)),
         resolved: HashMap::new(),
     };
     // The reader walks every function owner, in FR-322's package-wide order
@@ -829,15 +732,10 @@ pub(super) fn rederive(
         .map(|(position, node)| (&node.node_id, position))
         .collect();
     let identities = identity_index(nodes);
-    let graph = WireGraph::new(nodes.iter().map(|node| &node.node_id))
-        .map_err(|_| EmitRefusal::SourceMapInvariant)?;
-    let key_index = key_index(graph.keys());
     let mut walk = Walk {
         nodes,
         index: &index,
         identity_index: &identities,
-        key_index: Some(&key_index),
-        resolver: Some(KeyResolver::Graph(&graph)),
         resolved: HashMap::new(),
     };
     let mut wanted = HashMap::<usize, Vec<(usize, usize, u64)>>::new();

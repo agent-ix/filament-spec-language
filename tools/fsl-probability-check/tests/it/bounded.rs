@@ -1436,9 +1436,11 @@ fn replace_source_and_rebind_with_mode(
     let mut certified: Value =
         serde_json::from_str(request["certificate"].as_str().unwrap()).unwrap();
     if certified["objective"]["profile"] == "filament.probability-objective/on-each-reachability/v1"
+        || certified["objective"]["base"]["profile"]
+            == "filament.probability-objective/finite-horizon-measure/v1"
     {
-        // An `on each` document carries no formula or key to rebind: only
-        // its identity names the claim.
+        // An `on each` document and bounds over a bounded measure carry no
+        // formula or key to rebind: only the identity names the claim.
         certified["identity"] = identity.clone();
         for part in ["numerator", "denominator"] {
             if !certified["conditional"][part].is_null() {

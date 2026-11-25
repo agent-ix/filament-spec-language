@@ -2333,11 +2333,30 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
     );
     let protocol_key = checked.abstract_protocol().expect("protocol key");
     assert_eq!(protocol_key.package(), "test/protocol-dependency");
+    // The external key is written in the dependency graph's own indices, so
+    // the owner is read from the dependency's clause path and operand row.
+    let dependency_raw = raw_wire(&dependency_emission);
+    let (clause_position, slot) = nodes(&dependency_raw)
+        .iter()
+        .enumerate()
+        .find_map(|(position, node)| {
+            let slot = node["node_id"]["path"][1]["operand"].as_u64()?;
+            let slot = usize::try_from(slot).expect("an operand slot");
+            (node["semantic_form"] == "protocol_clause"
+                && node["node_id"]["path"] == json!(["Twice", {"operand": slot}]))
+            .then_some((position, slot))
+        })
+        .expect("the dependency writes its owned clause");
+    let owner = &dependency_raw["semantic_graph"]["operand_rows"][clause_position][slot];
     assert_eq!(
         node["body"]["protocol"],
         json!({
             "package":"test/protocol-dependency",
-            "node":root_ids.wire_value(protocol_key).unwrap()
+            "node":{
+                "package":"test/protocol-dependency",
+                "path":["Twice",{"node":owner}],
+                "ordinal":0
+            }
         })
     );
     let dependency_keys = dependency
@@ -4271,30 +4290,85 @@ fn history_refusals(unit: &str, documents: &[Vec<u8>]) -> Vec<fsl_semantics::che
 const HISTORY_STEP: &str =
     "step C::ConfigVersion::attemptUpdate -> A::ConfigVersion::attemptUpdate(self);";
 
-/// FR-901-AC-1 (TC-2540): a `Boolean` initial is a reference to a `literal` node
-/// built by the one literal path a checked expression's literal uses, and an
-/// optional-absent initial is an inline `literal` term; each package is admitted
-/// by the strict reader, and the refinement body holds the `histories` row.
+/// FR-901-AC-1 (TC-2540): an initial that is not a present option, an absent
+/// option included, is an inline `literal` term typed at the history's node,
+/// and a present-option initial is a reference to an `option_value` node of
+/// that type (FSpec FR-375 `histories`); each package is admitted by the
+/// strict reader, and the refinement body holds the `histories` row.
 #[trace("TC-2540", "FR-901-AC-1")]
 #[test]
 fn history_initials_of_each_literal_form_are_written() {
-    for (declared, initial) in [
-        ("Int[0, 1]", "0"),
-        ("Boolean", "false"),
-        ("Option<Int[0, 1]>", "none"),
+    for (declared, initial, update, inline) in [
+        ("Int[0, 1]", "0", "0", Some(("integer", json!("0")))),
+        ("Boolean", "false", "false", Some(("boolean", json!(false)))),
+        (
+            "Text[0, 8; nfc]",
+            "\"boot\"",
+            "self.last",
+            Some(("text", json!("boot"))),
+        ),
+        (
+            "Rational[0, 10; 1, 2]",
+            "rational(1, 2)",
+            "self.last",
+            Some(("rational", json!("1/2"))),
+        ),
+        (
+            "Decimal[0, 1000; 0, 2; nearest-even]",
+            "decimal(150, 1)",
+            "self.last",
+            Some(("decimal", json!("15.0"))),
+        ),
+        (
+            "Option<Int[0, 1]>",
+            "none",
+            "none",
+            Some(("none", Value::Null)),
+        ),
+        ("Option<Int[0, 1]>", "0", "none", None),
     ] {
         let rows = format!(
             "{MAPS}\n{HISTORY_STEP}\nhistory C::ConfigVersion.last : {declared} = {initial} \
-             {{ on C::ConfigVersion::attemptUpdate : {initial}; }}"
+             {{ on C::ConfigVersion::attemptUpdate : {update}; }}"
         );
         let (emitted, _) = emit_rows(&rows, &["attemptUpdate"]);
         let node = refinement_node(&emitted.emission);
         let histories = node["body"]["histories"].as_array().expect("histories");
         assert_eq!(histories.len(), 1, "{declared}: {histories:?}");
         assert_eq!(histories[0]["name"], "last", "{declared}");
-        // An enum or absent-option initial is written inline; others reference a node.
-        let form = if initial == "none" { "literal" } else { "reference" };
-        assert_eq!(histories[0]["initial"]["term"], form, "{declared}");
+        let term = &histories[0]["initial"];
+        match inline {
+            Some((value_kind, value)) => {
+                assert_eq!(
+                    *term,
+                    json!({
+                        "term": "literal",
+                        "type": histories[0]["type"],
+                        "value_kind": value_kind,
+                        "value": value,
+                    }),
+                    "{declared} = {initial}"
+                );
+            }
+            None => {
+                assert_eq!(term["term"], "reference", "{declared} = {initial}");
+                let wire = wire(&emitted.emission);
+                let node_of = |target: &Value| {
+                    nodes(&wire)
+                        .iter()
+                        .find(|node| node["node_id"] == *target)
+                        .expect("the referenced node")
+                };
+                let target = node_of(&term["target"]);
+                assert_eq!(target["semantic_form"], "option_value", "{target}");
+                assert_eq!(target["semantic_type"], histories[0]["type"], "{target}");
+                let member = &target["body"]["members"][0];
+                assert_eq!(member["name"], "value", "{target}");
+                let payload = node_of(&member["value"]["target"]);
+                assert_eq!(payload["semantic_form"], "literal", "{payload}");
+                assert_eq!(payload["body"]["value"], "0", "{payload}");
+            }
+        }
         assert_eq!(
             histories[0]["updates"].as_array().map(Vec::len),
             Some(1),
@@ -4303,30 +4377,6 @@ fn history_initials_of_each_literal_form_are_written() {
         let admitted = read(&emitted);
         assert!(admitted.is_ok(), "{declared}: {admitted:?}");
     }
-}
-
-/// FR-901-AC-1: an initial with no `literal` form (a present `Option`
-/// payload) keeps the refinement out of the emission with the typed
-/// refusal, not an internal fault.
-#[trace("TC-2540", "FR-901-AC-1")]
-#[test]
-fn a_present_option_history_initial_has_no_literal_form_and_is_refused_typed() {
-    let rows = format!(
-        "{MAPS}\n{HISTORY_STEP}\nhistory C::ConfigVersion.last : Option<Int[0, 1]> = 0 \
-         {{ on C::ConfigVersion::attemptUpdate : none; }}"
-    );
-    let (unit, documents) = rows_refinement(&rows, &["attemptUpdate"]);
-    let found = history_refusals(&unit, &documents);
-    let [refusal] = &found[..] else {
-        panic!("one refusal: {found:?}");
-    };
-    assert!(
-        matches!(
-            refusal.cause.as_ref(),
-            fsl_semantics::check::CheckCause::RefinementNotEmitted { name, .. } if name == "R"
-        ),
-        "a typed refusal naming the refinement: {refusal:?}"
-    );
 }
 
 /// FR-901-AC-2 and FSpec FR-322 "History read" (TC-2540): a row that reads a
@@ -4454,10 +4504,9 @@ fn the_reader_refuses_a_history_row_whose_concrete_type_is_not_an_object_type() 
         .expect("one refinement relation node");
     assert_eq!(refinement_verdict(&emitted, &wire, position), "admitted");
     let mut bad = wire.clone();
-    let literal = bad["semantic_graph"]["nodes"][position]["body"]["histories"][0]["initial"]
-        ["target"]
-        .clone();
-    bad["semantic_graph"]["nodes"][position]["body"]["histories"][0]["concrete_type"] = literal;
+    let scalar_type =
+        bad["semantic_graph"]["nodes"][position]["body"]["histories"][0]["type"].clone();
+    bad["semantic_graph"]["nodes"][position]["body"]["histories"][0]["concrete_type"] = scalar_type;
     let verdict = refinement_verdict(&emitted, &bad, position);
     assert!(
         verdict.contains(&format!(

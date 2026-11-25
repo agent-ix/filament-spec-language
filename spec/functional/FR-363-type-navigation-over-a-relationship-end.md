@@ -80,7 +80,10 @@ to the one candidate; otherwise:
   When a record or model field is absent, the refusal SHALL retain the
   declared owner's qualified type name, the authored field spelling and the
   exact authored field-token span, with model-field refusals keeping their
-  `StateModel` attribution and `ill_typed`/`type-mismatch` pair (FR-300).
+  `StateModel` attribution and `ill_typed`/`type-mismatch` pair (FR-300). For
+  a model object, the owner is the declared qualified type spelling (for
+  example `Config::Account`); a single-segment type remains bare, and the
+  owner is not shortened to the final node-id segment.
 - two or more candidates (a field and an end, or two ends):
   `ambiguous_declaration`/`ambiguous-name` at the form, naming every
   candidate.
@@ -155,6 +158,8 @@ Evaluating a navigation node is outside this requirement.
 | FR-363-AC-5 | A non-`Reference` receiver, and `deref(r).name` over a relationship end, refuse `ill_typed`/`type-mismatch`; every refusal's family is `StateModel` and its catalog code carries the `state-model` prefix. | Test (TC-1031) |
 | FR-363-AC-6 | A checked `Navigate` lowers to one `filament.op.model.navigate` application with the member, argument and `result_type` stated above and no `filament.op.model.deref` node, and IR's v2 reader admits the emitted package. | Test (TC-1032) |
 | FR-363-AC-7 | `r.name` over an unordered unique end `{0,unbounded}` types as `Set<Reference<U>>` with no cardinality bound and over an unordered non-unique one as `Bag<Reference<U>>` with no bound; over an ordered unique end `{0,3}` it types as `OrderedSet<Reference<U>>[0,3]`, over an ordered non-unique `{0,3}` as `Sequence<Reference<U>>[0,3]`, and over an ordered unique `{0,unbounded}` as `OrderedSet<Reference<U>>` with no bound; an ordered `{0,1}` end types as `Option<Reference<U>>`. None of these refuses, and no navigation refusal has code `unsupported_construct`. | Test (TC-1901) |
+| FR-363-AC-8 | For an absent record field read by `s.paid` when `s: Config::Settings`, the `ill_typed`/`type-mismatch` refusal retains owner `Config::Settings`, field `paid`, and exactly the source span of the `paid` token; the span excludes `s.` and the rest of the expression. | Test |
+| FR-363-AC-9 | For an absent model field read by `deref(a).paid` when `a: Reference<Config::Account>`, the refusal is attributed to `StateModel` and has code/cause `ill_typed`/`type-mismatch`; it retains owner `Config::Account`, field `paid`, and exactly the source span of the `paid` token, excluding `deref(a).`; a model type declared without qualification retains its one-segment spelling (for example `Account`). | Test |
 
 ## Dependencies
 

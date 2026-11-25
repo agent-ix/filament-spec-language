@@ -33,6 +33,7 @@ use filament_checked::node::{
     Arithmetic, CaseArm, CheckedLiteral, Connective, IntegerDivisionOperator, NodeKind,
     OrderedKind, RecordField, RecordSlot, Visit,
 };
+use ix_trace_rs::implements;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, hash_map};
 use std::fmt;
 use std::ops::ControlFlow;
@@ -1252,6 +1253,35 @@ pub(crate) fn require_admitted(
         NodeRef::Admitted(key) => Ok(key),
         NodeRef::Pending(_) => Err(fault(location, KeyFault::UnresolvedDraft)),
     }
+}
+
+/// A declared node's structural key (FSpec FR-322 "Structural node
+/// identity"): the declaration's segments and, for a node with an
+/// `owner_model` (a `protocol_clause` alone), one final operand naming that
+/// node (FSpec FR-322 "Protocol clause owner identity").
+#[implements("FR-383-AC-26", "FR-383-AC-27")]
+fn declaration_key(
+    package_name: &str,
+    names: &[Identifier],
+    owner_model: Option<&NodeKey>,
+    ordinal: u64,
+) -> Result<NodeKey, filament_exact::InvalidNodeKey> {
+    use filament_exact::PathSegment;
+    let len = names
+        .len()
+        .saturating_add(usize::from(owner_model.is_some()));
+    let mut path = Vec::new();
+    path.try_reserve_exact(len)
+        .map_err(|_| filament_exact::InvalidNodeKey::Allocation {
+            requested: len.saturating_mul(std::mem::size_of::<PathSegment>()),
+        })?;
+    path.extend(
+        names
+            .iter()
+            .map(|name| PathSegment::Text(name.as_str().to_owned())),
+    );
+    path.extend(owner_model.cloned().map(PathSegment::Node));
+    super::structural_node_key(package_name, path, ordinal)
 }
 
 /// The declared structural key of a step-relation node, which is built
@@ -2750,8 +2780,9 @@ impl<'a> Lowering<'a> {
     }
 
     /// The structural key of an unpended `content`: equal content is one
-    /// node; a declared node is keyed by its declaration's path, any other
-    /// by its closed tag and semantic form alone. Repeats of one path take
+    /// node; a declared node is keyed by its declaration's path (and its
+    /// `owner_model`, [`declaration_key`]), any other by its closed tag and
+    /// semantic form alone. Repeats of one path take
     /// the next unused ordinal, so a key's size never depends on how deep
     /// its operands nest (QSL-381: no depth cap, and a key that nested its
     /// operands' keys would cost memory quadratic in a chain's depth).
@@ -2771,11 +2802,7 @@ impl<'a> Lowering<'a> {
         };
         let operands = derived_operands(content);
         let key = self.mint_key(location, |ordinal| match &content.declaration {
-            Some(names) => super::declared_node_key(
-                package.clone(),
-                names.iter().map(|name| name.as_str().to_owned()).collect(),
-                ordinal,
-            ),
+            Some(names) => declaration_key(&package, names, content.owner_model.as_ref(), ordinal),
             None => super::derived_node_key(
                 &package,
                 content.node_tag,
@@ -2817,10 +2844,12 @@ impl<'a> Lowering<'a> {
     }
 
     /// The admitted keys of one recursion group's members, in member order.
-    /// A declared member is keyed by its declaration's path; any other
-    /// member by the anchor's (least declared member's) path with no
-    /// operand, the producer's ordinal telling the members apart. A group
+    /// A declared member is keyed by its [`declaration_key`]; any other
+    /// member takes the sole declared member's path, or, among several, the
+    /// anchor's (least declared member's) declaration segments with no
+    /// operand; the producer's ordinal tells the members apart. A group
     /// with no declared member has no anchor, which is an internal fault.
+    #[implements("FR-383-AC-24")]
     fn admitted_group_keys(
         &mut self,
         members: &[&Draft],
@@ -2831,11 +2860,7 @@ impl<'a> Lowering<'a> {
         for draft in members {
             keys.push(match &draft.content.declaration {
                 Some(names) => Some(self.mint_key(&draft.location, |ordinal| {
-                    super::declared_node_key(
-                        package.clone(),
-                        names.iter().map(|name| name.as_str().to_owned()).collect(),
-                        ordinal,
-                    )
+                    declaration_key(&package, names, draft.content.owner_model.as_ref(), ordinal)
                 })?),
                 None => None,
             });
@@ -2844,26 +2869,24 @@ impl<'a> Lowering<'a> {
         // not depend on the order the members are declared in. The pinned
         // reader (filament-contract-model `validate_recursion`) requires every
         // undeclared member's path to equal the sole declared member's path.
-        let anchor_path: Vec<String> = keys
+        let anchor = keys
             .iter()
-            .flatten()
-            .min()
-            .ok_or_else(|| fault(location, KeyFault::InvalidGroup))?
-            .view()
-            .path()
-            .map(|segment| match segment {
-                filament_exact::PathSegmentView::Text(text) => Ok(text.to_owned()),
-                filament_exact::PathSegmentView::Node(_) => {
-                    Err(fault(location, KeyFault::InvalidGroup))
-                }
+            .zip(members)
+            .filter_map(|(key, draft)| {
+                Some((key.as_ref()?, draft.content.declaration.as_deref()?, draft))
             })
-            .collect::<Result<_, _>>()?;
+            .min_by(|left, right| left.0.cmp(right.0));
+        let (_, anchor_names, anchor) =
+            anchor.ok_or_else(|| fault(location, KeyFault::InvalidGroup))?;
+        let anchor_owner = (keys.iter().flatten().count() == 1)
+            .then_some(anchor.content.owner_model.as_ref())
+            .flatten();
         let mut admitted = Vec::with_capacity(members.len());
-        for (draft, key) in members.iter().zip(keys) {
+        for (draft, key) in members.iter().zip(&keys) {
             admitted.push(match key {
-                Some(key) => key,
+                Some(key) => key.clone(),
                 None => self.mint_key(&draft.location, |ordinal| {
-                    super::declared_node_key(package.clone(), anchor_path.clone(), ordinal)
+                    declaration_key(&package, anchor_names, anchor_owner, ordinal)
                 })?,
             });
         }
@@ -4569,32 +4592,55 @@ impl<'a> Lowering<'a> {
     /// scalar type. Preserve that identity for its projection and for IEEE
     /// negation, whose checked result has the operand's type node.
     fn lowering_type_ref(&mut self, node: CheckedNode<'_>) -> Result<NodeRef, CheckRefusal> {
-        let value_type = node.lowered_value_type();
-        if let NodeKind::Pre(operand) = node.kind() {
-            return self.lowering_type_ref(node.at(*operand));
-        }
-        if matches!(node.kind(), NodeKind::Attribute { .. }) {
-            if let ValueType::Float(float) = &*value_type {
-                // Equality provenance retains the checked exact-mode source
-                // type even though the model member's wire type is scalar.
-                let source_type = self.type_ref(&value_type, node.location())?;
-                if let Some(key) = source_type.admitted() {
-                    if !self.occurrences.has(key.clone()) {
-                        self.record(
-                            key.clone(),
-                            OccurrenceRole::Generated,
-                            node.location().clone(),
-                        );
-                    }
-                }
-                let scalar = match float.width() {
-                    filament_exact::IeeeWidth::Binary32 => "float32",
-                    filament_exact::IeeeWidth::Binary64 => "float64",
-                };
-                return self.scalar(scalar, node.location()).map(NodeRef::from);
+        let node = under_pre(node);
+        let source_type = self.type_ref(&node.lowered_value_type(), node.location())?;
+        let Some(scalar) = float_member_scalar(node) else {
+            return Ok(source_type);
+        };
+        // Equality provenance retains the checked exact-mode source type even
+        // though the model member's wire type is scalar.
+        if let Some(key) = source_type.admitted() {
+            if !self.occurrences.has(key.clone()) {
+                self.record(
+                    key.clone(),
+                    OccurrenceRole::Generated,
+                    node.location().clone(),
+                );
             }
         }
-        self.type_ref(&value_type, node.location())
+        self.scalar(scalar, node.location()).map(NodeRef::from)
+    }
+
+    /// The literal term of `operand` where the floating equality `node` is
+    /// authored, `operand` is a float constant and `other`, the operand it is
+    /// compared with, is typed at a bare float scalar node: a float model
+    /// member read, through `pre` and one negation. The constant is typed at
+    /// that same node, since FSpec FR-322's `float` schedule joins two
+    /// operands of one type node. `None` for any other operand, which lowers
+    /// at its own checked type; so does an operand of the `numericEqual`
+    /// intrinsic, which records no equality decision.
+    fn member_compared_literal(
+        &mut self,
+        node: CheckedNode<'_>,
+        operand: CheckedNode<'_>,
+        other: CheckedNode<'_>,
+    ) -> Result<Option<LeafTerm>, CheckRefusal> {
+        if node.equality_producer().is_none() {
+            return Ok(None);
+        }
+        let NodeKind::Literal(CheckedLiteral(value @ Value::Float(_))) = operand.kind() else {
+            return Ok(None);
+        };
+        // A negation takes its operand's type node (`Self::application`).
+        let other = match other.kind() {
+            NodeKind::Negate(negated) => other.at(*negated),
+            _ => other,
+        };
+        let Some(scalar) = float_member_scalar(under_pre(other)) else {
+            return Ok(None);
+        };
+        self.literal_as(operand, value, operand.value_type(), Some(scalar))
+            .map(Some)
     }
 
     /// Key an application node for checked `node` and return a reference to
@@ -4849,6 +4895,7 @@ impl<'a> Lowering<'a> {
     /// operand in its place; any other node builds its own type and member
     /// nodes, pushes its frame and descends into its first operand.
     #[deny(clippy::wildcard_enum_match_arm)]
+    #[implements("FR-093-AC-78")]
     fn lower_node<'n>(
         &mut self,
         node: CheckedNode<'n>,
@@ -6414,6 +6461,15 @@ impl<'a> Lowering<'a> {
                     }
                 }
             }
+            let node = frame.node;
+            if let NodeKind::IeeeNumericEquality(left, right) = node.kind() {
+                let other = if frame.next == 1 { right } else { left };
+                if let Some(term) = self.member_compared_literal(node, operand, node.at(*other))? {
+                    self.retain_checked_node(operand, &term);
+                    frame.terms.push(term);
+                    return self.next_operand(frame, frames);
+                }
+            }
             frames.push(LowerFrame::Operands(frame));
             return Ok(LowerStep::Descend(operand));
         }
@@ -7438,8 +7494,8 @@ impl<'a> Lowering<'a> {
     }
 
     /// The literal term of `value` typed at `declared`, located at
-    /// `location`: the one value-to-literal decision a checked literal node
-    /// and a refinement history row's initial value both use.
+    /// `location`: a `literal` node, or an enum member's `enum_value` node.
+    #[implements("FR-093-AC-33", "FR-093-AC-50")]
     pub(super) fn literal_at(
         &mut self,
         location: &Location,
@@ -7447,7 +7503,49 @@ impl<'a> Lowering<'a> {
         declared: &ValueType,
         scalar: Option<&'static str>,
     ) -> Result<LeafTerm, CheckRefusal> {
-        let literal = match value {
+        if let Value::Enum(member) = value {
+            // FR-093: the enum member's FSpec `enum_value` node, whose
+            // key is its `VariantId` (ADR-013 O-14). A model variant
+            // type's nodes are built where it is first named, here.
+            self.type_ref(declared, location)?;
+            let variant = member.variant();
+            let key = crate::value::enumeration::enum_value_key_in(
+                &self.package_name,
+                variant.owner(),
+                variant.case(),
+            )
+            .map_err(|_| {
+                fault(
+                    location,
+                    KeyFault::InvalidMemberKey(variant.owner().clone()),
+                )
+            })?;
+            self.record(key.clone(), OccurrenceRole::Expression, location.clone());
+            return Ok(LeafTerm::reference_node(key.into()));
+        }
+        let literal = Self::literal_value(location, value, scalar)?;
+        let semantic_type = match scalar {
+            Some(form) => NodeRef::from(self.scalar(form, location)?),
+            None => self.type_ref(declared, location)?,
+        };
+        self.value_node_at(
+            location,
+            "literal",
+            semantic_type.clone(),
+            BodyTerm::literal_node(semantic_type, literal),
+        )
+    }
+
+    /// The `literal` term value of `value`: the one value-to-literal decision
+    /// a checked literal node and a refinement history row's inline initial
+    /// both use.
+    #[implements("FR-093-AC-33", "FR-093-AC-50")]
+    pub(super) fn literal_value(
+        location: &Location,
+        value: &Value,
+        scalar: Option<&'static str>,
+    ) -> Result<LiteralValue, CheckRefusal> {
+        Ok(match value {
             Value::Boolean(value) => LiteralValue::Boolean(*value),
             Value::Integer(value) => LiteralValue::Integer(value.clone()),
             Value::Rational(value) => LiteralValue::Rational(value.clone()),
@@ -7458,26 +7556,7 @@ impl<'a> Lowering<'a> {
                 }
                 filament_exact::IeeeWidth::Binary64 => LiteralValue::Float64Bits(value.bits()),
             },
-            Value::Enum(member) => {
-                // FR-093: the enum member's FSpec `enum_value` node, whose
-                // key is its `VariantId` (ADR-013 O-14). A model variant
-                // type's nodes are built where it is first named, here.
-                self.type_ref(declared, location)?;
-                let variant = member.variant();
-                let key = crate::value::enumeration::enum_value_key_in(
-                    &self.package_name,
-                    variant.owner(),
-                    variant.case(),
-                )
-                .map_err(|_| {
-                    fault(
-                        location,
-                        KeyFault::InvalidMemberKey(variant.owner().clone()),
-                    )
-                })?;
-                self.record(key.clone(), OccurrenceRole::Expression, location.clone());
-                return Ok(LeafTerm::reference_node(key.into()));
-            }
+            Value::Enum(member) => LiteralValue::Enum(member.variant().case().to_owned()),
             // FR-093-AC-33: a quantity literal is a `quantity` literal typed
             // by its unit's node; the magnitude is already reduced.
             Value::Quantity(quantity) => LiteralValue::Quantity(quantity.magnitude().clone()),
@@ -7505,17 +7584,7 @@ impl<'a> Lowering<'a> {
             // bare `text` scalar (IR joins the two).
             Value::String(value) if scalar == Some("text") => LiteralValue::Text(value.clone()),
             Value::String(value) => LiteralValue::String(value.clone()),
-        };
-        let semantic_type = match scalar {
-            Some(form) => NodeRef::from(self.scalar(form, location)?),
-            None => self.type_ref(declared, location)?,
-        };
-        self.value_node_at(
-            location,
-            "literal",
-            semantic_type.clone(),
-            BodyTerm::literal_node(semantic_type, literal),
-        )
+        })
     }
 
     fn unbuilt_map_literal(location: &Location) -> CheckRefusal {
@@ -8292,6 +8361,7 @@ fn exact_decimal_or_ratio(value: &filament_exact::Rational) -> String {
 }
 
 /// The body-walk operands of [`derived_operands`].
+#[implements("FR-093-AC-78")]
 fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     use filament_exact::PathSegment;
     struct Walk {
@@ -8776,6 +8846,30 @@ fn relax(
 /// declaration reaches its node.
 pub(crate) fn generated_location() -> Location {
     Location::root(Origin::Expression)
+}
+
+/// `node`, or the operand under its `pre` operators, which take their
+/// operand's type node.
+fn under_pre(mut node: CheckedNode<'_>) -> CheckedNode<'_> {
+    while let NodeKind::Pre(operand) = node.kind() {
+        node = node.at(*operand);
+    }
+    node
+}
+
+/// The bare scalar form the model package types `node` at, where `node` reads
+/// a floating model member.
+fn float_member_scalar(node: CheckedNode<'_>) -> Option<&'static str> {
+    if !matches!(node.kind(), NodeKind::Attribute { .. }) {
+        return None;
+    }
+    match &*node.lowered_value_type() {
+        ValueType::Float(float) => Some(match float.width() {
+            filament_exact::IeeeWidth::Binary32 => "float32",
+            filament_exact::IeeeWidth::Binary64 => "float64",
+        }),
+        _ => None,
+    }
 }
 
 /// Whether `identity` is an integer operator whose integer literal operands

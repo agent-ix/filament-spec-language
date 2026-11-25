@@ -530,12 +530,12 @@ pub(super) fn visit_operation(
                     let order = if result.is_eq() {
                         let left_key = walk
                             .system
-                            .state_key(&left.state)
+                            .state_key(&left.state, fsl_foundation::IdentityLimits::default())
                             .map_err(|_| stop(BROKEN))?
                             .0;
                         let right_key = walk
                             .system
-                            .state_key(&right.state)
+                            .state_key(&right.state, fsl_foundation::IdentityLimits::default())
                             .map_err(|_| stop(BROKEN))?
                             .0;
                         left_key.cmp(&right_key)
@@ -566,12 +566,12 @@ pub(super) fn visit_operation(
                 let same_state = same_result
                     && walk
                         .system
-                        .state_key(&left.state)
+                        .state_key(&left.state, fsl_foundation::IdentityLimits::default())
                         .map_err(|_| stop(BROKEN))?
                         .0
                         == walk
                             .system
-                            .state_key(&right.state)
+                            .state_key(&right.state, fsl_foundation::IdentityLimits::default())
                             .map_err(|_| stop(BROKEN))?
                             .0;
                 if same_state {

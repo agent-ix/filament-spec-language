@@ -66,6 +66,7 @@ use fsl_eval::automaton::{
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::Reductions;
+use ix_trace_rs::implements;
 
 /// FR-239's budgets.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -665,6 +666,7 @@ impl From<DbmError> for Halt {
 /// [`ZoneCheckRefusal`] when the clause is of no form EN-6 decides, its
 /// automaton does not build, its instances are not finite, an atom gives
 /// no reading, or the engine breaks an invariant.
+#[implements("FR-239-AC-1")]
 pub fn check_timed_model<S: Clone>(
     request: ZoneCheckRequest<'_, '_, '_, S>,
     cancel: &Cancel,
@@ -1652,7 +1654,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         let (mut key, _) = self
             .timed
             .system()
-            .state_key(&state)
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ZoneCheckRefusal::Fault("state-key"))?;
         key.extend_from_slice(&widen(q).to_be_bytes());
         if let Some(stored) = self.passed.get(&key) {
@@ -1823,7 +1825,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     pub(super) fn key(&self, state: &ModelSimState) -> Result<Vec<u8>, Halt> {
         self.timed
             .system()
-            .state_key(state)
+            .state_key(state, fsl_foundation::IdentityLimits::default())
             .map(|(key, _)| key)
             .map_err(|_| ZoneCheckRefusal::Fault("state-key").into())
     }
@@ -2571,7 +2573,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         let (discrete_key, _) = self
             .timed
             .system()
-            .state_key(&state)
+            .state_key(&state, fsl_foundation::IdentityLimits::default())
             .map_err(|_| ZoneCheckRefusal::Fault("state-key"))?;
         let present: Vec<Rational> = self
             .timed

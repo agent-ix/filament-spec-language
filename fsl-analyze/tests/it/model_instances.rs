@@ -74,12 +74,21 @@ fn object_type(name: &str, supertypes: &[&str]) -> Json {
     let identity = ident(name);
     let fields: Vec<Json> = if name == "Animal" {
         let age = ident("Animal/age");
-        vec![json!({
-            "identity": age, "name": "age", "typeRef": ident("Level"),
-            "presence": "required", "nullable": false, "defaultKind": "none",
-            "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
-            "origin": origin(&age),
-        })]
+        let weight = ident("Animal/weight");
+        vec![
+            json!({
+                "identity": age, "name": "age", "typeRef": ident("Level"),
+                "presence": "required", "nullable": false, "defaultKind": "none",
+                "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+                "origin": origin(&age),
+            }),
+            json!({
+                "identity": weight, "name": "weight", "typeRef": "ix://filament/native/Float64",
+                "presence": "required", "nullable": false, "defaultKind": "none",
+                "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+                "origin": origin(&weight),
+            }),
+        ]
     } else {
         Vec::new()
     };
@@ -192,7 +201,10 @@ fn world(populations: &[(&str, &[&str])], held: &[Held<'_>]) -> World {
                 .iter()
                 .map(|(key, type_name)| {
                     let fields = if matches!(*type_name, "Animal" | "Dog" | "Cat") {
-                        json!({"age": {"integer": "5"}})
+                        json!({
+                            "age": {"integer": "5"},
+                            "weight": {"kind": "float64", "bits": "3ff0000000000000"}
+                        })
                     } else {
                         json!({})
                     };
@@ -819,8 +831,9 @@ fn an_unbounded_admitting_population_requires_a_bound_and_no_key_is_no_instance(
 /// FR-125-AC-13: instancing exits before exploration in the specified order.
 /// An unbounded overlapping population requires a universe even with no
 /// initial state; bounded empty initials report NoInitialState; conflicting
-/// same-key types refuse before any instance is formed; agreeing types admit;
-/// and a bounded subject with no admitted key reports NoInstance.
+/// same-key types refuse before any instance is formed; equal records for a
+/// clock-free agreeing type admit; differing records refuse; and a bounded
+/// subject with no admitted key reports NoInstance.
 #[trace("TC-520", "FR-125-AC-13")]
 #[test]
 fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
@@ -868,7 +881,10 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
                     {"population": ident("animals"), "complete": true, "objects": []},
                     {"population": ident("dogs"), "complete": true,
                      "objects": [{"key": "c", "type": ident("Dog"),
-                                 "fields": {"age": {"integer": "5"}}}]}
+                                 "fields": {
+                                     "age": {"integer": "5"},
+                                     "weight": {"kind": "float64", "bits": "3ff0000000000000"}
+                                 }}]}
                 ]
             })
             .to_string()
@@ -919,15 +935,17 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
         ],
     );
     let (agreeing_package, _) = agreeing.clause("Animal");
-    assert!(ModelSystem::new(
-        agreeing
-            .subject(
-                &agreeing_package,
-                universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
-            )
-            .simulation,
-    )
-    .is_ok());
+    assert!(
+        ModelSystem::new(
+            agreeing
+                .subject(
+                    &agreeing_package,
+                    universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
+                )
+                .simulation,
+        )
+        .is_ok()
+    );
     assert_eq!(
         agreeing.instances(
             "Animal",
@@ -955,6 +973,48 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
         ),
         Ok(ModelCheckOutcome::Holds { stats, .. }) if stats.product_states == 1
     ));
+
+    let mut differing = self::world(
+        &[("animals", &["Animal"]), ("moreAnimals", &["Animal"])],
+        &[
+            ("animals", &[("c", "Animal")]),
+            ("moreAnimals", &[("c", "Animal")]),
+        ],
+    );
+    let identity = differing.initial[0].clone();
+    let mut snapshot: Json = serde_json::from_slice(
+        differing
+            .snapshots
+            .get(&identity)
+            .expect("initial snapshot"),
+    )
+    .expect("snapshot JSON");
+    snapshot["populations"][1]["objects"][0]["fields"]["age"] = json!({"integer": "6"});
+    differing.snapshots.insert(
+        identity,
+        serde_json::to_vec(&snapshot).expect("snapshot JSON"),
+    );
+    let (differing_package, _) = differing.clause("Animal");
+    let refusal = ModelSystem::new(
+        differing
+            .subject(
+                &differing_package,
+                universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
+            )
+            .simulation,
+    )
+    .err()
+    .expect("same-key records with different values are not coalesced");
+    let AdmissionFailure::Refused(record) = refusal else {
+        panic!("unequal shared records retain the typed refusal: {refusal:?}");
+    };
+    assert_eq!(record.catalog.code(), "unknown_required_feature");
+    assert_eq!(record.catalog.cause(), "unsupported-feature");
+    assert_eq!(
+        record.fields.get("reason").map(String::as_str),
+        Some("population-qualified-object-identity")
+    );
+
     // `Other` is in no hierarchy with `Animal`, so its `c` is another object
     // universe's object and no conflict.
     let unrelated = self::world(
@@ -982,6 +1042,50 @@ fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
             }) if stats.product_states == 0
         ),
         "{no_key_result:?}"
+    );
+}
+
+#[trace("TC-520", "FR-125-AC-13")]
+#[test]
+fn model_instancing_compares_shared_float_fields_by_wire_bits() {
+    let populations = &[("left", &["Animal"][..]), ("right", &["Animal"][..])];
+    let held = &[
+        ("left", &[("c", "Animal")][..]),
+        ("right", &[("c", "Animal")][..]),
+    ];
+    let bounded_universes = || universes(&[("left", &["c"]), ("right", &["c"])]);
+
+    let agreeing = world(populations, held);
+    let (package, _) = agreeing.clause("Animal");
+    assert!(ModelSystem::new(agreeing.subject(&package, bounded_universes()).simulation).is_ok());
+
+    let mut differing = world(populations, held);
+    let identity = differing.initial[0].clone();
+    let mut snapshot: Json = serde_json::from_slice(
+        differing
+            .snapshots
+            .get(&identity)
+            .expect("initial snapshot"),
+    )
+    .expect("snapshot JSON");
+    snapshot["populations"][1]["objects"][0]["fields"]["weight"]["bits"] =
+        json!("3ff0000000000001");
+    differing.snapshots.insert(
+        identity,
+        serde_json::to_vec(&snapshot).expect("snapshot JSON"),
+    );
+    let (package, _) = differing.clause("Animal");
+    let refusal = ModelSystem::new(differing.subject(&package, bounded_universes()).simulation)
+        .err()
+        .expect("different Float64 bit patterns are not identical records");
+    let AdmissionFailure::Refused(record) = refusal else {
+        panic!("different Float64 records retain the typed refusal: {refusal:?}");
+    };
+    assert_eq!(record.catalog.code(), "unknown_required_feature");
+    assert_eq!(record.catalog.cause(), "unsupported-feature");
+    assert_eq!(
+        record.fields.get("reason").map(String::as_str),
+        Some("population-qualified-object-identity")
     );
 }
 

@@ -1419,6 +1419,7 @@ where
 fn open_cause_label(cause: fsl_replay::OpenCause) -> &'static str {
     match cause {
         fsl_replay::OpenCause::MaxDepth => "max_depth",
+        fsl_replay::OpenCause::ConstraintBoundary => "constraint_boundary",
         fsl_replay::OpenCause::UndecidedSuccessor => "undecided_successor",
         fsl_replay::OpenCause::NotExpanded => "not_expanded",
     }

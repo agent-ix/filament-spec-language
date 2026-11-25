@@ -69,6 +69,7 @@
 // resolution and typing) -- the inception is the spec's own naming, not an
 // accidental collision this file introduced.
 use filament_checked::node::NodeKind;
+use ix_trace_rs::implements;
 mod abstraction;
 mod assemble;
 mod call_target;
@@ -772,6 +773,7 @@ fn function_state<'a>(
 ) -> FunctionState<'a> {
     FunctionState {
         name: &signature.name,
+        parameters: &signature.parameters,
         body: function.body.root(),
         slots: function.slots,
         formed_units: &function.formed_units,
@@ -1795,14 +1797,16 @@ impl CheckedExpression {
     }
 }
 
-/// One admitted function's evaluation-visible state: exactly what
-/// `value::expression`'s evaluator needs (name, checked body, slot count --
-/// FR-068's own Description names these as the accessor surface), without
-/// exposing `CheckedFunction`'s private representation.
+/// One admitted function's evaluation-visible state: what `value::expression`'s
+/// evaluator needs (name, parameters, checked body, slot count, formed units),
+/// read through FR-068's public accessors without exposing `CheckedFunction`'s
+/// private representation.
 #[non_exhaustive]
 pub struct FunctionState<'a> {
     /// The declared name.
     pub name: &'a str,
+    /// The declared parameters, for argument admission.
+    pub parameters: &'a [(String, ValueType)],
     /// The checked body.
     pub body: CheckedNode<'a>,
     /// The evaluation slot count.
@@ -2355,6 +2359,7 @@ impl PackageDeclarations {
     /// charge, inside a declaration as well as between them. The stop is a
     /// refusal list like a reached work budget; a caller that holds the
     /// handle reads [`Cancel::tripped`] to tell the two apart.
+    #[implements("FR-276-AC-2")]
     pub fn check_with_cancel(
         self,
         mode: CheckMode,
@@ -2447,6 +2452,7 @@ impl PackageDeclarations {
         clippy::too_many_arguments,
         reason = "one internal pipeline entry whose callers pass the stage flags; a parameter struct is a separate refactor"
     )]
+    #[implements("FR-503-AC-5", "FR-503-AC-6")]
     fn check_retaining_protocols(
         mut self,
         mode: CheckMode,

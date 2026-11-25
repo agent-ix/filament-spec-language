@@ -79,6 +79,7 @@ pub(crate) fn admitted_library(
                 )
             })
             .collect(),
+        model_correspondence: Vec::new(),
     };
     Ok(AdmittedImport {
         identity: library,

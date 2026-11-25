@@ -356,10 +356,9 @@ fn decimal_and_enum_history_rows_check_and_prove() {
     }
 }
 
-/// FR-630-AC-3, FR-138-AC-9: an `Option` history row with a `none` initial
-/// proves through the package route, and an initial outside the payload type
-/// refuses at compile. A present initial has no checked-package form the
-/// package admits (QSL-2888 FND-001), so none is run here.
+/// FR-630-AC-3, FR-138-AC-9: an `Option` history row with an absent or a
+/// present initial proves through the package route, and an initial outside
+/// the payload type refuses at compile.
 #[trace("TC-1590", "FR-630-AC-3")]
 #[trace("TC-1590", "FR-138-AC-9")]
 #[test]
@@ -379,6 +378,12 @@ fn option_history_initials_prove_or_refuse() {
         ("Option<Phase>", "none"),
         ("Option<Int[0, 1]>", "none"),
         ("Option<Decimal[0, 100; 0, 2; nearest-even]>", "none"),
+        ("Option<Phase>", "Phase::idle"),
+        ("Option<Int[0, 1]>", "1"),
+        (
+            "Option<Decimal[0, 100; 0, 2; nearest-even]>",
+            "decimal(150, 1)",
+        ),
     ] {
         let run = run_with(declared, initial);
         assert_eq!(
