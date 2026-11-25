@@ -85,3 +85,23 @@ fn a_100_000_deep_package_document_reads_equally_on_small_and_large_stacks() {
     assert_document_shape(&large_stack);
     assert_json_trees_equal(small_stack.tree(), large_stack.tree());
 }
+
+/// TC-729 step 5 candidate for FR-259-AC-8: malformed package JSON preserves
+/// the shared reader's byte offset and carries no limit payload. This is not
+/// tagged with AC-8 because the public read API has no way to inject its
+/// separate 4096-byte allocation failure.
+#[trace("TC-729")]
+#[test]
+fn malformed_package_json_reports_its_offset_without_a_limit_payload() {
+    let bytes = b"{\"package\":";
+    let refusal = PackageDocument::parse(bytes, IntakeLimits::default())
+        .expect_err("an incomplete JSON object is malformed");
+
+    assert_eq!(
+        refusal.code,
+        fsl_foundation::diagnostic::Code::InvalidModelBinding
+    );
+    assert_eq!(refusal.cause.as_str(), "malformed-declaration");
+    assert!(refusal.detail.contains("byte 11:"), "{}", refusal.detail);
+    assert_eq!(refusal.cause.catalog_fields(), None);
+}
