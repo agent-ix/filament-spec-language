@@ -288,6 +288,156 @@ fn nested_guards_share_every_prefix_in_one_table() {
     );
 }
 
+/// One admitted record as its application occurrence and its guard chain,
+/// outermost first, each guard as `(guard node's semantic form, occurrence,
+/// holds)`.
+type AdmittedChain = (u64, Vec<(String, u64, bool)>);
+
+/// The emission of `declarations` and its records as the strict reader admits
+/// them, in ascending order.
+fn admitted_chains(declarations: &str) -> (Emission, Vec<AdmittedChain>) {
+    let (_, emission, admitted, records) = emitted_records(declarations);
+    let nodes = crate::emit::tests::typed_nodes(&emission);
+    let mut chains = records
+        .iter()
+        .map(|record| {
+            let chain = admitted
+                .path_condition(record)
+                .iter()
+                .map(|guard| {
+                    let node = nodes
+                        .iter()
+                        .find(|node| &node.node_id == guard.guard)
+                        .expect("the guard node is written");
+                    (
+                        node.semantic_form.to_string(),
+                        guard.occurrence,
+                        guard.holds,
+                    )
+                })
+                .collect();
+            (record.occurrence, chain)
+        })
+        .collect::<Vec<_>>();
+    chains.sort();
+    (emission, chains)
+}
+
+/// FSpec FR-825 "Shared path-condition frames": the branch or right operand a
+/// literal guard decides away is walked like any other, so each record there
+/// cites the frame of the literal with the outcome that reaches it.
+#[test]
+fn a_record_a_literal_guard_decides_away_cites_the_literals_frame() {
+    for (declarations, holds, records) in [
+        (
+            "function f using v(x: Integer): Integer pure { if true then x else x + x }",
+            false,
+            1,
+        ),
+        (
+            "function f using v(x: Integer): Integer pure { if false then x + x else x }",
+            true,
+            1,
+        ),
+        (
+            "function f using v(x: Integer): Boolean pure { false and x + x > 0 }",
+            true,
+            2,
+        ),
+        (
+            "function f using v(x: Integer): Boolean pure { true or x + x > 0 }",
+            false,
+            2,
+        ),
+        (
+            "function f using v(x: Integer): Boolean pure { false implies x + x > 0 }",
+            true,
+            2,
+        ),
+        (
+            "function f using v(x: Integer): Integer pure { if true then x else if x > 0 then x else 0 }",
+            false,
+            1,
+        ),
+    ] {
+        let (emission, chains) = admitted_chains(declarations);
+        assert_eq!(
+            chains,
+            vec![(0, vec![("literal".to_owned(), 0, holds)]); records],
+            "{declarations}"
+        );
+        assert_eq!(
+            wire_frames(&emission),
+            (vec![(None, holds)], vec![Some(0); records]),
+            "{declarations}"
+        );
+    }
+}
+
+/// FSpec FR-825: both branches of a literal `if` keep their own frame, here
+/// over the two occurrences of one shared `x + 1`.
+#[test]
+fn both_branches_of_a_literal_if_hold_their_own_frame() {
+    let (emission, chains) = admitted_chains(
+        "function f using v(x: Integer): Integer pure { if true then x + 1 else x + 1 }",
+    );
+    assert_eq!(
+        chains,
+        [
+            (0, vec![("literal".to_owned(), 0, true)]),
+            (1, vec![("literal".to_owned(), 0, false)]),
+        ]
+    );
+    assert_eq!(
+        wire_frames(&emission),
+        (vec![(None, true), (None, false)], vec![Some(0), Some(1)])
+    );
+}
+
+/// FSpec FR-825-AC-12: a node read inside a branch that holds no record still
+/// takes its occurrence ordinal, a branch behind a literal guard included, so
+/// a later guard read and a later record name the next one.
+#[trace("FR-825-AC-12")]
+#[test]
+fn reads_behind_a_literal_guard_advance_later_ordinals() {
+    let under_p = || vec![("parameter".to_owned(), 1, true)];
+    for (declarations, expected) in [
+        (
+            "function f using v(p: Boolean, x: Integer): Integer pure { (if true then 0 else (if p then 1 else 2)) + (if p then x + 1 else x) }",
+            vec![(0, vec![]), (0, under_p())],
+        ),
+        (
+            "function f using v(p: Boolean, x: Integer): Integer pure { (if false then (if p then 1 else 2) else 0) + (if p then x + 1 else x) }",
+            vec![(0, vec![]), (0, under_p())],
+        ),
+        (
+            "function f using v(p: Boolean, x: Integer): Boolean pure { (false and (if p then true else false)) or (if p then x + 1 > 0 else true) }",
+            vec![
+                (
+                    0,
+                    vec![
+                        ("binary".to_owned(), 0, false),
+                        ("parameter".to_owned(), 1, true),
+                    ],
+                );
+                2
+            ],
+        ),
+        (
+            "function f using v(p: Boolean): Integer pure { if true then 0 else (if p then 1 else 2) }\n\
+             function g using v(p: Boolean, x: Integer): Integer pure { if p then x + 1 else x }",
+            vec![(0, under_p())],
+        ),
+        (
+            "function f using v(x: Integer): Integer pure { if true then 0 else g(x) }\n\
+             function g using v(x: Integer): Integer pure { x + 1 }",
+            vec![(1, vec![])],
+        ),
+    ] {
+        assert_eq!(admitted_chains(declarations).1, expected, "{declarations}");
+    }
+}
+
 /// FSpec FR-825 package order over hand-built rows: claim key first, then
 /// role spelling, ordinal and capability spelling on ties. The `NodeKey`
 /// order used for the claim equals the order of the structural ids the reader
