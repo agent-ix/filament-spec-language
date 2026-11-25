@@ -18,26 +18,31 @@
 //! dispatch-family fixture whose `family_steps` or `ancestor_steps` ceiling refuses a dispatched
 //! call, and the dispatch fixtures live in `fsl-eval`'s tests (Remaining
 //! work: QSL-898). Replay's reading of a guarded condition
-//! (`ReplayedLetters::activation`) is untested here: replay recompiles the
-//! unit and reads the guard through the production letters.
+//! (`ReplayedLetters::activation`) is exercised once, over FR-315-AC-58's
+//! hand-built package and its production letters.
 
 use filament_exact::{Cancel, Charge, ChargePoint, Incomplete, LimitKind, Meter};
 use fsl_analyze::model_check::{check_model, Atoms, ModelCheckRefusal, ModelCheckRequest, Por};
 use fsl_eval::automaton::translate;
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
-use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
-use fsl_eval::temporal::AtomReading;
+use fsl_eval::simulation::model::{ExpansionLimits, ModelSimState, ModelSystem};
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::UndefinedCause;
+use fsl_eval::temporal::{AtomReading, LetterStop, TemporalPosition};
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_replay::{
-    settle_model_check, CertificateRequest, CounterexampleKind, IncompleteCause, ModelCheckItem,
-    ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ReachedLimit, SmtEncodingLimits,
-    TemporalCounterexample, TerminalValue, UndefinedLocus,
+    replay_model_trace_with_temporal_selections, settle_model_check, CertificateRequest,
+    CounterexampleKind, DisagreementCause, IncompleteCause, ModelCheckItem, ModelCheckLimit,
+    ModelCheckLimits, ModelCheckOutcome, ModelStep, ModelTraceSettlement, ModelTraceSubject,
+    ModelTraceValue, ReachedLimit, ReplayLimits, SmtEncodingLimits, TemporalCounterexample,
+    TerminalValue, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 use fsl_semantics::check::FormulaNodeId;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::counter::{CONTRACT, UNLIMITED};
+use crate::model_settle::{envelope_at, request};
 use crate::model_world::{self, Atom, Clause, Letters, World, BOUNDED, INFINITE};
 
 const ORIGIN: &str = "on origin";
@@ -138,6 +143,127 @@ fn counter_world(profile: &str, clauses: &[Clause<'_>]) -> World {
         clauses,
         &[("c", json!({"value": {"integer": "0"}}))],
     )
+}
+
+/// The production letters of one instance over the states of one behaviour,
+/// recording each position read with its reading.
+struct RecordedLetters<'b, L> {
+    letters: &'b L,
+    instance: ModelInstance,
+    states: &'b [ModelSimState],
+    reads: Vec<(u64, AtomReading)>,
+}
+
+impl<L: ModelLetters> fsl_eval::temporal::TemporalLetters for RecordedLetters<'_, L> {
+    fn atom(
+        &mut self,
+        atom: FormulaNodeId,
+        position: TemporalPosition,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, LetterStop> {
+        let index = usize::try_from(position.index()).expect("a position");
+        let reading = self
+            .letters
+            .atom(atom, &self.instance, &self.states[index], meter)?;
+        self.reads.push((position.index(), reading.clone()));
+        Ok(reading)
+    }
+
+    fn activation(
+        &mut self,
+        _position: TemporalPosition,
+        _meter: &mut Meter,
+    ) -> Result<AtomReading, LetterStop> {
+        panic!("an `on origin` clause has no activation condition")
+    }
+}
+
+/// FR-125-AC-6: over the Counter subject, the letter of `always holds(q(2 -
+/// c.value) >= 0)` under infinite-trace is true at positions 0 and 1 and
+/// undefined at position 2, cause division by zero; `eventually[0,1]
+/// holds(q(2 - c.value) = 0 and c.value = 1)` under event-position
+/// false-extension, `on origin`, reads positions 0 and 1 only and is true.
+#[trace("TC-537", "FR-125-AC-6")]
+#[test]
+fn a_model_letter_is_read_up_to_its_first_undefined_position_or_its_horizon() {
+    use fsl_eval::simulation::TransitionSystem;
+    use fsl_eval::temporal::{evaluate, TemporalOutcome, TemporalTrace, UndefinedEvaluation};
+
+    let read = |profile: &str, formula: &str, trace: TemporalTrace| {
+        let world = counter_world(
+            profile,
+            &[Clause {
+                activation: ORIGIN,
+                formula,
+            }],
+        );
+        let system = ModelSystem::new(world.subject(&["c"], UNLIMITED).simulation)
+            .expect("the subject admits");
+        let mut states = vec![system.initial_states()[0].clone()];
+        loop {
+            let expansion = system
+                .successors(&states[states.len() - 1])
+                .expect("the state expands");
+            let Some((_, next)) = expansion.successors.into_iter().next() else {
+                break;
+            };
+            states.push(next);
+        }
+        let values: Vec<_> = states
+            .iter()
+            .map(|state| world.domain.integer(state, "c", "value"))
+            .collect();
+        assert_eq!(values, [0, 1, 2, 3]);
+        let node = &world.package.graph().temporal_clauses()[0];
+        let letters = system.clause_letters(node).expect("the clause has letters");
+        let mut recorded = RecordedLetters {
+            letters: &letters,
+            instance: ModelInstance {
+                population: world.domain.key(world.domain.population),
+                key: "c".to_owned(),
+            },
+            states: &states,
+            reads: Vec::new(),
+        };
+        let outcome = evaluate(
+            node.clause(),
+            trace,
+            &mut recorded,
+            &mut Meter::new(UNLIMITED),
+        )
+        .expect("the trace is readable");
+        (outcome, recorded.reads)
+    };
+    let division = UndefinedCause::Kernel(filament_exact::Undefined::DivisionByZero);
+
+    let (outcome, reads) = read(
+        INFINITE,
+        "always holds(q(2 - c.value) >= 0)",
+        TemporalTrace::Finite { len: 4 },
+    );
+    assert_eq!(
+        outcome,
+        TemporalOutcome::Undefined(UndefinedEvaluation {
+            at: TemporalPosition::new(2),
+            cause: division.clone(),
+        })
+    );
+    assert_eq!(
+        reads,
+        [
+            (0, AtomReading::True),
+            (1, AtomReading::True),
+            (2, AtomReading::Undefined(division)),
+        ]
+    );
+
+    let (outcome, reads) = read(
+        BOUNDED,
+        "eventually[0,1] holds(q(2 - c.value) = 0 and c.value = 1)",
+        TemporalTrace::Finite { len: 4 },
+    );
+    assert_eq!(outcome, TemporalOutcome::Holds);
+    assert_eq!(reads, [(0, AtomReading::False), (1, AtomReading::True)]);
 }
 
 /// FR-125-AC-14: a key that is unused at initialization stays excluded from
@@ -721,6 +847,11 @@ fn production_letters_decide_each_guard_row_and_include_guard_only_por_visibilit
         undefined(&undefined_world, &undefined_outcome),
         (2, vec![0, 1, 2])
     );
+    let CounterexampleKind::UndefinedEvaluation(evaluation) = &violated(&undefined_outcome).kind
+    else {
+        panic!("expected an undefined evaluation");
+    };
+    assert_eq!(evaluation.site.locus, UndefinedLocus::Activation);
 
     // The atom has no reads; the activation guard alone reads Counter.value.
     let activation = format!("{} when (c.value >= 3)", each("Counter"));
@@ -1165,6 +1296,213 @@ fn an_undefined_activation_condition_is_an_undefined_evaluation() {
     assert_eq!(
         values(&world, &["c"], counterexample, "c", "value"),
         [0, 1, 2]
+    );
+}
+
+/// The `Counter` package whose object type also declares `held`, an optional
+/// field of `value`'s type that no operation modifies, and whose `inc` writes
+/// its receiver's `value` only (FR-154).
+fn holding_counter() -> model_world::Domain {
+    let counter = model_world::counter();
+    let mut document: Value =
+        serde_json::from_slice(&counter.document).expect("the Counter document is JSON");
+    let object = document["types"]
+        .as_array_mut()
+        .expect("the document declares types")
+        .iter_mut()
+        .find(|declared| declared.get("fields").is_some())
+        .expect("the document declares the object type");
+    for operation in object["operations"]
+        .as_array_mut()
+        .expect("the object type declares operations")
+    {
+        let written = operation["frame"]["modifies"].take();
+        operation["frame"]["modifies"] = json!([]);
+        operation["frame"]["modifies_receiver"] = written;
+    }
+    let fields = object["fields"]
+        .as_array_mut()
+        .expect("the object type declares its fields");
+    let mut held: Value =
+        serde_json::from_str(&fields[0].to_string().replace("/value\"", "/held\""))
+            .expect("the renamed field is JSON");
+    held["name"] = json!("held");
+    held["presence"] = json!("optional");
+    fields.push(held);
+    model_world::Domain {
+        document: document.to_string().into_bytes(),
+        ..counter
+    }
+}
+
+/// FR-315-AC-58: over the hand-built package whose guard reads `value(c.held)`
+/// where `c.value >= 2`, the one path FR-315's query admits, `inc` on `d`
+/// twice, ends where the guard of `d`, which holds no `held`, has no value.
+/// FR-128 replays the counterexample read from that model, its condition read
+/// by the production letters, as an undefined activation, and the same payload
+/// bound over `c` is not reproduced. EN-1 searches every depth and reports the
+/// first instance in canonical order with a finding (FR-126-AC-11), `c`, whose
+/// formula a longer path violates.
+#[trace("TC-1201", "FR-315-AC-58")]
+#[test]
+fn a_hand_built_guards_undefined_activation_replays_for_its_instance() {
+    let activation = format!(
+        "{} when (present(c.held) and (c.value < 2 or value(c.held) = 0))",
+        each("Counter")
+    );
+    let clauses = [Clause {
+        activation: &activation,
+        formula: "eventually[0,3] holds(c.value = 3)",
+    }];
+    let start = [
+        (
+            "c",
+            json!({"value": {"integer": "0"}, "held": {"present": {"integer": "0"}}}),
+        ),
+        (
+            "d",
+            json!({"value": {"integer": "0"}, "held": {"absent": {}}}),
+        ),
+    ];
+    let source = World::new(holding_counter(), CONTRACT, BOUNDED, &clauses, &start);
+    let built = World::with_edited_graph(
+        holding_counter(),
+        CONTRACT,
+        |graph| graph.drop_temporal_guard_left_conjunct_after_s3(0),
+        BOUNDED,
+        &clauses,
+        &start,
+    );
+    let keys = ["c", "d"];
+    let node = &built.package.graph().temporal_clauses()[0];
+    let system =
+        ModelSystem::new(built.subject(&keys, UNLIMITED).simulation).expect("the subject admits");
+    let letters = system.clause_letters(node).expect("the clause has letters");
+    let selections = crate::fill::tcb_01_event_position_selection(&built.package);
+    let outcome = check_model(
+        ModelCheckRequest {
+            workers: 1,
+            temporal_clock_selections: &selections,
+            subject: built.subject(&keys, UNLIMITED),
+            item: ModelCheckItem::Clause {
+                clause: &built.clauses[0],
+                letters: &letters,
+            },
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
+            reductions: Default::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("checked");
+    let found = violated(&outcome);
+    assert_eq!(
+        found.over_binding.as_ref().map(|over| over.key.as_str()),
+        Some("c")
+    );
+    assert_eq!(found.kind, CounterexampleKind::Formula);
+
+    // The counterexample read from the query's satisfiable model (FR-315 rules
+    // 4b and 4c): `inc` on `d` twice, bound over `d`.
+    let mut state = system.initial()[0].clone();
+    let mut prefix = Vec::new();
+    for raised in [1, 2] {
+        let (transition, next) = system
+            .successors(&state)
+            .expect("the state expands")
+            .successors
+            .into_iter()
+            .find(|(_, next)| built.domain.integer(next, "d", "value") == raised)
+            .expect("`inc` on `d` is enabled");
+        prefix.push(ModelStep {
+            transition,
+            post_state: system.state_key(&next).expect("the state encodes").1,
+            delay: None,
+        });
+        state = next;
+    }
+    let bound = |key: &str| ModelInstance {
+        population: built.domain.key(built.domain.population),
+        key: key.to_owned(),
+    };
+    let claimed = UndefinedEvaluation {
+        site: UndefinedSite {
+            position: 2,
+            state_key: prefix[1].post_state.clone(),
+            locus: UndefinedLocus::Activation,
+            transition: None,
+            time: None,
+        },
+        cause: UndefinedCause::Kernel(filament_exact::Undefined::NoneValue),
+    };
+    let counterexample = TemporalCounterexample {
+        initial_state: 0,
+        prefix,
+        over_binding: Some(bound("d")),
+        fairness: node.clause().fairness().to_vec(),
+        kind: CounterexampleKind::UndefinedEvaluation(claimed.clone()),
+        lasso: None,
+        blocked: Vec::new(),
+        refinement: None,
+        final_delay: None,
+        closure_stutters: Vec::new(),
+    };
+    assert_eq!(
+        values(&built, &keys, &counterexample, "c", "value"),
+        [0, 0, 0]
+    );
+    assert_eq!(
+        values(&built, &keys, &counterexample, "d", "value"),
+        [0, 1, 2]
+    );
+
+    let identity = node.identity().clone();
+    let occurrence = OccurrenceKey::new(identity.clone(), node.claim().clone());
+    let subject = ModelTraceSubject {
+        timed: None,
+        initial: source.initial.clone(),
+        universes: crate::counter::universe(&keys),
+        expansion: ExpansionLimits {
+            max_candidates: 1_000_000,
+        },
+        stutter_closure: false,
+    };
+    let replay = |payload: TemporalCounterexample| {
+        replay_model_trace_with_temporal_selections(
+            request(
+                &source.package,
+                &selections,
+                source.domain.document.as_slice(),
+                source.snapshot_bytes(),
+                &source.unit,
+            ),
+            &subject,
+            &envelope_at(payload, identity.clone(), occurrence.clone()),
+            &letters,
+            &selections,
+            ReplayLimits::default(),
+        )
+        .expect("replays")
+        .settlement
+    };
+    assert_eq!(
+        replay(counterexample.clone()),
+        ModelTraceSettlement::Reproduced {
+            value: ModelTraceValue::Undefined(claimed),
+            trace_position: Some(2),
+        }
+    );
+    let mut misbound = counterexample;
+    misbound.over_binding = Some(bound("c"));
+    let settled = replay(misbound);
+    assert!(
+        matches!(
+            settled,
+            ModelTraceSettlement::Inconclusive(DisagreementCause::Verdicts { .. })
+        ),
+        "{settled:?}"
     );
 }
 
