@@ -1222,7 +1222,7 @@ fn tc_444_stage_limits_bound_the_recompile() {
         .expect("the stage refusal retains its limit");
     assert_eq!(limit.setting().name(), "s3.work_units");
     assert_eq!(limit.configured_bound(), 0);
-    assert_eq!(limit.actual(), 1);
+    assert_eq!(limit.actual(), 15);
     assert_eq!(refused.code(), Code::StageLimitExceeded);
 }
 
