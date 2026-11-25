@@ -570,13 +570,8 @@ pub fn check_protocol_step(
         };
         count = count.saturating_add(u64::try_from(expansion.successors.len()).unwrap_or(u64::MAX));
         for (transition, candidate) in expansion.successors {
-            // FR-148: an operation's label is an `attempt` or `cattempt` of
-            // it. A `cfail` or `ctimeout` names the same application and
-            // applies nothing (FR-736).
-            if !matches!(transition.kind(), StepKind::Attempt | StepKind::CAttempt) {
-                continue;
-            }
-            let Some(application) = transition.application() else {
+            // FR-148: an operation's label is a step that applies it.
+            let Some(application) = transition.applied_application() else {
                 continue;
             };
             if !accepted.contains(application) {

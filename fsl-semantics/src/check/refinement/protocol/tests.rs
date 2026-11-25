@@ -1210,7 +1210,7 @@ const PAY_ROWS: &str = "step M::Pay::C -> stutter;\n\
 /// `cexpire` row refuses once, naming that class. TC-380's `Pay` is
 /// `on origin` and so has no `activate` class; the `on each` form of it takes
 /// the criterion's `activate` row as well.
-#[trace("FSpec-TC-386", "FSpec-FR-432-AC-25")]
+#[trace("TC-541", "FR-136-AC-14", "FSpec-TC-386", "FSpec-FR-432-AC-25")]
 #[test]
 fn each_compensation_outcome_class_needs_its_own_row() {
     for (activation, trigger_row) in [
@@ -1230,6 +1230,7 @@ fn each_compensation_outcome_class_needs_its_own_row() {
             .collect();
         let refund = || "Refund".to_owned();
         for (keyword, class) in [
+            ("cend", StepClass::CompensationEnd(refund())),
             ("cfail", StepClass::CompensationFail(refund())),
             ("ctimeout", StepClass::CompensationTimeout(refund())),
             ("cexpire", StepClass::CompensationExpire(refund())),

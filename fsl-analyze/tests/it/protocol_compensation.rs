@@ -2222,7 +2222,7 @@ fn class_kinds(explored: &Explored, target: &ProtocolTarget) -> BTreeSet<String>
 /// FSpec FR-430: an operation's classes hold the `attempt` and `cattempt`
 /// steps that apply it, and no `cfail` or `ctimeout` of the same application.
 /// Here `touch` is both the charge and the refund.
-#[trace("FSpec-TC-384", "FSpec-FR-430")]
+#[trace("TC-657", "FR-212-AC-5", "FSpec-TC-384", "FSpec-FR-430")]
 #[test]
 fn an_operation_fairness_class_holds_attempts_and_compensation_attempts_only() {
     explore(&twice(), |_, explored| {

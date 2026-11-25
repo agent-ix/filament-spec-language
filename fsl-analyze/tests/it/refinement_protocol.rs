@@ -21,7 +21,7 @@ use fsl_replay::{
 use ix_trace_rs::trace;
 
 use crate::refinement_fixture::{cas_refines_counter, World, UNLIMITED};
-use crate::refinement_fixture::{key, Variant, CAS, SPEC};
+use crate::refinement_fixture::{failing_compensation, key, Variant, CAS, SPEC};
 use crate::ring_world::{
     key as ring_key, RingWorld, Variant as RingVariant, QUEUE as RING_QUEUE, RING as RING_MODEL,
     UNLIMITED as RING_UNLIMITED,
@@ -2990,31 +2990,9 @@ fn compensated_increment() -> &'static str {
      }"
 }
 
-/// The decision of the concrete steps `names`, in order, over
-/// [`compensated_increment`] with `Paid`, `Fail` and `listed` as the internal
-/// list: the step kinds along each abstract trace the last one took.
-fn compensated_run(listed: &[&str], names: &[&str]) -> Vec<Vec<StepKind>> {
-    let internal: Vec<&str> = ["Spec::Comp::Paid", "Spec::Comp::Fail"]
-        .into_iter()
-        .chain(listed.iter().copied())
-        .collect();
-    let world = World::with_internals(
-        Variant {
-            peek: false,
-            ..Variant::CAS
-        },
-        compensated_increment(),
-        serde_json::json!([{"refinement": "CompRefines", "internal": internal}]),
-    );
-    let systems = open_protocol_systems(
-        world.refinement(),
-        &world.concrete_request(UNLIMITED),
-        world.package(),
-        vec![world.abstract_initial()],
-        protocol_binding().over,
-        &[],
-    )
-    .expect("the compensating protocol opens");
+/// The decision of the concrete operations `names`, in order, from the first
+/// initial state: what the last one took on the abstract side.
+fn last_taken(world: &World, systems: &fsl_replay::RefinementSystems<'_>, names: &[&str]) -> Taken {
     let protocol = systems.abstract_protocol.as_ref().expect("a protocol side");
     let mut state = systems.concrete.initial_states()[0].clone();
     let initial = check_protocol_initial(
@@ -3027,12 +3005,12 @@ fn compensated_run(listed: &[&str], names: &[&str]) -> Vec<Vec<StepKind>> {
     )
     .expect("initial states settle");
     let StepVerdict::Passes {
-        post: mut position, ..
+        post: mut position,
+        taken: mut last,
     } = initial.verdict
     else {
         panic!("the root maps: {:?}", initial.verdict);
     };
-    let mut traces = Vec::new();
     for (step_index, name) in (1..).zip(names) {
         let operation = operation_identity_text(&key(
             crate::refinement_fixture::CAS,
@@ -3062,38 +3040,109 @@ fn compensated_run(listed: &[&str], names: &[&str]) -> Vec<Vec<StepKind>> {
         let StepVerdict::Passes { post, taken } = result.verdict else {
             panic!("{name} passes: {:?}", result.verdict);
         };
-        traces = match *taken {
-            Taken::ProtocolTraces(paths) => paths
-                .iter()
-                .map(|path| path.transitions.iter().map(|step| step.kind()).collect())
-                .collect(),
-            Taken::Stutter => Vec::new(),
-            other => panic!("{name} takes protocol traces or stutters: {other:?}"),
-        };
+        last = taken;
         position = post;
         state = post_state;
     }
-    traces
+    *last
 }
 
-/// After the first commit, the internal closure takes the one compensation
-/// class listed and neither of the other two.
-fn assert_closure_takes_only(entry: &str, listed: StepKind) {
-    let traces = compensated_run(&[entry], &["beginA", "commitA"]);
-    for kind in [StepKind::CFail, StepKind::CTimeout, StepKind::CExpire] {
+/// The abstract protocol systems of `world`, over its counter `c`.
+fn counter_protocol_systems(world: &World) -> fsl_replay::RefinementSystems<'_> {
+    open_protocol_systems(
+        world.refinement(),
+        &world.concrete_request(UNLIMITED),
+        world.package(),
+        vec![world.abstract_initial()],
+        protocol_binding().over,
+        &[],
+    )
+    .expect("the compensating protocol opens")
+}
+
+/// The decision of the concrete steps `names`, in order, over
+/// [`compensated_increment`] with `Paid`, `Fail` and `listed` as the internal
+/// list: along each abstract trace the last one took, each step's kind and the
+/// class its observation label names.
+fn compensated_run(listed: &[&str], names: &[&str]) -> Vec<Vec<(StepKind, String)>> {
+    let internal: Vec<&str> = ["Spec::Comp::Paid", "Spec::Comp::Fail"]
+        .into_iter()
+        .chain(listed.iter().copied())
+        .collect();
+    let world = World::with_internals(
+        Variant {
+            peek: false,
+            ..Variant::CAS
+        },
+        compensated_increment(),
+        serde_json::json!([{"refinement": "CompRefines", "internal": internal}]),
+    );
+    let systems = counter_protocol_systems(&world);
+    let protocol = systems.abstract_protocol.as_ref().expect("a protocol side");
+    match last_taken(&world, &systems, names) {
+        Taken::ProtocolTraces(paths) => paths
+            .iter()
+            .map(|path| {
+                path.transitions
+                    .iter()
+                    .map(|step| {
+                        let label = fsl_replay::protocol_observation_label(protocol, step)
+                            .expect("the step has an observation label");
+                        (step.kind(), label.step)
+                    })
+                    .collect()
+            })
+            .collect(),
+        Taken::Stutter => Vec::new(),
+        other => panic!("the last step takes protocol traces or stutters: {other:?}"),
+    }
+}
+
+/// The kinds of the compensation steps.
+const COMPENSATION_KINDS: [StepKind; 5] = [
+    StepKind::CAttempt,
+    StepKind::CEnd,
+    StepKind::CFail,
+    StepKind::CTimeout,
+    StepKind::CExpire,
+];
+
+/// After the first commit, the internal closure takes exactly the
+/// compensation kinds `listed` names, given the internal entries `entries`.
+fn assert_closure_takes_only(entries: &[&str], listed: &[StepKind]) {
+    let traces = compensated_run(entries, &["beginA", "commitA"]);
+    for kind in COMPENSATION_KINDS {
         assert_eq!(
-            traces.iter().any(|trace| trace.contains(&kind)),
-            kind == listed,
-            "{entry}: {kind:?} in {traces:?}"
+            traces.iter().flatten().any(|(taken, _)| *taken == kind),
+            listed.contains(&kind),
+            "{entries:?}: {kind:?} in {traces:?}"
         );
     }
+}
+
+/// An internal template path makes the template's `cattempt` steps internal.
+#[trace("TC-553", "FR-148-AC-1", "FSpec-TC-386", "FSpec-FR-432-AC-8")]
+#[test]
+fn an_internal_template_entry_closes_over_compensation_attempts_only() {
+    assert_closure_takes_only(&["Spec::Comp::Undo"], &[StepKind::CAttempt]);
+}
+
+/// An internal `cend` entry makes the thread's end internal; a `cfail` entry
+/// beside it brings the thread to where it can end.
+#[trace("TC-553", "FR-148-AC-1", "FSpec-TC-386", "FSpec-FR-432-AC-8")]
+#[test]
+fn an_internal_cend_entry_closes_over_the_end_of_a_failed_thread() {
+    assert_closure_takes_only(
+        &["cfail Spec::Comp::Undo", "cend Spec::Comp::Undo"],
+        &[StepKind::CFail, StepKind::CEnd],
+    );
 }
 
 /// An internal `cfail` entry makes the template's failed attempts internal.
 #[trace("TC-553", "FR-148-AC-1", "FSpec-TC-386", "FSpec-FR-432-AC-8")]
 #[test]
 fn an_internal_cfail_entry_closes_over_failed_attempts_only() {
-    assert_closure_takes_only("cfail Spec::Comp::Undo", StepKind::CFail);
+    assert_closure_takes_only(&["cfail Spec::Comp::Undo"], &[StepKind::CFail]);
 }
 
 /// An internal `ctimeout` entry makes the template's timed-out attempts
@@ -3101,14 +3150,50 @@ fn an_internal_cfail_entry_closes_over_failed_attempts_only() {
 #[trace("TC-553", "FR-148-AC-1", "FSpec-TC-386", "FSpec-FR-432-AC-8")]
 #[test]
 fn an_internal_ctimeout_entry_closes_over_timed_out_attempts_only() {
-    assert_closure_takes_only("ctimeout Spec::Comp::Undo", StepKind::CTimeout);
+    assert_closure_takes_only(&["ctimeout Spec::Comp::Undo"], &[StepKind::CTimeout]);
 }
 
 /// An internal `cexpire` entry makes the template's expiry internal.
 #[trace("TC-553", "FR-148-AC-1", "FSpec-TC-386", "FSpec-FR-432-AC-8")]
 #[test]
 fn an_internal_cexpire_entry_closes_over_expiry_only() {
-    assert_closure_takes_only("cexpire Spec::Comp::Undo", StepKind::CExpire);
+    assert_closure_takes_only(&["cexpire Spec::Comp::Undo"], &[StepKind::CExpire]);
+}
+
+/// A compensation step's observation label names its class, the protocol
+/// spelled once.
+#[trace("TC-553", "FR-148-AC-11")]
+#[test]
+fn each_compensation_step_is_labelled_with_its_class() {
+    let traces = compensated_run(
+        &[
+            "Spec::Comp::Undo",
+            "cend Spec::Comp::Undo",
+            "cfail Spec::Comp::Undo",
+            "ctimeout Spec::Comp::Undo",
+            "cexpire Spec::Comp::Undo",
+        ],
+        &["beginA", "commitA"],
+    );
+    let labels: std::collections::BTreeSet<(String, &str)> = traces
+        .iter()
+        .flatten()
+        .filter(|(kind, _)| COMPENSATION_KINDS.contains(kind))
+        .map(|(kind, label)| (format!("{kind:?}"), label.as_str()))
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            ("CAttempt", "Comp::Undo"),
+            ("CEnd", "cend Comp::Undo"),
+            ("CExpire", "cexpire Comp::Undo"),
+            ("CFail", "cfail Comp::Undo"),
+            ("CTimeout", "ctimeout Comp::Undo"),
+        ]
+        .into_iter()
+        .map(|(kind, label)| (kind.to_owned(), label))
+        .collect()
+    );
 }
 
 /// The concrete `commitB` takes the compensation's `cattempt` of `inc` and
@@ -3117,7 +3202,7 @@ fn assert_operation_row_never_takes(other: StepKind) {
     let traces = compensated_run(&[], &["beginA", "commitA", "beginB", "commitB"]);
     let visible: Vec<StepKind> = traces
         .iter()
-        .filter_map(|trace| trace.first().copied())
+        .filter_map(|trace| trace.first().map(|(kind, _)| *kind))
         .collect();
     assert!(visible.contains(&StepKind::CAttempt), "{visible:?}");
     assert!(!visible.contains(&other), "{other:?} in {visible:?}");
@@ -3136,4 +3221,36 @@ fn an_operation_row_is_not_satisfied_by_a_cfail() {
 #[test]
 fn an_operation_row_is_not_satisfied_by_a_ctimeout() {
     assert_operation_row_never_takes(StepKind::CTimeout);
+}
+
+/// A step whose abstract traces apply `add` and fail the compensation of
+/// `inc` takes the class of `add` and not the class of `inc`.
+#[trace("TC-657", "FR-212-AC-5")]
+#[test]
+fn a_failed_compensation_attempt_takes_no_abstract_operation_class() {
+    let world = failing_compensation();
+    let systems = counter_protocol_systems(&world);
+    let taken = last_taken(&world, &systems, &["bump"]);
+    let Taken::ProtocolTraces(paths) = &taken else {
+        panic!("protocol traces: {taken:?}");
+    };
+    let kinds: Vec<StepKind> = paths
+        .iter()
+        .flat_map(|path| path.transitions.iter().map(|step| step.kind()))
+        .collect();
+    assert!(kinds.contains(&StepKind::CFail), "{kinds:?}");
+    assert!(!kinds.contains(&StepKind::CAttempt), "{kinds:?}");
+
+    let fairness: Vec<_> = world
+        .refinement()
+        .abstract_operation_fairness()
+        .cloned()
+        .collect();
+    let classes = fsl_replay::abstract_classes(&systems.abstract_system, &fairness, &[])
+        .expect("both constraints name declared operations");
+    let takes: Vec<bool> = classes
+        .iter()
+        .map(|class| class.is_taken_by(&taken))
+        .collect();
+    assert_eq!(takes, [true, false], "add, then inc");
 }

@@ -2364,7 +2364,7 @@ fn protocol_hidden_graph(
                             rows.push((
                                 pre_candidate,
                                 pre.clone(),
-                                transition.application().cloned(),
+                                transition.applied_application().cloned(),
                                 post,
                                 None,
                                 Vec::new(),
@@ -2385,7 +2385,7 @@ fn protocol_hidden_graph(
                         let first = trace
                             .transitions
                             .first()
-                            .and_then(|step| step.application().cloned());
+                            .and_then(|step| step.applied_application().cloned());
                         // The configuration each later step leaves is the one
                         // the step before it reached.
                         let mut hops = Vec::new();
@@ -2401,7 +2401,7 @@ fn protocol_hidden_graph(
                                     return Ok(ProtocolHiddenGraph::Settled(settlement));
                                 }
                             };
-                            hops.push((enabled, step.application().cloned()));
+                            hops.push((enabled, step.applied_application().cloned()));
                         }
                         rows.push((pre_candidate, pre.clone(), first, post, None, hops));
                     }
@@ -2486,4 +2486,112 @@ fn abstract_enabled(
         );
     }
     Ok(Enabledness::Enabled(enabled))
+}
+
+#[cfg(test)]
+#[path = "../../../tests/support/refinement_cas.rs"]
+mod cas_fixture;
+
+#[cfg(test)]
+mod tests {
+    use fsl_eval::model_subject::ModelInstance;
+    use ix_trace_rs::trace;
+
+    use super::cas_fixture::{failing_compensation, key, SPEC, UNLIMITED};
+    use super::*;
+    use crate::refinement::open_protocol_systems;
+
+    /// One concrete step of [`failing_compensation`]: in the candidate graph
+    /// replay rebuilds, the rows apply `add` and never `inc`, whose
+    /// compensation attempt fails along them while `inc` stays enabled.
+    #[trace("TC-657", "FR-212-AC-5")]
+    #[test]
+    fn the_replay_candidate_graph_applies_no_failed_compensation_attempt() {
+        let world = failing_compensation();
+        let systems = open_protocol_systems(
+            world.refinement(),
+            &world.concrete_request(UNLIMITED),
+            world.package(),
+            vec![world.abstract_initial()],
+            ModelInstance {
+                population: key(SPEC, "counters"),
+                key: "c".to_owned(),
+            },
+            &[],
+        )
+        .expect("the compensating protocol opens");
+        let protocol = systems.abstract_protocol.as_ref().expect("a protocol side");
+        let state = systems.concrete.initial_states()[0].clone();
+        let StepVerdict::Passes { post: initial, .. } = check_protocol_initial(
+            world.refinement(),
+            &systems.concrete,
+            &systems.abstract_system,
+            protocol,
+            0,
+            state.state(),
+        )
+        .expect("initial states settle")
+        .verdict
+        else {
+            panic!("the root maps");
+        };
+        let (transition, post) = systems
+            .concrete
+            .successors(&state)
+            .expect("the concrete state expands")
+            .successors
+            .into_iter()
+            .next()
+            .expect("bump is enabled");
+        let StepVerdict::Passes { post: after, taken } = check_protocol_step(
+            world.refinement(),
+            &systems.concrete,
+            &systems.abstract_system,
+            protocol,
+            &initial,
+            &ConcreteStep {
+                position: 1,
+                transition: Some(&transition),
+                post: &post,
+            },
+        )
+        .verdict
+        else {
+            panic!("bump passes");
+        };
+
+        let ProtocolHiddenGraph::Built(_, steps) =
+            protocol_hidden_graph(protocol, &[*initial, *after], &[*taken])
+                .expect("the candidate graph rebuilds")
+        else {
+            panic!("the candidate graph is built");
+        };
+        let fairness: Vec<_> = world
+            .refinement()
+            .abstract_operation_fairness()
+            .cloned()
+            .collect();
+        let classes = abstract_classes(&systems.abstract_system, &fairness, &[])
+            .expect("both constraints name declared operations");
+        let [add, inc] = classes.as_slice() else {
+            panic!("one class per constraint: {classes:?}");
+        };
+        let rows: Vec<_> = steps.iter().flatten().collect();
+        let applied: Vec<&ModelTransition> = rows
+            .iter()
+            .flat_map(|row| {
+                row.2
+                    .iter()
+                    .chain(row.5.iter().filter_map(|hop| hop.1.as_ref()))
+            })
+            .collect();
+        assert!(applied.iter().any(|taken| add.covers(taken)), "{applied:?}");
+        assert!(
+            !applied.iter().any(|taken| inc.covers(taken)),
+            "{applied:?}"
+        );
+        assert!(rows
+            .iter()
+            .any(|row| row.5.iter().any(|hop| inc.is_enabled_in(&hop.0))));
+    }
 }

@@ -277,12 +277,7 @@ impl ProtocolFairness {
         let each = self.granularity == FairnessGranularity::Each;
         match &self.target {
             ProtocolTarget::Operation { name } => {
-                // A `cfail` or `ctimeout` names an application and applies
-                // nothing (FR-736).
-                if !matches!(transition.kind(), StepKind::Attempt | StepKind::CAttempt) {
-                    return None;
-                }
-                let application = transition.application()?;
+                let application = transition.applied_application()?;
                 (application.operation() == name).then(|| {
                     if each {
                         ProtocolClass::Application(application.clone())
