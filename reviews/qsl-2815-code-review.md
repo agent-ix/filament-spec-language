@@ -14,7 +14,7 @@ Reviewed the 19-file Rust diff against `origin/main`, including the state-key me
 
 ## Verdict
 
-**FAIL** — the new cached-key path hardcodes the canonical writer's serialization layout, creating a second source of truth for key-byte limits.
+**PASS** — all three findings are fixed at the disposition head; the remaining AC-4 timing gate needs evidence on this exact head.
 
 ## Scope
 
@@ -35,10 +35,29 @@ Reviewed the 19-file Rust diff against `origin/main`, including the state-key me
 
 - `code-review` with Rust lane: completed. The cache keys preserve full `StateKey` bytes; the expansion cache is local to one binding/pass, and cached expansion results preserve their bounded result and cut. The `model_state_key_memo_tracks_clones_and_cell_mutation` test exercises sharing, mutation detachment, and unchanged original state. `FR-120-AC-32`'s added test exercises undefined/incomplete equation behavior under the narrowed path.
 - Trace review: the changed test binds to FR-120-AC-32; the memo regression binds to FR-101-AC-2; the AC-4 rover test binds to FR-851-AC-4.
-- Focused rustfmt check: failed. `rustfmt --edition 2021 --config skip_children=true --check` over the changed Rust files reports numerous pre-existing formatting differences in the merged `fsl-eval/src/simulation/model.rs`; it also reports the two changed formatting sites in FND-002 and FND-003 and FND-003. The narrower liveness and bounded-successors check passed on the merged head according to the lead's focused check.
+- Focused rustfmt check: failed. `rustfmt --edition 2021 --config skip_children=true --check` over the changed Rust files reports numerous pre-existing formatting differences in the merged `fsl-eval/src/simulation/model.rs`; it also reports the two changed formatting sites in FND-002 and FND-003. The narrower liveness and bounded-successors check passed on the merged head according to the lead's focused check.
 - Cargo checks/tests: not run by this reviewer because the shared build scheduler was not visible here. The lead's delegated merged-head focused cold-clone regression passed 1/1; AC-4's five-pass series on the preceding head measured 26.4 seconds median on draco (load ~20). No aggregate workspace gate was run.
 - `cargo deny check` and workspace Clippy were not run; neither is an aggregate workspace gate requested for this review.
 
+
+
+
 ## Dispositions
 
-Not applicable in this review pass.
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | Product-key cache keys now include the exact caller byte limit, so a cache hit can only reuse bytes already admitted by the canonical encoder under that same limit; the manual layout/chunk accounting helper was removed. |
+| FND-002 | fixed | The canonical key field now matches rustfmt's one-line form. |
+| FND-003 | fixed | The observation imports now match rustfmt order. |
+
+### Round 1 evidence
+
+| FND | Outcome | After excerpt |
+| --- | --- | --- |
+| FND-001 | fixed | `let key = (state.model_key.clone(), property, identity.input_bytes);` and cache misses call `canonical_bytes_with_model_value(&model, property, identity.input_bytes)`. |
+| FND-002 | fixed | `canonical_key: std::sync::Arc<std::sync::OnceLock<std::sync::Arc<crate::simulation::StateKey>>>,` |
+| FND-003 | fixed | `admit_initial_state, model_views, observation_facts, observe_state, state_fields, state_reference,` |
+
+The former FR-120-AC-32 tag on `a_solved_size_integer_assignment_uses_its_domain_index` is removed; that test now covers the out-of-domain assignment case without claiming the temporal-query acceptance criterion. The two scenario tests for defined and undefined pre-state queries remain tagged to FR-120-AC-32. The memo regression now compares the mutated clone's key with a fresh changed state and checks that memo population leaves `Debug` output stable.
+
+No new code defect was found in the capped FIFO caches, caller-limit keyed product cache, or expansion-payload cache removal. The current PR head has no recorded FR-851-AC-4 test-profile timing result in the issue/CI evidence I inspected; existing evidence is from earlier heads. Merge readiness therefore remains pending a current-head AC-4 measurement, separate from the resolved code review findings.
