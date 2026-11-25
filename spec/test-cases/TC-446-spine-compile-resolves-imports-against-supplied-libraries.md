@@ -18,7 +18,8 @@ library's identity and version, types an imported function call from the
 library's checked graph and emits it as a `dependency_reference`, and
 refuses each ADR-015 D-1 and D-2 case with no package.
 
-Scope: FR-099-AC-1 to FR-099-AC-7, FR-099-AC-9, FR-027-AC-10, FR-027-AC-12.
+Scope: FR-099-AC-1 to FR-099-AC-7, FR-099-AC-9, FR-099-AC-10, FR-027-AC-10,
+FR-027-AC-12.
 
 ## Test Procedure
 
@@ -76,6 +77,10 @@ package reference (FSpec FR-322 `package_id` wire member) its spine compile emit
    value absent and with `[]`. Request
    the `1-draft` export with the member at the top level and on a library
    object, and a `0-draft` request with the member.
+10. Under `package_name` `R`, compile a unit that imports `R`, then one that
+    imports `test/a` whose source imports `R`. Run each with no library
+    supplied as `R`, with a library supplied as `R` from another source
+    identity declaring what the unit declares, and with one that differs.
 
 Tag the tests `#[trace("FR-099-AC-n", "TC-446")]` with the AC each backs.
 
@@ -130,3 +135,7 @@ Tag the tests `#[trace("FR-099-AC-n", "TC-446")]` with the AC each backs.
   first compile and no member for the absent and `[]` values; the
   `1-draft` request carries both members and the `0-draft` request refuses
   with `unknown_edition` at stage `profile`.
+- Step 10: each compile refuses `invalid_package`/`definition-cycle`,
+  unwrapped, stage `intake`, at the identity string of the import naming `R`,
+  with identity path `R`, `R` for the direct import and `R`, `test/a`, `R`
+  through `test/a`. No package.

@@ -119,9 +119,12 @@ cross-package references (ADR-015 D-1, D-2, D-3, D-5; FSpec FR-307, FR-322).
 - The resolution SHALL apply ADR-015 D-1's steps to each import, depth
   first in source order, in D-1's order: cycle, reuse, selection, compile,
   view.
-- When an import names a library whose compile is in progress, the
-  resolution SHALL refuse `invalid_package`/`definition-cycle` naming the
-  identity path.
+- When an import in the unit's closure names the unit's own package name
+  (the compile's `package_name`, FR-091), or a library whose compile is in
+  progress, the resolution SHALL refuse `invalid_package`/`definition-cycle`
+  naming the identity path. A cycle through the unit's own name has that name
+  at both ends of the path, and is refused whether or not a library is supplied
+  under that name and whatever such a library declares (FSpec FR-307).
 - When an import names an identity that an earlier import in the closure
   named, the resolution SHALL reuse that
   import's library once its compile has completed.
@@ -198,6 +201,7 @@ cross-package references (ADR-015 D-1, D-2, D-3, D-5; FSpec FR-307, FR-322).
 | FR-099-AC-7 | A unit importing `test/a`, which imports `test/b`, which imports `test/c`, compiled with `dependency.libraries` at 2, refuses `stage_limit_exceeded` at stage `intake` at `test/b`'s import of `test/c`, with limit kind node count, bound 2, actual 3 and setting `dependency.libraries`, and no package; with `dependency.libraries` at 3 it compiles. The same unit with `dependency.import_edges` at 2 refuses naming edge count, bound 2, actual 3 and setting `dependency.import_edges`; with `dependency.source_bytes` one byte below the three libraries' summed source bytes it refuses naming input bytes and setting `dependency.source_bytes`. A chain of 200 libraries, each importing the next, compiles at the default limits. | Test (TC-446) |
 | FR-099-AC-8 | With `test/geometry` exporting `function f using v(x: Int[0, 9]): Boolean pure { x < 5 }` and the importing unit also declaring a local `function f2 using v(x: Int[0, 9]): Boolean pure { x < 5 }`, each call `g::f(e)` receives the same verdict, refusal code, cause and locus as `f2(e)` in the same body, for `e` each of `y` with `y: Int[0, 9]`, `3`, `12`, `y` with `y: Int[0, 20]`, and `y` with `y: Int[0, 20]` under `if y <= 9`. With `f`'s body changed to `(10 div x) < 5`, whose divisor `x` may be zero, the compile refuses `CompileRefusal::Dependency` with path `[test/geometry]` carrying `undefined_expression`/`unproved-nonzero` in the library's source, and raises no refusal at the call site. | Test (TC-894) |
 | FR-099-AC-9 | A compile given `refinement_internals` `[{"refinement": "CasTwice", "internal": ["Spec::Twice::finish"]}]` for the unit and none for any library hands S3 that value unchanged and the empty list for every library refinement, and writes the package member `refinement_internals` with that list; the same compile with no value writes no such member, and a value `[]` writes none either. With the value `null`, `{}` or `7` the input builder does not refuse it and S3 reports `invalid_model_binding`/`malformed-declaration` at the root pointer (the empty string) of the unit's value (FR-147-AC-6). A defect in the value of a supplied library, a shape defect or a `refinement` naming a refinement the library does not declare, refuses the compilation, the unit included, located at (that library's value, pointer) whether or not the unit imports the library, and for a library no import reaches the refusal is the resolution's, wrapped as `CompileRefusal::Dependency` with that library's identity as the path. A library no import reaches with no value is neither compiled nor recorded. | Test (TC-446) |
+| FR-099-AC-10 | A unit compiled under `package_name` `R` that imports `R`, and one that imports `test/a` whose source imports `R`, each refuses `invalid_package`/`definition-cycle`, unwrapped, at stage `intake`, at the identity string of the import naming `R`, with identity path `R`, `R` and `R`, `test/a`, `R` respectively, and yields no package: with no library supplied as `R`, with one supplied as `R` from another source identity declaring what the unit declares, and with one supplied as `R` that differs. | Test (TC-446) |
 
 ## Dependencies
 

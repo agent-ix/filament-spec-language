@@ -19,7 +19,7 @@ relationships:
 ## Description
 
 Verify the bytes-only entry and its selected-monitor preparation boundary.
-Scope: FR-531-AC-1 through FR-531-AC-35, FR-531-AC-45 through FR-531-AC-48, FR-531-AC-52 through FR-531-AC-58. **R** is the package of FR-517.
+Scope: FR-531-AC-1 through FR-531-AC-35, FR-531-AC-45 through FR-531-AC-48, FR-531-AC-52 through FR-531-AC-63. **R** is the package of FR-517.
 The isolated bytes-only consumer test crate depends on `filament-contract-model`,
 `fsl-package` and `fsl-eval` only. Producer transport and selected-monitor
 preparation tests additionally obtain authentic final emissions, admitted model
@@ -33,7 +33,7 @@ rows or bytes to the consumer.
 | 1 | 1, 3 | in a child run given only **R**'s handoff directory: `read_checked_package`, `BarePackage::new`, one temporal call, one slot call | both return a result; the source unit is never compiled |
 | 2 | 2 | compile-fail probes of a `BarePackage` from bytes, from a decoded graph and from a term; API-surface listing of the signatures | each fails to compile; no signature names `CheckedPackage`, `Emission` or `AdmittedPackageRead` |
 | 3 | 4 | each clause form and each slot kind **R** holds; a non-temporal node; a non-protocol node | results; `clause-root-unresolved` and FR-390-AC-4's refusal, empty charge logs |
-| 4 | 5 | slot call with no supply, foreign rows, unknown rows; the temporal call with no supply; `read_checked_package` over a lock that selects a dependency the evidence lacks | `MissingIdentityWitness`, `ForeignIdentityWitness`, `UnknownIdentityWitness` as exit-21 `Admission`, meter untouched; the temporal call returns; the reader refuses `MissingImport`, so no package is admitted and no dependency refusal exists |
+| 4 | 5 | slot call with no supply, foreign rows, unknown rows; the temporal call with no supply; `read_checked_package` over a lock that selects a dependency the evidence lacks | `MissingIdentityWitness`, `ForeignIdentityWitness`, `UnknownIdentityWitness` as exit-21 `Admission`, meter untouched; the temporal call returns; the reader refuses `MissingImport`, so no package is admitted and no call-time dependency refusal exists |
 | 5 | 6 | an admitted `temporal_bindings` channel missing a required row for one admitted temporal clause | the call returns `activation = Unavailable` with the clock's `Missing` non-value; the meter's charge log remains empty |
 | 6 | 7 | encode **R**'s results; search for the clause names, `source:` labels and source map regions; read the progress binding | none present; the binding holds `package.name()` |
 | 7 | 8 | **R**'s directory: read `identities.json`; compare with the encoding of the in-process rows; write twice; omit the file from the supply | slot call evaluates; bytes equal; two writes equal; `MissingIdentityWitness` for the slot call only |
@@ -64,6 +64,11 @@ rows or bytes to the consumer.
 | 56 | 56 | compare charges for the AC-54 profile-unknown refusal with FR-516's source-route counterpart | equal source-route charges |
 | 57 | 57 | compare charges for the AC-55 infinite-profile refusal with FR-516's source-route counterpart | equal source-route charges |
 | 58 | 58 | inspect the AC-53 strict-read refusal before any evaluation call | no evaluation work is charged |
+| 59 | 59 | root `dep` declaring `unit ms : Time = rational(1, 1000) * s`; a `HandoffSupply` replay with an artifact named `dep`, the root's own content then one declaring `rational(1, 2000) * s`, for a function converting 3 s to `ms` and for a function comparing `three_seconds_in_ms()` with `3000 ms` | `PackageRead(Malformed)`, `invalid_package` with no cause; no result, so no converted value or verdict |
+| 60 | 60 | `HandoffSupply` replays with two artifacts of one name, identical then differing, in both orders; then the name held once | the first four return `PackageRead(Malformed)`, `invalid_package` with no cause; the last is not refused for its names |
+| 61 | 61 | `with_dependency_artifacts` with a root-named artifact, equal then differing; two artifacts of one name, identical then differing; then distinct names, none the root's | `invalid_package` with no cause and no `BarePackage` for the first four; the last returns the package |
+| 62 | 62 | assemble, below the name check, a view set whose unit definitions, then dimension definitions, under one node key are unequal, and one whose definitions are equal; call `world()` and `world_with_source_objects()` | a world fault and no unit table for each unequal set; one world holding the definition once for the equal set |
+| 63 | 63 | `read_checked_package` and the FR-850 directory loader over a package that selects its own name, and over one that reaches it through a library, with differing content under that name | `invalid_package`/`definition-cycle`; no `BarePackage`, no item evaluated |
 
 Trace each procedure row with `TC-1331` and the AC id in its second column. In
 particular, the admitted missing-clock-row result owns `FR-531-AC-6`, and the
