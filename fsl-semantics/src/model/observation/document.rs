@@ -1681,7 +1681,12 @@ fn admit_leaf(
                     None => record,
                 }
             })?;
-            Ok(Value::Reference(admitted))
+            let place = filament_exact::ClockPlaceReference::new(
+                admitted.universe().clone(),
+                admitted.object().as_str(),
+            )
+            .map_err(|_| admission_record(Code::InvalidRuntimeInput, "invalid-value"))?;
+            Ok(Value::ClockReference(place))
         }
         (RawForm::Variant(variant), filament_exact::ValueType::Enum(slot)) => {
             admit_variant(references, variant, slot)
