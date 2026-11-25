@@ -36,7 +36,8 @@ count.
    `cargo xtask qualify` with `--count 3`; inspect the values the `parity`
    part takes with no replacement.
 7. Repeat step 1 with an added `runtime`/`run` vector that expects a value and
-   names an absent source file, then over a corpus with two vectors of one id.
+   names an absent source file, then over a corpus with two vectors of one id
+   and over one with a parent-traversing input path.
 
 Tag the tests `#[trace("TC-1396", "<AC id>")]`.
 
@@ -55,5 +56,6 @@ Tag the tests `#[trace("TC-1396", "<AC id>")]`.
   more; `--count` refused, exit 2; the defaults are FR-295's seed and count
   10,000 and `ParityLimits::default()`.
 - Step 7: `not-qualified` naming `parity/jit` with an `unbuildable-case`
-  finding for that vector, the other vectors executed, exit 1; then a refusal
-  with no verdict, exit 2.
+  finding for that vector, the other vectors executed, exit 1; then for each of
+  the two corpora a preflight refusal with no `prepare` call and no verdict,
+  exit 2.
