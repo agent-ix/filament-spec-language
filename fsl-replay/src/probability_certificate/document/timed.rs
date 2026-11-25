@@ -4666,6 +4666,14 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
     let binding = claim_binding(system, claim)
         .map_err(|_| unsupported())?
         .map(|binding| binding.reference);
+    // A bounded monitor keeps the claim's whole horizon, as the certificate
+    // check does: a nested window ends past its root operator's upper bound.
+    let clock_bound = match &watch {
+        Watch::Bounded { .. } | Watch::Nested { .. } => watch.horizon(),
+        Watch::Deadline(_) | Watch::Elapsed(_) => {
+            time_bound(claim, scale).map_err(from_document)?
+        }
+    };
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
     let mut meter =
         filament_exact::Meter::new(document_limits.accounting).with_cancel(cancel.clone());
@@ -4677,7 +4685,7 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
             claim,
             binding.as_ref(),
             &watch,
-            time_bound(claim, scale).map_err(from_document)?,
+            clock_bound,
             scale,
             document_limits,
             cancel,
@@ -4691,7 +4699,7 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
             claim,
             binding.as_ref(),
             &watch,
-            time_bound(claim, scale).map_err(from_document)?,
+            clock_bound,
             scale,
             scale,
             document_limits,
